@@ -151,6 +151,7 @@ mod tests {
     use lyra_db::test_db::{
         self,
         TestDb,
+        new_test_db,
     };
     use lyra_db::track_sources::SourceFormat;
     use lyra_db::{
@@ -188,24 +189,6 @@ mod tests {
         MetadataLayer,
     };
     use std::collections::BTreeMap;
-
-    fn new_test_db() -> anyhow::Result<DbAny> {
-        Ok(TestDb::with_root_aliases(&[
-            "releases",
-            "chains",
-            "tracks",
-            "artists",
-            "providers",
-            "entries",
-            "track_sources",
-            "cue_sheets",
-            "cue_tracks",
-            "genres",
-            "labels",
-            "server",
-        ])?
-        .into_inner())
-    }
 
     fn insert_entry(db: &mut DbAny, path: &str) -> anyhow::Result<DbId> {
         insert_entry_with_kind(db, Path::new(path), lyra_db::entries::EntryKind::File)
@@ -1167,22 +1150,11 @@ mod tests {
             Some(lyra_db::ArtistType::Character)
         );
 
-        let character_id = lyra_db::lookup::find_id_by_indexed_string_field(
-            &db,
-            "artists",
-            "scan_name",
-            "scan_name",
-            "井ノ華六花",
-        )?
-        .ok_or_else(|| anyhow!("character artist missing"))?;
-        let actor_id = lyra_db::lookup::find_id_by_indexed_string_field(
-            &db,
-            "artists",
-            "scan_name",
-            "scan_name",
-            "瀬戸桃子",
-        )?
-        .ok_or_else(|| anyhow!("voice actor artist missing"))?;
+        let character_id =
+            lyra_db::lookup::find_id_by_index(&db, "scan_name", "井ノ華六花", "Artist")?
+                .ok_or_else(|| anyhow!("character artist missing"))?;
+        let actor_id = lyra_db::lookup::find_id_by_index(&db, "scan_name", "瀬戸桃子", "Artist")?
+            .ok_or_else(|| anyhow!("voice actor artist missing"))?;
 
         let actor =
             lyra_db::artists::get_by_id(&db, actor_id)?.ok_or_else(|| anyhow!("actor missing"))?;
@@ -1212,13 +1184,7 @@ mod tests {
     }
 
     fn artist_named(db: &DbAny, name: &str) -> anyhow::Result<Option<DbId>> {
-        lyra_db::lookup::find_id_by_indexed_string_field(
-            db,
-            "artists",
-            "scan_name",
-            "scan_name",
-            name,
-        )
+        lyra_db::lookup::find_id_by_index(db, "scan_name", name, "Artist")
     }
 
     fn voice_actors_of(db: &DbAny, character_id: DbId) -> anyhow::Result<Vec<String>> {

@@ -55,13 +55,7 @@ fn normalize(s: &str) -> String {
 }
 
 pub fn find_by_name(db: &impl DbAccess, name: &str) -> anyhow::Result<Option<DbId>> {
-    super::lookup::find_id_by_indexed_string_field(
-        db,
-        "genres",
-        "scan_name",
-        "scan_name",
-        &normalize(name),
-    )
+    super::lookup::find_id_by_index(db, "scan_name", &normalize(name), "Genre")
 }
 
 pub(crate) fn find_by_alias(db: &impl DbAccess, alias: &str) -> anyhow::Result<Option<DbId>> {

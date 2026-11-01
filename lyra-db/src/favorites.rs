@@ -45,12 +45,12 @@ impl FavoriteKind {
         }
     }
 
-    pub(crate) fn collection_alias(self) -> &'static str {
+    const fn element_kind(self) -> &'static str {
         match self {
-            Self::Track => "tracks",
-            Self::Release => "releases",
-            Self::Artist => "artists",
-            Self::Playlist => "playlists",
+            Self::Track => "Track",
+            Self::Release => "Release",
+            Self::Artist => "Artist",
+            Self::Playlist => "Playlist",
         }
     }
 }
@@ -83,33 +83,12 @@ pub struct FavoriteEdge {
 }
 
 pub fn target_kind(db: &impl DbAccess, target_db_id: DbId) -> anyhow::Result<Option<FavoriteKind>> {
-    if target_db_id.0 <= 0 {
+    let Some(element_kind) = super::graph::element_kind(db, target_db_id)? else {
         return Ok(None);
-    }
-    for kind in FavoriteKind::ALL {
-        if collection_neighbor(db, kind.collection_alias(), target_db_id)? {
-            return Ok(Some(kind));
-        }
-    }
-    Ok(None)
-}
-
-fn collection_neighbor(
-    db: &impl DbAccess,
-    collection_alias: &str,
-    target_db_id: DbId,
-) -> anyhow::Result<bool> {
-    let result = db.exec(
-        QueryBuilder::select()
-            .search()
-            .from(collection_alias)
-            .where_()
-            .neighbor()
-            .and()
-            .ids(target_db_id)
-            .query(),
-    )?;
-    Ok(!result.elements.is_empty())
+    };
+    Ok(FavoriteKind::ALL
+        .into_iter()
+        .find(|kind| kind.element_kind() == element_kind))
 }
 
 /// Insert a favorite edge, or refresh `last_refreshed_at_ms` on an existing one.
@@ -413,41 +392,11 @@ mod tests {
     }
 
     fn create_test_track(db: &mut DbAny) -> anyhow::Result<DbId> {
-        let track_db_id = db
-            .exec_mut(
-                QueryBuilder::insert()
-                    .nodes()
-                    .values([[("track_title", "Track").into()]])
-                    .query(),
-            )?
-            .ids()[0];
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("tracks")
-                .to(track_db_id)
-                .query(),
-        )?;
-        Ok(track_db_id)
+        crate::fixtures::insert_track(db, "Track")
     }
 
     fn create_test_release(db: &mut DbAny) -> anyhow::Result<DbId> {
-        let release_db_id = db
-            .exec_mut(
-                QueryBuilder::insert()
-                    .nodes()
-                    .values([[("name", "Release").into()]])
-                    .query(),
-            )?
-            .ids()[0];
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("releases")
-                .to(release_db_id)
-                .query(),
-        )?;
-        Ok(release_db_id)
+        crate::fixtures::insert_release(db, "Release")
     }
 
     #[test]

@@ -27,25 +27,6 @@ fn string_field_value<'a>(element: &'a DbElement, field_name: &str) -> Option<&'
     })
 }
 
-pub fn collection_contains_id(
-    db: &impl DbAccess,
-    collection_alias: &str,
-    id: DbId,
-) -> anyhow::Result<bool> {
-    let result = db.exec(
-        QueryBuilder::select()
-            .search()
-            .from(collection_alias)
-            .where_()
-            .neighbor()
-            .and()
-            .ids(id)
-            .query(),
-    )?;
-
-    Ok(!result.elements.is_empty())
-}
-
 pub fn find_node_id_by_id(db: &impl DbAccess, id: &str) -> anyhow::Result<Option<DbId>> {
     Ok(super::indexes::node_ids(db, "id", id)?.into_iter().next())
 }
@@ -130,42 +111,29 @@ pub fn find_node_ids_by_ids(
     Ok(map)
 }
 
-pub(crate) fn find_id_by_string_field(
+/// A `kind` node whose indexed `index` key holds `value`.
+pub fn find_id_by_index(
     db: &impl DbAccess,
-    collection_alias: &str,
-    field_name: &str,
+    index: &str,
     value: &str,
+    kind: &str,
 ) -> anyhow::Result<Option<DbId>> {
-    let result = db.exec(
-        QueryBuilder::select()
-            .search()
-            .from(collection_alias)
-            .where_()
-            .neighbor()
-            .query(),
-    )?;
-
-    Ok(result.elements.into_iter().find_map(|element| {
-        (string_field_value(&element, field_name) == Some(value)).then_some(element.id)
-    }))
-}
-
-pub fn find_id_by_indexed_string_field(
-    db: &impl DbAccess,
-    collection_alias: &str,
-    field_name: &str,
-    index_name: &str,
-    value: &str,
-) -> anyhow::Result<Option<DbId>> {
-    if let Ok(ids) = super::indexes::node_ids(db, index_name, value) {
-        for id in ids {
-            if collection_contains_id(db, collection_alias, id)? {
-                return Ok(Some(id));
-            }
-        }
-    }
-
-    find_id_by_string_field(db, collection_alias, field_name, value)
+    Ok(db
+        .exec(
+            QueryBuilder::search()
+                .index(index)
+                .value(value)
+                .limit(1)
+                .where_()
+                .node()
+                .and()
+                .key("db_element_id")
+                .value(kind)
+                .query(),
+        )?
+        .ids()
+        .into_iter()
+        .next())
 }
 
 #[cfg(test)]

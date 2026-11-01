@@ -36,19 +36,6 @@ pub(crate) fn node_ids(db: &impl DbAccess, key: &str, value: &str) -> anyhow::Re
         .ids())
 }
 
-pub(crate) fn has_index(db: &impl DbAccess, name: &str) -> anyhow::Result<bool> {
-    let result = db.exec(QueryBuilder::select().indexes().query())?;
-    Ok(query_result_has_index(&result, name))
-}
-
-pub fn ensure_index(db: &mut impl DbAccess, name: &str) -> anyhow::Result<()> {
-    if !has_index(db, name)? {
-        db.exec_mut(QueryBuilder::insert().index(name).query())?;
-    }
-
-    Ok(())
-}
-
 pub(crate) fn ensure_indexes(db: &mut impl DbAccess, names: &[&str]) -> anyhow::Result<()> {
     if names.is_empty() {
         return Ok(());

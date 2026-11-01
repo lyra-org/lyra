@@ -31,7 +31,7 @@ fn cue_sheet_identity(db: &impl DbAccess, cue_entry_id: DbId) -> anyhow::Result<
 }
 
 fn find_sheet_id_by_identity(db: &impl DbAccess, identity: &str) -> anyhow::Result<Option<DbId>> {
-    lookup::find_id_by_indexed_string_field(db, "cue_sheets", "identity", "identity", identity)
+    lookup::find_id_by_index(db, "identity", identity, "CueSheet")
 }
 
 pub fn upsert(

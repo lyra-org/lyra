@@ -229,29 +229,15 @@ fn resolve_track_ids_by_public_id(
     db: &DbAny,
     track_public_ids: &HashSet<String>,
 ) -> anyhow::Result<HashMap<String, DbId>> {
-    if super::indexes::has_index(db, "id")? {
-        let mut resolved = HashMap::with_capacity(track_public_ids.len());
-        for track_public_id in track_public_ids {
-            let Some(track_db_id) = super::lookup::find_node_id_by_id(db, track_public_id)? else {
-                continue;
-            };
-            if super::tracks::get_by_id(db, track_db_id)?.is_some() {
-                resolved.insert(track_public_id.clone(), track_db_id);
-            }
+    let mut resolved = HashMap::with_capacity(track_public_ids.len());
+    for track_public_id in track_public_ids {
+        if let Some(track_db_id) =
+            super::lookup::find_id_by_index(db, "id", track_public_id, "Track")?
+        {
+            resolved.insert(track_public_id.clone(), track_db_id);
         }
-        return Ok(resolved);
     }
-
-    let tracks = super::tracks::get_direct(db, "tracks")?;
-    Ok(tracks
-        .into_iter()
-        .filter(|track| track_public_ids.contains(&track.id))
-        .filter_map(|track| {
-            let track_id = track.id;
-            let track_db_id = track.db_id.map(DbId::from)?;
-            Some((track_id, track_db_id))
-        })
-        .collect())
+    Ok(resolved)
 }
 
 fn resolve_listen_user_ids(db: &DbAny, listens: &[Listen]) -> anyhow::Result<HashMap<DbId, DbId>> {

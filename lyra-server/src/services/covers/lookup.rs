@@ -81,7 +81,7 @@ pub(crate) fn resolve(
             if !seen.insert(item_id) {
                 continue;
             }
-            let display_cover = match lyra_db::entities::get_element_type(db, item_id)?.as_deref() {
+            let display_cover = match lyra_db::graph::element_kind(db, item_id)?.as_deref() {
                 Some("Release" | "Artist" | "Track") => {
                     if viewer.sees(db, item_id)? {
                         owned_ids.push(item_id);

@@ -66,13 +66,7 @@ pub struct TrackSourceUpsert {
 }
 
 fn find_source_id_by_identity(db: &impl DbAccess, identity: &str) -> anyhow::Result<Option<DbId>> {
-    super::lookup::find_id_by_indexed_string_field(
-        db,
-        "track_sources",
-        "identity",
-        "identity",
-        identity,
-    )
+    super::lookup::find_id_by_index(db, "identity", identity, "TrackSource")
 }
 
 pub fn get_by_id(

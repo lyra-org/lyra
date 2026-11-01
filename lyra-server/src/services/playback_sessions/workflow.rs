@@ -53,14 +53,10 @@ fn resolve_library_public_id_for_track(
 
 fn resolve_kind_validated_public_id(
     db: &impl lyra_db::DbAccess,
-    collection_alias: &str,
+    kind: &str,
     db_id: DbId,
 ) -> ServiceResult<Option<String>> {
-    if !map_internal(lyra_db::lookup::collection_contains_id(
-        db,
-        collection_alias,
-        db_id,
-    ))? {
+    if !map_internal(lyra_db::graph::is_kind(db, db_id, kind))? {
         return Ok(None);
     }
     map_internal(lyra_db::lookup::find_id_by_db_id(db, db_id))
@@ -73,10 +69,10 @@ fn build_playback_record(
     user_db_id: DbId,
     playback: PlaybackSession,
 ) -> ServiceResult<Option<PlaybackRecord>> {
-    let Some(track_public_id) = resolve_kind_validated_public_id(db, "tracks", track_db_id)? else {
+    let Some(track_public_id) = resolve_kind_validated_public_id(db, "Track", track_db_id)? else {
         return Ok(None);
     };
-    let Some(user_public_id) = resolve_kind_validated_public_id(db, "users", user_db_id)? else {
+    let Some(user_public_id) = resolve_kind_validated_public_id(db, "User", user_db_id)? else {
         return Ok(None);
     };
     let library_public_id = resolve_library_public_id_for_track(db, track_db_id)?;
@@ -100,10 +96,10 @@ fn build_evicted_playback_record(
     user_db_id: DbId,
     playback: PlaybackSession,
 ) -> ServiceResult<Option<EvictedPlaybackRecord>> {
-    let Some(track_public_id) = resolve_kind_validated_public_id(db, "tracks", track_db_id)? else {
+    let Some(track_public_id) = resolve_kind_validated_public_id(db, "Track", track_db_id)? else {
         return Ok(None);
     };
-    let Some(user_public_id) = resolve_kind_validated_public_id(db, "users", user_db_id)? else {
+    let Some(user_public_id) = resolve_kind_validated_public_id(db, "User", user_db_id)? else {
         return Ok(None);
     };
     let library_public_id = resolve_library_public_id_for_track(db, track_db_id)?;

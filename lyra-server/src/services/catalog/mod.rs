@@ -166,7 +166,7 @@ impl Viewer {
     /// Whether the viewer can see `node_db_id`, by the rule for its type. A missing node is
     /// unseen; a graph search from it would fail.
     pub(crate) fn sees(&self, db: &DbAny, node_db_id: DbId) -> anyhow::Result<bool> {
-        match lyra_db::entities::get_element_type(db, node_db_id)?.as_deref() {
+        match lyra_db::graph::element_kind(db, node_db_id)?.as_deref() {
             None => Ok(false),
             Some("Artist") => self.sees_artist(db, node_db_id),
             Some("Playlist") => self.sees_playlist(db, node_db_id),

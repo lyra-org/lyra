@@ -155,25 +155,13 @@ pub fn find_by_path_key(db: &impl super::DbAccess, key: &str) -> anyhow::Result<
     find_indexed_library(db, "path_key", key)
 }
 
-// `index_name` must be in [`crate::bootstrap::CORE_INDEXES`]; alias filter
-// guards against key collisions on non-Library nodes.
+// `index_name` must be in [`crate::bootstrap::CORE_INDEXES`].
 fn find_indexed_library(
     db: &impl super::DbAccess,
     index_name: &str,
     value: &str,
 ) -> anyhow::Result<Option<Library>> {
-    for id in super::indexes::node_ids(db, index_name, value)? {
-        if !super::lookup::collection_contains_id(db, "libraries", id)? {
-            continue;
-        }
-        let library: Vec<Library> = db
-            .exec(QueryBuilder::select().elements::<Library>().ids(id).query())?
-            .try_into()?;
-        if let Some(lib) = library.into_iter().next() {
-            return Ok(Some(lib));
-        }
-    }
-    Ok(None)
+    super::graph::fetch_typed_by_index(db, index_name, value, "Library")
 }
 
 pub fn get_by_id(

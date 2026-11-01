@@ -144,6 +144,33 @@ pub fn inbound_neighbor_ids(db: &impl DbAccess, to: DbId, kind: &str) -> anyhow:
         .ids())
 }
 
+/// The `DbElement` type of the node `id`, or `None` when it is missing or untyped.
+pub fn element_kind(db: &impl DbAccess, id: DbId) -> anyhow::Result<Option<String>> {
+    if id.0 <= 0 {
+        return Ok(None);
+    }
+    match db.exec(
+        QueryBuilder::select()
+            .values(["db_element_id"])
+            .ids(id)
+            .query(),
+    ) {
+        Ok(result) => Ok(result
+            .elements
+            .into_iter()
+            .next()
+            .and_then(|element| element.values.into_iter().next())
+            .and_then(|kv| kv.value.string().ok().cloned())),
+        Err(error) if error.ty == agdb::DbErrorType::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Whether `id` names an existing `kind` node.
+pub fn is_kind(db: &impl DbAccess, id: DbId, kind: &str) -> anyhow::Result<bool> {
+    Ok(element_kind(db, id)?.as_deref() == Some(kind))
+}
+
 /// The ids that name an existing `kind` node, in order.
 pub fn existing_ids(db: &impl DbAccess, ids: &[DbId], kind: &str) -> anyhow::Result<Vec<DbId>> {
     let nodes = ids

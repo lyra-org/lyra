@@ -94,7 +94,7 @@ pub(crate) fn public_id_list(
 
 /// What kind of node `db_id` is, as its stored type names it, such as `"Track"`.
 pub(crate) fn kind(db: &DbAny, db_id: DbId) -> luau::runtime::Result<Option<String>> {
-    lyra_db::entities::get_element_type(db, db_id).map_err(crate::plugins::runtime_error)
+    lyra_db::graph::element_kind(db, db_id).map_err(crate::plugins::runtime_error)
 }
 
 /// The node `id` names when it is a `kind`, such as `"Genre"`.

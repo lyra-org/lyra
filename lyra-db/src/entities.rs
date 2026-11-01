@@ -60,21 +60,6 @@ pub fn metadata_entity_type(
     Ok(classify_element(element))
 }
 
-pub fn get_element_type(db: &DbAny, node_id: DbId) -> anyhow::Result<Option<String>> {
-    let Ok(result) = db.exec(QueryBuilder::select().ids(node_id).query()) else {
-        return Ok(None);
-    };
-    let Some(element) = result.elements.first() else {
-        return Ok(None);
-    };
-    let key = DbValue::from("db_element_id");
-    let value = element.values.iter().find(|kv| kv.key == key);
-    match value.map(|kv| &kv.value) {
-        Some(DbValue::String(s)) => Ok(Some(s.clone())),
-        _ => Ok(None),
-    }
-}
-
 pub fn exists(db: &DbAny, node_id: DbId) -> anyhow::Result<bool> {
     Ok(metadata_entity_type(db, node_id)?.is_some())
 }

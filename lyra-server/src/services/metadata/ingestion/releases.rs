@@ -38,7 +38,6 @@ use lyra_db::{
     Release,
     Track,
     graph::ensure_owned_edge,
-    indexes::ensure_index,
     labels::LabelInput,
     metadata::layers::{
         FieldInput,
@@ -341,9 +340,6 @@ fn persist_release_inner(
     release_title: &str,
     release_tracks: Vec<TrackIngest>,
 ) -> anyhow::Result<ReleaseIngestResult> {
-    ensure_index(db, "scan_name")?;
-    ensure_index(db, lyra_db::artists::SCAN_ALIAS_HOLDER)?;
-
     let mut artist_cache: BTreeMap<String, DbId> = BTreeMap::new();
     let mut scanned_relations = ScannedRelations::new();
     let mut scanned_artist_types: HashMap<DbId, ArtistType> = HashMap::new();

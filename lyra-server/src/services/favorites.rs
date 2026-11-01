@@ -184,7 +184,11 @@ mod tests {
             .exec_mut(
                 QueryBuilder::insert()
                     .nodes()
-                    .values([[("id", public_id).into(), ("track_title", "Track").into()]])
+                    .values([[
+                        ("id", public_id).into(),
+                        ("track_title", "Track").into(),
+                        ("db_element_id", "Track").into(),
+                    ]])
                     .query(),
             )?
             .ids()[0];
@@ -214,11 +218,6 @@ mod tests {
             updated_at_ms: None,
         };
         lyra_db::playlists::create(db, &playlist, owner_db_id)
-    }
-
-    fn setup_id_index(db: &mut DbAny) -> anyhow::Result<()> {
-        lyra_db::indexes::ensure_index(db, "id")?;
-        Ok(())
     }
 
     fn principal_for(
@@ -253,7 +252,6 @@ mod tests {
     #[test]
     fn add_applies_for_whitelisted_track() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
         let library_db_id = insert_library(&mut db, "Favorites", "/tmp/lyra-favorites-add")?;
         let library_public_id = lyra_db::lookup::find_id_by_db_id(&db, library_db_id)?
@@ -272,7 +270,6 @@ mod tests {
     #[test]
     fn missing_db_ids_are_not_targetable() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
 
         let principal = principal_for(&db, user, HashSet::new());
@@ -294,7 +291,6 @@ mod tests {
     #[test]
     fn add_returns_not_targetable_for_non_whitelisted_kind() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
         let other_node = db
             .exec_mut(
@@ -315,7 +311,6 @@ mod tests {
     #[test]
     fn add_rejects_whitelist_bypass_via_real_user() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        setup_id_index(&mut db)?;
         let caller = create_user(&mut db, "alice")?;
         let bob_db_id = create_user(&mut db, "bob")?;
 
@@ -333,7 +328,6 @@ mod tests {
     #[test]
     fn playlist_visibility_gate_blocks_non_owner_non_public() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        setup_id_index(&mut db)?;
         let owner = create_user(&mut db, "alice")?;
         let intruder = create_user(&mut db, "bob")?;
         let playlist = create_playlist(&mut db, owner, &nanoid!(), /* is_public= */ false)?;
@@ -357,7 +351,6 @@ mod tests {
     #[test]
     fn playlist_visibility_gate_allows_owner() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        setup_id_index(&mut db)?;
         let owner = create_user(&mut db, "alice")?;
         let playlist = create_playlist(&mut db, owner, &nanoid!(), false)?;
 
@@ -372,7 +365,6 @@ mod tests {
     #[test]
     fn playlist_visibility_gate_allows_public_non_owner() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        setup_id_index(&mut db)?;
         let owner = create_user(&mut db, "alice")?;
         let other = create_user(&mut db, "bob")?;
         let playlist = create_playlist(&mut db, owner, &nanoid!(), true)?;
@@ -387,7 +379,6 @@ mod tests {
     fn favorited_at_for_principal_returns_visible_favorites_and_caps_existing_ids()
     -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
         let unsupported_user = create_user(&mut db, "unsupported")?;
         let visible_library = insert_library(&mut db, "Visible", "/tmp/lyra-favorites-check")?;
@@ -439,7 +430,6 @@ mod tests {
     #[test]
     fn remove_bypasses_visibility_gate_for_private_playlist() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        setup_id_index(&mut db)?;
         let owner = create_user(&mut db, "alice")?;
         let other = create_user(&mut db, "bob")?;
         let pub_id = nanoid!();
@@ -471,7 +461,6 @@ mod tests {
     #[test]
     fn remove_still_rejects_non_whitelisted_node() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        setup_id_index(&mut db)?;
         let caller = create_user(&mut db, "alice")?;
         let victim_db_id = create_user(&mut db, "victim")?;
 
@@ -488,7 +477,6 @@ mod tests {
     #[test]
     fn remove_idempotent_over_whitelisted_kind() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
         let track = create_track(&mut db, &nanoid!())?;
 

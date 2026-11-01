@@ -40,7 +40,7 @@ fn cue_track_identity(
 }
 
 fn find_track_id_by_identity(db: &impl DbAccess, identity: &str) -> anyhow::Result<Option<DbId>> {
-    lookup::find_id_by_indexed_string_field(db, "cue_tracks", "identity", "identity", identity)
+    lookup::find_id_by_index(db, "identity", identity, "CueTrack")
 }
 
 pub fn get_by_id(db: &impl DbAccess, cue_track_id: DbId) -> anyhow::Result<Option<CueTrack>> {

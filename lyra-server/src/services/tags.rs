@@ -538,11 +538,6 @@ mod tests {
         create(db, owner_db_id, target_db_id, &NewTag::parse(name, color)?)
     }
 
-    fn setup_id_index(db: &mut DbAny) -> anyhow::Result<()> {
-        lyra_db::indexes::ensure_index(db, "id")?;
-        Ok(())
-    }
-
     fn create_user(db: &mut DbAny, username: &str) -> anyhow::Result<DbId> {
         users::create(db, &test_user(username)?)
     }
@@ -556,6 +551,7 @@ mod tests {
                     .values([[
                         ("id", public_id.as_str()).into(),
                         ("track_title", "Track").into(),
+                        ("db_element_id", "Track").into(),
                     ]])
                     .query(),
             )?
@@ -641,7 +637,6 @@ mod tests {
     #[test]
     fn create_and_reuse_via_service() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
         let (track_a, _, _) = create_accessible_track(&mut db, user)?;
         let (track_b, _, _) = create_accessible_track(&mut db, user)?;
@@ -661,7 +656,6 @@ mod tests {
     #[test]
     fn detach_final_target_preserves_manageable_empty_tag() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
         let (track, _, _) = create_accessible_track(&mut db, user)?;
 
@@ -697,7 +691,6 @@ mod tests {
     #[test]
     fn create_rejects_bad_tag_name() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
         let (track, _, _) = create_accessible_track(&mut db, user)?;
 
@@ -713,7 +706,6 @@ mod tests {
     #[test]
     fn create_rejects_track_without_library_access() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
         let (track, _) = create_inaccessible_track(&mut db)?;
 
@@ -725,7 +717,6 @@ mod tests {
     #[test]
     fn create_on_private_playlist_as_non_owner_is_not_targetable() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        setup_id_index(&mut db)?;
         let owner = create_user(&mut db, "alice")?;
         let intruder = create_user(&mut db, "bob")?;
         let (playlist, _) = create_playlist(&mut db, owner, false)?;
@@ -738,7 +729,6 @@ mod tests {
     #[test]
     fn remove_target_bypasses_visibility() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        setup_id_index(&mut db)?;
         let alice = create_user(&mut db, "alice")?;
         let bob = create_user(&mut db, "bob")?;
         let (playlist_db_id, public_id) = create_playlist(&mut db, alice, true)?;
@@ -772,7 +762,6 @@ mod tests {
     #[test]
     fn foreign_tag_filtered_but_persists_across_visibility_flips() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        setup_id_index(&mut db)?;
         let alice = create_user(&mut db, "alice")?;
         let bob = create_user(&mut db, "bob")?;
         let (playlist_db_id, public_id) = create_playlist(&mut db, alice, true)?;
@@ -823,7 +812,6 @@ mod tests {
     #[test]
     fn get_for_targets_many_filters_non_visible_playlists() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        setup_id_index(&mut db)?;
         let alice = create_user(&mut db, "alice")?;
         let bob = create_user(&mut db, "bob")?;
         let (playlist_db_id, public_id) = create_playlist(&mut db, alice, true)?;
@@ -856,7 +844,6 @@ mod tests {
     #[test]
     fn media_tags_are_filtered_after_library_access_is_revoked() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
         let (track_db_id, _, library_db_id) = create_accessible_track(&mut db, user)?;
 
@@ -875,7 +862,6 @@ mod tests {
     #[test]
     fn missing_and_unsupported_targets_are_not_targetable() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
         let other_user = create_user(&mut db, "bob")?;
 
@@ -899,7 +885,6 @@ mod tests {
     #[test]
     fn get_by_public_id_rejects_non_owner() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        setup_id_index(&mut db)?;
         let alice = create_user(&mut db, "alice")?;
         let bob = create_user(&mut db, "bob")?;
         let (track, _, _) = create_accessible_track(&mut db, alice)?;
@@ -916,7 +901,6 @@ mod tests {
     #[test]
     fn update_rename_collision_returns_error() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
         let (track, _, _) = create_accessible_track(&mut db, user)?;
 
@@ -938,7 +922,6 @@ mod tests {
     #[test]
     fn update_empty_patch_rejected() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
         let (track, _, _) = create_accessible_track(&mut db, user)?;
         create_tag(&mut db, user, track, "X", "blue")?;

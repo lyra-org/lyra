@@ -229,13 +229,11 @@ pub(super) fn recent_listen_tracks(
         if listen.track_public_id.is_empty() {
             continue;
         }
-        let Some(track_db_id) = lyra_db::lookup::find_node_id_by_id(db, &listen.track_public_id)?
+        let Some(track_db_id) =
+            lyra_db::lookup::find_id_by_index(db, "id", &listen.track_public_id, "Track")?
         else {
             continue;
         };
-        if !lyra_db::lookup::collection_contains_id(db, "tracks", track_db_id)? {
-            continue;
-        }
         if let Some(accessible_library_ids) = accessible_library_ids
             && !track_accessible_to_library_set(db, track_db_id, accessible_library_ids)?
         {

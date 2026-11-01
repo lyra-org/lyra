@@ -130,13 +130,7 @@ pub(crate) fn normalize_catalog_number(raw: &str) -> Option<String> {
 }
 
 pub fn find_by_name(db: &impl DbAccess, name: &str) -> anyhow::Result<Option<DbId>> {
-    super::lookup::find_id_by_indexed_string_field(
-        db,
-        "labels",
-        "label_scan_name",
-        "label_scan_name",
-        &normalize_label_name(name),
-    )
+    super::lookup::find_id_by_index(db, "label_scan_name", &normalize_label_name(name), "Label")
 }
 
 pub fn find_by_external_id(
