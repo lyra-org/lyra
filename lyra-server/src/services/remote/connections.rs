@@ -57,6 +57,8 @@ pub(crate) struct ConnectionPlayback {
 #[derive(Clone, Debug)]
 pub(crate) struct UserConnection {
     pub(crate) id: String,
+    /// The public id of the user the connection belongs to.
+    pub(crate) user_id: String,
     pub(crate) session_key: String,
     pub(crate) client_name: Option<String>,
     pub(crate) supported_commands: Vec<RemoteAction>,
@@ -129,30 +131,89 @@ pub(crate) fn join(
     snapshots: Vec<ConnectionSnapshot>,
     now_ms: u64,
 ) -> Result<Vec<UserConnection>, PlaybackError> {
-    let bound = snapshots
+    let snapshots = snapshots
         .into_iter()
         .filter(|snapshot| snapshot.user_public_id == principal.user_public_id)
+        .collect::<Vec<_>>();
+    let playback_by_session = if snapshots.iter().any(is_bound) {
+        let user_db_id = principal.require(db).map_err(anyhow::Error::from)?;
+        playback_ids_by_session(db, user_db_id, user_db_id, now_ms)?
+    } else {
+        HashMap::new()
+    };
+    Ok(assemble(snapshots, &playback_by_session, now_ms))
+}
+
+/// Joins registry snapshots of the connections of `owners`, each a user's database and public
+/// ids, with the playbacks their native scopes are bound to, leaving out the playbacks whose
+/// current track the viewer can't see. Snapshots of anyone else's connections are left out.
+pub(crate) fn join_owned(
+    db: &DbAny,
+    viewer_db_id: DbId,
+    owners: &[(DbId, &str)],
+    snapshots: Vec<ConnectionSnapshot>,
+    now_ms: u64,
+) -> Result<Vec<UserConnection>, PlaybackError> {
+    let snapshots = snapshots
+        .into_iter()
+        .filter(|snapshot| {
+            owners
+                .iter()
+                .any(|(_, public_id)| snapshot.user_public_id == *public_id)
+        })
+        .collect::<Vec<_>>();
+    let mut playback_by_session = HashMap::new();
+    for (owner_db_id, public_id) in owners {
+        if snapshots
+            .iter()
+            .any(|snapshot| snapshot.user_public_id == *public_id && is_bound(snapshot))
+        {
+            playback_by_session.extend(playback_ids_by_session(
+                db,
+                *owner_db_id,
+                viewer_db_id,
+                now_ms,
+            )?);
+        }
+    }
+    Ok(assemble(snapshots, &playback_by_session, now_ms))
+}
+
+fn is_bound(snapshot: &ConnectionSnapshot) -> bool {
+    bindings::get(&bindings::ConnectionKey::new(
+        &snapshot.user_public_id,
+        &snapshot.session_key,
+    ))
+    .is_some_and(|scope| scope.current_playback_session_id.is_some())
+}
+
+/// The public id of each of the owner's playbacks the viewer can see, keyed by its current track
+/// session.
+fn playback_ids_by_session(
+    db: &DbAny,
+    owner_db_id: DbId,
+    viewer_db_id: DbId,
+    now_ms: u64,
+) -> Result<HashMap<DbId, String>, PlaybackError> {
+    Ok(
+        playbacks::list_projections_with_current(db, owner_db_id, viewer_db_id, false, now_ms)?
+            .into_iter()
+            .filter_map(|(projection, session_id)| Some((session_id?, projection.id)))
+            .collect(),
+    )
+}
+
+fn assemble(
+    snapshots: Vec<ConnectionSnapshot>,
+    playback_by_session: &HashMap<DbId, String>,
+    now_ms: u64,
+) -> Vec<UserConnection> {
+    let mut connections = snapshots
+        .into_iter()
         .map(|snapshot| {
             let key = bindings::ConnectionKey::new(&snapshot.user_public_id, &snapshot.session_key);
             let scope = bindings::get(&key);
             let degraded_at_ms = bindings::remote_control_degraded_at_ms(&key);
-            (snapshot, scope, degraded_at_ms)
-        })
-        .collect::<Vec<_>>();
-
-    let playback_by_session = if bound.iter().any(|(_, scope, _)| {
-        scope
-            .as_ref()
-            .is_some_and(|scope| scope.current_playback_session_id.is_some())
-    }) {
-        visible_playbacks_by_current_session(db, principal, now_ms)?
-    } else {
-        HashMap::new()
-    };
-
-    let mut connections = bound
-        .into_iter()
-        .map(|(snapshot, scope, degraded_at_ms)| {
             let playback = scope
                 .as_ref()
                 .and_then(|scope| scope.current_playback_session_id)
@@ -164,6 +225,7 @@ pub(crate) fn join(
                 });
             UserConnection {
                 id: snapshot.public_id,
+                user_id: snapshot.user_public_id,
                 session_key: snapshot.session_key,
                 client_name: snapshot.client_name,
                 supported_commands: snapshot.supported_commands,
@@ -181,7 +243,7 @@ pub(crate) fn join(
             .cmp(&right.connected_at_ms)
             .then_with(|| left.connection_id.cmp(&right.connection_id))
     });
-    Ok(connections)
+    connections
 }
 
 /// The connection driving the playback. When several are bound to it, the one whose scope
@@ -194,20 +256,6 @@ pub(crate) fn controller<'a>(
         .iter()
         .filter(|connection| connection.playback_id() == Some(playback_id))
         .max_by_key(|connection| (connection.bound_at_ms, connection.connection_id))
-}
-
-/// The public id of each playback the principal can see, keyed by its current track session.
-fn visible_playbacks_by_current_session(
-    db: &DbAny,
-    principal: &Principal,
-    now_ms: u64,
-) -> Result<HashMap<DbId, String>, PlaybackError> {
-    Ok(
-        playbacks::list_visible_projections_with_current(db, principal, false, now_ms)?
-            .into_iter()
-            .filter_map(|(projection, session_id)| Some((session_id?, projection.id)))
-            .collect(),
-    )
 }
 
 #[cfg(test)]
@@ -258,6 +306,51 @@ mod tests {
         );
 
         for connection in [idle, driving, bobs] {
+            registry::unregister(connection.connection_id).await;
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn join_owned_lists_another_owners_connections_with_their_playback() -> anyhow::Result<()>
+    {
+        let _guard = testing::runtime_test_lock().await;
+        fixture::init().await?;
+        let alice = fixture::user("alice").await?;
+        let bob = fixture::user("bob").await?;
+        let driving = fixture::connect(&alice, "driving").await?;
+        let bobs = fixture::connect(&bob, "own").await?;
+        let (playback_id, _) = fixture::drive_new_playback(&alice, "driving").await?;
+
+        let now_ms = crate::services::playback_sessions::now_ms()?;
+        let db = STATE.db.read().await;
+        let alice_user = lyra_db::users::get_by_id(&*db, alice.db_id)?.expect("alice");
+        let listed = join_owned(
+            &db,
+            bob.db_id,
+            &[(alice.db_id, alice.principal.user_public_id.as_str())],
+            registry::list_connections().await,
+            now_ms,
+        )?;
+        assert_eq!(
+            listed.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            [driving.public_id.as_str()],
+            "only the owners' connections are joined"
+        );
+        assert_eq!(listed[0].user_id, alice.principal.user_public_id);
+        assert_eq!(listed[0].playback_id(), Some(playback_id.as_str()));
+
+        let active = playbacks::list_active(&db, &bob.principal, &[alice_user], now_ms)?;
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].playback_id, playback_id);
+        assert_eq!(active[0].reported_session_key, None);
+        assert_eq!(
+            controller(&listed, &playback_id).map(|c| c.id.as_str()),
+            Some(driving.public_id.as_str())
+        );
+        drop(db);
+
+        for connection in [driving, bobs] {
             registry::unregister(connection.connection_id).await;
         }
         Ok(())

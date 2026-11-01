@@ -3,6 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use std::collections::HashMap;
+
 use harmony_luau as luau;
 #[cfg(feature = "docgen")]
 use harmony_luau::FunctionParameter;
@@ -34,6 +36,7 @@ use crate::plugins::executor::ApiWebSocketSender;
 use crate::services::playbacks::holds::HeldSession;
 use crate::{
     plugins::{
+        auth::OwnersQuery,
         db::Db,
         types::{
             LuauPlaybackEvent,
@@ -42,7 +45,10 @@ use crate::{
         },
     },
     services::{
-        auth::Principal,
+        auth::{
+            Principal,
+            owners,
+        },
         playback_sessions as playbacks,
         remote::{
             connections,
@@ -83,6 +89,23 @@ struct SendCommandRequest {
 }
 
 #[derive(Serialize)]
+struct ActivePlaybackInfo {
+    id: String,
+    user_id: String,
+    username: String,
+    track_id: String,
+    position_ms: u64,
+    duration_ms: Option<u64>,
+    state: lyra_db::PlaybackState,
+    started_at_ms: u64,
+    updated_at_ms: u64,
+    client_name: Option<String>,
+    plugin_id: Option<String>,
+    session_key: Option<String>,
+    connection_id: Option<String>,
+}
+
+#[derive(Serialize)]
 struct PlaybackInfo {
     track_id: String,
     position_ms: u64,
@@ -93,6 +116,8 @@ struct PlaybackInfo {
 #[derive(Serialize)]
 struct ConnectionInfo {
     id: String,
+    user_id: String,
+    username: String,
     session_key: String,
     client_name: Option<String>,
     supported_commands: Vec<RemoteAction>,
@@ -261,19 +286,27 @@ impl PlaybackSessionsModule {
     }
 
     #[harmony(
-        description = "Lists the dispatch principal's open WebSocket connections, oldest first, with the playback each drives.",
+        description = "Lists open WebSocket connections of Lyra's own clients, oldest first, with the playback each drives. Without a query, lists the dispatch principal's own; another user's or all users' require the manage_users permission, and an admin's also the admin permission. All users' leaves out the admins' without it. A playback whose current track the principal can't see is left out of its connection. Needs the `lyra.playback_sessions.all` scope too.",
         returns(Vec<ConnectionInfo>)
     )]
     async fn list_connections(
+        query: Option<OwnersQuery>,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::Value> {
-        let snapshots = registry::list_user_connections(&principal.user_public_id).await;
+        let query = query.unwrap_or_default();
+        let owners = query.owners("list_connections")?;
+        let snapshots = registry::list_connections().await;
         let now_ms = playbacks::now_ms().map_err(crate::plugins::runtime_error)?;
         let db = db.read().await;
-        crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let connections = connections::join(&db, &principal, snapshots, now_ms)
-            .map_err(crate::plugins::runtime_error)?;
+        let (viewer_db_id, users) = owned_users(&db, &principal, owners)?;
+        let usernames = users
+            .iter()
+            .map(|user| (user.id.as_str(), user.username.as_str()))
+            .collect::<HashMap<_, _>>();
+        let connections =
+            connections::join_owned(&db, viewer_db_id, &owner_ids(&users), snapshots, now_ms)
+                .map_err(crate::plugins::runtime_error)?;
         let mut result = Vec::with_capacity(connections.len());
         for connection in connections {
             let playback = connection
@@ -289,6 +322,12 @@ impl PlaybackSessionsModule {
                 playback_id: connection.playback_id().map(str::to_string),
                 playback,
                 id: connection.id,
+                username: usernames
+                    .get(connection.user_id.as_str())
+                    .copied()
+                    .unwrap_or_default()
+                    .to_string(),
+                user_id: connection.user_id,
                 session_key: connection.session_key,
                 client_name: connection.client_name,
                 supported_commands: connection.supported_commands,
@@ -297,6 +336,53 @@ impl PlaybackSessionsModule {
             });
         }
         drop(db);
+        harmony_luau::serializable_to_luau_owned(&result)
+    }
+
+    #[harmony(
+        description = "Lists active playbacks, from Lyra's own clients and every plugin, most recently reported first: those whose current track is playing, paused or buffering and was reported within the last five minutes. Without a query, lists the dispatch principal's own; another user's or all users' require the manage_users permission, and an admin's also the admin permission. All users' leaves out the admins' without it. Playbacks whose current track the principal can't see are left out. Needs the `lyra.playback_sessions.all` scope too.",
+        returns(Vec<ActivePlaybackInfo>)
+    )]
+    async fn list_playbacks(
+        query: Option<OwnersQuery>,
+        #[context] db: Db,
+        #[context] principal: Principal,
+    ) -> luau::runtime::Result<luau::Value> {
+        let query = query.unwrap_or_default();
+        let owners = query.owners("list_playbacks")?;
+        let snapshots = registry::list_connections().await;
+        let now_ms = playbacks::now_ms().map_err(crate::plugins::runtime_error)?;
+        let db = db.read().await;
+        let (viewer_db_id, users) = owned_users(&db, &principal, owners)?;
+        let connections =
+            connections::join_owned(&db, viewer_db_id, &owner_ids(&users), snapshots, now_ms)
+                .map_err(crate::plugins::runtime_error)?;
+        let active = crate::services::playbacks::list_active(&db, &principal, &users, now_ms)
+            .map_err(crate::plugins::runtime_error)?;
+        drop(db);
+        let result = active
+            .into_iter()
+            .map(|active| {
+                let connection = connections::controller(&connections, &active.playback_id);
+                ActivePlaybackInfo {
+                    session_key: active
+                        .reported_session_key
+                        .or_else(|| connection.map(|connection| connection.session_key.clone())),
+                    connection_id: connection.map(|connection| connection.id.clone()),
+                    id: active.playback_id,
+                    user_id: active.user_id,
+                    username: active.username,
+                    track_id: active.track_id,
+                    position_ms: active.session.position_ms,
+                    duration_ms: active.session.duration_ms,
+                    state: active.session.state,
+                    started_at_ms: active.session.created_at_ms,
+                    updated_at_ms: active.session.updated_at_ms,
+                    client_name: active.session.client_name,
+                    plugin_id: active.session.plugin_id,
+                }
+            })
+            .collect::<Vec<_>>();
         harmony_luau::serializable_to_luau_owned(&result)
     }
 
@@ -357,6 +443,25 @@ fn playback_mutation(
     }
 }
 
+/// The verified principal's database id, and the users `owners` covers whose playback it may read.
+fn owned_users(
+    db: &agdb::DbAny,
+    principal: &Principal,
+    owners: owners::Owners<'_>,
+) -> luau::runtime::Result<(agdb::DbId, Vec<lyra_db::User>)> {
+    let viewer_db_id = crate::plugins::auth::require_user_db_id(principal, db)?;
+    let users = owners::resolve(db, principal, viewer_db_id, owners)
+        .map_err(crate::plugins::runtime_error)?;
+    Ok((viewer_db_id, users))
+}
+
+fn owner_ids(users: &[lyra_db::User]) -> Vec<(agdb::DbId, &str)> {
+    users
+        .iter()
+        .filter_map(|user| Some((user.db_id?, user.id.as_str())))
+        .collect()
+}
+
 fn require_non_empty_string(value: String, field_name: &str) -> luau::runtime::Result<String> {
     let value = value.trim().to_string();
     if value.is_empty() {
@@ -383,7 +488,9 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
             SendCommandRequest::interface_descriptor(),
             ConnectionInfo::interface_descriptor(),
             PlaybackInfo::interface_descriptor(),
+            ActivePlaybackInfo::interface_descriptor(),
             crate::plugins::api::websocket_sender_interface(),
+            OwnersQuery::interface_descriptor(),
         ],
         &[],
     )
@@ -479,6 +586,89 @@ impl DescribeInterface for SendCommandRequest {
     }
 }
 
+impl LuauTypeInfo for ActivePlaybackInfo {
+    fn luau_type() -> LuauType {
+        LuauType::literal("ActivePlaybackInfo")
+    }
+}
+
+impl DescribeInterface for ActivePlaybackInfo {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new(
+            "ActivePlaybackInfo",
+            Some("A playback and the track session it plays now."),
+        );
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "id",
+                ty: String::luau_type(),
+                description: Some("Public playback id."),
+            },
+            FieldDescriptor {
+                name: "user_id",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "username",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "track_id",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "position_ms",
+                ty: u64::luau_type(),
+                description: Some("The position at the last report."),
+            },
+            FieldDescriptor {
+                name: "duration_ms",
+                ty: Option::<u64>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "state",
+                ty: LuauPlaybackState::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "started_at_ms",
+                ty: u64::luau_type(),
+                description: Some("When the track session started."),
+            },
+            FieldDescriptor {
+                name: "updated_at_ms",
+                ty: u64::luau_type(),
+                description: Some("When the track session last changed."),
+            },
+            FieldDescriptor {
+                name: "client_name",
+                ty: Option::<String>::luau_type(),
+                description: Some("Label of the app or device playing, if it gave one."),
+            },
+            FieldDescriptor {
+                name: "plugin_id",
+                ty: Option::<String>::luau_type(),
+                description: Some("The plugin that reports the playback; nil for Lyra's own clients."),
+            },
+            FieldDescriptor {
+                name: "session_key",
+                ty: Option::<String>::luau_type(),
+                description: Some("The reporting plugin's session key, or that of the connection driving the playback; nil for neither."),
+            },
+            FieldDescriptor {
+                name: "connection_id",
+                ty: Option::<String>::luau_type(),
+                description: Some("The open WebSocket connection of Lyra's own clients driving the playback, as `send_command` takes it; nil when none does."),
+            },
+        ]);
+        descriptor
+    }
+}
+
 impl LuauTypeInfo for PlaybackInfo {
     fn luau_type() -> LuauType {
         LuauType::literal("PlaybackInfo")
@@ -524,13 +714,23 @@ impl DescribeInterface for ConnectionInfo {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new(
             "ConnectionInfo",
-            Some("One of the dispatch principal's open WebSocket connections."),
+            Some("An open WebSocket connection of Lyra's own clients."),
         );
         descriptor.fields.extend([
             FieldDescriptor {
                 name: "id",
                 ty: String::luau_type(),
                 description: Some("Public connection id, as `send_command` takes it."),
+            },
+            FieldDescriptor {
+                name: "user_id",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "username",
+                ty: String::luau_type(),
+                description: None,
             },
             FieldDescriptor {
                 name: "session_key",
@@ -550,7 +750,7 @@ impl DescribeInterface for ConnectionInfo {
             FieldDescriptor {
                 name: "playback_id",
                 ty: Option::<String>::luau_type(),
-                description: Some("The playback the connection drives; nil when it is idle or the playback is hidden from the principal."),
+                description: Some("The playback the connection drives; nil when it is idle or its current track is hidden from the principal."),
             },
             FieldDescriptor {
                 name: "playback",

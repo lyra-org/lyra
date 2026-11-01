@@ -17,8 +17,17 @@ rejects(
 	function() end
 )
 rejects(lyrics.delete_for_track, "lyrics.delete_for_track requires the lyra.lyrics.all scope", 1)
+rejects(
+	playback_sessions.list_connections,
+	"playback_sessions.list_connections requires the lyra.playback_sessions.all scope"
+)
+rejects(
+	playback_sessions.list_playbacks,
+	"playback_sessions.list_playbacks requires the lyra.playback_sessions.all scope"
+)
 
 -- The rest of each module stays available.
 assert(lyrics.parse_lrc("[00:01.00]Hello").plain_text == "Hello")
 assert(next(listens.get({})) == nil)
-assert(#playback_sessions.list_connections() == 0)
+local _, rejection = playback_sessions.report_session({ session_key = "idle", track_id = "none", play_id = "?" })
+assert(rejection == "malformed play_id: ?", `rejection {rejection}`)

@@ -13,6 +13,7 @@ assert(#connections == 2, `only the principal's connections are listed, got {#co
 
 local phone, speaker = connections[1], connections[2]
 assert(phone.id == fixture.connections.phone, "oldest first")
+assert(phone.user_id == fixture.users.owner and phone.username ~= "", "the connection's user")
 assert(phone.session_key == "phone", "the session key defaults to the fixture key")
 assert(phone.client_name == "Phone")
 assert(#phone.supported_commands == 0)
@@ -42,6 +43,14 @@ rejects(
 	"not authorized to control target",
 	{ connection_id = fixture.connections.elsewhere, action = "pause" }
 )
+rejects(playback_sessions.list_connections, "ManageUsers permission required", { all_users = true })
+rejects(
+	playback_sessions.list_connections,
+	"list_connections takes user_id or all_users, not both",
+	{ user_id = fixture.users.other, all_users = true }
+)
+assert(#playback_sessions.list_connections({ user_id = fixture.users.owner }) == 2, "the principal's own by id")
+
 rejects(playback_sessions.send_command, "connection not found", { connection_id = "missing", action = "pause" })
 rejects(
 	playback_sessions.send_command,

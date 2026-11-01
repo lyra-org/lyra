@@ -1,0 +1,65 @@
+run_as = "manager"
+
+[[users]]
+key = "manager"
+permissions = ["manage_users"]
+
+[[users]]
+key = "admin"
+admin = true
+
+[[users]]
+key = "listener"
+
+[[sessions]]
+key = "manager_web"
+user = "manager"
+
+[[sessions]]
+key = "admin_web"
+user = "admin"
+
+[[sessions]]
+key = "listener_phone"
+user = "listener"
+
+[[connections]]
+key = "listener_speaker"
+user = "listener"
+client_name = "Speaker"
+
+[[connections]]
+key = "admin_speaker"
+user = "admin"
+
+[[libraries]]
+key = "shared"
+name = "Shared"
+users = ["manager", "listener"]
+
+[[libraries]]
+key = "private"
+name = "Private"
+users = ["listener"]
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "shared"
+
+[[releases]]
+key = "hidden"
+title = "Hidden"
+library = "private"
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+duration_ms = 200000
+
+[[tracks]]
+key = "secret"
+title = "Secret"
+release = "hidden"
+duration_ms = 200000

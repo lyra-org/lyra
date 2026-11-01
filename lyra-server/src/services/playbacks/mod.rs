@@ -26,11 +26,13 @@ use crate::services::{
     playback_sessions,
 };
 
+mod active;
 pub(crate) mod bindings;
 pub(crate) mod holds;
 mod reported;
 mod reporting;
 
+pub(crate) use active::list_active;
 pub(crate) use reported::{
     ReportOutcome,
     ReportedPlaybackRequest,
@@ -656,7 +658,19 @@ pub(crate) fn list_visible_projections_with_current(
     now_ms: u64,
 ) -> Result<Vec<(lyra_db::playbacks::PlaybackListProjection, Option<DbId>)>, PlaybackError> {
     let user_db_id = principal.require(db).map_err(anyhow::Error::from)?;
-    let projections = lyra_db::playbacks::list_projections_for_user(db, user_db_id)?;
+    list_projections_with_current(db, user_db_id, user_db_id, active_only, now_ms)
+}
+
+/// The owner's playbacks, each with the database id of its current track session, leaving out
+/// those whose current track the viewer can't see.
+pub(crate) fn list_projections_with_current(
+    db: &DbAny,
+    owner_db_id: DbId,
+    viewer_db_id: DbId,
+    active_only: bool,
+    now_ms: u64,
+) -> Result<Vec<(lyra_db::playbacks::PlaybackListProjection, Option<DbId>)>, PlaybackError> {
+    let projections = lyra_db::playbacks::list_projections_for_user(db, owner_db_id)?;
     if projections.len() > lyra_db::playbacks::MAX_PLAYBACKS_PER_USER
         || projections.len() > pagination::snapshot_item_capacity()
     {
@@ -671,12 +685,12 @@ pub(crate) fn list_visible_projections_with_current(
     let sessions =
         lyra_db::playback_sessions::get_list_projections_by_ids(db, session_ids.clone())?;
     let track_ids = lyra_db::playback_sessions::track_ids_for_sessions(db, &session_ids)?;
-    let is_admin = lyra_db::roles::has_admin_role(db, user_db_id)?;
+    let is_admin = lyra_db::roles::has_admin_role(db, viewer_db_id)?;
     let accessible_track_ids = if is_admin {
         HashSet::new()
     } else {
         let current_track_ids = track_ids.values().copied().collect::<Vec<_>>();
-        lyra_db::libraries::accessible_track_ids(db, user_db_id, &current_track_ids)?
+        lyra_db::libraries::accessible_track_ids(db, viewer_db_id, &current_track_ids)?
     };
     let active_cutoff = now_ms.saturating_sub(playback_sessions::ACTIVE_SESSION_TTL_MS);
     let mut visible = Vec::with_capacity(projections.len());

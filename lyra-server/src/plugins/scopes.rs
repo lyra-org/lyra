@@ -391,7 +391,7 @@ scopes! {
     PlaybackSessionsAll => {
         id: "lyra.playback_sessions.all",
         within: PlaybackSessions,
-        functions: &["on_update"],
+        functions: &["list_connections", "list_playbacks", "on_update"],
         effects: &[Effect::ReadsPersonal(PersonalKind::PlaybackActivity, Users::All)],
     },
     PlaybackSources => {
@@ -1488,7 +1488,8 @@ mod tests {
                 "on_update(handler) [lyra.playback_sessions.all]",
                 "report_session(request)",
                 "hold_session(sender, session_key)",
-                "list_connections()",
+                "list_connections(query) [lyra.playback_sessions.all]",
+                "list_playbacks(query) [lyra.playback_sessions.all]",
                 "send_command(request)",
             ],
         ),

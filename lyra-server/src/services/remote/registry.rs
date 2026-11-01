@@ -472,7 +472,6 @@ pub(crate) async fn close_user_connections(user_public_id: &str, reason: CloseRe
     closed
 }
 
-#[cfg(test)]
 pub(crate) async fn list_connections() -> Vec<ConnectionSnapshot> {
     let registry = REGISTRY.read().await;
     registry

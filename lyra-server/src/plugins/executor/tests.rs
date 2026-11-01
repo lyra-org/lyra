@@ -1846,7 +1846,12 @@ async fn websocket_spawned_work_acts_as_the_verified_socket_principal() -> Resul
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest(
             "demo",
-            &["harmony.task", "lyra.api", "lyra.playback_sessions"],
+            &[
+                "harmony.task",
+                "lyra.api",
+                "lyra.playback_sessions",
+                "lyra.playback_sessions.all",
+            ],
         )]),
         default_server_info(),
         crate::services::STATE.db.get(),
