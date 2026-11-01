@@ -28,9 +28,18 @@ local function request(path: string, json: any?): any
 	}
 end
 
-local function report(event: string, position_ticks: number): number
-	local body = { ItemId = item_ids.encode_jellyfin_item_id(fixture.ids.song), PositionTicks = position_ticks }
+local function report(event: string, position_ticks: number, track: string?, start_ticks: number?): number
+	local body = {
+		ItemId = item_ids.encode_jellyfin_item_id(fixture.ids[track or "song"]),
+		PositionTicks = position_ticks,
+		PlaybackStartTimeTicks = start_ticks,
+	}
 	return session.handle_playback_report_route(request("/Sessions/Playing", body), event).status
+end
+
+local function stop_unnamed(start_ticks: number?): number
+	local body = { PlaybackStartTimeTicks = start_ticks }
+	return session.handle_playback_report_route(request("/Sessions/Playing/Stopped", body), "stopped").status
 end
 
 local principal = session.require_jellyfin_principal(request("/Sessions"))
@@ -45,6 +54,11 @@ end
 local function host_state(): string?
 	local playing = playback_sessions.list_playbacks()[1]
 	return if playing then playing.state else nil
+end
+
+local function host_track(): string?
+	local playing = playback_sessions.list_playbacks()[1]
+	return if playing then playing.track_id else nil
 end
 
 local started = report("started", 0)
@@ -89,6 +103,15 @@ assert(back.PlayState.IsPaused == false and back.PlayState.PositionTicks == 5000
 assert(host_state() == "playing", `the host plays it again, got {host_state()}`)
 
 -- A stop that can't name its item ends what the session played.
-local stopped = session.handle_playback_report_route(request("/Sessions/Playing/Stopped", {}), "stopped").status
+local stopped = stop_unnamed()
 assert(stopped == 204, `the stop is accepted, got {stopped}`)
 assert(listed() == nil and host_state() == nil, "nothing is left playing")
+
+-- A late stop of a play another replaced leaves the replacement playing, even unnamed.
+assert(report("started", 0, "song", 100) == 204)
+assert(report("started", 0, "other", 200) == 204)
+assert(stop_unnamed(100) == 204, "the stale stop is accepted")
+assert(host_track() == fixture.ids.other, `the replacement stays current, got {host_track()}`)
+assert(host_state() == "playing", `the replacement plays on, got {host_state()}`)
+assert(stop_unnamed(200) == 204)
+assert(host_state() == nil, `the current play's stop ends it, got {host_state()}`)

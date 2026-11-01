@@ -1031,7 +1031,8 @@ function module.ensure_payload_user_matches(auth_context: AuthContext, payload: 
 	return true
 end
 
--- Ends what the session's last start began, for a stop that can't name its item.
+-- Ends what the session's last start began, for a stop that can't name its item. The stop names
+-- the play seen playing, so a play a report started since keeps going.
 local function stop_session_playback(session_key: string): (boolean, string?)
 	for _, playing in playbacks.list_playbacks() do
 		if playing.plugin_id ~= JELLYFIN_PLUGIN_ID or playing.session_key ~= session_key then
@@ -1040,6 +1041,7 @@ local function stop_session_playback(session_key: string): (boolean, string?)
 		local _, stop_error = playbacks.report_session({
 			session_key = session_key,
 			track_id = playing.track_id,
+			play_id = playing.play_id,
 			position_ms = playing.position_ms,
 			duration_ms = playing.duration_ms,
 			state = "stopped",
@@ -1057,6 +1059,16 @@ function module.report_playback_event(
 	session_key: string,
 	reporter: PlaybackReporter
 ): (boolean, string?)
+	local playback_start_ticks = tonumber(scalar_field(payload, "PlaybackStartTimeTicks")) or 0
+	local known = reporters[session_key]
+
+	-- Ignore late reports from plays older than the latest one this session started, whether they
+	-- name their item or not. The host keeps only the play a track switch replaced, so a report from
+	-- before that would reopen its track, and a stop would end the play that replaced it.
+	if known and playback_start_ticks > 0 and playback_start_ticks < known.playback_start_ticks then
+		return true, nil
+	end
+
 	local raw_item_id = scalar_field(payload, "ItemId")
 	local item_id = item_ids.decode_jellyfin_item_id(if type(raw_item_id) == "string" then raw_item_id else nil)
 	-- As upstream, a report naming no item records nothing and still succeeds. A track the caller
@@ -1082,14 +1094,6 @@ function module.report_playback_event(
 		then "started"
 		else event_name
 	local normalized_state: PlaybackState = if normalized_event_name == "started" then "playing" else state
-	local playback_start_ticks = tonumber(scalar_field(payload, "PlaybackStartTimeTicks")) or 0
-	local known = reporters[session_key]
-
-	-- Ignore late reports from plays older than the latest one this session started. The host keeps
-	-- only the play a track switch replaced, so a report from before that would reopen its track.
-	if known and playback_start_ticks > 0 and playback_start_ticks < known.playback_start_ticks then
-		return true, nil
-	end
 
 	-- As upstream, a new item replaces the one playing without stopping it. The host keeps the
 	-- replaced play for its late stop report, and pauses it with the session's disconnect.

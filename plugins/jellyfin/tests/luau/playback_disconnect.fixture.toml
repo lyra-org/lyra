@@ -22,3 +22,9 @@ key = "song"
 title = "Song"
 release = "album"
 duration_ms = 200000
+
+[[tracks]]
+key = "other"
+title = "Other"
+release = "album"
+duration_ms = 200000
