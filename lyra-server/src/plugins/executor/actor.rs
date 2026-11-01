@@ -470,6 +470,7 @@ mod tests {
             user_public_id: "user-public".to_string(),
             library_public_id: None,
             plugin_id: None,
+            client_name: None,
             position_ms: 42,
             duration_ms: Some(100),
             played_ms: 42,

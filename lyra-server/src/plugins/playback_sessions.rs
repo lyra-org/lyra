@@ -609,6 +609,7 @@ pub(crate) struct PlaybackUpdate<'a> {
     user_id: &'a str,
     library_id: Option<&'a str>,
     plugin_id: Option<&'a str>,
+    client_name: Option<&'a str>,
     position_ms: u64,
     duration_ms: Option<u64>,
     played_ms: u64,
@@ -627,6 +628,7 @@ impl<'a> From<&'a crate::services::playback_sessions::PlaybackUpdatePayload>
             user_id: &payload.user_public_id,
             library_id: payload.library_public_id.as_deref(),
             plugin_id: payload.plugin_id.as_deref(),
+            client_name: payload.client_name.as_deref(),
             position_ms: payload.position_ms,
             duration_ms: payload.duration_ms,
             played_ms: payload.played_ms,
@@ -670,6 +672,11 @@ impl DescribeInterface for LuauPlaybackUpdatePayload {
                     description: Some(
                         "The plugin that reported the play; nil for Lyra's own clients.",
                     ),
+                },
+                FieldDescriptor {
+                    name: "client_name",
+                    ty: Option::<String>::luau_type(),
+                    description: Some("Label of the app or device playing, if it gave one."),
                 },
                 field("position_ms", u64::luau_type()),
                 field("duration_ms", Option::<u64>::luau_type()),

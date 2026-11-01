@@ -159,6 +159,8 @@ pub(crate) struct PlaybackUpdatePayload {
     pub library_public_id: Option<String>,
     /// The plugin that reported the play; null for Lyra's own clients.
     pub plugin_id: Option<String>,
+    /// Label of the app or device playing, if it gave one.
+    pub client_name: Option<String>,
     pub position_ms: u64,
     pub duration_ms: Option<u64>,
     pub played_ms: u64,
@@ -177,6 +179,7 @@ pub(crate) fn playback_to_payload(
         user_public_id: playback.user_public_id.clone(),
         library_public_id: playback.library_public_id.clone(),
         plugin_id: playback.playback.plugin_id.clone(),
+        client_name: playback.playback.client_name.clone(),
         position_ms: playback.playback.position_ms,
         duration_ms: playback.playback.duration_ms,
         played_ms: playback.playback.played_ms,
@@ -278,6 +281,7 @@ mod tests {
             user_public_id: user_public_id.to_string(),
             library_public_id: None,
             plugin_id: None,
+            client_name: None,
             position_ms: 0,
             duration_ms: None,
             played_ms: 0,
