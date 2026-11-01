@@ -198,6 +198,7 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 			-- regardless of whose it was so a legitimate reconnect isn't
 			-- blocked by a dead foreign slot.
 			sessions[session_id] = nil
+			existing = nil
 		elseif existing.user_id ~= principal.user_id then
 			-- Different-user means a collision on the id function; refuse to
 			-- overwrite another user's live socket.
@@ -205,11 +206,19 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 				`session id collision; refusing overwrite: existing.user_id={existing.user_id}, new.user_id={principal.user_id}`
 			)
 			return
-		else
-			pcall(function()
-				existing.sender:close()
-			end)
 		end
+	end
+	-- Held before a replaced socket closes, so its close leaves the session's playback alone.
+	playback_sessions.hold_session(sender, session_id)
+	-- A socket that closed already holds nothing, so it must not replace an open one.
+	if sender:is_closed() then
+		return
+	end
+	if existing then
+		local replaced = existing
+		pcall(function()
+			replaced.sender:close()
+		end)
 	end
 	sessions[session_id] = entry
 
@@ -349,7 +358,8 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 	if sessions[session_id] and sessions[session_id].sender == sender then
 		syncplay.disconnect_entry(entry)
 		sessions[session_id] = nil
-		-- Nothing will report a stop for this device now, so its playback must not outlive it.
+		-- Nothing will report a stop for this device now. As upstream, its playback isn't stopped: the
+		-- host pauses it as the socket closes.
 		playback.forget_client_playback(session_id)
 	end
 end, "public")
