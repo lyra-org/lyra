@@ -22,8 +22,11 @@ use crate::{
         AuthError,
         Principal,
         hash_secret,
+        owners::{
+            self,
+            Owners,
+        },
         random_hex_secret,
-        require_permission,
     },
 };
 use lyra_db::{
@@ -290,15 +293,6 @@ pub(crate) async fn revoke_session_by_token(token: &str) -> SessionServiceResult
     Ok(removed)
 }
 
-/// Whose sessions [`list_sessions`] returns. Sessions of anyone but the principal require
-/// [`Permission::ManageUsers`], and an admin's also [`Permission::Admin`].
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum SessionOwners<'a> {
-    Principal,
-    User(&'a str),
-    All,
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct SessionInfo {
     pub(crate) id: String,
@@ -315,46 +309,12 @@ pub(crate) struct SessionInfo {
 /// The live sessions of `owners`, oldest first, each with `plugin_id`'s data on it.
 pub(crate) async fn list_sessions(
     principal: &Principal,
-    owners: SessionOwners<'_>,
+    owners: Owners<'_>,
     plugin_id: &str,
 ) -> Result<Vec<SessionInfo>, AuthError> {
     let db = STATE.db.read().await;
     let principal_db_id = principal.require(&*db)?;
-    let owners = match owners {
-        SessionOwners::User(user_id) if user_id == principal.user_public_id => {
-            SessionOwners::Principal
-        }
-        owners => owners,
-    };
-    let users = match owners {
-        SessionOwners::Principal => lyra_db::users::get_by_id(&*db, principal_db_id)?
-            .into_iter()
-            .collect(),
-        SessionOwners::User(user_id) => {
-            require_permission(principal, Permission::ManageUsers)?;
-            let user = lyra_db::users::get_by_public_id(&*db, user_id)?;
-            if let Some(user_db_id) = user.as_ref().and_then(|user| user.db_id)
-                && !manages_sessions_of(&*db, principal, principal_db_id, user_db_id)?
-            {
-                return Err(AuthError::Forbidden(
-                    "Admin permission required for an admin's sessions".to_string(),
-                ));
-            }
-            user.into_iter().collect()
-        }
-        SessionOwners::All => {
-            require_permission(principal, Permission::ManageUsers)?;
-            let mut users = Vec::new();
-            for user in lyra_db::users::get(&*db)? {
-                if let Some(user_db_id) = user.db_id
-                    && manages_sessions_of(&*db, principal, principal_db_id, user_db_id)?
-                {
-                    users.push(user);
-                }
-            }
-            users
-        }
-    };
+    let users = owners::resolve(&*db, principal, principal_db_id, owners)?;
 
     let mut sessions = Vec::new();
     for user in users {
@@ -405,7 +365,7 @@ pub(crate) async fn revoke_session(
     };
     let owner_db_id = lyra_db::users::session_owner(&*db, session_id)?.and_then(|user| user.db_id);
     let manages = match owner_db_id {
-        Some(owner_db_id) => manages_sessions_of(&*db, principal, principal_db_id, owner_db_id)?,
+        Some(owner_db_id) => owners::manages(&*db, principal, principal_db_id, owner_db_id)?,
         None => lyra_db::roles::has_permission(&principal.permissions, Permission::ManageUsers),
     };
     if !manages {
@@ -417,27 +377,6 @@ pub(crate) async fn revoke_session(
         forget_last_seen(session_public_id);
     }
     Ok(removed)
-}
-
-/// Whether the principal may see and revoke `owner_db_id`'s sessions: its own, anyone's with
-/// [`Permission::ManageUsers`], and an admin's only with [`Permission::Admin`] as well, like the
-/// user routes that delete an admin or set their password.
-fn manages_sessions_of(
-    db: &impl lyra_db::DbAccess,
-    principal: &Principal,
-    principal_db_id: DbId,
-    owner_db_id: DbId,
-) -> anyhow::Result<bool> {
-    if owner_db_id == principal_db_id {
-        return Ok(true);
-    }
-    if !lyra_db::roles::has_permission(&principal.permissions, Permission::ManageUsers) {
-        return Ok(false);
-    }
-    Ok(
-        lyra_db::roles::has_permission(&principal.permissions, Permission::Admin)
-            || !lyra_db::roles::has_admin_role(db, owner_db_id)?,
-    )
 }
 
 const MAX_PLUGIN_SESSION_DATA_BYTES: usize = 16 * 1024;
@@ -596,13 +535,13 @@ mod tests {
             )?;
         }
 
-        let external = list_sessions(&principal, SessionOwners::Principal, "external").await?;
+        let external = list_sessions(&principal, Owners::Principal, "external").await?;
         assert_eq!(external.len(), 1);
         assert_eq!(
             external[0].plugin_data,
             serde_json::json!({"device_id": "phone"})
         );
-        let other = list_sessions(&principal, SessionOwners::Principal, "other").await?;
+        let other = list_sessions(&principal, Owners::Principal, "other").await?;
         assert_eq!(other.len(), 1);
         assert!(other[0].plugin_data.is_null());
         Ok(())

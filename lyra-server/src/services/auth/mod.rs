@@ -73,6 +73,7 @@ pub(crate) mod access;
 pub(crate) mod api_keys;
 pub(crate) mod caller;
 pub(crate) mod media_tokens;
+pub(crate) mod owners;
 pub(crate) mod sessions;
 
 pub(crate) fn random_hex_secret<const BYTES: usize>() -> String {

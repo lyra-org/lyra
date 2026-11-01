@@ -28,11 +28,11 @@ use crate::services::auth::{
     ResolvedAuth as ServiceResolvedAuth,
     login_with_password,
     logout_with_token,
+    owners::Owners,
     resolve_auth_from_bearer,
     sessions::{
         self,
         SessionMetadata,
-        SessionOwners,
     },
 };
 
@@ -98,12 +98,37 @@ impl LoginOutcome {
     }
 }
 
+/// Whose data a read covers, as plugins name it: the caller's without either field.
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SessionListQuery {
+pub(crate) struct OwnersQuery {
     user_id: Option<String>,
     #[serde(default)]
     all_users: bool,
+}
+
+impl OwnersQuery {
+    pub(crate) fn owners(&self, function: &str) -> luau::runtime::Result<Owners<'_>> {
+        match (self.user_id.as_deref(), self.all_users) {
+            (Some(_), true) => Err(crate::plugins::runtime_error(format!(
+                "{function} takes user_id or all_users, not both"
+            ))),
+            (Some(user_id), false) => Ok(Owners::User(user_id)),
+            (None, true) => Ok(Owners::All),
+            (None, false) => Ok(Owners::Principal),
+        }
+    }
+}
+
+impl<'vm> luau::FromLuau<'vm> for OwnersQuery {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let query: luau::Value = reader.read()?;
+        match harmony_serde::luau_to_json(&query, 0)? {
+            // An empty table converts to an empty array.
+            serde_json::Value::Array(values) if values.is_empty() => Ok(Self::default()),
+            query => serde_json::from_value(query).map_err(crate::plugins::runtime_error),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -218,17 +243,6 @@ impl luau::FromCallFrame for LoginClient {
     }
 }
 
-impl<'vm> luau::FromLuau<'vm> for SessionListQuery {
-    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
-        let query: luau::Value = reader.read()?;
-        match harmony_serde::luau_to_json(&query, 0)? {
-            // An empty table converts to an empty array.
-            serde_json::Value::Array(values) if values.is_empty() => Ok(Self::default()),
-            query => serde_json::from_value(query).map_err(crate::plugins::runtime_error),
-        }
-    }
-}
-
 #[harmony_macros::module(
     id = "lyra/auth",
     description = "Sessions, logins, and the principal a dispatch acts for. A coroutine acts with the auth of the call that created it, as does code a module runs when it is first required.",
@@ -311,7 +325,7 @@ impl AuthModule {
         returns(Vec<SessionInfo>)
     )]
     async fn list_sessions(
-        query: Option<SessionListQuery>,
+        query: Option<OwnersQuery>,
         #[context] principal: ServicePrincipal,
         #[context] origin: luau::ChunkOrigin,
     ) -> luau::runtime::Result<luau::Value> {
@@ -319,16 +333,7 @@ impl AuthModule {
         let plugin_id = origin.plugin.ok_or_else(|| {
             crate::plugins::runtime_error("session listing requires plugin origin")
         })?;
-        let owners = match (query.user_id.as_deref(), query.all_users) {
-            (Some(_), true) => {
-                return Err(crate::plugins::runtime_error(
-                    "list_sessions takes user_id or all_users, not both",
-                ));
-            }
-            (Some(user_id), false) => SessionOwners::User(user_id),
-            (None, true) => SessionOwners::All,
-            (None, false) => SessionOwners::Principal,
-        };
+        let owners = query.owners("list_sessions")?;
         let sessions = sessions::list_sessions(&principal, owners, &plugin_id)
             .await
             .map_err(crate::plugins::runtime_error)?;
@@ -686,25 +691,28 @@ impl DescribeInterface for LoginOutcome {
     }
 }
 
-impl LuauTypeInfo for SessionListQuery {
+impl LuauTypeInfo for OwnersQuery {
     fn luau_type() -> LuauType {
-        LuauType::literal("SessionListQuery")
+        LuauType::literal("OwnersQuery")
     }
 }
 
-impl DescribeInterface for SessionListQuery {
+impl DescribeInterface for OwnersQuery {
     fn interface_descriptor() -> InterfaceDescriptor {
-        let mut descriptor = InterfaceDescriptor::new("SessionListQuery", None);
+        let mut descriptor = InterfaceDescriptor::new(
+            "OwnersQuery",
+            Some("Whose data a listing reads: the caller's without either field."),
+        );
         descriptor.fields.extend([
             FieldDescriptor {
                 name: "user_id",
                 ty: Option::<String>::luau_type(),
-                description: Some("Lists this user's sessions instead of the caller's."),
+                description: Some("Reads this user's instead of the caller's."),
             },
             FieldDescriptor {
                 name: "all_users",
                 ty: Option::<bool>::luau_type(),
-                description: Some("Lists every user's sessions."),
+                description: Some("Reads every user's."),
             },
         ]);
         descriptor
@@ -805,7 +813,7 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
             ResolvedAuth::interface_descriptor(),
             LoginResult::interface_descriptor(),
             LoginOutcome::interface_descriptor(),
-            SessionListQuery::interface_descriptor(),
+            OwnersQuery::interface_descriptor(),
             SessionInfo::interface_descriptor(),
         ],
         &[],
