@@ -18,6 +18,7 @@ use super::registry::{
 };
 use crate::services::STATE;
 use crate::services::playback_sessions as playbacks;
+use crate::services::playbacks::bindings;
 
 /// Who sends a remote control command.
 #[derive(Clone, Copy, Debug)]
@@ -145,9 +146,10 @@ pub(crate) async fn send(
     drop(db);
 
     if let Ok(now_ms) = playbacks::now_ms() {
-        let scope_key =
-            playbacks::PlaybackScopeKey::native(&target.user_public_id, &target.session_key);
-        playbacks::mark_command_dispatched(&scope_key, now_ms);
+        bindings::mark_command_dispatched(
+            &bindings::ConnectionKey::new(&target.user_public_id, &target.session_key),
+            now_ms,
+        );
     }
     Ok(())
 }

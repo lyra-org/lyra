@@ -50,9 +50,9 @@ async fn reported_reads_share_the_supplied_expiry_cutoff() -> anyhow::Result<()>
     let mut db = STATE.db.write().await;
     let track_db_id = lyra_db::lookup::find_node_id_by_id(&*db, &fixture.first_track_id)?.unwrap();
     let observed_at = 1_000;
-    sessions::report_playback_session_with_cleanup(
+    crate::services::playbacks::report_reported_playback(
         &mut db,
-        sessions::SessionPlaybackReportRequest {
+        crate::services::playbacks::ReportedPlaybackRequest {
             plugin_id: "external",
             user_db_id: fixture.user_db_id,
             session_key: "player",
@@ -685,10 +685,12 @@ async fn queue_replacement_cannot_overtake_committed_handoff_finish() -> anyhow:
         .await?
         .map_err(|error| anyhow::anyhow!("{error:?}"))?;
     assert_eq!(replaced.revision, 2);
-    let target_scope =
-        sessions::PlaybackScopeKey::native(&fixture.user_public_id, "target-session");
+    let target_scope = crate::services::playbacks::bindings::ConnectionKey::new(
+        &fixture.user_public_id,
+        "target-session",
+    );
     assert_eq!(
-        sessions::get_playback_session(&target_scope)
+        crate::services::playbacks::bindings::get(&target_scope)
             .and_then(|scope| scope.current_playback_session_id),
         None,
         "the later queue replacement must clear the serialized handoff binding"
@@ -886,9 +888,9 @@ async fn reported_playback_shares_collection_and_rejects_queue_operations() -> a
     };
     {
         let mut db = STATE.db.write().await;
-        sessions::report_playback_session_with_cleanup(
+        crate::services::playbacks::report_reported_playback(
             &mut db,
-            sessions::SessionPlaybackReportRequest {
+            crate::services::playbacks::ReportedPlaybackRequest {
                 plugin_id: "external",
                 user_db_id: fixture.user_db_id,
                 session_key: "reported-player",
@@ -1016,9 +1018,9 @@ async fn reported_playback_shares_collection_and_rejects_queue_operations() -> a
     assert!(other_page.items.is_empty());
     {
         let mut db = STATE.db.write().await;
-        sessions::report_playback_session_with_cleanup(
+        crate::services::playbacks::report_reported_playback(
             &mut db,
-            sessions::SessionPlaybackReportRequest {
+            crate::services::playbacks::ReportedPlaybackRequest {
                 plugin_id: "external",
                 user_db_id: fixture.user_db_id,
                 session_key: "reported-player",

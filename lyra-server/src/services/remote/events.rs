@@ -244,19 +244,16 @@ mod tests {
             changes(&mut events, &alice).await.is_empty(),
             "a new track session of the same playback is no change to the connection",
         );
-        let scope = crate::services::playback_sessions::get_playback_session(&fixture::scope(
-            &alice, "speaker",
-        ))
-        .expect("the reporter stays bound");
+        let scope =
+            crate::services::playbacks::bindings::get(&fixture::connection_key(&alice, "speaker"))
+                .expect("the reporter stays bound");
         assert_eq!(scope.current_playback_session_id, Some(next_session));
         assert_eq!(
             scope.previous_playback_session_id, None,
             "the replaced session is cleared"
         );
 
-        crate::services::playback_sessions::clear_playback_session_scope(&fixture::scope(
-            &alice, "speaker",
-        ));
+        crate::services::playbacks::bindings::clear(&fixture::connection_key(&alice, "speaker"));
         let detached = changes(&mut events, &alice).await;
         assert_eq!(detached.len(), 1);
         assert!(detached[0]["data"]["playback_id"].is_null());
@@ -380,8 +377,8 @@ mod tests {
         );
 
         let dispatched_at_ms = playback_sessions::now_ms()?;
-        playback_sessions::mark_command_dispatched(
-            &fixture::scope(&alice, "speaker"),
+        crate::services::playbacks::bindings::mark_command_dispatched(
+            &fixture::connection_key(&alice, "speaker"),
             dispatched_at_ms,
         );
         assert!(
@@ -438,14 +435,15 @@ mod tests {
             playback_sessions::watch_connection_changes(&alice.principal.user_public_id);
 
         let dispatched_at_ms = playback_sessions::now_ms()?;
-        playback_sessions::mark_command_dispatched(
-            &fixture::scope(&alice, "speaker"),
+        crate::services::playbacks::bindings::mark_command_dispatched(
+            &fixture::connection_key(&alice, "speaker"),
             dispatched_at_ms,
         );
         fixture::stop(&alice, "speaker", &second).await?;
         assert!(notified(&mut alice_changes));
-        let scope = playback_sessions::get_playback_session(&fixture::scope(&alice, "speaker"))
-            .expect("the earlier playback keeps the scope");
+        let scope =
+            crate::services::playbacks::bindings::get(&fixture::connection_key(&alice, "speaker"))
+                .expect("the earlier playback keeps the scope");
         assert_eq!(scope.current_playback_session_id, None);
         assert_eq!(scope.command_dispatched_at_ms, None);
 
@@ -469,9 +467,9 @@ mod tests {
         let (_, first_session) = fixture::drive_new_playback(&alice, "speaker").await?;
         let (second, _) = fixture::drive_new_playback(&alice, "speaker").await?;
         fixture::stop(&alice, "speaker", &second).await?;
-        let scope_key = fixture::scope(&alice, "speaker");
+        let key = fixture::connection_key(&alice, "speaker");
         let dispatched_at_ms = playback_sessions::now_ms()?;
-        playback_sessions::mark_command_dispatched(&scope_key, dispatched_at_ms);
+        crate::services::playbacks::bindings::mark_command_dispatched(&key, dispatched_at_ms);
         let mut events = ConnectionEvents::default();
         let degraded_at = connections::list(&alice.principal, dispatched_at_ms + 30_000).await?;
         events.connected(&speaker.public_id, &degraded_at);
@@ -485,11 +483,11 @@ mod tests {
                 .expect("first session exists")
                 .id
         };
-        playback_sessions::clear_session_bindings_for_playback(
+        crate::services::playbacks::bindings::clear_session(
             first_session,
             &first_session_public_id,
         );
-        assert!(playback_sessions::get_playback_session(&scope_key).is_none());
+        assert!(crate::services::playbacks::bindings::get(&key).is_none());
         assert!(
             notified(&mut alice_changes),
             "removing the scope with its previous session notifies"

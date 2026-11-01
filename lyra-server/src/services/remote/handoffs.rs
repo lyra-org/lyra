@@ -31,6 +31,7 @@ use crate::{
         playback_sessions,
         playbacks::{
             self,
+            bindings,
             validate_handoff_queue,
         },
     },
@@ -63,7 +64,7 @@ struct PendingHandoff {
 pub(super) struct ExpectedSourceBinding {
     pub(super) user_public_id: String,
     pub(super) session_key: String,
-    pub(super) snapshot: playback_sessions::CurrentBindingSnapshot,
+    pub(super) snapshot: bindings::CurrentBindingSnapshot,
 }
 
 pub(super) struct ProgressReady {
@@ -819,14 +820,16 @@ mod tests {
                 .expect("completion sender should remain live")
                 .is_ok()
         );
-        let target_scope =
-            playback_sessions::PlaybackScopeKey::native(&applied.user_public_id, "target-session");
+        let target_scope = crate::services::playbacks::bindings::ConnectionKey::new(
+            &applied.user_public_id,
+            "target-session",
+        );
         assert_eq!(
-            playback_sessions::get_playback_session(&target_scope)
+            crate::services::playbacks::bindings::get(&target_scope)
                 .and_then(|scope| scope.current_playback_session_id),
             applied.expected_session.db_id
         );
-        playback_sessions::clear_playback_session_scope(&target_scope);
+        crate::services::playbacks::bindings::clear(&target_scope);
         registry::unregister(registered.connection_id).await;
         drop(registered.command_rx);
         Ok(())
@@ -861,9 +864,11 @@ mod tests {
         )
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let source_scope =
-            playback_sessions::PlaybackScopeKey::native(&applied.user_public_id, "source-session");
-        playback_sessions::bind_current_playback_session_scope(
+        let source_scope = crate::services::playbacks::bindings::ConnectionKey::new(
+            &applied.user_public_id,
+            "source-session",
+        );
+        crate::services::playbacks::bindings::bind_current(
             &source_scope,
             &applied.playback_public_id,
             playback_session_id,
@@ -880,7 +885,7 @@ mod tests {
         .await
         .map_err(anyhow::Error::msg)?;
         let newer_source_playback_id = DbId(playback_session_id.0 + 10_000);
-        playback_sessions::bind_current_playback_session_scope(
+        crate::services::playbacks::bindings::bind_current(
             &source_scope,
             &applied.playback_public_id,
             newer_source_playback_id,
@@ -900,7 +905,7 @@ mod tests {
 
         assert!(committed.finish().await);
         assert!(completion_rx.await?.is_ok());
-        let source_after = playback_sessions::get_playback_session(&source_scope)
+        let source_after = crate::services::playbacks::bindings::get(&source_scope)
             .expect("newer source binding must survive handoff completion");
         assert_eq!(
             source_after.current_playback_session_id,
@@ -910,15 +915,17 @@ mod tests {
             source_after.previous_playback_session_id,
             Some(playback_session_id)
         );
-        let target_scope =
-            playback_sessions::PlaybackScopeKey::native(&applied.user_public_id, "target-session");
+        let target_scope = crate::services::playbacks::bindings::ConnectionKey::new(
+            &applied.user_public_id,
+            "target-session",
+        );
         assert_eq!(
-            playback_sessions::get_playback_session(&target_scope)
+            crate::services::playbacks::bindings::get(&target_scope)
                 .and_then(|scope| scope.current_playback_session_id),
             Some(playback_session_id)
         );
-        playback_sessions::clear_playback_session_scope(&target_scope);
-        playback_sessions::clear_playback_session_scope(&source_scope);
+        crate::services::playbacks::bindings::clear(&target_scope);
+        crate::services::playbacks::bindings::clear(&source_scope);
         registry::unregister(source.connection_id).await;
         registry::unregister(target.connection_id).await;
         drop(source.command_rx);
@@ -983,9 +990,11 @@ mod tests {
             .is_some()
         );
         drop(db);
-        let target_scope =
-            playback_sessions::PlaybackScopeKey::native(&durable.user_public_id, "target-session");
-        assert!(playback_sessions::get_playback_session(&target_scope).is_none());
+        let target_scope = crate::services::playbacks::bindings::ConnectionKey::new(
+            &durable.user_public_id,
+            "target-session",
+        );
+        assert!(crate::services::playbacks::bindings::get(&target_scope).is_none());
         registry::unregister(target.connection_id).await;
         drop(target.command_rx);
         Ok(())
@@ -1026,8 +1035,9 @@ mod tests {
             registry::FinishProgress::Failed
         ));
         assert!(completion_rx.await?.is_err());
-        let target_scope = playback_sessions::PlaybackScopeKey::native("user", "target-session");
-        assert!(playback_sessions::get_playback_session(&target_scope).is_none());
+        let target_scope =
+            crate::services::playbacks::bindings::ConnectionKey::new("user", "target-session");
+        assert!(crate::services::playbacks::bindings::get(&target_scope).is_none());
         drop(target.command_rx);
         Ok(())
     }

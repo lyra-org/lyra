@@ -555,10 +555,7 @@ async fn delete_playback(
     lyra_db::playbacks::delete(&mut db, record.db_id)?;
     remote_handoffs::fail_for_playback(&record.id).await;
     if let Some((playback_session_id, playback_session_public_id)) = current {
-        sessions::clear_session_bindings_for_playback(
-            playback_session_id,
-            &playback_session_public_id,
-        );
+        playbacks::bindings::clear_session(playback_session_id, &playback_session_public_id);
     }
     drop(db);
     Ok(StatusCode::NO_CONTENT)

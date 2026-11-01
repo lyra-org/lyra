@@ -76,7 +76,7 @@ async fn sweep_stale_playback_sessions(db: &DbAsync, now_ms: u64) {
         {
             tracing::warn!(error = %err, "reported playback sweep failed");
         }
-        match playback_sessions::cleanup_evicted_playbacks(&mut db_write, now_ms) {
+        match crate::services::playbacks::cleanup_evicted_playbacks(&mut db_write, now_ms) {
             Ok(evicted) => evicted,
             Err(err) => {
                 tracing::warn!(error = %err, "playback session sweep failed");

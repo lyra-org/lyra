@@ -189,9 +189,9 @@ impl PlaybackSessionsModule {
                     crate::plugins::runtime_error(format!("track not found: {}", request.track_id))
                 })?;
 
-        let update = match playbacks::report_playback_session_with_cleanup(
+        let outcome = match crate::services::playbacks::report_reported_playback(
             &mut db,
-            playbacks::SessionPlaybackReportRequest {
+            crate::services::playbacks::ReportedPlaybackRequest {
                 plugin_id: &plugin_id,
                 user_db_id,
                 session_key: &session_key,
@@ -203,40 +203,33 @@ impl PlaybackSessionsModule {
                 active_event,
             },
         ) {
-            Ok(update) => update,
-            Err(playbacks::PlaybackServiceError::BadRequest(message)) => {
+            Ok(outcome) => outcome,
+            Err(crate::services::playbacks::PlaybackError::Session(
+                playbacks::PlaybackServiceError::BadRequest(message),
+            )) => {
                 return Ok((None, Some(message)));
             }
             Err(error) => return Err(crate::plugins::runtime_error(error)),
         };
+        drop(db);
         let dispatch_caller = format!("plugin:{plugin_id}");
+        let update = match outcome {
+            crate::services::playbacks::ReportOutcome::Applied(update) => *update,
+            crate::services::playbacks::ReportOutcome::Ignored(evicted_playbacks) => {
+                playbacks::dispatch_evicted_updates_for_caller(dispatch_caller, evicted_playbacks);
+                return Ok((None, None));
+            }
+        };
         playbacks::dispatch_evicted_updates_for_caller(
             dispatch_caller.clone(),
             update.evicted_playbacks,
         );
-
-        let playbacks::OptionalPlaybackUpdateResult {
-            playback, event, ..
-        } = update;
-        let Some(playback) = playback else {
-            return Ok((None, None));
-        };
-
-        let playback_id = crate::services::playbacks::reported_id(
-            &db,
-            user_db_id,
-            &plugin_id,
-            &session_key,
-            current_ms,
-        )
-        .map_err(crate::plugins::runtime_error)?
-        .ok_or_else(|| crate::plugins::runtime_error("reported playback context not found"))?;
-        let event_label = event
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| active_event.to_string());
-        drop(db);
-        playbacks::dispatch_playback_update_for_caller(dispatch_caller, &playback, event_label);
-        Ok((Some(playback_id), None))
+        playbacks::dispatch_playback_update_for_caller(
+            dispatch_caller,
+            &update.session,
+            update.event,
+        );
+        Ok((Some(update.playback.id), None))
     }
 
     #[harmony(

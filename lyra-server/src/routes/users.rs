@@ -421,7 +421,7 @@ async fn delete_user(
         lyra_db::users::delete_user(t, user_db_id)?;
         Ok(revoked)
     })?;
-    crate::services::playback_sessions::clear_playback_scopes_for_user(&user.id);
+    crate::services::playbacks::bindings::clear_for_user(&user.id);
     drop(db);
     api_keys::forget_last_used_many(revoked_api_key_ids);
     remote_registry::close_user_connections(&user.id, CloseReason::UserDeleted).await;
@@ -1058,11 +1058,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_user_clears_that_users_playback_scopes() -> anyhow::Result<()> {
-        use crate::services::playback_sessions::{
-            PlaybackScopeKey,
-            bind_current_playback_session_scope,
-            get_playback_session,
+    async fn delete_user_clears_that_users_connection_bindings() -> anyhow::Result<()> {
+        use crate::services::playbacks::bindings::{
+            ConnectionKey,
+            bind_current,
+            get,
         };
 
         let _guard = runtime_test_lock().await;
@@ -1075,13 +1075,9 @@ mod tests {
         .await?;
         let (target_id, _) = create_user("scope-owner").await?;
         let (bystander_id, _) = create_user("scope-bystander").await?;
-        let scope = |user_public_id| PlaybackScopeKey {
-            plugin_id: "test-plugin",
-            user_public_id,
-            session_key: "device",
-        };
+        let scope = |user_public_id| ConnectionKey::new(user_public_id, "device");
         for user_public_id in [target_id.as_str(), bystander_id.as_str()] {
-            bind_current_playback_session_scope(
+            bind_current(
                 &scope(user_public_id),
                 "playback",
                 agdb::DbId(1),
@@ -1094,8 +1090,8 @@ mod tests {
             .await
             .map_err(|error| anyhow::anyhow!("{error:?}"))?;
 
-        assert!(get_playback_session(&scope(&target_id)).is_none());
-        assert!(get_playback_session(&scope(&bystander_id)).is_some());
+        assert!(get(&scope(&target_id)).is_none());
+        assert!(get(&scope(&bystander_id)).is_some());
 
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())

@@ -47,7 +47,7 @@ pub(crate) async fn check_auth(
     }
 }
 
-async fn pause_playing_scope_for_disconnected_connection(handle: &registry::ConnectionHandle) {
+async fn pause_playback_of_disconnected_connection(handle: &registry::ConnectionHandle) {
     let now_ms = match playbacks::now_ms() {
         Ok(now_ms) => now_ms,
         Err(err) => {
@@ -56,7 +56,7 @@ async fn pause_playing_scope_for_disconnected_connection(handle: &registry::Conn
                 user_public_id = %handle.user_public_id,
                 session_key = %handle.session_key,
                 error = %err,
-                "failed to timestamp disconnected playback scope"
+                "failed to timestamp disconnected connection"
             );
             return;
         }
@@ -64,7 +64,7 @@ async fn pause_playing_scope_for_disconnected_connection(handle: &registry::Conn
 
     let update = {
         let mut db = STATE.db.write().await;
-        playbacks::pause_playing_scopes_on_disconnect(
+        crate::services::playbacks::pause_disconnected_connection(
             &mut db,
             &handle.user_public_id,
             &handle.session_key,
@@ -85,7 +85,7 @@ async fn pause_playing_scope_for_disconnected_connection(handle: &registry::Conn
                 user_public_id = %handle.user_public_id,
                 session_key = %handle.session_key,
                 error = %err,
-                "failed to pause disconnected playback scope"
+                "failed to pause playback of disconnected connection"
             );
         }
     }
@@ -116,7 +116,7 @@ pub(crate) async fn disconnect(connection_id: ConnectionId, user_public_id: &str
             session_key = %handle.session_key,
             "websocket disconnected"
         );
-        pause_playing_scope_for_disconnected_connection(handle).await;
+        pause_playback_of_disconnected_connection(handle).await;
     }
 }
 
@@ -199,32 +199,39 @@ mod tests {
             let mut db = STATE.db.write().await;
             let bob_db_id = lyra_db::test_db::recycle_user(&mut db, alice_db_id, "bob")?;
             let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Bob's Track")?;
-            playbacks::report_playback_session_with_cleanup(
+            let track_id = lyra_db::lookup::find_id_by_db_id(&*db, track_db_id)?.expect("track id");
+            let bob_public_id =
+                lyra_db::lookup::find_id_by_db_id(&*db, bob_db_id)?.expect("bob's id");
+            crate::services::playbacks::create_playback(
                 &mut db,
-                playbacks::SessionPlaybackReportRequest {
-                    plugin_id: playbacks::NATIVE_PLUGIN_ID,
+                crate::services::playbacks::CreatePlaybackRequest {
+                    id: nanoid::nanoid!(),
+                    play_id: nanoid::nanoid!(),
                     user_db_id: bob_db_id,
-                    session_key: "device",
-                    track_db_id,
-                    play_id: None,
                     client_name: None,
+                    queue: crate::services::playbacks::ValidatedQueue {
+                        snapshot: crate::services::playbacks::QueueSnapshot::single(track_id),
+                        current_track_db_id: track_db_id,
+                    },
                     mutation: playbacks::PlaybackMutation {
                         position_ms: Some(0),
                         duration_ms: Some(200_000),
                         state: Some(PlaybackState::Playing),
                     },
                     now_ms: playbacks::now_ms()?,
-                    active_event: playbacks::ActiveEvent::Started,
+                    reporting_connection: Some(crate::services::playbacks::ReportingConnection {
+                        user_public_id: bob_public_id,
+                        session_key: "device".to_string(),
+                    }),
                 },
             )?
-            .playback
-            .expect("bob's playback starts")
+            .session
         };
 
         let handle = registry::unregister(alice_connection.connection_id)
             .await
             .expect("alice's connection is registered");
-        pause_playing_scope_for_disconnected_connection(&handle).await;
+        pause_playback_of_disconnected_connection(&handle).await;
 
         let db = STATE.db.read().await;
         let persisted =

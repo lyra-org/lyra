@@ -32,7 +32,7 @@ pub(crate) struct PlaybackUpdateRegistries {
     event_broadcasts: Mutex<HashMap<String, broadcast::Sender<PlaybackUpdatePayload>>>,
     dispatch_buckets: Mutex<HashMap<String, DispatchBucket>>,
     /// Per user, a notice that the user's connections may look different: one registered,
-    /// declared capabilities or closed, or a native scope's binding changed. Notices coalesce.
+    /// declared capabilities or closed, or a connection's binding changed. Notices coalesce.
     connection_changes: Mutex<HashMap<String, watch::Sender<()>>>,
 }
 

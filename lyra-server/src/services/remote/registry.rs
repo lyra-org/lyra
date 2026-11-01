@@ -32,6 +32,7 @@ use super::handoffs::{
 };
 use super::messages::OutgoingMessage;
 use crate::services::playback_sessions;
+use crate::services::playbacks::bindings;
 
 pub(crate) type ConnectionId = u64;
 
@@ -284,16 +285,11 @@ pub(super) async fn insert_handoff(
     let source_binding = source_id
         .and_then(|source_id| registry.connections.get(&source_id))
         .and_then(|source| {
-            let scope_key = playback_sessions::PlaybackScopeKey::native(
-                &source.user_public_id,
-                &source.session_key,
-            );
-            playback_sessions::snapshot_current_binding(&scope_key).map(|snapshot| {
-                ExpectedSourceBinding {
-                    user_public_id: source.user_public_id.clone(),
-                    session_key: source.session_key.clone(),
-                    snapshot,
-                }
+            let key = bindings::ConnectionKey::new(&source.user_public_id, &source.session_key);
+            bindings::snapshot_current(&key).map(|snapshot| ExpectedSourceBinding {
+                user_public_id: source.user_public_id.clone(),
+                session_key: source.session_key.clone(),
+                snapshot,
             })
         });
     registry.pending_handoffs.begin(
@@ -383,8 +379,8 @@ pub(super) async fn finish_handoff_progress(
         registry.pending_handoffs.finish_progress(token);
         return FinishProgress::Failed;
     };
-    playback_sessions::bind_current_playback_session_scope(
-        &playback_sessions::PlaybackScopeKey::native(&target.user_public_id, &target.session_key),
+    bindings::bind_current(
+        &bindings::ConnectionKey::new(&target.user_public_id, &target.session_key),
         &applied.playback_public_id,
         applied
             .expected_session
@@ -394,11 +390,8 @@ pub(super) async fn finish_handoff_progress(
         applied.expected_session.updated_at_ms,
     );
     if let Some(source) = ready.source_binding {
-        playback_sessions::clear_current_binding_if_unchanged(
-            &playback_sessions::PlaybackScopeKey::native(
-                &source.user_public_id,
-                &source.session_key,
-            ),
+        bindings::clear_current_if_unchanged(
+            &bindings::ConnectionKey::new(&source.user_public_id, &source.session_key),
             &source.snapshot,
         );
     }

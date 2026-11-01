@@ -83,7 +83,7 @@ pub(super) async fn replace_queue(
     remote_handoffs::fail_for_playback_revision(&id, require_queue_revision(&updated.playback)?)
         .await;
     if let Some(detached) = updated.detached_session.as_ref() {
-        sessions::clear_session_bindings_for_playback(
+        crate::services::playbacks::bindings::clear_session(
             detached.playback_session_id,
             &detached.playback_session_public_id,
         );

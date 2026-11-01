@@ -26,6 +26,20 @@ use crate::services::{
     playback_sessions,
 };
 
+pub(crate) mod bindings;
+mod reported;
+mod reporting;
+
+pub(crate) use reported::{
+    ReportOutcome,
+    ReportedPlaybackRequest,
+    report_reported_playback,
+};
+pub(crate) use reporting::{
+    cleanup_evicted_playbacks,
+    pause_disconnected_connection,
+};
+
 pub(crate) const QUEUE_ITEM_HARD_CAP: usize = 1_000;
 pub(crate) use lyra_db::playbacks::RepeatMode;
 
@@ -144,7 +158,7 @@ pub(crate) struct PlaybackUpdate {
     pub(crate) evicted_playbacks: Vec<playback_sessions::EvictedPlaybackRecord>,
 }
 
-/// The native scope of the connection that reports a playback, which then drives it.
+/// The connection of Lyra's own client that reports a playback, which then drives it.
 pub(crate) struct ReportingConnection {
     pub(crate) user_public_id: String,
     pub(crate) session_key: String,
@@ -152,8 +166,8 @@ pub(crate) struct ReportingConnection {
 
 impl ReportingConnection {
     fn bind(&self, playback_id: &str, session: &playback_sessions::PlaybackRecord, now_ms: u64) {
-        playback_sessions::bind_current_playback_session_scope(
-            &playback_sessions::PlaybackScopeKey::native(&self.user_public_id, &self.session_key),
+        bindings::bind_current(
+            &bindings::ConnectionKey::new(&self.user_public_id, &self.session_key),
             playback_id,
             session.playback_session_id,
             session.playback_session_public_id.clone(),
@@ -227,8 +241,8 @@ pub(crate) fn create_playback(
         updated_at_ms: now_ms,
     };
 
-    let (playback, session) = db.transaction_mut(|t| {
-        lyra_db::playbacks::expire_reported_for_user(t, user_db_id, now_ms)?;
+    let transition = db.transaction_mut(|t| {
+        reporting::expire_lapsed(t, user_db_id, now_ms)?;
         if lyra_db::playbacks::count_for_user_up_to_limit(t, user_db_id)?
             >= lyra_db::playbacks::MAX_PLAYBACKS_PER_USER
         {
@@ -255,23 +269,18 @@ pub(crate) fn create_playback(
         )?;
         let mut playback = playback.clone();
         playback.db_id = Some(playback_db_id);
-        Ok::<_, PlaybackError>((playback, session))
+        Ok::<_, PlaybackError>(reporting::Transition {
+            playback,
+            session,
+            displaced_session: None,
+        })
     })?;
-    session.announce_recorded_listen();
-    if let Some(connection) = &reporting_connection
-        && !session.playback.playback.state.is_terminal()
-    {
-        connection.bind(&playback.id, &session.playback, now_ms);
-    }
-    let evicted_playbacks = playback_sessions::cleanup_after_commit(db, now_ms);
-
-    Ok(PlaybackUpdate {
-        playback,
-        event: session.event,
-        session: session.playback,
-        displaced_session: None,
-        evicted_playbacks,
-    })
+    Ok(reporting::finish(
+        db,
+        transition,
+        reporting_connection.as_ref(),
+        now_ms,
+    ))
 }
 
 pub(crate) fn report_progress(
@@ -291,7 +300,7 @@ pub(crate) fn report_progress(
         reporting_connection,
     } = request;
 
-    let (playback, session, displaced_session) = db.transaction_mut(|t| {
+    let transition = db.transaction_mut(|t| {
         if lyra_db::playbacks::get_owner_id(t, playback_db_id)? != Some(user_db_id) {
             return Err(PlaybackError::NotFound);
         }
@@ -394,40 +403,18 @@ pub(crate) fn report_progress(
         };
 
         playback.updated_at_ms = now_ms;
-        Ok::<_, PlaybackError>((playback, session, displaced_session))
+        Ok::<_, PlaybackError>(reporting::Transition {
+            playback,
+            session,
+            displaced_session,
+        })
     })?;
-    session.announce_recorded_listen();
-    if let Some(displaced) = &displaced_session {
-        displaced.announce_recorded_listen();
-    }
-
-    // Bound before the displaced session is cleared, so the reporter moves straight from the
-    // replaced track session to its successor.
-    if let Some(connection) = &reporting_connection
-        && !session.playback.playback.state.is_terminal()
-    {
-        connection.bind(&playback.id, &session.playback, now_ms);
-    }
-    if session.playback.playback.state.is_terminal() {
-        playback_sessions::clear_session_bindings_for_playback(
-            session.playback.playback_session_id,
-            &session.playback.playback_session_public_id,
-        );
-    }
-    if let Some(displaced) = displaced_session.as_ref() {
-        playback_sessions::clear_session_bindings_for_playback(
-            displaced.playback_session_id,
-            &displaced.playback_session_public_id,
-        );
-    }
-    let evicted_playbacks = playback_sessions::cleanup_after_commit(db, now_ms);
-    Ok(PlaybackUpdate {
-        playback,
-        event: session.event,
-        session: session.playback,
-        displaced_session,
-        evicted_playbacks,
-    })
+    Ok(reporting::finish(
+        db,
+        transition,
+        reporting_connection.as_ref(),
+        now_ms,
+    ))
 }
 
 pub(crate) fn compensate_failed_handoff_progress(
@@ -447,7 +434,7 @@ pub(crate) fn compensate_failed_handoff_progress(
             "handoff compensation session is missing its database ID"
         ))
     })?;
-    let Some(compensated) = playback_sessions::with_no_current_binding_for_playback(
+    let Some(compensated) = bindings::with_no_current_binding_for_session(
         playback_session_id,
         &expected_session.id,
         || {
@@ -480,25 +467,17 @@ pub(crate) fn compensate_failed_handoff_progress(
                 };
                 playback.updated_at_ms = session.playback.playback.updated_at_ms;
                 lyra_db::playbacks::touch(t, playback_db_id, playback.updated_at_ms)?;
-                Ok(Some((playback, session)))
+                Ok(Some(reporting::Transition {
+                    playback,
+                    session,
+                    displaced_session: None,
+                }))
             })
         },
     ) else {
         return Ok(None);
     };
-    let compensated = compensated?;
-    let Some((playback, session)) = compensated else {
-        return Ok(None);
-    };
-    session.announce_recorded_listen();
-    let evicted_playbacks = playback_sessions::cleanup_after_commit(db, now_ms);
-    Ok(Some(PlaybackUpdate {
-        playback,
-        event: session.event,
-        session: session.playback,
-        displaced_session: None,
-        evicted_playbacks,
-    }))
+    Ok(compensated?.map(|transition| reporting::finish(db, transition, None, now_ms)))
 }
 
 pub(crate) fn current_handoff_playback(
@@ -594,19 +573,6 @@ fn detail_from_playback(
         playback,
         current_session,
     })
-}
-
-pub(crate) fn reported_id(
-    db: &DbAny,
-    user_db_id: DbId,
-    plugin_id: &str,
-    session_key: &str,
-    now_ms: u64,
-) -> Result<Option<String>, PlaybackError> {
-    Ok(
-        lyra_db::playbacks::get_reported(db, user_db_id, plugin_id, session_key, now_ms)?
-            .map(|playback| playback.id),
-    )
 }
 
 pub(crate) fn get_owned_detail(

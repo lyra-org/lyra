@@ -24,14 +24,11 @@ use super::registry::{
 };
 use crate::services::STATE;
 use crate::services::auth::Principal;
-use crate::services::playback_sessions::{
-    self,
-    PlaybackScopeKey,
-};
 use crate::services::playbacks::{
     self,
     CurrentSession,
     PlaybackError,
+    bindings,
 };
 
 /// One of the caller's open WebSocket connections.
@@ -136,9 +133,9 @@ pub(crate) fn join(
         .into_iter()
         .filter(|snapshot| snapshot.user_public_id == principal.user_public_id)
         .map(|snapshot| {
-            let scope_key = scope_key(&snapshot);
-            let scope = playback_sessions::get_playback_session(&scope_key);
-            let degraded_at_ms = playback_sessions::remote_control_degraded_at_ms(&scope_key);
+            let key = bindings::ConnectionKey::new(&snapshot.user_public_id, &snapshot.session_key);
+            let scope = bindings::get(&key);
+            let degraded_at_ms = bindings::remote_control_degraded_at_ms(&key);
             (snapshot, scope, degraded_at_ms)
         })
         .collect::<Vec<_>>();
@@ -199,10 +196,6 @@ pub(crate) fn controller<'a>(
         .max_by_key(|connection| (connection.bound_at_ms, connection.connection_id))
 }
 
-fn scope_key(snapshot: &ConnectionSnapshot) -> PlaybackScopeKey<'_> {
-    PlaybackScopeKey::native(&snapshot.user_public_id, &snapshot.session_key)
-}
-
 /// The public id of each playback the principal can see, keyed by its current track session.
 fn visible_playbacks_by_current_session(
     db: &DbAny,
@@ -234,7 +227,7 @@ mod tests {
         let bobs = fixture::connect(&bob, "driving").await?;
         let (playback_id, _) = fixture::drive_new_playback(&alice, "driving").await?;
 
-        let now_ms = playback_sessions::now_ms()?;
+        let now_ms = crate::services::playback_sessions::now_ms()?;
         let listed = list(&alice.principal, now_ms).await?;
         let resources = listed
             .iter()

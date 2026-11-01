@@ -33,10 +33,8 @@ use crate::services::{
     libraries::LibrarySyncRegistries,
     mix::MixRegistries,
     pagination::SnapshotRegistry,
-    playback_sessions::{
-        PlaybackScopes,
-        PlaybackUpdateRegistries,
-    },
+    playback_sessions::PlaybackUpdateRegistries,
+    playbacks::bindings::ConnectionBindings,
     plugin_dispatch::PluginDispatch,
     providers::ProviderRegistries,
     settings::server::{
@@ -149,7 +147,7 @@ pub(crate) struct GenerationState {
     pub(crate) mix: MixRegistries,
     pub(crate) pagination: SnapshotRegistry,
     pub(crate) playback_updates: PlaybackUpdateRegistries,
-    pub(crate) playback_scopes: PlaybackScopes,
+    pub(crate) connection_bindings: ConnectionBindings,
     pub(crate) library_sync: LibrarySyncRegistries,
     pub(crate) catalog_index: crate::services::catalog::index::IndexCache,
     pub(crate) hls_cleanup: HlsCleanupState,

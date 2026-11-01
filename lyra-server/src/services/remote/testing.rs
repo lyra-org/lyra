@@ -14,11 +14,11 @@ use crate::services::auth::Principal;
 use crate::services::playback_sessions::{
     self,
     PlaybackMutation,
-    PlaybackScopeKey,
 };
 use crate::services::playbacks::{
     self,
     QueueSnapshot,
+    bindings,
 };
 use crate::services::testing;
 use lyra_db::PlaybackState;
@@ -67,8 +67,11 @@ pub(crate) async fn connect(
     .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
-pub(crate) fn scope<'a>(user: &'a TestUser, session_key: &'a str) -> PlaybackScopeKey<'a> {
-    PlaybackScopeKey::native(&user.principal.user_public_id, session_key)
+pub(crate) fn connection_key<'a>(
+    user: &'a TestUser,
+    session_key: &'a str,
+) -> bindings::ConnectionKey<'a> {
+    bindings::ConnectionKey::new(&user.principal.user_public_id, session_key)
 }
 
 fn reporting(user: &TestUser, session_key: &str) -> Option<playbacks::ReportingConnection> {
