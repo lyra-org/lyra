@@ -357,8 +357,10 @@ impl PlaybackSessionsModule {
         let connections =
             connections::join_owned(&db, viewer_db_id, &owner_ids(&users), snapshots, now_ms)
                 .map_err(crate::plugins::runtime_error)?;
-        let active = crate::services::playbacks::list_active(&db, &principal, &users, now_ms)
-            .map_err(crate::plugins::runtime_error)?;
+        let all_users = matches!(owners, owners::Owners::All);
+        let active =
+            crate::services::playbacks::list_active(&db, &principal, &users, all_users, now_ms)
+                .map_err(crate::plugins::runtime_error)?;
         drop(db);
         let result = active
             .into_iter()

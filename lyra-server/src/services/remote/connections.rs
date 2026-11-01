@@ -340,7 +340,13 @@ mod tests {
         assert_eq!(listed[0].user_id, alice.principal.user_public_id);
         assert_eq!(listed[0].playback_id(), Some(playback_id.as_str()));
 
-        let active = playbacks::list_active(&db, &bob.principal, &[alice_user], now_ms)?;
+        let owners = [alice_user];
+        let all = playbacks::list_active(&db, &bob.principal, &owners, true, now_ms)?;
+        let active = playbacks::list_active(&db, &bob.principal, &owners, false, now_ms)?;
+        assert_eq!(
+            all.iter().map(|a| &a.playback_id).collect::<Vec<_>>(),
+            active.iter().map(|a| &a.playback_id).collect::<Vec<_>>()
+        );
         assert_eq!(active.len(), 1);
         assert_eq!(active[0].playback_id, playback_id);
         assert_eq!(active[0].reported_session_key, None);
