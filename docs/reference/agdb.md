@@ -30,6 +30,11 @@ project-local guidance for using agdb in Lyra.
   `search().to()` traverse via these lists and are **O(neighbors)**, not
   O(all_edges). Reverse BFS with `to()` is equally efficient as forward BFS.
 - Removing a node also removes all its incoming/outgoing edges and their values.
+- Each node keeps its edges in a singly linked list, newest first. Removing an
+  edge walks both endpoints' lists from the newest edge, so it costs the number
+  of edges added to them since. Deleting the oldest neighbors of a hub node
+  with one edge per entity is quadratic, so deleting old members of a large
+  root is slow. This is a known agdb limitation (agnesoft/agdb#2030).
 - Orphaned edges are **not possible** via normal queries:
   - Inserted edges must reference existing nodes.
   - When a node is deleted, all attached edges are deleted as part of the same operation.
@@ -385,7 +390,14 @@ project-local guidance for using agdb in Lyra.
 ## Practical Patterns
 
 - Create a root node alias (`root`) to anchor discovery of graph structure.
-- Use indexes for attributes that do not map well to graph traversal.
+- A Lyra root alias exists only for a collection something enumerates in
+  full. Those that grow with the catalog are reached only through
+  `lyra_db::roots`: link and read their members through that module.
+- Use indexes for attributes that do not map well to graph traversal. Do not
+  index a key with few distinct values: insert and remove cost grows with the
+  count per value (agnesoft/agdb#2028).
+- In aliases, put the varying part first: agdb's string hash places keys that
+  differ only near the end in few slots (agnesoft/agdb#2031).
 - Use `where_().node()` / `where_().edge()` if your search requires a specific
   element type; search returns both nodes and edges by default.
 - Wrap related DB interactions in `transaction_mut` so failures rollback cleanly
