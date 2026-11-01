@@ -66,6 +66,7 @@ use super::{
         covers_locked,
         has_stored_cover,
         resolve_local_cover_for_release,
+        scan_local_cover_for_release,
     },
 };
 
@@ -159,108 +160,191 @@ pub(crate) fn discard_cover_file(covers_root: &Path, path: &str) {
     }
 }
 
-/// A cover image to store under the covers root as an owner's cover from one source.
-pub(super) struct NewCoverFile<'a> {
-    pub(super) owner_id: DbId,
-    pub(super) source: CoverSource,
-    pub(super) dir: &'a Path,
-    pub(super) ext: &'a str,
-    pub(super) bytes: &'a [u8],
-    pub(super) provider_id: Option<&'a str>,
-    /// Whether to pin the source as the one the owner shows.
-    pub(super) select: bool,
+/// Discards the files of covers detached inside a transaction, once that transaction is over
+/// and only if it committed: a cover whose record survived, as after a rollback, keeps its file.
+/// Runs in the background, since the caller may still hold the database write guard.
+pub(crate) fn discard_unreferenced_cover_files(covers: Vec<Cover>) {
+    if covers.is_empty() {
+        return;
+    }
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    let db = crate::services::STATE.db.get();
+    let covers_root = super::configured_covers_root();
+    runtime.spawn(async move {
+        let unreferenced = {
+            let db = db.read().await;
+            covers
+                .into_iter()
+                .filter(|cover| {
+                    lyra_db::covers::get_by_public_id(&*db, &cover.id)
+                        .is_ok_and(|found| found.is_none())
+                })
+                .collect::<Vec<_>>()
+        };
+        for cover in unreferenced {
+            discard_cover_file(&covers_root, &cover.path);
+        }
+    });
 }
 
-/// Writes the image as a new file in its directory and records it as the owner's cover from
-/// its source, discarding the file of the cover it replaces once nothing refers to it. Every
-/// stored file gets its own name, so a replaced cover never changes under another owner.
-pub(super) async fn store_cover_file(
-    db: &lyra_db::DbAsync,
-    covers_root: &Path,
-    new: NewCoverFile<'_>,
-) -> Result<Cover> {
-    let target = new
-        .dir
-        .join(format!("{}-{}.{}", new.source.as_str(), nanoid!(), new.ext));
-    write_cover_image(&target, new.bytes).await?;
-    let recorded = async {
-        let (hash, blurhash, mime_type) = cover_file_metadata(&target).await?;
-        let cover = Cover {
-            db_id: None,
-            id: nanoid!(),
-            path: target.to_string_lossy().into_owned(),
-            mime_type,
-            hash,
-            blurhash,
-            provider_id: new.provider_id.map(str::to_string),
+/// A new image file under the covers root, not yet recorded as anyone's cover. Dropped before
+/// it is recorded, it deletes its file. Every stored file gets its own name, so a replaced cover
+/// never changes under another owner.
+pub(super) struct PreparedCover {
+    source: CoverSource,
+    pending: Option<Cover>,
+}
+
+impl PreparedCover {
+    pub(super) async fn write(
+        dir: &Path,
+        source: CoverSource,
+        ext: &str,
+        bytes: &[u8],
+        provider_id: Option<&str>,
+    ) -> Result<Self> {
+        let target = dir.join(format!("{}-{}.{ext}", source.as_str(), nanoid!()));
+        write_cover_image(&target, bytes).await?;
+        let mut prepared = Self {
+            source,
+            pending: Some(Cover {
+                db_id: None,
+                id: nanoid!(),
+                path: target.to_string_lossy().into_owned(),
+                mime_type: String::new(),
+                hash: String::new(),
+                blurhash: None,
+                provider_id: provider_id.map(str::to_string),
+            }),
         };
-        let mut db_write = db.write().await;
-        db_write.transaction_mut(|t| {
-            let upserted = lyra_db::covers::upsert(t, new.owner_id, new.source, cover)?;
-            if new.select {
-                lyra_db::covers::select(t, new.owner_id, Some(new.source))?;
+        let (hash, blurhash, mime_type) = cover_file_metadata(&target).await?;
+        if let Some(cover) = prepared.pending.as_mut() {
+            cover.hash = hash;
+            cover.blurhash = blurhash;
+            cover.mime_type = mime_type;
+        }
+        Ok(prepared)
+    }
+
+    /// Records the file as the owner's cover from its source, under the write guard in which the
+    /// caller confirmed the write still applies, and discards the file of the cover it replaces
+    /// once nothing refers to it.
+    pub(super) fn record(
+        mut self,
+        db: &mut agdb::DbAny,
+        covers_root: &Path,
+        owner_id: DbId,
+        select: bool,
+    ) -> Result<Cover> {
+        let cover = self
+            .pending
+            .clone()
+            .ok_or_else(|| anyhow!("prepared cover already recorded"))?;
+        let source = self.source;
+        let upserted = db.transaction_mut(|t| {
+            let upserted = lyra_db::covers::upsert(t, owner_id, source, cover)?;
+            if select {
+                lyra_db::covers::select(t, owner_id, Some(source))?;
             }
             anyhow::Ok(upserted)
-        })
-    }
-    .await;
-    let upserted = match recorded {
-        Ok(upserted) => upserted,
-        Err(err) => {
-            let _ = fs::remove_file(&target).await;
-            return Err(err);
+        })?;
+        self.pending = None;
+        if let Some(replaced) = upserted.replaced
+            && replaced.orphaned
+        {
+            discard_cover_file(covers_root, &replaced.cover.path);
         }
-    };
-    if let Some(replaced) = upserted.replaced
-        && replaced.orphaned
-    {
-        discard_cover_file(covers_root, &replaced.cover.path);
+        Ok(upserted.cover)
     }
-    Ok(upserted.cover)
 }
 
+impl Drop for PreparedCover {
+    fn drop(&mut self) {
+        if let Some(cover) = self.pending.take() {
+            let _ = std::fs::remove_file(cover.path);
+        }
+    }
+}
+
+/// What an automatic provider sync saw when it decided to fetch a cover, checked again under the
+/// write guard before the download is recorded.
+#[derive(Clone)]
+struct ProviderSyncBasis {
+    options: CoverSyncOptions,
+    owner_id: DbId,
+    owner_public_id: String,
+    /// The stored provider cover's file, which a user's choice made meanwhile would change.
+    provider_cover: Option<String>,
+}
+
+/// The basis on which an automatic provider sync may fetch a cover for the owner: never for a
+/// locked owner, and otherwise only when it has no cover at all unless the stored provider
+/// cover is to be replaced.
+fn provider_sync_basis(
+    db: &agdb::DbAny,
+    owner_id: DbId,
+    owner_public_id: &str,
+    local_cover: Option<&Path>,
+    options: CoverSyncOptions,
+) -> Result<Option<ProviderSyncBasis>> {
+    if covers_locked(db, owner_id)? {
+        return Ok(None);
+    }
+    if !options.replace_existing && (local_cover.is_some() || has_stored_cover(db, owner_id)?) {
+        return Ok(None);
+    }
+    Ok(Some(ProviderSyncBasis {
+        options,
+        owner_id,
+        owner_public_id: owner_public_id.to_string(),
+        provider_cover: lyra_db::covers::get_source(db, owner_id, CoverSource::Provider)?
+            .map(|cover| cover.path),
+    }))
+}
+
+/// Whether the basis still holds: the same entity, still unlocked, with no cover arrived
+/// meanwhile unless replacing, and the provider cover as the sync found it.
+fn provider_sync_still_allowed(db: &agdb::DbAny, basis: &ProviderSyncBasis) -> Result<bool> {
+    if lyra_db::lookup::find_node_id_by_id(db, &basis.owner_public_id)? != Some(basis.owner_id)
+        || covers_locked(db, basis.owner_id)?
+    {
+        return Ok(false);
+    }
+    if !basis.options.replace_existing && has_stored_cover(db, basis.owner_id)? {
+        return Ok(false);
+    }
+    let provider_cover = lyra_db::covers::get_source(db, basis.owner_id, CoverSource::Provider)?
+        .map(|cover| cover.path);
+    Ok(provider_cover == basis.provider_cover)
+}
+
+/// Records a downloaded provider cover when the sync's basis still holds. Returns the stored
+/// file, or none when the entity changed meanwhile.
 async fn save_provider_cover(
     db: &lyra_db::DbAsync,
     covers_root: &Path,
-    owner_id: DbId,
+    basis: &ProviderSyncBasis,
     target_dir: &Path,
     provider_id: &str,
     ext: &str,
     bytes: &[u8],
-) -> Result<PathBuf> {
-    let cover = store_cover_file(
-        db,
-        covers_root,
-        NewCoverFile {
-            owner_id,
-            source: CoverSource::Provider,
-            dir: target_dir,
-            ext,
-            bytes,
-            provider_id: Some(provider_id),
-            select: false,
-        },
+) -> Result<Option<PathBuf>> {
+    let prepared = PreparedCover::write(
+        target_dir,
+        CoverSource::Provider,
+        ext,
+        bytes,
+        Some(provider_id),
     )
     .await?;
-    Ok(PathBuf::from(cover.path))
-}
-
-/// Whether an automatic provider sync may fetch a cover for the owner: never for a locked owner,
-/// and otherwise only when it has no cover at all unless the stored provider cover is to be
-/// replaced.
-fn provider_sync_allowed(
-    db: &agdb::DbAny,
-    owner_id: DbId,
-    local_cover: Option<&Path>,
-    options: CoverSyncOptions,
-) -> Result<bool> {
-    if covers_locked(db, owner_id)? {
-        return Ok(false);
+    let mut db_write = db.write().await;
+    if !provider_sync_still_allowed(&db_write, basis)? {
+        return Ok(None);
     }
-    if options.replace_existing {
-        return Ok(true);
-    }
-    Ok(local_cover.is_none() && !has_stored_cover(db, owner_id)?)
+    let cover = prepared.record(&mut db_write, covers_root, basis.owner_id, false)?;
+    Ok(Some(PathBuf::from(cover.path)))
 }
 
 pub(crate) async fn sync_release_cover_for_tracks(
@@ -275,12 +359,18 @@ pub(crate) async fn sync_release_cover_for_tracks(
         return Ok(false);
     };
 
-    let (allowed, provider_contexts) = {
+    let (basis, provider_contexts) = {
         let db_read = db.read().await;
         let sorted_providers = active_providers(&db_read)?;
         let library = library_for_release(&db_read, release_id)?;
         let local_cover = resolve_local_cover_for_release(&db_read, tracks, paths.library_root)?;
-        let allowed = provider_sync_allowed(&db_read, release_id, local_cover.as_deref(), options)?;
+        let basis = provider_sync_basis(
+            &db_read,
+            release_id,
+            &release.id,
+            local_cover.as_deref(),
+            options,
+        )?;
 
         let mut provider_contexts = Vec::new();
         for provider in sorted_providers {
@@ -291,12 +381,12 @@ pub(crate) async fn sync_release_cover_for_tracks(
             provider_contexts.push((provider.provider_id, release_context));
         }
 
-        (allowed, provider_contexts)
+        (basis, provider_contexts)
     };
 
-    if provider_contexts.is_empty() || !allowed {
+    let Some(basis) = basis.filter(|_| !provider_contexts.is_empty()) else {
         return Ok(false);
-    }
+    };
 
     let target_dir = configured_cover_dir_for_release(paths.covers_root, release_id);
 
@@ -334,16 +424,19 @@ pub(crate) async fn sync_release_cover_for_tracks(
             }
         };
 
-        let target = save_provider_cover(
+        let Some(target) = save_provider_cover(
             db,
             paths.covers_root,
-            release_id,
+            &basis,
             &target_dir,
             &provider_id,
             ext,
             &bytes,
         )
-        .await?;
+        .await?
+        else {
+            return Ok(false);
+        };
         tracing::info!(
             provider = %provider_id,
             release = %release.release_title,
@@ -367,10 +460,10 @@ pub(crate) async fn sync_artist_cover(
         return Ok(false);
     };
 
-    let (allowed, provider_contexts) = {
+    let (basis, provider_contexts) = {
         let db_read = db.read().await;
         let sorted_providers = active_providers(&db_read)?.only(provider_filter);
-        let allowed = provider_sync_allowed(&db_read, artist_id, None, options)?;
+        let basis = provider_sync_basis(&db_read, artist_id, &artist.id, None, options)?;
 
         let mut provider_contexts = Vec::new();
         for provider in sorted_providers {
@@ -380,12 +473,12 @@ pub(crate) async fn sync_artist_cover(
             provider_contexts.push((provider.provider_id, artist_context));
         }
 
-        (allowed, provider_contexts)
+        (basis, provider_contexts)
     };
 
-    if provider_contexts.is_empty() || !allowed {
+    let Some(basis) = basis.filter(|_| !provider_contexts.is_empty()) else {
         return Ok(false);
-    }
+    };
 
     let target_dir = configured_cover_dir_for_artist(paths.covers_root, artist_id);
 
@@ -423,16 +516,19 @@ pub(crate) async fn sync_artist_cover(
             }
         };
 
-        let target = save_provider_cover(
+        let Some(target) = save_provider_cover(
             db,
             paths.covers_root,
-            artist_id,
+            &basis,
             &target_dir,
             &provider_id,
             ext,
             &bytes,
         )
-        .await?;
+        .await?
+        else {
+            return Ok(false);
+        };
         tracing::info!(
             provider = %provider_id,
             artist = %artist.artist_name,
@@ -446,14 +542,14 @@ pub(crate) async fn sync_artist_cover(
 }
 
 struct CoverResolveContext {
-    release_id: DbId,
+    basis: ProviderSyncBasis,
     release_title: String,
     target_dir: PathBuf,
     provider_contexts: Vec<(String, serde_json::Value)>,
 }
 
 struct CoverDownloadTask {
-    release_id: DbId,
+    basis: ProviderSyncBasis,
     release_title: String,
     provider_id: String,
     cover_url: String,
@@ -479,7 +575,7 @@ async fn execute_cover_download(db: lyra_db::DbAsync, task: CoverDownloadTask) -
     let target = match save_provider_cover(
         &db,
         &task.covers_root,
-        task.release_id,
+        &task.basis,
         &task.target_dir,
         &task.provider_id,
         ext,
@@ -487,7 +583,8 @@ async fn execute_cover_download(db: lyra_db::DbAsync, task: CoverDownloadTask) -
     )
     .await
     {
-        Ok(target) => target,
+        Ok(Some(target)) => target,
+        Ok(None) => return false,
         Err(err) => {
             tracing::warn!(
                 provider = %task.provider_id,
@@ -508,35 +605,16 @@ async fn execute_cover_download(db: lyra_db::DbAsync, task: CoverDownloadTask) -
     true
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum CoverScope {
-    Release,
-    Artist,
-}
-
-impl CoverScope {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Release => "release",
-            Self::Artist => "artist",
-        }
-    }
-}
-
 /// Local covers found for a library's releases, and the errors of those whose search failed.
 type ResolvedCovers = (Vec<(DbId, PathBuf)>, Vec<anyhow::Error>);
 
-/// The local covers of the library's unlocked releases. Artists have no local covers.
+/// The local covers of the library's unlocked releases.
 fn resolve_local_covers_for_library(
-    scope: CoverScope,
     db: &agdb::DbAny,
     library_id: DbId,
     paths: CoverPaths<'_>,
 ) -> Result<ResolvedCovers> {
     let (mut resolved, mut failed) = (Vec::new(), Vec::new());
-    if matches!(scope, CoverScope::Artist) {
-        return Ok((resolved, failed));
-    }
     for release in &lyra_db::releases::get(db, library_id)? {
         let Some(release_id) = release.db_id.clone().map(Into::<DbId>::into) else {
             continue;
@@ -583,9 +661,16 @@ pub(crate) async fn sync_release_covers_for_library(
             else {
                 continue;
             };
-            if !provider_sync_allowed(&db_read, release_id, local_cover.as_deref(), options)? {
+            let Some(basis) = provider_sync_basis(
+                &db_read,
+                release_id,
+                &release.id,
+                local_cover.as_deref(),
+                options,
+            )?
+            else {
                 continue;
-            }
+            };
 
             let artists = lyra_db::artists::get(&db_read, release_id)?;
             let library = library_for_release(&db_read, release_id)?;
@@ -601,7 +686,7 @@ pub(crate) async fn sync_release_covers_for_library(
             }
 
             contexts.push(CoverResolveContext {
-                release_id,
+                basis,
                 release_title: release.release_title.clone(),
                 target_dir,
                 provider_contexts,
@@ -638,7 +723,7 @@ pub(crate) async fn sync_release_covers_for_library(
             };
 
             downloads.push(CoverDownloadTask {
-                release_id: ctx.release_id,
+                basis: ctx.basis.clone(),
                 release_title: ctx.release_title.clone(),
                 provider_id: provider_id.clone(),
                 cover_url,
@@ -706,24 +791,6 @@ pub(crate) async fn sync_artist_covers_for_library(
     Ok(synced)
 }
 
-async fn sync_covers_for_library_scope(
-    scope: CoverScope,
-    db: &lyra_db::DbAsync,
-    paths: CoverPaths<'_>,
-    library_id: DbId,
-    options: CoverSyncOptions,
-    provider_filter: Option<&str>,
-) -> Result<usize> {
-    match scope {
-        CoverScope::Release => {
-            sync_release_covers_for_library(db, paths, library_id, options, provider_filter).await
-        }
-        CoverScope::Artist => {
-            sync_artist_covers_for_library(db, paths, library_id, options, provider_filter).await
-        }
-    }
-}
-
 async fn cover_file_metadata(path: &Path) -> Result<(String, Option<String>, String)> {
     let path = path.to_path_buf();
     let (hash, blurhash, mime_type) = tokio::task::spawn_blocking(move || {
@@ -775,13 +842,14 @@ pub(super) async fn upsert_local_cover_metadata(
 }
 
 /// Records the release's library cover as its local cover, leaving a locked release alone.
-/// Returns the cover found and whether its record changed.
+/// When the release's folders could be listed and hold no cover, a recorded local cover whose
+/// file is gone is removed. Returns the cover found and whether its record changed.
 pub(crate) async fn record_local_release_cover(
     db: &lyra_db::DbAsync,
     release_id: DbId,
     library_root: Option<&Path>,
 ) -> Result<Option<(PathBuf, bool)>> {
-    let local_cover = {
+    let scan = {
         let db_read = db.read().await;
         let Some(release) = lyra_db::releases::get_by_id(&db_read, release_id)? else {
             return Ok(None);
@@ -790,13 +858,38 @@ pub(crate) async fn record_local_release_cover(
             return Ok(None);
         }
         let tracks = lyra_db::tracks::get_direct(&db_read, release_id)?;
-        resolve_local_cover_for_release(&db_read, &tracks, library_root)?
+        scan_local_cover_for_release(&db_read, &tracks, library_root)?
     };
-    let Some(cover_path) = local_cover else {
+    let Some(cover_path) = scan.cover else {
+        if scan.reached {
+            forget_missing_local_cover(db, release_id).await?;
+        }
         return Ok(None);
     };
     let changed = upsert_local_cover_metadata(db, release_id, &cover_path).await?;
     Ok(Some((cover_path, changed)))
+}
+
+/// Removes the release's local cover record when its file is gone, unless the release is now
+/// locked. The library file itself is never touched.
+async fn forget_missing_local_cover(db: &lyra_db::DbAsync, release_id: DbId) -> Result<()> {
+    let gone = {
+        let db_read = db.read().await;
+        lyra_db::covers::get_source(&*db_read, release_id, CoverSource::Local)?
+            .is_some_and(|cover| !Path::new(&cover.path).exists())
+    };
+    if !gone {
+        return Ok(());
+    }
+    let mut db_write = db.write().await;
+    if covers_locked(&db_write, release_id)?
+        || lyra_db::covers::get_source(&*db_write, release_id, CoverSource::Local)?
+            .is_none_or(|cover| Path::new(&cover.path).exists())
+    {
+        return Ok(());
+    }
+    db_write.transaction_mut(|t| lyra_db::covers::remove(t, release_id, CoverSource::Local))?;
+    Ok(())
 }
 
 struct PendingCover {
@@ -816,7 +909,6 @@ struct ComputedCover {
 async fn sync_local_cover_metadata_from_resolved(
     db: &lyra_db::DbAsync,
     resolved: &[(DbId, PathBuf)],
-    entity_type: &'static str,
 ) -> Result<usize> {
     let mut pending: Vec<PendingCover> = Vec::new();
 
@@ -867,60 +959,65 @@ async fn sync_local_cover_metadata_from_resolved(
             Err(err) => rayon::iter::Either::Right(err),
         });
 
-    let count = computed.len();
-    for c in computed {
-        let cover = Cover {
-            db_id: None,
-            id: nanoid!(),
-            path: c.path,
-            mime_type: c.mime_type,
-            hash: c.hash,
-            blurhash: c.blurhash,
-            provider_id: None,
-        };
-        let mut db_write = db.write().await;
-        db_write.transaction_mut(|t| {
-            lyra_db::covers::upsert(t, c.owner_id, CoverSource::Local, cover)
-        })?;
-    }
+    let mut db_write = db.write().await;
+    let count = db_write.transaction_mut(|t| {
+        let mut count = 0;
+        for c in computed {
+            // A release locked since the scan read it keeps its covers.
+            if covers_locked(t, c.owner_id)? {
+                continue;
+            }
+            let cover = Cover {
+                db_id: None,
+                id: nanoid!(),
+                path: c.path,
+                mime_type: c.mime_type,
+                hash: c.hash,
+                blurhash: c.blurhash,
+                provider_id: None,
+            };
+            lyra_db::covers::upsert(t, c.owner_id, CoverSource::Local, cover)?;
+            count += 1;
+        }
+        anyhow::Ok(count)
+    })?;
+    drop(db_write);
 
-    tracing::info!(count, entity_type, "persisted cover metadata");
+    tracing::info!(count, "persisted release cover metadata");
     if let Some(first) = unreadable.first() {
         anyhow::bail!(
-            "{} {entity_type} covers could not be read; first: {first:#}",
+            "{} release covers could not be read; first: {first:#}",
             unreadable.len()
         );
     }
     Ok(count)
 }
 
-pub(crate) async fn sync_and_persist_covers_for_library(
+/// Fetches provider covers for the library's releases that may get one, then records the local
+/// covers found beside their audio files.
+pub(crate) async fn sync_and_persist_release_covers_for_library(
     db: &lyra_db::DbAsync,
     paths: CoverPaths<'_>,
     library_id: DbId,
     options: CoverSyncOptions,
     provider_filter: Option<&str>,
-    scope: CoverScope,
 ) -> Result<usize> {
-    let scope_name = scope.as_str();
-    let _synced =
-        sync_covers_for_library_scope(scope, db, paths, library_id, options, provider_filter)
-            .await?;
+    sync_release_covers_for_library(db, paths, library_id, options, provider_filter).await?;
 
     let (resolved, unresolved) = {
         let db_read = db.read().await;
-        resolve_local_covers_for_library(scope, &db_read, library_id, paths)?
+        resolve_local_covers_for_library(&db_read, library_id, paths)?
     };
     let persisted = if resolved.is_empty() {
         Ok(0)
     } else {
-        sync_local_cover_metadata_from_resolved(db, &resolved, scope_name).await
+        sync_local_cover_metadata_from_resolved(db, &resolved).await
     };
     let persisted = match (persisted, unresolved.first()) {
         (persisted, None) => persisted?,
         (persisted, Some(first)) => {
             let unresolved = anyhow::anyhow!(
-                "{} {scope_name} covers could not be resolved; first: {first:#}",
+                "{} release covers could not be resolved; first: {first:#}",
                 unresolved.len()
             );
             return Err(match persisted {
@@ -931,9 +1028,8 @@ pub(crate) async fn sync_and_persist_covers_for_library(
     };
     tracing::debug!(
         library_id = library_id.0,
-        scope = scope_name,
         persisted,
-        "synced library cover metadata"
+        "synced library release cover metadata"
     );
     Ok(persisted)
 }
@@ -1055,26 +1151,35 @@ mod tests {
 
         let covers_root = root.path().join("covers");
         let target_dir = configured_cover_dir_for_release(&covers_root, release_id);
-        let first = save_provider_cover(
-            &db,
-            &covers_root,
-            release_id,
-            &target_dir,
-            "provider",
-            "png",
-            PNG_1X1,
-        )
-        .await?;
-        let second = save_provider_cover(
-            &db,
-            &covers_root,
-            release_id,
-            &target_dir,
-            "provider",
-            "png",
-            PNG_1X1,
-        )
-        .await?;
+        let replace = CoverSyncOptions {
+            replace_existing: true,
+            force_refresh: false,
+        };
+        let mut saved = Vec::new();
+        for _ in 0..2 {
+            let basis = {
+                let db_read = db.read().await;
+                let public_id = lyra_db::releases::get_by_id(&*db_read, release_id)?
+                    .expect("release exists")
+                    .id;
+                provider_sync_basis(&db_read, release_id, &public_id, None, replace)?
+                    .expect("replacing is allowed")
+            };
+            saved.push(
+                save_provider_cover(
+                    &db,
+                    &covers_root,
+                    &basis,
+                    &target_dir,
+                    "provider",
+                    "png",
+                    PNG_1X1,
+                )
+                .await?
+                .expect("the basis still holds"),
+            );
+        }
+        let (first, second) = (&saved[0], &saved[1]);
 
         assert!(library_cover.is_file());
         assert!(!first.exists(), "the replaced provider file is discarded");
@@ -1085,7 +1190,7 @@ mod tests {
         assert_eq!(PathBuf::from(local.path), library_cover);
         let provider = lyra_db::covers::get_source(&*db_read, release_id, CoverSource::Provider)?
             .expect("the provider cover is recorded");
-        assert_eq!(PathBuf::from(&provider.path), second);
+        assert_eq!(&PathBuf::from(&provider.path), second);
         assert_eq!(provider.provider_id.as_deref(), Some("provider"));
         Ok(())
     }
@@ -1129,37 +1234,112 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn provider_sync_skips_locked_and_covered_owners() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        let release_id = insert_release(&mut db, "Release")?;
+    #[tokio::test]
+    async fn provider_sync_records_only_while_its_basis_holds() -> anyhow::Result<()> {
+        let db = lyra_db::DbAsync::new(new_test_db()?);
+        let release_id = insert_release(&mut *db.write().await, "Release")?;
+        let public_id = lyra_db::releases::get_by_id(&*db.read().await, release_id)?
+            .expect("release exists")
+            .id;
+        let root = tempfile::tempdir()?;
+        let covers_root = root.path().join("covers");
+        let target_dir = configured_cover_dir_for_release(&covers_root, release_id);
+        let fetch_missing = CoverSyncOptions::default();
         let replace = CoverSyncOptions {
             replace_existing: true,
             force_refresh: false,
         };
-        assert!(provider_sync_allowed(
-            &db,
-            release_id,
-            None,
-            CoverSyncOptions::default()
-        )?);
-        assert!(!provider_sync_allowed(
-            &db,
-            release_id,
-            Some(Path::new("/music/cover.jpg")),
-            CoverSyncOptions::default()
-        )?);
-        assert!(provider_sync_allowed(
-            &db,
-            release_id,
-            Some(Path::new("/music/cover.jpg")),
-            replace
-        )?);
+        let basis = |options| {
+            let db = db.clone();
+            let public_id = public_id.clone();
+            async move {
+                let db_read = db.read().await;
+                provider_sync_basis(&db_read, release_id, &public_id, None, options)
+            }
+        };
+        let save = |basis: ProviderSyncBasis| {
+            let db = db.clone();
+            let covers_root = covers_root.clone();
+            let target_dir = target_dir.clone();
+            async move {
+                save_provider_cover(
+                    &db,
+                    &covers_root,
+                    &basis,
+                    &target_dir,
+                    "provider",
+                    "png",
+                    PNG_1X1,
+                )
+                .await
+            }
+        };
 
-        let mut release = lyra_db::releases::get_by_id(&db, release_id)?.expect("release exists");
-        release.locked = Some(true);
-        lyra_db::releases::update(&mut db, &release)?;
-        assert!(!provider_sync_allowed(&db, release_id, None, replace)?);
+        assert!(
+            provider_sync_basis(
+                &*db.read().await,
+                release_id,
+                &public_id,
+                Some(Path::new("/music/cover.jpg")),
+                fetch_missing
+            )?
+            .is_none(),
+            "a local cover means no fetch"
+        );
+
+        // A cover arrives while a fetch for a cover-less release is under way.
+        let missing = basis(fetch_missing).await?.expect("no cover yet");
+        let replacing = basis(replace).await?.expect("replacing is allowed");
+        save(replacing).await?.expect("the first replace records");
+        assert!(save(missing).await?.is_none());
+
+        // The provider cover changes, as a user's choice would, while a replace is under way.
+        let stale = basis(replace).await?.expect("replacing is allowed");
+        let current = basis(replace).await?.expect("replacing is allowed");
+        save(current).await?.expect("recorded");
+        assert!(save(stale).await?.is_none());
+
+        // The release is locked while a replace is under way.
+        let unlocked = basis(replace).await?.expect("replacing is allowed");
+        {
+            let mut db_write = db.write().await;
+            let mut release =
+                lyra_db::releases::get_by_id(&*db_write, release_id)?.expect("release exists");
+            release.locked = Some(true);
+            lyra_db::releases::update(&mut db_write, &release)?;
+        }
+        assert!(save(unlocked).await?.is_none());
+        assert!(basis(replace).await?.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_scan_forgets_a_local_cover_only_when_it_reached_the_folder() -> anyhow::Result<()> {
+        let db = lyra_db::DbAsync::new(new_test_db()?);
+        let release_id = insert_release(&mut *db.write().await, "Release")?;
+        let root = tempfile::tempdir()?;
+        let library_cover = root.path().join("cover.png");
+        std_fs::write(&library_cover, PNG_1X1)?;
+        upsert_local_cover_metadata(&db, release_id, &library_cover).await?;
+        std_fs::remove_file(&library_cover)?;
+
+        // The release has no reachable folders here, as on an unmounted library.
+        assert!(
+            record_local_release_cover(&db, release_id, None)
+                .await?
+                .is_none()
+        );
+        assert!(
+            lyra_db::covers::get_source(&*db.read().await, release_id, CoverSource::Local)?
+                .is_some(),
+            "an unreachable library keeps the record"
+        );
+
+        forget_missing_local_cover(&db, release_id).await?;
+        assert!(
+            lyra_db::covers::get_source(&*db.read().await, release_id, CoverSource::Local)?
+                .is_none()
+        );
         Ok(())
     }
 }

@@ -50,7 +50,6 @@ use crate::{
             self,
             selection::{
                 self,
-                CandidateSource,
                 CoverCandidates,
                 CoverOwnerKind,
             },
@@ -197,7 +196,7 @@ pub(crate) fn build_cover_response(
     }
 
     Ok(Some(
-        lyra_db::covers::get(db, owner_db_id)?.map(cover_to_response),
+        covers::lookup::shown_cover(db, owner_db_id)?.map(cover_to_response),
     ))
 }
 
@@ -360,15 +359,13 @@ pub enum CoverCandidateSource {
     Generated,
 }
 
-impl From<CandidateSource> for CoverCandidateSource {
-    fn from(source: CandidateSource) -> Self {
+impl From<Option<CoverSource>> for CoverCandidateSource {
+    fn from(source: Option<CoverSource>) -> Self {
         match source {
-            CandidateSource::Stored(source) => match StoredCoverSource::from(source) {
-                StoredCoverSource::Local => Self::Local,
-                StoredCoverSource::Provider => Self::Provider,
-                StoredCoverSource::Manual => Self::Manual,
-            },
-            CandidateSource::Generated => Self::Generated,
+            Some(CoverSource::Local) => Self::Local,
+            Some(CoverSource::Provider) => Self::Provider,
+            Some(CoverSource::Manual) => Self::Manual,
+            None => Self::Generated,
         }
     }
 }
@@ -389,6 +386,13 @@ pub struct CoverCandidateResponse {
         schemars(description = "Whether this is the cover the entity shows.")
     )]
     pub active: bool,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Whether the image file is there. A stored cover whose file is missing keeps its place, and a pin to it, but is passed over for the next cover until the file returns or is replaced."
+        )
+    )]
+    pub available: bool,
     #[cfg_attr(
         feature = "docgen",
         schemars(description = "The provider that supplied a `provider` cover.")
@@ -421,6 +425,7 @@ impl From<CoverCandidates> for CoverCandidatesResponse {
                 .map(|candidate| CoverCandidateResponse {
                     source: candidate.source.into(),
                     active: candidate.active,
+                    available: candidate.available,
                     provider_id: candidate.cover.provider_id.clone(),
                     cover: cover_to_response(candidate.cover),
                 })
@@ -554,7 +559,7 @@ fn get_cover_candidates_docs<K: CoverOwnerRoute>(op: TransformOperation) -> Tran
     };
     op.summary(&format!("List {} cover candidates", K::NAME))
         .description(&format!(
-            "Returns the {name}'s stored covers, at most one per source, as `{{ candidates, selection }}`. Each candidate carries its `source`, whether it is `active` (the cover `inc=covers` returns), the `provider_id` of a provider cover, and its `cover` with the public image URL. Without a pinned `selection`, the {name} shows its manual cover, else its provider cover, else its local cover.{generated} 404 if the {name} is not found or not visible.",
+            "Returns the {name}'s stored covers, at most one per source, as `{{ candidates, selection }}`. Each candidate carries its `source`, whether it is `active` (the cover `inc=covers` returns), whether its image file is `available`, the `provider_id` of a provider cover, and its `cover` with the public image URL. The {name} shows its pinned `selection`, else its manual cover, else its provider cover, else its local cover, passing over any whose file is missing; such a cover keeps its record and pin and shows again once the file is back.{generated} 404 if the {name} is not found or not visible.",
             name = K::NAME
         ))
 }

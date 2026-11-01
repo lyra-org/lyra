@@ -93,11 +93,12 @@ pub(crate) use providers::{
 };
 pub(crate) use resolve::configured_covers_root;
 pub(crate) use sync::{
-    CoverScope,
     MAX_COVER_BYTES,
     discard_cover_file,
+    discard_unreferenced_cover_files,
     record_local_release_cover,
-    sync_and_persist_covers_for_library,
+    sync_and_persist_release_covers_for_library,
     sync_artist_cover,
+    sync_artist_covers_for_library,
     sync_release_cover_for_tracks,
 };

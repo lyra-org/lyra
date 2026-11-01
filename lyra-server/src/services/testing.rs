@@ -552,3 +552,16 @@ mod fake_dispatch {
         }
     }
 }
+
+/// An image file that exists for the test run, for covers whose file must be there to show.
+#[cfg(test)]
+pub(crate) fn existing_cover_path() -> String {
+    static PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| {
+        let path = std::env::temp_dir().join(format!("lyra-test-cover-{}.jpg", std::process::id()));
+        std::fs::write(&path, b"cover").expect("write test cover");
+        path
+    })
+    .to_string_lossy()
+    .into_owned()
+}

@@ -251,10 +251,12 @@ pub(crate) fn track_detail_to_response(
     chains: &TrackChains,
 ) -> anyhow::Result<TrackResponse> {
     let artist_covers = match detail.artists.as_ref() {
-        Some(artists) if includes.artist_covers => Some(lyra_db::covers::get_many(
-            db,
-            &super::db_ids_from_credited_artists(artists),
-        )?),
+        Some(artists) if includes.artist_covers => {
+            Some(crate::services::covers::lookup::shown_covers(
+                db,
+                &super::db_ids_from_credited_artists(artists),
+            )?)
+        }
         _ => None,
     };
     let releases = detail
@@ -843,7 +845,7 @@ mod tests {
                 lyra_db::Cover {
                     db_id: None,
                     id: nanoid!(),
-                    path: "/music/release/cover.jpg".to_string(),
+                    path: crate::services::testing::existing_cover_path(),
                     mime_type: "image/jpeg".to_string(),
                     hash: "a".repeat(64),
                     blurhash: Some("LKO2?U%2Tw=w]~RBVZRi};RPxuwH".to_string()),

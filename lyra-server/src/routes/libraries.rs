@@ -384,7 +384,7 @@ async fn delete_library(
             "Wait for the library sync or refresh to finish before deleting it.",
         ));
     }
-    let track_ids = {
+    let removed = {
         let mut db = STATE.db.write().await;
         let user_db_id = principal.require(&db)?;
         let library_db_id = lyra_db::lookup::find_node_id_by_id(&*db, &id)?
@@ -400,7 +400,8 @@ async fn delete_library(
             Ok(lyra_db::libraries::delete(t, &library)?)
         })?
     };
-    crate::services::hls::state::teardown_hls_jobs_for_tracks(&track_ids).await;
+    crate::services::covers::discard_unreferenced_cover_files(removed.orphaned_covers);
+    crate::services::hls::state::teardown_hls_jobs_for_tracks(&removed.track_ids).await;
     Ok(StatusCode::NO_CONTENT)
 }
 

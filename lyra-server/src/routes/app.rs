@@ -407,9 +407,21 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("GET", "/api/releases/"),
     ("GET", "/api/releases/{id}"),
     ("POST", "/api/releases/{id}/covers/search"),
+    ("GET", "/api/releases/{id}/covers/candidates"),
+    ("PUT", "/api/releases/{id}/covers/manual"),
+    ("DELETE", "/api/releases/{id}/covers/manual"),
+    ("PUT", "/api/releases/{id}/covers/provider"),
+    ("PUT", "/api/releases/{id}/covers/selection"),
+    ("DELETE", "/api/releases/{id}/covers/selection"),
     ("GET", "/api/artists/"),
     ("GET", "/api/artists/{id}"),
     ("POST", "/api/artists/{id}/covers/search"),
+    ("GET", "/api/artists/{id}/covers/candidates"),
+    ("PUT", "/api/artists/{id}/covers/manual"),
+    ("DELETE", "/api/artists/{id}/covers/manual"),
+    ("PUT", "/api/artists/{id}/covers/provider"),
+    ("PUT", "/api/artists/{id}/covers/selection"),
+    ("DELETE", "/api/artists/{id}/covers/selection"),
     ("GET", "/api/entries/"),
     ("GET", "/api/entries/{id}"),
     ("GET", "/api/genres/"),
@@ -440,6 +452,9 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("POST", "/api/playlists/{id}/tracks/remove"),
     ("PATCH", "/api/playlists/{id}/tracks/{entry_id}"),
     ("DELETE", "/api/playlists/{id}/tracks/{entry_id}"),
+    ("GET", "/api/playlists/{id}/covers/candidates"),
+    ("PUT", "/api/playlists/{id}/covers/manual"),
+    ("DELETE", "/api/playlists/{id}/covers/manual"),
     ("GET", "/api/stream/{track_id}"),
     ("GET", "/api/stream/{track_id}/hls.m3u8"),
     ("GET", "/api/stream/hls/{session_id}/{segment}"),
@@ -490,6 +505,18 @@ mod tests {
         assert!(core_api.reservations.contains(
             &RouteKey::new("POST", "/api/me/ratings/check").expect("ratings check route key")
         ));
+        for (method, path) in [
+            ("PUT", "/api/releases/{id}/covers/manual"),
+            ("DELETE", "/api/artists/{id}/covers/selection"),
+            ("GET", "/api/playlists/{id}/covers/candidates"),
+        ] {
+            assert!(
+                core_api
+                    .reservations
+                    .contains(&RouteKey::new(method, path).expect("cover route key")),
+                "{method} {path}"
+            );
+        }
         assert!(
             !core_api
                 .reservations

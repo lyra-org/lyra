@@ -135,25 +135,72 @@ fn cover_by_db_id(db: &impl DbAccess, cover_db_id: DbId) -> anyhow::Result<Optio
     super::graph::fetch_typed_by_id(db, cover_db_id, "Cover")
 }
 
+fn precedence_rank(source: CoverSource) -> usize {
+    CoverSource::PRECEDENCE
+        .iter()
+        .position(|candidate| *candidate == source)
+        .unwrap_or(CoverSource::PRECEDENCE.len())
+}
+
+/// Each owner's stored covers, in automatic precedence order. Owners without any are left out.
+pub fn sources_many(
+    db: &impl DbAccess,
+    owner_db_ids: &[DbId],
+) -> anyhow::Result<HashMap<DbId, Vec<SourcedCover>>> {
+    let mut edges_by_owner = Vec::new();
+    let mut cover_db_ids = Vec::new();
+    for owner_db_id in super::dedup_positive_ids(owner_db_ids) {
+        let edges = source_edges(db, owner_db_id)?;
+        cover_db_ids.extend(edges.iter().map(|edge| edge.cover_db_id));
+        edges_by_owner.push((owner_db_id, edges));
+    }
+    cover_db_ids.sort_by_key(|id| id.0);
+    cover_db_ids.dedup();
+    let covers = super::graph::bulk_fetch_typed::<Cover>(db, cover_db_ids, "Cover")?;
+
+    let mut sources = HashMap::new();
+    for (owner_db_id, edges) in edges_by_owner {
+        let mut owned = edges
+            .into_iter()
+            .filter_map(|edge| {
+                covers.get(&edge.cover_db_id).map(|cover| SourcedCover {
+                    source: edge.source,
+                    selected: edge.selected,
+                    cover: cover.clone(),
+                })
+            })
+            .collect::<Vec<_>>();
+        if owned.is_empty() {
+            continue;
+        }
+        owned.sort_by_key(|sourced| precedence_rank(sourced.source));
+        sources.insert(owner_db_id, owned);
+    }
+    Ok(sources)
+}
+
 /// The owner's stored covers, in automatic precedence order.
 pub fn sources(db: &impl DbAccess, owner_db_id: DbId) -> anyhow::Result<Vec<SourcedCover>> {
-    let mut covers = Vec::new();
-    for edge in source_edges(db, owner_db_id)? {
-        let Some(cover) = cover_by_db_id(db, edge.cover_db_id)? else {
-            continue;
-        };
-        covers.push(SourcedCover {
-            source: edge.source,
-            selected: edge.selected,
-            cover,
-        });
+    Ok(sources_many(db, &[owner_db_id])?
+        .remove(&owner_db_id)
+        .unwrap_or_default())
+}
+
+/// The cover to show from an owner's `sources`, skipping those `available` rejects: the pinned
+/// source's, else the first in precedence order.
+pub fn shown(
+    sources: &[SourcedCover],
+    mut available: impl FnMut(&Cover) -> bool,
+) -> Option<&SourcedCover> {
+    if let Some(pinned) = sources.iter().find(|sourced| sourced.selected)
+        && available(&pinned.cover)
+    {
+        return Some(pinned);
     }
-    covers.sort_by_key(|covered| {
-        CoverSource::PRECEDENCE
-            .iter()
-            .position(|source| *source == covered.source)
-    });
-    Ok(covers)
+    sources
+        .iter()
+        .filter(|sourced| !sourced.selected)
+        .find(|sourced| available(&sourced.cover))
 }
 
 /// The owner's cover from `source`.
@@ -162,35 +209,26 @@ pub fn get_source(
     owner_db_id: DbId,
     source: CoverSource,
 ) -> anyhow::Result<Option<Cover>> {
-    let Some(edge) = source_edges(db, owner_db_id)?
+    Ok(sources(db, owner_db_id)?
         .into_iter()
-        .find(|edge| edge.source == source)
-    else {
-        return Ok(None);
-    };
-    cover_by_db_id(db, edge.cover_db_id)
+        .find(|sourced| sourced.source == source)
+        .map(|sourced| sourced.cover))
 }
 
 /// The source the owner pinned, if any.
 pub fn selection(db: &impl DbAccess, owner_db_id: DbId) -> anyhow::Result<Option<CoverSource>> {
-    Ok(source_edges(db, owner_db_id)?
+    Ok(sources(db, owner_db_id)?
         .into_iter()
-        .find(|edge| edge.selected)
-        .map(|edge| edge.source))
+        .find(|sourced| sourced.selected)
+        .map(|sourced| sourced.source))
 }
 
-/// The cover the owner shows: its pinned source's, else the first source in precedence order.
+/// The cover the owner shows by its records alone: its pinned source's, else the first in
+/// precedence order. Readers that serve the image skip covers whose file is missing with
+/// [`shown`].
 pub fn get(db: &impl DbAccess, owner_db_id: DbId) -> anyhow::Result<Option<Cover>> {
-    let edges = source_edges(db, owner_db_id)?;
-    let shown = edges.iter().find(|edge| edge.selected).or_else(|| {
-        CoverSource::PRECEDENCE
-            .iter()
-            .find_map(|source| edges.iter().find(|edge| edge.source == *source))
-    });
-    match shown {
-        Some(edge) => cover_by_db_id(db, edge.cover_db_id),
-        None => Ok(None),
-    }
+    let sources = sources(db, owner_db_id)?;
+    Ok(shown(&sources, |_| true).map(|sourced| sourced.cover.clone()))
 }
 
 pub fn get_by_public_id(db: &impl DbAccess, id: &str) -> anyhow::Result<Option<Cover>> {
@@ -201,18 +239,12 @@ pub fn get_many(
     db: &impl super::DbAccess,
     owner_db_ids: &[DbId],
 ) -> anyhow::Result<HashMap<DbId, Cover>> {
-    let unique_owner_db_ids = super::dedup_positive_ids(owner_db_ids);
-
-    if unique_owner_db_ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let mut covers = HashMap::new();
-    for owner_db_id in unique_owner_db_ids {
-        if let Some(cover) = get(db, owner_db_id)? {
-            covers.insert(owner_db_id, cover);
-        }
-    }
-    Ok(covers)
+    Ok(sources_many(db, owner_db_ids)?
+        .into_iter()
+        .filter_map(|(owner_db_id, sources)| {
+            shown(&sources, |_| true).map(|sourced| (owner_db_id, sourced.cover.clone()))
+        })
+        .collect())
 }
 
 /// Pins `source` as the cover the owner shows, or clears the pin with `None`. Returns false,
@@ -292,25 +324,35 @@ fn link(
     Ok(())
 }
 
-/// Links an existing cover node to another owner as its `source` cover, sharing the node, when
-/// the owner has no cover from that source yet. Returns whether it linked.
-pub fn share(
-    db: &mut impl DbAccess,
-    owner_db_id: DbId,
-    source: CoverSource,
-    cover_db_id: DbId,
-    selected: bool,
-) -> anyhow::Result<bool> {
-    let had_cover = !source_edges(db, owner_db_id)?.is_empty();
-    if get_source(db, owner_db_id, source)?.is_some() {
-        return Ok(false);
+/// Gives `winner` the covers of `loser` for the sources it has none from, sharing their nodes.
+/// The loser's pin carries over only when the winner had no covers at all.
+pub fn adopt_missing(db: &mut impl DbAccess, winner: DbId, loser: DbId) -> anyhow::Result<()> {
+    let winner_sources = sources(db, winner)?;
+    let had_cover = !winner_sources.is_empty();
+    let mut adopted = false;
+    for sourced in sources(db, loser)? {
+        if winner_sources
+            .iter()
+            .any(|existing| existing.source == sourced.source)
+        {
+            continue;
+        }
+        let Some(cover_db_id) = sourced.cover.db_id else {
+            continue;
+        };
+        link(
+            db,
+            winner,
+            cover_db_id,
+            sourced.source,
+            sourced.selected && !had_cover,
+        )?;
+        adopted = true;
     }
-    let selected = selected && selection(db, owner_db_id)?.is_none();
-    link(db, owner_db_id, cover_db_id, source, selected)?;
-    if !had_cover {
-        cover_gained(db, owner_db_id)?;
+    if adopted && !had_cover {
+        cover_gained(db, winner)?;
     }
-    Ok(true)
+    Ok(())
 }
 
 fn is_release(db: &impl DbAccess, owner_db_id: DbId) -> anyhow::Result<bool> {
@@ -363,6 +405,21 @@ pub fn remove(
         cover_lost(db, owner_db_id)?;
     }
     Ok(Some(DetachedCover { cover, orphaned }))
+}
+
+/// Detaches every cover of the owner, as when the owner is deleted, and returns those no other
+/// owner shares, whose files may be discarded.
+pub fn remove_all(db: &mut impl DbAccess, owner_db_id: DbId) -> anyhow::Result<Vec<Cover>> {
+    let mut orphaned = Vec::new();
+    for edge in source_edges(db, owner_db_id)? {
+        let Some(detached) = remove(db, owner_db_id, edge.source)? else {
+            continue;
+        };
+        if detached.orphaned {
+            orphaned.push(detached.cover);
+        }
+    }
+    Ok(orphaned)
 }
 
 /// The owner's cover from `source` after an upsert, and the cover it replaced.
@@ -709,13 +766,7 @@ mod tests {
         )?
         .cover;
         let shared_db_id = shared.db_id.ok_or_else(|| anyhow!("db_id"))?;
-        assert!(share(
-            &mut db,
-            second,
-            CoverSource::Provider,
-            shared_db_id,
-            false
-        )?);
+        adopt_missing(&mut db, second, first)?;
 
         let rewritten = upsert_cover(
             &mut db,
@@ -731,22 +782,135 @@ mod tests {
         assert_eq!(shown_id(&db, first)?.as_deref(), Some("shared"));
         assert_eq!(shown_id(&db, second)?.as_deref(), Some("own"));
 
-        assert!(share(
-            &mut db,
-            second,
-            CoverSource::Local,
-            shared_db_id,
-            false
-        )?);
-        let detached =
-            remove(&mut db, second, CoverSource::Local)?.ok_or_else(|| anyhow!("removed"))?;
-        assert!(!detached.orphaned);
+        let third = insert_owner(&mut db)?;
+        adopt_missing(&mut db, third, first)?;
+        assert!(
+            remove_all(&mut db, third)?.is_empty(),
+            "the first owner keeps it"
+        );
         assert!(get_by_public_id(&db, "shared")?.is_some());
 
-        let detached =
-            remove(&mut db, first, CoverSource::Provider)?.ok_or_else(|| anyhow!("removed"))?;
-        assert!(detached.orphaned);
+        let orphaned = remove_all(&mut db, first)?;
+        assert_eq!(
+            orphaned
+                .iter()
+                .map(|cover| cover.id.as_str())
+                .collect::<Vec<_>>(),
+            ["shared"]
+        );
         assert!(get_by_public_id(&db, "shared")?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn adopting_keeps_the_winners_covers_and_pin() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let winner = insert_owner(&mut db)?;
+        let loser = insert_owner(&mut db)?;
+        upsert_cover(
+            &mut db,
+            winner,
+            CoverSource::Local,
+            cover("winner-local", "/music/w.jpg"),
+        )?;
+        upsert_cover(
+            &mut db,
+            loser,
+            CoverSource::Local,
+            cover("loser-local", "/music/l.jpg"),
+        )?;
+        upsert_cover(
+            &mut db,
+            loser,
+            CoverSource::Manual,
+            cover("loser-manual", "/covers/l/manual.jpg"),
+        )?;
+        select(&mut db, loser, Some(CoverSource::Manual))?;
+
+        adopt_missing(&mut db, winner, loser)?;
+        assert_eq!(
+            get_source(&db, winner, CoverSource::Local)?.map(|cover| cover.id),
+            Some("winner-local".to_string())
+        );
+        assert_eq!(
+            get_source(&db, winner, CoverSource::Manual)?.map(|cover| cover.id),
+            Some("loser-manual".to_string())
+        );
+        assert_eq!(
+            selection(&db, winner)?,
+            None,
+            "a winner with covers keeps choosing by precedence"
+        );
+
+        let fresh = insert_owner(&mut db)?;
+        adopt_missing(&mut db, fresh, loser)?;
+        assert_eq!(selection(&db, fresh)?, Some(CoverSource::Manual));
+        Ok(())
+    }
+
+    #[test]
+    fn a_pin_whose_file_is_missing_falls_through_but_stays() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let owner = insert_owner(&mut db)?;
+        upsert_cover(
+            &mut db,
+            owner,
+            CoverSource::Local,
+            cover("local", "/music/cover.jpg"),
+        )?;
+        upsert_cover(
+            &mut db,
+            owner,
+            CoverSource::Provider,
+            cover("provider", "/covers/1/provider.jpg"),
+        )?;
+        select(&mut db, owner, Some(CoverSource::Local))?;
+        let stored = sources(&db, owner)?;
+
+        let shown_id = shown(&stored, |cover| cover.id != "local").map(|s| s.cover.id.as_str());
+        assert_eq!(shown_id, Some("provider"));
+        assert!(shown(&stored, |_| false).is_none());
+        assert_eq!(selection(&db, owner)?, Some(CoverSource::Local));
+        Ok(())
+    }
+
+    #[test]
+    fn removing_entities_detaches_their_covers() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let removed = crate::fixtures::insert_release(&mut db, "Removed")?;
+        let kept = crate::fixtures::insert_release(&mut db, "Kept")?;
+        upsert_cover(
+            &mut db,
+            removed,
+            CoverSource::Manual,
+            cover("own", "/covers/1/manual.jpg"),
+        )?;
+        upsert_cover(
+            &mut db,
+            removed,
+            CoverSource::Local,
+            cover("shared", "/music/cover.jpg"),
+        )?;
+        let other = insert_owner(&mut db)?;
+        adopt_missing(&mut db, other, removed)?;
+        remove(&mut db, other, CoverSource::Manual)?;
+        adopt_missing(&mut db, kept, other)?;
+        remove_all(&mut db, other)?;
+
+        let orphaned = crate::metadata::cascade_remove_entities(&mut db, &[removed])?;
+        assert_eq!(
+            orphaned
+                .iter()
+                .map(|cover| cover.id.as_str())
+                .collect::<Vec<_>>(),
+            ["own"]
+        );
+        assert!(get_by_public_id(&db, "own")?.is_none());
+        assert_eq!(
+            get(&db, kept)?.map(|cover| cover.id),
+            Some("shared".to_string()),
+            "a cover another entity shares stays"
+        );
         Ok(())
     }
 

@@ -477,12 +477,21 @@ fn library_entry_ids(db: &impl super::DbAccess, library_id: DbId) -> anyhow::Res
     Ok(entries)
 }
 
+/// What deleting a library removed.
+#[derive(Debug, Default)]
+pub struct RemovedLibrary {
+    /// Public ids of the removed tracks.
+    pub track_ids: HashSet<String>,
+    /// Covers of removed entities no remaining owner shares, whose files may be discarded.
+    pub orphaned_covers: Vec<super::Cover>,
+}
+
 /// Remove the library's exclusive media graph in the caller's transaction.
 /// Media reachable from another library remains available there.
 pub fn delete(
     db: &mut DbAnyTransactionMut<'_>,
     library: &Library,
-) -> anyhow::Result<HashSet<String>> {
+) -> anyhow::Result<RemovedLibrary> {
     let library_id = library
         .db_id
         .ok_or_else(|| anyhow!("library missing db_id"))?;
@@ -558,7 +567,7 @@ pub fn delete(
                     track_ids.insert(id.clone());
                 }
             }
-            Some("TrackSource" | "CueSheet" | "CueTrack" | "Cover") => children.push(element.id),
+            Some("TrackSource" | "CueSheet" | "CueTrack") => children.push(element.id),
             _ => {}
         }
     }
@@ -648,7 +657,7 @@ pub fn delete(
         cue_children.extend(tracks.into_iter().filter_map(|track| track.db_id));
     }
     children.extend(cue_children);
-    super::metadata::cascade_remove_entities_in_txn(db, &entities)?;
+    let orphaned_covers = super::metadata::cascade_remove_entities_in_txn(db, &entities)?;
     children.push(library_id);
     for run in super::sync_runs::list_for_library(db, &library.id)? {
         if let Some(id) = run.db_id {
@@ -656,7 +665,10 @@ pub fn delete(
         }
     }
     db.exec_mut(QueryBuilder::remove().ids(children).query())?;
-    Ok(track_ids)
+    Ok(RemovedLibrary {
+        track_ids,
+        orphaned_covers,
+    })
 }
 
 const ACCESS_KIND_KEY: &str = "library_access_kind";
@@ -1009,7 +1021,7 @@ mod tests {
         let layer_ids = crate::metadata::collect_layer_ids(&db, track)?;
         let track_public_id = crate::tracks::get_by_id(&db, track)?.unwrap().id;
         let removed = db.transaction_mut(|t| delete(t, &deleted))?;
-        assert_eq!(removed, HashSet::from([track_public_id]));
+        assert_eq!(removed.track_ids, HashSet::from([track_public_id]));
         assert!(get_by_id(&db, deleted_id)?.is_none());
         assert!(get_by_id(&db, kept_id)?.is_some());
         assert!(crate::tracks::get_by_id(&db, track)?.is_none());
@@ -1085,7 +1097,7 @@ mod tests {
 
         let deleted_track_id = crate::tracks::get_by_id(&db, deleted_track)?.unwrap().id;
         let removed = db.transaction_mut(|t| delete(t, &deleted))?;
-        assert_eq!(removed, HashSet::from([deleted_track_id]));
+        assert_eq!(removed.track_ids, HashSet::from([deleted_track_id]));
         assert!(crate::tracks::get_by_id(&db, deleted_track)?.is_none());
         assert!(crate::tracks::get_by_id(&db, kept_track)?.is_some());
         assert!(crate::genres::get_by_id(&db, jazz)?.is_some());
@@ -1219,7 +1231,11 @@ mod tests {
                 Ok((sheet, selected, unselected, source))
             })?;
         let affected = db.transaction_mut(|t| delete(t, &deleted))?;
-        assert!(affected.contains(&crate::tracks::get_by_id(&db, track)?.unwrap().id));
+        assert!(
+            affected
+                .track_ids
+                .contains(&crate::tracks::get_by_id(&db, track)?.unwrap().id)
+        );
         for id in [entry_id, sheet, selected, unselected, source] {
             assert!(
                 db.exec(QueryBuilder::select().ids(id).query()).is_err(),

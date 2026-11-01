@@ -102,31 +102,23 @@ async fn covers(
     ids: &UniqueIds,
     listens: Listens,
 ) -> luau::runtime::Result<luau::OwnedTable> {
-    let (table, stale_owners) = {
-        let (db, viewer) = db.read().await?;
-        let ids = Resolved::of(&*db, ids.0.clone())?;
-        let found = lookup::resolve(&db, &viewer, ids.db_ids(), listens)?;
-        let owner_ids = found
-            .covers
-            .values()
-            .map(|cover| cover.owner_db_id)
-            .collect::<Vec<_>>();
-        let owners = crate::plugins::ids::public_ids(&*db, &owner_ids)?;
-        let mut covers = Vec::with_capacity(found.covers.len());
-        for (id, cover) in found.covers {
-            covers.push((
-                id,
-                harmony_luau::serializable_to_luau_owned(CoverInfo::new(cover, &owners)?)?,
-            ));
-        }
-        (ids.keyed(covers), found.stale_owners)
-    };
-    if !stale_owners.is_empty() {
-        let handle = db.handle();
-        let mut db = handle.write().await;
-        lookup::remove_stale(&mut db, &stale_owners)?;
+    let (db, viewer) = db.read().await?;
+    let ids = Resolved::of(&*db, ids.0.clone())?;
+    let found = lookup::resolve(&db, &viewer, ids.db_ids(), listens)?;
+    let owner_ids = found
+        .covers
+        .values()
+        .map(|cover| cover.owner_db_id)
+        .collect::<Vec<_>>();
+    let owners = crate::plugins::ids::public_ids(&*db, &owner_ids)?;
+    let mut covers = Vec::with_capacity(found.covers.len());
+    for (id, cover) in found.covers {
+        covers.push((
+            id,
+            harmony_luau::serializable_to_luau_owned(CoverInfo::new(cover, &owners)?)?,
+        ));
     }
-    Ok(table)
+    Ok(ids.keyed(covers))
 }
 
 #[cfg(feature = "docgen")]

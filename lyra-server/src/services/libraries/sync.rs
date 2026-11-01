@@ -1828,7 +1828,7 @@ FILE "album.flac" WAVE
         }
 
         let covers_root = configured_covers_root();
-        let result = crate::services::covers::sync_and_persist_covers_for_library(
+        let result = crate::services::covers::sync_and_persist_release_covers_for_library(
             &STATE.db.get(),
             CoverPaths {
                 library_root: Some(&library.path),
@@ -1840,7 +1840,6 @@ FILE "album.flac" WAVE
                 force_refresh: false,
             },
             None,
-            crate::services::covers::CoverScope::Release,
         )
         .await;
         std::fs::set_permissions(&hidden, std::fs::Permissions::from_mode(0o755))?;

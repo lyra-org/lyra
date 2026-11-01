@@ -157,12 +157,15 @@ pub fn update_in_transaction(
     )
 }
 
-pub fn delete(db: &mut DbAny, playlist_db_id: DbId) -> anyhow::Result<()> {
-    db.transaction_mut(|t| -> anyhow::Result<()> {
+/// Deletes the playlist and detaches its covers. Returns the covers no other owner shares,
+/// whose files may be discarded.
+pub fn delete(db: &mut DbAny, playlist_db_id: DbId) -> anyhow::Result<Vec<super::Cover>> {
+    db.transaction_mut(|t| {
         super::favorites::remove_inbound_for_target(t, playlist_db_id)?;
         super::covers::display::remove_playlist_cover_profile(t, playlist_db_id)?;
+        let orphaned = super::covers::remove_all(t, playlist_db_id)?;
         t.exec_mut(QueryBuilder::remove().ids(playlist_db_id).query())?;
-        Ok(())
+        Ok(orphaned)
     })
 }
 

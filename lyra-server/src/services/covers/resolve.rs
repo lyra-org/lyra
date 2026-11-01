@@ -41,14 +41,14 @@ pub(crate) fn configured_cover_dir_for_playlist(covers_root: &Path, playlist_id:
 }
 
 /// Whether the owner has a stored cover from any source whose file is there.
-pub(crate) fn has_stored_cover(db: &DbAny, owner_db_id: DbId) -> Result<bool> {
+pub(crate) fn has_stored_cover(db: &impl lyra_db::DbAccess, owner_db_id: DbId) -> Result<bool> {
     Ok(lyra_db::covers::sources(db, owner_db_id)?
         .iter()
         .any(|sourced| Path::new(&sourced.cover.path).is_file()))
 }
 
 /// Whether automatic scans and provider syncs must leave the owner's covers alone.
-pub(crate) fn covers_locked(db: &DbAny, owner_db_id: DbId) -> Result<bool> {
+pub(crate) fn covers_locked(db: &impl lyra_db::DbAccess, owner_db_id: DbId) -> Result<bool> {
     let locked = match lyra_db::graph::element_kind(db, owner_db_id)?.as_deref() {
         Some("Release") => {
             lyra_db::releases::get_by_id(db, owner_db_id)?.and_then(|release| release.locked)
@@ -61,8 +61,8 @@ pub(crate) fn covers_locked(db: &DbAny, owner_db_id: DbId) -> Result<bool> {
     Ok(locked.unwrap_or(false))
 }
 
-/// The directory's cover image; none when the directory doesn't exist.
-pub(crate) fn find_cover_in_directory(dir: &Path) -> Result<Option<PathBuf>> {
+/// The directory's cover image, or none at all when the directory doesn't exist.
+fn list_cover_in_directory(dir: &Path) -> Result<Option<Option<PathBuf>>> {
     let mut candidates: Vec<(usize, PathBuf)> = Vec::new();
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -102,7 +102,7 @@ pub(crate) fn find_cover_in_directory(dir: &Path) -> Result<Option<PathBuf>> {
             .cmp(b_pri)
             .then_with(|| a_path.to_string_lossy().cmp(&b_path.to_string_lossy()))
     });
-    Ok(candidates.into_iter().next().map(|(_, path)| path))
+    Ok(Some(candidates.into_iter().next().map(|(_, path)| path)))
 }
 
 pub(crate) fn cover_dirs_for_release(
@@ -168,12 +168,39 @@ pub(crate) fn resolve_local_cover_for_release(
     tracks: &[Track],
     library_root: Option<&Path>,
 ) -> Result<Option<PathBuf>> {
+    Ok(scan_local_cover_for_release(db, tracks, library_root)?.cover)
+}
+
+/// What a look for a release's cover in its library found.
+pub(crate) struct LocalCoverScan {
+    pub(crate) cover: Option<PathBuf>,
+    /// Whether a folder holding the release's tracks could be listed, so a missing cover is
+    /// really gone rather than on a library that is unavailable.
+    pub(crate) reached: bool,
+}
+
+pub(crate) fn scan_local_cover_for_release(
+    db: &DbAny,
+    tracks: &[Track],
+    library_root: Option<&Path>,
+) -> Result<LocalCoverScan> {
+    let mut reached = false;
     for dir in cover_dirs_for_release(db, tracks, library_root)? {
-        if let Some(cover) = find_cover_in_directory(&dir)? {
-            return Ok(Some(cover));
+        let Some(listed) = list_cover_in_directory(&dir)? else {
+            continue;
+        };
+        reached = true;
+        if let Some(cover) = listed {
+            return Ok(LocalCoverScan {
+                cover: Some(cover),
+                reached,
+            });
         }
     }
-    Ok(None)
+    Ok(LocalCoverScan {
+        cover: None,
+        reached,
+    })
 }
 
 #[cfg(test)]

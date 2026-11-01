@@ -31,12 +31,12 @@ use crate::{
         EntityType,
         covers::{
             CoverPaths,
-            CoverScope,
             CoverSyncOptions,
             configured_covers_root,
             record_local_release_cover,
-            sync_and_persist_covers_for_library,
+            sync_and_persist_release_covers_for_library,
             sync_artist_cover,
+            sync_artist_covers_for_library,
             sync_release_cover_for_tracks,
         },
         deduplicate_artists_by_external_id,
@@ -705,23 +705,21 @@ async fn sync_library_covers_after_refresh(
         replace_existing: options.replace_cover,
         force_refresh: options.force_refresh,
     };
-    let release_count = sync_and_persist_covers_for_library(
+    let release_count = sync_and_persist_release_covers_for_library(
         &STATE.db.get(),
         paths,
         library_db_id,
         cover_options,
         options.provider_id,
-        CoverScope::Release,
     )
     .await
     .map_err(ProviderServiceError::Internal)?;
-    let artist_count = sync_and_persist_covers_for_library(
+    let artist_count = sync_artist_covers_for_library(
         &STATE.db.get(),
         paths,
         library_db_id,
         cover_options,
         options.provider_id,
-        CoverScope::Artist,
     )
     .await
     .map_err(ProviderServiceError::Internal)?;

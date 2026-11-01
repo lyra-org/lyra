@@ -3,8 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-//! Covers by item id for callers that read the image file itself, so a cover whose file is gone
-//! is left out and reported for removal.
+//! The covers items show, for callers that serve the image file itself. A stored cover whose
+//! file is missing is passed over for the next one the owner has, and its record kept.
 
 use std::collections::{
     HashMap,
@@ -27,37 +27,36 @@ use super::{
 use crate::services::catalog::Viewer;
 use lyra_db::Cover;
 
+/// Whether the cover's image file can be served.
+pub(crate) fn cover_file_available(cover: &Cover) -> bool {
+    std::fs::metadata(&cover.path).is_ok_and(|meta| meta.is_file())
+}
+
+/// The cover each owner shows: its pinned source's, else the first by precedence, passing over
+/// those whose file is missing. Owners without one are left out.
+pub(crate) fn shown_covers(
+    db: &impl lyra_db::DbAccess,
+    owner_db_ids: &[DbId],
+) -> anyhow::Result<HashMap<DbId, Cover>> {
+    Ok(lyra_db::covers::sources_many(db, owner_db_ids)?
+        .into_iter()
+        .filter_map(|(owner_db_id, sources)| {
+            lyra_db::covers::shown(&sources, cover_file_available)
+                .map(|sourced| (owner_db_id, sourced.cover.clone()))
+        })
+        .collect())
+}
+
+/// [`shown_covers`] for one owner.
+pub(crate) fn shown_cover(
+    db: &impl lyra_db::DbAccess,
+    owner_db_id: DbId,
+) -> anyhow::Result<Option<Cover>> {
+    Ok(shown_covers(db, &[owner_db_id])?.remove(&owner_db_id))
+}
+
 pub(crate) struct CoverLookup {
     pub(crate) covers: HashMap<DbId, ResolvedCover>,
-    /// Owners whose cover file is gone, for [`remove_stale`] once the read is over.
-    pub(crate) stale_owners: Vec<DbId>,
-}
-
-enum CoverFile {
-    Present,
-    Gone,
-    Unreadable,
-}
-
-fn cover_file(cover: &Cover) -> CoverFile {
-    match std::fs::metadata(&cover.path) {
-        Ok(meta) if meta.is_file() => CoverFile::Present,
-        Ok(_) => CoverFile::Gone,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => CoverFile::Gone,
-        Err(_) => CoverFile::Unreadable,
-    }
-}
-
-/// Whether `cover`'s file is there, noting `owner_db_id` as stale when it is gone.
-fn cover_file_present(stale_owners: &mut Vec<DbId>, owner_db_id: DbId, cover: &Cover) -> bool {
-    match cover_file(cover) {
-        CoverFile::Present => true,
-        CoverFile::Gone => {
-            stale_owners.push(owner_db_id);
-            false
-        }
-        CoverFile::Unreadable => false,
-    }
 }
 
 /// The covers of the items the viewer can see, keyed by item id. Releases and artists have their
@@ -70,71 +69,51 @@ pub(crate) fn resolve(
     listens: Listens,
 ) -> anyhow::Result<CoverLookup> {
     let mut covers = HashMap::new();
-    let mut stale_owners = Vec::new();
     let mut owned_ids = Vec::new();
     let mut track_ids = HashSet::new();
     let mut seen = HashSet::new();
-    {
-        let mut check =
-            |owner_db_id, cover: &Cover| cover_file_present(&mut stale_owners, owner_db_id, cover);
-        let mut filter = CoverFilter::new(viewer).checked(&mut check);
-        for item_id in item_ids.iter().copied() {
-            if !seen.insert(item_id) {
+    let mut filter = CoverFilter::new(viewer);
+    for item_id in item_ids.iter().copied() {
+        if !seen.insert(item_id) {
+            continue;
+        }
+        let display_cover = match lyra_db::graph::element_kind(db, item_id)?.as_deref() {
+            Some(kind @ ("Release" | "Artist" | "Track")) => {
+                if viewer.sees(db, item_id)? {
+                    owned_ids.push(item_id);
+                    if kind == "Track" {
+                        track_ids.insert(item_id);
+                    }
+                }
                 continue;
             }
-            let display_cover = match lyra_db::graph::element_kind(db, item_id)?.as_deref() {
-                Some(kind @ ("Release" | "Artist" | "Track")) => {
-                    if viewer.sees(db, item_id)? {
-                        owned_ids.push(item_id);
-                        if kind == "Track" {
-                            track_ids.insert(item_id);
-                        }
-                    }
+            Some("Playlist") => {
+                if !viewer.sees_playlist(db, item_id)? {
                     continue;
                 }
-                Some("Playlist") => {
-                    if !viewer.sees_playlist(db, item_id)? {
-                        continue;
-                    }
-                    let Some(playlist) = lyra_db::playlists::get_by_id(db, item_id)? else {
-                        continue;
-                    };
-                    display::playlists::cover_for_playlist(db, &mut filter, &playlist)?
-                }
-                Some("Genre") => {
-                    let Some(genre) = lyra_db::genres::get_by_id(db, item_id)? else {
-                        continue;
-                    };
-                    display::genres::cover_for_genre(db, &mut filter, &genre, listens)?
-                }
-                _ => continue,
-            };
-            if let Some(display_cover) = display_cover {
-                covers.insert(item_id, display_cover);
+                let Some(playlist) = lyra_db::playlists::get_by_id(db, item_id)? else {
+                    continue;
+                };
+                display::playlists::cover_for_playlist(db, &mut filter, &playlist)?
             }
+            Some("Genre") => {
+                let Some(genre) = lyra_db::genres::get_by_id(db, item_id)? else {
+                    continue;
+                };
+                display::genres::cover_for_genre(db, &mut filter, &genre, listens)?
+            }
+            _ => continue,
+        };
+        if let Some(display_cover) = display_cover {
+            covers.insert(item_id, display_cover);
         }
     }
-    let mut lookup = CoverLookup {
-        covers,
-        stale_owners,
-    };
+    let mut lookup = CoverLookup { covers };
     lookup.resolve_owned(db, &owned_ids, &track_ids)?;
     Ok(lookup)
 }
 
 impl CoverLookup {
-    fn keep_valid(&mut self, item_id: DbId, resolved: ResolvedCover) -> bool {
-        if !cover_file_present(
-            &mut self.stale_owners,
-            resolved.owner_db_id,
-            &resolved.cover,
-        ) {
-            return false;
-        }
-        self.covers.insert(item_id, resolved);
-        true
-    }
-
     /// Own covers, with tracks lacking one falling back to their releases' in id order.
     fn resolve_owned(
         &mut self,
@@ -142,19 +121,18 @@ impl CoverLookup {
         item_ids: &[DbId],
         track_ids: &HashSet<DbId>,
     ) -> anyhow::Result<()> {
-        let direct_covers = lyra_db::covers::get_many(db, item_ids)?;
+        let mut direct_covers = shown_covers(db, item_ids)?;
 
         let mut unresolved_tracks = Vec::new();
         for item_id in item_ids.iter().copied() {
-            if let Some(cover) = direct_covers.get(&item_id)
-                && self.keep_valid(
+            if let Some(cover) = direct_covers.remove(&item_id) {
+                self.covers.insert(
                     item_id,
                     ResolvedCover {
                         owner_db_id: item_id,
-                        cover: cover.clone(),
+                        cover,
                     },
-                )
-            {
+                );
                 continue;
             }
             if track_ids.contains(&item_id) {
@@ -178,7 +156,7 @@ impl CoverLookup {
                 }
             }
         }
-        let covers_by_release = lyra_db::covers::get_many(db, &release_ids)?;
+        let covers_by_release = shown_covers(db, &release_ids)?;
 
         for item_id in unresolved_tracks {
             let Some(releases) = track_releases.get(&item_id) else {
@@ -189,39 +167,22 @@ impl CoverLookup {
                 .filter_map(|release| release.db_id.clone().map(DbId::from))
                 .collect::<Vec<_>>();
             release_ids.sort_by_key(|release_id| release_id.0);
-            for release_id in release_ids {
-                let Some(cover) = covers_by_release.get(&release_id) else {
-                    continue;
-                };
-                if self.keep_valid(
+            if let Some((release_id, cover)) = release_ids.into_iter().find_map(|release_id| {
+                covers_by_release
+                    .get(&release_id)
+                    .map(|cover| (release_id, cover.clone()))
+            }) {
+                self.covers.insert(
                     item_id,
                     ResolvedCover {
                         owner_db_id: release_id,
-                        cover: cover.clone(),
+                        cover,
                     },
-                ) {
-                    break;
-                }
+                );
             }
         }
         Ok(())
     }
-}
-
-/// Removes the covers of `owner_ids`, from any source, whose files are still gone.
-pub(crate) fn remove_stale(db: &mut DbAny, owner_ids: &[DbId]) -> anyhow::Result<()> {
-    let mut seen = HashSet::new();
-    for owner_id in owner_ids.iter().copied() {
-        if !seen.insert(owner_id) {
-            continue;
-        }
-        for sourced in lyra_db::covers::sources(db, owner_id)? {
-            if matches!(cover_file(&sourced.cover), CoverFile::Gone) {
-                lyra_db::covers::remove(db, owner_id, sourced.source)?;
-            }
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -313,7 +274,10 @@ mod tests {
                 .map(|cover| cover.owner_db_id),
             Some(candidates[1])
         );
-        assert_eq!(found.stale_owners, vec![winner]);
+        assert!(
+            lyra_db::covers::get(&db, winner)?.is_some(),
+            "the record stays"
+        );
         Ok(())
     }
 
@@ -351,7 +315,10 @@ mod tests {
                 .map(|cover| cover.owner_db_id),
             Some(sources[1].1)
         );
-        assert_eq!(found.stale_owners, vec![sources[0].1]);
+        assert!(
+            lyra_db::covers::get(&db, sources[0].1)?.is_some(),
+            "the record stays"
+        );
         Ok(())
     }
 

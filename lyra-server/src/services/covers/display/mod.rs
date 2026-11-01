@@ -70,15 +70,12 @@ fn profile_is_current(profile: &DisplayCoverProfile) -> bool {
     lyra_db::covers::display::profile_is_clean(profile)
 }
 
-/// A check a release's cover must pass to be shown, given the release and its cover.
-pub(crate) type CoverCheck<'a> = &'a mut dyn FnMut(DbId, &lyra_db::Cover) -> bool;
-
 /// The releases a display cover may come from: those the viewer sees, only in `library` when
-/// set, whose cover passes the check. Every step of a selection skips the releases it rejects.
+/// set, that show a cover whose file is there. Every step of a selection skips the releases it
+/// rejects.
 pub(crate) struct CoverFilter<'a> {
     viewer: &'a Viewer,
     library: Option<DbId>,
-    check: Option<CoverCheck<'a>>,
 }
 
 impl<'a> CoverFilter<'a> {
@@ -86,19 +83,11 @@ impl<'a> CoverFilter<'a> {
         Self {
             viewer,
             library: None,
-            check: None,
         }
     }
 
     pub(crate) fn in_library(self, library: Option<DbId>) -> Self {
         Self { library, ..self }
-    }
-
-    pub(crate) fn checked(self, check: CoverCheck<'a>) -> Self {
-        Self {
-            check: Some(check),
-            ..self
-        }
     }
 
     pub(crate) fn viewer(&self) -> &'a Viewer {
@@ -119,36 +108,18 @@ impl<'a> CoverFilter<'a> {
         if !self.viewer.sees_entity(db, release_db_id)? {
             return Ok(None);
         }
-        let Some(cover) = lyra_db::covers::get(db, release_db_id)? else {
-            return Ok(None);
-        };
-        if let Some(check) = self.check.as_mut()
-            && !check(release_db_id, &cover)
-        {
-            return Ok(None);
-        }
-        Ok(Some(ResolvedCover {
-            owner_db_id: release_db_id,
-            cover,
-        }))
+        self.owned_cover(db, release_db_id)
     }
 
-    /// The cover `owner_db_id` holds itself, when it passes the check. The caller has already
-    /// established that the viewer sees the owner.
+    /// The cover `owner_db_id` shows itself. The caller has already established that the viewer
+    /// sees the owner.
     fn owned_cover(
         &mut self,
         db: &DbAny,
         owner_db_id: DbId,
     ) -> anyhow::Result<Option<ResolvedCover>> {
-        let Some(cover) = lyra_db::covers::get(db, owner_db_id)? else {
-            return Ok(None);
-        };
-        if let Some(check) = self.check.as_mut()
-            && !check(owner_db_id, &cover)
-        {
-            return Ok(None);
-        }
-        Ok(Some(ResolvedCover { owner_db_id, cover }))
+        Ok(super::lookup::shown_cover(db, owner_db_id)?
+            .map(|cover| ResolvedCover { owner_db_id, cover }))
     }
 
     /// The first of `release_db_ids` the filter lets through.

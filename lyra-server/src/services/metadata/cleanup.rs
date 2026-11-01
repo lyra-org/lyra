@@ -52,7 +52,10 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
         }
     }
 
-    cascade_remove_entities(db, &orphan_track_ids)?;
+    crate::services::covers::discard_unreferenced_cover_files(cascade_remove_entities(
+        db,
+        &orphan_track_ids,
+    )?);
 
     let releases: Vec<Release> = roots::members::<Release>(db, Root::Releases)?;
     let mut orphan_release_ids = Vec::new();
@@ -75,7 +78,10 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
         }
     }
 
-    cascade_remove_entities(db, &orphan_release_ids)?;
+    crate::services::covers::discard_unreferenced_cover_files(cascade_remove_entities(
+        db,
+        &orphan_release_ids,
+    )?);
 
     let connected_artist_ids = lyra_db::artists::reachable_from_catalog(db)?;
     let all_artists: Vec<Artist> = roots::members::<Artist>(db, Root::Artists)?;
@@ -98,7 +104,10 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
     )?;
     orphan_artist_ids.retain(|artist_id| !spared.contains(artist_id));
 
-    cascade_remove_entities(db, &orphan_artist_ids)?;
+    crate::services::covers::discard_unreferenced_cover_files(cascade_remove_entities(
+        db,
+        &orphan_artist_ids,
+    )?);
 
     // Cleanup order matters for cue/source graph nodes:
     // 1) remove orphan track_sources, 2) then orphan cue_tracks no longer referenced
@@ -137,7 +146,10 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
             orphan_track_source_ids.push(source_db_id);
         }
     }
-    cascade_remove_entities(db, &orphan_track_source_ids)?;
+    crate::services::covers::discard_unreferenced_cover_files(cascade_remove_entities(
+        db,
+        &orphan_track_source_ids,
+    )?);
 
     let all_cue_tracks: Vec<CueTrack> = roots::members::<CueTrack>(db, Root::CueTracks)?;
     let mut orphan_cue_track_ids = Vec::new();
@@ -172,7 +184,10 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
             orphan_cue_track_ids.push(cue_track_db_id);
         }
     }
-    cascade_remove_entities(db, &orphan_cue_track_ids)?;
+    crate::services::covers::discard_unreferenced_cover_files(cascade_remove_entities(
+        db,
+        &orphan_cue_track_ids,
+    )?);
 
     let all_cue_sheets: Vec<CueSheet> = roots::members::<CueSheet>(db, Root::CueSheets)?;
     let mut orphan_cue_sheet_ids = Vec::new();
@@ -207,7 +222,10 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
             orphan_cue_sheet_ids.push(cue_sheet_db_id);
         }
     }
-    cascade_remove_entities(db, &orphan_cue_sheet_ids)?;
+    crate::services::covers::discard_unreferenced_cover_files(cascade_remove_entities(
+        db,
+        &orphan_cue_sheet_ids,
+    )?);
 
     Ok(())
 }
@@ -385,9 +403,12 @@ fn merge_artist_into(
     lyra_db::favorites::retarget(db, loser, winner)?;
     lyra_db::ratings::retarget(db, loser, winner)?;
     lyra_db::tags::retarget(db, loser, winner)?;
+    lyra_db::covers::adopt_missing(db, winner, loser)?;
     // `merge_artist_into` runs inside `deduplicate_artists_by_external_id`'s outer
     // `transaction_mut`; use the in-txn variant — agdb does not support reentrant transactions.
-    lyra_db::metadata::cascade_remove_entities_in_txn(db, &[loser])?;
+    crate::services::covers::discard_unreferenced_cover_files(
+        lyra_db::metadata::cascade_remove_entities_in_txn(db, &[loser])?,
+    );
     for owner_id in reapplied_owners {
         crate::services::metadata::merging::apply_merged_metadata_to_entity_inside_tx(
             db, owner_id,
@@ -544,6 +565,70 @@ mod tests {
         };
         assert_eq!(tags(&db, alice)?, ["kept", "moved"]);
         assert_eq!(tags(&db, bob)?, ["bob"]);
+        Ok(())
+    }
+
+    #[test]
+    fn a_merged_artists_covers_fill_the_winners_missing_sources() -> anyhow::Result<()> {
+        use lyra_db::covers::CoverSource;
+
+        let mut db = test_db::new_test_db()?;
+        let artist = |db: &mut DbAny, credits: usize, cover: &str| -> anyhow::Result<DbId> {
+            let artist_id = lyra_db::fixtures::insert_artist(db, "Radiohead")?;
+            for _ in 0..credits {
+                let release = lyra_db::fixtures::insert_release(db, "Release")?;
+                test_db::connect_artist(db, release, artist_id)?;
+            }
+            lyra_db::external_ids::upsert(
+                db,
+                artist_id,
+                "musicbrainz",
+                "artist_id",
+                "mbid",
+                IdSource::Resolved,
+            )?;
+            let source = if cover == "winner" {
+                CoverSource::Provider
+            } else {
+                CoverSource::Manual
+            };
+            db.transaction_mut(|t| {
+                lyra_db::covers::upsert(
+                    t,
+                    artist_id,
+                    source,
+                    lyra_db::Cover {
+                        db_id: None,
+                        id: cover.to_string(),
+                        path: format!("/covers/{cover}.jpg"),
+                        mime_type: "image/jpeg".to_string(),
+                        hash: cover.to_string(),
+                        blurhash: None,
+                        provider_id: None,
+                    },
+                )
+            })?;
+            Ok(artist_id)
+        };
+        let winner = artist(&mut db, 10, "winner")?;
+        let loser = artist(&mut db, 0, "loser")?;
+
+        assert_eq!(
+            deduplicate_artists_by_external_id(&mut db, &unique_artist_ids())?,
+            1
+        );
+        assert!(lyra_db::artists::get_by_id(&db, loser)?.is_none());
+        let kept = lyra_db::covers::sources(&db, winner)?
+            .into_iter()
+            .map(|sourced| (sourced.source, sourced.cover.id))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kept,
+            [
+                (CoverSource::Manual, "loser".to_string()),
+                (CoverSource::Provider, "winner".to_string()),
+            ]
+        );
         Ok(())
     }
 

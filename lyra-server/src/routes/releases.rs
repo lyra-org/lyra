@@ -252,7 +252,10 @@ pub(crate) fn detail_to_release_response(
                 artist_db_ids.extend(super::db_ids_from_credited_artists(artists));
             }
         }
-        Some(lyra_db::covers::get_many(db, &artist_db_ids)?)
+        Some(crate::services::covers::lookup::shown_covers(
+            db,
+            &artist_db_ids,
+        )?)
     } else {
         None
     };
@@ -656,7 +659,7 @@ mod tests {
         let cover = lyra_db::Cover {
             db_id: None,
             id: nanoid!(),
-            path: "/music/release/cover.jpg".to_string(),
+            path: crate::services::testing::existing_cover_path(),
             mime_type: "image/jpeg".to_string(),
             hash: "a".repeat(64),
             blurhash: Some("LKO2?U%2Tw=w]~RBVZRi};RPxuwH".to_string()),

@@ -126,7 +126,7 @@ mod tests {
                 lyra_db::Cover {
                     db_id: None,
                     id: title.to_string(),
-                    path: format!("/music/{title}.jpg"),
+                    path: crate::services::testing::existing_cover_path(),
                     mime_type: "image/jpeg".to_string(),
                     hash: "a".repeat(64),
                     blurhash: None,

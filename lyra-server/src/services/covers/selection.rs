@@ -27,6 +27,7 @@ use super::{
         CoverFilter,
         playlists::generated_cover_for_playlist,
     },
+    lookup::cover_file_available,
     providers::{
         EntityType,
         search_artist_cover_candidates,
@@ -39,10 +40,9 @@ use super::{
         configured_covers_root,
     },
     sync::{
-        NewCoverFile,
+        PreparedCover,
         discard_cover_file,
         download_cover,
-        store_cover_file,
     },
 };
 use crate::services::{
@@ -88,18 +88,13 @@ impl CoverOwnerKind {
     }
 }
 
-/// Where a cover candidate comes from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CandidateSource {
-    Stored(CoverSource),
-    /// A playlist's display cover, picked from its releases' covers.
-    Generated,
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct CoverCandidate {
-    pub(crate) source: CandidateSource,
+    /// The stored source, or none for a playlist's generated cover.
+    pub(crate) source: Option<CoverSource>,
     pub(crate) cover: Cover,
+    /// Whether the image file is there; a stored cover without it is never shown.
+    pub(crate) available: bool,
     pub(crate) active: bool,
 }
 
@@ -199,12 +194,19 @@ fn collect_candidates(
     kind: CoverOwnerKind,
     owner_db_id: DbId,
 ) -> anyhow::Result<CoverCandidates> {
-    let active_id = lyra_db::covers::get(db, owner_db_id)?.map(|cover| cover.id);
-    let mut candidates = lyra_db::covers::sources(db, owner_db_id)?
+    let stored = lyra_db::covers::sources(db, owner_db_id)?;
+    let selection = stored
+        .iter()
+        .find(|sourced| sourced.selected)
+        .map(|sourced| sourced.source);
+    let shown_id = lyra_db::covers::shown(&stored, cover_file_available)
+        .map(|sourced| sourced.cover.id.clone());
+    let mut candidates = stored
         .into_iter()
         .map(|sourced| CoverCandidate {
-            source: CandidateSource::Stored(sourced.source),
-            active: active_id.as_deref() == Some(sourced.cover.id.as_str()),
+            source: Some(sourced.source),
+            available: cover_file_available(&sourced.cover),
+            active: shown_id.as_deref() == Some(sourced.cover.id.as_str()),
             cover: sourced.cover,
         })
         .collect::<Vec<_>>();
@@ -216,25 +218,17 @@ fn collect_candidates(
             generated_cover_for_playlist(db, &mut CoverFilter::new(&viewer), &playlist)?
         {
             candidates.push(CoverCandidate {
-                source: CandidateSource::Generated,
-                active: active_id.is_none(),
+                source: None,
+                available: true,
+                active: shown_id.is_none(),
                 cover: generated.cover,
             });
         }
     }
     Ok(CoverCandidates {
         candidates,
-        selection: lyra_db::covers::selection(db, owner_db_id)?,
+        selection,
     })
-}
-
-async fn current_candidates(
-    principal: &Principal,
-    kind: CoverOwnerKind,
-    owner_db_id: DbId,
-) -> Result<CoverCandidates, CoverSelectionError> {
-    let db = STATE.db.read().await;
-    Ok(collect_candidates(&db, principal, kind, owner_db_id)?)
 }
 
 /// The owner's stored covers per source, which one it shows, and the source it pinned.
@@ -245,6 +239,28 @@ pub(crate) async fn candidates(
 ) -> Result<CoverCandidates, CoverSelectionError> {
     let db = STATE.db.read().await;
     let owner_db_id = resolve_owner(&db, principal, kind, id, Access::Read)?;
+    Ok(collect_candidates(&db, principal, kind, owner_db_id)?)
+}
+
+/// Records a prepared cover once the principal is confirmed, under the write guard, to still
+/// be allowed to change the covers of the same entity `id` named when the request began.
+async fn record_for_owner(
+    principal: &Principal,
+    kind: CoverOwnerKind,
+    id: &str,
+    owner_db_id: DbId,
+    prepared: PreparedCover,
+    select: bool,
+) -> Result<CoverCandidates, CoverSelectionError> {
+    let covers_root = configured_covers_root();
+    let mut db = STATE.db.write().await;
+    if resolve_owner(&db, principal, kind, id, Access::Write)? != owner_db_id {
+        return Err(CoverSelectionError::NotFound(format!(
+            "{} not found: {id}",
+            kind.label()
+        )));
+    }
+    prepared.record(&mut db, &covers_root, owner_db_id, select)?;
     Ok(collect_candidates(&db, principal, kind, owner_db_id)?)
 }
 
@@ -267,22 +283,23 @@ pub(crate) async fn set_manual(
     .map_err(|err| anyhow::anyhow!("cover validation task failed: {err}"))?
     .map_err(|err| CoverSelectionError::Invalid(format!("{err:#}")))?;
 
-    let covers_root = configured_covers_root();
-    store_cover_file(
-        &STATE.db.get(),
-        &covers_root,
-        NewCoverFile {
-            owner_id: owner_db_id,
-            source: CoverSource::Manual,
-            dir: &kind.cover_dir(&covers_root, owner_db_id),
-            ext,
-            bytes: &bytes,
-            provider_id: None,
-            select: kind != CoverOwnerKind::Playlist,
-        },
+    let prepared = PreparedCover::write(
+        &kind.cover_dir(&configured_covers_root(), owner_db_id),
+        CoverSource::Manual,
+        ext,
+        &bytes,
+        None,
     )
     .await?;
-    current_candidates(principal, kind, owner_db_id).await
+    record_for_owner(
+        principal,
+        kind,
+        id,
+        owner_db_id,
+        prepared,
+        kind != CoverOwnerKind::Playlist,
+    )
+    .await
 }
 
 /// Removes the owner's manual cover, and the pin with it when it pointed there.
@@ -291,24 +308,20 @@ pub(crate) async fn remove_manual(
     kind: CoverOwnerKind,
     id: &str,
 ) -> Result<CoverCandidates, CoverSelectionError> {
-    let (owner_db_id, detached) = {
-        let mut db = STATE.db.write().await;
-        let owner_db_id = resolve_owner(&db, principal, kind, id, Access::Write)?;
-        let detached =
-            db.transaction_mut(|t| lyra_db::covers::remove(t, owner_db_id, CoverSource::Manual))?;
-        (owner_db_id, detached)
-    };
+    let mut db = STATE.db.write().await;
+    let owner_db_id = resolve_owner(&db, principal, kind, id, Access::Write)?;
+    let detached =
+        db.transaction_mut(|t| lyra_db::covers::remove(t, owner_db_id, CoverSource::Manual))?;
     let detached = detached
         .ok_or_else(|| CoverSelectionError::NotFound("no manual cover is stored".to_string()))?;
     if detached.orphaned {
         discard_cover_file(&configured_covers_root(), &detached.cover.path);
     }
-    current_candidates(principal, kind, owner_db_id).await
+    Ok(collect_candidates(&db, principal, kind, owner_db_id)?)
 }
 
 /// Downloads `url` as the owner's provider cover and pins it. The URL must be one of the
-/// provider's current cover candidates for the owner, so a caller can only adopt images the
-/// provider's own cover handler offers.
+/// candidates a fresh search of the provider's own cover handler offers for the owner.
 pub(crate) async fn set_provider(
     principal: &Principal,
     kind: CoverOwnerKind,
@@ -335,9 +348,9 @@ pub(crate) async fn set_provider(
 
     let found = match kind {
         CoverOwnerKind::Release => {
-            search_release_cover_candidates(id, Some(provider_id), false).await?
+            search_release_cover_candidates(id, Some(provider_id), true).await?
         }
-        _ => search_artist_cover_candidates(id, Some(provider_id), false).await?,
+        _ => search_artist_cover_candidates(id, Some(provider_id), true).await?,
     };
     let offered = found
         .iter()
@@ -354,22 +367,15 @@ pub(crate) async fn set_provider(
     let (bytes, ext) = download_cover(provider_id, entity_type, url)
         .await
         .map_err(|err| CoverSelectionError::Upstream(format!("{err:#}")))?;
-    let covers_root = configured_covers_root();
-    store_cover_file(
-        &STATE.db.get(),
-        &covers_root,
-        NewCoverFile {
-            owner_id: owner_db_id,
-            source: CoverSource::Provider,
-            dir: &kind.cover_dir(&covers_root, owner_db_id),
-            ext,
-            bytes: &bytes,
-            provider_id: Some(provider_id),
-            select: true,
-        },
+    let prepared = PreparedCover::write(
+        &kind.cover_dir(&configured_covers_root(), owner_db_id),
+        CoverSource::Provider,
+        ext,
+        &bytes,
+        Some(provider_id),
     )
     .await?;
-    current_candidates(principal, kind, owner_db_id).await
+    record_for_owner(principal, kind, id, owner_db_id, prepared, true).await
 }
 
 /// Pins the stored `source` as the cover the owner shows, or with `None` returns it to the
@@ -381,18 +387,15 @@ pub(crate) async fn select(
     source: Option<CoverSource>,
 ) -> Result<CoverCandidates, CoverSelectionError> {
     require_selectable(kind)?;
-    let owner_db_id = {
-        let mut db = STATE.db.write().await;
-        let owner_db_id = resolve_owner(&db, principal, kind, id, Access::Write)?;
-        let selected = db.transaction_mut(|t| lyra_db::covers::select(t, owner_db_id, source))?;
-        if !selected {
-            return Err(CoverSelectionError::SourceMissing(
-                source.expect("clearing the pin always succeeds"),
-            ));
-        }
-        owner_db_id
-    };
-    current_candidates(principal, kind, owner_db_id).await
+    let mut db = STATE.db.write().await;
+    let owner_db_id = resolve_owner(&db, principal, kind, id, Access::Write)?;
+    let selected = db.transaction_mut(|t| lyra_db::covers::select(t, owner_db_id, source))?;
+    if !selected {
+        return Err(CoverSelectionError::SourceMissing(
+            source.expect("clearing the pin always succeeds"),
+        ));
+    }
+    Ok(collect_candidates(&db, principal, kind, owner_db_id)?)
 }
 
 #[cfg(test)]
@@ -463,23 +466,23 @@ mod tests {
     /// Stores a provider cover the way an automatic provider sync does.
     async fn store_provider_cover(release_db_id: DbId) -> anyhow::Result<Cover> {
         let covers_root = configured_covers_root();
-        store_cover_file(
-            &STATE.db.get(),
-            &covers_root,
-            NewCoverFile {
-                owner_id: release_db_id,
-                source: CoverSource::Provider,
-                dir: &configured_cover_dir_for_release(&covers_root, release_db_id),
-                ext: "png",
-                bytes: &png(),
-                provider_id: Some("provider"),
-                select: false,
-            },
+        let prepared = PreparedCover::write(
+            &configured_cover_dir_for_release(&covers_root, release_db_id),
+            CoverSource::Provider,
+            "png",
+            &png(),
+            Some("provider"),
         )
-        .await
+        .await?;
+        prepared.record(
+            &mut *STATE.db.write().await,
+            &covers_root,
+            release_db_id,
+            false,
+        )
     }
 
-    fn active(found: &CoverCandidates) -> Option<CandidateSource> {
+    fn active(found: &CoverCandidates) -> Option<Option<CoverSource>> {
         found
             .candidates
             .iter()
@@ -491,7 +494,7 @@ mod tests {
         found
             .candidates
             .iter()
-            .find(|candidate| candidate.source == CandidateSource::Stored(source))
+            .find(|candidate| candidate.source == Some(source))
             .map(|candidate| &candidate.cover)
     }
 
@@ -503,10 +506,7 @@ mod tests {
         let admin = user("admin", true).await?;
         let (release_db_id, id, library_cover) = release_with_local_cover(library.path()).await?;
         let found = candidates(&admin, CoverOwnerKind::Release, &id).await?;
-        assert_eq!(
-            active(&found),
-            Some(CandidateSource::Stored(CoverSource::Local))
-        );
+        assert_eq!(active(&found), Some(Some(CoverSource::Local)));
 
         let provider = store_provider_cover(release_db_id).await?;
         let found = select(
@@ -517,10 +517,7 @@ mod tests {
         )
         .await?;
         assert_eq!(found.selection, Some(CoverSource::Provider));
-        assert_eq!(
-            active(&found),
-            Some(CandidateSource::Stored(CoverSource::Provider))
-        );
+        assert_eq!(active(&found), Some(Some(CoverSource::Provider)));
         assert_eq!(
             stored(&found, CoverSource::Provider).map(|cover| cover.provider_id.as_deref()),
             Some(Some("provider"))
@@ -534,10 +531,7 @@ mod tests {
         )
         .await?;
         assert_eq!(found.selection, Some(CoverSource::Local));
-        assert_eq!(
-            active(&found),
-            Some(CandidateSource::Stored(CoverSource::Local))
-        );
+        assert_eq!(active(&found), Some(Some(CoverSource::Local)));
         let local = stored(&found, CoverSource::Local).expect("the local cover is kept");
         assert_eq!(PathBuf::from(&local.path), library_cover);
         assert_eq!(
@@ -566,16 +560,13 @@ mod tests {
         let found = candidates(&admin, CoverOwnerKind::Release, &id).await?;
         assert_eq!(
             active(&found),
-            Some(CandidateSource::Stored(CoverSource::Provider)),
+            Some(Some(CoverSource::Provider)),
             "provider covers come before local ones"
         );
 
         let found = set_manual(&admin, CoverOwnerKind::Release, &id, png()).await?;
         assert_eq!(found.selection, Some(CoverSource::Manual));
-        assert_eq!(
-            active(&found),
-            Some(CandidateSource::Stored(CoverSource::Manual))
-        );
+        assert_eq!(active(&found), Some(Some(CoverSource::Manual)));
         let first_manual = stored(&found, CoverSource::Manual)
             .expect("manual cover")
             .path
@@ -597,10 +588,7 @@ mod tests {
         assert_eq!(found.selection, None);
         assert!(stored(&found, CoverSource::Manual).is_none());
         assert!(!Path::new(&second_manual).exists());
-        assert_eq!(
-            active(&found),
-            Some(CandidateSource::Stored(CoverSource::Provider))
-        );
+        assert_eq!(active(&found), Some(Some(CoverSource::Provider)));
         assert!(library_cover.is_file());
 
         let error = remove_manual(&admin, CoverOwnerKind::Release, &id)
@@ -700,10 +688,7 @@ mod tests {
 
         let found = set_manual(&owner, CoverOwnerKind::Playlist, &id, png()).await?;
         assert_eq!(found.selection, None, "playlists have no pin");
-        assert_eq!(
-            active(&found),
-            Some(CandidateSource::Stored(CoverSource::Manual))
-        );
+        assert_eq!(active(&found), Some(Some(CoverSource::Manual)));
         let path = stored(&found, CoverSource::Manual)
             .expect("manual cover")
             .path
@@ -728,6 +713,90 @@ mod tests {
             !Path::new(&path).exists(),
             "deleting the playlist discards its upload"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_missing_file_is_passed_over_but_kept_with_its_pin() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let library = tempfile::tempdir()?;
+        let admin = user("admin", true).await?;
+        let (release_db_id, id, library_cover) = release_with_local_cover(library.path()).await?;
+        let provider = store_provider_cover(release_db_id).await?;
+        select(
+            &admin,
+            CoverOwnerKind::Release,
+            &id,
+            Some(CoverSource::Local),
+        )
+        .await?;
+        std::fs::remove_file(&library_cover)?;
+
+        let found = candidates(&admin, CoverOwnerKind::Release, &id).await?;
+        assert_eq!(found.selection, Some(CoverSource::Local), "the pin stays");
+        assert_eq!(active(&found), Some(Some(CoverSource::Provider)));
+        let local = found
+            .candidates
+            .iter()
+            .find(|candidate| candidate.source == Some(CoverSource::Local))
+            .expect("the local record stays");
+        assert!(!local.available);
+        let db = STATE.db.read().await;
+        assert_eq!(
+            super::super::lookup::shown_cover(&*db, release_db_id)?.map(|cover| cover.path),
+            Some(provider.path.clone()),
+            "readers show the next cover"
+        );
+        let found = super::super::lookup::resolve(
+            &db,
+            &Viewer::System,
+            &[release_db_id],
+            super::super::display::Listens::Instance,
+        )?;
+        assert_eq!(
+            found
+                .covers
+                .get(&release_db_id)
+                .map(|cover| cover.cover.path.clone()),
+            Some(provider.path.clone())
+        );
+        assert!(lyra_db::covers::get_source(&*db, release_db_id, CoverSource::Local)?.is_some());
+        drop(db);
+
+        std::fs::write(&library_cover, png())?;
+        let found = candidates(&admin, CoverOwnerKind::Release, &id).await?;
+        assert_eq!(
+            active(&found),
+            Some(Some(CoverSource::Local)),
+            "the pinned cover shows again once its file is back"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_write_lands_only_on_the_entity_the_request_named() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let library = tempfile::tempdir()?;
+        let admin = user("admin", true).await?;
+        let (_, id, _) = release_with_local_cover(library.path()).await?;
+        let other = insert_release(&mut *STATE.db.write().await, "Other")?;
+        let covers_root = configured_covers_root();
+        let dir = configured_cover_dir_for_release(&covers_root, other);
+        let prepared = PreparedCover::write(&dir, CoverSource::Manual, "png", &png(), None).await?;
+
+        // As when `id`'s release was deleted and its database id reused while the upload ran.
+        let error = record_for_owner(&admin, CoverOwnerKind::Release, &id, other, prepared, true)
+            .await
+            .expect_err("the id names another entity now");
+        assert!(matches!(error, CoverSelectionError::NotFound(_)), "{error}");
+        assert_eq!(
+            std::fs::read_dir(&dir)?.count(),
+            0,
+            "the unrecorded file is removed"
+        );
+        assert!(lyra_db::covers::sources(&*STATE.db.read().await, other)?.is_empty());
         Ok(())
     }
 
@@ -775,6 +844,8 @@ mod tests {
             );
         }
 
+        search_release_cover_candidates(&id, Some("provider"), false).await?;
+        assert_eq!(dispatch.calls(callback).len(), 1);
         let error = set_provider(
             &admin,
             CoverOwnerKind::Release,
@@ -785,7 +856,11 @@ mod tests {
         .await
         .expect_err("the URL is not a candidate");
         assert!(error.to_string().contains("not one of provider"), "{error}");
-        assert_eq!(dispatch.calls(callback).len(), 1);
+        assert_eq!(
+            dispatch.calls(callback).len(),
+            2,
+            "the URL is checked against a fresh search, not the cached one"
+        );
         assert!(
             lyra_db::covers::get_source(
                 &*STATE.db.read().await,

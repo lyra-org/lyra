@@ -68,39 +68,48 @@ pub(crate) fn collect_custom_field_ids(
         .collect())
 }
 
-/// Cascade-remove entity nodes and their inbound favorite, rating, and tag edges.
+/// Cascade-remove entity nodes and their inbound favorite, rating, and tag edges, and detach
+/// their covers. Returns the covers no remaining owner shares, whose files may be discarded.
 /// Callers already inside a `transaction_mut` must use [`cascade_remove_entities_in_txn`]
 /// — agdb transactions are not reentrant.
-pub fn cascade_remove_entities(db: &mut DbAny, node_ids: &[DbId]) -> anyhow::Result<()> {
+pub fn cascade_remove_entities(
+    db: &mut DbAny,
+    node_ids: &[DbId],
+) -> anyhow::Result<Vec<super::Cover>> {
     if node_ids.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let playlist_db_ids = super::covers::display::playlist_ids_for_tracks(db, node_ids)?;
-    db.transaction_mut(|t| -> anyhow::Result<()> {
-        cascade_remove_entities_pre_favorites(t, node_ids)?;
+    db.transaction_mut(|t| {
+        let orphaned = cascade_remove_entities_pre_favorites(t, node_ids)?;
         cascade_remove_favorites_and_nodes(t, node_ids)?;
-        super::covers::display::sync_playlist_covers(t, &playlist_db_ids)
+        super::covers::display::sync_playlist_covers(t, &playlist_db_ids)?;
+        Ok(orphaned)
     })
 }
 
+/// [`cascade_remove_entities`] inside the caller's transaction.
 pub fn cascade_remove_entities_in_txn(
     db: &mut impl DbAccess,
     node_ids: &[DbId],
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<super::Cover>> {
     if node_ids.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let playlist_db_ids = super::covers::display::playlist_ids_for_tracks(db, node_ids)?;
-    cascade_remove_entities_pre_favorites(db, node_ids)?;
+    let orphaned = cascade_remove_entities_pre_favorites(db, node_ids)?;
     cascade_remove_favorites_and_nodes(db, node_ids)?;
-    super::covers::display::sync_playlist_covers(db, &playlist_db_ids)
+    super::covers::display::sync_playlist_covers(db, &playlist_db_ids)?;
+    Ok(orphaned)
 }
 
 fn cascade_remove_entities_pre_favorites(
     db: &mut impl DbAccess,
     node_ids: &[DbId],
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<super::Cover>> {
+    let mut orphaned = Vec::new();
     for &id in node_ids {
+        orphaned.extend(super::covers::remove_all(db, id)?);
         layers::remove_by_ids(db, &collect_layer_ids(db, id)?)?;
         for custom_field_id in collect_custom_field_ids(db, id)? {
             db.exec_mut(QueryBuilder::remove().ids(custom_field_id).query())?;
@@ -117,7 +126,7 @@ fn cascade_remove_entities_pre_favorites(
         // the track; agdb's direct-edge cascade misses them. No-op for non-tracks.
         super::lyrics::delete_for_track_in_txn(db, id)?;
     }
-    Ok(())
+    Ok(orphaned)
 }
 
 fn cascade_remove_favorites_and_nodes(

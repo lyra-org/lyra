@@ -127,13 +127,10 @@ fn merge_release_into_inside_tx(
     lyra_db::metadata::custom_fields::copy_between_entities(db, loser, winner)?;
 
     // The winner keeps its own covers and takes the loser's for the sources it lacks.
-    for sourced in lyra_db::covers::sources(db, loser)? {
-        if let Some(cover_id) = sourced.cover.db_id {
-            lyra_db::covers::share(db, winner, sourced.source, cover_id, sourced.selected)?;
-        }
-    }
-
-    lyra_db::metadata::cascade_remove_entities_in_txn(db, &[loser])?;
+    lyra_db::covers::adopt_missing(db, winner, loser)?;
+    crate::services::covers::discard_unreferenced_cover_files(
+        lyra_db::metadata::cascade_remove_entities_in_txn(db, &[loser])?,
+    );
 
     Ok(())
 }
