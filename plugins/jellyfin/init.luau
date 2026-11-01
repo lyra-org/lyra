@@ -137,9 +137,9 @@ local JELLYFIN_WS_REAUTH_MAX_ERRORS = 5
 local JELLYFIN_WS_PROGRESS_MIN_INTERVAL_SECONDS = 10
 local JELLYFIN_SESSIONS_PUSH_SECONDS = 2
 
--- Returns nil on miss, scope mismatch, or closed sender (evicting the
--- closed entry). Mismatch is logged so a hash collision is distinguishable
--- from the normal miss.
+-- Returns nil on miss, scope mismatch, or closed sender. Mismatch is logged so
+-- a hash collision is distinguishable from the normal miss. A closed entry
+-- stays for its socket handler to release.
 local function get_owned_session(session_id: string?, principal: session.Principal): SessionEntry?
 	if not session_id then
 		return nil
@@ -153,7 +153,6 @@ local function get_owned_session(session_id: string?, principal: session.Princip
 		return nil
 	end
 	if entry.sender:is_closed() then
-		sessions[session_id] = nil
 		return nil
 	end
 	return entry
@@ -353,9 +352,9 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 	task.cancel(sessions_thread)
 	task.cancel(keep_alive_thread)
 
-	-- A concurrent reconnect may have replaced our slot; only clear it if
-	-- it still points at our sender.
-	if sessions[session_id] and sessions[session_id].sender == sender then
+	-- Only the handler releases its slot. A concurrent reconnect may have replaced the slot; its
+	-- socket then owns the session.
+	if sessions[session_id] == entry then
 		syncplay.disconnect_entry(entry)
 		sessions[session_id] = nil
 		playback.end_session(session_id)
@@ -1547,11 +1546,7 @@ local function resolve_ws_entry_for_dispatch(
 		return nil, nil
 	end
 	local entry = sessions[session_id]
-	if not entry then
-		return nil, nil
-	end
-	if entry.sender:is_closed() then
-		sessions[session_id] = nil
+	if not entry or entry.sender:is_closed() then
 		return nil, nil
 	end
 	if not session.can_control_user(principal, entry.user_id) then
@@ -1569,14 +1564,14 @@ local function dispatch_to_ws(principal: session.Principal, session_id: string?,
 	if not entry then
 		return nil
 	end
-	local target_session_id = session_id :: string
 	local ok = pcall(function()
 		entry.sender:send(envelope_text)
 	end)
 	if not ok then
-		if sessions[target_session_id] == entry then
-			sessions[target_session_id] = nil
-		end
+		-- Closing ends the socket's handler, which releases the session.
+		pcall(function()
+			entry.sender:close()
+		end)
 		return responses.not_found("session not found")
 	end
 	return api.response.empty(204)

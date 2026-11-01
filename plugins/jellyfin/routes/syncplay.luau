@@ -397,11 +397,9 @@ local function syncplay_update(group_id: string, update_type: string, data: Json
 	}
 end
 
+-- A socket that fails a send is closed, and its handler releases the session.
 local function syncplay_send_entry(entry: SessionEntry, message_type: string, data: JsonValue): boolean
 	if entry.sender:is_closed() then
-		if sessions[entry.session_id] == entry then
-			sessions[entry.session_id] = nil
-		end
 		return false
 	end
 
@@ -409,9 +407,9 @@ local function syncplay_send_entry(entry: SessionEntry, message_type: string, da
 		entry.sender:send(websocket.encode(message_type, data, nil))
 	end)
 	if not ok then
-		if sessions[entry.session_id] == entry then
-			sessions[entry.session_id] = nil
-		end
+		pcall(function()
+			entry.sender:close()
+		end)
 		return false
 	end
 	return true
