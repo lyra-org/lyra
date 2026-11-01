@@ -175,6 +175,7 @@ fn active_filter_requires_recent_non_terminal_current_session() {
             db_id: Some(DbId(2)),
             id: "internal".to_string(),
             client_name: None,
+            plugin_id: None,
             position_ms: 0,
             duration_ms: None,
             played_ms: 0,
@@ -922,6 +923,12 @@ async fn reported_playback_shares_collection_and_rejects_queue_operations() -> a
         fixture.second_track_id
     );
     assert_eq!(reported.current.as_ref().unwrap().position_ms, 1_200);
+    assert_eq!(
+        reported.current.as_ref().unwrap().plugin_id.as_deref(),
+        Some("external")
+    );
+    let native_item = page.items.iter().find(|item| item.id == native.id).unwrap();
+    assert_eq!(native_item.current.as_ref().unwrap().plugin_id, None);
     let id = reported.id.clone();
     let Json(detail) = get_playback(
         fixture.headers.clone(),

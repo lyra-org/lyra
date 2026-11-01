@@ -537,6 +537,7 @@ mod tests {
             track_public_id: "track".to_string(),
             user_public_id: user_public_id.to_string(),
             library_public_id: library_public_id.map(str::to_string),
+            plugin_id: None,
             position_ms: 0,
             duration_ms: Some(1_000),
             played_ms: 0,

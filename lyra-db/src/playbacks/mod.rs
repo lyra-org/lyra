@@ -683,6 +683,7 @@ mod tests {
                 db_id: None,
                 id: nanoid!(),
                 client_name: None,
+                plugin_id: None,
                 position_ms: 0,
                 duration_ms: None,
                 played_ms: 0,

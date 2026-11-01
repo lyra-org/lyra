@@ -105,6 +105,8 @@ pub struct PlaybackSession {
     /// The client's id for the play this session tracks; one play per session.
     pub play_id: String,
     pub client_name: Option<String>,
+    /// The plugin that reported the play; `None` for Lyra's own clients.
+    pub plugin_id: Option<String>,
     pub position_ms: u64,
     pub duration_ms: Option<u64>,
     /// Playing time credited to the play so far.
@@ -506,6 +508,7 @@ mod tests {
             id: nanoid!(),
             play_id: nanoid!(),
             client_name: None,
+            plugin_id: None,
             position_ms: 0,
             duration_ms: Some(300_000),
             played_ms: 0,
@@ -668,6 +671,7 @@ mod tests {
             id: nanoid!(),
             play_id: nanoid!(),
             client_name: None,
+            plugin_id: None,
             position_ms: 1000,
             duration_ms: Some(300_000),
             played_ms: 100,
@@ -703,6 +707,7 @@ mod tests {
             id: nanoid!(),
             play_id: nanoid!(),
             client_name: None,
+            plugin_id: None,
             position_ms: 100,
             duration_ms: Some(300_000),
             played_ms: 100,
@@ -737,6 +742,7 @@ mod tests {
             id: nanoid!(),
             play_id: nanoid!(),
             client_name: None,
+            plugin_id: None,
             position_ms: 100,
             duration_ms: Some(300_000),
             played_ms: 100,

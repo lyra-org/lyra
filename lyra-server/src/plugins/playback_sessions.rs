@@ -59,6 +59,7 @@ struct PlaybackSessionReportRequest {
     session_key: String,
     track_id: String,
     play_id: Option<String>,
+    client_name: Option<String>,
     event: Option<playbacks::PlaybackEvent>,
     position_ms: Option<u64>,
     duration_ms: Option<u64>,
@@ -170,6 +171,11 @@ impl PlaybackSessionsModule {
         {
             return Ok((None, Some(format!("malformed play_id: {play_id}"))));
         }
+        let client_name =
+            match crate::services::auth::sessions::normalize_client_name(request.client_name) {
+                Ok(client_name) => client_name,
+                Err(error) => return Ok((None, Some(error.to_string()))),
+            };
         let active_event = playbacks::classify_active_event(request.event)
             .map_err(crate::plugins::runtime_error)?;
         let current_ms = playbacks::now_ms().map_err(crate::plugins::runtime_error)?;
@@ -191,7 +197,7 @@ impl PlaybackSessionsModule {
                 session_key: &session_key,
                 track_db_id,
                 play_id: request.play_id.as_deref(),
-                client_name: None,
+                client_name,
                 mutation,
                 now_ms: current_ms,
                 active_event,
@@ -392,6 +398,11 @@ impl DescribeInterface for PlaybackSessionReportRequest {
                 description: Some(crate::services::listens::PLAY_ID_DESCRIPTION),
             },
             FieldDescriptor {
+                name: "client_name",
+                ty: Option::<String>::luau_type(),
+                description: Some("Label of the reporting app or device, validated and normalized as a login `client_name` is. Kept from the report that starts a track session."),
+            },
+            FieldDescriptor {
                 name: "event",
                 ty: Option::<LuauPlaybackEvent>::luau_type(),
                 description: None,
@@ -571,6 +582,7 @@ pub(crate) struct PlaybackUpdate<'a> {
     track_id: &'a str,
     user_id: &'a str,
     library_id: Option<&'a str>,
+    plugin_id: Option<&'a str>,
     position_ms: u64,
     duration_ms: Option<u64>,
     played_ms: u64,
@@ -588,6 +600,7 @@ impl<'a> From<&'a crate::services::playback_sessions::PlaybackUpdatePayload>
             track_id: &payload.track_public_id,
             user_id: &payload.user_public_id,
             library_id: payload.library_public_id.as_deref(),
+            plugin_id: payload.plugin_id.as_deref(),
             position_ms: payload.position_ms,
             duration_ms: payload.duration_ms,
             played_ms: payload.played_ms,
@@ -625,6 +638,13 @@ impl DescribeInterface for LuauPlaybackUpdatePayload {
                 field("track_id", String::luau_type()),
                 field("user_id", String::luau_type()),
                 field("library_id", Option::<String>::luau_type()),
+                FieldDescriptor {
+                    name: "plugin_id",
+                    ty: Option::<String>::luau_type(),
+                    description: Some(
+                        "The plugin that reported the play; nil for Lyra's own clients.",
+                    ),
+                },
                 field("position_ms", u64::luau_type()),
                 field("duration_ms", Option::<u64>::luau_type()),
                 field("played_ms", u64::luau_type()),

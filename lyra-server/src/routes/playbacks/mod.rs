@@ -117,6 +117,8 @@ struct CurrentPlaybackResponse {
     track_id: String,
     play_id: String,
     client_name: Option<String>,
+    /// The plugin that reported the play; null for Lyra's own clients.
+    plugin_id: Option<String>,
     position_ms: u64,
     duration_ms: Option<u64>,
     state: PlaybackState,
@@ -243,6 +245,7 @@ fn current_to_response(
         track_id: current.track_public_id.clone(),
         play_id: playback.play_id.clone(),
         client_name: playback.client_name.clone(),
+        plugin_id: playback.plugin_id.clone(),
         position_ms: playback.position_ms,
         duration_ms: playback.duration_ms,
         state: playback.state,

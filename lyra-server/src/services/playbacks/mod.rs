@@ -245,6 +245,7 @@ pub(crate) fn create_playback(
                 track_db_id: current_track_db_id,
                 user_db_id,
                 client_name,
+                plugin_id: None,
                 mutation,
                 now_ms,
                 active_event: playback_sessions::ActiveEvent::Started,
@@ -378,6 +379,7 @@ pub(crate) fn report_progress(
                         track_db_id: current_track_db_id,
                         user_db_id,
                         client_name,
+                        plugin_id: None,
                         mutation: playback_sessions::PlaybackMutation {
                             state: mutation.state.or(Some(lyra_db::PlaybackState::Playing)),
                             ..mutation

@@ -73,7 +73,9 @@ pub(crate) enum ClientNameError {
 /// CGJ, trimming Unicode whitespace, and NFC-composing. Rejects control characters and
 /// labels over [`MAX_CLIENT_NAME_LEN`]; a label that normalizes away entirely becomes
 /// `None`. Stripping precedes trimming because format controls are not whitespace.
-fn normalize_client_name(value: Option<String>) -> Result<Option<String>, ClientNameError> {
+pub(crate) fn normalize_client_name(
+    value: Option<String>,
+) -> Result<Option<String>, ClientNameError> {
     let Some(client_name) = value else {
         return Ok(None);
     };

@@ -662,6 +662,7 @@ mod tests {
                 db_id: Some(DbId(10)),
                 id: "playback-session".to_string(),
                 client_name: None,
+                plugin_id: None,
                 position_ms: 0,
                 duration_ms: None,
                 played_ms: 0,

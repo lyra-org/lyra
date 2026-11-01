@@ -1448,6 +1448,7 @@ fn plugin_executor_reports_playback_acceptance_rejection_and_internal_failure() 
         function report(key, state)
             return sessions.report_session({{
                 track_id = "{track_id}", session_key = key, state = state,
+                client_name = "  Kitchen  ",
             }})
         end
         accepted_id, accepted_error = report("player", "playing")
@@ -1464,6 +1465,10 @@ fn plugin_executor_reports_playback_acceptance_rejection_and_internal_failure() 
             .context("accepted report creates durable root")?;
         let session_id = lyra_db::playbacks::get_current_session_id(&*db, root.db_id.unwrap())?
             .context("accepted root has accounting session")?;
+        let session = lyra_db::playback_sessions::get_by_id(&*db, session_id)?
+            .context("accounting session is stored")?;
+        assert_eq!(session.client_name.as_deref(), Some("Kitchen"));
+        assert_eq!(session.plugin_id.as_deref(), Some("reporter"));
         for index in 0..lyra_db::playbacks::MAX_PLAYBACKS_PER_USER {
             let result = db.transaction_mut(|db| {
                 lyra_db::playbacks::insert_reported(

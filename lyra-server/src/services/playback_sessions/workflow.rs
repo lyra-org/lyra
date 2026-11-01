@@ -631,6 +631,7 @@ pub(crate) fn start_playback_in_transaction(
         track_db_id,
         user_db_id,
         client_name,
+        plugin_id,
         mutation,
         now_ms,
         active_event,
@@ -655,7 +656,7 @@ pub(crate) fn start_playback_in_transaction(
     {
         return Err(PlaybackServiceError::PlayConflict(play_id));
     }
-    let playback = new_playback_session(play_id, client_name, mutation, now_ms)?;
+    let playback = new_playback_session(play_id, client_name, plugin_id, mutation, now_ms)?;
 
     let playback_session_id = map_internal(lyra_db::playback_sessions::insert(
         db,
@@ -685,6 +686,7 @@ pub(crate) fn start_playback_in_transaction(
 fn new_playback_session(
     play_id: String,
     client_name: Option<String>,
+    plugin_id: Option<String>,
     mutation: PlaybackMutation,
     now_ms: u64,
 ) -> ServiceResult<PlaybackSession> {
@@ -697,6 +699,7 @@ fn new_playback_session(
         id: nanoid!(),
         play_id,
         client_name,
+        plugin_id,
         position_ms,
         duration_ms: mutation.duration_ms,
         played_ms: 0,
@@ -1177,6 +1180,7 @@ fn report_playback_session_in_transaction(
                         track_db_id,
                         user_db_id,
                         client_name,
+                        plugin_id: Some(plugin_id.to_string()),
                         mutation: PlaybackMutation {
                             position_ms: mutation.position_ms,
                             duration_ms: mutation.duration_ms,
