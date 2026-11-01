@@ -291,6 +291,60 @@ pub(crate) fn remove_inbound_for_target(
     Ok(())
 }
 
+/// Moves the ratings of `from` onto `to`. A user who rated both keeps the rating they changed
+/// last, created at the earlier of the two times.
+pub fn retarget(db: &mut impl DbAccess, from: DbId, to: DbId) -> anyhow::Result<()> {
+    for element in read_inbound_rating_edges(db, from)? {
+        let user_db_id = element.from;
+        let edge_id = element.id;
+        let Some(moved) = parse_rating_edge(element) else {
+            continue;
+        };
+        let (edge, kept) = match find_rating_edge(db, user_db_id, to)? {
+            Some(existing) => (
+                existing,
+                parse_rating_edge(
+                    db.exec(QueryBuilder::select().ids(existing).query())?
+                        .elements
+                        .remove(0),
+                ),
+            ),
+            None => (
+                db.exec_mut(
+                    QueryBuilder::insert()
+                        .edges()
+                        .from(user_db_id)
+                        .to(to)
+                        .query(),
+                )?
+                .ids()[0],
+                None,
+            ),
+        };
+        let (value, updated_at_ms) = match &kept {
+            Some(kept) if kept.updated_at_ms >= moved.updated_at_ms => {
+                (kept.value, kept.updated_at_ms)
+            }
+            _ => (moved.value, moved.updated_at_ms),
+        };
+        let created_at_ms = kept.map_or(moved.created_at_ms, |kept| {
+            kept.created_at_ms.min(moved.created_at_ms)
+        });
+        db.exec_mut(
+            QueryBuilder::insert()
+                .values_uniform([
+                    (VALUE_KEY, u64::from(value.get())).into(),
+                    (CREATED_AT_KEY, created_at_ms).into(),
+                    (UPDATED_AT_KEY, updated_at_ms).into(),
+                ])
+                .ids(edge)
+                .query(),
+        )?;
+        db.exec_mut(QueryBuilder::remove().ids(edge_id).query())?;
+    }
+    Ok(())
+}
+
 fn find_rating_edge(
     db: &impl DbAccess,
     user_db_id: DbId,

@@ -263,25 +263,6 @@ pub fn get_relations_to(
     collect_relations(result, relation_type, |e| (e.from.0 != 0).then_some(e.from))
 }
 
-pub fn incoming_edge_ids(db: &impl DbAccess, artist_id: DbId) -> anyhow::Result<HashSet<DbId>> {
-    Ok(db
-        .exec(
-            QueryBuilder::search()
-                .to(artist_id)
-                .where_()
-                .edge()
-                .and()
-                .distance(CountComparison::Equal(1))
-                .and()
-                .key("db_element_id")
-                .value("ArtistRelation")
-                .query(),
-        )?
-        .ids()
-        .into_iter()
-        .collect())
-}
-
 pub fn get_relations_from(
     db: &impl DbAccess,
     artist_id: DbId,

@@ -34,10 +34,7 @@ use lyra_db::{
     Release,
     Track,
     TrackSource,
-    graph::{
-        edge_count_map,
-        ensure_owned_edge,
-    },
+    graph::edge_count_map,
     metadata::cascade_remove_entities,
 };
 
@@ -323,7 +320,6 @@ fn merge_artist_into(
     loser: DbId,
 ) -> anyhow::Result<()> {
     let outgoing_relations = lyra_db::artists::relations::get_relations_from(db, loser, None)?;
-    let relation_edge_ids = lyra_db::artists::relations::incoming_edge_ids(db, loser)?;
 
     // Layers own the incoming relations; re-applying the winner below rebuilds
     // them. The outgoing ones follow the related artists' retargeted layers.
@@ -385,29 +381,10 @@ fn merge_artist_into(
             lyra_db::credits::link(db, link.owner_id, winner, &link.credit)?;
         }
     }
-    let credit_edge_ids: HashSet<DbId> = credit_links.iter().map(|link| link.edge_id).collect();
-
-    let incoming = db.exec(
-        QueryBuilder::search()
-            .to(loser)
-            .where_()
-            .edge()
-            .and()
-            .distance(CountComparison::Equal(1))
-            .query(),
-    )?;
-
-    for element in &incoming.elements {
-        if relation_edge_ids.contains(&element.id) || credit_edge_ids.contains(&element.id) {
-            continue;
-        }
-        let from_id = element.from;
-        if from_id.0 != 0 {
-            ensure_owned_edge(db, from_id, winner)?;
-        }
-    }
-
     lyra_db::artists::absorb_scan_names(db, winner, loser)?;
+    lyra_db::favorites::retarget(db, loser, winner)?;
+    lyra_db::ratings::retarget(db, loser, winner)?;
+    lyra_db::tags::retarget(db, loser, winner)?;
     // `merge_artist_into` runs inside `deduplicate_artists_by_external_id`'s outer
     // `transaction_mut`; use the in-txn variant — agdb does not support reentrant transactions.
     lyra_db::metadata::cascade_remove_entities_in_txn(db, &[loser])?;
@@ -486,6 +463,89 @@ mod tests {
         IdSource,
         test_db,
     };
+
+    #[test]
+    fn a_merged_artists_favorites_ratings_and_tags_move_to_the_winner() -> anyhow::Result<()> {
+        use lyra_db::{
+            favorites::FavoriteKind,
+            ratings::RatingValue,
+        };
+        let mut db = test_db::new_test_db()?;
+        let alice = test_db::insert_user(&mut db, "alice")?;
+        let bob = test_db::insert_user(&mut db, "bob")?;
+        let artist = |db: &mut DbAny, credits: usize| -> anyhow::Result<DbId> {
+            let artist_id = lyra_db::fixtures::insert_artist(db, "Radiohead")?;
+            for _ in 0..credits {
+                let release = lyra_db::fixtures::insert_release(db, "Release")?;
+                test_db::connect_artist(db, release, artist_id)?;
+            }
+            lyra_db::external_ids::upsert(
+                db,
+                artist_id,
+                "musicbrainz",
+                "artist_id",
+                "mbid",
+                IdSource::Resolved,
+            )?;
+            Ok(artist_id)
+        };
+        let winner = artist(&mut db, 10)?;
+        let loser = artist(&mut db, 0)?;
+        let rating = |value| RatingValue::new(value).expect("rating");
+
+        lyra_db::favorites::add(&mut db, alice, winner, FavoriteKind::Artist, 10)?;
+        lyra_db::favorites::add(&mut db, alice, loser, FavoriteKind::Artist, 5)?;
+        lyra_db::favorites::add(&mut db, alice, winner, FavoriteKind::Artist, 30)?;
+        lyra_db::favorites::add(&mut db, bob, loser, FavoriteKind::Artist, 7)?;
+        lyra_db::ratings::upsert(&mut db, alice, winner, rating(2), 10)?;
+        lyra_db::ratings::upsert(&mut db, alice, loser, rating(5), 20)?;
+        lyra_db::ratings::upsert(&mut db, bob, loser, rating(3), 8)?;
+        for (user, target, name) in [
+            (alice, winner, "kept"),
+            (alice, loser, "kept"),
+            (alice, loser, "moved"),
+            (bob, loser, "bob"),
+        ] {
+            lyra_db::tags::create(&mut db, user, target, name, "blue", 1)?;
+        }
+
+        assert_eq!(
+            deduplicate_artists_by_external_id(&mut db, &unique_artist_ids())?,
+            1
+        );
+        assert!(lyra_db::artists::get_by_id(&db, loser)?.is_none());
+
+        let favorited = |db: &DbAny, user| -> anyhow::Result<Option<i64>> {
+            Ok(
+                lyra_db::favorites::first_favorited_at(db, user, FavoriteKind::Artist)?
+                    .get(&winner)
+                    .copied(),
+            )
+        };
+        assert_eq!(favorited(&db, alice)?, Some(5), "the earlier favorite wins");
+        assert_eq!(favorited(&db, bob)?, Some(7));
+
+        let alice_rating = lyra_db::ratings::get(&db, alice, winner)?.expect("alice's rating");
+        assert_eq!(
+            (alice_rating.value.get(), alice_rating.updated_at_ms),
+            (5, 20),
+            "the rating changed last wins"
+        );
+        let bob_rating = lyra_db::ratings::get(&db, bob, winner)?.expect("bob's rating");
+        assert_eq!(bob_rating.value.get(), 3);
+
+        let tags = |db: &DbAny, user| -> anyhow::Result<Vec<String>> {
+            let mut names: Vec<String> = lyra_db::tags::get_for_target(db, user, winner)?
+                .into_iter()
+                .map(|tag| tag.tag)
+                .collect();
+            names.sort();
+            Ok(names)
+        };
+        assert_eq!(tags(&db, alice)?, ["kept", "moved"]);
+        assert_eq!(tags(&db, bob)?, ["bob"]);
+        Ok(())
+    }
 
     /// Each test provider's `artist_id`, declared unique.
     fn unique_artist_ids() -> DeclaredIds {

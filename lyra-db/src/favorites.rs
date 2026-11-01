@@ -257,6 +257,65 @@ pub(crate) fn remove_inbound_for_target(
     Ok(())
 }
 
+/// Moves the favorites of `from` onto `to`. A user who favorites both keeps one favorite,
+/// first favorited at the earlier time and last refreshed at the later.
+pub fn retarget(db: &mut impl DbAccess, from: DbId, to: DbId) -> anyhow::Result<()> {
+    for element in read_inbound_favorite_edges(db, from)? {
+        let user_db_id = element.from;
+        let edge_id = element.id;
+        let Some(moved) = parse_favorite_edge(element) else {
+            continue;
+        };
+        let (edge, first, last) = match find_favorite_edge(db, user_db_id, to)? {
+            Some(existing) => {
+                let kept = parse_favorite_edge(
+                    db.exec(QueryBuilder::select().ids(existing).query())?
+                        .elements
+                        .remove(0),
+                );
+                let (first, last) = kept.map_or(
+                    (moved.first_favorited_at_ms, moved.last_refreshed_at_ms),
+                    |kept| {
+                        (
+                            kept.first_favorited_at_ms.min(moved.first_favorited_at_ms),
+                            kept.last_refreshed_at_ms.max(moved.last_refreshed_at_ms),
+                        )
+                    },
+                );
+                (existing, first, last)
+            }
+            None => {
+                let edge = db
+                    .exec_mut(
+                        QueryBuilder::insert()
+                            .edges()
+                            .from(user_db_id)
+                            .to(to)
+                            .query(),
+                    )?
+                    .ids()[0];
+                (
+                    edge,
+                    moved.first_favorited_at_ms,
+                    moved.last_refreshed_at_ms,
+                )
+            }
+        };
+        db.exec_mut(
+            QueryBuilder::insert()
+                .values_uniform([
+                    (KIND_KEY, moved.kind.as_str()).into(),
+                    (FIRST_FAVORITED_KEY, first).into(),
+                    (LAST_REFRESHED_KEY, last).into(),
+                ])
+                .ids(edge)
+                .query(),
+        )?;
+        db.exec_mut(QueryBuilder::remove().ids(edge_id).query())?;
+    }
+    Ok(())
+}
+
 fn find_favorite_edge(
     db: &impl DbAccess,
     user_db_id: DbId,

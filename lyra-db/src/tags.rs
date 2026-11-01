@@ -429,6 +429,46 @@ pub fn get_for_targets_many(
     Ok(result)
 }
 
+/// Moves the tags on `from` onto `to`; a tag already on `to` stays there once.
+pub fn retarget(db: &mut impl DbAccess, from: DbId, to: DbId) -> anyhow::Result<()> {
+    let inbound = db.exec(
+        QueryBuilder::select()
+            .search()
+            .to(from)
+            .where_()
+            .edge()
+            .and()
+            .distance(CountComparison::Equal(1))
+            .end_where()
+            .query(),
+    )?;
+    for edge in inbound
+        .elements
+        .into_iter()
+        .filter(|edge| edge.to == from && edge_is_tag_target(edge))
+    {
+        if !has_target_edge(db, edge.from, to)? {
+            let moved = db
+                .exec_mut(
+                    QueryBuilder::insert()
+                        .edges()
+                        .from(edge.from)
+                        .to(to)
+                        .query(),
+                )?
+                .ids()[0];
+            db.exec_mut(
+                QueryBuilder::insert()
+                    .values_uniform([(TAG_EDGE_KEY, 1_i64).into()])
+                    .ids(moved)
+                    .query(),
+            )?;
+        }
+        db.exec_mut(QueryBuilder::remove().ids(edge.id).query())?;
+    }
+    Ok(())
+}
+
 fn tag_target_edges_from(db: &impl DbAccess, tag_id: DbId) -> anyhow::Result<Vec<DbElement>> {
     let result = db.exec(
         QueryBuilder::select()
