@@ -358,9 +358,7 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 	if sessions[session_id] and sessions[session_id].sender == sender then
 		syncplay.disconnect_entry(entry)
 		sessions[session_id] = nil
-		-- Nothing will report a stop for this device now. As upstream, its playback isn't stopped: the
-		-- host pauses it as the socket closes.
-		playback.forget_client_playback(session_id)
+		playback.end_session(session_id)
 	end
 end, "public")
 

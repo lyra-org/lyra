@@ -457,15 +457,13 @@ local function report_client_playback(
 	resolved_auth: ResolvedAuth,
 	payload: playback.PlaybackPayload,
 	event_name: string,
-	identity: ClientIdentity,
-	via_socket: boolean
+	identity: ClientIdentity
 ): (boolean, string?)
 	local principal = resolved_auth.principal
 	local session_id = module.build_session_id(principal, identity)
 	return playback.report_playback_event(resolved_auth, payload, event_name, session_id, {
 		session_info = module.build_session_info(session_id, principal, identity, module.current_iso_timestamp()),
 		client_name = identity.label,
-		via_socket = via_socket,
 	})
 end
 
@@ -484,7 +482,7 @@ function module.handle_ws_playback_event(
 	if not playback.ensure_payload_user_matches(resolved_auth, payload) then
 		return false, "playback report user does not match authenticated user"
 	end
-	return report_client_playback(resolved_auth, payload, event_name, identity, true)
+	return report_client_playback(resolved_auth, payload, event_name, identity)
 end
 
 function module.handle_playback_report_route(ctx: ApiContext?, event_name: string): ApiResponse
@@ -506,7 +504,7 @@ function module.handle_playback_report_route(ctx: ApiContext?, event_name: strin
 		return responses.bad_request(identity_err or "missing Client or DeviceId")
 	end
 
-	local ok, report_err = report_client_playback(resolved_auth, payload, event_name, identity, false)
+	local ok, report_err = report_client_playback(resolved_auth, payload, event_name, identity)
 	if not ok then
 		return responses.bad_request(report_err or "failed to report playback event")
 	end
@@ -1183,6 +1181,10 @@ end
 
 function module.current_iso_timestamp(): string
 	return iso_timestamp(os.time())
+end
+
+function module.iso_timestamp_ms(unix_ms: number): string
+	return iso_timestamp(unix_ms // 1000)
 end
 
 local function saved_text(fields: { [string]: auth.JsonValue }, key: string): string?

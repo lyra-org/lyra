@@ -1,0 +1,42 @@
+run_as = "admin"
+
+[[users]]
+key = "admin"
+admin = true
+
+[[users]]
+key = "listener"
+
+[[api_keys]]
+key = "admin_key"
+user = "admin"
+
+[[api_keys]]
+key = "phone"
+user = "listener"
+
+[[connections]]
+key = "speaker"
+user = "listener"
+client_name = "Kitchen Speaker"
+commands = ["pause"]
+
+[[connections]]
+key = "desk"
+user = "admin"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener"]
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+duration_ms = 200000

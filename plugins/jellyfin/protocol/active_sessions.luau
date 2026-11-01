@@ -7,7 +7,6 @@
 local api = require("@lyra/api")
 local playback_sessions = require("@lyra/playback_sessions")
 local tracks = require("@lyra/tracks")
-local users = require("@lyra/users")
 
 local constants = require("../constants")
 local item_ids = require("./items/identifiers")
@@ -15,18 +14,14 @@ local playback = require("./items/playback")
 local session = require("./session")
 local websocket = require("./websocket")
 
+local JELLYFIN_PLUGIN_ID = constants.JELLYFIN_PLUGIN_ID
 local SERVER_ID = constants.SERVER_ID
 
 type JsonValue = api.JsonValue
 type JsonObject = { [string]: JsonValue }
-type ClientPlayback = playback.ClientPlayback
+type ActivePlayback = playback_sessions.ActivePlaybackInfo
+type Connection = playback_sessions.ConnectionInfo
 type Principal = session.Principal
-type PublicUser = users.PublicUser
-
-type UserIdentity = {
-	user_id: string,
-	username: string,
-}
 
 export type SessionEntry = {
 	sender: api.ApiWebSocketSender,
@@ -49,10 +44,9 @@ export type SessionEntry = {
 	last_keep_alive_s: number,
 }
 
--- Per-listing state: every source's client playback, and the NowPlayingItem tables whose track
--- names are filled in one batched lookup at the end.
+-- Per-listing state: the NowPlayingItem tables whose track names are filled in one batched lookup
+-- at the end.
 type Listing = {
-	client_playbacks: { [string]: ClientPlayback },
 	now_playing_tracks: { [JsonObject]: string },
 }
 
@@ -72,6 +66,8 @@ local JELLYFIN_COMMAND_MAP: { [playback_sessions.RemoteAction]: string } = {
 	previous_track = "PreviousTrack",
 	set_volume = "SetVolume",
 }
+
+local PLAYABLE_MEDIA_TYPES: { JsonValue } = { "Audio" }
 
 local function to_jellyfin_supported_commands(commands: { playback_sessions.RemoteAction }): { string }
 	local result = {}
@@ -112,232 +108,201 @@ local function resolve_now_playing_names(listing: Listing)
 	end
 end
 
-local function build_now_playing(
-	listing: Listing,
-	track_id: string?,
-	position_ms: number?,
-	duration_ms: number?,
-	is_paused: boolean
-): (JsonObject, JsonObject)
+local function set_now_playing(listing: Listing, dto: JsonObject, playing: ActivePlayback)
 	local now_playing: JsonObject = {
-		Id = item_ids.encode_jellyfin_item_id(track_id),
+		Id = item_ids.encode_jellyfin_item_id(playing.track_id),
 		Name = "",
 		Type = "Audio",
 	}
-	if track_id then
-		listing.now_playing_tracks[now_playing] = track_id
+	listing.now_playing_tracks[now_playing] = playing.track_id
+	if playing.duration_ms then
+		now_playing.RunTimeTicks = playing.duration_ms * 10000
 	end
-	if duration_ms then
-		now_playing.RunTimeTicks = duration_ms * 10000
-	end
-	local play_state: JsonObject = {
-		PositionTicks = (position_ms or 0) * 10000,
-		IsPaused = is_paused,
+	dto.NowPlayingItem = now_playing
+	dto.PlayState = {
+		PositionTicks = playing.position_ms * 10000,
+		IsPaused = playing.state == "paused",
 		CanSeek = true,
 	}
-	return now_playing, play_state
 end
 
-local function native_now_playing(listing: Listing, info: playback_sessions.PlaybackInfo): (JsonObject, JsonObject)
-	return build_now_playing(listing, info.track_id, info.position_ms, info.duration_ms, info.state == "paused")
-end
-
-local function client_now_playing(listing: Listing, client: ClientPlayback): (JsonObject, JsonObject)
-	return build_now_playing(listing, client.track_id, client.position_ms, client.duration_ms, client.is_paused)
-end
-
-local function build_sessions_dto_list(
-	user_id: string,
-	username: string,
-	connections: { playback_sessions.ConnectionInfo },
-	listing: Listing
-): { JsonValue }
-	local conn_by_session_key: { [string]: playback_sessions.ConnectionInfo } = {}
-	for _, conn in connections do
-		conn_by_session_key[conn.session_key] = conn
+-- The playback reported last, of two that may report for one device.
+local function latest(left: ActivePlayback?, right: ActivePlayback?): ActivePlayback?
+	if left and right then
+		return if right.updated_at_ms > left.updated_at_ms then right else left
 	end
-	local own_playbacks: { [string]: ClientPlayback } = {}
-	for session_key, client in listing.client_playbacks do
-		if client.user_id == user_id then
-			own_playbacks[session_key] = client
+	return left or right
+end
+
+local function device_key(user_id: string, session_key: string): string
+	return `{#user_id}:{user_id}{session_key}`
+end
+
+local function set_activity(dto: JsonObject, activity_iso: string)
+	dto.LastActivityDate = activity_iso
+	dto.LastPlaybackCheckIn = activity_iso
+end
+
+-- A session for a connection of Lyra's own clients, which takes the commands it declares.
+local function connection_dto(conn: Connection): JsonObject
+	local supported_commands = to_jellyfin_supported_commands(conn.supported_commands)
+	local cmd_list: { JsonValue } = {}
+	for _, cmd in supported_commands do
+		table.insert(cmd_list, cmd)
+	end
+	return {
+		Id = conn.id,
+		UserId = item_ids.encode_jellyfin_item_id(conn.user_id),
+		UserName = conn.username,
+		DeviceId = conn.session_key,
+		DeviceName = conn.client_name or conn.session_key,
+		Client = conn.client_name or "Lyra",
+		ServerId = SERVER_ID,
+		IsActive = true,
+		SupportsRemoteControl = #conn.supported_commands > 0,
+		PlayableMediaTypes = PLAYABLE_MEDIA_TYPES,
+		Capabilities = {
+			SupportsMediaControl = #supported_commands > 0,
+			SupportedCommands = cmd_list,
+			PlayableMediaTypes = PLAYABLE_MEDIA_TYPES,
+		},
+	}
+end
+
+-- A session for a player that reports its playback without a socket, which takes no commands.
+local function playback_dto(playing: ActivePlayback): JsonObject
+	local reporter = if playing.plugin_id == JELLYFIN_PLUGIN_ID and playing.session_key
+		then playback.reporter(playing.session_key)
+		else nil
+	local dto: JsonObject
+	if reporter then
+		dto = table.clone(reporter.session_info)
+	else
+		local device = playing.session_key or playing.id
+		dto = {
+			Id = device,
+			UserId = item_ids.encode_jellyfin_item_id(playing.user_id),
+			UserName = playing.username,
+			DeviceId = device,
+			DeviceName = playing.client_name or device,
+			Client = playing.client_name or "Lyra",
+			ServerId = SERVER_ID,
+			IsActive = true,
+			PlayableMediaTypes = PLAYABLE_MEDIA_TYPES,
+		}
+	end
+	dto.SupportsRemoteControl = false
+	set_activity(dto, session.iso_timestamp_ms(playing.updated_at_ms))
+	return dto
+end
+
+-- Whether the Jellyfin session reporting this plugin's playback closed its socket since: as
+-- upstream, a session whose socket closed is gone.
+local function reporter_ended(playing: ActivePlayback): boolean
+	local reporter = if playing.session_key then playback.reporter(playing.session_key) else nil
+	return reporter ~= nil and reporter.ended
+end
+
+-- Every session the principal can see: this plugin's sockets, the players that report playback to
+-- it over HTTP alone, connections of Lyra's own clients, and what Lyra's own clients and other
+-- plugins play without either.
+local function list_sessions(principal: Principal, all_users: boolean, listing: Listing): { JsonObject }
+	local query: playback_sessions.OwnersQuery? = if all_users then { all_users = true } else nil
+	local connections = playback_sessions.list_connections(query)
+	local active = playback_sessions.list_playbacks(query)
+
+	local connection_by_device: { [string]: Connection } = {}
+	for _, conn in connections do
+		connection_by_device[device_key(conn.user_id, conn.session_key)] = conn
+	end
+	-- This plugin's playback by device, and Lyra's own clients' by the connection driving it.
+	local reported_by_device: { [string]: ActivePlayback } = {}
+	local driven_by_connection: { [string]: ActivePlayback } = {}
+	for _, playing in active do
+		if playing.plugin_id == JELLYFIN_PLUGIN_ID and playing.session_key then
+			reported_by_device[device_key(playing.user_id, playing.session_key)] = playing
+		elseif playing.connection_id then
+			driven_by_connection[playing.connection_id] = playing
 		end
 	end
+	local function paired_report(device: string): ActivePlayback?
+		local playing = reported_by_device[device]
+		return if playing and not reporter_ended(playing) then playing else nil
+	end
 
-	local jellyfin_user_id = item_ids.encode_jellyfin_item_id(user_id)
-	local result: { JsonValue } = {}
-	local seen_session_keys: { [string]: boolean } = {}
+	local result: { JsonObject } = {}
+	local listed: { [string]: boolean } = {}
 
+	-- Native clients opt into pairing by sending a Jellyfin session ID as their session key.
 	for _, entry in entries do
 		-- Skip foreign users and zombies (closed sender pre-cleanup).
-		if entry.user_id ~= user_id or entry.sender:is_closed() then
+		if entry.sender:is_closed() or (not all_users and entry.user_id ~= principal.user_id) then
 			continue
 		end
-		-- Native clients opt into pairing by sending this Jellyfin session ID as their opaque session_key.
-		local join_key = entry.session_id
-		seen_session_keys[join_key] = true
+		local device = device_key(entry.user_id, entry.session_id)
+		listed[device] = true
 		local dto: JsonObject = table.clone(entry.info)
-		dto.LastActivityDate = entry.last_activity
-		dto.LastPlaybackCheckIn = entry.last_activity
+		set_activity(dto, entry.last_activity)
 		if entry.capabilities then
 			dto.Capabilities = entry.capabilities
 		end
-		local conn = conn_by_session_key[join_key]
-		local conn_playback = if conn then conn.playback else nil
-		local client_playback = own_playbacks[join_key]
-		-- Native playback carries no report time to compare, so a paired native client wins.
-		if conn_playback then
-			dto.NowPlayingItem, dto.PlayState = native_now_playing(listing, conn_playback)
-		elseif client_playback then
-			dto.NowPlayingItem, dto.PlayState = client_now_playing(listing, client_playback)
+		local conn = connection_by_device[device]
+		local playing = latest(reported_by_device[device], if conn then driven_by_connection[conn.id] else nil)
+		if playing then
+			set_now_playing(listing, dto, playing)
 		end
 		table.insert(result, dto)
 	end
 
-	-- Clients that report playback over HTTP without a socket can't take remote commands. A socket
-	-- reporter without a live socket is gone. A native connection paired with the session lists
-	-- once, below, under its own controllable id.
-	local paired_playbacks: { [string]: ClientPlayback } = {}
-	for session_key, client in own_playbacks do
-		if seen_session_keys[session_key] or client.via_socket then
-			continue
-		end
-		seen_session_keys[session_key] = true
-		if conn_by_session_key[session_key] then
-			paired_playbacks[session_key] = client
-			continue
-		end
-		local dto: JsonObject = table.clone(client.session_info)
-		dto.SupportsRemoteControl = false
-		dto.NowPlayingItem, dto.PlayState = client_now_playing(listing, client)
-		table.insert(result, dto)
-	end
-
-	-- Non-WS clients (playback-only) still need to surface here.
+	-- A native connection paired with a player that reports over HTTP lists once, under the
+	-- connection's controllable id.
 	for _, conn in connections do
-		if seen_session_keys[conn.session_key] and not paired_playbacks[conn.session_key] then
+		local device = device_key(conn.user_id, conn.session_key)
+		if listed[device] then
 			continue
 		end
-		local playable_types: { JsonValue } = { "Audio" }
-		local legacy: JsonObject = {
-			Id = conn.id,
-			UserId = jellyfin_user_id,
-			UserName = username,
-			DeviceId = conn.session_key,
-			DeviceName = conn.client_name or conn.session_key,
-			Client = conn.client_name or "Lyra",
-			ServerId = SERVER_ID,
-			IsActive = true,
-			SupportsRemoteControl = #conn.supported_commands > 0,
-			PlayableMediaTypes = playable_types,
-		}
-		local conn_playback = conn.playback
-		local paired_playback = paired_playbacks[conn.session_key]
-		if conn_playback then
-			legacy.NowPlayingItem, legacy.PlayState = native_now_playing(listing, conn_playback)
-		elseif paired_playback then
-			legacy.NowPlayingItem, legacy.PlayState = client_now_playing(listing, paired_playback)
+		listed[device] = true
+		local dto = connection_dto(conn)
+		local playing = latest(driven_by_connection[conn.id], paired_report(device))
+		if playing then
+			set_now_playing(listing, dto, playing)
 		end
-		local supported_commands = to_jellyfin_supported_commands(conn.supported_commands)
-		local cmd_list: { JsonValue } = {}
-		for _, cmd in supported_commands do
-			table.insert(cmd_list, cmd)
+		table.insert(result, dto)
+	end
+
+	for _, playing in active do
+		if playing.connection_id then
+			continue
 		end
-		legacy.Capabilities = {
-			SupportsMediaControl = #supported_commands > 0,
-			SupportedCommands = cmd_list,
-			PlayableMediaTypes = playable_types,
-		}
-		table.insert(result, legacy)
+		if playing.plugin_id == JELLYFIN_PLUGIN_ID and playing.session_key then
+			local device = device_key(playing.user_id, playing.session_key)
+			if listed[device] or reporter_ended(playing) then
+				continue
+			end
+			listed[device] = true
+		end
+		local dto = playback_dto(playing)
+		set_now_playing(listing, dto, playing)
+		table.insert(result, dto)
 	end
 
 	return result
 end
 
-local function list_all_user_identities(fallback: UserIdentity): { UserIdentity }
-	local result: { UserIdentity } = {}
-	local seen: { [string]: boolean } = {}
-	for _, user: PublicUser in users.list() do
-		if not seen[user.user_id] then
-			seen[user.user_id] = true
-			table.insert(result, {
-				user_id = user.user_id,
-				username = user.username,
-			})
-		end
-	end
-	if not seen[fallback.user_id] then
-		table.insert(result, fallback)
-	end
-	return result
-end
-
-local function session_supports_remote_control(dto: JsonValue): boolean
-	if type(dto) ~= "table" then
-		return false
-	end
-	return (dto :: JsonObject).SupportsRemoteControl == true
-end
-
-local function append_sessions_for_user(
-	result: { JsonValue },
-	user_id: string,
-	username: string,
-	connections: { playback_sessions.ConnectionInfo },
-	listing: Listing,
-	require_remote_control: boolean
-)
-	for _, dto in build_sessions_dto_list(user_id, username, connections, listing) do
-		if not require_remote_control or session_supports_remote_control(dto) then
-			table.insert(result, dto)
-		end
-	end
-end
-
--- The server lists only the dispatch principal's own native connections, so every other user's
--- sessions come from this plugin's WebSocket registry alone.
-local function list_all_sessions(
-	own: UserIdentity,
-	own_connections: { playback_sessions.ConnectionInfo },
-	listing: Listing,
-	require_remote_control: boolean
-): { JsonValue }
-	local result: { JsonValue } = {}
-	for _, user in list_all_user_identities(own) do
-		local connections = if user.user_id == own.user_id then own_connections else {}
-		append_sessions_for_user(result, user.user_id, user.username, connections, listing, require_remote_control)
-	end
-	return result
-end
-
--- The one listing behind both GET /Sessions and the socket push. The host scopes native connections
--- to the dispatch principal and verifies it first, so a deleted user's listing fails.
+-- The one listing behind both GET /Sessions and the socket push. Admins see every user's sessions
+-- and others their own, as upstream. The host verifies the dispatch principal first, so a deleted
+-- user's listing fails.
 function module.list_visible(principal: Principal, controllable_user_id: string?): { JsonValue }
 	if controllable_user_id and not session.can_control_user(principal, controllable_user_id) then
 		return {}
 	end
 
-	local require_remote_control = controllable_user_id ~= nil
-	local own_connections = playback_sessions.list_connections()
-	local listing: Listing = {
-		client_playbacks = playback.list_client_playbacks(),
-		now_playing_tracks = {},
-	}
-	local result: { JsonValue }
-	if session.is_admin(principal) then
-		result = list_all_sessions({
-			user_id = principal.user_id,
-			username = principal.username,
-		}, own_connections, listing, require_remote_control)
-	else
-		result = {}
-		append_sessions_for_user(
-			result,
-			principal.user_id,
-			principal.username,
-			own_connections,
-			listing,
-			require_remote_control
-		)
+	local listing: Listing = { now_playing_tracks = {} }
+	local result: { JsonValue } = {}
+	for _, dto in list_sessions(principal, session.is_admin(principal), listing) do
+		if controllable_user_id == nil or dto.SupportsRemoteControl == true then
+			table.insert(result, dto)
+		end
 	end
 	resolve_now_playing_names(listing)
 	return result
