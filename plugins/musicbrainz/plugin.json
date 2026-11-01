@@ -2,8 +2,8 @@
   "schema_version": 1,
   "id": "musicbrainz",
   "name": "MusicBrainz Provider",
-  "version": "0.0.1",
-  "lyra": "0.0.1-dev.2",
+  "version": "0.0.2",
+  "lyra": "0.0.1-dev.3",
   "description": "Matches local albums to MusicBrainz releases",
   "entrypoint": "init.luau",
   "scopes": [
