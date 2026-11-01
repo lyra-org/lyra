@@ -88,10 +88,6 @@ static CONCURRENCY_LIMITER: LazyLock<Arc<RwLock<ConcurrencyLimiter>>> =
 static DEFAULT_USER_AGENT: LazyLock<StdRwLock<Option<String>>> =
     LazyLock::new(|| StdRwLock::new(None));
 
-pub fn shared_client() -> &'static reqwest::Client {
-    &HTTP_CLIENT
-}
-
 /// Redirect hops a request follows before it fails.
 const MAX_REDIRECTS: usize = 5;
 
