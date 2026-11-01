@@ -112,6 +112,34 @@ impl LuauTypeInfo for UniqueIds {
     }
 }
 
+/// The public ids of a Luau array in array order, raising when one is listed more than once.
+pub(crate) fn distinct_ids(table: &luau::Table) -> luau::runtime::Result<Vec<String>> {
+    let ids = id_sequence(table)?;
+    let mut seen = HashSet::with_capacity(ids.len());
+    if let Some(repeated) = ids.iter().find(|id| !seen.insert(id.as_str())) {
+        return Err(crate::plugins::runtime_error(format!(
+            "id {repeated} is listed more than once"
+        )));
+    }
+    Ok(ids)
+}
+
+/// A [`distinct_ids`] argument.
+pub(crate) struct DistinctIds(pub(crate) Vec<String>);
+
+impl<'vm> luau::FromLuau<'vm> for DistinctIds {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let table: luau::Table = reader.read()?;
+        distinct_ids(&table).map(Self)
+    }
+}
+
+impl LuauTypeInfo for DistinctIds {
+    fn luau_type() -> LuauType {
+        Vec::<String>::luau_type()
+    }
+}
+
 /// A [`id_sequence`] argument.
 pub(crate) struct IdSequence(pub(crate) Vec<String>);
 
@@ -126,22 +154,6 @@ impl LuauTypeInfo for IdSequence {
     fn luau_type() -> LuauType {
         Vec::<String>::luau_type()
     }
-}
-
-/// The strings of a Luau array in array order.
-pub(crate) fn strings(table: &luau::Table) -> luau::runtime::Result<Vec<String>> {
-    array_values(table)?
-        .into_iter()
-        .map(|(index, value)| match value {
-            luau::Value::String(bytes) => {
-                String::from_utf8(bytes).map_err(crate::plugins::runtime_error)
-            }
-            other => Err(crate::plugins::runtime_error(format!(
-                "entry {index} must be a string, got {}",
-                other.type_name()
-            ))),
-        })
-        .collect()
 }
 
 pub(crate) fn optional_u64(table: &luau::Table, key: &str) -> luau::runtime::Result<Option<u64>> {

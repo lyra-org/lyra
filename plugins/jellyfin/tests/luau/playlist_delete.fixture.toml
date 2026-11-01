@@ -13,6 +13,10 @@ admin = true
 key = "admin_key"
 user = "admin"
 
+[[api_keys]]
+key = "owner_key"
+user = "owner"
+
 [[playlists]]
 key = "mix"
 owner = "owner"

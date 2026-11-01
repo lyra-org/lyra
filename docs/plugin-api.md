@@ -27,6 +27,9 @@ modules predate some of them.
 - An input that drives expensive work states its limit and raises past it, as mix seeds
   do.
 - A result size the caller asks for is capped rather than refused, as a mix `limit` is.
+- A stated limit is exported as a module field named `MAX_<WHAT>` in upper snake case, such
+  as `playlists.MAX_TRACK_IDS`, so callers check against it instead of copying the number.
+  Its value is the one the host enforces.
 
 ## Missing, Hidden and Invalid
 
@@ -59,7 +62,8 @@ modules predate some of them.
   `snake_case`, unless an external standard fixes the spelling, as `"GET"` is for HTTP
   methods.
 - Rust rejects an unknown value with an error that names the accepted ones.
-- Modules export no enum tables or constants tables.
+- Modules export no enum tables or constants tables; a limit is a single `MAX_<WHAT>`
+  field.
 - A value with behaviour is a class, not an enum.
 - Code that branches over every value of a union ends with `local _: never = value`, so
   a misspelled or missing branch fails analysis:

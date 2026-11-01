@@ -299,6 +299,47 @@ pub(crate) fn playlist_visible_to_user(
     Ok(lyra_db::playlists::get_owner(db, playlist_db_id)? == Some(user_db_id))
 }
 
+/// Whether the user can see the playlist as the plugin API shows playlists: its own, or a public
+/// one that still has an owner. A deleted user's playlists stay behind without one.
+pub(crate) fn playlist_visible_to_listener(
+    db: &impl lyra_db::DbAccess,
+    user_db_id: DbId,
+    playlist_db_id: DbId,
+) -> anyhow::Result<bool> {
+    let Some(playlist) = lyra_db::playlists::get_by_id(db, playlist_db_id)? else {
+        return Ok(false);
+    };
+    Ok(match lyra_db::playlists::get_owner(db, playlist_db_id)? {
+        Some(owner_db_id) => owner_db_id == user_db_id || playlist.is_public.unwrap_or(false),
+        None => false,
+    })
+}
+
+/// Which playlists a caller sees.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum PlaylistView {
+    /// [`playlist_accessible_as`]: its own and the public ones, and every one for an admin.
+    #[default]
+    Role,
+    /// [`playlist_visible_to_listener`], whatever the caller's role.
+    Listener,
+}
+
+impl PlaylistView {
+    pub(crate) fn sees(
+        self,
+        db: &impl lyra_db::DbAccess,
+        principal: &Principal,
+        user_db_id: DbId,
+        playlist_db_id: DbId,
+    ) -> anyhow::Result<bool> {
+        match self {
+            Self::Role => playlist_accessible_as(db, principal, user_db_id, playlist_db_id),
+            Self::Listener => playlist_visible_to_listener(db, user_db_id, playlist_db_id),
+        }
+    }
+}
+
 /// Whether the principal owns the playlist, verified under the guard of `db`. Anything but an
 /// existing playlist is unowned; a graph search from a missing id would fail.
 pub(crate) fn playlist_owned(

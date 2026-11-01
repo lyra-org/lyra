@@ -27,3 +27,7 @@ rejects(tracks.query, RATINGS, { min_rating = 1 })
 rejects(artists.query, RATINGS, { sort = { { key = "rating" } } })
 rejects(tracks.query, RATINGS, { rated = false })
 rejects(releases.query, RATINGS, { sort = { { key = "rated_at" } } })
+
+local playlists = require("@lyra/playlists")
+rejects(playlists.query, FAVORITES, { favorite = true })
+rejects(playlists.query, FAVORITES, { sort = { { key = "favorited_at", order = "descending" } } })

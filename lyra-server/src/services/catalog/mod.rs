@@ -33,6 +33,7 @@ use agdb::{
 use crate::services::auth::{
     AuthError,
     Principal,
+    access::PlaylistView,
 };
 
 use self::{
@@ -66,6 +67,7 @@ pub(crate) enum Viewer {
     User {
         principal: Principal,
         user_db_id: DbId,
+        playlists: PlaylistView,
     },
 }
 
@@ -79,6 +81,20 @@ impl Viewer {
         Ok(Self::User {
             principal,
             user_db_id,
+            playlists: PlaylistView::Role,
+        })
+    }
+
+    /// [`Viewer::user`] seeing playlists as a listener whatever its role, as plugins do.
+    pub(crate) fn listener(
+        db: &impl lyra_db::DbAccess,
+        principal: Principal,
+    ) -> Result<Self, AuthError> {
+        let user_db_id = principal.require(db)?;
+        Ok(Self::User {
+            principal,
+            user_db_id,
+            playlists: PlaylistView::Listener,
         })
     }
 
@@ -176,7 +192,7 @@ impl Viewer {
         Ok(visible)
     }
 
-    /// Whether the viewer can see `playlist_db_id`: a public playlist, or one it owns.
+    /// Whether the viewer can see `playlist_db_id`, by its [`PlaylistView`].
     pub(crate) fn sees_playlist(
         &self,
         db: &impl lyra_db::DbAccess,
@@ -187,12 +203,8 @@ impl Viewer {
             Self::User {
                 principal,
                 user_db_id,
-            } => crate::services::auth::access::playlist_accessible_as(
-                db,
-                principal,
-                *user_db_id,
-                playlist_db_id,
-            ),
+                playlists,
+            } => playlists.sees(db, principal, *user_db_id, playlist_db_id),
         }
     }
 

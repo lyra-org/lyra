@@ -30,7 +30,7 @@ type ItemsQueryOptions = options_module.ItemsQueryOptions
 type ItemInfo = catalog.ItemInfo
 type Scope = query.Scope
 type CreditRole = artists.CreditRole
-type PlaylistInfo = playlists.PlaylistInfo
+type Playlist = playlists.Playlist
 
 -- Upstream's default page for `/Items/Latest`.
 local LATEST_DEFAULT_LIMIT = 20
@@ -140,19 +140,18 @@ local function playlist_source(options: ItemsQueryOptions, scope: Scope): Source
 	local search = if options.search_term then string.lower(options.search_term) else nil
 
 	-- `Ids` may name any playlist the caller can see; without it, every one lists.
-	local candidates: { PlaylistInfo } = {}
+	local candidates: { Playlist } = {}
 	if wanted ~= nil then
+		local wanted_ids: { string } = {}
 		for id in wanted do
-			local playlist = playlist_access.find(id)
-			if playlist and playlist_access.can_view(playlist, options.user_id) then
-				table.insert(candidates, playlist)
-			end
+			table.insert(wanted_ids, id)
 		end
+		candidates = playlist_access.find_many(wanted_ids)
 	else
 		candidates = playlist_access.list_visible()
 	end
 
-	local shown: { PlaylistInfo } = {}
+	local shown: { Playlist } = {}
 	for _, playlist in candidates do
 		local id = playlist.id
 		if
@@ -169,8 +168,8 @@ local function playlist_source(options: ItemsQueryOptions, scope: Scope): Source
 	for _, playlist in shown do
 		table.insert(shown_ids, playlist.id)
 	end
-	local entries: { [string]: { playlists.PlaylistTrackLink } } = if #shown_ids > 0
-		then playlists.get_tracks_many(shown_ids)
+	local entries: { [string]: { playlists.PlaylistEntry } } = if #shown_ids > 0
+		then playlists.entries(shown_ids)
 		else {}
 	local under: { [string]: boolean }? = nil
 	if scope.id ~= nil then
@@ -337,7 +336,7 @@ end
 
 -- Playlists the caller sees, by the folder upstream lists them under.
 local function playlists_folder(options: ItemsQueryOptions): ItemInfo
-	local count = if options.include_child_count then #playlist_access.list_visible() else nil
+	local count = if options.include_child_count then playlist_access.count_visible() else nil
 	return catalog.playlists_folder_item(count)
 end
 
@@ -616,7 +615,7 @@ end
 function module.list_views(options: ItemsQueryOptions, include_hidden: boolean?): ({ ItemInfo }, number, number)
 	local search = if options.search_term then string.lower(options.search_term) else nil
 	local candidates = catalog.to_music_view_items(options.include_child_count)
-	local visible_playlists = #playlist_access.list_visible()
+	local visible_playlists = playlist_access.count_visible()
 	if visible_playlists > 0 then
 		table.insert(
 			candidates,
@@ -832,7 +831,7 @@ end
 
 -- Playlist order, as upstream, which honours only `StartIndex` and `Limit` here.
 function module.list_playlist_track_items(
-	playlist: PlaylistInfo?,
+	playlist: Playlist?,
 	options: ItemsQueryOptions
 ): ({ ItemInfo }, number, number)
 	if not playlist then

@@ -33,11 +33,10 @@ type JsonObject = { [string]: JsonValue }
 type LoginResult = auth.LoginResult
 export type Principal = auth.Principal
 type ResolvedAuth = auth.ResolvedAuth
-type PlaylistInfo = playlists.PlaylistInfo
-type PlaylistTrackLink = playlists.PlaylistTrackLink
-type PlaylistCreateRequest = playlists.PlaylistCreateRequest
+type Playlist = playlists.Playlist
+type PlaylistEntry = playlists.PlaylistEntry
+type PlaylistCreate = playlists.PlaylistCreate
 type PlaylistFields = playlists.PlaylistFields
-type PlaylistUpdateRequest = playlists.PlaylistUpdateRequest
 type UserIdentity = {
 	user_id: string,
 	username: string,
@@ -616,7 +615,7 @@ function module.parse_playlist_query_track_ids(query: ApiQueryParams?): { string
 	return item_ids.visible_track_ids(item_ids.parse_jellyfin_ids_csv(raw_ids))
 end
 
-function module.parse_playlist_query_entry_ids(query: ApiQueryParams?, playlist: PlaylistInfo): { string }
+function module.parse_playlist_query_entry_ids(query: ApiQueryParams?, playlist: Playlist): { string }
 	local raw = requests.parse_query_string(query, { "entryIds", "EntryIds", "entryids" }, nil)
 	local raw_ids: { string } = {}
 	for _, value in if raw then string.split(raw, ",") else {} do
@@ -636,7 +635,7 @@ function module.ensure_user_scope_matches_principal(requested_user_id: string?, 
 	return true
 end
 
-function module.resolve_playlist_for_route(ctx: ApiContext?): (PlaylistInfo?, ApiResponse?)
+function module.resolve_playlist_for_route(ctx: ApiContext?): (Playlist?, ApiResponse?)
 	local params = if ctx then ctx.params else nil
 	local playlist_id = if params then params.playlistId else nil
 	if not playlist_id then
@@ -651,7 +650,7 @@ function module.resolve_playlist_for_route(ctx: ApiContext?): (PlaylistInfo?, Ap
 	return playlist, nil
 end
 
-function module.ensure_playlist_visible(playlist: PlaylistInfo, principal: Principal): (boolean, ApiResponse?)
+function module.ensure_playlist_visible(playlist: Playlist, principal: Principal): (boolean, ApiResponse?)
 	if playlist_access.can_view(playlist, principal.user_id) then
 		return true, nil
 	end
@@ -659,7 +658,7 @@ function module.ensure_playlist_visible(playlist: PlaylistInfo, principal: Princ
 	return false, responses.forbidden("playlist not accessible")
 end
 
-function module.ensure_playlist_editable(playlist: PlaylistInfo, principal: Principal): (boolean, ApiResponse?)
+function module.ensure_playlist_editable(playlist: Playlist, principal: Principal): (boolean, ApiResponse?)
 	if playlist_access.can_edit(playlist, principal.user_id) then
 		return true, nil
 	end
@@ -710,7 +709,7 @@ function module.handle_create_playlist_route(ctx: ApiContext): ApiResponse
 	end
 
 	local playlist_name = request_payload.name or "New Playlist"
-	local create_request: PlaylistCreateRequest = {
+	local create_request: PlaylistCreate = {
 		name = playlist_name,
 		is_public = if request_payload.is_public ~= nil then request_payload.is_public else false,
 		created_at_ms = module.current_unix_ms(),
@@ -718,12 +717,12 @@ function module.handle_create_playlist_route(ctx: ApiContext): ApiResponse
 		track_ids = item_ids.visible_track_ids(item_ids.parse_jellyfin_ids_array(request_payload.requested_ids)),
 	}
 
-	local ok, playlist_id = pcall(playlists.create, create_request)
+	local ok, created = pcall(playlists.create, create_request)
 	if not ok then
 		return responses.bad_request("failed to create playlist")
 	end
 
-	local jellyfin_playlist_id = item_ids.encode_jellyfin_item_id(playlist_id)
+	local jellyfin_playlist_id = item_ids.encode_jellyfin_item_id(created.id)
 	if not jellyfin_playlist_id then
 		return responses.bad_request("failed to encode playlist id")
 	end
@@ -763,7 +762,7 @@ function module.handle_add_playlist_items_route(ctx: ApiContext): ApiResponse
 	if position ~= nil then
 		position = math.max(position, 0)
 	end
-	local added, entry_ids = pcall(playlists.add_tracks, playlist.id, track_ids, position)
+	local added, entry_ids = pcall(playlists.add_tracks, playlist.id, track_ids, { position = position })
 	if not added or entry_ids == nil then
 		return responses.bad_request("failed to add track to playlist")
 	end
@@ -809,13 +808,7 @@ function module.handle_update_playlist_route(ctx: ApiContext): ApiResponse
 		end
 		ok, updated = pcall(playlists.replace, playlist.id, { fields = fields, track_ids = replacement_ids })
 	else
-		local update_request: PlaylistUpdateRequest = {
-			playlist_id = playlist.id,
-			name = fields.name,
-			is_public = fields.is_public,
-			updated_at_ms = fields.updated_at_ms,
-		}
-		ok, updated = pcall(playlists.update, update_request)
+		ok, updated = pcall(playlists.update, playlist.id, fields)
 	end
 	if not ok or updated == nil then
 		return responses.bad_request("failed to update playlist")
@@ -823,9 +816,9 @@ function module.handle_update_playlist_route(ctx: ApiContext): ApiResponse
 
 	return api.response.empty(204)
 end
-local function playlist_item_ids(playlist: PlaylistInfo): { string }
+local function playlist_item_ids(playlist: Playlist): { string }
 	local encoded_ids: { string } = {}
-	for _, track_ref: PlaylistTrackLink in playlist_access.track_refs(playlist) do
+	for _, track_ref: PlaylistEntry in playlist_access.track_refs(playlist) do
 		local item_id = item_ids.encode_jellyfin_item_id(track_ref.track_id)
 		if item_id then
 			table.insert(encoded_ids, item_id)
@@ -835,7 +828,7 @@ local function playlist_item_ids(playlist: PlaylistInfo): { string }
 	return encoded_ids
 end
 
-function module.to_playlist_info(playlist: PlaylistInfo): PlaylistResponseInfo
+function module.to_playlist_info(playlist: Playlist): PlaylistResponseInfo
 	local owner_id = playlist_access.owner_id(playlist)
 	local shares: { PlaylistUserPermission } = {}
 	if owner_id then
@@ -880,7 +873,7 @@ function module.playlist_info_to_json(info: PlaylistResponseInfo): JsonObject
 	}
 end
 
-function module.to_playlist_user_permission(playlist: PlaylistInfo, user_id: string): PlaylistUserPermission
+function module.to_playlist_user_permission(playlist: Playlist, user_id: string): PlaylistUserPermission
 	local owner_id = playlist_access.owner_id(playlist)
 	return {
 		UserId = item_ids.encode_jellyfin_item_id(user_id) or "",

@@ -298,10 +298,35 @@ documented_type!(
     LuauType::Optional(Box::new(LuauType::literal("{ Track }")))
 );
 
+crate::plugins::limits::module_limits!(&[
+    crate::plugins::limits::Limit {
+        name: "MAX_SEEDS",
+        value: mix_service::MAX_SEEDS,
+        description: "The most seeds a request names; it raises past them.",
+    },
+    crate::plugins::limits::Limit {
+        name: "MAX_QUERY_LENGTH",
+        value: mix_service::MAX_QUERY_LEN,
+        description: "The most characters a request's `q` holds; it raises past them.",
+    },
+    crate::plugins::limits::Limit {
+        name: "MAX_TRACKS",
+        value: mix_service::MAX_LIMIT,
+        description: "The most tracks a blend returns, and the most steps a path takes; a larger `limit` is capped to it.",
+    },
+    crate::plugins::limits::Limit {
+        name: "MAX_TIMEOUT_MS",
+        value: MIX_DISPATCH_BUDGET.as_millis() as usize,
+        description: "The longest a mixer handler may run, and the budget every mixer tried for one request shares.",
+    },
+]);
+
 #[harmony_macros::module(
     id = "lyra/mix",
     docs_feature = "docgen",
-    userdata(LuauMixSeedType, Mixer)
+    userdata(LuauMixSeedType, Mixer),
+    extend = install_limits,
+    describe = describe_limits
 )]
 impl MixModule {
     #[harmony(
@@ -352,7 +377,7 @@ impl MixModule {
     }
 
     #[harmony(
-        description = "Tracks leading from the request's first seed to its second, in the mixer's order, up to 2000 tracks; tracks the caller can't see are left out and `limit` is only a step hint. Nil if a seed is missing or hidden from the caller; errors when the request is invalid or no mixer can serve it.",
+        description = "Tracks leading from the request's first seed to its second, in the mixer's order, up to `MAX_TRACKS` tracks; tracks the caller can't see are left out and `limit` is only a step hint. Nil if a seed is missing or hidden from the caller; errors when the request is invalid or no mixer can serve it.",
         args(request: MixPathRequest),
         returns(OptionalTrackList)
     )]
@@ -486,11 +511,13 @@ async fn consume(
 ) -> luau::runtime::Result<luau::Value> {
     let label = format!("mix.{}", shape.as_str());
     let fields = request_fields(request.0, &label)?;
-    let request = MixRequest {
+    let mut request = MixRequest {
         shape,
         ..fields.into_request()
     };
-    match mix_service::mix(&request, &MixViewer::for_principal(&principal)).await {
+    // A larger limit is capped here; REST refuses it.
+    request.limit = request.limit.map(|limit| limit.min(mix_service::MAX_LIMIT));
+    match mix_service::mix(&request, &plugin_viewer(&principal)).await {
         Ok(tracks) => tracks_to_luau(Some(tracks)),
         Err(MixError::SeedNotFound(_)) => tracks_to_luau(None),
         Err(MixError::Internal(error)) => Err(error.into()),
@@ -747,15 +774,14 @@ fn options_field() -> FieldDescriptor {
 fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
     let options_map = || opt(LuauType::literal("{ [string]: boolean | string | number }"));
     let seed_types = || opt(LuauType::literal("{ SeedType }"));
-    // The description spells out the budget and default timeout.
-    const _: () = assert!(MIX_DISPATCH_BUDGET.as_millis() == 15000);
+    // The description spells out the default timeout.
     const _: () = assert!(DEFAULT_MIXER_HANDLER_TIMEOUT.as_millis() == 10000);
     let timeout_ms = || {
         field(
             "timeout_ms",
             opt(f64::luau_type()),
             Some(
-                "How long the handler may run, up to 15000; defaults to 10000. Mixers share one 15000 ms budget per request, so a handler tried after others gets at most what remains.",
+                "How long the handler may run, up to `MAX_TIMEOUT_MS`; defaults to 10000. Mixers share one `MAX_TIMEOUT_MS` budget per request, so a handler tried after others gets at most what remains.",
             ),
         )
     };
@@ -886,7 +912,9 @@ fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
                 field(
                     "seeds",
                     opt(LuauType::literal("{ MixSeedInput }")),
-                    Some("Tracks, releases, artists, genres or playlists, by id."),
+                    Some(
+                        "Tracks, releases, artists, genres or playlists, by id; at most `MAX_SEEDS`.",
+                    ),
                 ),
                 field(
                     "from_history",
@@ -895,7 +923,11 @@ fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
                         "Adds the caller's recent listens as track seeds, up to what the serving mixer takes beyond the explicit seeds.",
                     ),
                 ),
-                field("q", opt(String::luau_type()), Some("A free-text query.")),
+                field(
+                    "q",
+                    opt(String::luau_type()),
+                    Some("A free-text query of at most `MAX_QUERY_LENGTH` characters."),
+                ),
                 mixer_field(),
                 field(
                     "pin_seed",
@@ -907,7 +939,7 @@ fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
                 field(
                     "limit",
                     opt(f64::luau_type()),
-                    Some("The most tracks returned, up to 2000. Defaults to 200."),
+                    Some("The most tracks returned, capped to `MAX_TRACKS`. Defaults to 200."),
                 ),
                 options_field(),
             ],
@@ -921,7 +953,11 @@ fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
                     LuauType::literal("{ MixSeedInput }"),
                     Some("The start and end, by id."),
                 ),
-                field("q", opt(String::luau_type()), Some("A free-text query.")),
+                field(
+                    "q",
+                    opt(String::luau_type()),
+                    Some("A free-text query of at most `MAX_QUERY_LENGTH` characters."),
+                ),
                 mixer_field(),
                 field(
                     "limit",
@@ -945,4 +981,12 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
             Mixer::class_descriptor(),
         ],
     )
+}
+
+/// The mix viewer for the dispatch principal, seeding from playlists as a listener.
+fn plugin_viewer(principal: &crate::services::auth::Principal) -> MixViewer {
+    MixViewer {
+        playlists: crate::services::auth::access::PlaylistView::Listener,
+        ..MixViewer::for_principal(principal)
+    }
 }

@@ -141,7 +141,18 @@ impl LuauTypeInfo for ReleasePage {
     }
 }
 
-#[harmony_macros::module(id = "lyra/releases", docs_feature = "docgen")]
+crate::plugins::limits::module_limits!(&[crate::plugins::limits::Limit {
+    name: "MAX_SIMILAR",
+    value: release_service::MAX_SIMILAR_RELEASE_LIMIT,
+    description: "The most releases `similar` returns; a larger `limit` is capped to it.",
+}]);
+
+#[harmony_macros::module(
+    id = "lyra/releases",
+    docs_feature = "docgen",
+    extend = install_limits,
+    describe = describe_limits
+)]
 impl ReleasesModule {
     #[harmony(
         description = "The releases with these ids that the caller can see, keyed by id.",
@@ -316,20 +327,11 @@ fn parse_similar_options(
         });
     };
     let limit = parse_optional_similar_positive_integer(&opts, "limit")?
-        .map(|value| {
-            usize::try_from(value).map_err(|_| {
-                crate::plugins::runtime_error("releases.similar opts.limit is too large")
-            })
-        })
-        .transpose()?
+        .map(|value| usize::try_from(value).unwrap_or(usize::MAX))
         .unwrap_or(release_service::DEFAULT_SIMILAR_RELEASE_LIMIT);
-    if limit > release_service::MAX_SIMILAR_RELEASE_LIMIT {
-        return Err(crate::plugins::runtime_error(format!(
-            "releases.similar opts.limit must be <= {}, got {limit}",
-            release_service::MAX_SIMILAR_RELEASE_LIMIT
-        )));
-    }
-    Ok(SimilarReleaseRequest { limit })
+    Ok(SimilarReleaseRequest {
+        limit: limit.min(release_service::MAX_SIMILAR_RELEASE_LIMIT),
+    })
 }
 
 fn parse_optional_similar_positive_integer(
@@ -486,7 +488,7 @@ fn similar_release_options() -> InterfaceDescriptor {
     descriptor.fields.extend([described_field(
         "limit",
         Option::<i64>::luau_type(),
-        "Maximum number of releases to return. Defaults to 20 and cannot exceed 100.",
+        "Maximum number of releases to return, capped to `MAX_SIMILAR`. Defaults to 20.",
     )]);
     descriptor
 }
@@ -523,6 +525,12 @@ mod tests {
         opts.set("limit", luau::Value::from(7_i64))?;
         let parsed = parse_similar_options(Some(opts))?;
         assert_eq!(parsed.limit, 7);
+
+        let opts = vm.create_table()?;
+        let past = release_service::MAX_SIMILAR_RELEASE_LIMIT as i64 + 1;
+        opts.set("limit", luau::Value::from(past))?;
+        let capped = parse_similar_options(Some(opts))?;
+        assert_eq!(capped.limit, release_service::MAX_SIMILAR_RELEASE_LIMIT);
         Ok(())
     }
 

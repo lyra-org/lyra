@@ -800,7 +800,7 @@ impl Fixture {
                 .iter()
                 .map(|key| keys.entity(key).map(|(db_id, _)| db_id))
                 .collect::<anyhow::Result<Vec<_>>>()?;
-            let playlist_db_id = services::playlists::create(
+            let (playlist_db_id, _) = services::playlists::create(
                 db,
                 &services::playlists::CreatePlaylistRequest {
                     user_db_id: keys.user(&playlist.owner)?,

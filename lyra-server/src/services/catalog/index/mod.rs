@@ -1628,6 +1628,7 @@ mod tests {
                 Viewer::User {
                     principal: Principal::for_user(&db, user, Vec::new(), set),
                     user_db_id: user,
+                    playlists: Default::default(),
                 }
             })
             .collect();

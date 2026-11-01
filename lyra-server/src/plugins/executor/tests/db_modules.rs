@@ -858,28 +858,27 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
                 local playlists = require("@lyra/playlists")
                 local track_id = "{track_id}"
 
-                executor_playlist_id = playlists.create({{
+                executor_created = playlists.create({{
                     name = "Raw Playlist",
                     description = "seed",
                     is_public = false,
                     created_at_ms = 10,
                     updated_at_ms = 20,
                 }})
-                executor_playlist = playlists.get_by_id(executor_playlist_id)
-                executor_playlist_owner = playlists.get_owner(executor_playlist_id)
-                executor_user_playlists = playlists.list_owned()
-                executor_playlist_entry_id = playlists.add_track(executor_playlist_id, track_id)
-                executor_playlist_tracks = playlists.get_tracks(executor_playlist_id)
-                executor_playlist_tracks_many = playlists.get_tracks_many({{ executor_playlist_id, executor_playlist_id }})
-                executor_updated_playlist = playlists.update({{
-                    playlist_id = executor_playlist_id,
+                executor_playlist_id = executor_created.id
+                executor_playlist = playlists.get({{ executor_playlist_id }})[executor_playlist_id]
+                executor_user_playlists = playlists.query({{ owner_id = executor_created.owner_id }}).items
+                executor_playlist_entry_id = playlists.add_tracks(executor_playlist_id, {{ track_id }})[1]
+                executor_playlist_tracks = playlists.entries({{ executor_playlist_id }})[executor_playlist_id]
+                executor_playlist_tracks_many = playlists.entries({{ executor_playlist_id, executor_playlist_id }})
+                executor_updated_playlist = playlists.update(executor_playlist_id, {{
                     name = "Raw Updated Playlist",
                     description = "changed",
                     is_public = true,
                     updated_at_ms = 30,
                 }})
-                playlists.remove_track(executor_playlist_id, executor_playlist_entry_id)
-                executor_playlist_tracks_after_remove = playlists.get_tracks(executor_playlist_id)
+                playlists.remove_entries(executor_playlist_id, {{ executor_playlist_entry_id }})
+                executor_playlist_tracks_after_remove = playlists.entries({{ executor_playlist_id }})[executor_playlist_id]
             "#,
         )
         .into_bytes(),
@@ -893,7 +892,7 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
                 return executor_playlist_id ~= nil,
                     executor_playlist.name,
                     executor_playlist.id == executor_playlist_id,
-                    executor_playlist_owner,
+                    executor_playlist.owner_id,
                     executor_user_playlists[1].name,
                     executor_playlist_entry_id ~= nil,
                     executor_playlist_tracks[1].track_id,
@@ -1611,11 +1610,93 @@ fn stale_principal_cannot_use_favorites_of_a_user_with_its_recycled_db_id() -> R
 }
 
 #[test]
+fn playlists_of_a_deleted_user_are_hidden_from_every_read() -> Result<()> {
+    let mut db = lyra_db::test_db::new_test_db()?;
+    let admin = lyra_db::fixtures::test_user("playlist-admin")?;
+    let admin_public_id = admin.id.clone();
+    let admin_db_id = lyra_db::users::create(&mut db, &admin)?;
+    let gone_db_id = lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("gone")?)?;
+    let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Left Behind")?;
+    let mut create = |name: &str, user_db_id| {
+        crate::services::playlists::create(
+            &mut db,
+            &crate::services::playlists::CreatePlaylistRequest {
+                user_db_id,
+                name: name.to_string(),
+                description: None,
+                is_public: Some(true),
+                created_at_ms: None,
+                updated_at_ms: None,
+                track_db_ids: vec![track_db_id],
+            },
+        )
+        .map(|(_, playlist)| playlist.id)
+    };
+    let orphan_id = create("Orphan", gone_db_id)?;
+    let kept_id = create("Kept", admin_db_id)?;
+    lyra_db::users::delete_user(&mut db, gone_db_id)?;
+    let orphan_db_id = lyra_db::lookup::find_node_id_by_id(&db, &orphan_id)?
+        .ok_or_else(|| anyhow::anyhow!("the playlist stays behind"))?;
+    assert_eq!(lyra_db::playlists::get_owner(&db, orphan_db_id)?, None);
+    let db = lyra_db::DbAsync::new(db);
+
+    let runtime = PluginExecutor::with_database(
+        Arc::from(vec![manifest("demo", &["lyra.playlists"])]),
+        default_server_info(),
+        db,
+    )?;
+    let mut context = CallContext {
+        origin: plugin_origin("demo", "orphan.luau"),
+        ..CallContext::default()
+    };
+    seed_caller_principal(
+        &mut context,
+        crate::services::auth::Principal::from_parts(
+            admin_db_id,
+            admin_public_id,
+            "playlist-admin".to_string(),
+            vec![lyra_db::Permission::Admin],
+            Some("admin".to_string()),
+            std::collections::HashSet::new(),
+        ),
+    );
+    let values = runtime.eval_plugin_source_with_call_context(
+        format!(
+            r#"
+                local playlists = require("@lyra/playlists")
+                local orphan, kept = "{orphan_id}", "{kept_id}"
+                local page = playlists.query({{ limit = 1 }})
+                return playlists.get({{ orphan, kept }})[orphan] == nil,
+                    playlists.get({{ kept }})[kept] ~= nil,
+                    page.total,
+                    page.items[1].id == kept,
+                    playlists.entries({{ orphan }})[orphan] == nil,
+                    playlists.delete(orphan)
+            "#,
+        )
+        .into_bytes(),
+        context,
+    )?;
+    assert_eq!(
+        values,
+        vec![
+            luau::Value::Boolean(true),
+            luau::Value::Boolean(true),
+            luau::Value::Number(1.0),
+            luau::Value::Boolean(true),
+            luau::Value::Boolean(true),
+            luau::Value::Boolean(false),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
 fn stale_principal_cannot_use_playlists_of_a_user_with_its_recycled_db_id() -> Result<()> {
     let mut db = lyra_db::test_db::new_test_db()?;
     let (stale, current_db_id) =
         recycled_user_principal(&mut db, std::collections::HashSet::new())?;
-    let playlist_db_id = crate::services::playlists::create(
+    let (playlist_db_id, _) = crate::services::playlists::create(
         &mut db,
         &crate::services::playlists::CreatePlaylistRequest {
             user_db_id: current_db_id,
@@ -1648,10 +1729,10 @@ fn stale_principal_cannot_use_playlists_of_a_user_with_its_recycled_db_id() -> R
                 local function rejects(f, ...)
                     return not pcall(f, ...)
                 end
-                return rejects(playlists.get_by_id, playlist_id),
-                    rejects(playlists.list_owned),
-                    rejects(playlists.list),
-                    rejects(playlists.update, {{ playlist_id = playlist_id, name = "Taken" }}),
+                return rejects(playlists.get, {{ playlist_id }}),
+                    rejects(playlists.query),
+                    rejects(playlists.entries, {{ playlist_id }}),
+                    rejects(playlists.update, playlist_id, {{ name = "Taken" }}),
                     rejects(playlists.delete, playlist_id),
                     rejects(playlists.create, {{ name = "Stale" }})
             "#,

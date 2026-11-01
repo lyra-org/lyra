@@ -1,0 +1,43 @@
+run_as = "owner"
+
+[[users]]
+key = "owner"
+admin = true
+
+[[users]]
+key = "other"
+
+[[tracks]]
+key = "song"
+title = "Song"
+
+[[playlists]]
+key = "jazz"
+owner = "owner"
+name = "Jazz"
+public = false
+tracks = ["song"]
+
+[[playlists]]
+key = "night"
+owner = "owner"
+name = "A Jazz Night"
+public = false
+
+[[playlists]]
+key = "shared"
+owner = "other"
+name = "Shared"
+public = true
+
+[[playlists]]
+key = "hidden"
+owner = "other"
+name = "Hidden"
+public = false
+tracks = ["song"]
+
+[[favorites]]
+user = "owner"
+target = "shared"
+at = 1700000000000

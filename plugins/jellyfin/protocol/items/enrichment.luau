@@ -67,7 +67,7 @@ function module.playlist_runtime_ticks(playlist_ids: { string }): { [string]: nu
 		return runtime_ticks
 	end
 
-	local links_by_playlist = playlists.get_tracks_many(playlist_ids)
+	local links_by_playlist = playlists.entries(playlist_ids)
 	local track_ids: { string } = {}
 	local track_seen: { [string]: boolean } = {}
 	for _, links in links_by_playlist do

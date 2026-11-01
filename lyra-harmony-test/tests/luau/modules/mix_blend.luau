@@ -26,6 +26,11 @@ for _, seed in { ids.s1, ids.solo, ids.amy, ids.rock, ids.mix } do
 end
 assert(titles(mix.blend({ seeds = { { id = ids.rock, exclude = false } } })) == "S1,S2,S3", "a seed entry")
 
+-- A limit past the cap is capped, not refused.
+assert(mix.MAX_TRACKS == 2000)
+assert(titles(mix.blend({ seeds = { ids.s1 }, limit = mix.MAX_TRACKS + 1 })) == "S1,S2,S3", "a capped limit")
+fails({ seeds = { ids.s1 }, limit = 0 }, "limit must be > 0")
+
 -- Or from the listener's history alone.
 assert(titles(mix.blend({ from_history = true })) == "S1,S2,S3", "history blend")
 
@@ -56,7 +61,6 @@ fails({ seeds = { ids.s1, ids.s1 } }, "is given twice")
 fails({ seeds = { { id = ids.s1, weight = 2 } } }, "request:")
 fails({ seeds = { { id = ids.s1, exclude = true }, ids.s2 }, pin_seed = true }, "pin_seed needs exactly one seed")
 fails({ seeds = { ids.s1 }, kind = "track" }, "unknown field")
-fails({ seeds = { ids.s1 }, limit = 2001 }, "limit must be <= 2000")
 fails({ seeds = { ids.s1 }, options = { ["a.b"] = { 1 } } }, "option 'a.b' must be a boolean, number, or string")
 fails({ seeds = { ids.s1 }, shape = "path" }, "unknown field `shape`")
 fails({ seeds = { 1 } }, "mix.blend: request:")

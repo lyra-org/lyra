@@ -124,7 +124,8 @@ impl TagsModule {
         let targets = Resolved::of(&*db, target_ids.0)?;
         let result = tag_service::has_targets(&db, user_id, targets.db_ids(), &tag)
             .map_err(crate::plugins::runtime_error)?;
-        Ok(targets.keyed(result))
+        let viewer = ids::viewer_of(&*db, &principal)?;
+        Ok(targets.keyed(ids::seen_by(&db, &viewer, result)?))
     }
 
     #[harmony(
@@ -161,6 +162,8 @@ impl TagsModule {
         let targets = Resolved::of(&*db, target_ids.0)?;
         let result = tag_service::get_for_targets_many(&db, user_id, targets.db_ids())
             .map_err(crate::plugins::runtime_error)?;
+        let viewer = ids::viewer_of(&*db, &principal)?;
+        let result = ids::seen_by(&db, &viewer, result)?;
         Ok(targets.keyed(result.into_iter().map(|(id, tags)| {
             (
                 id,
@@ -182,6 +185,10 @@ impl TagsModule {
         let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
         let (tagged, _canonical) =
             tag_service::get_tagged(&db, user_id, &tag).map_err(crate::plugins::runtime_error)?;
+        let viewer = ids::viewer_of(&*db, &principal)?;
+        let tagged = viewer
+            .visible(&db, tagged)
+            .map_err(crate::plugins::runtime_error)?;
         ids::public_id_list(&*db, &tagged)
     }
 }

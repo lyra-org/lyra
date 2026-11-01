@@ -1,19 +1,21 @@
 local fixture = ...
 local track_id: string = fixture.ids.track
 local foreign_id: string = fixture.ids.foreign
+local hidden_id: string = fixture.ids.hidden
 
 local playlists = require("@lyra/playlists")
-local id = playlists.create({ name = "Delete me" })
-local entry = playlists.add_track(id, track_id)
-local playlist = playlists.get_by_id(id)
-assert(playlist ~= nil)
+local playlist = playlists.create({ name = "Delete me" })
+local id = playlist.id
+local entries = playlists.add_tracks(id, { track_id })
+assert(entries ~= nil and #entries == 1)
 assert(playlists.delete(track_id) == false)
 assert(playlists.delete("missing-playlist") == false)
 assert(not pcall(playlists.delete, 1))
-assert(playlists.delete(playlist.id) == true)
-assert(playlists.get_by_id(id) == nil)
+assert(playlists.delete(id) == true)
+assert(playlists.get({ id })[id] == nil)
 assert(playlists.delete(id) == false)
-assert(entry ~= nil and playlists.remove_track(id, entry) == false)
-assert(playlists.delete(foreign_id) == true, "an admin deletes any user's playlist")
-assert(playlists.get_by_id(foreign_id) == nil)
+assert(playlists.remove_entries(id, entries) == false)
+assert(playlists.delete(foreign_id) == true, "an admin deletes another user's public playlist")
+assert(playlists.get({ foreign_id })[foreign_id] == nil)
+assert(playlists.delete(hidden_id) == false, "but not a private one it cannot see")
 assert(not pcall(playlists.delete, {}))

@@ -31,7 +31,11 @@ assert(shared.songCount == 1, "a hidden song isn't counted")
 -- Only an admin lists another user's.
 assert(call.error_code("getPlaylists", key, { username = "other" }) == 50, "a listener can't list another user's")
 local admin_listed = call.ok("getPlaylists", fixture.api_keys.admin_key, { username = "other" }).playlists.playlist
-call.same(call.ids(admin_listed), { ids.shared, ids.theirs }, "the other user's, as an admin")
+call.same(call.ids(admin_listed), { ids.shared }, "the other user's public ones, even as an admin")
+assert(
+	call.error_code("getPlaylist", fixture.api_keys.admin_key, { id = ids.theirs }) == 70,
+	"an admin doesn't see another user's private playlist"
+)
 assert(call.error_code("getPlaylists", fixture.api_keys.admin_key, { username = "nobody" }) == 70, "an unknown user")
 
 -- A playlist carries its visible entries, in order and with repeats.
@@ -84,6 +88,21 @@ assert(call.error_code("updatePlaylist", key, { playlistId = ids.mine, songIndex
 assert(call.error_code("updatePlaylist", key, { playlistId = ids.mine, public = "maybe" }) == 0, "not a boolean")
 assert(call.error_code("updatePlaylist", key, { playlistId = ids.mine, songIdToAdd = ids.h }) == 70, "a hidden song")
 call.same(call.ids(call.ok("getPlaylist", other_key, { id = ids.shared }).playlist.entry), { ids.a }, "untouched")
+
+-- A change past the playlist cap is refused before anything is written.
+local playlists_module = require("@lyra/playlists")
+local before = playlist(ids.mine)
+local too_many = table.create(playlists_module.MAX_TRACK_IDS + 1, ids.a)
+assert(call.error_code("updatePlaylist", key, { playlistId = ids.mine, name = "Capped", songIdToAdd = too_many }) == 0)
+assert(call.error_code("createPlaylist", key, { name = "Capped", songId = too_many }) == 0)
+local after = playlist(ids.mine)
+assert(after.name == before.name and after.songCount == before.songCount, "nothing was written")
+
+-- A name the host refuses fails before any entry changes.
+call.ok("updatePlaylist", key, { playlistId = ids.mine, songIdToAdd = { ids.a } })
+local named = playlist(ids.mine)
+assert(call.error_code("updatePlaylist", key, { playlistId = ids.mine, name = "   ", songIndexToRemove = "0" }) == 0)
+assert(playlist(ids.mine).songCount == named.songCount, "a blank name leaves the entries alone")
 
 -- Form-encoded POST bodies carry parameters, including the credentials.
 local form = call.raw("createPlaylist", {}, {

@@ -243,10 +243,18 @@ impl luau::FromCallFrame for LoginClient {
     }
 }
 
+crate::plugins::limits::module_limits!(&[crate::plugins::limits::Limit {
+    name: "MAX_SESSION_DATA_BYTES",
+    value: crate::services::auth::sessions::MAX_PLUGIN_SESSION_DATA_BYTES,
+    description: "The most bytes of JSON `set_session_data` stores; it raises past them.",
+}]);
+
 #[harmony_macros::module(
     id = "lyra/auth",
     description = "Sessions, logins, and the principal a dispatch acts for. A coroutine acts with the auth of the call that created it, as does code a module runs when it is first required.",
-    docs_feature = "docgen"
+    docs_feature = "docgen",
+    extend = install_limits,
+    describe = describe_limits
 )]
 impl AuthModule {
     #[harmony(
@@ -265,7 +273,7 @@ impl AuthModule {
     }
 
     #[harmony(
-        description = "Stores up to 16 KiB of JSON for this plugin on a live session. Nil clears it; revoking the session removes the data.",
+        description = "Stores up to `MAX_SESSION_DATA_BYTES` bytes of JSON for this plugin on a live session. Nil clears it; revoking the session removes the data.",
         returns()
     )]
     async fn set_session_data(

@@ -1221,7 +1221,7 @@ api.delete(P .. "/Playlists/{playlistId}/Items", function(ctx: ApiContext)
 	local query = if ctx and ctx.request then ctx.request.query else nil
 	local entry_ids = session.parse_playlist_query_entry_ids(query, playlist)
 	if #entry_ids > 0 then
-		local ok, removed = pcall(playlists.remove_tracks, playlist.id, entry_ids)
+		local ok, removed = pcall(playlists.remove_entries, playlist.id, entry_ids)
 		if not ok or not removed then
 			return responses.bad_request("failed to remove playlist entry")
 		end
@@ -1255,7 +1255,7 @@ api.post(P .. "/Playlists/{playlistId}/Items/{itemId}/Move/{newIdx}", function(c
 	if entry_id == nil then
 		return api.response.empty(204)
 	end
-	local ok, moved = pcall(playlists.move_track, playlist.id, entry_id, position)
+	local ok, moved = pcall(playlists.move_entry, playlist.id, entry_id, position)
 	if not ok then
 		return responses.bad_request("failed to move playlist entry")
 	end

@@ -32,6 +32,7 @@ pub(crate) mod ids;
 pub(crate) mod labels;
 pub(crate) mod libraries;
 pub(crate) mod lifecycle;
+pub(crate) mod limits;
 pub(crate) mod listens;
 pub(crate) mod locale;
 pub(crate) mod lyrics;

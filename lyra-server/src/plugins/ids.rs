@@ -136,12 +136,31 @@ pub(crate) fn visible_db_id_of(
     Ok(visible.then_some(db_id))
 }
 
+/// The entries of `values` keyed by nodes `viewer` can see, so a batch read leaves out what a
+/// single-target read would.
+pub(crate) fn seen_by<V>(
+    db: &DbAny,
+    viewer: &Viewer,
+    values: HashMap<DbId, V>,
+) -> luau::runtime::Result<HashMap<DbId, V>> {
+    let mut seen = HashMap::with_capacity(values.len());
+    for (db_id, value) in values {
+        if viewer
+            .sees(db, db_id)
+            .map_err(crate::plugins::runtime_error)?
+        {
+            seen.insert(db_id, value);
+        }
+    }
+    Ok(seen)
+}
+
 /// The caller's viewer, verified under the guard `db` was read through.
 pub(crate) fn viewer_of(
     db: &impl DbAccess,
     principal: &crate::services::auth::Principal,
 ) -> luau::runtime::Result<Viewer> {
-    Viewer::user(db, principal.clone()).map_err(crate::plugins::runtime_error)
+    Viewer::listener(db, principal.clone()).map_err(crate::plugins::runtime_error)
 }
 
 /// [`visible_db_id_of`] for the dispatch principal's viewer.

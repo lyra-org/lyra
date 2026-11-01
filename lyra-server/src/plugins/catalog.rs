@@ -90,18 +90,26 @@ impl luau::FromCallFrame for PersonalScopes {
 impl PersonalScopes {
     /// Raises when `query` reads personal data whose scope the caller lacks.
     pub(crate) fn check<C: Catalog>(&self, query: &Query<C>) -> luau::runtime::Result<()> {
-        match query.personal().difference(&self.0).next() {
-            None => Ok(()),
-            Some(data) => Err(crate::plugins::runtime_error(format!(
-                "filtering or sorting by the caller's {} requires the {} scope",
-                match data {
-                    PersonalData::Favorites => "favorites",
-                    PersonalData::Listens => "listens",
-                    PersonalData::Ratings => "ratings",
-                },
-                scope_of(*data).def().id,
-            ))),
+        query
+            .personal()
+            .iter()
+            .try_for_each(|data| self.require(*data))
+    }
+
+    /// Raises when the caller lacks the scope that gates `data`.
+    pub(crate) fn require(&self, data: PersonalData) -> luau::runtime::Result<()> {
+        if self.0.contains(&data) {
+            return Ok(());
         }
+        Err(crate::plugins::runtime_error(format!(
+            "filtering or sorting by the caller's {} requires the {} scope",
+            match data {
+                PersonalData::Favorites => "favorites",
+                PersonalData::Listens => "listens",
+                PersonalData::Ratings => "ratings",
+            },
+            scope_of(data).def().id,
+        )))
     }
 }
 

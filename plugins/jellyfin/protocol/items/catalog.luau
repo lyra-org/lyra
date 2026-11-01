@@ -67,7 +67,7 @@ type Release = releases.Release
 -- Releases list through catalog queries, which carry their counts.
 type ReleaseSummary = releases.ReleaseSummary
 type Artist = artists_module.Artist
-type PlaylistInfo = playlists.PlaylistInfo
+type Playlist = playlists.Playlist
 type PlaybackSourceInfo = playback_sources.PlaybackSourceInfo
 type TagInfo = tags_module.TagInfo
 type TagInfoMap = { [string]: { TagInfo } }
@@ -97,7 +97,7 @@ type ReleaseLike = Release | ReleaseRecord
 -- Artists list through catalog queries, which carry their counts.
 type ArtistLike = artists_module.ArtistSummary
 type TrackLike = Track | TrackRecord
-type ItemRaw = ReleaseLike | ArtistLike | TrackLike | PlaylistInfo
+type ItemRaw = ReleaseLike | ArtistLike | TrackLike | Playlist
 type ItemKind = "release" | "artist" | "track" | "playlist"
 type LibraryInfo = {
 	id: string,
@@ -394,8 +394,8 @@ function helpers.track_like_from_raw(raw: ItemRaw?): TrackLike?
 	return nil
 end
 
-function helpers.playlist_info_from_raw(raw: ItemRaw?): PlaylistInfo?
-	local playlist = raw :: PlaylistInfo?
+function helpers.playlist_info_from_raw(raw: ItemRaw?): Playlist?
+	local playlist = raw :: Playlist?
 	if playlist ~= nil and type(playlist.name) == "string" then
 		return playlist
 	end
@@ -1133,7 +1133,7 @@ function module.playlists_folder_item(child_count: number?): ItemInfo
 end
 
 function helpers.to_playlist_item(
-	playlist: PlaylistInfo?,
+	playlist: Playlist?,
 	user_id: string?,
 	child_count: number?,
 	context: ItemContext?
@@ -1495,7 +1495,7 @@ function helpers.to_person_stub(artist: ArtistLike?): ItemInfo?
 	return item
 end
 
-function helpers.to_playlist_stub(playlist: PlaylistInfo?, child_count: number?): ItemInfo?
+function helpers.to_playlist_stub(playlist: Playlist?, child_count: number?): ItemInfo?
 	if not playlist then
 		return nil
 	end

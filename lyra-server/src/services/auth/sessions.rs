@@ -379,7 +379,7 @@ pub(crate) async fn revoke_session(
     Ok(removed)
 }
 
-const MAX_PLUGIN_SESSION_DATA_BYTES: usize = 16 * 1024;
+pub(crate) const MAX_PLUGIN_SESSION_DATA_BYTES: usize = 16 * 1024;
 
 fn parse_plugin_data(value: Option<String>) -> anyhow::Result<serde_json::Value> {
     value

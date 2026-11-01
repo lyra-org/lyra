@@ -77,8 +77,6 @@ use crate::{
 };
 use lyra_db::Playlist;
 
-const PLAYLIST_BULK_TRACK_HARD_CAP: usize = 500;
-
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
 struct CreatePlaylistRequest {
@@ -214,7 +212,7 @@ struct PlaylistListQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Comma-separated or repeated values: name, created_at, updated_at, track_count, total_duration, favorited_at, id."
+            description = "Comma-separated or repeated values: name, created_at, updated_at, track_count, total_duration, favorited_at, relevance, id."
         )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
@@ -294,17 +292,8 @@ fn parse_playlist_sort_specs(
     super::parse_route_sort_specs(
         sort_by,
         sort_order,
-        |token| match token {
-            "name" => Some(PlaylistSortKey::Name),
-            "created_at" => Some(PlaylistSortKey::CreatedAt),
-            "updated_at" => Some(PlaylistSortKey::UpdatedAt),
-            "track_count" => Some(PlaylistSortKey::TrackCount),
-            "total_duration" => Some(PlaylistSortKey::TotalDuration),
-            "favorited_at" => Some(PlaylistSortKey::FavoritedAt),
-            "id" => Some(PlaylistSortKey::Id),
-            _ => None,
-        },
-        "name, created_at, updated_at, track_count, total_duration, favorited_at, id",
+        PlaylistSortKey::parse,
+        "name, created_at, updated_at, track_count, total_duration, favorited_at, relevance, id",
     )
 }
 
@@ -321,6 +310,15 @@ fn resolve_owner_filter(db: &agdb::DbAny, owner_id: &str) -> Result<DbId, AppErr
     let owner_db_id = lyra_db::lookup::find_node_id_by_id(db, owner_id)?.ok_or_else(not_found)?;
     lyra_db::users::get_by_id(db, owner_db_id)?.ok_or_else(not_found)?;
     Ok(owner_db_id)
+}
+
+/// A 400 for an [`playlists::InvalidPlaylistRequest`], and `err` as it maps otherwise.
+fn invalid_request(err: anyhow::Error) -> AppError {
+    if err.is::<playlists::InvalidPlaylistRequest>() {
+        AppError::bad_request(err.to_string())
+    } else {
+        AppError::from(err)
+    }
 }
 
 fn resolve_owner_id(db: &agdb::DbAny, owner_db_id: Option<DbId>) -> anyhow::Result<Option<String>> {
@@ -500,7 +498,7 @@ async fn create_playlist(
     let now = now_ms();
     let mut db = STATE.db.write().await;
     let user_db_id = principal.require(&db)?;
-    let playlist_db_id = playlists::create(
+    let (_, created) = playlists::create(
         &mut db,
         &playlists::CreatePlaylistRequest {
             user_db_id,
@@ -513,9 +511,6 @@ async fn create_playlist(
         },
     )
     .map_err(|err| AppError::bad_request(err.to_string()))?;
-
-    let created = lyra_db::playlists::get_by_id(&db, playlist_db_id)?
-        .ok_or_else(|| AppError::not_found("playlist not found after creation"))?;
 
     Ok((
         StatusCode::CREATED,
@@ -576,10 +571,15 @@ async fn get_playlists(
         let (mut playlists_page, summaries) = playlists::list_visible(
             db,
             &principal,
-            playlists::PlaylistFilter { owner, favorite },
+            playlists::PlaylistFilter {
+                owner,
+                favorite,
+                ..playlists::PlaylistFilter::default()
+            },
             &sort,
             search_term.as_deref(),
-        )?;
+        )
+        .map_err(invalid_request)?;
         let page = page_request.start(
             &snapshot_key,
             playlists_page
@@ -600,6 +600,7 @@ async fn get_playlists(
     if !playlist_db_ids.iter().all(|id| summaries.contains_key(id)) {
         summaries = playlists::summaries(db, &principal, &playlist_db_ids)?;
     }
+    let mut owners = playlists::owner_ids(db, &playlist_db_ids)?;
     let covers = if inc.covers {
         let viewer = catalog::Viewer::user(db, principal.clone())?;
         Some(cover_services::display::playlists::covers_for_playlists(
@@ -629,13 +630,11 @@ async fn get_playlists(
                 .cloned()
                 .map(|resolved| route_covers::cover_to_response(resolved.cover))
         });
-        let owner_id =
-            resolve_owner_id(db, playlists::get_owner(db, QueryId::Id(playlist_db_id))?)?;
         items.push(playlist_to_response(
             playlist,
             tracks,
             cover,
-            owner_id,
+            owners.remove(&playlist_db_id),
             summaries.get(&playlist_db_id).copied().unwrap_or_default(),
         ));
     }
@@ -747,12 +746,7 @@ async fn add_playlist_tracks(
     if request.track_ids.is_empty() {
         return Err(AppError::bad_request("track_ids cannot be empty"));
     }
-    if request.track_ids.len() > PLAYLIST_BULK_TRACK_HARD_CAP {
-        return Err(AppError::bad_request(format!(
-            "track_ids cap exceeded: {} > {PLAYLIST_BULK_TRACK_HARD_CAP}",
-            request.track_ids.len(),
-        )));
-    }
+    playlists::check_id_count("track ids", request.track_ids.len()).map_err(invalid_request)?;
 
     let mut db = STATE.db.write().await;
     let playlist_db_id = require_owned_playlist(&db, &principal, &id)?;
@@ -781,7 +775,7 @@ async fn add_playlist_tracks(
         if message.starts_with("track not found") {
             AppError::not_found(message)
         } else {
-            AppError::from(err)
+            invalid_request(err)
         }
     })?;
 
@@ -819,12 +813,7 @@ async fn remove_playlist_entries(
     if entry_ids.is_empty() {
         return Err(AppError::bad_request("entry_ids cannot be empty"));
     }
-    if entry_ids.len() > PLAYLIST_BULK_TRACK_HARD_CAP {
-        return Err(AppError::bad_request(format!(
-            "entry_ids cap exceeded: {} > {PLAYLIST_BULK_TRACK_HARD_CAP}",
-            entry_ids.len(),
-        )));
-    }
+    playlists::check_id_count("entry ids", entry_ids.len()).map_err(invalid_request)?;
 
     let mut db = STATE.db.write().await;
     let playlist_db_id = require_owned_playlist(&db, &principal, &id)?;
@@ -835,7 +824,7 @@ async fn remove_playlist_entries(
             if message.starts_with("playlist entry not found") {
                 AppError::not_found(message)
             } else {
-                AppError::from(err)
+                invalid_request(err)
             }
         })?;
 
@@ -915,7 +904,7 @@ fn create_playlist_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn list_playlists_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List playlists")
-        .description("Returns a cursor-paginated page of the playlists the authenticated user can see: their own and every public playlist. `owner_id` keeps one user's playlists; pass the authenticated user's ID for their own. `favorite=true` keeps only playlists the user has favorited and `favorite=false` the rest. `sort_by` supports `name`, `created_at`, `updated_at`, `track_count`, `total_duration`, `favorited_at` (when the user first favorited the playlist; unfavorited playlists sort last in both directions), and `id`. Track counts and durations are always included. Use `inc` to include tracks, artists, releases, covers.")
+        .description("Returns a cursor-paginated page of the playlists the authenticated user can see: their own and every public playlist. `owner_id` keeps one user's playlists; pass the authenticated user's ID for their own. `favorite=true` keeps only playlists the user has favorited and `favorite=false` the rest. `sort_by` supports `name`, `created_at`, `updated_at`, `track_count`, `total_duration`, `favorited_at` (when the user first favorited the playlist; unfavorited playlists sort last in both directions), `relevance` (how well the name matches `query`, which it needs), and `id`. Without `sort_by`, a `query` ranks by relevance and anything else is by name. Track counts and durations are always included. Use `inc` to include tracks, artists, releases, covers.")
 }
 
 #[cfg(feature = "docgen")]
@@ -1067,6 +1056,7 @@ mod tests {
                 track_db_ids: Vec::new(),
             },
         )
+        .map(|(playlist_db_id, _)| playlist_db_id)
     }
 
     async fn session_headers(user_db_id: DbId) -> anyhow::Result<HeaderMap> {

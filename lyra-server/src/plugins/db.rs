@@ -90,8 +90,11 @@ impl ViewerDb {
         &self,
         db: &agdb::DbAny,
     ) -> harmony_luau::runtime::Result<crate::services::catalog::Viewer> {
-        crate::services::catalog::Viewer::of(db, self.principal.clone())
-            .map_err(crate::plugins::runtime_error)
+        match &self.principal {
+            Some(principal) => crate::services::catalog::Viewer::listener(db, principal.clone()),
+            None => Ok(crate::services::catalog::Viewer::System),
+        }
+        .map_err(crate::plugins::runtime_error)
     }
 
     /// The same database, for writes that follow a scoped read.

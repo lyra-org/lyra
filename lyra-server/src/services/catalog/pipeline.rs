@@ -955,6 +955,7 @@ mod tests {
                 HashSet::from([split.shown_id.clone()]),
             ),
             user_db_id: user,
+            playlists: Default::default(),
         };
         let none = (Vec::new(), 0);
 

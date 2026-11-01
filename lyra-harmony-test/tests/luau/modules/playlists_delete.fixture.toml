@@ -17,3 +17,9 @@ owner = "other"
 name = "Other playlist"
 public = true
 tracks = ["track"]
+
+[[playlists]]
+key = "hidden"
+owner = "other"
+name = "Other private playlist"
+public = false

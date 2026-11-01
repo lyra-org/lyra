@@ -73,7 +73,8 @@ impl FavoritesModule {
         let targets = Resolved::of(&*db, target_ids.0)?;
         let favorited =
             favorite_service::favorited_at_for_principal(&db, &principal, targets.db_ids())?;
-        Ok(targets.keyed(favorited))
+        let viewer = ids::viewer_of(&*db, &principal)?;
+        Ok(targets.keyed(ids::seen_by(&db, &viewer, favorited)?))
     }
 
     #[harmony(returns(Vec<String>))]
@@ -87,11 +88,15 @@ impl FavoritesModule {
         let db = db.read().await;
         let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
         let ids = favorite_service::list_ids(&db, user_db_id, kind)?;
+        let viewer = ids::viewer_of(&*db, &principal)?;
         let mut visible_ids = Vec::new();
         for id in ids {
-            if kind == FavoriteKind::Playlist
-                || crate::services::auth::access::entity_accessible(&db, &principal, id)?
-            {
+            let visible = if kind == FavoriteKind::Playlist {
+                viewer.sees_playlist(&*db, id)?
+            } else {
+                crate::services::auth::access::entity_accessible(&db, &principal, id)?
+            };
+            if visible {
                 visible_ids.push(id);
             }
         }

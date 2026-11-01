@@ -176,10 +176,18 @@ impl LuauTypeInfo for LuauListenStats {
     }
 }
 
+crate::plugins::limits::module_limits!(&[crate::plugins::limits::Limit {
+    name: "MAX_PLAYS",
+    value: MAX_SUBMITTED_PLAYS,
+    description: "The most plays one `submit` judges.",
+}]);
+
 #[harmony_macros::module(
     id = "lyra/listens",
     description = "Listen counts and submitted plays of the dispatch principal, and every user's listens as they are recorded: like `playback_sessions.on_update` for playbacks, `on_update` delivers all users' listens, not only the caller's, and needs the `lyra.listens.all` scope too.",
-    docs_feature = "docgen"
+    docs_feature = "docgen",
+    extend = install_limits,
+    describe = describe_limits
 )]
 impl ListensModule {
     #[harmony(
@@ -222,7 +230,7 @@ impl ListensModule {
     }
 
     #[harmony(
-        description = "Judges the dispatch principal's plays as listens in one transaction and returns each play's outcome, keyed by `play_id`. A `play_id` repeated in the batch is judged by its first occurrence. Recorded listens reach `on_update`. Raises on a malformed play or more than 500 plays, judging none.",
+        description = "Judges the dispatch principal's plays as listens in one transaction and returns each play's outcome, keyed by `play_id`. A `play_id` repeated in the batch is judged by its first occurrence. Recorded listens reach `on_update`. Raises on a malformed play or more than `MAX_PLAYS` plays, judging none.",
         returns(HashMap<String, ListenOutcome>)
     )]
     async fn submit(

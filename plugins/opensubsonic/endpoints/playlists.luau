@@ -17,13 +17,10 @@ local songs = require("../catalog/songs")
 type ApiQueryParams = api.ApiQueryParams
 type ApiResponse = api.ApiResponse
 type JsonObject = { [string]: any }
-type PlaylistInfo = playlists.PlaylistInfo
-type PlaylistTrackLink = playlists.PlaylistTrackLink
+type Playlist = playlists.Playlist
+type PlaylistEntry = playlists.PlaylistEntry
 type Request = request.Request
 type Track = tracks.Track
-
--- A playlist with its owner's id, which listings and `readonly` need.
-type Owned = { playlist: PlaylistInfo, owner_id: string? }
 
 local module = {}
 
@@ -31,33 +28,18 @@ local function is_admin(req: Request): boolean
 	return table.find(req.auth.principal.permissions, "admin") ~= nil
 end
 
--- The playlists a user can play: its own, then everyone else's public ones, whatever its role.
-local function playable_by(user_id: string, caller_id: string): { Owned }
-	local playable: { Owned } = {}
-	local listed: { [string]: boolean } = {}
-	if user_id == caller_id then
-		for _, playlist in playlists.list_owned() do
-			listed[playlist.id] = true
-			table.insert(playable, { playlist = playlist, owner_id = caller_id })
-		end
-	end
-	for _, playlist in playlists.list() do
-		if listed[playlist.id] or (user_id == caller_id and playlist.is_public ~= true) then
-			continue
-		end
-		local owner_id = playlists.get_owner(playlist.id)
-		if owner_id == user_id or playlist.is_public == true then
-			table.insert(playable, { playlist = playlist, owner_id = owner_id })
-		end
-	end
-	return playable
+-- The playlists listed for a user: for the caller, its own and everyone's public ones; for
+-- another user, that user's public ones.
+local function listed_for(user_id: string, caller_id: string): { Playlist }
+	local query: playlists.PlaylistQuery? = if user_id == caller_id then nil else { owner_id = user_id }
+	return playlists.query(query).items
 end
 
 -- The `playlist` of each playlist, in order, from its visible entries, and each one's entry
 -- tracks by playlist id, in order and with repeats.
 local function describe(
-	owned: { Owned },
-	links_by_playlist: { [string]: { PlaylistTrackLink } },
+	listed: { Playlist },
+	links_by_playlist: { [string]: { PlaylistEntry } },
 	caller_id: string
 ): ({ JsonObject }, { [string]: { Track } })
 	local track_ids: { string } = {}
@@ -78,8 +60,7 @@ local function describe(
 
 	local items: { JsonObject } = {}
 	local entries_by_playlist: { [string]: { Track } } = {}
-	for _, item in owned do
-		local playlist = item.playlist
+	for _, playlist in listed do
 		local entry_tracks: { Track } = {}
 		local duration_ms = 0
 		for _, link in links_by_playlist[playlist.id] or {} do
@@ -95,22 +76,30 @@ local function describe(
 			id = playlist.id,
 			name = playlist.name,
 			comment = playlist.description,
-			owner = if item.owner_id then usernames[item.owner_id] else nil,
+			owner = usernames[playlist.owner_id],
 			public = playlist.is_public == true,
 			songCount = #entry_tracks,
 			duration = dates.seconds(duration_ms),
 			created = dates.iso8601(created_at_ms),
 			changed = dates.iso8601(playlist.updated_at_ms or created_at_ms),
-			readonly = item.owner_id ~= caller_id,
+			readonly = playlist.owner_id ~= caller_id,
 		}
 		table.insert(items, described)
 	end
 	return items, entries_by_playlist
 end
 
--- The songs these ids name, in order. Fails with 70 when one is missing or hidden.
+local function check_count(count: number, what: string)
+	if count > playlists.MAX_TRACK_IDS then
+		request.fail(0, `A playlist change takes at most {playlists.MAX_TRACK_IDS} {what}`)
+	end
+end
+
+-- The songs these ids name, in order. Fails with 70 when one is missing or hidden, and with 0
+-- past the playlist cap.
 local function song_ids(params: ApiQueryParams, name: string): { string }
 	local ids = request.values(params, name)
+	check_count(#ids, "songs")
 	if #ids == 0 then
 		return ids
 	end
@@ -123,8 +112,8 @@ local function song_ids(params: ApiQueryParams, name: string): { string }
 	return ids
 end
 
-local function visible_playlist(id: string): PlaylistInfo
-	local playlist = playlists.get_by_id(id)
+local function visible_playlist(id: string): Playlist
+	local playlist = playlists.get({ id })[id]
 	if not playlist then
 		return request.not_found("Playlist")
 	end
@@ -132,18 +121,17 @@ local function visible_playlist(id: string): PlaylistInfo
 end
 
 -- The playlist parameter `name` names, which the caller must own.
-local function owned_playlist(req: Request, name: string): PlaylistInfo
+local function owned_playlist(req: Request, name: string): Playlist
 	local playlist = visible_playlist(request.required(req.params, name))
-	if playlists.get_owner(playlist.id) ~= req.auth.principal.user_id then
+	if playlist.owner_id ~= req.auth.principal.user_id then
 		return request.fail(50, "Only the owner can change the playlist")
 	end
 	return playlist
 end
 
-local function playlist_response(req: Request, playlist: PlaylistInfo): ApiResponse
+local function playlist_response(req: Request, playlist: Playlist): ApiResponse
 	local caller_id = req.auth.principal.user_id
-	local owned = { { playlist = playlist, owner_id = playlists.get_owner(playlist.id) } }
-	local items, entries = describe(owned, { [playlist.id] = playlists.get_tracks(playlist.id) }, caller_id)
+	local items, entries = describe({ playlist }, playlists.entries({ playlist.id }), caller_id)
 	local item = items[1]
 	local entry_tracks = entries[playlist.id]
 	if #entry_tracks > 0 then
@@ -175,13 +163,13 @@ module.methods = {
 			user_id = found
 		end
 
-		local owned = playable_by(user_id, caller_id)
+		local listed = listed_for(user_id, caller_id)
 		local ids: { string } = {}
-		for _, item in owned do
-			table.insert(ids, item.playlist.id)
+		for _, playlist in listed do
+			table.insert(ids, playlist.id)
 		end
-		local links_by_playlist = if #ids > 0 then playlists.get_tracks_many(ids) else {}
-		local items = describe(owned, links_by_playlist, caller_id)
+		local links_by_playlist = if #ids > 0 then playlists.entries(ids) else {}
+		local items = describe(listed, links_by_playlist, caller_id)
 		return response.ok(
 			req.params,
 			{ playlists = if #items > 0 then { playlist = items } else response.EMPTY_OBJECT }
@@ -208,12 +196,13 @@ module.methods = {
 		end
 
 		local name = request.required(params, "name")
-		local playlist_id = playlists.create({ name = name, track_ids = song_ids(params, "songId") })
-		return playlist_response(req, visible_playlist(playlist_id))
+		return playlist_response(req, playlists.create({ name = name, track_ids = song_ids(params, "songId") }))
 	end,
 
-	-- Removes the entries at `songIndexToRemove` from the playlist as the caller sees it, then
-	-- appends `songIdToAdd`.
+	-- Sets the fields, then removes the entries at `songIndexToRemove` from the playlist as the
+	-- caller sees it, then appends `songIdToAdd`. The fields go first because the host validates
+	-- them; every other parameter is checked before then, so only a concurrent change can stop it
+	-- part way.
 	updatePlaylist = function(req: Request): ApiResponse
 		local params = req.params
 		local playlist = owned_playlist(req, "playlistId")
@@ -221,11 +210,12 @@ module.methods = {
 		local comment = request.param_or_empty(params, "comment")
 		local is_public = request.bool(params, "public")
 		local indices = request.ints(params, "songIndexToRemove")
+		check_count(#indices, "removals")
 		local add_ids = song_ids(params, "songIdToAdd")
 
 		local remove_entries: { string } = {}
 		if #indices > 0 then
-			local links = playlists.get_tracks(playlist.id)
+			local links: { PlaylistEntry } = playlists.entries({ playlist.id })[playlist.id] or {}
 			local removing: { [string]: boolean } = {}
 			for _, index in indices do
 				local link = links[index + 1]
@@ -239,19 +229,21 @@ module.methods = {
 			end
 		end
 
-		if name or comment or is_public ~= nil then
-			playlists.update({
-				playlist_id = playlist.id,
+		if
+			(name or comment or is_public ~= nil)
+			and not playlists.update(playlist.id, {
 				name = name,
 				description = comment,
 				is_public = is_public,
 			})
-		end
-		if #remove_entries > 0 and not playlists.remove_tracks(playlist.id, remove_entries) then
+		then
 			return request.fail(0, "The playlist changed while it was being updated")
 		end
-		if #add_ids > 0 then
-			playlists.add_tracks(playlist.id, add_ids)
+		if #remove_entries > 0 and not playlists.remove_entries(playlist.id, remove_entries) then
+			return request.fail(0, "The playlist changed while it was being updated")
+		end
+		if #add_ids > 0 and not playlists.add_tracks(playlist.id, add_ids) then
+			return request.fail(0, "The playlist changed while it was being updated")
 		end
 		return response.ok(params)
 	end,

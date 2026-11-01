@@ -5,7 +5,10 @@
 
 use std::{
     cmp::Ordering,
-    collections::HashMap,
+    collections::{
+        HashMap,
+        HashSet,
+    },
 };
 
 use agdb::{
@@ -29,6 +32,28 @@ use lyra_db::{
     Playlist,
     favorites::FavoriteKind,
 };
+
+/// The most track or entry ids one playlist write takes.
+pub(crate) const MAX_PLAYLIST_TRACK_IDS: usize = 10_000;
+
+/// A playlist request the caller must change, applied to nothing.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum InvalidPlaylistRequest {
+    #[error("too many {what}: {count}, at most {MAX_PLAYLIST_TRACK_IDS}")]
+    TooManyIds { what: &'static str, count: usize },
+    #[error("playlist entry listed more than once: {0}")]
+    RepeatedEntry(String),
+    #[error("the relevance sort key needs a search term")]
+    RelevanceWithoutSearch,
+}
+
+/// Raises [`InvalidPlaylistRequest::TooManyIds`] past [`MAX_PLAYLIST_TRACK_IDS`].
+pub(crate) fn check_id_count(what: &'static str, count: usize) -> anyhow::Result<()> {
+    if count > MAX_PLAYLIST_TRACK_IDS {
+        return Err(InvalidPlaylistRequest::TooManyIds { what, count }.into());
+    }
+    Ok(())
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct PlaylistTrackLink {
@@ -103,6 +128,7 @@ pub(crate) fn list(db: &DbAny) -> anyhow::Result<Vec<Playlist>> {
     lyra_db::playlists::get(db)
 }
 
+#[cfg(test)]
 pub(crate) fn get(db: &DbAny, query_id: QueryId) -> anyhow::Result<Option<Playlist>> {
     let Some(playlist_db_id) = resolve_optional_id(db, query_id)? else {
         return Ok(None);
@@ -119,6 +145,33 @@ pub(crate) fn get_owner(db: &DbAny, playlist_id: QueryId) -> anyhow::Result<Opti
         return Ok(None);
     };
     lyra_db::playlists::get_owner(db, playlist_db_id)
+}
+
+/// The public ids of the owners of these playlists, keyed by playlist. Playlists without an
+/// owner are absent.
+pub(crate) fn owner_ids(
+    db: &DbAny,
+    playlist_db_ids: &[DbId],
+) -> anyhow::Result<HashMap<DbId, String>> {
+    let mut owners = HashMap::with_capacity(playlist_db_ids.len());
+    for &playlist_db_id in playlist_db_ids {
+        if let Some(owner_db_id) = lyra_db::playlists::get_owner(db, playlist_db_id)? {
+            owners.insert(playlist_db_id, owner_db_id);
+        }
+    }
+    let owner_db_ids = owners
+        .values()
+        .copied()
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let public_ids = lyra_db::lookup::find_ids_by_db_ids(db, &owner_db_ids)?;
+    Ok(owners
+        .into_iter()
+        .filter_map(|(playlist_db_id, owner_db_id)| {
+            Some((playlist_db_id, public_ids.get(&owner_db_id)?.clone()))
+        })
+        .collect())
 }
 
 pub(crate) fn get_tracks(
@@ -226,21 +279,47 @@ pub(crate) enum SortKey {
     TotalDuration,
     /// When the caller first favorited the playlist; unfavorited playlists sort last.
     FavoritedAt,
+    /// How well the name matches the search, best first; needs a search term.
+    Relevance,
     Id,
 }
 
 impl SortKey {
+    /// Every key and the token that names it.
+    pub(crate) const KEYS: &'static [(&'static str, Self)] = &[
+        ("name", Self::Name),
+        ("created_at", Self::CreatedAt),
+        ("updated_at", Self::UpdatedAt),
+        ("track_count", Self::TrackCount),
+        ("total_duration", Self::TotalDuration),
+        ("favorited_at", Self::FavoritedAt),
+        ("relevance", Self::Relevance),
+        ("id", Self::Id),
+    ];
+
+    pub(crate) fn parse(token: &str) -> Option<Self> {
+        Self::KEYS
+            .iter()
+            .find(|(name, _)| *name == token)
+            .map(|(_, key)| *key)
+    }
+
     fn needs_summary(self) -> bool {
         matches!(self, Self::TrackCount | Self::TotalDuration)
     }
 }
 
 /// Which of the playlists the caller can see a list keeps.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct PlaylistFilter {
     /// Playlists this user owns.
     pub(crate) owner: Option<DbId>,
     pub(crate) favorite: Option<bool>,
+    /// Only these playlists.
+    pub(crate) ids: Option<HashSet<DbId>>,
+    pub(crate) exclude_ids: HashSet<DbId>,
+    /// Leaves out playlists without an owner, which a deleted user leaves behind.
+    pub(crate) owned: bool,
 }
 
 struct ListEntry {
@@ -269,6 +348,7 @@ fn compare_field(a: &ListEntry, b: &ListEntry, key: SortKey) -> Ordering {
             .total_duration_ms
             .cmp(&b.summary.total_duration_ms),
         SortKey::FavoritedAt => a.favorited_at.cmp(&b.favorited_at),
+        SortKey::Relevance => b.match_score.cmp(&a.match_score),
         SortKey::Id => a.playlist.id.cmp(&b.playlist.id),
     }
 }
@@ -296,8 +376,8 @@ fn compare_entries(a: &ListEntry, b: &ListEntry, sort: &[(SortKey, Direction)]) 
 }
 
 /// The playlists the principal can see that pass `filter` and match `search`, ordered by
-/// `sort` (by name when empty), with any summaries the sort computed so callers need not
-/// repeat them.
+/// `sort` (by relevance when searching and by name otherwise when empty), with any summaries
+/// the sort computed so callers need not repeat them.
 pub(crate) fn list_visible(
     db: &DbAny,
     principal: &Principal,
@@ -305,11 +385,14 @@ pub(crate) fn list_visible(
     sort: &[(SortKey, Direction)],
     search: Option<&str>,
 ) -> anyhow::Result<(Vec<Playlist>, HashMap<DbId, PlaylistSummary>)> {
-    let sort = if sort.is_empty() {
-        &[(SortKey::Name, Direction::Ascending)]
-    } else {
-        sort
+    let sort = match (sort.is_empty(), search.is_some()) {
+        (true, true) => &[(SortKey::Relevance, Direction::Ascending)],
+        (true, false) => &[(SortKey::Name, Direction::Ascending)],
+        (false, _) => sort,
     };
+    if search.is_none() && sort.iter().any(|(key, _)| *key == SortKey::Relevance) {
+        return Err(InvalidPlaylistRequest::RelevanceWithoutSearch.into());
+    }
     let user_db_id = principal.require(db)?;
     let candidates = match filter.owner {
         Some(owner) => get_by_user(db, owner)?,
@@ -333,7 +416,17 @@ pub(crate) fn list_visible(
         let Some(playlist_db_id) = playlist.db_id.clone().map(DbId::from) else {
             continue;
         };
-        if !access::playlist_visible_to_user(db, user_db_id, playlist_db_id)? {
+        if filter
+            .ids
+            .as_ref()
+            .is_some_and(|ids| !ids.contains(&playlist_db_id))
+            || filter.exclude_ids.contains(&playlist_db_id)
+            || !(if filter.owned {
+                access::playlist_visible_to_listener(db, user_db_id, playlist_db_id)?
+            } else {
+                access::playlist_visible_to_user(db, user_db_id, playlist_db_id)?
+            })
+        {
             continue;
         }
         if let (Some(wanted), Some(favorites)) = (filter.favorite, &favorites)
@@ -387,8 +480,13 @@ pub(crate) fn list_visible(
     ))
 }
 
-pub(crate) fn create(db: &mut DbAny, request: &CreatePlaylistRequest) -> anyhow::Result<DbId> {
-    let playlist = Playlist {
+/// Creates the playlist and returns it with its database id set.
+pub(crate) fn create(
+    db: &mut DbAny,
+    request: &CreatePlaylistRequest,
+) -> anyhow::Result<(DbId, Playlist)> {
+    check_id_count("track ids", request.track_db_ids.len())?;
+    let mut playlist = Playlist {
         db_id: None,
         id: nanoid!(),
         name: validate_name(&request.name)?,
@@ -399,7 +497,7 @@ pub(crate) fn create(db: &mut DbAny, request: &CreatePlaylistRequest) -> anyhow:
     };
     require_tracks(db, &request.track_db_ids)?;
 
-    db.transaction_mut(|t| -> anyhow::Result<DbId> {
+    let playlist_db_id = db.transaction_mut(|t| -> anyhow::Result<DbId> {
         let playlist_db_id =
             lyra_db::playlists::create_in_transaction(t, &playlist, request.user_db_id)?;
         if !request.track_db_ids.is_empty() {
@@ -407,7 +505,9 @@ pub(crate) fn create(db: &mut DbAny, request: &CreatePlaylistRequest) -> anyhow:
             lyra_db::covers::display::sync_playlist_cover(t, playlist_db_id)?;
         }
         Ok(playlist_db_id)
-    })
+    })?;
+    playlist.db_id = Some(playlist_db_id.into());
+    Ok((playlist_db_id, playlist))
 }
 
 fn require_tracks(db: &DbAny, track_db_ids: &[DbId]) -> anyhow::Result<()> {
@@ -470,6 +570,7 @@ pub(crate) fn replace(
     request: &UpdatePlaylistRequest,
     track_db_ids: &[DbId],
 ) -> anyhow::Result<Option<Playlist>> {
+    check_id_count("track ids", track_db_ids.len())?;
     let Some(playlist_db_id) = resolve_optional_id(db, request.playlist_id.clone())? else {
         return Ok(None);
     };
@@ -482,15 +583,18 @@ pub(crate) fn replace(
 
     db.transaction_mut(|t| -> anyhow::Result<()> {
         lyra_db::playlists::update_in_transaction(t, &playlist)?;
-        for entry in &entries {
-            lyra_db::playlists::remove_track(t, entry.edge_id)?;
-        }
+        let edge_ids = entries
+            .iter()
+            .map(|entry| entry.edge_id)
+            .collect::<Vec<_>>();
+        lyra_db::playlists::remove_tracks(t, playlist_db_id, &edge_ids)?;
         lyra_db::playlists::add_tracks(t, playlist_db_id, track_db_ids)?;
         lyra_db::covers::display::sync_playlist_cover(t, playlist_db_id)
     })?;
     Ok(Some(playlist))
 }
 
+#[cfg(test)]
 pub(crate) fn add_track(
     db: &mut DbAny,
     playlist_id: QueryId,
@@ -513,7 +617,11 @@ pub(crate) fn add_tracks(
     track_ids: &[QueryId],
     position: Option<u64>,
 ) -> anyhow::Result<Vec<PlaylistTrackLink>> {
+    check_id_count("track ids", track_ids.len())?;
     let playlist_db_id = resolve_id(db, playlist_id)?;
+    if track_ids.is_empty() {
+        return Ok(Vec::new());
+    }
     let mut resolved_track_ids = Vec::with_capacity(track_ids.len());
     for track_id in track_ids {
         let track_db_id = resolve_id(db, track_id.clone())?;
@@ -566,21 +674,39 @@ fn require_entry(
 }
 
 /// Removes the playlist's entries named by public id, failing before any removal when one is
-/// not in the playlist.
+/// not in the playlist or is named twice.
 pub(crate) fn remove_tracks(
     db: &mut DbAny,
     playlist_db_id: DbId,
     entry_ids: &[String],
 ) -> anyhow::Result<Vec<PlaylistTrackLink>> {
+    check_id_count("entry ids", entry_ids.len())?;
+    let mut seen = HashSet::with_capacity(entry_ids.len());
+    if let Some(repeated) = entry_ids
+        .iter()
+        .find(|entry_id| !seen.insert(entry_id.as_str()))
+    {
+        return Err(InvalidPlaylistRequest::RepeatedEntry(repeated.clone()).into());
+    }
+    let mut entries = get_tracks(db, QueryId::Id(playlist_db_id))?
+        .into_iter()
+        .map(|link| (link.entry_id.clone(), link))
+        .collect::<HashMap<_, _>>();
     let removed = entry_ids
         .iter()
-        .map(|entry_id| require_entry(db, playlist_db_id, entry_id))
+        .map(|entry_id| {
+            entries
+                .remove(entry_id)
+                .ok_or_else(|| anyhow::anyhow!("playlist entry not found: {entry_id}"))
+        })
         .collect::<anyhow::Result<Vec<_>>>()?;
 
     db.transaction_mut(|t| -> anyhow::Result<()> {
-        for track in &removed {
-            lyra_db::playlists::remove_track(t, track.entry_db_id)?;
-        }
+        let edge_ids = removed
+            .iter()
+            .map(|track| track.entry_db_id)
+            .collect::<Vec<_>>();
+        lyra_db::playlists::remove_tracks(t, playlist_db_id, &edge_ids)?;
         lyra_db::covers::display::sync_playlist_cover(t, playlist_db_id)
     })?;
 
@@ -645,6 +771,7 @@ mod tests {
                 track_db_ids: Vec::new(),
             },
         )
+        .map(|(playlist_db_id, _)| playlist_db_id)
     }
 
     fn owner(db: &mut DbAny) -> anyhow::Result<(DbId, Principal)> {
@@ -724,6 +851,92 @@ mod tests {
         )?;
         assert_eq!(names(&ordered), ["Late Night Jazz"]);
 
+        Ok(())
+    }
+
+    #[test]
+    fn list_visible_ranks_a_search_by_relevance_without_a_sort() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (user_db_id, principal) = owner(&mut db)?;
+        create_playlist(&mut db, user_db_id, "A Jazz Night")?;
+        create_playlist(&mut db, user_db_id, "Jazz")?;
+
+        let (ordered, _) = list_visible(
+            &db,
+            &principal,
+            PlaylistFilter::default(),
+            &[],
+            Some("jazz"),
+        )?;
+        assert_eq!(names(&ordered), ["Jazz", "A Jazz Night"]);
+
+        let sort = [(SortKey::Relevance, Direction::Ascending)];
+        let error = list_visible(&db, &principal, PlaylistFilter::default(), &sort, None)
+            .expect_err("relevance needs a search term");
+        assert!(matches!(
+            error.downcast_ref::<InvalidPlaylistRequest>(),
+            Some(InvalidPlaylistRequest::RelevanceWithoutSearch)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn list_visible_keeps_only_the_named_ids() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (user_db_id, principal) = owner(&mut db)?;
+        let first = create_playlist(&mut db, user_db_id, "First")?;
+        let second = create_playlist(&mut db, user_db_id, "Second")?;
+        create_playlist(&mut db, user_db_id, "Third")?;
+
+        let filter = PlaylistFilter {
+            ids: Some(HashSet::from([first, second])),
+            exclude_ids: HashSet::from([second]),
+            ..PlaylistFilter::default()
+        };
+        let (ordered, _) = list_visible(&db, &principal, filter, &[], None)?;
+        assert_eq!(names(&ordered), ["First"]);
+        Ok(())
+    }
+
+    #[test]
+    fn remove_tracks_refuses_a_repeated_entry_removing_nothing() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = lyra_db::users::create(&mut db, &test_user("repeat-remover")?)?;
+        let track = insert_track(&mut db, "Track")?;
+        let playlist_db_id = create_playlist(&mut db, user_db_id, "Repeats")?;
+        let added = add_tracks(
+            &mut db,
+            QueryId::Id(playlist_db_id),
+            &[QueryId::Id(track), QueryId::Id(track)],
+            None,
+        )?;
+
+        let entry_id = added[0].entry_id.clone();
+        let error = remove_tracks(&mut db, playlist_db_id, &[entry_id.clone(), entry_id])
+            .expect_err("a repeated entry is refused");
+        assert!(matches!(
+            error.downcast_ref::<InvalidPlaylistRequest>(),
+            Some(InvalidPlaylistRequest::RepeatedEntry(_))
+        ));
+        assert_eq!(entry_tracks(&db, playlist_db_id)?, vec![track, track]);
+        Ok(())
+    }
+
+    #[test]
+    fn writes_past_the_id_cap_apply_nothing() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = lyra_db::users::create(&mut db, &test_user("capped")?)?;
+        let track = insert_track(&mut db, "Track")?;
+        let playlist_db_id = create_playlist(&mut db, user_db_id, "Capped")?;
+        let too_many = vec![QueryId::Id(track); MAX_PLAYLIST_TRACK_IDS + 1];
+
+        let error = add_tracks(&mut db, QueryId::Id(playlist_db_id), &too_many, None)
+            .expect_err("past the cap");
+        assert!(matches!(
+            error.downcast_ref::<InvalidPlaylistRequest>(),
+            Some(InvalidPlaylistRequest::TooManyIds { .. })
+        ));
+        assert!(entry_tracks(&db, playlist_db_id)?.is_empty());
         Ok(())
     }
 
@@ -845,7 +1058,7 @@ mod tests {
     fn update_distinguishes_absent_description_from_explicit_clear() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user_db_id = lyra_db::users::create(&mut db, &test_user("describer")?)?;
-        let playlist_db_id = create(
+        let (playlist_db_id, created) = create(
             &mut db,
             &CreatePlaylistRequest {
                 user_db_id,
@@ -857,6 +1070,8 @@ mod tests {
                 track_db_ids: Vec::new(),
             },
         )?;
+        assert_eq!(created.db_id.map(DbId::from), Some(playlist_db_id));
+        assert_eq!(created.description.as_deref(), Some("original"));
 
         let untouched = update(
             &mut db,
@@ -1072,6 +1287,104 @@ mod tests {
         assert_eq!(summary.track_count, 0);
         assert_eq!(summary.total_duration_ms, 0);
 
+        Ok(())
+    }
+
+    /// Times writes at the id cap on an mmap database, as the server opens it. Run with
+    /// `cargo test -p lyra-server --release -- --ignored playlist_writes_at_the_cap --nocapture`.
+    #[test]
+    #[ignore = "timing; run in release"]
+    fn playlist_writes_at_the_cap() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let created = lyra_db::bootstrap::create(&lyra_db::bootstrap::DbConfig {
+            kind: lyra_db::bootstrap::DbKind::Mmap,
+            path: dir.path().join("timing.agdb"),
+        })?;
+        let mut db = futures::executor::block_on(created.db.write());
+        let db = &mut *db;
+        let user_db_id = lyra_db::users::create(db, &test_user("timing")?)?;
+        let tracks = (0..MAX_PLAYLIST_TRACK_IDS)
+            .map(|index| insert_track(db, &format!("Track {index}")))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let track_ids = tracks.iter().copied().map(QueryId::Id).collect::<Vec<_>>();
+        let time = |label: &str, started: std::time::Instant| {
+            println!("{label}: {:?}", started.elapsed());
+        };
+
+        let public = tracks
+            .iter()
+            .map(|&id| lyra_db::lookup::find_id_by_db_id(db, id).map(Option::unwrap))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let viewer = principal(user_db_id, Vec::new());
+        let started = std::time::Instant::now();
+        let resolved = public
+            .iter()
+            .map(|id| lyra_db::lookup::find_node_id_by_id(db, id).map(Option::unwrap))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        access::accessible_entities(db, &viewer, &resolved)?;
+        for &id in &resolved {
+            lyra_db::tracks::get_by_id(db, id)?;
+        }
+        time(
+            "resolve and check the cap's track ids, as the bindings do",
+            started,
+        );
+        let started = std::time::Instant::now();
+        let (full, _) = create(
+            db,
+            &CreatePlaylistRequest {
+                user_db_id,
+                name: "Full".to_string(),
+                description: None,
+                is_public: None,
+                created_at_ms: None,
+                updated_at_ms: None,
+                track_db_ids: tracks.clone(),
+            },
+        )?;
+        time("create with the cap", started);
+
+        let started = std::time::Instant::now();
+        replace(db, &replacement(full, None), &tracks)?;
+        time("replace a full playlist with the cap", started);
+
+        let empty = create_playlist(db, user_db_id, "Empty")?;
+        let started = std::time::Instant::now();
+        add_tracks(db, QueryId::Id(empty), &track_ids, None)?;
+        time("add the cap to an empty playlist", started);
+
+        let existing = create_playlist(db, user_db_id, "Existing")?;
+        add_tracks(db, QueryId::Id(existing), &track_ids[..100], None)?;
+        let started = std::time::Instant::now();
+        add_tracks(db, QueryId::Id(existing), &track_ids, Some(50))?;
+        time("insert the cap into a 100-entry playlist", started);
+
+        let started = std::time::Instant::now();
+        add_tracks(db, QueryId::Id(full), &track_ids[..1], Some(0))?;
+        time("insert one at the start of a full playlist", started);
+        let last = get_tracks(db, QueryId::Id(full))?
+            .pop()
+            .ok_or_else(|| anyhow::anyhow!("a full playlist"))?;
+        let started = std::time::Instant::now();
+        move_track(db, full, &last.entry_id, 0)?;
+        time(
+            "move the last entry of a full playlist to the start",
+            started,
+        );
+
+        let first = get_tracks(db, QueryId::Id(full))?[0].entry_id.clone();
+        let started = std::time::Instant::now();
+        remove_tracks(db, full, &[first])?;
+        time("remove the first entry of a full playlist", started);
+
+        let entry_ids = get_tracks(db, QueryId::Id(full))?
+            .into_iter()
+            .map(|link| link.entry_id)
+            .take(MAX_PLAYLIST_TRACK_IDS)
+            .collect::<Vec<_>>();
+        let started = std::time::Instant::now();
+        remove_tracks(db, full, &entry_ids)?;
+        time("remove the cap's entries", started);
         Ok(())
     }
 }

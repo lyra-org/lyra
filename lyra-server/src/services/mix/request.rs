@@ -380,7 +380,11 @@ fn resolve_visible(
     } else if lyra_db::genres::get_by_id(db, db_id)?.is_some() {
         Some(MixSeedType::Genre)
     } else if lyra_db::playlists::get_by_id(db, db_id)?.is_some() {
-        access::playlist_accessible(db, principal, db_id)?.then_some(MixSeedType::Playlist)
+        let user_db_id = principal.require(db)?;
+        viewer
+            .playlists
+            .sees(db, principal, user_db_id, db_id)?
+            .then_some(MixSeedType::Playlist)
     } else {
         None
     };

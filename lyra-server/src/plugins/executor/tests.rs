@@ -2565,10 +2565,10 @@ fn playlist_bulk_bindings_refuse_inaccessible_tracks() -> Result<()> {
         format!(
             r#"
                 local playlists = require("@lyra/playlists")
-                local id = playlists.create({{ name = "Viewer" }})
+                local id = playlists.create({{ name = "Viewer" }}).id
                 local added = pcall(playlists.add_tracks, id, {{ "{hidden_track}" }})
                 local replaced = pcall(playlists.replace, id, {{ track_ids = {{ "{hidden_track}" }} }})
-                return added, replaced, #playlists.get_tracks(id)
+                return added, replaced, #playlists.entries({{ id }})[id]
             "#,
         )
         .into_bytes(),

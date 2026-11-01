@@ -14,7 +14,10 @@ use agdb::{
 };
 
 use crate::services::STATE;
-use crate::services::auth::Principal;
+use crate::services::auth::{
+    Principal,
+    access::PlaylistView,
+};
 use lyra_db::{
     Permission,
     Track,
@@ -46,6 +49,8 @@ pub(crate) use registry::{
 };
 use request::ResolvedSeeds;
 pub(crate) use request::{
+    MAX_QUERY_LEN,
+    MAX_SEEDS,
     MixError,
     MixRequest,
     MixRequestFields,
@@ -69,6 +74,8 @@ pub(crate) struct MixViewer {
     /// The libraries the user can see, or `None` for every one. History seeds, built-in
     /// candidates and mixer results keep to them.
     pub(crate) accessible_library_ids: Option<HashSet<String>>,
+    /// Which playlists the user can seed from.
+    pub(crate) playlists: PlaylistView,
 }
 
 impl MixViewer {
@@ -77,6 +84,7 @@ impl MixViewer {
             principal: Some(principal.clone()),
             accessible_library_ids: (!principal.permissions.contains(&Permission::Admin))
                 .then(|| principal.accessible_library_ids.clone()),
+            playlists: PlaylistView::Role,
         }
     }
 

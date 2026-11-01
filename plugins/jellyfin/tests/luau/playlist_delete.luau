@@ -24,9 +24,14 @@ end
 local ids = fixture.ids
 local private = delete(ids.mix)
 assert(private == 404, `another user's private playlist isn't found, got {private}`)
-assert(playlist_access.find(ids.mix) ~= nil, "and it is kept")
+assert(playlist_access.find(ids.mix) == nil, "nor seen")
 local shared = delete(ids.shared)
 assert(shared == 204, `an admin deletes another user's public playlist, got {shared}`)
 assert(playlist_access.find(ids.shared) == nil, "and it is gone")
 local own = delete(ids.own)
 assert(own == 204, `an admin deletes its own playlist, got {own}`)
+
+-- The private playlist is still there for its owner.
+local auth = require("@lyra/auth")
+assert(auth.resolve_auth(fixture.api_keys.owner_key) ~= nil, "acting as the owner")
+assert(playlist_access.find(ids.mix) ~= nil, "the private playlist is kept")
