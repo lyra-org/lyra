@@ -333,8 +333,16 @@ pub fn get_by_artist(db: &impl DbAccess, artist_db_id: DbId) -> anyhow::Result<V
         .collect())
 }
 
+/// The releases holding the track; none when `track_db_id` is not a track.
 pub fn get_by_track(db: &impl super::DbAccess, track_db_id: DbId) -> anyhow::Result<Vec<Release>> {
-    let releases: Vec<Release> = db
+    if !super::graph::is_kind(db, track_db_id, "Track")? {
+        return Ok(Vec::new());
+    }
+    releases_holding(db, track_db_id)
+}
+
+fn releases_holding(db: &impl super::DbAccess, track_db_id: DbId) -> anyhow::Result<Vec<Release>> {
+    Ok(db
         .exec(
             QueryBuilder::select()
                 .elements::<Release>()
@@ -345,11 +353,10 @@ pub fn get_by_track(db: &impl super::DbAccess, track_db_id: DbId) -> anyhow::Res
                 .end_where()
                 .query(),
         )?
-        .try_into()?;
-
-    Ok(releases)
+        .try_into()?)
 }
 
+/// The releases holding each track, keyed by every id given; ids that are not tracks map to none.
 pub fn get_by_tracks(
     db: &DbAny,
     track_db_ids: &[DbId],
@@ -372,13 +379,14 @@ pub fn get_by_tracks(
         .copied()
         .map(|track_db_id| (track_db_id, Vec::new()))
         .collect();
+    let unique_track_db_ids = super::graph::existing_ids(db, &unique_track_db_ids, "Track")?;
     if unique_track_db_ids.is_empty() {
         return Ok(related);
     }
 
     if unique_track_db_ids.len() <= SMALL_TRACK_BATCH_THRESHOLD {
         for track_db_id in unique_track_db_ids {
-            let track_releases = get_by_track(db, track_db_id)?;
+            let track_releases = releases_holding(db, track_db_id)?;
             let Some(owner_related) = related.get_mut(&track_db_id) else {
                 continue;
             };
@@ -712,6 +720,41 @@ mod tests {
 
         let releases = get_by_track(&db, track_id)?;
         assert!(releases.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn get_by_track_ignores_releases_crediting_an_artist() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release_id = insert_release(&mut db, "Credited Release")?;
+        let artist_id = insert_artist(&mut db, "Credited Artist")?;
+        link_artist(&mut db, release_id, artist_id)?;
+
+        assert!(get_by_track(&db, artist_id)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn get_by_tracks_maps_non_tracks_to_no_releases() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release_id = insert_release(&mut db, "Mixed Release")?;
+        let artist_id = insert_artist(&mut db, "Mixed Artist")?;
+        link_artist(&mut db, release_id, artist_id)?;
+        let mut track_ids = Vec::new();
+        for index in 0..40 {
+            let track_id = insert_track(&mut db, &format!("Mixed Track {index}"))?;
+            link(&mut db, release_id, track_id)?;
+            track_ids.push(track_id);
+        }
+
+        for ids in [
+            vec![track_ids[0], artist_id],
+            [track_ids.clone(), vec![artist_id]].concat(),
+        ] {
+            let related = get_by_tracks(&db, &ids)?;
+            assert_eq!(related.get(&artist_id).map(Vec::len), Some(0));
+            assert_eq!(related.get(&track_ids[0]).map(Vec::len), Some(1));
+        }
         Ok(())
     }
 
