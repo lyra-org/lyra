@@ -157,14 +157,13 @@ fn active_filter_requires_recent_non_terminal_current_session() {
     let playback = lyra_db::playbacks::Playback {
         db_id: Some(DbId(1)),
         id: "playback".to_string(),
-        queue: Some(lyra_db::playbacks::Queue {
+        source: lyra_db::playbacks::PlaybackSource::Queue(lyra_db::playbacks::Queue {
             revision: 1,
             track_ids: vec!["track".to_string()],
             current_index: 0,
             repeat_mode: playbacks::RepeatMode::None,
             shuffle_enabled: false,
         }),
-        reported: None,
         created_at_ms: 1,
         updated_at_ms: 1,
     };

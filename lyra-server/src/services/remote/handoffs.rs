@@ -631,6 +631,7 @@ mod tests {
                 reporting_connection: None,
             },
         )?;
+        let queue_revision = update.playback.queue().unwrap().revision;
         Ok(AppliedProgress {
             user_public_id,
             playback_db_id: update
@@ -638,7 +639,7 @@ mod tests {
                 .db_id
                 .expect("persisted playback must have a database ID"),
             playback_public_id: update.playback.id,
-            queue_revision: update.playback.queue.as_ref().unwrap().revision,
+            queue_revision,
             expected_session: update.session.playback,
         })
     }

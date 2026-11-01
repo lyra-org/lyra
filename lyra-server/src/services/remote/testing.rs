@@ -180,7 +180,7 @@ async fn report(
             play_id,
             user_db_id: user.db_id,
             client_name: None,
-            queue_revision: playback.queue.as_ref().expect("queue").revision,
+            queue_revision: playback.queue().expect("queue").revision,
             current_track_db_id,
             mutation: PlaybackMutation {
                 position_ms: Some(0),

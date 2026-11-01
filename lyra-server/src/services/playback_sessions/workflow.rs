@@ -900,6 +900,14 @@ fn report_playback_session_in_transaction(
         session_key,
         now_ms,
     ))?;
+    let stored_previous = match root.as_ref() {
+        Some(root) => {
+            let root_id = root.db_id.expect("persisted playback id");
+            map_internal(lyra_db::playbacks::get_previous_session(db, root_id))?
+                .map(|previous| (root_id, previous))
+        }
+        None => None,
+    };
     let mut session = if let Some(root) = root.as_ref() {
         let root_id = root.db_id.expect("persisted playback id");
         let current_id = lyra_db::playbacks::get_current_session_id(db, root_id)?;
@@ -909,22 +917,20 @@ fn report_playback_session_in_transaction(
             .map_err(PlaybackServiceError::internal)?
             .flatten()
             .map(|session| session.id);
-        let previous = root
-            .reported
-            .as_ref()
-            .and_then(|source| source.previous.as_ref());
-        let previous_id = previous
-            .map(|previous| lyra_db::lookup::find_node_id_by_id(db, &previous.session_public_id))
+        let previous = stored_previous.map(|(_, previous)| previous);
+        let previous_id = previous.map(|previous| previous.session_db_id);
+        let previous_public_id = previous_id
+            .map(|id| lyra_db::playback_sessions::get_by_id(db, id))
             .transpose()
             .map_err(PlaybackServiceError::internal)?
-            .flatten();
+            .flatten()
+            .map(|session| session.id);
         Some(PlaybackSessionScope {
             current_playback_session_id: current_id,
             current_playback_session_public_id: current_public_id,
             current_playback_id: current_id.map(|_| root.id.clone()),
             previous_playback_session_id: previous_id,
-            previous_playback_session_public_id: previous
-                .map(|previous| previous.session_public_id.clone()),
+            previous_playback_session_public_id: previous_public_id,
             previous_demoted_at_ms: previous.map(|previous| previous.demoted_at_ms),
             previous_expires_at_ms: previous.map(|previous| previous.expires_at_ms),
             updated_at_ms: root.updated_at_ms,
@@ -1030,16 +1036,10 @@ fn report_playback_session_in_transaction(
                     && mutation.state.is_some_and(|state| !state.is_terminal());
                 if !current_resumed && !should_reopen_terminal_same_track_session(active_event) {
                     if session_state.previous_playback_session_public_id.is_none()
-                        && let Some(root) = root.as_ref()
-                        && root
-                            .reported
-                            .as_ref()
-                            .is_some_and(|source| source.previous.is_some())
+                        && let Some(previous) = stored_previous
                     {
-                        map_internal(lyra_db::playbacks::update_reported_previous(
-                            db,
-                            root.db_id.expect("persisted playback id"),
-                            None,
+                        map_internal(lyra_db::playbacks::set_previous_session(
+                            db, previous.0, None,
                         ))?;
                     }
                     let session = session.as_ref().and_then(|session| {
@@ -1259,10 +1259,9 @@ fn report_playback_session_in_transaction(
     }
     if let Some(root) = root.as_ref() {
         let previous = session_state
-            .previous_playback_session_public_id
-            .as_ref()
-            .map(|id| lyra_db::playbacks::ReportedPrevious {
-                session_public_id: id.clone(),
+            .previous_playback_session_id
+            .map(|session_db_id| lyra_db::playbacks::PreviousSession {
+                session_db_id,
                 demoted_at_ms: session_state
                     .previous_demoted_at_ms
                     .expect("previous demotion"),
@@ -1270,13 +1269,8 @@ fn report_playback_session_in_transaction(
                     .previous_expires_at_ms
                     .expect("previous expiry"),
             });
-        if root
-            .reported
-            .as_ref()
-            .and_then(|source| source.previous.as_ref())
-            != previous.as_ref()
-        {
-            map_internal(lyra_db::playbacks::update_reported_previous(
+        if stored_previous.map(|(_, previous)| previous) != previous {
+            map_internal(lyra_db::playbacks::set_previous_session(
                 db,
                 root.db_id.expect("persisted playback id"),
                 previous,

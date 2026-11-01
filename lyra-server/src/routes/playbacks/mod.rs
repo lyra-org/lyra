@@ -275,7 +275,7 @@ fn playback_to_response(
     PlaybackResponse {
         id: playback.id.clone(),
         user_id: user_public_id.to_string(),
-        queue_revision: playback.queue.as_ref().map(|queue| queue.revision),
+        queue_revision: playback.queue().map(|queue| queue.revision),
         current: current_session.map(|current| current_to_response(current, current_ms)),
         created_at: crate::services::timestamps::unix_ms_to_rfc3339_u64(playback.created_at_ms),
         updated_at: crate::services::timestamps::unix_ms_to_rfc3339_u64(playback.updated_at_ms),
@@ -337,8 +337,7 @@ fn revision_conflict(expected_revision: u64, current_revision: u64) -> AppError 
 
 fn require_queue_revision(playback: &lyra_db::playbacks::Playback) -> Result<u64, AppError> {
     playback
-        .queue
-        .as_ref()
+        .queue()
         .map(|queue| queue.revision)
         .ok_or_else(|| map_playback_error(PlaybackError::QueueUnavailable))
 }

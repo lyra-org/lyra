@@ -19,6 +19,7 @@ use super::{
     DbAccess,
     MAX_PLAYBACKS_PER_USER,
     Playback,
+    PlaybackSource,
     count_for_user_up_to_limit,
     delete_in_transaction,
     get_by_id,
@@ -36,18 +37,10 @@ pub struct ReportedPlaybackLimitReached;
 
 pub const REPORTED_PLAYBACK_TTL_MS: u64 = 5 * 60 * 1_000;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, DbTypeMarker)]
-pub struct ReportedPrevious {
-    pub session_public_id: String,
-    pub demoted_at_ms: u64,
-    pub expires_at_ms: u64,
-}
-
+/// The player session a plugin reports a playback for. The plugin is the one its sessions name.
 #[derive(Clone, Debug, Serialize, Deserialize, DbTypeMarker)]
 pub struct ReportedSource {
-    pub(crate) plugin_id: String,
     pub(crate) session_key: String,
-    pub previous: Option<ReportedPrevious>,
 }
 
 impl From<ReportedSource> for DbValue {
@@ -100,8 +93,9 @@ pub fn get_reported(
     };
     anyhow::ensure!(
         get_owner_id(db, element.id)? == Some(user_db_id)
-            && playback.reported.as_ref().is_some_and(
-                |source| source.plugin_id == plugin_id && source.session_key == session_key
+            && matches!(
+                &playback.source,
+                PlaybackSource::Reported(source) if source.session_key == session_key
             ),
         "reported playback binding identity mismatch"
     );
@@ -148,11 +142,8 @@ pub fn insert_reported(
     let mut playback = Playback {
         db_id: None,
         id: nanoid::nanoid!(),
-        queue: None,
-        reported: Some(ReportedSource {
-            plugin_id: plugin_id.to_owned(),
+        source: PlaybackSource::Reported(ReportedSource {
             session_key: session_key.to_owned(),
-            previous: None,
         }),
         created_at_ms: now_ms,
         updated_at_ms: now_ms,
@@ -166,26 +157,6 @@ pub fn insert_reported(
     )?;
     playback.db_id = Some(id);
     Ok(playback)
-}
-
-pub fn update_reported_previous(
-    db: &mut impl DbAccess,
-    playback_db_id: DbId,
-    previous: Option<ReportedPrevious>,
-) -> anyhow::Result<()> {
-    let playback =
-        get_by_id(db, playback_db_id)?.ok_or_else(|| anyhow::anyhow!("playback not found"))?;
-    let mut source = playback
-        .reported
-        .ok_or_else(|| anyhow::anyhow!("playback is not reported"))?;
-    source.previous = previous;
-    db.exec_mut(
-        QueryBuilder::insert()
-            .values_uniform([("reported", DbValue::from(source)).into()])
-            .ids(playback_db_id)
-            .query(),
-    )?;
-    Ok(())
 }
 
 pub fn expire_reported_for_user(

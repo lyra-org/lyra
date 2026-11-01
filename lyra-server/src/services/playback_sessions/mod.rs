@@ -486,7 +486,7 @@ mod tests {
         .unwrap();
         let root =
             lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", 1_000)?.unwrap();
-        assert!(root.queue.is_none());
+        assert!(root.queue().is_none());
         let root_id = root.db_id.unwrap();
         sessions::clear_playback_session_scope(&scope);
         let resumed = report_test_playback_session(
@@ -1501,7 +1501,9 @@ mod tests {
             )?;
             let before =
                 lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", 3_000)?.unwrap();
-            assert!(before.reported.unwrap().previous.is_some());
+            assert!(
+                lyra_db::playbacks::get_previous_session(&db, before.db_id.unwrap())?.is_some()
+            );
             let now = if missing {
                 db.exec_mut(
                     QueryBuilder::remove()
@@ -1528,7 +1530,7 @@ mod tests {
             );
             let after =
                 lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", now)?.unwrap();
-            assert!(after.reported.unwrap().previous.is_none());
+            assert!(lyra_db::playbacks::get_previous_session(&db, after.db_id.unwrap())?.is_none());
             assert_eq!(after.updated_at_ms, 3_000);
         }
         Ok(())

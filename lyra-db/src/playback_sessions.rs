@@ -385,8 +385,8 @@ pub fn get(db: &DbAny) -> anyhow::Result<Vec<PlaybackSession>> {
     Ok(playback_sessions)
 }
 
-/// Removes sessions untouched for longer than the stale TTL, except a playback's current session
-/// and those `is_active` holds for.
+/// Removes sessions untouched for longer than the stale TTL, except those a playback holds and
+/// those `is_active` holds for.
 pub fn evict_stale(
     db: &mut DbAny,
     now_ms: u64,
@@ -405,7 +405,7 @@ pub fn evict_stale(
             continue;
         };
         if is_active(playback_session_id)
-            || super::playbacks::is_current_session(db, playback_session_id)?
+            || super::playbacks::holds_session(db, playback_session_id, cutoff_ms)?
         {
             continue;
         }

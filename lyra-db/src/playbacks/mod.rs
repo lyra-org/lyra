@@ -25,17 +25,16 @@ mod reported;
 pub use reported::{
     REPORTED_PLAYBACK_TTL_MS,
     ReportedPlaybackLimitReached,
-    ReportedPrevious,
     ReportedSource,
     expire_reported,
     expire_reported_for_user,
     get_reported,
     insert_reported,
-    update_reported_previous,
 };
 
 const OWNER_EDGE_KEY: &str = "owner";
 const CURRENT_SESSION_EDGE_KEY: &str = "current_session";
+const PREVIOUS_SESSION_EDGE_KEY: &str = "previous_session";
 pub const MAX_PLAYBACKS_PER_USER: usize = 10_000;
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -99,10 +98,29 @@ impl TryFrom<DbValue> for RepeatMode {
 pub struct Playback {
     pub db_id: Option<DbId>,
     pub id: String,
-    pub queue: Option<Queue>,
-    pub reported: Option<ReportedSource>,
+    pub source: PlaybackSource,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
+}
+
+impl Playback {
+    pub fn queue(&self) -> Option<&Queue> {
+        match &self.source {
+            PlaybackSource::Queue(queue) => Some(queue),
+            PlaybackSource::Reported(_) => None,
+        }
+    }
+
+    pub fn is_reported(&self) -> bool {
+        matches!(self.source, PlaybackSource::Reported(_))
+    }
+}
+
+/// What drives a playback: a queue the server manages, or a player that reports what it plays.
+#[derive(Clone, Debug)]
+pub enum PlaybackSource {
+    Queue(Queue),
+    Reported(ReportedSource),
 }
 
 #[derive(Clone, Debug)]
@@ -131,12 +149,16 @@ struct PlaybackRecord {
 
 impl PlaybackRecord {
     fn from_playback(playback: &Playback) -> Self {
-        let queue = playback.queue.as_ref();
+        let queue = playback.queue();
+        let reported = match &playback.source {
+            PlaybackSource::Queue(_) => None,
+            PlaybackSource::Reported(source) => Some(source.clone()),
+        };
         Self {
             db_element_id: "Playback".to_owned(),
             db_id: playback.db_id,
             id: playback.id.clone(),
-            reported: playback.reported.clone(),
+            reported,
             queue_revision: queue.map(|queue| queue.revision),
             queue_track_ids: queue.map(|queue| queue.track_ids.clone()),
             queue_current_index: queue.map(|queue| queue.current_index),
@@ -171,11 +193,16 @@ impl PlaybackRecord {
             (None, None, None, None, None) => None,
             _ => anyhow::bail!("playback {} has incomplete queue fields", self.id),
         };
+        let source = match (queue, self.reported) {
+            (Some(queue), None) => PlaybackSource::Queue(queue),
+            (None, Some(source)) => PlaybackSource::Reported(source),
+            (Some(_), Some(_)) => anyhow::bail!("playback {} has a queue and a reporter", self.id),
+            (None, None) => anyhow::bail!("playback {} has no queue or reporter", self.id),
+        };
         Ok(Playback {
             db_id: self.db_id,
             id: self.id,
-            queue,
-            reported: self.reported,
+            source,
             created_at_ms: self.created_at_ms,
             updated_at_ms: self.updated_at_ms,
         })
@@ -226,10 +253,6 @@ pub fn insert(
     owner_db_id: DbId,
     current_session_db_id: DbId,
 ) -> anyhow::Result<DbId> {
-    anyhow::ensure!(
-        playback.queue.is_some() || playback.reported.is_some(),
-        "playback requires a queue or reporting source"
-    );
     let record = PlaybackRecord::from_playback(playback);
     let playback_db_id = db
         .exec_mut(QueryBuilder::insert().element(&record).query())?
@@ -497,23 +520,44 @@ pub fn get_current_session_id(
     Ok(tagged_edge(db, playback_db_id, CURRENT_SESSION_EDGE_KEY)?.map(|(_, target)| target))
 }
 
-/// Whether a playback holds the session as its current session.
-pub fn is_current_session(
+/// Whether a playback holds the session: as its current session, or as its previous one while
+/// both the playback and the previous session's grace last past `cutoff_ms`.
+pub fn holds_session(
     db: &impl DbAccess,
     playback_session_db_id: DbId,
+    cutoff_ms: u64,
 ) -> anyhow::Result<bool> {
-    let result = db.exec(
-        QueryBuilder::search()
+    let edges = db.exec(
+        QueryBuilder::select()
+            .search()
             .to(playback_session_db_id)
             .where_()
             .edge()
             .and()
             .distance(CountComparison::Equal(1))
-            .and()
-            .keys(CURRENT_SESSION_EDGE_KEY)
             .query(),
     )?;
-    Ok(!result.elements.is_empty())
+    for edge in edges.elements {
+        if edge.id.0 >= 0 {
+            continue;
+        }
+        let value = |key: &str| {
+            edge.values
+                .iter()
+                .find(|kv| kv.key == DbValue::from(key))
+                .map(|kv| &kv.value)
+        };
+        if value(CURRENT_SESSION_EDGE_KEY).is_some() {
+            return Ok(true);
+        }
+        if value(PREVIOUS_SESSION_EDGE_KEY).is_some()
+            && previous_session_from_edge(&edge)?.expires_at_ms >= cutoff_ms
+            && get_by_id(db, edge.from)?.is_some_and(|playback| playback.updated_at_ms >= cutoff_ms)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 pub fn link_current_session(
@@ -530,6 +574,90 @@ pub fn link_current_session(
         CURRENT_SESSION_EDGE_KEY,
     )?;
     touch(db, playback_db_id, updated_at_ms)
+}
+
+/// The session a playback's current one replaced, which late reports of it may still reach until
+/// it expires.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PreviousSession {
+    pub session_db_id: DbId,
+    pub demoted_at_ms: u64,
+    pub expires_at_ms: u64,
+}
+
+pub fn get_previous_session(
+    db: &impl DbAccess,
+    playback_db_id: DbId,
+) -> anyhow::Result<Option<PreviousSession>> {
+    let result = db.exec(
+        QueryBuilder::select()
+            .search()
+            .from(playback_db_id)
+            .where_()
+            .edge()
+            .and()
+            .distance(CountComparison::Equal(1))
+            .and()
+            .keys(PREVIOUS_SESSION_EDGE_KEY)
+            .query(),
+    )?;
+    result
+        .elements
+        .iter()
+        .find(|element| element.id.0 < 0 && element.to.0 > 0)
+        .map(previous_session_from_edge)
+        .transpose()
+}
+
+fn previous_session_from_edge(edge: &agdb::DbElement) -> anyhow::Result<PreviousSession> {
+    let value = |key: &str| -> anyhow::Result<u64> {
+        edge.values
+            .iter()
+            .find(|kv| kv.key == DbValue::from(key))
+            .ok_or_else(|| anyhow::anyhow!("previous session edge {} missing {key}", edge.id.0))?
+            .value
+            .to_u64()
+            .map_err(Into::into)
+    };
+    Ok(PreviousSession {
+        session_db_id: edge.to,
+        demoted_at_ms: value("demoted_at_ms")?,
+        expires_at_ms: value("expires_at_ms")?,
+    })
+}
+
+/// Replaces the playback's previous session, or clears it with `None`.
+pub fn set_previous_session(
+    db: &mut impl DbAccess,
+    playback_db_id: DbId,
+    previous: Option<PreviousSession>,
+) -> anyhow::Result<()> {
+    if let Some((edge_id, _)) = tagged_edge(db, playback_db_id, PREVIOUS_SESSION_EDGE_KEY)? {
+        db.exec_mut(QueryBuilder::remove().ids(edge_id).query())?;
+    }
+    let Some(previous) = previous else {
+        return Ok(());
+    };
+    let edge_id = db
+        .exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from(playback_db_id)
+                .to(previous.session_db_id)
+                .query(),
+        )?
+        .ids()[0];
+    db.exec_mut(
+        QueryBuilder::insert()
+            .values_uniform([
+                (PREVIOUS_SESSION_EDGE_KEY, 1_u64).into(),
+                ("demoted_at_ms", previous.demoted_at_ms).into(),
+                ("expires_at_ms", previous.expires_at_ms).into(),
+            ])
+            .ids(edge_id)
+            .query(),
+    )?;
+    Ok(())
 }
 
 pub fn touch(
@@ -592,10 +720,9 @@ pub fn replace_queue_in_transaction(
     let mut playback = get_by_id(db, playback_db_id)
         .map_err(ReplaceQueueError::Internal)?
         .ok_or(ReplaceQueueError::NotFound)?;
-    let queue = playback
-        .queue
-        .as_mut()
-        .ok_or(ReplaceQueueError::QueueUnavailable)?;
+    let PlaybackSource::Queue(queue) = &mut playback.source else {
+        return Err(ReplaceQueueError::QueueUnavailable);
+    };
     if queue.revision != expected_revision {
         return Err(ReplaceQueueError::RevisionConflict {
             expected_revision,
@@ -701,18 +828,78 @@ mod tests {
         Ok((db, user_id, session_id))
     }
 
+    fn insert_session(db: &mut DbAny, user_id: DbId) -> anyhow::Result<DbId> {
+        let track_id = insert_track(db, "Other")?;
+        crate::playback_sessions::create(
+            db,
+            &PlaybackSession {
+                db_id: None,
+                id: nanoid!(),
+                client_name: None,
+                plugin_id: None,
+                position_ms: 0,
+                duration_ms: None,
+                played_ms: 0,
+                last_position_ms: 0,
+                state: PlaybackState::Paused,
+                play_id: nanoid!(),
+                latency_allowance_used_ms: 0,
+                last_position_at_ms: 1,
+                updated_at_ms: 1,
+                created_at_ms: 1,
+            },
+            track_id,
+            user_id,
+        )
+    }
+
+    #[test]
+    fn previous_session_is_replaced_and_held_through_its_grace() -> anyhow::Result<()> {
+        let (mut db, user_id, session_id) = setup()?;
+        let root_id = db
+            .transaction_mut(|t| insert_reported(t, user_id, "external", "device", session_id, 1))?
+            .db_id
+            .unwrap();
+        let first = insert_session(&mut db, user_id)?;
+        let second = insert_session(&mut db, user_id)?;
+        let held = |db: &DbAny, session, cutoff| holds_session(db, session, cutoff);
+        let previous = |session_db_id| PreviousSession {
+            session_db_id,
+            demoted_at_ms: 1,
+            expires_at_ms: 20,
+        };
+        db.transaction_mut(|t| set_previous_session(t, root_id, Some(previous(first))))?;
+        db.transaction_mut(|t| set_previous_session(t, root_id, Some(previous(second))))?;
+        assert_eq!(get_previous_session(&db, root_id)?, Some(previous(second)));
+        assert!(!held(&db, first, 0)?);
+        assert!(held(&db, second, 1)?);
+        assert!(
+            !held(&db, second, 2)?,
+            "the playback went untouched past the cutoff"
+        );
+        db.transaction_mut(|t| touch(t, root_id, 30))?;
+        assert!(held(&db, second, 20)?);
+        assert!(!held(&db, second, 21)?, "the grace ended before the cutoff");
+        db.exec_mut(QueryBuilder::remove().ids(second).query())?;
+        assert_eq!(get_previous_session(&db, root_id)?, None);
+        db.transaction_mut(|t| set_previous_session(t, root_id, Some(previous(first))))?;
+        db.transaction_mut(|t| set_previous_session(t, root_id, None))?;
+        assert_eq!(get_previous_session(&db, root_id)?, None);
+        assert_eq!(get_current_session_id(&db, root_id)?, Some(session_id));
+        Ok(())
+    }
+
     fn playback() -> Playback {
         Playback {
             db_id: None,
             id: nanoid!(),
-            queue: Some(Queue {
+            source: PlaybackSource::Queue(Queue {
                 revision: 1,
                 track_ids: vec!["track".to_string()],
                 current_index: 0,
                 repeat_mode: RepeatMode::None,
                 shuffle_enabled: false,
             }),
-            reported: None,
             created_at_ms: 1,
             updated_at_ms: 1,
         }
@@ -725,16 +912,14 @@ mod tests {
             insert_reported(t, user_id, "external", "device", session_id, 1)
         })?;
         let root_id = root.db_id.unwrap();
+        let prior_id = insert_session(&mut db, user_id)?;
+        let previous = PreviousSession {
+            session_db_id: prior_id,
+            demoted_at_ms: 2,
+            expires_at_ms: 10,
+        };
         db.transaction_mut(|t| {
-            update_reported_previous(
-                t,
-                root_id,
-                Some(ReportedPrevious {
-                    session_public_id: "prior-track".into(),
-                    demoted_at_ms: 2,
-                    expires_at_ms: 10,
-                }),
-            )?;
+            set_previous_session(t, root_id, Some(previous))?;
             link_current_session(t, root_id, session_id, 3)
         })?;
         let mut stopped = crate::playback_sessions::get_by_id(&db, session_id)?.unwrap();
@@ -742,16 +927,8 @@ mod tests {
         db.exec_mut(QueryBuilder::insert().element(&stopped).query())?;
         let restored = get_reported(&db, user_id, "external", "device", 4)?.unwrap();
         assert_eq!(restored.id, root.id);
-        assert!(restored.queue.is_none());
-        assert_eq!(
-            restored
-                .reported
-                .unwrap()
-                .previous
-                .unwrap()
-                .session_public_id,
-            "prior-track"
-        );
+        assert!(restored.queue().is_none());
+        assert_eq!(get_previous_session(&db, root_id)?, Some(previous));
         assert!(get_reported(&db, user_id, "other", "device", 4)?.is_none());
         assert!(get_reported(&db, user_id, "external", "other", 4)?.is_none());
         assert_eq!(get_current_session_id(&db, root_id)?, Some(session_id));
@@ -808,13 +985,13 @@ mod tests {
         let root_id = create(&mut db, &playback(), user_id, session_id)?;
         let stale_now_ms = 24 * 60 * 60 * 1000;
 
-        assert!(is_current_session(&db, session_id)?);
+        assert!(holds_session(&db, session_id, stale_now_ms)?);
         assert!(
             crate::playback_sessions::evict_stale(&mut db, stale_now_ms, |_| false)?.is_empty()
         );
 
         delete(&mut db, root_id)?;
-        assert!(!is_current_session(&db, session_id)?);
+        assert!(!holds_session(&db, session_id, 0)?);
         let evicted = crate::playback_sessions::evict_stale(&mut db, stale_now_ms, |_| false)?;
         assert_eq!(evicted.len(), 1);
         assert!(crate::playback_sessions::get_by_id(&db, session_id)?.is_none());
@@ -853,7 +1030,7 @@ mod tests {
                 REPORTED_PLAYBACK_TTL_MS + 2,
             )
         })?;
-        assert!(replacement.queue.is_none());
+        assert!(replacement.queue().is_none());
         assert_eq!(count_for_user_up_to_limit(&db, user_id)?, 2);
         assert!(get_by_id(&db, native_id)?.is_some());
         Ok(())
@@ -864,7 +1041,7 @@ mod tests {
         let (mut db, user_id, session_id) = setup()?;
         let playback_id = create(&mut db, &playback(), user_id, session_id)?;
         let stored = get_by_id(&db, playback_id)?.unwrap();
-        let queue = stored.queue.unwrap();
+        let queue = stored.queue().unwrap();
         assert_eq!(queue.revision, 1);
         assert_eq!(queue.track_ids, vec!["track"]);
         assert_eq!(queue.current_index, 0);
@@ -1004,7 +1181,7 @@ mod tests {
                 clear_current_session: false,
             },
         )?;
-        assert_eq!(updated.queue.as_ref().unwrap().revision, 2);
+        assert_eq!(updated.queue().unwrap().revision, 2);
 
         let error = replace_queue(
             &mut db,
@@ -1028,9 +1205,9 @@ mod tests {
             }
         ));
         let stored = get_by_id(&db, playback_id)?.unwrap();
-        assert_eq!(stored.queue.as_ref().unwrap().track_ids, vec!["updated"]);
-        assert_eq!(stored.queue.as_ref().unwrap().repeat_mode, RepeatMode::All);
-        assert!(stored.queue.as_ref().unwrap().shuffle_enabled);
+        assert_eq!(stored.queue().unwrap().track_ids, vec!["updated"]);
+        assert_eq!(stored.queue().unwrap().repeat_mode, RepeatMode::All);
+        assert!(stored.queue().unwrap().shuffle_enabled);
         Ok(())
     }
 

@@ -58,10 +58,7 @@ impl QueueSnapshot {
 pub(crate) fn queue_from_playback(
     playback: &lyra_db::playbacks::Playback,
 ) -> Result<QueueSnapshot, PlaybackError> {
-    let stored = playback
-        .queue
-        .as_ref()
-        .ok_or(PlaybackError::QueueUnavailable)?;
+    let stored = playback.queue().ok_or(PlaybackError::QueueUnavailable)?;
     let queue = QueueSnapshot {
         track_ids: stored.track_ids.clone(),
         current_index: stored.current_index,
@@ -219,14 +216,13 @@ pub(crate) fn create_playback(
     let playback = lyra_db::playbacks::Playback {
         db_id: None,
         id,
-        queue: Some(lyra_db::playbacks::Queue {
+        source: lyra_db::playbacks::PlaybackSource::Queue(lyra_db::playbacks::Queue {
             revision: 1,
             track_ids: snapshot.track_ids,
             current_index: snapshot.current_index,
             repeat_mode: snapshot.repeat_mode,
             shuffle_enabled: snapshot.shuffle_enabled,
         }),
-        reported: None,
         created_at_ms: now_ms,
         updated_at_ms: now_ms,
     };
@@ -302,8 +298,7 @@ pub(crate) fn report_progress(
         let mut playback =
             lyra_db::playbacks::get_by_id(t, playback_db_id)?.ok_or(PlaybackError::NotFound)?;
         let current_revision = playback
-            .queue
-            .as_ref()
+            .queue()
             .ok_or(PlaybackError::QueueUnavailable)?
             .revision;
         if current_revision != queue_revision {
@@ -524,7 +519,7 @@ pub(crate) fn current_handoff_playback(
         return Ok(None);
     };
     if playback.id != playback_public_id
-        || playback.queue.as_ref().map(|queue| queue.revision) != Some(queue_revision)
+        || playback.queue().map(|queue| queue.revision) != Some(queue_revision)
         || lyra_db::playbacks::get_current_session_id(db, playback_db_id)?
             != Some(playback_session_id)
     {
@@ -626,7 +621,7 @@ pub(crate) fn get_owned_detail(
     let Some(playback) = lyra_db::playbacks::get_by_id(db, playback_db_id)? else {
         return Ok(None);
     };
-    if playback.reported.is_some()
+    if playback.is_reported()
         && playback.updated_at_ms
             < now_ms.saturating_sub(lyra_db::playbacks::REPORTED_PLAYBACK_TTL_MS)
     {
@@ -889,8 +884,7 @@ pub(crate) fn validate_handoff_queue(
         return Err(HandoffValidationError::WrongOwner);
     }
     let current_revision = playback
-        .queue
-        .as_ref()
+        .queue()
         .ok_or(HandoffValidationError::QueueUnavailable)?
         .revision;
     if current_revision != expected_revision {
