@@ -8,6 +8,7 @@ mod image;
 pub(crate) mod lookup;
 pub(crate) mod providers;
 mod resolve;
+pub(crate) mod selection;
 mod sync;
 
 use std::path::Path;
@@ -93,6 +94,8 @@ pub(crate) use providers::{
 pub(crate) use resolve::configured_covers_root;
 pub(crate) use sync::{
     CoverScope,
+    MAX_COVER_BYTES,
+    discard_cover_file,
     record_local_release_cover,
     sync_and_persist_covers_for_library,
     sync_artist_cover,

@@ -571,6 +571,7 @@ pub fn artist_routes() -> Router {
         .route("/", get(get_artists))
         .route("/{id}", get(get_artist))
         .route("/{id}/covers/search", post(search_artist_covers))
+        .merge(route_covers::owner_cover_routes::<route_covers::ArtistCovers>())
 }
 
 #[cfg(feature = "docgen")]
@@ -587,6 +588,9 @@ pub(crate) fn artist_openapi_routes() -> aide::axum::ApiRouter {
             "/{id}/covers/search",
             post_with(search_artist_covers, search_artist_covers_docs),
         )
+        .merge(route_covers::owner_cover_openapi_routes::<
+            route_covers::ArtistCovers,
+        >())
 }
 
 #[cfg(test)]

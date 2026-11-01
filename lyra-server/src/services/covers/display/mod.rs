@@ -133,6 +133,24 @@ impl<'a> CoverFilter<'a> {
         }))
     }
 
+    /// The cover `owner_db_id` holds itself, when it passes the check. The caller has already
+    /// established that the viewer sees the owner.
+    fn owned_cover(
+        &mut self,
+        db: &DbAny,
+        owner_db_id: DbId,
+    ) -> anyhow::Result<Option<ResolvedCover>> {
+        let Some(cover) = lyra_db::covers::get(db, owner_db_id)? else {
+            return Ok(None);
+        };
+        if let Some(check) = self.check.as_mut()
+            && !check(owner_db_id, &cover)
+        {
+            return Ok(None);
+        }
+        Ok(Some(ResolvedCover { owner_db_id, cover }))
+    }
+
     /// The first of `release_db_ids` the filter lets through.
     fn first_release_cover(
         &mut self,

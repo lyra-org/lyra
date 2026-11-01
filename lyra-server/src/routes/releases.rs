@@ -569,6 +569,9 @@ pub fn release_routes() -> Router {
         )
         .route("/{id}/similar", get(similarity::get_similar_releases))
         .route("/{id}/covers/search", post(search_release_covers))
+        .merge(route_covers::owner_cover_routes::<
+            route_covers::ReleaseCovers,
+        >())
 }
 
 #[cfg(feature = "docgen")]
@@ -599,6 +602,9 @@ pub(crate) fn release_openapi_routes() -> aide::axum::ApiRouter {
             "/{id}/covers/search",
             post_with(search_release_covers, search_release_covers_docs),
         )
+        .merge(route_covers::owner_cover_openapi_routes::<
+            route_covers::ReleaseCovers,
+        >())
 }
 
 #[cfg(test)]

@@ -21,11 +21,26 @@ use lyra_db::covers::display::{
     DisplayCoverWinnerKind,
 };
 
-/// A playlist's display cover: the deterministically chosen release cover from
+/// A playlist's cover: the one its owner uploaded, else its generated display cover.
+pub(crate) fn cover_for_playlist(
+    db: &DbAny,
+    filter: &mut CoverFilter<'_>,
+    playlist: &lyra_db::Playlist,
+) -> anyhow::Result<Option<ResolvedCover>> {
+    let Some(playlist_db_id) = playlist.db_id.clone().map(DbId::from) else {
+        return Ok(None);
+    };
+    if let Some(cover) = filter.owned_cover(db, playlist_db_id)? {
+        return Ok(Some(cover));
+    }
+    generated_cover_for_playlist(db, filter, playlist)
+}
+
+/// A playlist's generated display cover: the deterministically chosen release cover from
 /// its membership. Unlike genres there is no listen-driven personal or instance
 /// winner — a playlist's identity is its curation, not aggregate listening.
 /// When the filter rejects the stored winner, the next source it lets through stands in.
-pub(crate) fn cover_for_playlist(
+pub(crate) fn generated_cover_for_playlist(
     db: &DbAny,
     filter: &mut CoverFilter<'_>,
     playlist: &lyra_db::Playlist,

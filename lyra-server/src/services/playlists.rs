@@ -527,7 +527,18 @@ pub(crate) fn delete(db: &mut DbAny, playlist_id: QueryId) -> anyhow::Result<Opt
         return Ok(None);
     };
 
+    let detached = db.transaction_mut(|t| {
+        let mut detached = Vec::new();
+        for sourced in lyra_db::covers::sources(t, playlist_db_id)? {
+            detached.extend(lyra_db::covers::remove(t, playlist_db_id, sourced.source)?);
+        }
+        anyhow::Ok(detached)
+    })?;
     lyra_db::playlists::delete(db, playlist_db_id)?;
+    let covers_root = crate::services::covers::configured_covers_root();
+    for cover in detached.into_iter().filter(|cover| cover.orphaned) {
+        crate::services::covers::discard_cover_file(&covers_root, &cover.cover.path);
+    }
     Ok(Some(playlist))
 }
 

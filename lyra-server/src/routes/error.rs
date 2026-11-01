@@ -39,6 +39,7 @@ use crate::services::{
         SortSpec,
         pipeline::SortKey,
     },
+    covers::selection::CoverSelectionError,
     delivery::DeliveryError,
     entries::EntryServiceError,
     hls::HlsError,
@@ -282,6 +283,19 @@ impl From<ProviderServiceError> for AppError {
                 Self::not_found(format!("No refresh handler for provider '{provider_id}'"))
             }
             ProviderServiceError::Internal(err) => err.into(),
+        }
+    }
+}
+
+impl From<CoverSelectionError> for AppError {
+    fn from(err: CoverSelectionError) -> Self {
+        match err {
+            CoverSelectionError::NotFound(message) => Self::not_found(message),
+            CoverSelectionError::Forbidden(message) => Self::forbidden(message),
+            CoverSelectionError::Invalid(message) => Self::bad_request(message),
+            CoverSelectionError::SourceMissing(_) => Self::conflict(err.to_string()),
+            CoverSelectionError::Upstream(message) => Self::bad_gateway(message),
+            CoverSelectionError::Internal(err) => err.into(),
         }
     }
 }

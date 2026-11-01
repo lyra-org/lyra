@@ -961,6 +961,9 @@ pub fn playlist_routes() -> Router {
         .route("/{id}/tracks/remove", post(remove_playlist_tracks))
         .route("/{id}/tracks/{entry_id}", delete(delete_playlist_track))
         .route("/{id}/tracks/{entry_id}", patch(move_playlist_track))
+        .merge(route_covers::owner_cover_routes::<
+            route_covers::PlaylistCovers,
+        >())
 }
 
 #[cfg(feature = "docgen")]
@@ -994,6 +997,9 @@ pub(crate) fn playlist_openapi_routes() -> aide::axum::ApiRouter {
             "/{id}/tracks/{entry_id}",
             patch_with(move_playlist_track, move_track_docs),
         )
+        .merge(route_covers::owner_cover_openapi_routes::<
+            route_covers::PlaylistCovers,
+        >())
 }
 
 #[cfg(test)]

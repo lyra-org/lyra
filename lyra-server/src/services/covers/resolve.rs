@@ -34,6 +34,12 @@ pub(crate) fn configured_cover_dir_for_artist(covers_root: &Path, artist_id: DbI
     covers_root.join("artists").join(artist_id.0.to_string())
 }
 
+pub(crate) fn configured_cover_dir_for_playlist(covers_root: &Path, playlist_id: DbId) -> PathBuf {
+    covers_root
+        .join("playlists")
+        .join(playlist_id.0.to_string())
+}
+
 /// Whether the owner has a stored cover from any source whose file is there.
 pub(crate) fn has_stored_cover(db: &DbAny, owner_db_id: DbId) -> Result<bool> {
     Ok(lyra_db::covers::sources(db, owner_db_id)?
