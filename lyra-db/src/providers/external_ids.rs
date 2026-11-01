@@ -22,7 +22,6 @@ use serde::{
 };
 
 use super::super::NodeId;
-use crate::roots::Root;
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(DbElement, Serialize, Clone, Debug)]
@@ -146,27 +145,6 @@ pub fn get_for_entity_inside_tx(
                 .from(node_id)
                 .where_()
                 .neighbor()
-                .end_where()
-                .query(),
-        )?
-        .try_into()?;
-
-    Ok(ids)
-}
-
-pub fn get_all_for_tracks(db: &DbAny) -> anyhow::Result<Vec<ExternalId>> {
-    let ids: Vec<ExternalId> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<ExternalId>()
-                .search()
-                .from(Root::Tracks.alias())
-                .where_()
-                .beyond()
-                .where_()
-                .not()
-                .key("db_element_id")
-                .value("ExternalId")
                 .end_where()
                 .query(),
         )?
@@ -329,8 +307,8 @@ pub fn upsert(
 
 /// Transaction-capable variant of [`upsert`].
 ///
-/// A manual write keeps the resolved value beneath it, and a resolved write
-/// under a manual value updates only that kept value.
+/// Values are stored trimmed. A manual write keeps the resolved value beneath it, and a resolved
+/// write under a manual value updates only that kept value.
 pub(crate) fn upsert_inside_tx(
     db: &mut impl DbAccess,
     node_id: DbId,
@@ -339,6 +317,7 @@ pub(crate) fn upsert_inside_tx(
     id_value: &str,
     source: IdSource,
 ) -> anyhow::Result<DbId> {
+    let id_value = id_value.trim();
     let existing = get_inside_tx(db, node_id, provider_id, id_type)?;
 
     let (effective, new_source, resolved_value) = match (&existing, source) {
@@ -586,6 +565,28 @@ mod tests {
                 None
             }
         })
+    }
+
+    #[test]
+    fn values_are_stored_trimmed() -> anyhow::Result<()> {
+        let mut db = crate::test_db::new_test_db()?;
+        let track = crate::fixtures::insert_track(&mut db, "Track")?;
+        upsert(
+            &mut db,
+            track,
+            "musicbrainz",
+            "recording_id",
+            "  rec \n",
+            IdSource::Manual,
+        )?;
+
+        let stored = get(&db, track, "musicbrainz", "recording_id")?.expect("stored id");
+        assert_eq!(stored.id_value, "rec");
+        assert_eq!(
+            get_owners(&db, "musicbrainz", "recording_id", "rec", Some("Track"))?,
+            [track]
+        );
+        Ok(())
     }
 
     #[test]

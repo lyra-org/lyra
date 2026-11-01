@@ -234,32 +234,15 @@ pub(crate) fn resolve_merged_track_ids_for_play_count(
         return Ok(vec![track_db_id]);
     }
 
-    let all_external_ids = lyra_db::external_ids::get_all_for_tracks(db)?;
-    let matching_ext_ids: Vec<_> = all_external_ids
-        .into_iter()
-        .filter(|ext_id| {
-            let id_value = ext_id.id_value.trim();
-            !id_value.is_empty()
-                && unique_track_id_pairs
-                    .contains(&(ext_id.provider_id.clone(), ext_id.id_type.clone()))
-                && target_keys.contains(&(
-                    ext_id.provider_id.clone(),
-                    ext_id.id_type.clone(),
-                    id_value.to_string(),
-                ))
-        })
-        .collect();
-
     let mut merged_track_ids = HashSet::new();
-    for ext_id in matching_ext_ids {
-        let Some(ext_db_id) = ext_id.db_id.map(DbId::from) else {
-            continue;
-        };
-        if let Some(owner_db_id) = lyra_db::external_ids::get_owner_id(db, ext_db_id)?
-            && lyra_db::tracks::get_by_id(db, owner_db_id)?.is_some()
-        {
-            merged_track_ids.insert(owner_db_id);
-        }
+    for (provider_id, id_type, id_value) in &target_keys {
+        merged_track_ids.extend(lyra_db::external_ids::get_owners(
+            db,
+            provider_id,
+            id_type,
+            id_value,
+            Some("Track"),
+        )?);
     }
 
     if merged_track_ids.is_empty() {

@@ -352,6 +352,15 @@ mod tests {
             track_b,
             "musicbrainz",
             "recording_id",
+            " rec-123 ",
+            lyra_db::external_ids::IdSource::Manual,
+        )?;
+        let artist = lyra_db::fixtures::insert_artist(&mut db, "Not A Track")?;
+        lyra_db::external_ids::upsert(
+            &mut db,
+            artist,
+            "musicbrainz",
+            "recording_id",
             "rec-123",
             lyra_db::external_ids::IdSource::Resolved,
         )?;
