@@ -478,13 +478,16 @@ async fn resolve_auth_from_api_key(key: &str) -> AuthResult<Option<ResolvedAuth>
         return Ok(None);
     };
 
+    // A key is named for what uses it, so its name labels the client as a login's
+    // `client_name` does.
+    let client_name = sessions::tidy_client_name(Some(api_key.name.clone()));
     Ok(Some(ResolvedAuth {
         principal: api_key.principal,
         credential: AuthCredential::ApiKey {
             public_id: api_key.public_id,
             name: api_key.name,
         },
-        client_name: None,
+        client_name,
     }))
 }
 
@@ -760,6 +763,7 @@ mod tests {
                 name: "laptop".to_string()
             }
         );
+        assert_eq!(auth.client_name.as_deref(), Some("laptop"));
 
         Ok(())
     }
