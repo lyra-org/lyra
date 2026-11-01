@@ -19,7 +19,7 @@ use super::{
 
 pub(crate) const COVER_EXTENSIONS: [&str; 4] = ["jpg", "jpeg", "png", "webp"];
 
-pub(crate) fn normalize_extension(ext: &str) -> Option<&'static str> {
+fn normalize_extension(ext: &str) -> Option<&'static str> {
     match ext.to_ascii_lowercase().as_str() {
         "jpg" => Some("jpg"),
         "jpeg" => Some("jpeg"),
@@ -29,7 +29,7 @@ pub(crate) fn normalize_extension(ext: &str) -> Option<&'static str> {
     }
 }
 
-pub(crate) fn image_format_from_extension(ext: &str) -> Option<image::ImageFormat> {
+fn image_format_from_extension(ext: &str) -> Option<image::ImageFormat> {
     match ext {
         "jpg" | "jpeg" => Some(image::ImageFormat::Jpeg),
         "png" => Some(image::ImageFormat::Png),
@@ -38,7 +38,7 @@ pub(crate) fn image_format_from_extension(ext: &str) -> Option<image::ImageForma
     }
 }
 
-pub(crate) fn mime_from_extension(ext: &str) -> &'static str {
+fn mime_from_extension(ext: &str) -> &'static str {
     match ext {
         "jpg" | "jpeg" => "image/jpeg",
         "png" => "image/png",
@@ -47,13 +47,38 @@ pub(crate) fn mime_from_extension(ext: &str) -> &'static str {
     }
 }
 
-pub(crate) fn extension_from_image_format(format: image::ImageFormat) -> Option<&'static str> {
+fn extension_from_image_format(format: image::ImageFormat) -> Option<&'static str> {
     match format {
         image::ImageFormat::Jpeg => Some("jpg"),
         image::ImageFormat::Png => Some("png"),
         image::ImageFormat::WebP => Some("webp"),
         _ => None,
     }
+}
+
+const MAX_COVER_DIMENSION: u32 = 16_384;
+const MAX_COVER_DECODE_BYTES: u64 = 512 * 1024 * 1024;
+
+/// The extension for a cover image read from its bytes, whatever its source
+/// claims it is. The bytes must decode in full as a JPEG, PNG or WebP image
+/// within the cover size limits.
+pub(crate) fn validate_cover_image(bytes: &[u8]) -> Result<&'static str> {
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .context("failed to read cover image format")?;
+    let extension = reader
+        .format()
+        .and_then(extension_from_image_format)
+        .ok_or_else(|| anyhow!("not a JPEG, PNG or WebP image"))?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_COVER_DIMENSION);
+    limits.max_image_height = Some(MAX_COVER_DIMENSION);
+    limits.max_alloc = Some(MAX_COVER_DECODE_BYTES);
+    reader.limits(limits);
+    reader
+        .decode()
+        .with_context(|| format!("cover image does not decode as {extension}"))?;
+    Ok(extension)
 }
 
 pub(crate) fn parse_cover_image_format(raw_format: &str) -> Option<image::ImageFormat> {
@@ -196,4 +221,64 @@ pub(crate) fn cover_blurhash(path: &Path) -> Option<String> {
     let (sw, sh) = small.dimensions();
     let bytes = small.to_rgba8();
     blurhash::encode(4, 3, sw, sh, bytes.as_raw()).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn encoded(format: image::ImageFormat, width: u32, height: u32) -> Vec<u8> {
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(width, height)
+            .write_to(&mut cursor, format)
+            .expect("encode test image");
+        cursor.into_inner()
+    }
+
+    #[test]
+    fn validate_cover_image_reads_the_format_from_the_bytes() {
+        for (format, extension) in [
+            (image::ImageFormat::Jpeg, "jpg"),
+            (image::ImageFormat::Png, "png"),
+            (image::ImageFormat::WebP, "webp"),
+        ] {
+            assert_eq!(
+                validate_cover_image(&encoded(format, 1, 1)).ok(),
+                Some(extension)
+            );
+        }
+    }
+
+    #[test]
+    fn validate_cover_image_rejects_other_content() {
+        for bytes in [
+            &b"GIF89a\x01\x00\x01\x00"[..],
+            b"<!doctype html><title>x</title>",
+            b"{\"secret\":true}",
+            b"",
+        ] {
+            assert!(validate_cover_image(bytes).is_err(), "{bytes:?}");
+        }
+    }
+
+    #[test]
+    fn validate_cover_image_rejects_image_signatures_over_other_content() {
+        let mut fake_jpeg = vec![0xFF, 0xD8, 0xFF];
+        fake_jpeg.extend_from_slice(b"secret data, not an image");
+        let mut fake_png = encoded(image::ImageFormat::Png, 1, 1)[..16].to_vec();
+        fake_png.extend_from_slice(b"secret data, not an image");
+        let png = encoded(image::ImageFormat::Png, 64, 64);
+        let truncated_png = &png[..png.len() / 2];
+
+        for bytes in [&fake_jpeg[..], &fake_png, truncated_png] {
+            assert!(validate_cover_image(bytes).is_err(), "{bytes:?}");
+        }
+    }
+
+    #[test]
+    fn validate_cover_image_rejects_oversized_dimensions() {
+        let tall = encoded(image::ImageFormat::Png, 1, MAX_COVER_DIMENSION + 1);
+
+        assert!(validate_cover_image(&tall).is_err());
+    }
 }

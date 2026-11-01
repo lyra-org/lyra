@@ -21,7 +21,6 @@ use rayon::iter::{
     IntoParallelIterator,
     ParallelIterator,
 };
-use reqwest::header::CONTENT_TYPE;
 use tokio::{
     fs,
     io::AsyncWriteExt,
@@ -48,8 +47,8 @@ use super::{
         cover_blurhash,
         cover_hash,
         cover_mime_from_path,
-        normalize_extension,
         read_cover_hash,
+        validate_cover_image,
     },
     providers::{
         artist_context_value,
@@ -70,31 +69,8 @@ use super::{
 
 const MAX_COVER_BYTES: usize = 20 * 1024 * 1024;
 
-fn extension_from_url(url: &str) -> Option<&'static str> {
-    let parsed = Url::parse(url).ok()?;
-    let last_segment = parsed.path_segments()?.next_back()?;
-    let extension = std::path::Path::new(last_segment)
-        .extension()
-        .and_then(|s| s.to_str())?;
-    normalize_extension(extension)
-}
-
-fn extension_from_content_type(content_type: &str) -> Option<&'static str> {
-    match content_type
-        .split(';')
-        .next()?
-        .trim()
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "image/jpeg" | "image/jpg" => Some("jpg"),
-        "image/png" => Some("png"),
-        "image/webp" => Some("webp"),
-        _ => None,
-    }
-}
-
-async fn download_cover(url: &str) -> Result<(Vec<u8>, Option<String>)> {
+/// Downloads the cover at `url` with the extension its bytes call for.
+async fn download_cover(url: &str) -> Result<(Vec<u8>, &'static str)> {
     let response = harmony_http::shared_client()
         .get(url)
         .send()
@@ -117,11 +93,6 @@ async fn download_cover(url: &str) -> Result<(Vec<u8>, Option<String>)> {
         ));
     }
 
-    let content_type = response
-        .headers()
-        .get(CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .map(ToString::to_string);
     let bytes = response
         .bytes()
         .await
@@ -134,7 +105,12 @@ async fn download_cover(url: &str) -> Result<(Vec<u8>, Option<String>)> {
         ));
     }
 
-    Ok((bytes, content_type))
+    let (bytes, extension) =
+        tokio::task::spawn_blocking(move || validate_cover_image(&bytes).map(|ext| (bytes, ext)))
+            .await
+            .context("cover validation task panicked")?
+            .with_context(|| format!("cover from {url} is not a usable image"))?;
+    Ok((bytes, extension))
 }
 
 async fn write_cover_image(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -244,7 +220,7 @@ pub(crate) async fn sync_release_cover_for_tracks(
             continue;
         }
 
-        let (bytes, content_type) = match download_cover(&cover_url).await {
+        let (bytes, ext) = match download_cover(&cover_url).await {
             Ok(value) => value,
             Err(err) => {
                 tracing::warn!(
@@ -255,20 +231,6 @@ pub(crate) async fn sync_release_cover_for_tracks(
                 );
                 continue;
             }
-        };
-
-        let ext = extension_from_url(&cover_url).or_else(|| {
-            content_type
-                .as_deref()
-                .and_then(extension_from_content_type)
-        });
-        let Some(ext) = ext else {
-            tracing::warn!(
-                provider = %provider_id,
-                cover_url = %cover_url,
-                "unsupported cover extension or mime"
-            );
-            continue;
         };
 
         let target = target_dir.join(format!("cover.{ext}"));
@@ -360,7 +322,7 @@ pub(crate) async fn sync_artist_cover(
             continue;
         }
 
-        let (bytes, content_type) = match download_cover(&cover_url).await {
+        let (bytes, ext) = match download_cover(&cover_url).await {
             Ok(value) => value,
             Err(err) => {
                 tracing::warn!(
@@ -371,20 +333,6 @@ pub(crate) async fn sync_artist_cover(
                 );
                 continue;
             }
-        };
-
-        let ext = extension_from_url(&cover_url).or_else(|| {
-            content_type
-                .as_deref()
-                .and_then(extension_from_content_type)
-        });
-        let Some(ext) = ext else {
-            tracing::warn!(
-                provider = %provider_id,
-                cover_url = %cover_url,
-                "unsupported cover extension or mime"
-            );
-            continue;
         };
 
         let target = target_dir.join(format!("cover.{ext}"));
@@ -428,7 +376,7 @@ struct CoverDownloadTask {
 }
 
 async fn execute_cover_download(task: CoverDownloadTask) -> bool {
-    let (bytes, content_type) = match download_cover(&task.cover_url).await {
+    let (bytes, ext) = match download_cover(&task.cover_url).await {
         Ok(value) => value,
         Err(err) => {
             tracing::warn!(
@@ -439,20 +387,6 @@ async fn execute_cover_download(task: CoverDownloadTask) -> bool {
             );
             return false;
         }
-    };
-
-    let ext = extension_from_url(&task.cover_url).or_else(|| {
-        content_type
-            .as_deref()
-            .and_then(extension_from_content_type)
-    });
-    let Some(ext) = ext else {
-        tracing::warn!(
-            provider = %task.provider_id,
-            cover_url = %task.cover_url,
-            "unsupported cover extension or mime"
-        );
-        return false;
     };
 
     let target = task.target_dir.join(format!("cover.{ext}"));
