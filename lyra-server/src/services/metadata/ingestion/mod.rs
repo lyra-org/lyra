@@ -405,6 +405,7 @@ mod tests {
             lyra_db::covers::upsert(
                 t,
                 release_db_id,
+                lyra_db::covers::CoverSource::Local,
                 lyra_db::covers::Cover {
                     db_id: None,
                     id: id.to_string(),
@@ -412,6 +413,7 @@ mod tests {
                     mime_type: "image/jpeg".to_string(),
                     hash: "a".repeat(64),
                     blurhash: None,
+                    provider_id: None,
                 },
             )?;
             Ok(())

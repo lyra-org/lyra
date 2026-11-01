@@ -34,13 +34,10 @@ use crate::{
             CoverScope,
             CoverSyncOptions,
             configured_covers_root,
-            resolve_cover_for_artist_id,
-            resolve_cover_for_release_id,
+            record_local_release_cover,
             sync_and_persist_covers_for_library,
             sync_artist_cover,
             sync_release_cover_for_tracks,
-            upsert_artist_cover_metadata,
-            upsert_release_cover_metadata,
         },
         deduplicate_artists_by_external_id,
         entities::{
@@ -666,15 +663,9 @@ async fn sync_cover_for_refreshed_entity(
             )
             .await
             .map_err(ProviderServiceError::Internal)?;
-            let resolved = {
-                let db = STATE.db.read().await;
-                resolve_cover_for_release_id(&db, node_id, paths)?
-            };
-            if let Some(cover_path) = resolved {
-                upsert_release_cover_metadata(&STATE.db.get(), node_id, &cover_path)
-                    .await
-                    .map_err(ProviderServiceError::Internal)?;
-            }
+            record_local_release_cover(&STATE.db.get(), node_id, paths.library_root)
+                .await
+                .map_err(ProviderServiceError::Internal)?;
             tracing::debug!(
                 release_id = node_id.0,
                 synced,
@@ -692,15 +683,6 @@ async fn sync_cover_for_refreshed_entity(
             let synced = sync_artist_cover(&STATE.db.get(), &artist, paths, options, None)
                 .await
                 .map_err(ProviderServiceError::Internal)?;
-            let resolved = {
-                let db = STATE.db.read().await;
-                resolve_cover_for_artist_id(&db, node_id, paths)?
-            };
-            if let Some(cover_path) = resolved {
-                upsert_artist_cover_metadata(&STATE.db.get(), node_id, &cover_path)
-                    .await
-                    .map_err(ProviderServiceError::Internal)?;
-            }
             tracing::debug!(
                 artist_id = node_id.0,
                 synced,

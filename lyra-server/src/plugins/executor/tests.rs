@@ -2647,6 +2647,7 @@ fn cover_bindings_hide_inaccessible_releases() -> Result<()> {
             lyra_db::covers::upsert(
                 t,
                 release,
+                lyra_db::covers::CoverSource::Local,
                 lyra_db::Cover {
                     db_id: None,
                     id: nanoid::nanoid!(),
@@ -2654,6 +2655,7 @@ fn cover_bindings_hide_inaccessible_releases() -> Result<()> {
                     mime_type: "image/png".into(),
                     hash: "hash".into(),
                     blurhash: None,
+                    provider_id: None,
                 },
             )?;
             Ok(())
@@ -2699,6 +2701,7 @@ fn cover_artwork_bindings_serve_anonymous_public_routes() -> Result<()> {
         lyra_db::covers::upsert(
             t,
             release,
+            lyra_db::covers::CoverSource::Local,
             lyra_db::Cover {
                 db_id: None,
                 id: nanoid::nanoid!(),
@@ -2706,6 +2709,7 @@ fn cover_artwork_bindings_serve_anonymous_public_routes() -> Result<()> {
                 mime_type: "image/png".into(),
                 hash: "hash".into(),
                 blurhash: None,
+                provider_id: None,
             },
         )?;
         Ok(())

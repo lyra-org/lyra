@@ -208,18 +208,17 @@ impl CoverLookup {
     }
 }
 
-/// Removes the covers of `owner_ids` whose files are still gone.
+/// Removes the covers of `owner_ids`, from any source, whose files are still gone.
 pub(crate) fn remove_stale(db: &mut DbAny, owner_ids: &[DbId]) -> anyhow::Result<()> {
     let mut seen = HashSet::new();
     for owner_id in owner_ids.iter().copied() {
         if !seen.insert(owner_id) {
             continue;
         }
-        let Some(cover) = lyra_db::covers::get(db, owner_id)? else {
-            continue;
-        };
-        if matches!(cover_file(&cover), CoverFile::Gone) {
-            lyra_db::covers::remove(db, owner_id)?;
+        for sourced in lyra_db::covers::sources(db, owner_id)? {
+            if matches!(cover_file(&sourced.cover), CoverFile::Gone) {
+                lyra_db::covers::remove(db, owner_id, sourced.source)?;
+            }
         }
     }
     Ok(())
@@ -258,6 +257,7 @@ mod tests {
                 lyra_db::covers::upsert(
                     t,
                     release,
+                    lyra_db::covers::CoverSource::Local,
                     Cover {
                         db_id: None,
                         id: title.to_string(),
@@ -265,6 +265,7 @@ mod tests {
                         mime_type: "image/png".to_string(),
                         hash: title.to_string(),
                         blurhash: None,
+                        provider_id: None,
                     },
                 )
             })?;

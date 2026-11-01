@@ -283,6 +283,7 @@ mod tests {
             mime_type: "image/jpeg".to_string(),
             hash: "a".repeat(64),
             blurhash: None,
+            provider_id: None,
         });
 
         assert_eq!(response.id, "cover-1");

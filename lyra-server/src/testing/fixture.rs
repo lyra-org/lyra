@@ -687,6 +687,7 @@ impl Fixture {
                     lyra_db::covers::upsert(
                         t,
                         release_db_id,
+                        lyra_db::covers::CoverSource::Local,
                         lyra_db::Cover {
                             db_id: None,
                             id: nanoid::nanoid!(),
@@ -694,6 +695,7 @@ impl Fixture {
                             path: path.to_string_lossy().into_owned(),
                             hash: release.key.clone(),
                             blurhash: release.blurhash.clone(),
+                            provider_id: None,
                         },
                     )
                 })?;

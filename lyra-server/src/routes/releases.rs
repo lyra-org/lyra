@@ -654,17 +654,11 @@ mod tests {
             mime_type: "image/jpeg".to_string(),
             hash: "a".repeat(64),
             blurhash: Some("LKO2?U%2Tw=w]~RBVZRi};RPxuwH".to_string()),
+            provider_id: None,
         };
-
-        let result = db.exec_mut(QueryBuilder::insert().element(&cover).query())?;
-        let cover_id = result
-            .ids()
-            .first()
-            .copied()
-            .ok_or_else(|| anyhow::anyhow!("cover insert returned no id"))?;
-
-        lyra_db::graph::ensure_owned_edge(db, release_db_id, cover_id)?;
-
+        db.transaction_mut(|t| {
+            lyra_db::covers::upsert(t, release_db_id, lyra_db::covers::CoverSource::Local, cover)
+        })?;
         Ok(())
     }
 

@@ -38,9 +38,8 @@ use crate::services::{
     CoverSyncOptions,
     covers::{
         configured_covers_root,
-        resolve_cover_for_release_id,
+        record_local_release_cover,
         sync_release_cover_for_tracks,
-        upsert_release_cover_metadata,
     },
     metadata::{
         TrackMetadata,
@@ -907,24 +906,9 @@ async fn sync_local_release_cover_metadata(
     } else {
         0
     };
-    let covers_root = configured_covers_root();
-    let cover_paths = CoverPaths {
-        library_root: Some(context.library_path),
-        covers_root: &covers_root,
-    };
-    let resolved = {
-        let db_read = context.db.read().await;
-        resolve_cover_for_release_id(&db_read, context.release_id, cover_paths)
-    };
-    let result = match resolved {
-        Ok(Some(cover_path)) => {
-            upsert_release_cover_metadata(context.db, context.release_id, &cover_path)
-                .await
-                .map(|changed| Some((cover_path, changed)))
-        }
-        Ok(None) => Ok(None),
-        Err(err) => Err(err),
-    };
+    let result =
+        record_local_release_cover(context.db, context.release_id, Some(context.library_path))
+            .await;
 
     match result {
         Ok(synced) => {
@@ -1160,27 +1144,6 @@ async fn sync_provider_release_cover(context: &ReleaseArtifactContext<'_>) {
             false
         }
     };
-
-    let resolved = {
-        let db_read = context.db.read().await;
-        resolve_cover_for_release_id(&db_read, context.release_id, cover_paths)
-            .ok()
-            .flatten()
-    };
-    if let Some(cover_path) = resolved
-        && let Err(err) =
-            upsert_release_cover_metadata(context.db, context.release_id, &cover_path).await
-    {
-        tracing::warn!(
-            library_db_id = context.library_db_id.0,
-            run_id = %context.run_id,
-            release_db_id = context.release_id.0,
-            stage = "provider_cover",
-            cover_path = %cover_path.display(),
-            error = %format_args!("{err:#}"),
-            "scan release provider cover metadata sync failed"
-        );
-    }
 
     tracing::info!(
         library_db_id = context.library_db_id.0,

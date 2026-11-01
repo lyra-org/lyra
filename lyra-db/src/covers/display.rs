@@ -1464,6 +1464,7 @@ mod tests {
             covers::upsert(
                 t,
                 release_db_id,
+                covers::CoverSource::Local,
                 covers::Cover {
                     db_id: None,
                     id: id.to_string(),
@@ -1471,6 +1472,7 @@ mod tests {
                     mime_type: "image/jpeg".to_string(),
                     hash: "a".repeat(64),
                     blurhash: None,
+                    provider_id: None,
                 },
             )
         })?;
@@ -1917,7 +1919,7 @@ mod tests {
         .expect("instance profile should exist");
         assert!(!profile.dirty.unwrap_or(false));
 
-        covers::remove(&mut db, release)?;
+        covers::remove(&mut db, release, covers::CoverSource::Local)?;
 
         let (_, profile) = get_profile(
             &db,

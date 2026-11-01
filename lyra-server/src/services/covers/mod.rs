@@ -90,16 +90,11 @@ pub(crate) use providers::{
     search_artist_cover_candidates,
     search_release_cover_candidates,
 };
-pub(crate) use resolve::{
-    configured_covers_root,
-    resolve_cover_for_artist_id,
-    resolve_cover_for_release_id,
-};
+pub(crate) use resolve::configured_covers_root;
 pub(crate) use sync::{
     CoverScope,
+    record_local_release_cover,
     sync_and_persist_covers_for_library,
     sync_artist_cover,
     sync_release_cover_for_tracks,
-    upsert_artist_cover_metadata,
-    upsert_release_cover_metadata,
 };

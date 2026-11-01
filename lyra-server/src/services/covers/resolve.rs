@@ -20,10 +20,7 @@ use anyhow::Result;
 use crate::services::STATE;
 use lyra_db::Track;
 
-use super::{
-    CoverPaths,
-    image::COVER_EXTENSIONS,
-};
+use super::image::COVER_EXTENSIONS;
 
 pub(crate) fn configured_covers_root() -> PathBuf {
     STATE.config().covers_path.clone()
@@ -37,17 +34,25 @@ pub(crate) fn configured_cover_dir_for_artist(covers_root: &Path, artist_id: DbI
     covers_root.join("artists").join(artist_id.0.to_string())
 }
 
-pub(super) fn cover_path_from_db(db: &DbAny, owner_db_id: DbId) -> Result<Option<PathBuf>> {
-    let Some(cover) = lyra_db::covers::get(db, owner_db_id)? else {
-        return Ok(None);
+/// Whether the owner has a stored cover from any source whose file is there.
+pub(crate) fn has_stored_cover(db: &DbAny, owner_db_id: DbId) -> Result<bool> {
+    Ok(lyra_db::covers::sources(db, owner_db_id)?
+        .iter()
+        .any(|sourced| Path::new(&sourced.cover.path).is_file()))
+}
+
+/// Whether automatic scans and provider syncs must leave the owner's covers alone.
+pub(crate) fn covers_locked(db: &DbAny, owner_db_id: DbId) -> Result<bool> {
+    let locked = match lyra_db::graph::element_kind(db, owner_db_id)?.as_deref() {
+        Some("Release") => {
+            lyra_db::releases::get_by_id(db, owner_db_id)?.and_then(|release| release.locked)
+        }
+        Some("Artist") => {
+            lyra_db::artists::get_by_id(db, owner_db_id)?.and_then(|artist| artist.locked)
+        }
+        _ => None,
     };
-
-    let path = PathBuf::from(cover.path);
-    if path.is_file() {
-        return Ok(Some(path));
-    }
-
-    Ok(None)
+    Ok(locked.unwrap_or(false))
 }
 
 /// The directory's cover image; none when the directory doesn't exist.
@@ -150,61 +155,18 @@ pub(crate) fn cover_dirs_for_release(
     Ok(dirs)
 }
 
-pub(crate) fn resolve_cover_for_release(
+/// The release's cover in its library: a `cover.*` image in a folder holding its tracks or the
+/// folder above.
+pub(crate) fn resolve_local_cover_for_release(
     db: &DbAny,
-    release_id: DbId,
     tracks: &[Track],
-    paths: CoverPaths<'_>,
+    library_root: Option<&Path>,
 ) -> Result<Option<PathBuf>> {
-    if let Some(path) = cover_path_from_db(db, release_id)? {
-        return Ok(Some(path));
-    }
-
-    let configured_dir = configured_cover_dir_for_release(paths.covers_root, release_id);
-    if let Some(cover) = find_cover_in_directory(&configured_dir)? {
-        return Ok(Some(cover));
-    }
-
-    for dir in cover_dirs_for_release(db, tracks, paths.library_root)? {
+    for dir in cover_dirs_for_release(db, tracks, library_root)? {
         if let Some(cover) = find_cover_in_directory(&dir)? {
             return Ok(Some(cover));
         }
     }
-
-    Ok(None)
-}
-
-pub(crate) fn resolve_cover_for_release_id(
-    db: &DbAny,
-    release_id: DbId,
-    paths: CoverPaths<'_>,
-) -> Result<Option<PathBuf>> {
-    if lyra_db::releases::get_by_id(db, release_id)?.is_none() {
-        return Ok(None);
-    }
-
-    let tracks = lyra_db::tracks::get_direct(db, release_id)?;
-    resolve_cover_for_release(db, release_id, &tracks, paths)
-}
-
-pub(crate) fn resolve_cover_for_artist_id(
-    db: &DbAny,
-    artist_id: DbId,
-    paths: CoverPaths<'_>,
-) -> Result<Option<PathBuf>> {
-    if lyra_db::artists::get_by_id(db, artist_id)?.is_none() {
-        return Ok(None);
-    }
-
-    if let Some(path) = cover_path_from_db(db, artist_id)? {
-        return Ok(Some(path));
-    }
-
-    let configured_dir = configured_cover_dir_for_artist(paths.covers_root, artist_id);
-    if let Some(cover) = find_cover_in_directory(&configured_dir)? {
-        return Ok(Some(cover));
-    }
-
     Ok(None)
 }
 
