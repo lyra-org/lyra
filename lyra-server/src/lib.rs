@@ -267,7 +267,9 @@ pub fn openapi_spec() -> impl serde::Serialize {
 /// The WebSocket API's AsyncAPI document.
 #[cfg(feature = "docgen")]
 pub fn asyncapi_spec() -> impl serde::Serialize {
-    services::remote::messages::WsApiSpec::asyncapi_spec()
+    let mut spec = services::remote::messages::WsApiSpec::asyncapi_spec();
+    spec.info.version = env!("CARGO_PKG_VERSION").to_string();
+    spec
 }
 
 /// Installs plugins from a Git repository into the plugins directory.

@@ -227,7 +227,8 @@ impl ResponseMessage {
 #[derive(AsyncApi)]
 #[asyncapi(
     title = "Lyra WebSocket Remote Control",
-    version = "0.1.0",
+    // The derive requires a literal; `lyra_server::asyncapi_spec` sets the package version.
+    version = "0.0.0",
     description = "WebSocket protocol for native playback session reporting and remote control between connections."
 )]
 #[asyncapi_server(
