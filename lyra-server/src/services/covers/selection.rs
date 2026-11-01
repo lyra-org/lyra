@@ -136,6 +136,18 @@ fn resolve_owner(
     access: Access,
 ) -> Result<DbId, CoverSelectionError> {
     let not_found = || CoverSelectionError::NotFound(format!("{} not found: {id}", kind.label()));
+    // A write checks the caller as the database has it now: a request outlives the moment it
+    // was authorized, and an upload or download may take a while.
+    let current;
+    let principal = if access == Access::Write {
+        current = principal.current(db).map_err(|err| match err {
+            crate::services::auth::AuthError::Internal(err) => CoverSelectionError::Internal(err),
+            _ => CoverSelectionError::Forbidden("the caller is no longer authorized".to_string()),
+        })?;
+        &current
+    } else {
+        principal
+    };
     if access == Access::Write
         && kind != CoverOwnerKind::Playlist
         && !lyra_db::roles::has_permission(&principal.permissions, Permission::ManageMetadata)
@@ -797,6 +809,80 @@ mod tests {
             "the unrecorded file is removed"
         );
         assert!(lyra_db::covers::sources(&*STATE.db.read().await, other)?.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_write_checks_the_caller_as_it_is_when_recording() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let library = tempfile::tempdir()?;
+        let (release_db_id, id, _) = release_with_local_cover(library.path()).await?;
+        let covers_root = configured_covers_root();
+        let dir = configured_cover_dir_for_release(&covers_root, release_db_id);
+        let image = png();
+        let prepare = || PreparedCover::write(&dir, CoverSource::Manual, "png", &image, None);
+
+        // Demoted from admin while the upload ran.
+        let demoted = user("demoted", true).await?;
+        {
+            let mut db = STATE.db.write().await;
+            let user_db_id = demoted.require(&*db)?;
+            let role = lyra_db::roles::get_by_name(&db, lyra_db::roles::BUILTIN_USER_ROLE)?
+                .and_then(|role| role.db_id)
+                .expect("user role");
+            lyra_db::roles::assign_role_to_user(&mut db, user_db_id, role)?;
+        }
+        let error = record_for_owner(
+            &demoted,
+            CoverOwnerKind::Release,
+            &id,
+            release_db_id,
+            prepare().await?,
+            true,
+        )
+        .await
+        .expect_err("the caller lost ManageMetadata");
+        assert!(
+            matches!(error, CoverSelectionError::Forbidden(_)),
+            "{error}"
+        );
+
+        // Deleted while the upload ran.
+        let deleted = user("deleted", true).await?;
+        {
+            let mut db = STATE.db.write().await;
+            let user_db_id = deleted.require(&*db)?;
+            db.transaction_mut(|t| lyra_db::users::delete_user(t, user_db_id))?;
+        }
+        let error = record_for_owner(
+            &deleted,
+            CoverOwnerKind::Release,
+            &id,
+            release_db_id,
+            prepare().await?,
+            true,
+        )
+        .await
+        .expect_err("the caller no longer exists");
+        assert!(
+            matches!(error, CoverSelectionError::Forbidden(_)),
+            "{error}"
+        );
+
+        assert!(
+            lyra_db::covers::get_source(
+                &*STATE.db.read().await,
+                release_db_id,
+                CoverSource::Manual
+            )?
+            .is_none()
+        );
+        assert_eq!(
+            std::fs::read_dir(&dir)?.count(),
+            0,
+            "no unrecorded file is left"
+        );
         Ok(())
     }
 

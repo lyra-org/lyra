@@ -63,10 +63,10 @@ use super::{
     resolve::{
         configured_cover_dir_for_artist,
         configured_cover_dir_for_release,
+        cover_file_gone,
         covers_locked,
         has_stored_cover,
         resolve_local_cover_for_release,
-        scan_local_cover_for_release,
     },
 };
 
@@ -142,21 +142,31 @@ async fn write_cover_image(path: &Path, bytes: &[u8]) -> Result<()> {
     written
 }
 
-/// Deletes a cover file Lyra wrote. Files outside the covers root, such as library covers, are
-/// never touched.
+/// Deletes a cover file Lyra wrote. Only a regular file whose directory, resolved on disk, lies
+/// inside the covers root is deleted, so library files and anything a symlink leads to are never
+/// touched. A missing path has nothing to delete.
 pub(crate) fn discard_cover_file(covers_root: &Path, path: &str) {
     let path = Path::new(path);
-    let inside_root = path.starts_with(covers_root)
-        && path
-            .components()
-            .all(|component| !matches!(component, std::path::Component::ParentDir));
-    if !inside_root {
+    let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+        return;
+    };
+    let (Ok(root), Ok(dir)) = (
+        std::fs::canonicalize(covers_root),
+        std::fs::canonicalize(dir),
+    ) else {
+        return;
+    };
+    if !dir.starts_with(&root) {
         return;
     }
-    if let Err(err) = std::fs::remove_file(path)
+    let target = dir.join(name);
+    if !std::fs::symlink_metadata(&target).is_ok_and(|meta| meta.file_type().is_file()) {
+        return;
+    }
+    if let Err(err) = std::fs::remove_file(&target)
         && err.kind() != std::io::ErrorKind::NotFound
     {
-        tracing::warn!(path = %path.display(), error = %err, "failed to remove replaced cover file");
+        tracing::warn!(path = %target.display(), error = %err, "failed to remove replaced cover file");
     }
 }
 
@@ -842,8 +852,8 @@ pub(super) async fn upsert_local_cover_metadata(
 }
 
 /// Records the release's library cover as its local cover, leaving a locked release alone.
-/// When the release's folders could be listed and hold no cover, a recorded local cover whose
-/// file is gone is removed. Returns the cover found and whether its record changed.
+/// When the library shows none, a recorded local cover whose file is positively gone is
+/// removed. Returns the cover found and whether its record changed.
 pub(crate) async fn record_local_release_cover(
     db: &lyra_db::DbAsync,
     release_id: DbId,
@@ -858,25 +868,23 @@ pub(crate) async fn record_local_release_cover(
             return Ok(None);
         }
         let tracks = lyra_db::tracks::get_direct(&db_read, release_id)?;
-        scan_local_cover_for_release(&db_read, &tracks, library_root)?
+        resolve_local_cover_for_release(&db_read, &tracks, library_root)?
     };
-    let Some(cover_path) = scan.cover else {
-        if scan.reached {
-            forget_missing_local_cover(db, release_id).await?;
-        }
+    let Some(cover_path) = scan else {
+        forget_missing_local_cover(db, release_id).await?;
         return Ok(None);
     };
     let changed = upsert_local_cover_metadata(db, release_id, &cover_path).await?;
     Ok(Some((cover_path, changed)))
 }
 
-/// Removes the release's local cover record when its file is gone, unless the release is now
-/// locked. The library file itself is never touched.
+/// Removes the release's local cover record when its file is positively gone, unless the
+/// release is now locked. The library file itself is never touched.
 async fn forget_missing_local_cover(db: &lyra_db::DbAsync, release_id: DbId) -> Result<()> {
     let gone = {
         let db_read = db.read().await;
         lyra_db::covers::get_source(&*db_read, release_id, CoverSource::Local)?
-            .is_some_and(|cover| !Path::new(&cover.path).exists())
+            .is_some_and(|cover| cover_file_gone(Path::new(&cover.path)))
     };
     if !gone {
         return Ok(());
@@ -884,7 +892,7 @@ async fn forget_missing_local_cover(db: &lyra_db::DbAsync, release_id: DbId) -> 
     let mut db_write = db.write().await;
     if covers_locked(&db_write, release_id)?
         || lyra_db::covers::get_source(&*db_write, release_id, CoverSource::Local)?
-            .is_none_or(|cover| Path::new(&cover.path).exists())
+            .is_none_or(|cover| !cover_file_gone(Path::new(&cover.path)))
     {
         return Ok(());
     }
@@ -1199,15 +1207,55 @@ mod tests {
     fn discarding_never_touches_files_outside_the_covers_root() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;
         let covers_root = root.path().join("covers");
-        let library_cover = root.path().join("library").join("cover.png");
-        std_fs::create_dir_all(library_cover.parent().unwrap())?;
+        std_fs::create_dir_all(&covers_root)?;
+        let outside = root.path().join("library");
+        std_fs::create_dir_all(&outside)?;
+        let library_cover = outside.join("cover.png");
         std_fs::write(&library_cover, PNG_1X1)?;
-        let escaping = covers_root.join("..").join("library").join("cover.png");
 
+        let escaping = covers_root.join("..").join("library").join("cover.png");
         discard_cover_file(&covers_root, &library_cover.to_string_lossy());
         discard_cover_file(&covers_root, &escaping.to_string_lossy());
 
+        // A directory symlink under the covers root that leads outside it.
+        std::os::unix::fs::symlink(&outside, covers_root.join("linked"))?;
+        discard_cover_file(
+            &covers_root,
+            &covers_root
+                .join("linked")
+                .join("cover.png")
+                .to_string_lossy(),
+        );
+        // A file symlink under the covers root.
+        std::os::unix::fs::symlink(&library_cover, covers_root.join("manual-link.png"))?;
+        discard_cover_file(
+            &covers_root,
+            &covers_root.join("manual-link.png").to_string_lossy(),
+        );
+
         assert!(library_cover.is_file());
+        assert!(
+            covers_root
+                .join("manual-link.png")
+                .symlink_metadata()
+                .is_ok()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn discarding_works_under_a_covers_root_with_dot_dot() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        std_fs::create_dir_all(root.path().join("data"))?;
+        let covers_root = root.path().join("data").join("..").join("covers");
+        let dir = covers_root.join("1");
+        std_fs::create_dir_all(&dir)?;
+        let stored = dir.join("manual-x.png");
+        std_fs::write(&stored, PNG_1X1)?;
+
+        discard_cover_file(&covers_root, &stored.to_string_lossy());
+        assert!(!stored.exists());
+        discard_cover_file(&covers_root, &dir.join("missing.png").to_string_lossy());
         Ok(())
     }
 
@@ -1313,32 +1361,84 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn a_scan_forgets_a_local_cover_only_when_it_reached_the_folder() -> anyhow::Result<()> {
-        let db = lyra_db::DbAsync::new(new_test_db()?);
+    /// A release whose local cover is recorded at `cover` and pinned, with the file removed.
+    async fn pinned_local_cover(db: &lyra_db::DbAsync, cover: &Path) -> anyhow::Result<DbId> {
         let release_id = insert_release(&mut *db.write().await, "Release")?;
-        let root = tempfile::tempdir()?;
-        let library_cover = root.path().join("cover.png");
-        std_fs::write(&library_cover, PNG_1X1)?;
-        upsert_local_cover_metadata(&db, release_id, &library_cover).await?;
-        std_fs::remove_file(&library_cover)?;
+        std_fs::create_dir_all(cover.parent().expect("parent"))?;
+        std_fs::write(cover, PNG_1X1)?;
+        upsert_local_cover_metadata(db, release_id, cover).await?;
+        db.write().await.transaction_mut(|t| {
+            lyra_db::covers::select(t, release_id, Some(CoverSource::Local))
+        })?;
+        Ok(release_id)
+    }
 
-        // The release has no reachable folders here, as on an unmounted library.
+    async fn local_pin(db: &lyra_db::DbAsync, release_id: DbId) -> anyhow::Result<bool> {
+        let db_read = db.read().await;
+        Ok(
+            lyra_db::covers::get_source(&*db_read, release_id, CoverSource::Local)?.is_some()
+                && lyra_db::covers::selection(&*db_read, release_id)? == Some(CoverSource::Local),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_missing_disc_folder_keeps_the_local_cover_and_pin() -> anyhow::Result<()> {
+        let db = lyra_db::DbAsync::new(new_test_db()?);
+        let root = tempfile::tempdir()?;
+        let album = root.path().join("Album");
+        std_fs::create_dir_all(album.join("CD1"))?;
+        let release_id = pinned_local_cover(&db, &album.join("CD2").join("cover.png")).await?;
+        // The disc folder goes away, as an unmounted disc would, while its sibling and parent
+        // stay reachable.
+        std_fs::remove_dir_all(album.join("CD2"))?;
+
         assert!(
-            record_local_release_cover(&db, release_id, None)
+            record_local_release_cover(&db, release_id, Some(root.path()))
+                .await?
+                .is_none()
+        );
+        assert!(local_pin(&db, release_id).await?);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_folder_that_fails_to_list_keeps_the_local_cover() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let db = lyra_db::DbAsync::new(new_test_db()?);
+        let root = tempfile::tempdir()?;
+        let folder = root.path().join("Album");
+        let release_id = pinned_local_cover(&db, &folder.join("cover.png")).await?;
+        std_fs::remove_file(folder.join("cover.png"))?;
+        std_fs::set_permissions(&folder, std_fs::Permissions::from_mode(0o000))?;
+        if std_fs::read_dir(&folder).is_ok() {
+            std_fs::set_permissions(&folder, std_fs::Permissions::from_mode(0o755))?;
+            return Ok(());
+        }
+
+        let result = record_local_release_cover(&db, release_id, Some(root.path())).await;
+        std_fs::set_permissions(&folder, std_fs::Permissions::from_mode(0o755))?;
+        assert!(result?.is_none());
+        assert!(local_pin(&db, release_id).await?);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_cover_gone_from_a_listed_folder_is_forgotten() -> anyhow::Result<()> {
+        let db = lyra_db::DbAsync::new(new_test_db()?);
+        let root = tempfile::tempdir()?;
+        let folder = root.path().join("Album");
+        let release_id = pinned_local_cover(&db, &folder.join("cover.png")).await?;
+        std_fs::remove_file(folder.join("cover.png"))?;
+
+        assert!(
+            record_local_release_cover(&db, release_id, Some(root.path()))
                 .await?
                 .is_none()
         );
         assert!(
-            lyra_db::covers::get_source(&*db.read().await, release_id, CoverSource::Local)?
-                .is_some(),
-            "an unreachable library keeps the record"
-        );
-
-        forget_missing_local_cover(&db, release_id).await?;
-        assert!(
-            lyra_db::covers::get_source(&*db.read().await, release_id, CoverSource::Local)?
-                .is_none()
+            lyra_db::covers::sources(&*db.read().await, release_id)?.is_empty(),
+            "the record and its pin go"
         );
         Ok(())
     }

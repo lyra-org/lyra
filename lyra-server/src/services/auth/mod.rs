@@ -216,6 +216,22 @@ impl Principal {
             _ => Err(AuthError::InvalidBearerCredential),
         }
     }
+
+    /// The principal as the database has it now, under the caller's guard: the user must still
+    /// exist, and keeps only the permissions and libraries it both had and still has.
+    pub(crate) fn current(&self, db: &agdb::DbAny) -> AuthResult<Principal> {
+        let user_db_id = self.require(db)?;
+        let user =
+            lyra_db::users::get_by_id(db, user_db_id)?.ok_or(AuthError::InvalidBearerCredential)?;
+        let mut current = resolve_principal(db, user_db_id, user);
+        current
+            .permissions
+            .retain(|permission| self.permissions.contains(permission));
+        current
+            .accessible_library_ids
+            .retain(|library_id| self.accessible_library_ids.contains(library_id));
+        Ok(current)
+    }
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]

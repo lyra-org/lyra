@@ -15,7 +15,10 @@ use agdb::{
     DbAny,
     DbId,
 };
-use anyhow::Result;
+use anyhow::{
+    Context,
+    Result,
+};
 
 use crate::services::STATE;
 use lyra_db::Track;
@@ -61,8 +64,8 @@ pub(crate) fn covers_locked(db: &impl lyra_db::DbAccess, owner_db_id: DbId) -> R
     Ok(locked.unwrap_or(false))
 }
 
-/// The directory's cover image, or none at all when the directory doesn't exist.
-fn list_cover_in_directory(dir: &Path) -> Result<Option<Option<PathBuf>>> {
+/// The directory's cover image; none when the directory doesn't exist.
+fn find_cover_in_directory(dir: &Path) -> Result<Option<PathBuf>> {
     let mut candidates: Vec<(usize, PathBuf)> = Vec::new();
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -73,8 +76,10 @@ fn list_cover_in_directory(dir: &Path) -> Result<Option<Option<PathBuf>>> {
         }
     };
 
-    for entry in entries.flatten() {
-        let path = entry.path();
+    for entry in entries {
+        let path = entry
+            .with_context(|| format!("failed to list covers in {}", dir.display()))?
+            .path();
         if !path.is_file() {
             continue;
         }
@@ -102,7 +107,26 @@ fn list_cover_in_directory(dir: &Path) -> Result<Option<Option<PathBuf>>> {
             .cmp(b_pri)
             .then_with(|| a_path.to_string_lossy().cmp(&b_path.to_string_lossy()))
     });
-    Ok(Some(candidates.into_iter().next().map(|(_, path)| path)))
+    Ok(candidates.into_iter().next().map(|(_, path)| path))
+}
+
+/// Whether the cover file at `path` is positively gone: its directory lists without error and
+/// the file itself is not there. A directory that is missing or fails to list, as on a library
+/// that is unavailable, is no evidence.
+pub(crate) fn cover_file_gone(path: &Path) -> bool {
+    let Some(dir) = path.parent() else {
+        return false;
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    if entries.into_iter().any(|entry| entry.is_err()) {
+        return false;
+    }
+    matches!(
+        std::fs::symlink_metadata(path),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound
+    )
 }
 
 pub(crate) fn cover_dirs_for_release(
@@ -168,39 +192,12 @@ pub(crate) fn resolve_local_cover_for_release(
     tracks: &[Track],
     library_root: Option<&Path>,
 ) -> Result<Option<PathBuf>> {
-    Ok(scan_local_cover_for_release(db, tracks, library_root)?.cover)
-}
-
-/// What a look for a release's cover in its library found.
-pub(crate) struct LocalCoverScan {
-    pub(crate) cover: Option<PathBuf>,
-    /// Whether a folder holding the release's tracks could be listed, so a missing cover is
-    /// really gone rather than on a library that is unavailable.
-    pub(crate) reached: bool,
-}
-
-pub(crate) fn scan_local_cover_for_release(
-    db: &DbAny,
-    tracks: &[Track],
-    library_root: Option<&Path>,
-) -> Result<LocalCoverScan> {
-    let mut reached = false;
     for dir in cover_dirs_for_release(db, tracks, library_root)? {
-        let Some(listed) = list_cover_in_directory(&dir)? else {
-            continue;
-        };
-        reached = true;
-        if let Some(cover) = listed {
-            return Ok(LocalCoverScan {
-                cover: Some(cover),
-                reached,
-            });
+        if let Some(cover) = find_cover_in_directory(&dir)? {
+            return Ok(Some(cover));
         }
     }
-    Ok(LocalCoverScan {
-        cover: None,
-        reached,
-    })
+    Ok(None)
 }
 
 #[cfg(test)]
