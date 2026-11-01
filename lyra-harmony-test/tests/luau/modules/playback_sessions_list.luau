@@ -38,6 +38,7 @@ local phone = everyone[1]
 assert(phone.user_id == fixture.users.listener)
 assert(phone.username ~= "")
 assert(phone.track_id == fixture.ids.song)
+assert(phone.play_id ~= "")
 assert(phone.state == "playing")
 assert(phone.position_ms == 5000 and phone.duration_ms == 200000)
 assert(phone.client_name == "Phone")

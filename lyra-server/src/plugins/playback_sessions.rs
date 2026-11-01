@@ -91,6 +91,7 @@ struct SendCommandRequest {
 #[derive(Serialize)]
 struct ActivePlaybackInfo {
     id: String,
+    play_id: String,
     user_id: String,
     username: String,
     track_id: String,
@@ -372,6 +373,7 @@ impl PlaybackSessionsModule {
                         .or_else(|| connection.map(|connection| connection.session_key.clone())),
                     connection_id: connection.map(|connection| connection.id.clone()),
                     id: active.playback_id,
+                    play_id: active.session.play_id,
                     user_id: active.user_id,
                     username: active.username,
                     track_id: active.track_id,
@@ -605,6 +607,11 @@ impl DescribeInterface for ActivePlaybackInfo {
                 name: "id",
                 ty: String::luau_type(),
                 description: Some("Public playback id."),
+            },
+            FieldDescriptor {
+                name: "play_id",
+                ty: String::luau_type(),
+                description: Some("The play of the current track, as `report_session` takes it."),
             },
             FieldDescriptor {
                 name: "user_id",
