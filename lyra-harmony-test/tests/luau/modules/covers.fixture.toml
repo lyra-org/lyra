@@ -23,10 +23,15 @@ name = "Hidden"
 key = "rock"
 name = "Rock"
 
+[[artists]]
+key = "singer"
+name = "Singer"
+
 [[releases]]
 key = "a"
 title = "A"
 library = "shown"
+artists = ["singer"]
 genres = ["rock"]
 cover = "cover.png"
 blurhash = "L00000fQfQfQ"

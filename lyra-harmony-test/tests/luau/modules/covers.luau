@@ -4,12 +4,22 @@ local covers = require("@lyra/covers")
 
 local ids = fixture.ids
 
--- Releases have their own cover and a track shows its release's. What the caller can't see, and
--- what has no cover, is absent.
-local found = covers.get({ ids.a, ids.ta, ids.secret, ids.tsecret, ids.bare, ids.tbare, "missing-target" })
+-- Releases and artists have their own cover and a track shows its release's. What the caller can't
+-- see, and what has no cover, is absent; an artist doesn't take its releases' covers.
+local found = covers.get({
+	ids.a,
+	ids.ta,
+	ids.singer,
+	ids.secret,
+	ids.tsecret,
+	ids.bare,
+	ids.tbare,
+	"missing-target",
+})
 assert(found[ids.a].hash == "a" and found[ids.a].blurhash == "L00000fQfQfQ")
 assert(found[ids.a].release_id == ids.a and found[ids.a].mime_type == "image/png")
 assert(found[ids.ta].release_id == ids.a, "a track shows its release's cover")
+assert(found[ids.singer] == nil, "an artist without a cover doesn't take its release's")
 assert(found[ids.secret] == nil and found[ids.tsecret] == nil, "unseen releases and tracks are absent")
 assert(found[ids.bare] == nil and found[ids.tbare] == nil and found["missing-target"] == nil)
 

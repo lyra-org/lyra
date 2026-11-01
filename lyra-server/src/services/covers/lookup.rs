@@ -72,6 +72,7 @@ pub(crate) fn resolve(
     let mut covers = HashMap::new();
     let mut stale_owners = Vec::new();
     let mut owned_ids = Vec::new();
+    let mut track_ids = HashSet::new();
     let mut seen = HashSet::new();
     {
         let mut check =
@@ -82,9 +83,12 @@ pub(crate) fn resolve(
                 continue;
             }
             let display_cover = match lyra_db::graph::element_kind(db, item_id)?.as_deref() {
-                Some("Release" | "Artist" | "Track") => {
+                Some(kind @ ("Release" | "Artist" | "Track")) => {
                     if viewer.sees(db, item_id)? {
                         owned_ids.push(item_id);
+                        if kind == "Track" {
+                            track_ids.insert(item_id);
+                        }
                     }
                     continue;
                 }
@@ -114,7 +118,7 @@ pub(crate) fn resolve(
         covers,
         stale_owners,
     };
-    lookup.resolve_owned(db, &owned_ids)?;
+    lookup.resolve_owned(db, &owned_ids, &track_ids)?;
     Ok(lookup)
 }
 
@@ -132,10 +136,15 @@ impl CoverLookup {
     }
 
     /// Own covers, with tracks lacking one falling back to their releases' in id order.
-    fn resolve_owned(&mut self, db: &DbAny, item_ids: &[DbId]) -> anyhow::Result<()> {
+    fn resolve_owned(
+        &mut self,
+        db: &DbAny,
+        item_ids: &[DbId],
+        track_ids: &HashSet<DbId>,
+    ) -> anyhow::Result<()> {
         let direct_covers = lyra_db::covers::get_many(db, item_ids)?;
 
-        let mut unresolved = Vec::new();
+        let mut unresolved_tracks = Vec::new();
         for item_id in item_ids.iter().copied() {
             if let Some(cover) = direct_covers.get(&item_id)
                 && self.keep_valid(
@@ -148,13 +157,15 @@ impl CoverLookup {
             {
                 continue;
             }
-            unresolved.push(item_id);
+            if track_ids.contains(&item_id) {
+                unresolved_tracks.push(item_id);
+            }
         }
-        if unresolved.is_empty() {
+        if unresolved_tracks.is_empty() {
             return Ok(());
         }
 
-        let track_releases = lyra_db::releases::get_by_tracks(db, &unresolved)?;
+        let track_releases = lyra_db::releases::get_by_tracks(db, &unresolved_tracks)?;
         let mut release_ids = Vec::new();
         let mut seen_release_ids = HashSet::new();
         for related_releases in track_releases.values() {
@@ -169,7 +180,7 @@ impl CoverLookup {
         }
         let covers_by_release = lyra_db::covers::get_many(db, &release_ids)?;
 
-        for item_id in unresolved {
+        for item_id in unresolved_tracks {
             let Some(releases) = track_releases.get(&item_id) else {
                 continue;
             };
@@ -221,6 +232,8 @@ mod tests {
         covers::display as db_display,
         fixtures::{
             connect,
+            connect_credit,
+            insert_artist,
             insert_release,
             insert_track,
             test_user,
@@ -338,6 +351,30 @@ mod tests {
             Some(sources[1].1)
         );
         assert_eq!(found.stale_owners, vec![sources[0].1]);
+        Ok(())
+    }
+
+    #[test]
+    fn an_artist_without_a_cover_does_not_take_its_release_cover() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let mut db = new_test_db()?;
+        let (release, track) = covered_releases(&mut db, dir.path())?[0];
+        let artist = insert_artist(&mut db, "Artist")?;
+        connect_credit(
+            &mut db,
+            release,
+            artist,
+            lyra_db::CreditType::Artist,
+            None,
+            0,
+        )?;
+
+        let found = resolve(&db, &Viewer::System, &[artist, track], Listens::Viewer)?;
+        assert!(!found.covers.contains_key(&artist));
+        assert_eq!(
+            found.covers.get(&track).map(|cover| cover.owner_db_id),
+            Some(release)
+        );
         Ok(())
     }
 }
