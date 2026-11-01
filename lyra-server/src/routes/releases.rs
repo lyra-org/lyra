@@ -663,13 +663,7 @@ mod tests {
             .copied()
             .ok_or_else(|| anyhow::anyhow!("cover insert returned no id"))?;
 
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from(release_db_id)
-                .to(cover_id)
-                .query(),
-        )?;
+        lyra_db::graph::ensure_owned_edge(db, release_db_id, cover_id)?;
 
         Ok(())
     }

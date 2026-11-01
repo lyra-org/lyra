@@ -27,15 +27,24 @@ pub struct Cover {
     pub blurhash: Option<String>,
 }
 
-pub fn get(db: &impl DbAccess, release_db_id: DbId) -> anyhow::Result<Option<Cover>> {
+/// The cover `owner_db_id` owns.
+pub fn get(db: &impl DbAccess, owner_db_id: DbId) -> anyhow::Result<Option<Cover>> {
     let mut covers: Vec<Cover> = db
         .exec(
             QueryBuilder::select()
                 .elements::<Cover>()
                 .search()
-                .from(release_db_id)
+                .from(owner_db_id)
                 .where_()
                 .distance(CountComparison::Equal(2))
+                .and()
+                .beyond()
+                .where_()
+                .node()
+                .or()
+                .key("owned")
+                .value(1)
+                .end_where()
                 .query(),
         )?
         .try_into()?;
@@ -204,6 +213,39 @@ mod tests {
             .ok_or_else(|| anyhow!("upsert did not set db_id"))?;
         assert!(direct_edge_exists(&db, release_db_id, cover_id)?);
 
+        Ok(())
+    }
+
+    #[test]
+    fn get_ignores_covers_the_owner_does_not_own() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release_db_id = insert_release(&mut db)?;
+        let other_db_id = insert_release(&mut db)?;
+        let cover = upsert_cover(
+            &mut db,
+            release_db_id,
+            Cover {
+                db_id: None,
+                id: nanoid!(),
+                path: "/music/test/cover.jpg".to_string(),
+                mime_type: "image/jpeg".to_string(),
+                hash: "a".repeat(64),
+                blurhash: None,
+            },
+        )?;
+        let cover_id = cover
+            .db_id
+            .ok_or_else(|| anyhow!("upsert did not set db_id"))?;
+        db.exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from(other_db_id)
+                .to(cover_id)
+                .query(),
+        )?;
+
+        assert!(get(&db, release_db_id)?.is_some());
+        assert!(get(&db, other_db_id)?.is_none());
         Ok(())
     }
 
