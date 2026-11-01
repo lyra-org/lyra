@@ -439,6 +439,10 @@ pub fn update(
 
 #[cfg(test)]
 mod tests {
+    use crate::roots::{
+        self,
+        Root,
+    };
     use nanoid::nanoid;
 
     use super::*;
@@ -492,13 +496,7 @@ mod tests {
         let track_id = db
             .exec_mut(QueryBuilder::insert().element(&track).query())?
             .ids()[0];
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("tracks")
-                .to(track_id)
-                .query(),
-        )?;
+        roots::link(db, Root::Tracks, track_id)?;
         Ok(track_id)
     }
 

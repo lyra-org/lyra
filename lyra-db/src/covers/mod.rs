@@ -137,13 +137,6 @@ pub fn upsert(
                 .values_uniform([("owned", 1).into()])
                 .query(),
         )?;
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("covers")
-                .to(cover_id)
-                .query(),
-        )?;
     }
 
     display::sync_release_random_candidates(db, release_db_id)?;
@@ -192,26 +185,8 @@ mod tests {
             .any(|edge| edge.from == from && edge.to == to))
     }
 
-    fn outgoing_edge_count(db: &DbAny, from: DbId) -> anyhow::Result<u64> {
-        let qr = db.exec(
-            QueryBuilder::search()
-                .from(from)
-                .where_()
-                .edge()
-                .and()
-                .distance(CountComparison::Equal(1))
-                .query(),
-        )?;
-
-        Ok(qr
-            .elements
-            .into_iter()
-            .filter(|edge| edge.from == from)
-            .count() as u64)
-    }
-
     #[test]
-    fn upsert_new_cover_links_album_and_collection() -> anyhow::Result<()> {
+    fn upsert_new_cover_links_album() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let release_db_id = insert_release(&mut db)?;
         let cover = Cover {
@@ -227,10 +202,7 @@ mod tests {
         let cover_id = cover
             .db_id
             .ok_or_else(|| anyhow!("upsert did not set db_id"))?;
-        let covers_id = db.exec(QueryBuilder::select().ids("covers").query())?.ids()[0];
-
         assert!(direct_edge_exists(&db, release_db_id, cover_id)?);
-        assert!(direct_edge_exists(&db, covers_id, cover_id)?);
 
         Ok(())
     }
@@ -312,12 +284,12 @@ mod tests {
         let second_id = cover
             .db_id
             .ok_or_else(|| anyhow!("upsert did not set db_id"))?;
-        let covers_id = db.exec(QueryBuilder::select().ids("covers").query())?.ids()[0];
-
         assert_eq!(first_id, original_id);
         assert_eq!(second_id, original_id);
-        assert!(direct_edge_exists(&db, covers_id, original_id)?);
-        assert_eq!(outgoing_edge_count(&db, covers_id)?, 1);
+        assert_eq!(
+            crate::graph::direct_edge_ids(&db, release_db_id, original_id)?.len(),
+            1
+        );
 
         Ok(())
     }

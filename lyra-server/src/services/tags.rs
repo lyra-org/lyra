@@ -521,6 +521,10 @@ mod tests {
         QueryBuilder,
     };
     use lyra_db::fixtures::test_user;
+    use lyra_db::roots::{
+        self,
+        Root,
+    };
     use lyra_db::test_db::new_test_db;
     use lyra_db::{
         Playlist,
@@ -556,13 +560,7 @@ mod tests {
                     .query(),
             )?
             .ids()[0];
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("tracks")
-                .to(track_db_id)
-                .query(),
-        )?;
+        roots::link(db, Root::Tracks, track_db_id)?;
         Ok((track_db_id, public_id))
     }
 

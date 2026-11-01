@@ -409,6 +409,10 @@ pub fn prune_missing_entries(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::roots::{
+        self,
+        Root,
+    };
     use crate::test_db::TestDb;
     use agdb::DbValue;
     use nanoid::nanoid;
@@ -660,13 +664,7 @@ mod tests {
         let track_db_id = db
             .exec_mut(QueryBuilder::insert().element(&track).query())?
             .ids()[0];
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("tracks")
-                .to(track_db_id)
-                .query(),
-        )?;
+        roots::link(&mut db, Root::Tracks, track_db_id)?;
 
         let entry = Entry {
             db_id: None,

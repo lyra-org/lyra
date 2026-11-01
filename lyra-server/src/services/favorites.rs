@@ -155,6 +155,10 @@ fn now_ms() -> anyhow::Result<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lyra_db::roots::{
+        self,
+        Root,
+    };
     use std::collections::HashSet;
 
     use agdb::{
@@ -192,13 +196,7 @@ mod tests {
                     .query(),
             )?
             .ids()[0];
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("tracks")
-                .to(track_db_id)
-                .query(),
-        )?;
+        roots::link(db, Root::Tracks, track_db_id)?;
         Ok(track_db_id)
     }
 

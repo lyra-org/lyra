@@ -145,6 +145,10 @@ mod tests {
         DbId,
         QueryBuilder,
     };
+    use lyra_db::roots::{
+        self,
+        Root,
+    };
 
     use super::*;
     use crate::services::catalog::{
@@ -204,13 +208,7 @@ mod tests {
             .first()
             .copied()
             .ok_or_else(|| anyhow::anyhow!("release insert returned no id"))?;
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("releases")
-                .to(release_db_id)
-                .query(),
-        )?;
+        roots::link(db, Root::Releases, release_db_id)?;
 
         if let Some(genre_names) = &genre_strings {
             lyra_db::genres::sync_release_genres(db, release_db_id, genre_names)?;
@@ -290,13 +288,7 @@ mod tests {
         };
         let qr = db.exec_mut(QueryBuilder::insert().element(&track).query())?;
         let track_id = *qr.ids().first().unwrap();
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("tracks")
-                .to(track_id)
-                .query(),
-        )?;
+        roots::link(&mut db, Root::Tracks, track_id)?;
         db.exec_mut(
             QueryBuilder::insert()
                 .edges()
@@ -320,13 +312,7 @@ mod tests {
         };
         let qr = db.exec_mut(QueryBuilder::insert().element(&artist).query())?;
         let artist_id = *qr.ids().first().unwrap();
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("artists")
-                .to(artist_id)
-                .query(),
-        )?;
+        roots::link(&mut db, Root::Artists, artist_id)?;
         connect_artist(&mut db, release_id, artist_id)?;
 
         let includes = ReleaseIncludes {

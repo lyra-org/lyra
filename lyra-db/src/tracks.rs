@@ -14,7 +14,6 @@ use agdb::{
     DbElement,
     DbId,
     QueryBuilder,
-    QueryId,
 };
 use serde::{
     Deserialize,
@@ -22,6 +21,10 @@ use serde::{
 };
 
 use super::NodeId;
+use super::roots::{
+    self,
+    Root,
+};
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(DbElement, Serialize, Deserialize, Clone, Debug)]
@@ -70,7 +73,7 @@ impl Track {
     }
 }
 
-pub fn get(db: &DbAny, from: impl Into<QueryId>) -> anyhow::Result<Vec<Track>> {
+pub fn get(db: &DbAny, from: DbId) -> anyhow::Result<Vec<Track>> {
     let tracks: Vec<Track> = db
         .exec(
             QueryBuilder::select()
@@ -84,10 +87,7 @@ pub fn get(db: &DbAny, from: impl Into<QueryId>) -> anyhow::Result<Vec<Track>> {
     Ok(tracks)
 }
 
-pub fn get_direct(
-    db: &impl super::DbAccess,
-    from: impl Into<QueryId>,
-) -> anyhow::Result<Vec<Track>> {
+pub fn get_direct(db: &impl super::DbAccess, from: DbId) -> anyhow::Result<Vec<Track>> {
     let tracks: Vec<Track> = db
         .exec(
             QueryBuilder::select()
@@ -190,9 +190,9 @@ pub fn ids_with_year(db: &impl super::DbAccess, year: u32) -> anyhow::Result<Vec
     Ok(db
         .exec(
             QueryBuilder::search()
-                .from("tracks")
+                .from(Root::Tracks.alias())
                 .where_()
-                .neighbor()
+                .distance(roots::MEMBERS)
                 .and()
                 .key("year")
                 .value(u64::from(year))

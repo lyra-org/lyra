@@ -406,6 +406,10 @@ pub fn list_summaries_for_user(db: &DbAny, user_db_id: DbId) -> anyhow::Result<V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::roots::{
+        self,
+        Root,
+    };
     use crate::test_db::new_test_db;
     use agdb::QueryBuilder;
     use nanoid::nanoid;
@@ -441,13 +445,7 @@ mod tests {
         let track_db_id = db
             .exec_mut(QueryBuilder::insert().element(&track).query())?
             .ids()[0];
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("tracks")
-                .to(track_db_id)
-                .query(),
-        )?;
+        roots::link(db, Root::Tracks, track_db_id)?;
         Ok(track_db_id)
     }
 

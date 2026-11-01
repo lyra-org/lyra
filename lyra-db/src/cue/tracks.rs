@@ -13,6 +13,10 @@ use agdb::{
 
 use nanoid::nanoid;
 
+use crate::roots::{
+    self,
+    Root,
+};
 use crate::{
     DbAccess,
     entries,
@@ -86,13 +90,7 @@ pub fn upsert(
     };
 
     if existing_id.is_none() {
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("cue_tracks")
-                .to(cue_track_id)
-                .query(),
-        )?;
+        roots::link(db, Root::CueTracks, cue_track_id)?;
     }
 
     let has_sheet_edge = db

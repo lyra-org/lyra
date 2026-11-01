@@ -170,14 +170,6 @@ fn insert_user_with<A: DbAccess>(
     };
     let result = db.exec_mut(QueryBuilder::insert().element(&node).query())?;
     let result_id = result.ids()[0];
-
-    db.exec_mut(
-        QueryBuilder::insert()
-            .edges()
-            .from("user_plugin_settings")
-            .to(result_id)
-            .query(),
-    )?;
     db.exec_mut(
         QueryBuilder::insert()
             .edges()

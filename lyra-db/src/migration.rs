@@ -365,6 +365,10 @@ fn write_ahead_log(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::roots::{
+        self,
+        Root,
+    };
     use crate::{
         bootstrap,
         test_db::TestDb,
@@ -914,13 +918,7 @@ mod tests {
                     .values([[("title", "Song").into(), ("id", "track-1").into()]])
                     .query(),
             )?;
-            t.exec_mut(
-                QueryBuilder::insert()
-                    .edges()
-                    .from("tracks")
-                    .to(track.elements[0].id)
-                    .query(),
-            )?;
+            roots::link(t, Root::Tracks, track.elements[0].id)?;
             Ok(())
         })?;
         Ok(db)

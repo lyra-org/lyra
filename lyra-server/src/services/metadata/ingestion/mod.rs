@@ -143,11 +143,12 @@ mod tests {
         cleanup::cleanup_orphaned_metadata,
         parse_metadata,
     };
-    use agdb::{
-        CountComparison,
-        QueryBuilder,
-    };
+    use agdb::QueryBuilder;
     use anyhow::anyhow;
+    use lyra_db::roots::{
+        self,
+        Root,
+    };
     use lyra_db::test_db::{
         self,
         TestDb,
@@ -329,61 +330,22 @@ mod tests {
     }
 
     fn select_tracks(db: &DbAny) -> anyhow::Result<Vec<Track>> {
-        let tracks: Vec<Track> = db
-            .exec(
-                QueryBuilder::select()
-                    .elements::<Track>()
-                    .search()
-                    .from("tracks")
-                    .query(),
-            )?
-            .try_into()?;
+        let tracks: Vec<Track> = roots::members::<Track>(db, Root::Tracks)?;
         Ok(tracks)
     }
 
     fn select_releases(db: &DbAny) -> anyhow::Result<Vec<Release>> {
-        let releases: Vec<Release> = db
-            .exec(
-                QueryBuilder::select()
-                    .elements::<Release>()
-                    .search()
-                    .from("releases")
-                    .query(),
-            )?
-            .try_into()?;
+        let releases: Vec<Release> = roots::members::<Release>(db, Root::Releases)?;
         Ok(releases)
     }
 
     fn select_artists(db: &DbAny) -> anyhow::Result<Vec<Artist>> {
-        let artists: Vec<Artist> = db
-            .exec(
-                QueryBuilder::select()
-                    .elements::<Artist>()
-                    .search()
-                    .from("artists")
-                    .query(),
-            )?
-            .try_into()?;
+        let artists: Vec<Artist> = roots::members::<Artist>(db, Root::Artists)?;
         Ok(artists)
     }
 
-    fn collection_edge_count(db: &DbAny, alias: &str) -> anyhow::Result<u64> {
-        let from = db.exec(QueryBuilder::select().ids(alias).query())?.ids()[0];
-        let qr = db.exec(
-            QueryBuilder::search()
-                .from(from)
-                .where_()
-                .edge()
-                .and()
-                .distance(CountComparison::Equal(1))
-                .query(),
-        )?;
-
-        Ok(qr
-            .elements
-            .into_iter()
-            .filter(|edge| edge.from == from)
-            .count() as u64)
+    fn member_count(db: &DbAny, root: lyra_db::roots::Root) -> anyhow::Result<usize> {
+        Ok(roots::member_ids(db, root)?.len())
     }
 
     fn parsed_group(source_dir: &str, metadata: Vec<TrackMetadata>) -> ParsedMetadataGroup {
@@ -583,9 +545,9 @@ mod tests {
         let release_db_id = insert_release(&mut db, "Album 1")?;
         let artist_db_id = insert_artist(&mut db, "Artist 1")?;
 
-        connect(&mut db, "tracks", track_db_id)?;
-        connect(&mut db, "releases", release_db_id)?;
-        connect(&mut db, "artists", artist_db_id)?;
+        roots::link(&mut db, Root::Tracks, track_db_id)?;
+        roots::link(&mut db, Root::Releases, release_db_id)?;
+        roots::link(&mut db, Root::Artists, artist_db_id)?;
         connect(&mut db, release_db_id, track_db_id)?;
         lyra_db::test_db::connect_artist(&mut db, release_db_id, artist_db_id)?;
         connect_track_to_entry_source(&mut db, track_db_id, entry_db_id)?;
@@ -597,9 +559,9 @@ mod tests {
         assert!(select_tracks(&db)?.is_empty());
         assert!(select_releases(&db)?.is_empty());
         assert!(select_artists(&db)?.is_empty());
-        assert_eq!(collection_edge_count(&db, "tracks")?, 0);
-        assert_eq!(collection_edge_count(&db, "releases")?, 0);
-        assert_eq!(collection_edge_count(&db, "artists")?, 0);
+        assert_eq!(member_count(&db, Root::Tracks)?, 0);
+        assert_eq!(member_count(&db, Root::Releases)?, 0);
+        assert_eq!(member_count(&db, Root::Artists)?, 0);
 
         Ok(())
     }
@@ -613,9 +575,9 @@ mod tests {
         let release_db_id = insert_release(&mut db, "Album L")?;
         let artist_db_id = insert_artist(&mut db, "Artist L")?;
 
-        connect(&mut db, "tracks", track_db_id)?;
-        connect(&mut db, "releases", release_db_id)?;
-        connect(&mut db, "artists", artist_db_id)?;
+        roots::link(&mut db, Root::Tracks, track_db_id)?;
+        roots::link(&mut db, Root::Releases, release_db_id)?;
+        roots::link(&mut db, Root::Artists, artist_db_id)?;
         connect(&mut db, release_db_id, track_db_id)?;
         lyra_db::test_db::connect_artist(&mut db, release_db_id, artist_db_id)?;
         connect_track_to_entry_source(&mut db, track_db_id, entry_db_id)?;
@@ -673,9 +635,9 @@ mod tests {
         let release_db_id = insert_release(&mut db, "Album 2")?;
         let artist_db_id = insert_artist(&mut db, "Artist 2")?;
 
-        connect(&mut db, "tracks", track_db_id)?;
-        connect(&mut db, "releases", release_db_id)?;
-        connect(&mut db, "artists", artist_db_id)?;
+        roots::link(&mut db, Root::Tracks, track_db_id)?;
+        roots::link(&mut db, Root::Releases, release_db_id)?;
+        roots::link(&mut db, Root::Artists, artist_db_id)?;
         connect(&mut db, release_db_id, track_db_id)?;
         lyra_db::test_db::connect_artist(&mut db, release_db_id, artist_db_id)?;
         connect_track_to_entry_source(&mut db, track_db_id, entry_db_id)?;
@@ -685,9 +647,9 @@ mod tests {
         assert_eq!(select_tracks(&db)?.len(), 1);
         assert_eq!(select_releases(&db)?.len(), 1);
         assert_eq!(select_artists(&db)?.len(), 1);
-        assert_eq!(collection_edge_count(&db, "tracks")?, 1);
-        assert_eq!(collection_edge_count(&db, "releases")?, 1);
-        assert_eq!(collection_edge_count(&db, "artists")?, 1);
+        assert_eq!(member_count(&db, Root::Tracks)?, 1);
+        assert_eq!(member_count(&db, Root::Releases)?, 1);
+        assert_eq!(member_count(&db, Root::Artists)?, 1);
 
         Ok(())
     }
@@ -713,11 +675,11 @@ mod tests {
         let empty_release_id = insert_release(&mut db, "Empty")?;
         let hidden_id = insert_artist(&mut db, "Hidden")?;
         let member_id = insert_artist(&mut db, "Member")?;
-        connect(&mut db, "tracks", track_db_id)?;
-        connect(&mut db, "releases", release_db_id)?;
-        connect(&mut db, "releases", empty_release_id)?;
-        connect(&mut db, "artists", hidden_id)?;
-        connect(&mut db, "artists", member_id)?;
+        roots::link(&mut db, Root::Tracks, track_db_id)?;
+        roots::link(&mut db, Root::Releases, release_db_id)?;
+        roots::link(&mut db, Root::Releases, empty_release_id)?;
+        roots::link(&mut db, Root::Artists, hidden_id)?;
+        roots::link(&mut db, Root::Artists, member_id)?;
         connect(&mut db, release_db_id, track_db_id)?;
         connect_track_to_entry_source(&mut db, track_db_id, entry_db_id)?;
 
@@ -749,7 +711,7 @@ mod tests {
         })?;
 
         let alias_id = insert_artist(&mut db, "Alias")?;
-        connect(&mut db, "artists", alias_id)?;
+        roots::link(&mut db, Root::Artists, alias_id)?;
         lyra_db::artists::relations::link(
             &mut db,
             hidden_id,
@@ -794,11 +756,11 @@ mod tests {
         let artist_keep_id = insert_artist(&mut db, "Keep Artist")?;
         let artist_drop_id = insert_artist(&mut db, "Drop Artist")?;
 
-        connect(&mut db, "tracks", track_db_id)?;
-        connect(&mut db, "releases", release_keep_id)?;
-        connect(&mut db, "releases", release_drop_id)?;
-        connect(&mut db, "artists", artist_keep_id)?;
-        connect(&mut db, "artists", artist_drop_id)?;
+        roots::link(&mut db, Root::Tracks, track_db_id)?;
+        roots::link(&mut db, Root::Releases, release_keep_id)?;
+        roots::link(&mut db, Root::Releases, release_drop_id)?;
+        roots::link(&mut db, Root::Artists, artist_keep_id)?;
+        roots::link(&mut db, Root::Artists, artist_drop_id)?;
 
         connect(&mut db, release_keep_id, track_db_id)?;
         lyra_db::test_db::connect_artist(&mut db, release_keep_id, artist_keep_id)?;
@@ -815,9 +777,9 @@ mod tests {
         let artists = select_artists(&db)?;
         assert_eq!(artists.len(), 1);
         assert_eq!(artists[0].artist_name, "Keep Artist");
-        assert_eq!(collection_edge_count(&db, "tracks")?, 1);
-        assert_eq!(collection_edge_count(&db, "releases")?, 1);
-        assert_eq!(collection_edge_count(&db, "artists")?, 1);
+        assert_eq!(member_count(&db, Root::Tracks)?, 1);
+        assert_eq!(member_count(&db, Root::Releases)?, 1);
+        assert_eq!(member_count(&db, Root::Artists)?, 1);
 
         Ok(())
     }
@@ -1247,9 +1209,9 @@ mod tests {
         let track_db_id = insert_track(&mut db, "Track")?;
         let character_id = insert_artist(&mut db, "Character")?;
         let actor_id = insert_artist(&mut db, "Actor")?;
-        connect(&mut db, "tracks", track_db_id)?;
-        connect(&mut db, "artists", character_id)?;
-        connect(&mut db, "artists", actor_id)?;
+        roots::link(&mut db, Root::Tracks, track_db_id)?;
+        roots::link(&mut db, Root::Artists, character_id)?;
+        roots::link(&mut db, Root::Artists, actor_id)?;
         connect_track_to_entry_source(&mut db, track_db_id, entry_db_id)?;
         lyra_db::test_db::connect_artist(&mut db, track_db_id, character_id)?;
         upsert_provider(&mut db, "provider", true)?;
@@ -2260,30 +2222,16 @@ FILE "album.flac" WAVE
         assert_eq!(track_two_sources[0].start_ms, Some(120_000));
         assert_eq!(track_two_sources[0].end_ms, None);
 
-        let cue_sheets: Vec<lyra_db::CueSheet> = db
-            .exec(
-                QueryBuilder::select()
-                    .elements::<lyra_db::CueSheet>()
-                    .search()
-                    .from("cue_sheets")
-                    .query(),
-            )?
-            .try_into()?;
+        let cue_sheets: Vec<lyra_db::CueSheet> =
+            roots::members::<lyra_db::CueSheet>(&db, Root::CueSheets)?;
         assert_eq!(cue_sheets.len(), 1);
         let cue_sheet_id = cue_sheets[0]
             .db_id
             .ok_or_else(|| anyhow!("cue sheet missing db_id"))?;
         assert!(lyra_db::graph::edge_exists(&db, cue_sheet_id, cue_id)?);
 
-        let cue_tracks: Vec<lyra_db::CueTrack> = db
-            .exec(
-                QueryBuilder::select()
-                    .elements::<lyra_db::CueTrack>()
-                    .search()
-                    .from("cue_tracks")
-                    .query(),
-            )?
-            .try_into()?;
+        let cue_tracks: Vec<lyra_db::CueTrack> =
+            roots::members::<lyra_db::CueTrack>(&db, Root::CueTracks)?;
         assert_eq!(cue_tracks.len(), 2);
         let cue_track_numbers: HashSet<u32> =
             cue_tracks.iter().map(|track| track.track_no).collect();

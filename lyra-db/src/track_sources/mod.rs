@@ -15,6 +15,10 @@ use agdb::{
 use nanoid::nanoid;
 
 use super::DbAccess;
+use super::roots::{
+    self,
+    Root,
+};
 
 mod format;
 
@@ -190,13 +194,7 @@ pub fn upsert(
     };
 
     if existing_id.is_none() {
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("track_sources")
-                .to(source_id)
-                .query(),
-        )?;
+        roots::link(db, Root::TrackSources, source_id)?;
     }
 
     let has_track_edge = db

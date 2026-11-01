@@ -22,6 +22,7 @@ use serde::{
 };
 
 use super::super::NodeId;
+use crate::roots::Root;
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(DbElement, Serialize, Clone, Debug)]
@@ -159,7 +160,7 @@ pub fn get_all_for_tracks(db: &DbAny) -> anyhow::Result<Vec<ExternalId>> {
             QueryBuilder::select()
                 .elements::<ExternalId>()
                 .search()
-                .from("tracks")
+                .from(Root::Tracks.alias())
                 .where_()
                 .beyond()
                 .where_()

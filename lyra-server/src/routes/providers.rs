@@ -853,6 +853,10 @@ mod tests {
         QueryBuilder,
     };
     use anyhow::anyhow;
+    use lyra_db::roots::{
+        self,
+        Root,
+    };
     use lyra_db::{
         Entry,
         IdSource,
@@ -992,13 +996,7 @@ mod tests {
             .first()
             .map(|element| element.id)
             .ok_or_else(|| anyhow!("track insert missing id"))?;
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("tracks")
-                .to(track_db_id)
-                .query(),
-        )?;
+        roots::link(db, Root::Tracks, track_db_id)?;
         Ok(track_db_id)
     }
 

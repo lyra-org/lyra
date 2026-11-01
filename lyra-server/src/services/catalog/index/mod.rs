@@ -1389,6 +1389,10 @@ mod tests {
             user_principal,
         },
     };
+    use lyra_db::roots::{
+        self,
+        Root,
+    };
     use lyra_db::{
         fixtures::{
             connect,
@@ -1495,14 +1499,7 @@ mod tests {
                     agdb::QueryBuilder::insert().element(&release).query(),
                 )?
                 .ids()[0];
-                lyra_db::DbAccess::exec_mut(
-                    t,
-                    agdb::QueryBuilder::insert()
-                        .edges()
-                        .from("releases")
-                        .to(id)
-                        .query(),
-                )?;
+                roots::link(t, Root::Releases, id)?;
                 anyhow::bail!("rolled back")
             });
         }

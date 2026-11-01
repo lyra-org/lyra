@@ -43,6 +43,10 @@ use super::{
     tracks::Tracks,
 };
 use crate::services::auth::Principal;
+use lyra_db::roots::{
+    self,
+    Root,
+};
 use lyra_db::{
     Track,
     fixtures::{
@@ -137,13 +141,7 @@ fn insert_track(db: &mut DbAny, index: usize, number: u32) -> anyhow::Result<DbI
     let track_id = db
         .exec_mut(QueryBuilder::insert().element(&track).query())?
         .ids()[0];
-    db.exec_mut(
-        QueryBuilder::insert()
-            .edges()
-            .from("tracks")
-            .to(track_id)
-            .query(),
-    )?;
+    roots::link(db, Root::Tracks, track_id)?;
     Ok(track_id)
 }
 

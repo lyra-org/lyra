@@ -208,7 +208,7 @@ pub(crate) fn scoped_releases(
 }
 
 pub(crate) fn all_releases(db: &DbAny) -> anyhow::Result<Vec<DbId>> {
-    lyra_db::graph::neighbor_ids(db, "releases", "Release")
+    lyra_db::roots::member_ids(db, lyra_db::roots::Root::Releases)
 }
 
 /// The owners of kind `Owner` that credit any of `artists`.

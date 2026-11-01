@@ -101,13 +101,17 @@ mod tests {
         insert_release,
         insert_track,
     };
+    use lyra_db::roots::{
+        self,
+        Root,
+    };
     use lyra_db::test_db::{
         connect_artist,
         new_test_db,
     };
 
     fn list_details(db: &DbAny, includes: TrackIncludes) -> anyhow::Result<Vec<TrackDetails>> {
-        let tracks = lyra_db::tracks::get(db, "tracks")?;
+        let tracks = roots::members(db, Root::Tracks)?;
         list_details_for_tracks(db, includes, tracks)
     }
 

@@ -150,13 +150,6 @@ pub fn create(
                 .ids(tag_id)
                 .query(),
         )?;
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("tags")
-                .to(tag_id)
-                .query(),
-        )?;
         let owner_edge = db
             .exec_mut(
                 QueryBuilder::insert()
@@ -656,6 +649,10 @@ fn inbound_tag_edges(db: &impl DbAccess, target_db_id: DbId) -> anyhow::Result<V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::roots::{
+        self,
+        Root,
+    };
     use crate::test_db::new_test_db;
     use agdb::DbAny;
 
@@ -672,13 +669,7 @@ mod tests {
                     .query(),
             )?
             .ids()[0];
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("tracks")
-                .to(track_db_id)
-                .query(),
-        )?;
+        roots::link(db, Root::Tracks, track_db_id)?;
         Ok(track_db_id)
     }
 
@@ -1194,6 +1185,10 @@ mod benches {
     use test::Bencher;
 
     use super::*;
+    use crate::roots::{
+        self,
+        Root,
+    };
     use crate::test_db::new_test_db;
     use agdb::DbAny;
 
@@ -1206,8 +1201,7 @@ mod benches {
             .exec_mut(QueryBuilder::insert().nodes().count(1).query())
             .unwrap()
             .ids()[0];
-        db.exec_mut(QueryBuilder::insert().edges().from("tracks").to(id).query())
-            .unwrap();
+        roots::link(db, Root::Tracks, id).unwrap();
         id
     }
 

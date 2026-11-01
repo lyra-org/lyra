@@ -854,6 +854,10 @@ mod tests {
         insert_release,
         insert_track,
     };
+    use lyra_db::roots::{
+        self,
+        Root,
+    };
     use lyra_db::test_db::{
         connect_artist,
         new_test_db,
@@ -1178,13 +1182,7 @@ mod tests {
         let release_id = db
             .exec_mut(QueryBuilder::insert().element(&release).query())?
             .ids()[0];
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("releases")
-                .to(release_id)
-                .query(),
-        )?;
+        roots::link(&mut db, Root::Releases, release_id)?;
 
         let (entity_type, _) =
             build_entity_provider_context(&db, release_id, None, &IdSchemes::default())?;
@@ -1216,13 +1214,7 @@ mod tests {
         let track_id = db
             .exec_mut(QueryBuilder::insert().element(&track).query())?
             .ids()[0];
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("tracks")
-                .to(track_id)
-                .query(),
-        )?;
+        roots::link(&mut db, Root::Tracks, track_id)?;
 
         let (entity_type, _) =
             build_entity_provider_context(&db, track_id, None, &IdSchemes::default())?;
@@ -1250,13 +1242,7 @@ mod tests {
         let artist_id = db
             .exec_mut(QueryBuilder::insert().element(&artist).query())?
             .ids()[0];
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("artists")
-                .to(artist_id)
-                .query(),
-        )?;
+        roots::link(&mut db, Root::Artists, artist_id)?;
 
         let (entity_type, _) =
             build_entity_provider_context(&db, artist_id, None, &IdSchemes::default())?;

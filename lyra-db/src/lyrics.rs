@@ -777,13 +777,6 @@ fn upsert_inner(
     db.exec_mut(
         QueryBuilder::insert()
             .edges()
-            .from("lyrics")
-            .to(lyrics_db_id)
-            .query(),
-    )?;
-    db.exec_mut(
-        QueryBuilder::insert()
-            .edges()
             .from(track_id)
             .to(lyrics_db_id)
             .query(),

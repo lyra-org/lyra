@@ -5,6 +5,10 @@
 
 //! Inserts catalog entities and users directly, for data that tests run against.
 
+use super::roots::{
+    self,
+    Root,
+};
 use agdb::{
     DbAny,
     DbId,
@@ -44,13 +48,7 @@ pub fn insert_track(db: &mut DbAny, title: &str) -> anyhow::Result<DbId> {
     let track_id = db
         .exec_mut(QueryBuilder::insert().element(&track).query())?
         .ids()[0];
-    db.exec_mut(
-        QueryBuilder::insert()
-            .edges()
-            .from("tracks")
-            .to(track_id)
-            .query(),
-    )?;
+    roots::link(db, Root::Tracks, track_id)?;
     Ok(track_id)
 }
 
@@ -71,13 +69,7 @@ pub fn insert_release(db: &mut DbAny, title: &str) -> anyhow::Result<DbId> {
     let release_id = db
         .exec_mut(QueryBuilder::insert().element(&release).query())?
         .ids()[0];
-    db.exec_mut(
-        QueryBuilder::insert()
-            .edges()
-            .from("releases")
-            .to(release_id)
-            .query(),
-    )?;
+    roots::link(db, Root::Releases, release_id)?;
     Ok(release_id)
 }
 
@@ -98,13 +90,7 @@ pub fn insert_artist(db: &mut DbAny, name: &str) -> anyhow::Result<DbId> {
     let artist_id = db
         .exec_mut(QueryBuilder::insert().element(&artist).query())?
         .ids()[0];
-    db.exec_mut(
-        QueryBuilder::insert()
-            .edges()
-            .from("artists")
-            .to(artist_id)
-            .query(),
-    )?;
+    roots::link(db, Root::Artists, artist_id)?;
     Ok(artist_id)
 }
 

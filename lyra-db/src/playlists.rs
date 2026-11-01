@@ -532,6 +532,10 @@ pub(crate) fn get_by_track(db: &impl DbAccess, track_db_id: DbId) -> anyhow::Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::roots::{
+        self,
+        Root,
+    };
     use crate::test_db::new_test_db;
     use agdb::{
         DbAny,
@@ -567,13 +571,7 @@ mod tests {
                     .query(),
             )?
             .ids()[0];
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("tracks")
-                .to(track_db_id)
-                .query(),
-        )?;
+        roots::link(db, Root::Tracks, track_db_id)?;
         Ok(track_db_id)
     }
 

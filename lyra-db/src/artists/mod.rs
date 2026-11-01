@@ -6,7 +6,10 @@
 pub mod relations;
 
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{
+    HashMap,
+    HashSet,
+};
 use std::time::{
     SystemTime,
     UNIX_EPOCH,
@@ -21,7 +24,6 @@ use agdb::{
     DbTypeMarker,
     DbValue,
     QueryBuilder,
-    QueryId,
 };
 use anyhow::anyhow;
 use nanoid::nanoid;
@@ -31,6 +33,10 @@ use serde::{
 };
 
 use super::NodeId;
+use super::roots::{
+    self,
+    Root,
+};
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(
@@ -141,27 +147,21 @@ impl Artist {
     }
 }
 
-pub fn get(db: &impl super::DbAccess, from: impl Into<QueryId>) -> anyhow::Result<Vec<Artist>> {
-    let from = from.into();
-    let owner_db_id = resolve_owner_id(db, &from);
-    let mut artists = get_connected_artists(db, &from)?;
-    sort_artists_for_owner(db, owner_db_id, &mut artists)?;
-    Ok(artists)
-}
-
-fn get_connected_artists(db: &impl super::DbAccess, from: &QueryId) -> anyhow::Result<Vec<Artist>> {
-    Ok(db
+pub fn get(db: &impl super::DbAccess, owner_db_id: DbId) -> anyhow::Result<Vec<Artist>> {
+    let mut artists: Vec<Artist> = db
         .exec(
             QueryBuilder::select()
                 .elements::<Artist>()
                 .search()
-                .from(from.clone())
+                .from(owner_db_id)
                 .where_()
                 .neighbor()
                 .end_where()
                 .query(),
         )?
-        .try_into()?)
+        .try_into()?;
+    sort_artists_for_owner(db, Some(owner_db_id).filter(|id| id.0 > 0), &mut artists)?;
+    Ok(artists)
 }
 
 /// Returns all unique artists belonging to a library via its releases.
@@ -272,9 +272,9 @@ pub fn ids_with_type(
     Ok(db
         .exec(
             QueryBuilder::search()
-                .from("artists")
+                .from(Root::Artists.alias())
                 .where_()
-                .neighbor()
+                .distance(roots::MEMBERS)
                 .and()
                 .key("artist_type")
                 .value(DbValue::from(artist_type))
@@ -283,15 +283,34 @@ pub fn ids_with_type(
         .ids())
 }
 
+/// The artists any path of outgoing edges reaches from a release or track.
+pub fn reachable_from_catalog(db: &impl super::DbAccess) -> anyhow::Result<HashSet<DbId>> {
+    let mut reached = HashSet::new();
+    for root in [Root::Releases, Root::Tracks] {
+        reached.extend(
+            db.exec(
+                QueryBuilder::search()
+                    .from(root.alias())
+                    .where_()
+                    .key("db_element_id")
+                    .value("Artist")
+                    .query(),
+            )?
+            .ids(),
+        );
+    }
+    Ok(reached)
+}
+
 /// The credited artists, of `artist_type` when given.
 pub fn credited_ids(
     db: &impl super::DbAccess,
     artist_type: Option<ArtistType>,
 ) -> anyhow::Result<Vec<DbId>> {
     let mut query = QueryBuilder::search()
-        .from("artists")
+        .from(Root::Artists.alias())
         .where_()
-        .neighbor()
+        .distance(roots::MEMBERS)
         .and()
         .key(super::credits::CREDITED)
         .value(true);
@@ -438,9 +457,9 @@ pub fn find_by_scan_name(db: &impl super::DbAccess, name: &str) -> anyhow::Resul
         QueryBuilder::select()
             .values(["scan_name", "scan_aliases"])
             .search()
-            .from("artists")
+            .from(Root::Artists.alias())
             .where_()
-            .neighbor()
+            .distance(roots::MEMBERS)
             .query(),
     )?;
     let mut alias_holders = Vec::new();
@@ -533,13 +552,7 @@ pub fn create(
         .first()
         .copied()
         .ok_or_else(|| anyhow!("artist insert returned no id"))?;
-    db.exec_mut(
-        QueryBuilder::insert()
-            .edges()
-            .from("artists")
-            .to(artist_db_id)
-            .query(),
-    )?;
+    roots::link(db, Root::Artists, artist_db_id)?;
     Ok(artist_db_id)
 }
 
@@ -585,18 +598,6 @@ struct ArtistSortEntry {
     lower_name: String,
     lower_sort_name: Option<String>,
     db_id: Option<i64>,
-}
-
-fn resolve_owner_id(db: &impl super::DbAccess, from: &QueryId) -> Option<DbId> {
-    match from {
-        QueryId::Id(id) if id.0 > 0 => Some(*id),
-        QueryId::Alias(alias) => db
-            .exec(QueryBuilder::select().ids(alias.as_str()).query())
-            .ok()
-            .and_then(|result| result.ids().first().copied())
-            .filter(|id| id.0 > 0),
-        _ => None,
-    }
 }
 
 fn artist_edge_orders(

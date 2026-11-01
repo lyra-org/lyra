@@ -108,13 +108,7 @@ fn insert_genre(db: &mut impl DbAccess, name: &str) -> anyhow::Result<DbId> {
         .first()
         .copied()
         .ok_or_else(|| anyhow::anyhow!("genre creation returned no id"))?;
-    db.exec_mut(
-        QueryBuilder::insert()
-            .edges()
-            .from("genres")
-            .to(genre_id)
-            .query(),
-    )?;
+    super::roots::link(db, super::roots::Root::Genres, genre_id)?;
     Ok(genre_id)
 }
 

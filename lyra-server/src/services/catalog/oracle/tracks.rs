@@ -4,6 +4,10 @@
 // www.meshiplaw.com/lyra.
 
 use super::*;
+use lyra_db::roots::{
+    self,
+    Root,
+};
 
 impl Old for Tracks {
     fn old_shuffle_units(
@@ -283,5 +287,5 @@ impl TrackReleases {
 }
 
 fn all_tracks(db: &DbAny) -> anyhow::Result<Vec<DbId>> {
-    lyra_db::graph::neighbor_ids(db, "tracks", "Track")
+    roots::member_ids(db, Root::Tracks)
 }

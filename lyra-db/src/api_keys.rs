@@ -64,14 +64,6 @@ pub fn create(
         t.exec_mut(
             QueryBuilder::insert()
                 .edges()
-                .from("api_keys")
-                .to(api_key_db_id)
-                .query(),
-        )?;
-
-        t.exec_mut(
-            QueryBuilder::insert()
-                .edges()
                 .from(api_key_db_id)
                 .to(user_db_id)
                 .query(),

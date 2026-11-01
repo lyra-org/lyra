@@ -52,6 +52,10 @@ use crate::{
         with_provider_call,
     },
 };
+use lyra_db::roots::{
+    self,
+    Root,
+};
 
 pub(crate) const DEFAULT_HANDLER_TIMEOUT: Duration = Duration::from_secs(15);
 pub(crate) const MAX_CONCURRENT_DISPATCHES: usize = 4;
@@ -569,7 +573,7 @@ async fn build_track_context(
 pub(crate) async fn rescan(force_refresh: bool, cancel: CancellationToken) -> Result<()> {
     let track_ids: Vec<(DbId, String)> = {
         let db = STATE.db.read().await;
-        let tracks = lyra_db::tracks::get(&db, "tracks")?;
+        let tracks: Vec<lyra_db::tracks::Track> = roots::members(&*db, Root::Tracks)?;
         let mut filtered = Vec::with_capacity(tracks.len());
         for track in tracks {
             let Some(track_db_id) = track.db_id.clone().map(DbId::from) else {

@@ -12,6 +12,10 @@ use agdb::{
 
 use nanoid::nanoid;
 
+use crate::roots::{
+    self,
+    Root,
+};
 use crate::{
     DbAccess,
     lookup,
@@ -54,13 +58,7 @@ pub fn upsert(
         .ok_or_else(|| anyhow::anyhow!("upsert cue sheet returned no id"))?;
 
     if existing_id.is_none() {
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("cue_sheets")
-                .to(sheet_id)
-                .query(),
-        )?;
+        roots::link(db, Root::CueSheets, sheet_id)?;
     }
 
     let has_cue_entry_edge = db

@@ -207,14 +207,6 @@ pub fn login(db: &mut DbAny, user_db_id: DbId, session: &Session) -> anyhow::Res
         let session_id = t
             .exec_mut(QueryBuilder::insert().element(session).query())?
             .ids()[0];
-
-        t.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("sessions")
-                .to(session_id)
-                .query(),
-        )?;
         t.exec_mut(
             QueryBuilder::insert()
                 .edges()

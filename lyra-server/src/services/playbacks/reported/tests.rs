@@ -24,6 +24,10 @@ use crate::services::{
     playbacks::cleanup_evicted_playbacks,
     testing::RuntimeTestGuard,
 };
+use lyra_db::roots::{
+    self,
+    Root,
+};
 
 struct Reported {
     playback: Option<PlaybackRecord>,
@@ -153,13 +157,7 @@ fn insert_track(db: &mut DbAny, title: &str, duration_ms: u64) -> anyhow::Result
     let track_db_id = db
         .exec_mut(QueryBuilder::insert().element(&track).query())?
         .ids()[0];
-    db.exec_mut(
-        QueryBuilder::insert()
-            .edges()
-            .from("tracks")
-            .to(track_db_id)
-            .query(),
-    )?;
+    roots::link(db, Root::Tracks, track_db_id)?;
     Ok(track_db_id)
 }
 

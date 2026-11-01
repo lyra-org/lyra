@@ -3,10 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use agdb::{
-    DbId,
-    QueryId,
-};
+use agdb::DbId;
 use axum::http::StatusCode;
 use harmony_luau as luau;
 #[cfg(feature = "docgen")]
@@ -48,6 +45,10 @@ use crate::{
     },
 };
 
+use lyra_db::roots::{
+    self,
+    Root,
+};
 use std::collections::HashMap;
 
 #[cfg(feature = "docgen")]
@@ -82,15 +83,15 @@ impl PlaybackSourcesModule {
             &principal.permissions,
             lyra_db::Permission::ManageLibraries,
         );
-        let query_id = match id {
+        let tracks = match id {
             Some(id) => match ids::db_id(&*db, &id)? {
-                Some(id) => QueryId::Id(id),
+                Some(id) => lyra_db::tracks::get(&db, id)?,
                 None => return Ok(luau::OwnedTable::new()),
             },
-            None => QueryId::from("tracks"),
+            None => roots::members(&*db, Root::Tracks)?,
         };
         let mut sources = Vec::new();
-        for track in lyra_db::tracks::get(&db, query_id)? {
+        for track in tracks {
             let Some(track_id) = track.db_id.clone().map(DbId::from) else {
                 continue;
             };

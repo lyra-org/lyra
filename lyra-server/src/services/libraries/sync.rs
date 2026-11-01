@@ -1199,6 +1199,10 @@ pub(crate) async fn sync_library(db: &DbAsync, library: &Library) -> anyhow::Res
 
 #[cfg(test)]
 mod tests {
+    use lyra_db::roots::{
+        self,
+        Root,
+    };
     use std::{
         collections::BTreeMap,
         path::{
@@ -1211,8 +1215,6 @@ mod tests {
             UNIX_EPOCH,
         },
     };
-
-    use agdb::QueryBuilder;
 
     use super::*;
     use crate::services::STATE;
@@ -1281,15 +1283,7 @@ FILE "album.flac" WAVE
 
     async fn cue_track_ids() -> anyhow::Result<Vec<DbId>> {
         let db = STATE.db.read().await;
-        let mut ids = db
-            .exec(
-                QueryBuilder::search()
-                    .from("cue_tracks")
-                    .where_()
-                    .neighbor()
-                    .query(),
-            )?
-            .ids();
+        let mut ids = roots::member_ids(&*db, Root::CueTracks)?;
         ids.sort();
         Ok(ids)
     }

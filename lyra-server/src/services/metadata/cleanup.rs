@@ -23,6 +23,10 @@ use super::id_links::{
     provider_ranks,
 };
 use super::layers::MANUAL_SOURCE_ID;
+use lyra_db::roots::{
+    self,
+    Root,
+};
 use lyra_db::{
     Artist,
     CueSheet,
@@ -38,15 +42,7 @@ use lyra_db::{
 };
 
 pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
-    let all_tracks: Vec<Track> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<Track>()
-                .search()
-                .from("tracks")
-                .query(),
-        )?
-        .try_into()?;
+    let all_tracks: Vec<Track> = roots::members::<Track>(db, Root::Tracks)?;
 
     let mut orphan_track_ids: Vec<DbId> = Vec::new();
     for track in all_tracks {
@@ -61,15 +57,7 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
 
     cascade_remove_entities(db, &orphan_track_ids)?;
 
-    let releases: Vec<Release> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<Release>()
-                .search()
-                .from("releases")
-                .query(),
-        )?
-        .try_into()?;
+    let releases: Vec<Release> = roots::members::<Release>(db, Root::Releases)?;
     let mut orphan_release_ids = Vec::new();
     for release in releases {
         let release_db_id: DbId = match release.db_id {
@@ -92,32 +80,8 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
 
     cascade_remove_entities(db, &orphan_release_ids)?;
 
-    let mut connected_artist_ids: HashSet<DbId> = HashSet::new();
-    for origin in ["releases", "tracks"] {
-        let connected_artists: Vec<Artist> = db
-            .exec(
-                QueryBuilder::select()
-                    .elements::<Artist>()
-                    .search()
-                    .from(origin)
-                    .query(),
-            )?
-            .try_into()?;
-        for artist in connected_artists {
-            if let Some(artist_db_id) = artist.db_id {
-                connected_artist_ids.insert(artist_db_id.into());
-            }
-        }
-    }
-    let all_artists: Vec<Artist> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<Artist>()
-                .search()
-                .from("artists")
-                .query(),
-        )?
-        .try_into()?;
+    let connected_artist_ids = lyra_db::artists::reachable_from_catalog(db)?;
+    let all_artists: Vec<Artist> = roots::members::<Artist>(db, Root::Artists)?;
     let mut orphan_artist_ids: Vec<DbId> = all_artists
         .into_iter()
         .filter_map(|artist| {
@@ -142,15 +106,8 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
     // Cleanup order matters for cue/source graph nodes:
     // 1) remove orphan track_sources, 2) then orphan cue_tracks no longer referenced
     // by any source, 3) then orphan cue_sheets with no remaining cue_track children.
-    let all_track_sources: Vec<TrackSource> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<TrackSource>()
-                .search()
-                .from("track_sources")
-                .query(),
-        )?
-        .try_into()?;
+    let all_track_sources: Vec<TrackSource> =
+        roots::members::<TrackSource>(db, Root::TrackSources)?;
     let mut orphan_track_source_ids = Vec::new();
     for source in all_track_sources {
         let Some(source_db_id) = source.db_id else {
@@ -185,15 +142,7 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
     }
     cascade_remove_entities(db, &orphan_track_source_ids)?;
 
-    let all_cue_tracks: Vec<CueTrack> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<CueTrack>()
-                .search()
-                .from("cue_tracks")
-                .query(),
-        )?
-        .try_into()?;
+    let all_cue_tracks: Vec<CueTrack> = roots::members::<CueTrack>(db, Root::CueTracks)?;
     let mut orphan_cue_track_ids = Vec::new();
     for cue_track in all_cue_tracks {
         let Some(cue_track_db_id) = cue_track.db_id else {
@@ -228,15 +177,7 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
     }
     cascade_remove_entities(db, &orphan_cue_track_ids)?;
 
-    let all_cue_sheets: Vec<CueSheet> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<CueSheet>()
-                .search()
-                .from("cue_sheets")
-                .query(),
-        )?
-        .try_into()?;
+    let all_cue_sheets: Vec<CueSheet> = roots::members::<CueSheet>(db, Root::CueSheets)?;
     let mut orphan_cue_sheet_ids = Vec::new();
     for cue_sheet in all_cue_sheets {
         let Some(cue_sheet_db_id) = cue_sheet.db_id else {
@@ -285,15 +226,7 @@ pub(crate) fn deduplicate_artists_by_external_id(
         return Ok(0);
     }
 
-    let all_artists: Vec<Artist> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<Artist>()
-                .search()
-                .from("artists")
-                .query(),
-        )?
-        .try_into()?;
+    let all_artists: Vec<Artist> = roots::members::<Artist>(db, Root::Artists)?;
 
     let mut linked = LinkedIds::default();
     let mut artist_lookup: HashMap<DbId, Artist> = HashMap::new();

@@ -37,7 +37,6 @@ use crate::{
 
 pub(crate) const ALGORITHM_VERSION: u32 = 1;
 
-const COLLECTION_ALIAS: &str = "display_covers";
 const PROFILE_PREFIX: &str = "cover_profile";
 const CANDIDATE_PREFIX: &str = "cover_candidate";
 const WINNER_PREFIX: &str = "cover_winner";
@@ -500,13 +499,6 @@ pub(crate) fn ensure_profile(
         .first()
         .copied()
         .ok_or_else(|| anyhow::anyhow!("display cover profile insert returned no id"))?;
-    db.exec_mut(
-        QueryBuilder::insert()
-            .edges()
-            .from(COLLECTION_ALIAS)
-            .to(profile_db_id)
-            .query(),
-    )?;
     db.exec_mut(
         QueryBuilder::insert()
             .edges()

@@ -687,6 +687,10 @@ mod tests {
         use test::Bencher;
 
         use super::*;
+        use crate::roots::{
+            self,
+            Root,
+        };
         use crate::test_db::new_test_db;
         use agdb::{
             DbAny,
@@ -713,8 +717,7 @@ mod tests {
                 .exec_mut(QueryBuilder::insert().nodes().count(1).query())
                 .unwrap()
                 .ids()[0];
-            db.exec_mut(QueryBuilder::insert().edges().from("tracks").to(id).query())
-                .unwrap();
+            roots::link(db, Root::Tracks, id).unwrap();
             id
         }
 

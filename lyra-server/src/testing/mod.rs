@@ -616,13 +616,6 @@ fn insert_file_entry(
     db.exec_mut(
         QueryBuilder::insert()
             .edges()
-            .from("entries")
-            .to(entry_db_id)
-            .query(),
-    )?;
-    db.exec_mut(
-        QueryBuilder::insert()
-            .edges()
             .from(library_db_id)
             .to(entry_db_id)
             .query(),

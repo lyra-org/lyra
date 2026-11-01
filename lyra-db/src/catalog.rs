@@ -22,6 +22,10 @@ use super::{
     ArtistType,
     CreditType,
     DbAccess,
+    roots::{
+        self,
+        Root,
+    },
 };
 
 pub struct CatalogTrack {
@@ -93,17 +97,17 @@ pub struct Catalog {
 /// Reads in parallel: the reads share `db` and agdb reads take it by reference.
 pub fn read(db: &(impl DbAccess + Sync)) -> anyhow::Result<Catalog> {
     std::thread::scope(|scope| {
-        let tracks = scope.spawn(|| nodes(db, "tracks", "Track"));
-        let release_edges = scope.spawn(|| edges(db, "releases"));
-        let track_edges = scope.spawn(|| edges(db, "tracks"));
+        let tracks = scope.spawn(|| nodes(db, roots::member_ids(db, Root::Tracks)?, "Track"));
+        let release_edges = scope.spawn(|| member_edges(db, Root::Releases));
+        let track_edges = scope.spawn(|| member_edges(db, Root::Tracks));
         let others = scope.spawn(|| -> anyhow::Result<_> {
             Ok((
-                nodes(db, "releases", "Release")?,
-                nodes(db, "artists", "Artist")?,
-                nodes(db, "libraries", "Library")?,
-                nodes(db, "genres", "Genre")?,
-                edges(db, "libraries")?,
-                edges(db, "genres")?,
+                nodes(db, roots::member_ids(db, Root::Releases)?, "Release")?,
+                nodes(db, roots::member_ids(db, Root::Artists)?, "Artist")?,
+                nodes(db, library_ids(db)?, "Library")?,
+                nodes(db, roots::member_ids(db, Root::Genres)?, "Genre")?,
+                library_edges(db)?,
+                member_edges(db, Root::Genres)?,
                 alias_names(db)?,
             ))
         });
@@ -237,9 +241,9 @@ fn alias_names(db: &impl DbAccess) -> anyhow::Result<HashMap<DbId, String>> {
         .exec(
             QueryBuilder::select()
                 .search()
-                .from("genres")
+                .from(Root::Genres.alias())
                 .where_()
-                .distance(CountComparison::Equal(4))
+                .distance(roots::MEMBER_CHILDREN)
                 .and()
                 .key("db_element_id")
                 .value("GenreAlias")
@@ -251,18 +255,26 @@ fn alias_names(db: &impl DbAccess) -> anyhow::Result<HashMap<DbId, String>> {
         .collect())
 }
 
-/// The `kind` nodes under the root alias `root`, with their values. Reading the ids first and
-/// their values by id costs a fraction of a search that selects values as it filters.
-fn nodes(db: &(impl DbAccess + Sync), root: &str, kind: &str) -> anyhow::Result<Vec<DbElement>> {
-    let mut ids = db
+/// Every library.
+fn library_ids(db: &impl DbAccess) -> anyhow::Result<Vec<DbId>> {
+    Ok(db
         .exec(
             QueryBuilder::search()
-                .from(root)
+                .from("libraries")
                 .where_()
                 .neighbor()
                 .query(),
         )?
-        .ids();
+        .ids())
+}
+
+/// The `kind` nodes among `ids`, with their values. Reading the ids first and their values by id
+/// costs a fraction of a search that selects values as it filters.
+fn nodes(
+    db: &(impl DbAccess + Sync),
+    mut ids: Vec<DbId>,
+    kind: &str,
+) -> anyhow::Result<Vec<DbElement>> {
     ids.sort_unstable();
     Ok(select(db, ids)?
         .into_iter()
@@ -300,22 +312,32 @@ fn select(db: &(impl DbAccess + Sync), ids: Vec<DbId>) -> anyhow::Result<Vec<DbE
     })
 }
 
-/// The outgoing edges of every node under the root alias `root`, as `(edge, from, to)`.
-fn edges(db: &impl DbAccess, root: &str) -> anyhow::Result<Vec<(DbId, DbId, DbId)>> {
-    Ok(db
-        .exec(
+/// The outgoing edges of `root`'s members, as `(edge, from, to)`.
+fn member_edges(db: &impl DbAccess, root: Root) -> anyhow::Result<Vec<(DbId, DbId, DbId)>> {
+    Ok(triples(roots::member_edges(db, root)?))
+}
+
+/// The outgoing edges of every library, as `(edge, from, to)`.
+fn library_edges(db: &impl DbAccess) -> anyhow::Result<Vec<(DbId, DbId, DbId)>> {
+    Ok(triples(
+        db.exec(
             QueryBuilder::search()
-                .from(root)
+                .from("libraries")
                 .where_()
                 .edge()
                 .and()
                 .distance(CountComparison::Equal(3))
                 .query(),
         )?
-        .elements
+        .elements,
+    ))
+}
+
+fn triples(edges: Vec<DbElement>) -> Vec<(DbId, DbId, DbId)> {
+    edges
         .into_iter()
         .map(|element| (element.id, element.from, element.to))
-        .collect())
+        .collect()
 }
 
 /// The credits among `edges`, given as `(edge, from, to)`, that lead to one of `artists`.

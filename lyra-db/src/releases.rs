@@ -18,7 +18,6 @@ use agdb::{
     DbTypeMarker,
     DbValue,
     QueryBuilder,
-    QueryId,
 };
 use serde::{
     Deserialize,
@@ -27,6 +26,10 @@ use serde::{
 
 use super::DbAccess;
 use super::NodeId;
+use super::roots::{
+    self,
+    Root,
+};
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(
@@ -199,7 +202,7 @@ fn is_leap_year(year: u32) -> bool {
     (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
 }
 
-pub fn get(db: &DbAny, from: impl Into<QueryId>) -> anyhow::Result<Vec<Release>> {
+pub fn get(db: &DbAny, from: DbId) -> anyhow::Result<Vec<Release>> {
     let releases: Vec<Release> = db
         .exec(
             QueryBuilder::select()
@@ -213,7 +216,7 @@ pub fn get(db: &DbAny, from: impl Into<QueryId>) -> anyhow::Result<Vec<Release>>
     Ok(releases)
 }
 
-pub fn get_direct(db: &DbAny, from: impl Into<QueryId>) -> anyhow::Result<Vec<Release>> {
+pub fn get_direct(db: &DbAny, from: DbId) -> anyhow::Result<Vec<Release>> {
     let releases: Vec<Release> = db
         .exec(
             QueryBuilder::select()
@@ -234,9 +237,9 @@ pub fn ids_with_year(db: &impl DbAccess, year: u32) -> anyhow::Result<Vec<DbId>>
     Ok(db
         .exec(
             QueryBuilder::search()
-                .from("releases")
+                .from(Root::Releases.alias())
                 .where_()
-                .neighbor()
+                .distance(roots::MEMBERS)
                 .and()
                 .key("release_date")
                 .starts_with(format!("{year:04}"))
@@ -426,16 +429,8 @@ pub fn get_by_tracks(
 
     // Fast path: collect release relation edges in one traversal from the releases root.
     // This avoids one DB search per track for large batches.
-    if let Ok(edges) = db.exec(
-        QueryBuilder::search()
-            .from("releases")
-            .where_()
-            .edge()
-            .and()
-            .distance(CountComparison::Equal(3))
-            .query(),
-    ) {
-        for edge in edges.elements {
+    if let Ok(edges) = roots::member_edges(db, Root::Releases) {
+        for edge in edges {
             let (from, to) = (edge.from, edge.to);
             if from.0 == 0 || to.0 == 0 {
                 continue;
@@ -679,12 +674,17 @@ mod tests {
     }
 
     #[test]
-    fn get_returns_releases_from_root() -> anyhow::Result<()> {
+    fn get_returns_the_releases_under_an_owner() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        insert_release(&mut db, "Release A")?;
-        insert_release(&mut db, "Release B")?;
+        let library = crate::test_db::insert_test_library_node(&mut db, "Music", "/music".into())?;
+        let library_db_id: DbId = library.db_id.expect("library id");
+        for title in ["Release A", "Release B"] {
+            let release = insert_release(&mut db, title)?;
+            crate::graph::ensure_owned_edge(&mut db, library_db_id, release)?;
+        }
+        insert_release(&mut db, "Elsewhere")?;
 
-        let releases = get(&db, "releases")?;
+        let releases = get(&db, library_db_id)?;
         assert_eq!(releases.len(), 2);
         let titles: Vec<&str> = releases.iter().map(|a| a.release_title.as_str()).collect();
         assert!(titles.contains(&"Release A"));

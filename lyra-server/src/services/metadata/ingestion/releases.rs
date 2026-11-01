@@ -29,6 +29,10 @@ use super::super::{
     },
 };
 use super::artists::resolve_artist_ids;
+use lyra_db::roots::{
+    self,
+    Root,
+};
 use lyra_db::{
     ArtistRelationType,
     ArtistType,
@@ -422,13 +426,7 @@ fn persist_release_inner(
         };
         let insert_result = db.exec_mut(QueryBuilder::insert().element(&release).query())?;
         let release_db_id = insert_result.ids()[0];
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("releases")
-                .to(release_db_id)
-                .query(),
-        )?;
+        roots::link(db, Root::Releases, release_db_id)?;
         release_db_id
     };
 
@@ -593,13 +591,7 @@ fn persist_release_inner(
             };
             let track_insert = db.exec_mut(QueryBuilder::insert().element(&track_db).query())?;
             let track_db_id = track_insert.ids()[0];
-            db.exec_mut(
-                QueryBuilder::insert()
-                    .edges()
-                    .from("tracks")
-                    .to(track_db_id)
-                    .query(),
-            )?;
+            roots::link(db, Root::Tracks, track_db_id)?;
             track_db_id
         };
 

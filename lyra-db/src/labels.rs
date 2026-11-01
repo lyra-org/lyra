@@ -156,13 +156,7 @@ fn insert_label(db: &mut impl DbAccess, name: &str) -> anyhow::Result<DbId> {
         .first()
         .copied()
         .ok_or_else(|| anyhow::anyhow!("label creation returned no id"))?;
-    db.exec_mut(
-        QueryBuilder::insert()
-            .edges()
-            .from("labels")
-            .to(label_id)
-            .query(),
-    )?;
+    super::roots::link(db, super::roots::Root::Labels, label_id)?;
     Ok(label_id)
 }
 
@@ -585,18 +579,7 @@ pub fn get_for_releases_many(
 }
 
 pub fn get_all(db: &impl DbAccess) -> anyhow::Result<Vec<Label>> {
-    let labels: Vec<Label> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<Label>()
-                .search()
-                .from("labels")
-                .where_()
-                .distance(CountComparison::Equal(2))
-                .query(),
-        )?
-        .try_into()?;
-    Ok(labels)
+    super::roots::members(db, super::roots::Root::Labels)
 }
 
 pub fn get_by_id(db: &impl DbAccess, label_id: DbId) -> anyhow::Result<Option<Label>> {
