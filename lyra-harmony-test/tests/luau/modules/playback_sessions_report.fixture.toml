@@ -24,3 +24,21 @@ key = "other"
 title = "Other"
 release = "album"
 duration_ms = 200000
+
+[[tracks]]
+key = "porch"
+title = "porch"
+release = "album"
+duration_ms = 200000
+
+[[tracks]]
+key = "attic"
+title = "attic"
+release = "album"
+duration_ms = 200000
+
+[[tracks]]
+key = "cellar"
+title = "cellar"
+release = "album"
+duration_ms = 200000

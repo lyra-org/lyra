@@ -177,11 +177,7 @@ impl PlaybackSessionsModule {
         {
             return Ok((None, Some(format!("malformed play_id: {play_id}"))));
         }
-        let client_name =
-            match crate::services::auth::sessions::normalize_client_name(request.client_name) {
-                Ok(client_name) => client_name,
-                Err(error) => return Ok((None, Some(error.to_string()))),
-            };
+        let client_name = crate::services::auth::sessions::tidy_client_name(request.client_name);
         let active_event = playbacks::classify_active_event(request.event)
             .map_err(crate::plugins::runtime_error)?;
         let current_ms = playbacks::now_ms().map_err(crate::plugins::runtime_error)?;
@@ -426,7 +422,7 @@ impl DescribeInterface for PlaybackSessionReportRequest {
             FieldDescriptor {
                 name: "client_name",
                 ty: Option::<String>::luau_type(),
-                description: Some("Label of the reporting app or device, validated and normalized as a login `client_name` is. Kept from the report that starts a track session."),
+                description: Some("Label of the reporting app or device. Control and invisible characters are stripped and it is cut to 128 characters; nothing left reports none. Kept from the report that starts a track session."),
             },
             FieldDescriptor {
                 name: "event",

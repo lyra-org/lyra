@@ -69,10 +69,17 @@ pub(crate) enum ClientNameError {
     TooLong,
 }
 
+/// Strips the characters `remove` selects, trims Unicode whitespace, and NFC-composes.
+/// Stripping precedes trimming because format controls are not whitespace.
+fn canonical_client_name(client_name: &str, remove: impl Fn(char) -> bool) -> String {
+    let kept: String = client_name.chars().filter(|c| !remove(*c)).collect();
+    kept.trim_matches(char::is_whitespace).nfc().collect()
+}
+
 /// Canonicalize an optional client device label by stripping Unicode format controls and
 /// CGJ, trimming Unicode whitespace, and NFC-composing. Rejects control characters and
 /// labels over [`MAX_CLIENT_NAME_LEN`]; a label that normalizes away entirely becomes
-/// `None`. Stripping precedes trimming because format controls are not whitespace.
+/// `None`.
 pub(crate) fn normalize_client_name(
     value: Option<String>,
 ) -> Result<Option<String>, ClientNameError> {
@@ -80,12 +87,7 @@ pub(crate) fn normalize_client_name(
         return Ok(None);
     };
 
-    let stripped: String = client_name
-        .chars()
-        .filter(|c| !is_invisible_strippable(*c))
-        .collect();
-    let trimmed = stripped.trim_matches(char::is_whitespace);
-    let client_name: String = trimmed.nfc().collect();
+    let client_name = canonical_client_name(&client_name, is_invisible_strippable);
     if client_name.is_empty() {
         return Ok(None);
     }
@@ -96,6 +98,17 @@ pub(crate) fn normalize_client_name(
         return Err(ClientNameError::TooLong);
     }
     Ok(Some(client_name))
+}
+
+/// Canonicalizes a client label that comes from outside Lyra's own clients, such as a
+/// protocol header, as [`normalize_client_name`] does, but strips control characters and
+/// truncates to [`MAX_CLIENT_NAME_LEN`] instead of rejecting the label.
+pub(crate) fn tidy_client_name(value: Option<String>) -> Option<String> {
+    let client_name =
+        canonical_client_name(&value?, |c| c.is_control() || is_invisible_strippable(c));
+    let truncated: String = client_name.chars().take(MAX_CLIENT_NAME_LEN).collect();
+    let client_name = truncated.trim_end_matches(char::is_whitespace);
+    (!client_name.is_empty()).then(|| client_name.to_string())
 }
 
 #[derive(Clone, Debug)]
@@ -625,5 +638,30 @@ mod tests {
             normalize_client_name(Some("x".repeat(MAX_CLIENT_NAME_LEN + 1))),
             Err(ClientNameError::TooLong)
         );
+    }
+
+    #[test]
+    fn tidy_client_name_strips_controls_and_invisibles() {
+        assert_eq!(
+            tidy_client_name(Some(" Pixel\n\u{85}\u{200B} 8\t".to_string())),
+            Some("Pixel 8".to_string())
+        );
+    }
+
+    #[test]
+    fn tidy_client_name_composes_and_truncates() {
+        let long = format!("{} tail", "e\u{301}".repeat(MAX_CLIENT_NAME_LEN - 1));
+        let tidied = tidy_client_name(Some(long)).unwrap();
+        assert_eq!(tidied, "\u{e9}".repeat(MAX_CLIENT_NAME_LEN - 1));
+        assert_eq!(
+            normalize_client_name(Some(tidied.clone())),
+            Ok(Some(tidied))
+        );
+    }
+
+    #[test]
+    fn tidy_client_name_discards_names_that_tidy_away() {
+        assert_eq!(tidy_client_name(Some("\n\u{200B} ".to_string())), None);
+        assert_eq!(tidy_client_name(None), None);
     }
 }

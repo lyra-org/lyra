@@ -96,14 +96,6 @@ impl LoginOutcome {
             retry_after_seconds: Some(retry_after.as_secs().max(1)),
         }
     }
-
-    fn invalid_client_name() -> Self {
-        Self {
-            status: "invalid_client_name",
-            result: None,
-            retry_after_seconds: None,
-        }
-    }
 }
 
 #[derive(Default, Deserialize)]
@@ -365,7 +357,8 @@ impl AuthModule {
 
     #[harmony(
         description = "Attempts to log in and returns the outcome, including a principal plus \
-                     session token on success.",
+                     session token on success. The session's `client_name` has control and \
+                     invisible characters stripped and is cut to 128 characters.",
         returns(LoginOutcome)
     )]
     async fn login(
@@ -377,7 +370,7 @@ impl AuthModule {
     ) -> luau::runtime::Result<luau::Value> {
         let metadata = SessionMetadata {
             user_agent,
-            client_name,
+            client_name: sessions::tidy_client_name(client_name),
         };
         let login = match login_with_password(
             &username,
@@ -392,13 +385,6 @@ impl AuthModule {
                 return harmony_luau::serializable_to_luau_owned(LoginOutcome::rate_limited(
                     retry_after,
                 ));
-            }
-            // A rejected `client_name` is caller input, not a runtime fault:
-            // report it like the other input failures rather than raising.
-            Err(AuthError::InvalidClientName(_)) => {
-                return harmony_luau::serializable_to_luau_owned(
-                    LoginOutcome::invalid_client_name(),
-                );
             }
             Err(err) => return Err(crate::plugins::runtime_error(err)),
         };
@@ -682,9 +668,7 @@ impl DescribeInterface for LoginOutcome {
         descriptor.fields.extend([
             FieldDescriptor {
                 name: "status",
-                ty: LuauType::literal(
-                    "\"ok\" | \"invalid_credentials\" | \"rate_limited\" | \"invalid_client_name\"",
-                ),
+                ty: LuauType::literal("\"ok\" | \"invalid_credentials\" | \"rate_limited\""),
                 description: None,
             },
             FieldDescriptor {
