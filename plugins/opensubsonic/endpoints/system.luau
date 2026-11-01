@@ -1,0 +1,43 @@
+--!strict
+-- This Source Code Form is subject to the terms of the Lyra Public License,
+-- v1.0. If a copy of the Lyra Public License was not distributed with this file,
+-- You can obtain one here:
+-- www.meshiplaw.com/lyra.
+
+local api = require("@lyra/api")
+
+local request = require("../protocol/request")
+local response = require("../protocol/response")
+
+type ApiQueryParams = api.ApiQueryParams
+type ApiResponse = api.ApiResponse
+type Request = request.Request
+
+local EXTENSIONS = {
+	{ name = "apiKeyAuthentication", versions = { 1 } },
+	{ name = "formPost", versions = { 1 } },
+	{ name = "songLyrics", versions = { 1 } },
+	{ name = "transcodeOffset", versions = { 1 } },
+}
+
+-- Methods served without authentication.
+local public_methods: { [string]: (params: ApiQueryParams) -> ApiResponse } = {
+	getOpenSubsonicExtensions = function(params: ApiQueryParams): ApiResponse
+		return response.ok(params, { openSubsonicExtensions = EXTENSIONS })
+	end,
+}
+
+local module = {}
+
+module.public_methods = public_methods
+
+module.methods = {
+	ping = function(req: Request): ApiResponse
+		return response.ok(req.params)
+	end,
+	tokenInfo = function(req: Request): ApiResponse
+		return response.ok(req.params, { tokenInfo = { username = req.auth.principal.username } })
+	end,
+}
+
+return module

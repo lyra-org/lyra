@@ -9,16 +9,14 @@ local server = require("@lyra/server")
 
 local serde = require("@harmony/serde")
 
+local request = require("./request")
+
 type ApiQueryParams = api.ApiQueryParams
 type ApiResponse = api.ApiResponse
 type JsonValue = api.JsonValue
 type JsonObject = { [string]: JsonValue }
 
-export type SubsonicError = {
-	code: number,
-	message: string,
-	helpUrl: string?,
-}
+export type SubsonicError = request.SubsonicError
 
 local PROTOCOL_VERSION = "1.16.1"
 local SERVER_TYPE = "lyra"
@@ -27,13 +25,6 @@ local XML_NAMESPACE = "http://subsonic.org/restapi"
 local JSONP_CALLBACK_PATTERN = "^[%a_$][%w_$.]*$"
 
 local module = {}
-
--- Returns a query parameter's first non-empty value.
-function module.param(query: ApiQueryParams, name: string): string?
-	local values = query[name]
-	local value = if values then values[1] else nil
-	return if value ~= nil and value ~= "" then value else nil
-end
 
 function module.error(code: number, message: string, help_url: string?): SubsonicError
 	return {
@@ -57,33 +48,48 @@ local function envelope(status: string, body: JsonObject?): JsonObject
 	return fields
 end
 
+-- Marks an empty object, such as a result with nothing found. Any other empty table is an empty
+-- list: `[]` in JSON, and no elements in XML.
+module.EMPTY_OBJECT = serde.empty_object()
+
+-- Elements whose field of this name is the element's text rather than an attribute.
+local XML_TEXT_FIELDS: { [string]: string } = {
+	line = "value",
+}
+
 -- Subsonic XML carries scalars as attributes and lists as repeated elements.
-local function to_xml_element(value: { [string]: any }): { [string]: any }
+local function to_xml_element(value: { [string]: any }, name: string?): { [string]: any }
+	local text_field = if name then XML_TEXT_FIELDS[name] else nil
 	local element = {}
 	for key, child in value do
-		if type(child) ~= "table" then
+		if key == text_field then
+			element["$text"] = child
+		elseif child == module.EMPTY_OBJECT then
+			element[key] = module.EMPTY_OBJECT
+		elseif type(child) ~= "table" then
 			element[`@{key}`] = child
 		elseif child[1] ~= nil then
 			local items = {}
 			for _, item in child do
-				table.insert(items, if type(item) == "table" then to_xml_element(item) else item)
+				table.insert(items, if type(item) == "table" then to_xml_element(item, key) else item)
 			end
 			element[key] = items
 		elseif next(child) ~= nil then
-			element[key] = to_xml_element(child)
+			local nested = to_xml_element(child, key)
+			element[key] = if next(nested) ~= nil then nested else module.EMPTY_OBJECT
 		end
 	end
 	return element
 end
 
 local function render(query: ApiQueryParams, fields: JsonObject, http_status: number): ApiResponse
-	local format = module.param(query, "f")
+	local format = request.param(query, "f")
 	if format == "json" or format == "jsonp" then
 		local json = serde.json.encode({ ["subsonic-response"] = fields })
 		if format == "json" then
 			return api.response.text(http_status, json, { ["content-type"] = "application/json; charset=utf-8" })
 		end
-		local callback = module.param(query, "callback")
+		local callback = request.param(query, "callback")
 		if not callback or not string.match(callback, JSONP_CALLBACK_PATTERN) then
 			local missing = envelope("failed", { error = module.error(10, "Required parameter is missing: callback") })
 			return render({ f = { "json" } }, missing, 200)

@@ -7,6 +7,7 @@
 local api = require("@lyra/api")
 local auth = require("@lyra/auth")
 
+local request = require("./request")
 local response = require("./response")
 
 type ApiQueryParams = api.ApiQueryParams
@@ -42,14 +43,18 @@ end
 -- Lyra can't verify `t`/`s`, which needs the password itself.
 function module.authenticate(query: ApiQueryParams): (ResolvedAuth?, SubsonicError?)
 	if not auth.capabilities().enabled then
-		return auth.resolve_auth(nil), nil
+		local resolved = auth.resolve_auth(nil)
+		if not resolved then
+			return nil, response.error(0, "The default user is unavailable")
+		end
+		return resolved, nil
 	end
 
-	local api_key = response.param(query, "apiKey")
-	local username = response.param(query, "u")
-	local password = response.param(query, "p")
-	local token = response.param(query, "t")
-	local salt = response.param(query, "s")
+	local api_key = request.param(query, "apiKey")
+	local username = request.param(query, "u")
+	local password = request.param(query, "p")
+	local token = request.param(query, "t")
+	local salt = request.param(query, "s")
 	local help_url = module.HELP_URL
 
 	if api_key then

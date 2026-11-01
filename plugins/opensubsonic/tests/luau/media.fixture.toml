@@ -1,0 +1,57 @@
+run_as = "listener"
+
+# The listener sees "Album" and its songs Synced and Plain; "Secret" is in a library nobody is
+# granted.
+
+[[users]]
+key = "listener"
+
+[[api_keys]]
+key = "listener_key"
+user = "listener"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener"]
+
+[[libraries]]
+key = "locked"
+name = "Locked"
+
+[[artists]]
+key = "amy"
+name = "Amy"
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+artists = ["amy"]
+
+[[releases]]
+key = "secret"
+title = "Secret"
+library = "locked"
+
+[[tracks]]
+key = "synced"
+title = "Synced"
+release = "album"
+duration_ms = 180000
+artists = ["amy"]
+file = "song.opus"
+
+[[tracks]]
+key = "plain"
+title = "Plain"
+release = "album"
+duration_ms = 180000
+artists = ["amy"]
+file = "song.opus"
+
+[[tracks]]
+key = "hidden"
+title = "Hidden"
+release = "secret"
+file = "song.opus"

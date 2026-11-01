@@ -1,0 +1,91 @@
+run_as = "owner"
+
+# The owner and the other user see "Album" with A, B and C; "Secret" holds H, which only the
+# admin sees. The owner has "Mine" (A, B, C, A); the other user has the private "Theirs" (B) and
+# the public "Shared" (A, H).
+
+[[users]]
+key = "owner"
+
+[[users]]
+key = "other"
+
+[[users]]
+key = "admin"
+admin = true
+
+[[api_keys]]
+key = "owner_key"
+user = "owner"
+
+[[api_keys]]
+key = "other_key"
+user = "other"
+
+[[api_keys]]
+key = "admin_key"
+user = "admin"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["owner", "other"]
+
+[[libraries]]
+key = "locked"
+name = "Locked"
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+
+[[releases]]
+key = "secret"
+title = "Secret"
+library = "locked"
+
+[[tracks]]
+key = "a"
+title = "A"
+release = "album"
+track = 1
+duration_ms = 60000
+
+[[tracks]]
+key = "b"
+title = "B"
+release = "album"
+track = 2
+duration_ms = 120000
+
+[[tracks]]
+key = "c"
+title = "C"
+release = "album"
+track = 3
+duration_ms = 30000
+
+[[tracks]]
+key = "h"
+title = "H"
+release = "secret"
+
+[[playlists]]
+key = "mine"
+owner = "owner"
+name = "Mine"
+tracks = ["a", "b", "c", "a"]
+
+[[playlists]]
+key = "theirs"
+owner = "other"
+name = "Theirs"
+tracks = ["b"]
+
+[[playlists]]
+key = "shared"
+owner = "other"
+name = "Shared"
+public = true
+tracks = ["a", "h"]

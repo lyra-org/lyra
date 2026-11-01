@@ -41,3 +41,27 @@ assert(string.find(xml.body, 'xmlns="http://subsonic.org/restapi"', 1, true))
 assert(string.find(xml.body, 'status="ok"', 1, true))
 assert(string.find(xml.body, '<openSubsonicExtensions name="apiKeyAuthentication">', 1, true))
 assert(string.find(xml.body, "<versions>1</versions><versions>2</versions>", 1, true))
+
+-- Empty lists and empty objects stay apart in both formats.
+local empties = { results = response.EMPTY_OBJECT, folders = { folder = {} } }
+local empty_json = (serde.json.decode((response.ok(query({ f = "json" }), empties) :: any).body) :: any)["subsonic-response"]
+assert(type(empty_json.results) == "table" and next(empty_json.results) == nil, "an empty object")
+local raw_json = (response.ok(query({ f = "json" }), empties) :: any).body
+assert(string.find(raw_json, '"results":{}', 1, true), raw_json)
+assert(string.find(raw_json, '"folder":[]', 1, true), raw_json)
+local empty_xml = (response.ok(query({}), empties) :: any).body
+assert(string.find(empty_xml, "<results/>", 1, true), empty_xml)
+assert(string.find(empty_xml, "<folders/>", 1, true), empty_xml)
+
+-- A lyric line's value is its element's text.
+local lines_xml = (response.ok(query({}), {
+	lyricsList = {
+		structuredLyrics = {
+			{ synced = true, line = {
+				{ value = "Hello", start = 1000 },
+				{ value = "World" },
+			} },
+		},
+	},
+}) :: any).body
+assert(string.find(lines_xml, '<line start="1000">Hello</line><line>World</line>', 1, true), lines_xml)
