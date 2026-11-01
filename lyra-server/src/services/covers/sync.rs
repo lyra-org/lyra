@@ -136,21 +136,29 @@ async fn write_cover_image(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-async fn prune_other_covers(dirs: &[PathBuf], target_path: Option<&Path>) -> Result<()> {
-    for dir in dirs {
-        for ext in COVER_EXTENSIONS {
-            let cover = dir.join(format!("cover.{ext}"));
-            if target_path == Some(cover.as_path()) {
-                continue;
-            }
-
-            if cover.exists() {
-                let _ = fs::remove_file(&cover).await;
+/// Saves a provider cover in the entity's directory under the covers root and records it as the
+/// entity's cover. Replacing removes only covers in that directory, never files in a library.
+async fn save_provider_cover(
+    db: &lyra_db::DbAsync,
+    owner_id: DbId,
+    target_dir: &Path,
+    ext: &str,
+    bytes: &[u8],
+    replace_existing: bool,
+) -> Result<PathBuf> {
+    let target = target_dir.join(format!("cover.{ext}"));
+    if replace_existing {
+        for other_ext in COVER_EXTENSIONS {
+            let other = target_dir.join(format!("cover.{other_ext}"));
+            if other != target && other.exists() {
+                let _ = fs::remove_file(&other).await;
             }
         }
     }
 
-    Ok(())
+    write_cover_image(&target, bytes).await?;
+    upsert_cover_metadata(db, owner_id, &target).await?;
+    Ok(target)
 }
 
 pub(crate) async fn sync_release_cover_for_tracks(
@@ -226,18 +234,15 @@ pub(crate) async fn sync_release_cover_for_tracks(
             }
         };
 
-        let target = target_dir.join(format!("cover.{ext}"));
-        if options.replace_existing {
-            if let Some(existing) = existing_cover.as_ref()
-                && existing != &target
-            {
-                let _ = fs::remove_file(existing).await;
-            }
-
-            prune_other_covers(std::slice::from_ref(&target_dir), Some(&target)).await?;
-        }
-
-        write_cover_image(&target, &bytes).await?;
+        let target = save_provider_cover(
+            db,
+            release_id,
+            &target_dir,
+            ext,
+            &bytes,
+            options.replace_existing,
+        )
+        .await?;
         tracing::info!(
             provider = %provider_id,
             release = %release.release_title,
@@ -320,18 +325,15 @@ pub(crate) async fn sync_artist_cover(
             }
         };
 
-        let target = target_dir.join(format!("cover.{ext}"));
-        if options.replace_existing {
-            if let Some(existing) = existing_cover.as_ref()
-                && existing != &target
-            {
-                let _ = fs::remove_file(existing).await;
-            }
-
-            prune_other_covers(std::slice::from_ref(&target_dir), Some(&target)).await?;
-        }
-
-        write_cover_image(&target, &bytes).await?;
+        let target = save_provider_cover(
+            db,
+            artist_id,
+            &target_dir,
+            ext,
+            &bytes,
+            options.replace_existing,
+        )
+        .await?;
         tracing::info!(
             provider = %provider_id,
             artist = %artist.artist_name,
@@ -345,6 +347,7 @@ pub(crate) async fn sync_artist_cover(
 }
 
 struct CoverResolveContext {
+    release_id: DbId,
     release_title: String,
     existing_cover: Option<PathBuf>,
     target_dir: PathBuf,
@@ -352,15 +355,15 @@ struct CoverResolveContext {
 }
 
 struct CoverDownloadTask {
+    release_id: DbId,
     release_title: String,
     provider_id: String,
     cover_url: String,
     target_dir: PathBuf,
-    existing_cover: Option<PathBuf>,
     replace_existing: bool,
 }
 
-async fn execute_cover_download(task: CoverDownloadTask) -> bool {
+async fn execute_cover_download(db: lyra_db::DbAsync, task: CoverDownloadTask) -> bool {
     let (bytes, ext) =
         match download_cover(&task.provider_id, EntityType::Release, &task.cover_url).await {
             Ok(value) => value,
@@ -375,34 +378,27 @@ async fn execute_cover_download(task: CoverDownloadTask) -> bool {
             }
         };
 
-    let target = task.target_dir.join(format!("cover.{ext}"));
-    if task.replace_existing {
-        if let Some(existing) = task.existing_cover.as_ref()
-            && existing != &target
-        {
-            let _ = fs::remove_file(existing).await;
-        }
-
-        if let Err(err) =
-            prune_other_covers(std::slice::from_ref(&task.target_dir), Some(&target)).await
-        {
+    let target = match save_provider_cover(
+        &db,
+        task.release_id,
+        &task.target_dir,
+        ext,
+        &bytes,
+        task.replace_existing,
+    )
+    .await
+    {
+        Ok(target) => target,
+        Err(err) => {
             tracing::warn!(
-                release = %task.release_title,
+                provider = %task.provider_id,
+                cover_url = %task.cover_url,
                 error = %err,
-                "failed to prune other covers"
+                "failed to save cover image"
             );
+            return false;
         }
-    }
-
-    if let Err(err) = write_cover_image(&target, &bytes).await {
-        tracing::warn!(
-            provider = %task.provider_id,
-            cover_url = %task.cover_url,
-            error = %err,
-            "failed to write cover image"
-        );
-        return false;
-    }
+    };
 
     tracing::info!(
         provider = %task.provider_id,
@@ -531,6 +527,7 @@ pub(crate) async fn sync_release_covers_for_library(
             }
 
             contexts.push(CoverResolveContext {
+                release_id,
                 release_title: release.release_title.clone(),
                 existing_cover,
                 target_dir,
@@ -573,11 +570,11 @@ pub(crate) async fn sync_release_covers_for_library(
             };
 
             downloads.push(CoverDownloadTask {
+                release_id: ctx.release_id,
                 release_title: ctx.release_title.clone(),
                 provider_id: provider_id.clone(),
                 cover_url,
                 target_dir: target_dir.clone(),
-                existing_cover: ctx.existing_cover.clone(),
                 replace_existing: options.replace_existing,
             });
             break; // first provider with a URL wins
@@ -597,8 +594,9 @@ pub(crate) async fn sync_release_covers_for_library(
             .acquire_owned()
             .await
             .map_err(|_| anyhow!("download semaphore closed"))?;
+        let db = db.clone();
         tasks.spawn(async move {
-            let result = execute_cover_download(dl).await;
+            let result = execute_cover_download(db, dl).await;
             drop(permit);
             result
         });
@@ -884,6 +882,7 @@ mod tests {
     use std::fs as std_fs;
 
     use super::*;
+    use crate::services::covers::resolve_cover_for_release_id;
     use lyra_db::fixtures::insert_release;
     use lyra_db::test_db::new_test_db;
 
@@ -974,6 +973,42 @@ mod tests {
         assert!(!inserted_again);
 
         let _ = std_fs::remove_file(cover_path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn replacing_a_scanned_cover_keeps_the_library_file() -> anyhow::Result<()> {
+        let db = lyra_db::DbAsync::new(new_test_db()?);
+        let release_id = {
+            let mut db_write = db.write().await;
+            insert_release(&mut db_write, "Release")?
+        };
+        let root = std::env::temp_dir().join(format!("lyra-test-covers-{}", nanoid!()));
+        let library_cover = root.join("library").join("Release").join("cover.png");
+        std_fs::create_dir_all(library_cover.parent().unwrap())?;
+        std_fs::write(&library_cover, PNG_1X1)?;
+        upsert_release_cover_metadata(&db, release_id, &library_cover).await?;
+
+        let covers_root = root.join("covers");
+        let target_dir = configured_cover_dir_for_release(&covers_root, release_id);
+        std_fs::create_dir_all(&target_dir)?;
+        std_fs::write(target_dir.join("cover.jpg"), PNG_1X1)?;
+
+        let saved = save_provider_cover(&db, release_id, &target_dir, "png", PNG_1X1, true).await?;
+
+        assert!(library_cover.is_file());
+        assert!(!target_dir.join("cover.jpg").exists());
+        let resolved = resolve_cover_for_release_id(
+            &*db.read().await,
+            release_id,
+            CoverPaths {
+                library_root: Some(&root.join("library")),
+                covers_root: &covers_root,
+            },
+        )?;
+        assert_eq!(resolved, Some(saved));
+
+        let _ = std_fs::remove_dir_all(root);
         Ok(())
     }
 }
