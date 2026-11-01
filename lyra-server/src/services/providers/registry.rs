@@ -401,6 +401,17 @@ impl ProviderRegistry {
             .and_then(|provider| provider.cover_handlers.get(&entity_type))
     }
 
+    /// The plugin that owns the provider's cover handler for `entity_type`,
+    /// while one is registered.
+    pub(crate) fn cover_handler_owner(
+        &self,
+        provider_id: &str,
+        entity_type: EntityType,
+    ) -> Option<&PluginId> {
+        self.get_cover_handler(provider_id, entity_type)?;
+        self.plugin_by_provider.get(provider_id)
+    }
+
     pub(crate) fn set_similar_releases_handler(
         &mut self,
         provider_id: &str,

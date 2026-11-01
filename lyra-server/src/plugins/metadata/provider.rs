@@ -326,6 +326,19 @@ fn cover_callback(
         ));
     }
 
+    // Cover sync downloads the URLs the handler returns, so they reach the
+    // network on the plugin's behalf.
+    if !vm
+        .data()
+        .get::<harmony_core::luau::RequireRuntime>()?
+        .allows(&context.origin, harmony_http::SCOPE)
+    {
+        return Err(crate::plugins::runtime_error(format!(
+            "provider:cover requires the {} scope",
+            harmony_http::SCOPE
+        )));
+    }
+
     let (timeout, require) = parse_cover_spec(&config)?;
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
     let context = context.clone();

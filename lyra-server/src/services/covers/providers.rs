@@ -645,7 +645,7 @@ pub(crate) fn artist_context_value(
     Ok(context)
 }
 
-pub(crate) async fn resolve_provider_cover_url(
+async fn resolve_provider_cover_url(
     provider_id: &str,
     entity_type: EntityType,
     context: &Value,

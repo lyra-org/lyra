@@ -17,6 +17,7 @@ use anyhow::{
     Result,
     anyhow,
 };
+use nanoid::nanoid;
 use rayon::iter::{
     IntoParallelIterator,
     ParallelIterator,
@@ -27,11 +28,11 @@ use tokio::{
     sync::Semaphore,
     task::JoinSet,
 };
-use url::Url;
 
-use nanoid::nanoid;
-
-use crate::services::providers::active_providers;
+use crate::services::providers::{
+    active_providers,
+    provider_registry,
+};
 use lyra_db::{
     Artist,
     Cover,
@@ -51,6 +52,7 @@ use super::{
         validate_cover_image,
     },
     providers::{
+        EntityType,
         artist_context_value,
         library_for_release,
         provider_external_ids_for_entity,
@@ -69,47 +71,46 @@ use super::{
 
 const MAX_COVER_BYTES: usize = 20 * 1024 * 1024;
 
-/// Downloads the cover at `url` with the extension its bytes call for.
-async fn download_cover(url: &str) -> Result<(Vec<u8>, &'static str)> {
-    let response = harmony_http::shared_client()
-        .get(url)
-        .send()
+/// Downloads the cover at `url` that the provider's cover handler for
+/// `entity_type` returned, on behalf of the plugin that still owns that
+/// handler, with the extension its bytes call for.
+///
+/// Registering a cover handler is the `harmony.http` scope gate, so the
+/// download needs no scope check of its own. The owner is looked up here,
+/// not when the URL was produced, so that URLs queued by a batch sync are
+/// skipped once their plugin unloads or loses the handler.
+async fn download_cover(
+    provider_id: &str,
+    entity_type: EntityType,
+    url: &str,
+) -> Result<(Vec<u8>, &'static str)> {
+    let plugin_id = provider_registry()
+        .read()
+        .await
+        .cover_handler_owner(provider_id, entity_type)
+        .cloned()
+        .ok_or_else(|| {
+            anyhow!(
+                "provider '{provider_id}' no longer has a {} cover handler",
+                entity_type.as_str()
+            )
+        })?;
+    let request = harmony_http::Request::get(url).max_body_bytes(MAX_COVER_BYTES);
+    let response = harmony_http::request_as(plugin_id.as_str(), request)
         .await
         .with_context(|| format!("failed to download cover from {url}"))?;
-
-    if !response.status().is_success() {
+    if !(200..300).contains(&response.status) {
         return Err(anyhow!(
-            "cover download failed with status {} for {}",
-            response.status(),
-            url
+            "cover download failed with status {} for {url}",
+            response.status
         ));
     }
-
-    if let Some(size) = response.content_length()
-        && size > MAX_COVER_BYTES as u64
-    {
-        return Err(anyhow!(
-            "cover download from {url} exceeded max size {MAX_COVER_BYTES}"
-        ));
-    }
-
-    let bytes = response
-        .bytes()
-        .await
-        .with_context(|| format!("failed to read cover response from {url}"))?
-        .to_vec();
-
-    if bytes.len() > MAX_COVER_BYTES {
-        return Err(anyhow!(
-            "cover download from {url} exceeded max size {MAX_COVER_BYTES}"
-        ));
-    }
-
-    let (bytes, extension) =
-        tokio::task::spawn_blocking(move || validate_cover_image(&bytes).map(|ext| (bytes, ext)))
-            .await
-            .context("cover validation task panicked")?
-            .with_context(|| format!("cover from {url} is not a usable image"))?;
+    let (bytes, extension) = tokio::task::spawn_blocking(move || {
+        validate_cover_image(&response.body).map(|ext| (response.body, ext))
+    })
+    .await
+    .context("cover validation task panicked")?
+    .with_context(|| format!("cover from {url} is not a usable image"))?;
     Ok((bytes, extension))
 }
 
@@ -211,16 +212,8 @@ pub(crate) async fn sync_release_cover_for_tracks(
             }
         };
 
-        if Url::parse(&cover_url).is_err() {
-            tracing::warn!(
-                provider = %provider_id,
-                cover_url = %cover_url,
-                "invalid cover_url from provider cover handler"
-            );
-            continue;
-        }
-
-        let (bytes, ext) = match download_cover(&cover_url).await {
+        let (bytes, ext) = match download_cover(&provider_id, EntityType::Release, &cover_url).await
+        {
             Ok(value) => value,
             Err(err) => {
                 tracing::warn!(
@@ -313,16 +306,8 @@ pub(crate) async fn sync_artist_cover(
             }
         };
 
-        if Url::parse(&cover_url).is_err() {
-            tracing::warn!(
-                provider = %provider_id,
-                cover_url = %cover_url,
-                "invalid cover_url from provider cover handler"
-            );
-            continue;
-        }
-
-        let (bytes, ext) = match download_cover(&cover_url).await {
+        let (bytes, ext) = match download_cover(&provider_id, EntityType::Artist, &cover_url).await
+        {
             Ok(value) => value,
             Err(err) => {
                 tracing::warn!(
@@ -376,18 +361,19 @@ struct CoverDownloadTask {
 }
 
 async fn execute_cover_download(task: CoverDownloadTask) -> bool {
-    let (bytes, ext) = match download_cover(&task.cover_url).await {
-        Ok(value) => value,
-        Err(err) => {
-            tracing::warn!(
-                provider = %task.provider_id,
-                cover_url = %task.cover_url,
-                error = %err,
-                "failed to download cover"
-            );
-            return false;
-        }
-    };
+    let (bytes, ext) =
+        match download_cover(&task.provider_id, EntityType::Release, &task.cover_url).await {
+            Ok(value) => value,
+            Err(err) => {
+                tracing::warn!(
+                    provider = %task.provider_id,
+                    cover_url = %task.cover_url,
+                    error = %err,
+                    "failed to download cover"
+                );
+                return false;
+            }
+        };
 
     let target = task.target_dir.join(format!("cover.{ext}"));
     if task.replace_existing {
@@ -585,15 +571,6 @@ pub(crate) async fn sync_release_covers_for_library(
                     continue;
                 }
             };
-
-            if Url::parse(&cover_url).is_err() {
-                tracing::warn!(
-                    provider = %provider_id,
-                    cover_url = %cover_url,
-                    "invalid cover_url from provider cover handler"
-                );
-                continue;
-            }
 
             downloads.push(CoverDownloadTask {
                 release_title: ctx.release_title.clone(),
@@ -955,6 +932,29 @@ mod tests {
         .await?;
 
         assert!(!synced);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn download_cover_refuses_a_provider_without_a_registered_cover_handler()
+    -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+
+        let error = download_cover(
+            "unregistered-cover-provider",
+            EntityType::Release,
+            "http://127.0.0.1:9/cover.png",
+        )
+        .await
+        .expect_err("no plugin owns the handler the URL came from");
+
+        assert!(
+            error
+                .to_string()
+                .contains("no longer has a release cover handler"),
+            "{error:#}"
+        );
         Ok(())
     }
 
