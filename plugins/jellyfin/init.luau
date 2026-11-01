@@ -443,7 +443,8 @@ api.post(P .. "/Users/AuthenticateByName", function(ctx: ApiContext)
 		return parse_err or responses.bad_request("invalid authentication request body")
 	end
 
-	local outcome = auth.login(credentials.username, credentials.password)
+	local user_agent, client_name = session.login_metadata(ctx)
+	local outcome = auth.login(credentials.username, credentials.password, user_agent, client_name)
 	if outcome.status == "rate_limited" then
 		local headers: { [string]: string } = {}
 		if outcome.retry_after_seconds then

@@ -26,6 +26,7 @@ local module = {}
 
 type ApiContext = api.ApiContext
 type ApiQueryParams = api.ApiQueryParams
+type ApiRequest = api.ApiRequest
 type ApiResponse = api.ApiResponse
 type JsonValue = api.JsonValue
 type JsonObject = { [string]: JsonValue }
@@ -67,6 +68,8 @@ export type ClientIdentity = {
 	device: string,
 	device_id: string,
 	version: string,
+	-- The client as Lyra names it: the app, then the device when the client named one.
+	label: string,
 }
 
 -- Mirrors the server: the admin permission grants every other permission.
@@ -330,6 +333,34 @@ function module.adopt_optional_auth(ctx: ApiContext?)
 	pcall(resolve_jellyfin_auth, ctx)
 end
 
+-- The client, device, device id and version a request sends, from its Authorization header or,
+-- for browser WebSockets, its query parameters.
+local function request_identity(request: ApiRequest): (string?, string?, string?, string?)
+	local query = request.query
+	local header_values = mediabrowser_header_values(request.headers)
+
+	local function take(header_key: string, query_keys: { string }): string?
+		local header_value = requests.trim(header_values[header_key])
+		if header_value then
+			return header_value
+		end
+		return requests.parse_query_string(query, query_keys, nil)
+	end
+
+	return take("client", { "client", "Client" }),
+		take("device", { "device", "Device" }),
+		take("deviceid", { "deviceId", "DeviceId", "deviceid" }),
+		take("version", { "version", "Version" })
+end
+
+-- As upstream lists a session by its device and app, Lyra's one label names both.
+local function client_label(client: string, device: string?): string
+	if device and device ~= client then
+		return `{client} · {device}`
+	end
+	return client
+end
+
 -- Request identity overrides the login defaults without changing the saved binding.
 -- Browser WebSockets supply these via query parameters instead of custom headers.
 function module.resolve_client_identity(
@@ -342,22 +373,7 @@ function module.resolve_client_identity(
 		return nil, "missing request"
 	end
 
-	local headers = request.headers
-	local query = request.query
-	local header_values = mediabrowser_header_values(headers)
-
-	local function take(header_key: string, query_keys: { string }): string?
-		local header_value = requests.trim(header_values[header_key])
-		if header_value then
-			return header_value
-		end
-		return requests.parse_query_string(query, query_keys, nil)
-	end
-
-	local client: string? = take("client", { "client", "Client" })
-	local device: string? = take("device", { "device", "Device" })
-	local device_id: string? = take("deviceid", { "deviceId", "DeviceId", "deviceid" })
-	local version: string? = take("version", { "version", "Version" })
+	local client: string?, device: string?, device_id: string?, version: string? = request_identity(request)
 
 	if not resolved_auth or not token then
 		local request_auth, request_token = module.require_jellyfin_auth(ctx)
@@ -377,6 +393,7 @@ function module.resolve_client_identity(
 			version = version or (if type(fields.version) == "string" then fields.version else nil)
 		end
 	end
+	local named_device = device
 	if resolved_auth and resolved_auth.credential.kind == "api_key" then
 		client = resolved_auth.credential.api_key_name
 		device_id = device_id or SERVER_ID
@@ -393,8 +410,17 @@ function module.resolve_client_identity(
 		device = device or client,
 		device_id = device_id :: string,
 		version = version or "",
+		label = client_label(client, named_device),
 	}
 	return identity, nil
+end
+
+-- The session metadata a login records, from the identity the login request sends.
+function module.login_metadata(ctx: ApiContext): (string?, string?)
+	local request = ctx.request
+	local client, device = request_identity(request)
+	local client_name = if client then client_label(client, device) else nil
+	return requests.trim(request.headers["user-agent"]), client_name
 end
 
 function module.remember_login_identity(ctx: ApiContext, resolved_auth: ResolvedAuth, token: string)
@@ -427,16 +453,6 @@ function module.require_jellyfin_principal(ctx: ApiContext?): Principal?
 	return resolved_auth.principal
 end
 
--- Lyra refuses a report whose client name is too long or holds control characters, while Jellyfin
--- accepts any device name, so such a device reports without one.
-local function reportable_client_name(device: string): string?
-	local _, length = string.gsub(device, "[^\x80-\xBF]", "")
-	if length > 128 or string.find(device, "%c") or string.find(device, "\xC2[\x80-\x9F]") then
-		return nil
-	end
-	return device
-end
-
 local function report_client_playback(
 	resolved_auth: ResolvedAuth,
 	payload: playback.PlaybackPayload,
@@ -448,7 +464,7 @@ local function report_client_playback(
 	local session_id = module.build_session_id(principal, identity)
 	return playback.report_playback_event(resolved_auth, payload, event_name, session_id, {
 		session_info = module.build_session_info(session_id, principal, identity, module.current_iso_timestamp()),
-		client_name = reportable_client_name(identity.device),
+		client_name = identity.label,
 		via_socket = via_socket,
 	})
 end
