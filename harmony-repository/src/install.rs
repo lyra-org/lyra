@@ -235,8 +235,8 @@ fn displaced_path(plugins_dir: &Path, id: &str) -> PathBuf {
 }
 
 /// Moves every `staged` install into its plugins directory, replacing what
-/// is installed under its id, all or none: when one cannot be promoted,
-/// those promoted before it are put back as they were.
+/// is installed under its id, all or none: when one cannot be promoted, or a
+/// panic interrupts them, those promoted before it are put back as they were.
 ///
 /// The caller must still hold the exclusive access to their `plugins_dir`
 /// that [`stage_candidate`] requires.
@@ -244,25 +244,29 @@ fn displaced_path(plugins_dir: &Path, id: &str) -> PathBuf {
 /// Returns the source records written into the installed directories, in
 /// the order of `staged`.
 pub fn promote_together(staged: Vec<StagedInstall>) -> Result<Vec<SourceRecord>, InstallError> {
-    let mut promoted = Vec::new();
+    let mut promoted = Rollback(Vec::new());
     for install in &staged {
-        match promote(install) {
-            Ok(done) => promoted.push(done),
-            Err(error) => {
-                for done in promoted.into_iter().rev() {
-                    done.restore();
-                }
-                return Err(error);
-            }
-        }
+        promoted.0.push(promote(install)?);
     }
-    for done in promoted {
+    for done in std::mem::take(&mut promoted.0) {
         done.finish();
     }
     Ok(staged
         .iter()
         .map(|install| install.record.clone())
         .collect())
+}
+
+/// Promotions of one [`promote_together`] that are not final yet. Dropping
+/// it, on an error or a panic, puts back what they replaced, newest first.
+struct Rollback(Vec<Promoted>);
+
+impl Drop for Rollback {
+    fn drop(&mut self) {
+        while let Some(done) = self.0.pop() {
+            done.restore();
+        }
+    }
 }
 
 /// A staged install moved into place, with the install it replaced.
