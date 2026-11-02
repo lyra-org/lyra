@@ -62,6 +62,7 @@ constants.configure_root_item_id(resolve_root_item_id())
 
 local active_sessions = require("@self/protocol/active_sessions")
 local audio_routes = require("@self/routes/audio")
+local bitrate_test = require("@self/routes/bitrate_test")
 local catalog = require("@self/protocol/items/catalog")
 local discovery = require("@self/protocol/discovery")
 local filters = require("@self/protocol/items/filters")
@@ -641,68 +642,6 @@ api.get(P .. "/System/Endpoint", function(ctx: ApiContext)
 		IsLocal = in_network,
 		IsInNetwork = in_network,
 	})
-end, { auth = "public", case_insensitive = true })
-local BITRATE_TEST_DEFAULT_SIZE = 102400
-local BITRATE_TEST_MIN_SIZE = 1
-local BITRATE_TEST_MAX_SIZE = 100000000
-local BITRATE_TEST_CHUNK = string.rep("0", 65536)
-
-local function parse_bitrate_test_size(ctx: ApiContext): (number?, ApiResponse?)
-	local query = if ctx and ctx.request then ctx.request.query else nil
-	local raw_size = requests.parse_query_string(query, { "Size", "size" }, nil)
-	if raw_size == nil then
-		return BITRATE_TEST_DEFAULT_SIZE, nil
-	end
-
-	local size = tonumber(requests.trim(raw_size) or "")
-	if type(size) ~= "number" or size ~= size or math.floor(size) ~= size then
-		return nil,
-			responses.bad_request(
-				"The requested size must be greater than or equal to 1 and less than or equal to 100000000"
-			)
-	end
-
-	local parsed = size :: number
-	if parsed < BITRATE_TEST_MIN_SIZE or parsed > BITRATE_TEST_MAX_SIZE then
-		return nil,
-			responses.bad_request(
-				"The requested size must be greater than or equal to 1 and less than or equal to 100000000"
-			)
-	end
-
-	return parsed, nil
-end
-
-local function build_bitrate_test_body(size: number): string
-	if size <= #BITRATE_TEST_CHUNK then
-		return string.sub(BITRATE_TEST_CHUNK, 1, size)
-	end
-
-	local remaining = size
-	local chunks = {}
-	while remaining > #BITRATE_TEST_CHUNK do
-		table.insert(chunks, BITRATE_TEST_CHUNK)
-		remaining -= #BITRATE_TEST_CHUNK
-	end
-	if remaining > 0 then
-		table.insert(chunks, string.sub(BITRATE_TEST_CHUNK, 1, remaining))
-	end
-
-	return table.concat(chunks)
-end
-
-api.get(P .. "/Playback/BitrateTest", function(ctx: ApiContext)
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-
-	local size, size_err = parse_bitrate_test_size(ctx)
-	if size_err then
-		return size_err
-	end
-
-	return api.response.bytes(200, build_bitrate_test_body(size :: number))
 end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Library/VirtualFolders", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
@@ -1956,6 +1895,7 @@ end, { auth = "public", case_insensitive = true })
 -- from "present but malformed/negative" (value=nil, err=string). Zero is returned
 -- as-is so the server-side policy sees the value and can reject it.
 audio_routes.register()
+bitrate_test.register()
 api.post(P .. "/Items/{id}/PlaybackInfo", function(ctx: ApiContext)
 	local resolved_auth, access_token = session.require_jellyfin_auth(ctx)
 	if not resolved_auth then
