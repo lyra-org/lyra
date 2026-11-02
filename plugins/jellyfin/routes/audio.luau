@@ -171,6 +171,29 @@ local function infer_audio_codec(container: string?): string
 	return "aac"
 end
 
+-- The format and codecs the server delivers for a requested container and codecs, or else a bad
+-- request naming the one it does not deliver.
+local function delivery_request(
+	container: string?,
+	codecs: { string }?
+): (api.DeliveryFormat?, { api.DeliveryCodec }?, ApiResponse?)
+	local format: api.DeliveryFormat? = nil
+	if container ~= nil then
+		format = encoder.delivery_format(container)
+		if format == nil then
+			return nil, nil, responses.bad_request(`unsupported container: {container}`)
+		end
+	end
+	if codecs == nil then
+		return format, nil, nil
+	end
+	local delivered, unsupported = encoder.delivery_codecs(codecs)
+	if delivered == nil then
+		return nil, nil, responses.bad_request(`unsupported audio codec: {unsupported}`)
+	end
+	return format, delivered, nil
+end
+
 -- `/universal` takes the client's direct-play containers and falls back to its transcoding settings.
 function module.handle_universal_route(ctx: ApiContext): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
@@ -294,8 +317,12 @@ function module.handle_universal_route(ctx: ApiContext): ApiResponse
 			source_channels,
 			true
 		)
+		local _, hls_codecs, refused = delivery_request(nil, preferred_codecs)
+		if refused then
+			return refused
+		end
 		local options: api.HlsServeOptions = {
-			preferred_codecs = preferred_codecs,
+			preferred_codecs = hls_codecs,
 			bitrate_bps = settings.bitrate_bps,
 			sample_rate_hz = sample_rate_hz,
 			channels = settings.channels,
@@ -321,9 +348,13 @@ function module.handle_universal_route(ctx: ApiContext): ApiResponse
 		source_channels,
 		false
 	)
+	local format, codecs, refused = delivery_request(effective_transcoding_container, effective_preferred_codecs)
+	if refused then
+		return refused
+	end
 	local options: api.TrackStreamOptions = {
-		format = effective_transcoding_container,
-		preferred_codecs = effective_preferred_codecs,
+		format = format,
+		preferred_codecs = codecs,
 		bitrate_bps = settings.bitrate_bps,
 		sample_rate_hz = sample_rate_hz,
 		channels = settings.channels,
@@ -418,11 +449,15 @@ function module.handle_stream_route(ctx: ApiContext): ApiResponse
 	local source = media.resolve_public_playback_source(track)
 	local source_channels = if source then source.channel_count else nil
 	local settings = encoder.settings(query, channel_request, codecs, bitrate_bps, source_channels, false)
+	local format, delivered_codecs, refused = delivery_request(container, codecs)
+	if refused then
+		return refused
+	end
 
 	return api.response.stream_track(track_id, {
 		public = true,
-		format = container,
-		preferred_codecs = codecs,
+		format = format,
+		preferred_codecs = delivered_codecs,
 		bitrate_bps = settings.bitrate_bps,
 		sample_rate_hz = sample_rate_hz,
 		channels = settings.channels,
@@ -523,8 +558,12 @@ local function resolve_audio_hls_query_options(
 		true
 	)
 
+	local _, hls_codecs, refused = delivery_request(nil, preferred_codecs)
+	if refused then
+		return nil, nil, refused
+	end
 	return {
-		preferred_codecs = preferred_codecs,
+		preferred_codecs = hls_codecs,
 		bitrate_bps = settings.bitrate_bps,
 		sample_rate_hz = sample_rate_hz,
 		channels = settings.channels,

@@ -92,13 +92,6 @@ use self::websocket::{
     WebSocketRouteRequest,
     dispatch_websocket_route,
 };
-use crate::plugins::api::options::{
-    join_preferred_codecs,
-    parse_hls_serve_options,
-    parse_track_serve_options,
-    parse_u32_json,
-    stream_track_options,
-};
 use crate::plugins::api::{
     CaseInsensitiveRouter,
     RegisteredRoute,
@@ -117,7 +110,6 @@ use crate::routes::{
     track_response,
 };
 use crate::services::auth::resolve_optional_auth;
-use crate::services::delivery::ServeTrackOptions;
 use crate::services::remote::constants::{
     AUTH_CHECK_INTERVAL,
     MAX_CONSECUTIVE_AUTH_ERRORS,

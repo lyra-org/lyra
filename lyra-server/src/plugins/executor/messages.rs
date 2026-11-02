@@ -228,7 +228,8 @@ pub(crate) struct ApiHandlerResponse {
     pub(crate) path: Option<String>,
     pub(crate) transform: Option<serde_json::Value>,
     pub(crate) track_id: Option<String>,
-    pub(crate) options: Option<serde_json::Value>,
+    /// The options of a track response, read as it is served.
+    pub(crate) options: Option<crate::plugins::api::options::TrackResponseOptions>,
     /// Principal acting for the dispatch: seeded from boundary bearer auth
     /// and overwritten by `auth.resolve_auth`.
     pub(crate) principal: Option<crate::services::auth::Principal>,

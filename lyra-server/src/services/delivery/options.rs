@@ -9,7 +9,7 @@ use super::{
 };
 use crate::services::auth::media_tokens::DeliveryOptions;
 
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct ServeTrackOptions {
     pub(crate) format: Option<String>,
     pub(crate) codec: Option<String>,

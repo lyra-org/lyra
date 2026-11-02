@@ -70,6 +70,40 @@ function module.output_codec(codecs: { string }): string?
 	return codecs[1]
 end
 
+local DELIVERY_CODECS: { [string]: api.DeliveryCodec } = {
+	aac = "aac",
+	alac = "alac",
+	copy = "copy",
+	flac = "flac",
+	mp3 = "mp3",
+	opus = "opus",
+	pcm_s16be = "pcm_s16be",
+	pcm_s16le = "pcm_s16le",
+	pcm_s24be = "pcm_s24be",
+	pcm_s24le = "pcm_s24le",
+	vorbis = "vorbis",
+	wma = "wma",
+}
+
+-- The format the server delivers for a requested container, or nil when it delivers none.
+function module.delivery_format(container: string): api.DeliveryFormat?
+	return api.delivery_format(container)
+end
+
+-- The codecs the server encodes for requested ones, in order, or else nil and the first codec it
+-- does not encode.
+function module.delivery_codecs(codecs: { string }): ({ api.DeliveryCodec }?, string?)
+	local delivered: { api.DeliveryCodec } = {}
+	for _, codec in codecs do
+		local known: api.DeliveryCodec? = DELIVERY_CODECS[string.lower(codec)]
+		if known == nil then
+			return nil, codec
+		end
+		table.insert(delivered, known)
+	end
+	return delivered, nil
+end
+
 -- A stream option, which upstream reads by its exact name.
 local function stream_option_int(query: ApiQueryParams?, name: string): number?
 	local values = if query then query[name] else nil

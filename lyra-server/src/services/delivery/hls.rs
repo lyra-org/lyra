@@ -29,6 +29,7 @@ use crate::services::{
 
 const HLS_DURATION_MISMATCH_WARN_THRESHOLD_MS: u64 = 10;
 
+#[derive(Clone, Debug, Default)]
 pub(crate) struct HlsPlaylistOptions {
     pub(crate) codec: Option<String>,
     pub(crate) bitrate_bps: Option<u32>,

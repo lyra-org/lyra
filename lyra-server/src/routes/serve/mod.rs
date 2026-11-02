@@ -247,7 +247,7 @@ pub(crate) fn download_openapi_routes() -> aide::axum::ApiRouter {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::{
         AppError,
         require_track_access,
@@ -299,7 +299,7 @@ mod tests {
         roles::Role,
     };
 
-    async fn initialize_test_runtime() -> anyhow::Result<PathBuf> {
+    pub(crate) async fn initialize_test_runtime() -> anyhow::Result<PathBuf> {
         let test_dir = std::env::temp_dir().join(format!(
             "lyra-serve-auth-test-{}-{}",
             std::process::id(),
@@ -310,7 +310,7 @@ mod tests {
         Ok(test_dir)
     }
 
-    async fn create_user_with_permissions(
+    pub(crate) async fn create_user_with_permissions(
         username: &str,
         permissions: Vec<Permission>,
     ) -> anyhow::Result<HeaderMap> {
@@ -643,7 +643,9 @@ mod tests {
         assert_eq!(err.into_response().status(), StatusCode::BAD_REQUEST);
     }
 
-    async fn prepare_streamable_track(test_dir: &std::path::Path) -> anyhow::Result<String> {
+    pub(crate) async fn prepare_streamable_track(
+        test_dir: &std::path::Path,
+    ) -> anyhow::Result<String> {
         let fixture_src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/assets/metadata/integration_track.flac");
         let fixture_dst = test_dir.join("integration_track.flac");

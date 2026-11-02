@@ -59,6 +59,7 @@ use self::types::{
     TrackServeOptions,
     TrackStreamOptions,
 };
+use crate::plugins::executor::ApiResponseKind;
 
 use std::{
     collections::{
@@ -497,7 +498,7 @@ impl ApiModule {
 
     #[harmony(
         name = "response.file",
-        description = "Builds a file response. The path must resolve inside a library root or the configured cover storage root.",
+        description = "Builds a file response. The path must resolve inside a library root or the configured cover storage root. Its headers may not include the framing headers content-length, content-range, accept-ranges and transfer-encoding, which Lyra sets for the file it serves; a ranged request answers with 206 or 416 whatever its status.",
         args(status: Option<u16>, path: String, headers: Option<ApiHeaders>, transform: Option<ImageTransformOptions>),
         returns(ApiResponse)
     )]
@@ -528,32 +529,49 @@ impl ApiModule {
 
     #[harmony(
         name = "response.stream_track",
-        description = "Builds a streamed-track response.",
+        description = "Builds a response that streams the track, delivered as `options` ask. A `status` or `headers` set on the response apply to the audio Lyra serves. Its headers replace Lyra's of the same name, and its cache-control also Lyra's pragma and expires, but may not include the framing headers content-length, content-range, accept-ranges and transfer-encoding. Its status, which must be 200 to 203, replaces the 200 of a whole body; a ranged 206 and a 416 keep theirs. When Lyra can't serve the track it answers with its own error, without the response's status or headers.",
         args(track_id: String, options: Option<TrackStreamOptions>),
         returns(ApiResponse)
     )]
-    fn response_stream_track(track_id: String, options: Option<luau::Value>) -> luau::OwnedTable {
-        track_response("stream_track", track_id, options)
+    fn response_stream_track(
+        track_id: String,
+        options: Option<luau::Value>,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        track_response(ApiResponseKind::StreamTrack, track_id, options)
     }
 
     #[harmony(
         name = "response.download_track",
-        description = "Builds a download-track response.",
+        description = "Builds a response that sends the track as a download, delivered as `options` ask; without `public` the caller needs the download permission. A `status` or `headers` set on the response apply to the audio Lyra serves. Its headers replace Lyra's of the same name, and its cache-control also Lyra's pragma and expires, but may not include the framing headers content-length, content-range, accept-ranges and transfer-encoding. Its status, which must be 200 to 203, replaces the 200 of a whole body; a ranged 206 and a 416 keep theirs. When Lyra can't serve the track it answers with its own error, without the response's status or headers.",
         args(track_id: String, options: Option<TrackServeOptions>),
         returns(ApiResponse)
     )]
-    fn response_download_track(track_id: String, options: Option<luau::Value>) -> luau::OwnedTable {
-        track_response("download_track", track_id, options)
+    fn response_download_track(
+        track_id: String,
+        options: Option<luau::Value>,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        track_response(ApiResponseKind::DownloadTrack, track_id, options)
     }
 
     #[harmony(
         name = "response.hls_playlist",
-        description = "Builds an HLS playlist response.",
+        description = "Builds a response that serves the track's HLS media playlist, encoded as `options` ask. A `status` or `headers` set on the response apply to the playlist Lyra serves. Its headers replace Lyra's of the same name, and its cache-control also Lyra's pragma and expires, but may not include the framing headers content-length, content-range, accept-ranges and transfer-encoding. Its status, which must be 200 to 203, replaces Lyra's 200. When Lyra can't serve the track it answers with its own error, without the response's status or headers.",
         args(track_id: String, options: Option<HlsServeOptions>),
         returns(ApiResponse)
     )]
-    fn response_hls_playlist(track_id: String, options: Option<luau::Value>) -> luau::OwnedTable {
-        track_response("hls_playlist", track_id, options)
+    fn response_hls_playlist(
+        track_id: String,
+        options: Option<luau::Value>,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        track_response(ApiResponseKind::HlsPlaylist, track_id, options)
+    }
+
+    #[harmony(
+        description = "The format Lyra delivers for `name`, a format or another name of its container such as `m4b` or `oga`, in any case; nil when Lyra delivers no such format.",
+        returns(Option<options::DeliveryFormat>)
+    )]
+    fn delivery_format(name: String) -> Option<&'static str> {
+        lyra_ffmpeg::AudioFormat::parse(&name).map(|format| format.as_str())
     }
 
     #[harmony(
@@ -640,18 +658,20 @@ fn register_route(
     })
 }
 
+/// A track response of `kind`, raising on `options` it could not be served with.
 fn track_response(
-    kind: &'static str,
+    kind: ApiResponseKind,
     track_id: String,
     options: Option<luau::Value>,
-) -> luau::OwnedTable {
+) -> luau::runtime::Result<luau::OwnedTable> {
     let options = optional_value(options);
-    let mut response = kind_table(kind);
+    options::track_response_options(kind, &options)?;
+    let mut response = kind_table(kind.as_str());
     response.set_field("track_id", track_id);
     if !is_nil(&options) {
         response.set_field("options", options);
     }
-    response
+    Ok(response)
 }
 
 fn first_query_value(query: &luau::Table, key: &str) -> luau::runtime::Result<Option<String>> {
@@ -789,6 +809,7 @@ fn support_aliases() -> Vec<TypeAliasDescriptor> {
             Some("String-keyed path parameter map."),
         ),
     ];
+    aliases.extend(options::delivery_aliases());
     aliases.extend(api_response_aliases());
     aliases.extend([
         JsonValue::type_alias_descriptor(),
@@ -1063,20 +1084,9 @@ fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
                 field("max_height", LuauType::optional(u32::luau_type())),
             ],
         ),
-        interface("TrackServeOptions", track_serve_option_fields(true)),
-        interface(
-            "TrackStreamOptions",
-            track_serve_option_fields(true)
-                .into_iter()
-                .chain([FieldDescriptor {
-                    name: "public",
-                    ty: LuauType::optional(bool::luau_type()),
-                    description: Some(
-                        "Streams any track without checking the caller's access, for routes whose protocol streams publicly.",
-                    ),
-                }]),
-        ),
-        interface("HlsServeOptions", track_serve_option_fields(false)),
+        options::track_serve_options_interface(),
+        options::track_stream_options_interface(),
+        options::hls_serve_options_interface(),
     ]
 }
 
@@ -1106,26 +1116,6 @@ fn described_field(name: &'static str, ty: LuauType, description: &'static str) 
         ty,
         description: Some(description),
     }
-}
-
-#[cfg(feature = "docgen")]
-fn track_serve_option_fields(include_format: bool) -> Vec<FieldDescriptor> {
-    let mut fields = Vec::new();
-    if include_format {
-        fields.push(field("format", LuauType::optional(String::luau_type())));
-    }
-    fields.extend([
-        field(
-            "preferred_codecs",
-            LuauType::optional(Vec::<String>::luau_type()),
-        ),
-        field("bitrate_bps", LuauType::optional(u32::luau_type())),
-        field("sample_rate_hz", LuauType::optional(u32::luau_type())),
-        field("channels", LuauType::optional(u32::luau_type())),
-        field("prefer_vbr", LuauType::optional(bool::luau_type())),
-        field("start_offset_ms", LuauType::optional(u64::luau_type())),
-    ]);
-    fields
 }
 
 #[cfg(feature = "docgen")]

@@ -3,160 +3,357 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-//! The options plugins give `stream_track` and `stream_hls` responses.
+//! The options plugins give `stream_track`, `download_track` and `hls_playlist` responses, and
+//! `playback_sources.decide`.
 
-use anyhow::{
-    Context,
-    Result,
-    bail,
+use crate::{
+    plugins::{
+        args,
+        executor::ApiResponseKind,
+    },
+    services::delivery::{
+        HlsPlaylistOptions,
+        ServeTrackOptions,
+    },
+};
+use harmony_luau as luau;
+use harmony_luau::StringEnum;
+#[cfg(feature = "docgen")]
+use harmony_luau::{
+    DescribeTypeAlias,
+    FieldDescriptor,
+    InterfaceDescriptor,
+    LuauType,
+    LuauTypeInfo,
+    TypeAliasDescriptor,
 };
 
-use crate::services::delivery::ServeTrackOptions;
-
-pub(crate) fn join_preferred_codecs(preferred_codecs: Option<Vec<String>>) -> Option<String> {
-    preferred_codecs.and_then(|preferred_codecs| {
-        if preferred_codecs.is_empty() {
-            None
-        } else {
-            Some(preferred_codecs.join(","))
-        }
-    })
+#[harmony_macros::string_enum(description = "An audio format Lyra delivers.")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DeliveryFormat {
+    Mp3,
+    Flac,
+    Wav,
+    Ogg,
+    Webm,
+    Aac,
+    M4a,
+    Opus,
+    Aiff,
+    Alac,
+    Caf,
+    Wma,
 }
 
-#[derive(Default)]
-pub(crate) struct ParsedTrackServeOptions {
-    pub(crate) format: Option<String>,
-    pub(crate) preferred_codecs: Option<Vec<String>>,
-    pub(crate) bitrate_bps: Option<u32>,
-    pub(crate) sample_rate_hz: Option<u32>,
-    pub(crate) channels: Option<u32>,
-    pub(crate) prefer_vbr: Option<bool>,
-    pub(crate) start_offset_ms: Option<u64>,
+#[harmony_macros::string_enum(
+    description = "An audio codec Lyra delivers; \"copy\" keeps the source's audio as it is."
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DeliveryCodec {
+    Copy,
+    Mp3,
+    Flac,
+    Aac,
+    Alac,
+    Opus,
+    Vorbis,
+    #[harmony(rename = "pcm_s16le")]
+    PcmS16Le,
+    #[harmony(rename = "pcm_s16be")]
+    PcmS16Be,
+    #[harmony(rename = "pcm_s24le")]
+    PcmS24Le,
+    #[harmony(rename = "pcm_s24be")]
+    PcmS24Be,
+    Wma,
 }
 
-#[derive(Default)]
-pub(crate) struct ParsedHlsServeOptions {
-    pub(crate) preferred_codecs: Option<Vec<String>>,
-    pub(crate) bitrate_bps: Option<u32>,
-    pub(crate) sample_rate_hz: Option<u32>,
-    pub(crate) channels: Option<u32>,
-    pub(crate) prefer_vbr: Option<bool>,
-    pub(crate) start_offset_ms: Option<u64>,
-}
+const SERVE_FIELDS: &[&str] = &[
+    "format",
+    "preferred_codecs",
+    "bitrate_bps",
+    "sample_rate_hz",
+    "channels",
+    "prefer_vbr",
+    "start_offset_ms",
+];
 
-pub(crate) fn parse_track_serve_options(
-    value: Option<&serde_json::Value>,
-) -> Result<ParsedTrackServeOptions> {
-    let Some(value) = value else {
-        return Ok(ParsedTrackServeOptions::default());
-    };
-    let object = value
-        .as_object()
-        .ok_or_else(|| anyhow::anyhow!("track serve options must be an object"))?;
-    Ok(ParsedTrackServeOptions {
-        format: object
-            .get("format")
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string),
-        preferred_codecs: parse_string_list_json(object.get("preferred_codecs")),
-        bitrate_bps: parse_u32_json(object.get("bitrate_bps"))?,
-        sample_rate_hz: parse_u32_json(object.get("sample_rate_hz"))?,
-        channels: parse_u32_json(object.get("channels"))?,
-        prefer_vbr: object
-            .get("prefer_vbr")
-            .and_then(serde_json::Value::as_bool),
-        start_offset_ms: parse_u64_json(object.get("start_offset_ms"))?,
-    })
-}
+const STREAM_FIELDS: &[&str] = &[
+    "format",
+    "preferred_codecs",
+    "bitrate_bps",
+    "sample_rate_hz",
+    "channels",
+    "prefer_vbr",
+    "start_offset_ms",
+    "public",
+];
+
+const HLS_FIELDS: &[&str] = &[
+    "preferred_codecs",
+    "bitrate_bps",
+    "sample_rate_hz",
+    "channels",
+    "prefer_vbr",
+    "start_offset_ms",
+];
 
 /// A `stream_track` response's options: whether it skips the caller's track access check, and
 /// what it serves.
-pub(crate) fn stream_track_options(
-    value: Option<&serde_json::Value>,
-) -> Result<(bool, ServeTrackOptions)> {
-    let public = parse_public_stream(value)?;
-    let options = parse_track_serve_options(value)?;
-    Ok((
-        public,
-        ServeTrackOptions {
-            format: options.format,
-            codec: join_preferred_codecs(options.preferred_codecs),
-            bitrate_bps: options.bitrate_bps,
-            sample_rate_hz: options.sample_rate_hz,
-            channels: options.channels,
-            prefer_vbr: options.prefer_vbr,
-            start_offset_ms: options.start_offset_ms,
-        },
-    ))
+#[derive(Clone, Debug, Default)]
+pub(crate) struct TrackStreamRequest {
+    pub(crate) public: bool,
+    pub(crate) options: ServeTrackOptions,
 }
 
-/// Whether a stream response asked to skip the caller's track access check.
-fn parse_public_stream(value: Option<&serde_json::Value>) -> Result<bool> {
-    let Some(public) = value.and_then(|value| value.get("public")) else {
-        return Ok(false);
-    };
-    public
-        .as_bool()
-        .ok_or_else(|| anyhow::anyhow!("stream option public must be a boolean"))
+/// The options of a track response, read as it will be served.
+#[derive(Clone, Debug)]
+pub(crate) enum TrackResponseOptions {
+    Stream(TrackStreamRequest),
+    Download(ServeTrackOptions),
+    Hls(HlsPlaylistOptions),
 }
 
-pub(crate) fn parse_hls_serve_options(
-    value: Option<&serde_json::Value>,
-) -> Result<ParsedHlsServeOptions> {
-    let Some(value) = value else {
-        return Ok(ParsedHlsServeOptions::default());
-    };
-    let object = value
-        .as_object()
-        .ok_or_else(|| anyhow::anyhow!("HLS serve options must be an object"))?;
-    Ok(ParsedHlsServeOptions {
-        preferred_codecs: parse_string_list_json(object.get("preferred_codecs")),
-        bitrate_bps: parse_u32_json(object.get("bitrate_bps"))?,
-        sample_rate_hz: parse_u32_json(object.get("sample_rate_hz"))?,
-        channels: parse_u32_json(object.get("channels"))?,
-        prefer_vbr: object
-            .get("prefer_vbr")
-            .and_then(serde_json::Value::as_bool),
-        start_offset_ms: parse_u64_json(object.get("start_offset_ms"))?,
-    })
-}
-
-fn parse_string_list_json(value: Option<&serde_json::Value>) -> Option<Vec<String>> {
-    let values = value?.as_array()?;
-    let values = values
-        .iter()
-        .filter_map(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .collect::<Vec<_>>();
-    if values.is_empty() {
-        None
-    } else {
-        Some(values)
+/// `options`, the options table of `owner`, such as `stream_track options`; nil reads as no
+/// options.
+fn options_table(options: &luau::Value, owner: &str) -> luau::runtime::Result<Option<luau::Table>> {
+    match options {
+        luau::Value::Nil => Ok(None),
+        luau::Value::Table(table) => Ok(Some(table.clone())),
+        other => Err(crate::plugins::runtime_error(format!(
+            "{owner} must be a table, got {}",
+            other.type_name()
+        ))),
     }
 }
 
-pub(crate) fn parse_u32_json(value: Option<&serde_json::Value>) -> Result<Option<u32>> {
-    let Some(value) = value else {
-        return Ok(None);
+/// The options of a `stream_track` response, or `playback_sources.decide`, read from `options`;
+/// `owner` names them in errors.
+pub(crate) fn stream_request(
+    options: &luau::Value,
+    owner: &str,
+) -> luau::runtime::Result<TrackStreamRequest> {
+    let Some(table) = options_table(options, owner)? else {
+        return Ok(TrackStreamRequest::default());
     };
-    let Some(value) = value.as_u64() else {
-        bail!("expected unsigned integer option");
-    };
-    Ok(Some(
-        u32::try_from(value).context("integer option out of range")?,
-    ))
+    args::reject_unknown_fields(&table, owner, STREAM_FIELDS)?;
+    Ok(TrackStreamRequest {
+        public: args::optional_bool(&table, "public", owner)?.unwrap_or(false),
+        options: serve_options(&table, owner)?,
+    })
 }
 
-fn parse_u64_json(value: Option<&serde_json::Value>) -> Result<Option<u64>> {
-    let Some(value) = value else {
+/// The options of a `download_track` response, read from `options`.
+pub(crate) fn download_options(
+    options: &luau::Value,
+    owner: &str,
+) -> luau::runtime::Result<ServeTrackOptions> {
+    let Some(table) = options_table(options, owner)? else {
+        return Ok(ServeTrackOptions::default());
+    };
+    args::reject_unknown_fields(&table, owner, SERVE_FIELDS)?;
+    serve_options(&table, owner)
+}
+
+/// The options of an `hls_playlist` response, read from `options`.
+pub(crate) fn hls_options(
+    options: &luau::Value,
+    owner: &str,
+) -> luau::runtime::Result<HlsPlaylistOptions> {
+    let Some(table) = options_table(options, owner)? else {
+        return Ok(HlsPlaylistOptions::default());
+    };
+    args::reject_unknown_fields(&table, owner, HLS_FIELDS)?;
+    Ok(HlsPlaylistOptions {
+        codec: codecs(&table, owner)?,
+        bitrate_bps: optional_u32(&table, "bitrate_bps", owner)?,
+        sample_rate_hz: optional_u32(&table, "sample_rate_hz", owner)?,
+        channels: optional_u32(&table, "channels", owner)?,
+        prefer_vbr: args::optional_bool(&table, "prefer_vbr", owner)?,
+        start_offset_ms: optional_u64(&table, "start_offset_ms", owner)?,
+    })
+}
+
+/// The options of a track response of `kind`, read from `options`.
+pub(crate) fn track_response_options(
+    kind: ApiResponseKind,
+    options: &luau::Value,
+) -> luau::runtime::Result<TrackResponseOptions> {
+    let owner = format!("{kind} options");
+    match kind {
+        ApiResponseKind::StreamTrack => {
+            stream_request(options, &owner).map(TrackResponseOptions::Stream)
+        }
+        ApiResponseKind::DownloadTrack => {
+            download_options(options, &owner).map(TrackResponseOptions::Download)
+        }
+        ApiResponseKind::HlsPlaylist => hls_options(options, &owner).map(TrackResponseOptions::Hls),
+        other => Err(crate::plugins::runtime_error(format!(
+            "{other} is not a track response"
+        ))),
+    }
+}
+
+fn serve_options(table: &luau::Table, owner: &str) -> luau::runtime::Result<ServeTrackOptions> {
+    Ok(ServeTrackOptions {
+        format: args::optional_string_enum::<DeliveryFormat>(table, "format", owner)?
+            .map(|format| format.as_str().to_string()),
+        codec: codecs(table, owner)?,
+        bitrate_bps: optional_u32(table, "bitrate_bps", owner)?,
+        sample_rate_hz: optional_u32(table, "sample_rate_hz", owner)?,
+        channels: optional_u32(table, "channels", owner)?,
+        prefer_vbr: args::optional_bool(table, "prefer_vbr", owner)?,
+        start_offset_ms: optional_u64(table, "start_offset_ms", owner)?,
+    })
+}
+
+fn optional_u64(table: &luau::Table, key: &str, owner: &str) -> luau::runtime::Result<Option<u64>> {
+    let Some(value) = args::optional_i64(table, key, owner)? else {
         return Ok(None);
     };
-    value
-        .as_u64()
-        .map(Some)
-        .ok_or_else(|| anyhow::anyhow!("expected unsigned integer option"))
+    u64::try_from(value).map(Some).map_err(|_| {
+        crate::plugins::runtime_error(format!(
+            "{owner}.{key} must be a non-negative integer, got {value}"
+        ))
+    })
+}
+
+fn optional_u32(table: &luau::Table, key: &str, owner: &str) -> luau::runtime::Result<Option<u32>> {
+    let Some(value) = optional_u64(table, key, owner)? else {
+        return Ok(None);
+    };
+    u32::try_from(value).map(Some).map_err(|_| {
+        crate::plugins::runtime_error(format!("{owner}.{key} must be at most {}", u32::MAX))
+    })
+}
+
+/// `preferred_codecs` in order, joined as delivery reads them; none for an empty list.
+fn codecs(table: &luau::Table, owner: &str) -> luau::runtime::Result<Option<String>> {
+    let codecs = match table.get("preferred_codecs")? {
+        luau::Value::Nil => return Ok(None),
+        luau::Value::Table(codecs) => codecs,
+        other => {
+            return Err(crate::plugins::runtime_error(format!(
+                "{owner}.preferred_codecs must be an array of codecs, got {}",
+                other.type_name()
+            )));
+        }
+    };
+    let codecs = args::array_values(&codecs)
+        .map_err(|_| {
+            crate::plugins::runtime_error(format!(
+                "{owner}.preferred_codecs must be an array of codecs"
+            ))
+        })?
+        .into_iter()
+        .map(|(index, codec)| {
+            let name = format!("{owner}.preferred_codecs[{index}]");
+            match codec {
+                luau::Value::String(codec) => {
+                    args::string_enum_value::<DeliveryCodec>(&codec, &name)
+                        .map(|codec| codec.as_str())
+                }
+                other => Err(crate::plugins::runtime_error(format!(
+                    "{name} must be a string, got {}",
+                    other.type_name()
+                ))),
+            }
+        })
+        .collect::<luau::runtime::Result<Vec<_>>>()?;
+    Ok((!codecs.is_empty()).then(|| codecs.join(",")))
+}
+
+/// `TrackServeOptions`, the options of `download_track`, with the unions its fields name.
+#[cfg(feature = "docgen")]
+pub(crate) fn track_serve_options_interface() -> InterfaceDescriptor {
+    serve_interface("TrackServeOptions")
+}
+
+/// `TrackStreamOptions`, the options of `stream_track` and `playback_sources.decide`: those of
+/// `TrackServeOptions` and `public`.
+#[cfg(feature = "docgen")]
+pub(crate) fn track_stream_options_interface() -> InterfaceDescriptor {
+    let mut descriptor = serve_interface("TrackStreamOptions");
+    descriptor.fields.push(option_field(
+        "public",
+        Option::<bool>::luau_type(),
+        "Streams any track without checking the caller's access, for routes whose protocol streams publicly. Defaults to false.",
+    ));
+    descriptor
+}
+
+#[cfg(feature = "docgen")]
+fn serve_interface(name: &'static str) -> InterfaceDescriptor {
+    let mut descriptor = options_interface(name);
+    descriptor.fields.insert(
+        0,
+        option_field(
+            "format",
+            Option::<DeliveryFormat>::luau_type(),
+            "The format to deliver. Defaults to the first preferred codec's format, or else the source's.",
+        ),
+    );
+    descriptor
+}
+
+/// `HlsServeOptions`, the options of `hls_playlist`.
+#[cfg(feature = "docgen")]
+pub(crate) fn hls_serve_options_interface() -> InterfaceDescriptor {
+    options_interface("HlsServeOptions")
+}
+
+/// The unions the option interfaces name.
+#[cfg(feature = "docgen")]
+pub(crate) fn delivery_aliases() -> Vec<TypeAliasDescriptor> {
+    vec![
+        DeliveryFormat::type_alias_descriptor(),
+        DeliveryCodec::type_alias_descriptor(),
+    ]
+}
+
+#[cfg(feature = "docgen")]
+fn options_interface(name: &'static str) -> InterfaceDescriptor {
+    let mut descriptor = InterfaceDescriptor::new(name, None);
+    descriptor.fields.extend([
+        option_field(
+            "preferred_codecs",
+            Option::<Vec<DeliveryCodec>>::luau_type(),
+            "Codecs to encode with, in order of preference. Defaults to the format's codec.",
+        ),
+        plain_field("bitrate_bps", Option::<u32>::luau_type()),
+        plain_field("sample_rate_hz", Option::<u32>::luau_type()),
+        plain_field("channels", Option::<u32>::luau_type()),
+        plain_field("prefer_vbr", Option::<bool>::luau_type()),
+        plain_field("start_offset_ms", Option::<u64>::luau_type()),
+    ]);
+    descriptor
+}
+
+#[cfg(feature = "docgen")]
+fn option_field(name: &'static str, ty: LuauType, description: &'static str) -> FieldDescriptor {
+    FieldDescriptor {
+        name,
+        ty,
+        description: Some(description),
+    }
+}
+
+#[cfg(feature = "docgen")]
+fn plain_field(name: &'static str, ty: LuauType) -> FieldDescriptor {
+    FieldDescriptor {
+        name,
+        ty,
+        description: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delivery_unions_name_what_delivery_supports() {
+        assert_eq!(DeliveryFormat::VALUES, lyra_ffmpeg::SUPPORTED_FORMATS);
+        assert_eq!(DeliveryCodec::VALUES, lyra_ffmpeg::SUPPORTED_CODECS);
+    }
 }

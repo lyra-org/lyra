@@ -24,6 +24,7 @@ local transcoded = stream({ id = ids.synced, format = "mp3", maxBitRate = "128",
 assert(transcoded.kind == "stream_track", `transcode kind {transcoded.kind}`)
 assert(transcoded.options.format == "mp3" and transcoded.options.bitrate_bps == 128000)
 assert(transcoded.options.start_offset_ms == 1000 and transcoded.options.public == nil)
+assert(stream({ id = ids.synced, format = "MP4" }).options.format == "m4a", "mp4 delivers m4a")
 local capped = stream({ id = ids.synced, maxBitRate = "96" })
 assert(capped.options.bitrate_bps == 96000 and capped.options.format == nil, "a bitrate cap alone")
 

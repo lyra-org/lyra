@@ -31,6 +31,8 @@ local function find_track(params: ApiQueryParams): Track
 	return track
 end
 
+local REFUSED_OPTIONS = "The song can't be streamed with these options"
+
 -- The stream options a request asks for; nil serves the file as it is, which `format=raw` asks
 -- for whatever else the request says.
 local function stream_options(params: ApiQueryParams): TrackStreamOptions?
@@ -43,7 +45,11 @@ local function stream_options(params: ApiQueryParams): TrackStreamOptions?
 	local options: TrackStreamOptions = {}
 	local any = false
 	if format then
-		options.format = string.lower(format)
+		local delivered = api.delivery_format(format)
+		if delivered == nil then
+			return request.fail(0, REFUSED_OPTIONS)
+		end
+		options.format = delivered
 		any = true
 	end
 	if max_bitrate_kbps and max_bitrate_kbps > 0 then
@@ -108,7 +114,7 @@ module.methods = {
 			local ok, err = pcall(playback_sources.decide, track.id, options)
 			if not ok then
 				warn(`stream of {track.id} refused: {tostring(err)}`)
-				return request.fail(0, "The song can't be streamed with these options")
+				return request.fail(0, REFUSED_OPTIONS)
 			end
 		end
 		return api.response.stream_track(track.id, options)

@@ -3,16 +3,38 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use axum::http::header::{
+    CACHE_CONTROL,
+    EXPIRES,
+    PRAGMA,
+    TRANSFER_ENCODING,
+};
+
 use super::*;
-use crate::plugins::executor::ApiResponseKind;
+use crate::plugins::api::options::{
+    TrackResponseOptions,
+    TrackStreamRequest,
+};
+use crate::plugins::executor::{
+    ApiHandlerResponse,
+    ApiResponseKind,
+};
 use crate::routes::AppError;
 use crate::services::auth::media_tokens::MediaTokenPurpose;
 use crate::services::delivery::{
     DeliveryTarget,
-    HlsPlaylistOptions,
     require_plugin_track_access,
     stream_track_access,
 };
+
+/// The headers that frame the bodies Lyra serves for `file`, `stream_track`, `download_track` and
+/// `hls_playlist` responses, which those responses may not set.
+const FRAMING_HEADERS: [HeaderName; 4] = [
+    CONTENT_LENGTH,
+    CONTENT_RANGE,
+    ACCEPT_RANGES,
+    TRANSFER_ENCODING,
+];
 
 pub(super) fn header_pairs(headers: &HeaderMap) -> Vec<(String, String)> {
     headers
@@ -24,114 +46,20 @@ pub(super) fn header_pairs(headers: &HeaderMap) -> Vec<(String, String)> {
 }
 
 pub(super) async fn plugin_api_response_to_axum(
-    response: crate::plugins::executor::ApiHandlerResponse,
+    response: ApiHandlerResponse,
     request_method: &Method,
     request_headers: &HeaderMap,
 ) -> Result<Response> {
-    let principal = response.principal.as_ref();
+    let headers = response_headers(&response)?;
     let mut status =
         StatusCode::from_u16(response.status).context("invalid response status code")?;
     match response.kind {
-        ApiResponseKind::StreamTrack => {
-            let track_id = response
-                .track_id
-                .ok_or_else(|| anyhow::anyhow!("stream_track response requires track_id"))?;
-            let (public, options) = stream_track_options(response.options.as_ref())?;
-            let (track_id, access) =
-                match stream_track_access(principal, response.client, &track_id, public).await {
-                    Ok(resolved) => resolved,
-                    Err(error) => return Ok(AppError::from(error).into_response()),
-                };
-            return Ok(
-                match track_response(
-                    request_method,
-                    request_headers,
-                    &track_id,
-                    &access,
-                    options,
-                    DeliveryTarget::Stream,
-                )
-                .await
-                {
-                    Ok(response) => response,
-                    Err(error) => error.into_response(),
-                },
-            );
-        }
-        ApiResponseKind::DownloadTrack => {
-            let track_id = response
-                .track_id
-                .ok_or_else(|| anyhow::anyhow!("download_track response requires track_id"))?;
-            let (track_id, access) = match require_plugin_track_access(
-                principal,
-                &track_id,
-                MediaTokenPurpose::Download,
-            )
-            .await
-            {
-                Ok(resolved) => resolved,
-                Err(error) => return Ok(AppError::from(error).into_response()),
-            };
-            let options = parse_track_serve_options(response.options.as_ref())?;
-            return Ok(
-                match track_response(
-                    request_method,
-                    request_headers,
-                    &track_id,
-                    &access,
-                    ServeTrackOptions {
-                        format: options.format,
-                        codec: join_preferred_codecs(options.preferred_codecs),
-                        bitrate_bps: options.bitrate_bps,
-                        sample_rate_hz: options.sample_rate_hz,
-                        channels: options.channels,
-                        prefer_vbr: options.prefer_vbr,
-                        start_offset_ms: options.start_offset_ms,
-                    },
-                    DeliveryTarget::Download,
-                )
-                .await
-                {
-                    Ok(response) => response,
-                    Err(error) => error.into_response(),
-                },
-            );
-        }
-        ApiResponseKind::HlsPlaylist => {
-            let track_id = response
-                .track_id
-                .ok_or_else(|| anyhow::anyhow!("hls_playlist response requires track_id"))?;
-            let (track_id, access) = match require_plugin_track_access(
-                principal,
-                &track_id,
-                MediaTokenPurpose::HlsPlaylist,
-            )
-            .await
-            {
-                Ok(resolved) => resolved,
-                Err(error) => return Ok(AppError::from(error).into_response()),
-            };
-            let options = parse_hls_serve_options(response.options.as_ref())?;
-            return Ok(
-                match serve_hls_playlist_for_track(
-                    request_method,
-                    &track_id,
-                    &access,
-                    HlsPlaylistOptions {
-                        codec: join_preferred_codecs(options.preferred_codecs),
-                        bitrate_bps: options.bitrate_bps,
-                        sample_rate_hz: options.sample_rate_hz,
-                        channels: options.channels,
-                        prefer_vbr: options.prefer_vbr,
-                        start_offset_ms: options.start_offset_ms,
-                    },
-                )
-                .await
-                {
-                    Ok(response) => response,
-                    Err(error) => error.into_response(),
-                },
-            );
+        ApiResponseKind::StreamTrack
+        | ApiResponseKind::DownloadTrack
+        | ApiResponseKind::HlsPlaylist => {
+            let status = served_status(response.kind, status)?;
+            let served = serve_track(&response, request_method, request_headers).await?;
+            return Ok(with_plugin_status_and_headers(served, status, headers));
         }
         ApiResponseKind::Json
         | ApiResponseKind::Empty
@@ -141,6 +69,7 @@ pub(super) async fn plugin_api_response_to_axum(
         | ApiResponseKind::File => {}
     }
 
+    let principal = response.principal.as_ref();
     let mut content_type = None::<HeaderValue>;
     let mut content_length = None::<HeaderValue>;
     let mut content_range = None::<HeaderValue>;
@@ -195,45 +124,165 @@ pub(super) async fn plugin_api_response_to_axum(
         .status(status)
         .body(body)
         .map_err(|err| anyhow::anyhow!("failed to build response: {err}"))?;
-
-    for (name, value) in response.headers {
-        let name = HeaderName::from_bytes(name.as_bytes())
-            .with_context(|| format!("invalid header name '{name}'"))?;
-        let value = HeaderValue::from_str(&value)
-            .with_context(|| format!("invalid header value for '{name}'"))?;
-        response_out.headers_mut().insert(name, value);
-    }
+    *response_out.headers_mut() = headers;
     if let Some(content_type) = content_type {
         response_out
             .headers_mut()
             .entry(CONTENT_TYPE)
             .or_insert(content_type);
     }
-    if let Some(content_length) = content_length {
-        response_out
-            .headers_mut()
-            .entry(CONTENT_LENGTH)
-            .or_insert(content_length);
-    }
-    if let Some(content_range) = content_range {
-        response_out
-            .headers_mut()
-            .insert(CONTENT_RANGE, content_range);
-    }
-    if let Some(accept_ranges) = accept_ranges {
-        response_out
-            .headers_mut()
-            .insert(ACCEPT_RANGES, accept_ranges);
+    for (name, value) in [
+        (CONTENT_LENGTH, content_length),
+        (CONTENT_RANGE, content_range),
+        (ACCEPT_RANGES, accept_ranges),
+    ] {
+        if let Some(value) = value {
+            response_out.headers_mut().insert(name, value);
+        }
     }
     Ok(response_out)
 }
 
+/// The response's headers, refusing the framing headers on the kinds whose body Lyra frames.
+fn response_headers(response: &ApiHandlerResponse) -> Result<HeaderMap> {
+    let framed = matches!(
+        response.kind,
+        ApiResponseKind::File
+            | ApiResponseKind::StreamTrack
+            | ApiResponseKind::DownloadTrack
+            | ApiResponseKind::HlsPlaylist
+    );
+    let mut headers = HeaderMap::with_capacity(response.headers.len());
+    for (name, value) in &response.headers {
+        let name = HeaderName::from_bytes(name.as_bytes())
+            .with_context(|| format!("invalid header name '{name}'"))?;
+        if framed && FRAMING_HEADERS.contains(&name) {
+            bail!(
+                "{} responses cannot set the {name} header; Lyra sets it for the body it serves",
+                response.kind
+            );
+        }
+        let value = HeaderValue::from_str(value)
+            .with_context(|| format!("invalid header value for '{name}'"))?;
+        headers.insert(name, value);
+    }
+    Ok(headers)
+}
+
+/// The status a track response asks to replace Lyra's 200 with: one that carries the whole body.
+fn served_status(kind: ApiResponseKind, status: StatusCode) -> Result<StatusCode> {
+    if !(200..=203).contains(&status.as_u16()) {
+        bail!("{kind} response status must be 200 to 203, got {status}");
+    }
+    Ok(status)
+}
+
+/// `served` with the plugin's status in place of a 200 and its headers over Lyra's. Lyra's
+/// errors, a 416 among them, are left as Lyra answers them.
+fn with_plugin_status_and_headers(
+    mut served: Response,
+    status: StatusCode,
+    headers: HeaderMap,
+) -> Response {
+    if !served.status().is_success() {
+        return served;
+    }
+    if served.status() == StatusCode::OK {
+        *served.status_mut() = status;
+    }
+    if headers.contains_key(CACHE_CONTROL) {
+        // The plugin's caching replaces Lyra's, including the HTTP/1.0 headers that say no-store.
+        served.headers_mut().remove(PRAGMA);
+        served.headers_mut().remove(EXPIRES);
+    }
+    for (name, value) in &headers {
+        served.headers_mut().insert(name, value.clone());
+    }
+    served
+}
+
+/// What Lyra answers a `stream_track`, `download_track` or `hls_playlist` response with, before
+/// the plugin's status and headers apply.
+async fn serve_track(
+    response: &ApiHandlerResponse,
+    request_method: &Method,
+    request_headers: &HeaderMap,
+) -> Result<Response> {
+    let kind = response.kind;
+    let principal = response.principal.as_ref();
+    let track_id = response
+        .track_id
+        .as_deref()
+        .with_context(|| format!("{kind} response requires track_id"))?;
+    let options = response
+        .options
+        .clone()
+        .with_context(|| format!("{kind} response has no options"))?;
+    let served = match options {
+        TrackResponseOptions::Hls(options) => {
+            let (track_id, access) = match require_plugin_track_access(
+                principal,
+                track_id,
+                MediaTokenPurpose::HlsPlaylist,
+            )
+            .await
+            {
+                Ok(resolved) => resolved,
+                Err(error) => return Ok(AppError::from(error).into_response()),
+            };
+            serve_hls_playlist_for_track(request_method, &track_id, &access, options).await
+        }
+        TrackResponseOptions::Stream(TrackStreamRequest { public, options }) => {
+            let (track_id, access) =
+                match stream_track_access(principal, response.client, track_id, public).await {
+                    Ok(resolved) => resolved,
+                    Err(error) => return Ok(AppError::from(error).into_response()),
+                };
+            track_response(
+                request_method,
+                request_headers,
+                &track_id,
+                &access,
+                options,
+                DeliveryTarget::Stream,
+            )
+            .await
+        }
+        TrackResponseOptions::Download(options) => {
+            let (track_id, access) =
+                match require_plugin_track_access(principal, track_id, MediaTokenPurpose::Download)
+                    .await
+                {
+                    Ok(resolved) => resolved,
+                    Err(error) => return Ok(AppError::from(error).into_response()),
+                };
+            track_response(
+                request_method,
+                request_headers,
+                &track_id,
+                &access,
+                options,
+                DeliveryTarget::Download,
+            )
+            .await
+        }
+    };
+    Ok(served.unwrap_or_else(IntoResponse::into_response))
+}
+
 #[cfg(test)]
 mod tests {
+    use axum::http::HeaderMap;
+
+    use crate::plugins::api::options::{
+        TrackResponseOptions,
+        TrackStreamRequest,
+    };
     use crate::services::auth::caller::{
         Caller,
         ClientAddress,
     };
+    use crate::services::delivery::HlsPlaylistOptions;
     use std::collections::HashSet;
     use std::time::{
         SystemTime,
@@ -371,7 +420,14 @@ mod tests {
         Ok(())
     }
 
-    fn stream_response(track_id: &str, options: Option<serde_json::Value>) -> ApiHandlerResponse {
+    fn stream_options(public: bool) -> TrackResponseOptions {
+        TrackResponseOptions::Stream(TrackStreamRequest {
+            public,
+            ..Default::default()
+        })
+    }
+
+    fn stream_response(track_id: &str, public: bool) -> ApiHandlerResponse {
         ApiHandlerResponse {
             kind: ApiResponseKind::StreamTrack,
             status: 200,
@@ -380,7 +436,7 @@ mod tests {
             path: None,
             transform: None,
             track_id: Some(track_id.to_string()),
-            options,
+            options: Some(stream_options(public)),
             principal: None,
             client: ClientAddress::default(),
         }
@@ -453,7 +509,7 @@ mod tests {
 
         let headers = axum::http::HeaderMap::new();
         let private =
-            plugin_api_response_to_axum(stream_response(&track_id, None), &Method::GET, &headers)
+            plugin_api_response_to_axum(stream_response(&track_id, false), &Method::GET, &headers)
                 .await?;
         assert_eq!(
             private.status(),
@@ -461,7 +517,7 @@ mod tests {
             "streams without the public option still need a principal"
         );
         let private_head =
-            plugin_api_response_to_axum(stream_response(&track_id, None), &Method::HEAD, &headers)
+            plugin_api_response_to_axum(stream_response(&track_id, false), &Method::HEAD, &headers)
                 .await?;
         assert_eq!(
             private_head.status(),
@@ -469,27 +525,13 @@ mod tests {
             "HEAD fails as GET does"
         );
 
-        let public = plugin_api_response_to_axum(
-            stream_response(&release_id, Some(serde_json::json!({ "public": true }))),
-            &Method::GET,
-            &headers,
-        )
-        .await?;
+        let public =
+            plugin_api_response_to_axum(stream_response(&release_id, true), &Method::GET, &headers)
+                .await?;
         assert_eq!(
             public.status(),
             StatusCode::NOT_FOUND,
             "public streams serve tracks only"
-        );
-
-        let malformed = plugin_api_response_to_axum(
-            stream_response(&track_id, Some(serde_json::json!({ "public": "yes" }))),
-            &Method::GET,
-            &headers,
-        )
-        .await;
-        assert!(
-            malformed.is_err(),
-            "a non-boolean public option is rejected"
         );
 
         let _ = std::fs::remove_dir_all(test_dir);
@@ -607,6 +649,310 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(test_dir);
         let _ = std::fs::remove_dir_all(outside_dir);
+        Ok(())
+    }
+
+    fn track_kind_response(
+        kind: ApiResponseKind,
+        track_id: &str,
+        status: u16,
+        headers: &[(&str, &str)],
+        options: TrackResponseOptions,
+    ) -> ApiHandlerResponse {
+        ApiHandlerResponse {
+            kind,
+            status,
+            headers: headers
+                .iter()
+                .map(|(name, value)| (name.to_string(), value.to_string()))
+                .collect(),
+            options: Some(options),
+            ..stream_response(track_id, false)
+        }
+    }
+
+    fn header<'a>(response: &'a axum::response::Response, name: &str) -> Option<&'a str> {
+        response
+            .headers()
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn track_responses_keep_the_plugin_status_and_headers() -> anyhow::Result<()> {
+        use crate::routes::serve::tests::{
+            create_user_with_permissions,
+            initialize_test_runtime,
+            prepare_streamable_track,
+        };
+
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let downloader =
+            create_user_with_permissions("plugin-downloader", vec![Permission::Download]).await?;
+        let downloader = crate::services::auth::require_authenticated(
+            crate::routes::request::bearer_credential(&downloader),
+        )
+        .await?;
+        let plugin_headers = [
+            ("cache-control", "max-age=60"),
+            ("content-type", "audio/x-plugin"),
+            ("x-plugin", "kept"),
+        ];
+        let no_range = axum::http::HeaderMap::new();
+
+        for (kind, options) in [
+            (ApiResponseKind::StreamTrack, stream_options(true)),
+            (
+                ApiResponseKind::DownloadTrack,
+                TrackResponseOptions::Download(Default::default()),
+            ),
+        ] {
+            let served = plugin_api_response_to_axum(
+                ApiHandlerResponse {
+                    principal: Some(downloader.clone()),
+                    ..track_kind_response(kind, &track_id, 203, &plugin_headers, options)
+                },
+                &Method::GET,
+                &no_range,
+            )
+            .await?;
+            assert_eq!(
+                served.status(),
+                StatusCode::NON_AUTHORITATIVE_INFORMATION,
+                "{kind}"
+            );
+            assert_eq!(header(&served, "x-plugin"), Some("kept"), "{kind}");
+            assert_eq!(
+                header(&served, "cache-control"),
+                Some("max-age=60"),
+                "{kind}"
+            );
+            assert_eq!(header(&served, "pragma"), None, "{kind}");
+            assert_eq!(header(&served, "expires"), None, "{kind}");
+            assert_eq!(
+                header(&served, "content-type"),
+                Some("audio/x-plugin"),
+                "{kind}"
+            );
+            assert_eq!(header(&served, "accept-ranges"), Some("bytes"), "{kind}");
+            assert!(header(&served, "content-length").is_some(), "{kind}");
+        }
+
+        let mut range = axum::http::HeaderMap::new();
+        range.insert(
+            axum::http::header::RANGE,
+            axum::http::HeaderValue::from_static("bytes=0-9"),
+        );
+        let ranged = plugin_api_response_to_axum(
+            track_kind_response(
+                ApiResponseKind::StreamTrack,
+                &track_id,
+                203,
+                &plugin_headers,
+                stream_options(true),
+            ),
+            &Method::GET,
+            &range,
+        )
+        .await?;
+        assert_eq!(
+            ranged.status(),
+            StatusCode::PARTIAL_CONTENT,
+            "a range keeps its 206"
+        );
+        assert_eq!(header(&ranged, "content-length"), Some("10"));
+        assert!(
+            header(&ranged, "content-range").is_some_and(|value| value.starts_with("bytes 0-9/"))
+        );
+        assert_eq!(header(&ranged, "x-plugin"), Some("kept"));
+
+        range.insert(
+            axum::http::header::RANGE,
+            axum::http::HeaderValue::from_static("bytes=999999999-"),
+        );
+        let unsatisfiable = plugin_api_response_to_axum(
+            track_kind_response(
+                ApiResponseKind::StreamTrack,
+                &track_id,
+                203,
+                &plugin_headers,
+                stream_options(true),
+            ),
+            &Method::GET,
+            &range,
+        )
+        .await?;
+        assert_eq!(unsatisfiable.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(
+            header(&unsatisfiable, "x-plugin"),
+            None,
+            "Lyra's 416 is its own"
+        );
+
+        let missing = plugin_api_response_to_axum(
+            track_kind_response(
+                ApiResponseKind::StreamTrack,
+                "missing-track",
+                203,
+                &plugin_headers,
+                stream_options(true),
+            ),
+            &Method::GET,
+            &no_range,
+        )
+        .await?;
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            header(&missing, "x-plugin"),
+            None,
+            "Lyra's errors are its own"
+        );
+
+        for framing in [
+            "content-length",
+            "Content-Range",
+            "accept-ranges",
+            "transfer-encoding",
+        ] {
+            let refused = plugin_api_response_to_axum(
+                track_kind_response(
+                    ApiResponseKind::StreamTrack,
+                    &track_id,
+                    200,
+                    &[(framing, "1")],
+                    stream_options(true),
+                ),
+                &Method::GET,
+                &no_range,
+            )
+            .await;
+            assert!(
+                refused.is_err_and(|error| error.to_string().contains("cannot set the")),
+                "{framing} is Lyra's"
+            );
+        }
+        for status in [204, 206, 404] {
+            let refused = plugin_api_response_to_axum(
+                track_kind_response(
+                    ApiResponseKind::DownloadTrack,
+                    &track_id,
+                    status,
+                    &[],
+                    stream_options(true),
+                ),
+                &Method::GET,
+                &no_range,
+            )
+            .await;
+            assert!(
+                refused.is_err_and(|error| error.to_string().contains("must be 200 to 203")),
+                "status {status}"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn plugin_downloads_need_the_download_permission() -> anyhow::Result<()> {
+        use crate::routes::serve::tests::{
+            create_user_with_permissions,
+            initialize_test_runtime,
+            prepare_streamable_track,
+        };
+
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let headers = axum::http::HeaderMap::new();
+        let download = |principal| ApiHandlerResponse {
+            principal,
+            ..track_kind_response(
+                ApiResponseKind::DownloadTrack,
+                &track_id,
+                200,
+                &[],
+                TrackResponseOptions::Download(Default::default()),
+            )
+        };
+        let authenticate = |headers: HeaderMap| async move {
+            crate::services::auth::require_authenticated(crate::routes::request::bearer_credential(
+                &headers,
+            ))
+            .await
+        };
+
+        let listener =
+            authenticate(create_user_with_permissions("plugin-listener", Vec::new()).await?)
+                .await?;
+        let refused =
+            plugin_api_response_to_axum(download(Some(listener)), &Method::GET, &headers).await?;
+        assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+        let anonymous = plugin_api_response_to_axum(download(None), &Method::GET, &headers).await?;
+        assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+        let downloader = authenticate(
+            create_user_with_permissions("plugin-downloader", vec![Permission::Download]).await?,
+        )
+        .await?;
+        let allowed =
+            plugin_api_response_to_axum(download(Some(downloader)), &Method::GET, &headers).await?;
+        assert_eq!(allowed.status(), StatusCode::OK);
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn hls_playlists_keep_the_plugin_status_and_headers() -> anyhow::Result<()> {
+        use crate::routes::serve::tests::{
+            create_user_with_permissions,
+            initialize_test_runtime,
+            prepare_streamable_track,
+        };
+
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let listener = create_user_with_permissions("plugin-hls-listener", Vec::new()).await?;
+        let listener = crate::services::auth::require_authenticated(
+            crate::routes::request::bearer_credential(&listener),
+        )
+        .await?;
+        let playlist = |options: HlsPlaylistOptions| ApiHandlerResponse {
+            principal: Some(listener.clone()),
+            ..track_kind_response(
+                ApiResponseKind::HlsPlaylist,
+                &track_id,
+                201,
+                &[("content-type", "application/vnd.apple.mpegurl")],
+                TrackResponseOptions::Hls(options),
+            )
+        };
+
+        let served = plugin_api_response_to_axum(
+            playlist(HlsPlaylistOptions {
+                codec: Some("aac".to_string()),
+                ..Default::default()
+            }),
+            &Method::HEAD,
+            &axum::http::HeaderMap::new(),
+        )
+        .await?;
+        assert_eq!(served.status(), StatusCode::CREATED);
+        assert_eq!(
+            header(&served, "content-type"),
+            Some("application/vnd.apple.mpegurl")
+        );
+        assert_eq!(
+            header(&served, "cache-control"),
+            Some("no-cache, no-store, must-revalidate"),
+            "Lyra's headers stay where the plugin sets none"
+        );
+
+        let _ = std::fs::remove_dir_all(test_dir);
         Ok(())
     }
 }

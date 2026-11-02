@@ -44,8 +44,8 @@ pub(super) fn parse_image_transform_options(
         None => None,
     };
     let quality = parse_u8_json(object.get("quality"))?;
-    let max_width = super::parse_u32_json(object.get("max_width"))?;
-    let max_height = super::parse_u32_json(object.get("max_height"))?;
+    let max_width = parse_u32_json(object.get("max_width"))?;
+    let max_height = parse_u32_json(object.get("max_height"))?;
     if format.is_none() && quality.is_none() && max_width.is_none() && max_height.is_none() {
         return Ok(None);
     }
@@ -55,6 +55,18 @@ pub(super) fn parse_image_transform_options(
         max_width,
         max_height,
     }))
+}
+
+fn parse_u32_json(value: Option<&serde_json::Value>) -> Result<Option<u32>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let Some(value) = value.as_u64() else {
+        bail!("expected unsigned integer option");
+    };
+    Ok(Some(
+        u32::try_from(value).context("integer option out of range")?,
+    ))
 }
 
 pub(super) fn parse_u8_json(value: Option<&serde_json::Value>) -> Result<Option<u8>> {

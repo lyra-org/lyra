@@ -18,10 +18,7 @@ use harmony_luau::{
     render_definition_file_with_support,
 };
 
-use crate::plugins::args::{
-    JsonArg,
-    UniqueIds,
-};
+use crate::plugins::args::UniqueIds;
 use crate::plugins::auth::DispatchPrincipal;
 use crate::plugins::{
     ids::{
@@ -55,7 +52,7 @@ use std::collections::HashMap;
 struct PlaybackSourceInfo;
 
 #[cfg(feature = "docgen")]
-struct DeliveryRequest;
+struct TrackStreamOptions;
 
 #[cfg(feature = "docgen")]
 struct DeliveryDescription;
@@ -148,26 +145,27 @@ impl PlaybackSourcesModule {
 
     #[harmony(
         description = "What `api.response.stream_track(track_id, options)` would deliver, without serving anything: whether the source file is served as it is or transcoded, why, and the delivered format. Raises the error the stream would answer with when the request cannot be served.",
-        args(track_id: String, options: Option<DeliveryRequest>),
+        args(track_id: String, options: Option<TrackStreamOptions>),
         returns(DeliveryDescription)
     )]
     async fn decide(
         track_id: String,
-        options: Option<JsonArg>,
+        options: Option<luau::Value>,
         #[context] principal: DispatchPrincipal,
     ) -> luau::runtime::Result<luau::Value> {
-        let options = options.map(|options| options.0);
-        let (public, options) =
-            crate::plugins::api::options::stream_track_options(options.as_ref())?;
+        let request = crate::plugins::api::options::stream_request(
+            &options.unwrap_or(luau::Value::Nil),
+            "decide options",
+        )?;
         let (track_id, access) = delivery::stream_track_access(
             principal.0.as_ref(),
             Default::default(),
             &track_id,
-            public,
+            request.public,
         )
         .await
         .map_err(delivery_runtime_error)?;
-        let description = delivery::describe_stream(&track_id, &access, options)
+        let description = delivery::describe_stream(&track_id, &access, request.options)
             .await
             .map_err(delivery_runtime_error)?;
         harmony_serde::json_to_luau_owned(
@@ -442,34 +440,9 @@ fn field(name: &'static str, ty: LuauType, description: Option<&'static str>) ->
 }
 
 #[cfg(feature = "docgen")]
-impl LuauTypeInfo for DeliveryRequest {
+impl LuauTypeInfo for TrackStreamOptions {
     fn luau_type() -> LuauType {
-        LuauType::named("DeliveryRequest")
-    }
-}
-
-#[cfg(feature = "docgen")]
-impl DescribeInterface for DeliveryRequest {
-    fn interface_descriptor() -> InterfaceDescriptor {
-        let mut descriptor = InterfaceDescriptor::new(
-            "DeliveryRequest",
-            Some("The options of an `api.response.stream_track` response."),
-        );
-        descriptor.fields.extend([
-            field("format", Option::<String>::luau_type(), None),
-            field("preferred_codecs", Option::<Vec<String>>::luau_type(), None),
-            field("bitrate_bps", Option::<u32>::luau_type(), None),
-            field("sample_rate_hz", Option::<u32>::luau_type(), None),
-            field("channels", Option::<u32>::luau_type(), None),
-            field("prefer_vbr", Option::<bool>::luau_type(), None),
-            field("start_offset_ms", Option::<u64>::luau_type(), None),
-            field(
-                "public",
-                Option::<bool>::luau_type(),
-                Some("Decide without the caller's track access check, as a public stream route serves."),
-            ),
-        ]);
-        descriptor
+        LuauType::named("TrackStreamOptions")
     }
 }
 
@@ -556,24 +529,26 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
                 .collect(),
         )
     };
+    let mut aliases = crate::plugins::api::options::delivery_aliases();
+    aliases.extend([
+        TypeAliasDescriptor::new(
+            "SourceContainer",
+            string_enum(lyra_db::track_sources::SourceContainer::VALUES),
+            None,
+        ),
+        TypeAliasDescriptor::new(
+            "SourceCodec",
+            string_enum(lyra_db::track_sources::SourceCodec::VALUES),
+            None,
+        ),
+    ]);
     render_definition_file_with_support(
         &PlaybackSourcesModule::module_descriptor(),
-        &[
-            TypeAliasDescriptor::new(
-                "SourceContainer",
-                string_enum(lyra_db::track_sources::SourceContainer::VALUES),
-                None,
-            ),
-            TypeAliasDescriptor::new(
-                "SourceCodec",
-                string_enum(lyra_db::track_sources::SourceCodec::VALUES),
-                None,
-            ),
-        ],
+        &aliases,
         &[
             EntryInfo::interface_descriptor(),
             PlaybackSourceInfo::interface_descriptor(),
-            DeliveryRequest::interface_descriptor(),
+            crate::plugins::api::options::track_stream_options_interface(),
             DeliveryDescription::interface_descriptor(),
             SourceDescription::interface_descriptor(),
         ],

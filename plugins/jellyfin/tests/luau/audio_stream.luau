@@ -108,3 +108,25 @@ assert(
 	request(audio.handle_hls_master_route, ids.song, fixture.api_keys.desk, { audioCodec = "vorbis" }).status == 400,
 	"vorbis has no HLS segments"
 )
+
+-- A container clients name another way serves as the server's format; a container or codec the
+-- server doesn't deliver is a bad request.
+local mp4 = request(audio.handle_stream_route, ids.song, nil, { container = "MP4" })
+assert(mp4.kind == "stream_track", `mp4 kind {mp4.kind} status {mp4.status}`)
+assert(mp4.options.format == "m4a" and mp4.options.preferred_codecs[1] == "aac", "mp4 delivers m4a")
+assert(request(audio.handle_stream_route, ids.song, nil, { container = "mkv" }).status == 400, "mkv")
+assert(
+	request(audio.handle_stream_route, ids.song, nil, { container = "mp3", audioCodec = "ac3" }).status == 400,
+	"ac3"
+)
+local ts = request(
+	audio.handle_universal_route,
+	ids.song,
+	fixture.api_keys.desk,
+	{ container = "mp3", maxStreamingBitrate = "50000000", transcodingContainer = "ts" }
+)
+assert(ts.status == 400, `ts status {ts.status}`)
+assert(
+	request(audio.handle_hls_main_route, ids.song, fixture.api_keys.desk, { audioCodec = "opus,ac3" }).status == 400,
+	"an HLS codec the server doesn't encode"
+)

@@ -193,7 +193,14 @@ pub(super) fn parse_api_response(
     let body_value = table.get("body").unwrap_or(luau::Value::Nil);
     let path = table.optional_string_field("path")?;
     let transform = harmony_serde::optional_json_field(&table, "transform")?;
-    let options = harmony_serde::optional_json_field(&table, "options")?;
+    let options = match kind {
+        ApiResponseKind::StreamTrack
+        | ApiResponseKind::DownloadTrack
+        | ApiResponseKind::HlsPlaylist => Some(
+            crate::plugins::api::options::track_response_options(kind, &table.get("options")?)?,
+        ),
+        _ => None,
+    };
     let track_id = table.optional_string_field("track_id")?;
 
     let body = match kind {
