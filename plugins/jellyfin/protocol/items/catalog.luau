@@ -464,15 +464,16 @@ function helpers.resolve_entity_library_attribution(entity_id: string?, context:
 	if not entity_id then
 		return false, nil
 	end
-	local ok, libs = pcall(libraries.get_for_entity, entity_id)
+	local ok, by_entity = pcall(libraries.by_entity, { entity_id })
 	if not ok then
-		warn(`libraries.get_for_entity failed for entity {entity_id}: {libs}`)
+		warn(`libraries.by_entity failed for entity {entity_id}: {by_entity}`)
 		return false, nil
 	end
-	if not libs or #libs == 0 then
+	local libs = (by_entity :: { [string]: { libraries.Library } })[entity_id]
+	if not libs then
 		return false, nil
 	end
-	local first = libs[1] :: libraries.Library
+	local first = libs[1]
 	local hex = item_ids.nanoid_to_hex(first.id)
 	if hex == nil then
 		warn(`nanoid_to_hex failed for library id of entity {entity_id}; ParentId will be nil`)
@@ -1088,7 +1089,7 @@ function helpers.to_library_view_item(lib: LibraryInfo?, include_child_count: bo
 end
 
 function module.to_music_view_items(include_child_count: boolean): { ItemInfo }
-	local ok, libs = pcall(libraries.list, nil)
+	local ok, libs = pcall(libraries.list)
 	if not ok or type(libs) ~= "table" then
 		return {}
 	end
@@ -1672,11 +1673,11 @@ function helpers.prefetch_library_hex_ids(context: ItemContext, seed: Realizatio
 		return
 	end
 
-	local ok, lib_map = pcall(libraries.get_for_entities, all_entity_ids)
+	local ok, lib_map = pcall(libraries.by_entity, all_entity_ids)
 	if ok and lib_map then
 		local hex_map: { [string]: string } = {}
-		for entity_id, lib in lib_map do
-			local hex = item_ids.nanoid_to_hex(lib.id)
+		for entity_id, libs in lib_map do
+			local hex = item_ids.nanoid_to_hex(libs[1].id)
 			if hex then
 				hex_map[entity_id] = hex
 			end

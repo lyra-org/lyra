@@ -1031,18 +1031,17 @@ fn plugin_executor_exposes_db_backed_lyra_libraries_module() -> Result<()> {
                 local track_id = "{track_id}"
 
                 local all = libraries.list()
-                local by_id = libraries.list(library_id)
-                local for_entity = libraries.get_for_entity(track_id)
-                local many = libraries.get_for_entities({{ track_id, library_id, "missing" }})
+                local by_id = libraries.get({{ library_id, "missing" }})
+                local by_entity = libraries.by_entity({{ track_id, library_id, "missing" }})
 
                 return all[1].name,
-                    by_id[1].path,
-                    by_id[1].id,
-                    #libraries.list("missing"),
-                    for_entity[1].name,
-                    many[track_id].name,
-                    many[library_id].name,
-                    many["missing"] == nil
+                    by_id[library_id].path,
+                    by_id[library_id].id,
+                    by_id["missing"] == nil,
+                    by_entity[track_id][1].name,
+                    #by_entity[track_id],
+                    by_entity[library_id][1].name,
+                    by_entity["missing"] == nil
             "#,
         )
         .into_bytes(),
@@ -1054,9 +1053,9 @@ fn plugin_executor_exposes_db_backed_lyra_libraries_module() -> Result<()> {
             luau::Value::String(b"Raw Library".to_vec()),
             luau::Value::String(b"/tmp/raw-lib".to_vec()),
             luau::Value::String(library_id.into_bytes()),
-            luau::Value::Number(0.0),
+            luau::Value::Boolean(true),
             luau::Value::String(b"Raw Library".to_vec()),
-            luau::Value::String(b"Raw Library".to_vec()),
+            luau::Value::Number(1.0),
             luau::Value::String(b"Raw Library".to_vec()),
             luau::Value::Boolean(true),
         ]
@@ -1104,16 +1103,16 @@ fn libraries_expose_only_accessible_libraries_to_a_dispatch_principal() -> Resul
             r#"
                 local libraries = require("@lyra/libraries")
                 local all = libraries.list()
-                local for_entity = libraries.get_for_entity("{shared_track_id}")
-                local many = libraries.get_for_entities({{ "{shared_track_id}", "{hidden_track_id}" }})
+                local by_entity = libraries.by_entity({{ "{shared_track_id}", "{hidden_track_id}" }})
+                local by_id = libraries.get({{ "{shared_public_id}", "{hidden_public_id}" }})
                 return #all,
                     all[1].id,
                     all[1].path,
-                    for_entity[1].id,
-                    many["{shared_track_id}"].id,
-                    many["{hidden_track_id}"],
-                    #libraries.list("{hidden_public_id}"),
-                    #libraries.get_for_entity("{hidden_track_id}")
+                    by_entity["{shared_track_id}"][1].id,
+                    by_id["{shared_public_id}"].id,
+                    by_entity["{hidden_track_id}"],
+                    by_id["{hidden_public_id}"],
+                    #by_entity["{shared_track_id}"]
             "#,
         )
         .into_bytes(),
@@ -1130,8 +1129,8 @@ fn libraries_expose_only_accessible_libraries_to_a_dispatch_principal() -> Resul
             shared_id.clone(),
             shared_id,
             luau::Value::Nil,
-            luau::Value::Number(0.0),
-            luau::Value::Number(0.0),
+            luau::Value::Nil,
+            luau::Value::Number(1.0),
         ]
     );
     Ok(())
@@ -1168,8 +1167,8 @@ fn libraries_refuse_a_client_dispatch_without_a_principal() -> Result<()> {
                     return not ok and string.find(tostring(err), "no authenticated caller", 1, true) ~= nil
                 end
                 return refused(libraries.list),
-                    refused(libraries.get_for_entity, "{track_id}"),
-                    refused(libraries.get_for_entities, {{ "{track_id}" }})
+                    refused(libraries.get, {{ "{track_id}" }}),
+                    refused(libraries.by_entity, {{ "{track_id}" }})
             "#,
         )
         .into_bytes(),

@@ -1,0 +1,32 @@
+run_as = "manager"
+
+# The manager manages libraries and sees the Shown library; Hidden is granted to no one.
+
+[[users]]
+key = "manager"
+permissions = ["manage_libraries"]
+
+[[libraries]]
+key = "shown"
+name = "Shown"
+users = ["manager"]
+language = "jpn"
+
+[[libraries]]
+key = "hidden"
+name = "Hidden"
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "shown"
+
+[[releases]]
+key = "secret"
+title = "Secret"
+library = "hidden"
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"

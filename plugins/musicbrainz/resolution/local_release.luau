@@ -209,12 +209,11 @@ function module.from_context(release_context: ReleaseContext): LocalRelease
 	local library = if lookup_context then lookup_context.library else nil
 	local library_id = if lookup_context then lookup_context.library_id else nil
 	if not library and library_id then
-		local lib_results = libraries.list(library_id)
-		local first_library = if lib_results then lib_results[1] else nil
-		if first_library then
+		local found = libraries.get({ library_id })[library_id]
+		if found then
 			library = {
-				language = first_library.language,
-				country = first_library.country,
+				language = found.language,
+				country = found.country,
 			}
 		end
 	end

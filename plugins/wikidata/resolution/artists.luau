@@ -73,11 +73,11 @@ end
 -- The language of the first library holding the artist, in the order the
 -- server gives them, whose language resolves.
 local function library_language(artist_id: string): WikiLanguage?
-	local ok, artist_libraries = pcall(libraries.get_for_entity, artist_id)
+	local ok, by_entity = pcall(libraries.by_entity, { artist_id })
 	if not ok then
 		return nil
 	end
-	for _, library in artist_libraries do
+	for _, library in by_entity[artist_id] or {} do
 		local language = locale.language(library.language)
 		if not language then
 			continue

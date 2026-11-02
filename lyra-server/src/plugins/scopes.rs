@@ -1430,11 +1430,7 @@ mod tests {
         ),
         (
             "lyra/libraries",
-            &[
-                "list(id)",
-                "get_for_entity(entity_id)",
-                "get_for_entities(entity_ids)",
-            ],
+            &["list()", "get(library_ids)", "by_entity(entity_ids)"],
         ),
         (
             "lyra/listens",

@@ -3,13 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::{
-    collections::{
-        HashMap,
-        HashSet,
-    },
-    path::PathBuf,
-};
+use std::collections::HashSet;
 
 use agdb::DbId;
 
@@ -28,150 +22,49 @@ pub(crate) enum AccessError {
     Internal(#[from] anyhow::Error),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct LibraryView {
-    pub(crate) db_id: Option<DbId>,
-    pub(crate) id: String,
-    pub(crate) name: String,
-    pub(crate) language: Option<String>,
-    pub(crate) country: Option<String>,
-}
-
-impl From<Library> for LibraryView {
-    fn from(library: Library) -> Self {
-        Self {
-            db_id: library.db_id,
-            id: library.id,
-            name: library.name,
-            language: library.language,
-            country: library.country,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct LibraryFull {
-    pub(crate) db_id: Option<DbId>,
-    pub(crate) id: String,
-    pub(crate) name: String,
-    pub(crate) language: Option<String>,
-    pub(crate) country: Option<String>,
-    pub(crate) path: PathBuf,
-}
-
-impl From<Library> for LibraryFull {
-    fn from(library: Library) -> Self {
-        Self {
-            db_id: library.db_id,
-            id: library.id,
-            name: library.name,
-            language: library.language,
-            country: library.country,
-            path: library.path,
-        }
-    }
-}
-
 fn principal_can_access_library(principal: &Principal, library: &Library) -> bool {
     principal.accessible_library_ids.contains(&library.id)
 }
 
-fn filter_accessible_libraries(
-    libraries: impl IntoIterator<Item = Library>,
-    principal: &Principal,
-) -> Vec<LibraryView> {
-    libraries
-        .into_iter()
-        .filter(|library| principal_can_access_library(principal, library))
-        .map(LibraryView::from)
-        .collect()
-}
-
+/// The libraries the principal can see, by database id.
 pub(crate) fn libraries(
     db: &impl lyra_db::DbAccess,
     principal: &Principal,
-) -> anyhow::Result<Vec<LibraryView>> {
-    Ok(filter_accessible_libraries(
-        lyra_db::libraries::get(db)?,
-        principal,
-    ))
-}
-
-pub(crate) fn system_libraries(
-    db: &impl lyra_db::DbAccess,
-    _ctx: &SystemContext,
-) -> anyhow::Result<Vec<LibraryFull>> {
+) -> anyhow::Result<Vec<Library>> {
     Ok(lyra_db::libraries::get(db)?
         .into_iter()
-        .map(LibraryFull::from)
+        .filter(|library| principal_can_access_library(principal, library))
         .collect())
 }
 
-pub(crate) fn library_by_id(
-    db: &impl lyra_db::DbAccess,
-    principal: &Principal,
-    library_db_id: DbId,
-) -> anyhow::Result<Option<LibraryView>> {
-    Ok(lyra_db::libraries::get_by_id(db, library_db_id)?
-        .filter(|library| principal_can_access_library(principal, library))
-        .map(LibraryView::from))
-}
-
-pub(crate) fn system_library_by_id(
+/// Every library, by database id.
+pub(crate) fn system_libraries(
     db: &impl lyra_db::DbAccess,
     _ctx: &SystemContext,
-    library_db_id: DbId,
-) -> anyhow::Result<Option<LibraryFull>> {
-    Ok(lyra_db::libraries::get_by_id(db, library_db_id)?.map(LibraryFull::from))
+) -> anyhow::Result<Vec<Library>> {
+    lyra_db::libraries::get(db)
 }
 
+/// The libraries holding the entity that the principal can see, the one the server picks for the
+/// entity first.
 pub(crate) fn libraries_for_entity(
     db: &impl lyra_db::DbAccess,
     principal: &Principal,
     entity_db_id: DbId,
-) -> anyhow::Result<Vec<LibraryView>> {
-    Ok(filter_accessible_libraries(
-        lyra_db::libraries::get_for_entity(db, entity_db_id)?,
-        principal,
-    ))
+) -> anyhow::Result<Vec<Library>> {
+    Ok(lyra_db::libraries::get_for_entity(db, entity_db_id)?
+        .into_iter()
+        .filter(|library| principal_can_access_library(principal, library))
+        .collect())
 }
 
+/// Every library holding the entity, the one the server picks for the entity first.
 pub(crate) fn system_libraries_for_entity(
     db: &impl lyra_db::DbAccess,
     _ctx: &SystemContext,
     entity_db_id: DbId,
-) -> anyhow::Result<Vec<LibraryFull>> {
-    Ok(lyra_db::libraries::get_for_entity(db, entity_db_id)?
-        .into_iter()
-        .map(LibraryFull::from)
-        .collect())
-}
-
-pub(crate) fn libraries_for_entities(
-    db: &impl lyra_db::DbAccess,
-    principal: &Principal,
-    entity_ids: &[DbId],
-) -> anyhow::Result<HashMap<DbId, LibraryView>> {
-    let allowed = lyra_db::libraries::db_ids_for_public_ids(db, &principal.accessible_library_ids)?
-        .into_iter()
-        .collect::<HashSet<_>>();
-    Ok(
-        lyra_db::libraries::get_for_entities(db, entity_ids, Some(&allowed))?
-            .into_iter()
-            .map(|(entity_id, library)| (entity_id, LibraryView::from(library)))
-            .collect(),
-    )
-}
-
-pub(crate) fn system_libraries_for_entities(
-    db: &impl lyra_db::DbAccess,
-    _ctx: &SystemContext,
-    entity_ids: &[DbId],
-) -> anyhow::Result<HashMap<DbId, LibraryFull>> {
-    Ok(lyra_db::libraries::get_for_entities(db, entity_ids, None)?
-        .into_iter()
-        .map(|(entity_id, library)| (entity_id, LibraryFull::from(library)))
-        .collect())
+) -> anyhow::Result<Vec<Library>> {
+    lyra_db::libraries::get_for_entity(db, entity_db_id)
 }
 
 /// Return the unique entity ids accessible to the principal.
@@ -409,7 +302,7 @@ pub(crate) fn resolve_optional_library_filter(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::path::PathBuf;
 
     use agdb::DbAny;
     use nanoid::nanoid;
@@ -427,7 +320,7 @@ mod tests {
     };
 
     #[test]
-    fn a_shared_entity_reports_a_library_the_viewer_can_see() -> anyhow::Result<()> {
+    fn a_shared_entity_reports_only_the_libraries_the_viewer_can_see() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let shown = lyra_db::test_db::insert_library(&mut db, "Shown", "/access/shown")?;
         let hidden = lyra_db::test_db::insert_library(&mut db, "Hidden", "/access/hidden")?;
@@ -444,15 +337,18 @@ mod tests {
         let user = create_user(&mut db, "listener")?;
         let viewer = Principal::for_user(&db, user, Vec::new(), HashSet::from([shown_id.clone()]));
         let nobody = Principal::for_user(&db, user, Vec::new(), HashSet::new());
-        let named = |db: &DbAny, principal: &Principal| -> anyhow::Result<Vec<(DbId, String)>> {
-            let mut found = libraries_for_entities(db, principal, &[release, track])?
+        let named = |db: &DbAny, principal: &Principal| -> anyhow::Result<Vec<Vec<String>>> {
+            [release, track]
                 .into_iter()
-                .map(|(id, library)| (id, library.id))
-                .collect::<Vec<_>>();
-            found.sort();
-            Ok(found)
+                .map(|entity| {
+                    Ok(libraries_for_entity(db, principal, entity)?
+                        .into_iter()
+                        .map(|library| library.id)
+                        .collect())
+                })
+                .collect()
         };
-        let in_shown = vec![(release, shown_id.clone()), (track, shown_id.clone())];
+        let in_shown = vec![vec![shown_id.clone()], vec![shown_id.clone()]];
 
         assert_eq!(named(&db, &viewer)?, in_shown);
         connect(&mut db, hidden, release)?;
@@ -461,7 +357,7 @@ mod tests {
             in_shown,
             "the hidden library changes nothing"
         );
-        assert!(named(&db, &nobody)?.is_empty());
+        assert_eq!(named(&db, &nobody)?, vec![Vec::<String>::new(); 2]);
 
         let admin = Principal::for_user(
             &db,
@@ -469,13 +365,8 @@ mod tests {
             vec![lyra_db::Permission::Admin],
             HashSet::from([shown_id.clone(), hidden_id.clone()]),
         );
-        let found = named(&db, &admin)?;
-        assert_eq!(found.len(), 2);
-        assert!(
-            found
-                .iter()
-                .all(|(_, library)| *library == shown_id || *library == hidden_id)
-        );
+        let both = vec![shown_id, hidden_id];
+        assert_eq!(named(&db, &admin)?, vec![both.clone(), both]);
         Ok(())
     }
 

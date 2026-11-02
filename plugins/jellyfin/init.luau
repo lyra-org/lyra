@@ -650,7 +650,7 @@ api.get(P .. "/Library/VirtualFolders", function(ctx: ApiContext)
 		return session.unauthorized()
 	end
 
-	local ok, libs = pcall(libraries.list, nil)
+	local ok, libs = pcall(libraries.list)
 	if not ok or not libs then
 		return api.response.json(200, {})
 	end
