@@ -8,7 +8,7 @@ assert(original.transcode == false, "the source streams as it is")
 assert(#original.reasons == 0, `reasons {#original.reasons}`)
 assert(original.container == "opus", `container {original.container}`)
 assert(original.codec == "opus", `codec {original.codec}`)
-assert(original.content_type == "audio/opus", `content type {original.content_type}`)
+assert(original.content_type == "audio/ogg", `content type {original.content_type}`)
 assert(original.source.container == "ogg", `source container {original.source.container}`)
 assert(original.sample_rate_hz == 48000, `sample rate {original.sample_rate_hz}`)
 

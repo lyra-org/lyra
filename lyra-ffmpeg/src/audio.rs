@@ -142,7 +142,7 @@ impl AudioFormat {
             }
             Self::Wma => "audio/x-ms-wma",
             Self::Aiff => "audio/aiff",
-            Self::Opus => "audio/opus",
+            Self::Opus => "audio/ogg",
             Self::Caf => "audio/x-caf",
         }
     }
