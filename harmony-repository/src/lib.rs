@@ -36,6 +36,7 @@ pub use install::{
     InstalledBy,
     StagedInstall,
     install_candidate,
+    orphaned_installs,
     promote_together,
     stage_candidate,
     uninstall_plugin,

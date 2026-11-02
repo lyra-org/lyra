@@ -183,7 +183,7 @@ pub fn stage_candidate(
             Managed::Record(_) | Managed::Broken => {}
         }
     }
-    if path_exists(&displaced)? && (!installed || resolves_to(&target, &displaced)?) {
+    if only_previous(&target, &displaced)? {
         return Err(InstallError::PreviousOnly {
             id: id.to_string(),
             previous: displaced,
@@ -425,6 +425,53 @@ fn path_exists(path: &Path) -> Result<bool, InstallError> {
         context: format!("Could not inspect `{}`", path.display()),
         source,
     })
+}
+
+/// The plugins in `plugins_dir` whose only installation is the previous one
+/// a promotion displaced, as an interrupted promotion leaves them, each with
+/// where that installation remains. [`stage_candidate`] refuses to stage
+/// them.
+pub fn orphaned_installs(plugins_dir: &Path) -> Result<Vec<(String, PathBuf)>, InstallError> {
+    let staging_root = plugins_dir.join(STAGING_DIRNAME);
+    let entries = match std::fs::read_dir(&staging_root) {
+        Ok(entries) => entries,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) => {
+            return Err(InstallError::Io {
+                context: format!("Could not read directory `{}`", staging_root.display()),
+                source,
+            });
+        }
+    };
+    let mut orphaned = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|source| InstallError::Io {
+            context: format!("Could not read an entry in `{}`", staging_root.display()),
+            source,
+        })?;
+        let name = entry.file_name();
+        let Some(id) = name
+            .to_str()
+            .and_then(|name| name.strip_suffix(".previous"))
+        else {
+            continue;
+        };
+        if ensure_valid_id(id).is_err() {
+            continue;
+        }
+        let displaced = displaced_path(plugins_dir, id);
+        if only_previous(&plugins_dir.join(id), &displaced)? {
+            orphaned.push((id.to_string(), displaced));
+        }
+    }
+    orphaned.sort();
+    Ok(orphaned)
+}
+
+/// Whether `displaced` holds the only installation of a plugin: nothing is
+/// installed at `target`, or only a link to `displaced` is.
+fn only_previous(target: &Path, displaced: &Path) -> Result<bool, InstallError> {
+    Ok(path_exists(displaced)? && (!path_exists(target)? || resolves_to(target, displaced)?))
 }
 
 /// Whether `path` resolves to `other`, as a symlink to it does.
@@ -679,6 +726,29 @@ mod tests {
         };
         assert!(matches!(err, InstallError::PreviousOnly { .. }), "{err}");
         assert!(previous.join("init.luau").is_file());
+    }
+
+    #[tokio::test]
+    async fn orphaned_installs_lists_only_previous_installations_without_a_target() {
+        let (_server, resolved) = resolved_foo().await;
+        let plugins_dir = TempDir::new().unwrap();
+        assert!(orphaned_installs(plugins_dir.path()).unwrap().is_empty());
+        install_candidate(
+            &resolved.candidates[0],
+            plugins_dir.path(),
+            None,
+            InstalledBy::Request,
+        )
+        .unwrap();
+        let staging_root = plugins_dir.path().join(STAGING_DIRNAME);
+        std::fs::create_dir_all(staging_root.join("bar.previous")).unwrap();
+        std::fs::create_dir_all(staging_root.join("foo.previous")).unwrap();
+        std::fs::create_dir_all(staging_root.join("baz")).unwrap();
+
+        assert_eq!(
+            orphaned_installs(plugins_dir.path()).unwrap(),
+            vec![("bar".to_string(), displaced_path(plugins_dir.path(), "bar"))]
+        );
     }
 
     #[tokio::test]
