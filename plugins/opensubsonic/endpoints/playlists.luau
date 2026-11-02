@@ -145,9 +145,9 @@ module.methods = {
 		local caller_id = req.auth.principal.user_id
 		local user_id = caller_id
 		local username = request.param(req.params, "username")
-		if username and string.lower(username) ~= string.lower(req.auth.principal.username) then
+		if username then
 			if not is_admin(req) then
-				return request.fail(50, "Only admins can list another user's playlists")
+				return request.fail(50, "Only admins can name a user")
 			end
 			local wanted = string.lower(username)
 			local found: string? = nil

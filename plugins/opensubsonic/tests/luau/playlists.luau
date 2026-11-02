@@ -28,8 +28,11 @@ local shared = by_id[ids.shared]
 assert(shared.owner == "other" and shared.public == true and shared.readonly == true)
 assert(shared.songCount == 1, "a hidden song isn't counted")
 
--- Only an admin lists another user's.
+-- Only an admin names a user, even the caller itself.
 assert(call.error_code("getPlaylists", key, { username = "other" }) == 50, "a listener can't list another user's")
+assert(call.error_code("getPlaylists", key, { username = "owner" }) == 50, "nor name itself")
+local admin_own = call.ok("getPlaylists", fixture.api_keys.admin_key, { username = "ADMIN" }).playlists.playlist
+call.same(call.ids(admin_own), { ids.shared }, "an admin naming itself lists as without a name")
 local admin_listed = call.ok("getPlaylists", fixture.api_keys.admin_key, { username = "other" }).playlists.playlist
 call.same(call.ids(admin_listed), { ids.shared }, "the other user's public ones, even as an admin")
 assert(
