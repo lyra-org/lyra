@@ -50,7 +50,8 @@ local function normalize_all(raw_covers: { [string]: covers.Cover }): { [string]
 	return resolved
 end
 
--- The covers of the releases, artists and tracks the caller can see, keyed by id.
+-- The covers of the releases, artists and tracks the caller can see, keyed by id. Listings read
+-- them without looking at the files.
 function module.get_cover_infos(item_ids: { string }): { [string]: ResolvedCoverInfo }
 	if #item_ids == 0 then
 		return {}
@@ -83,15 +84,24 @@ function module.get_artwork_info(item_id: string?): ResolvedCoverInfo?
 	return module.get_artwork_infos({ item_id })[item_id]
 end
 
--- Any item's cover, if the caller can see the item.
-function module.get_item_cover_info(item_id: string): ResolvedCoverInfo?
+-- The artwork to serve for an item: as `get_artwork_info`, but only when its file is there. A
+-- cover whose file is gone is forgotten, so the next listing advertises the next pick.
+function module.get_artwork_file(item_id: string?): ResolvedCoverInfo?
+	if item_id == nil then
+		return nil
+	end
+	return module.normalize_cover_info(covers.artwork({ item_id }, { require_file = true })[item_id])
+end
+
+-- Any item's cover to serve, if the caller can see the item and its file is there.
+function module.get_item_cover_file(item_id: string): ResolvedCoverInfo?
 	local element_type = entities.get_type(item_id)
 	if element_type == "Playlist" then
-		return if playlist_access.find(item_id) then module.get_artwork_info(item_id) else nil
+		return if playlist_access.find(item_id) then module.get_artwork_file(item_id) else nil
 	elseif element_type == "Genre" then
-		return if genres.get({ item_id })[item_id] then module.get_artwork_info(item_id) else nil
+		return if genres.get({ item_id })[item_id] then module.get_artwork_file(item_id) else nil
 	end
-	return module.get_cover_info(item_id)
+	return module.normalize_cover_info(covers.get({ item_id }, { require_file = true })[item_id])
 end
 
 return module

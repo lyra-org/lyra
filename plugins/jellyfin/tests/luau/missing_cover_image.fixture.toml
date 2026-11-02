@@ -1,0 +1,22 @@
+run_as = "owner"
+
+# "Gone" has a stored cover whose file was deleted after the last sync; "Kept" still has its file.
+
+[[users]]
+key = "owner"
+admin = true
+
+[[api_keys]]
+key = "desk"
+user = "owner"
+
+[[releases]]
+key = "gone"
+title = "Gone"
+cover = "deleted_cover.png"
+cover_gone = true
+
+[[releases]]
+key = "kept"
+title = "Kept"
+cover = "cover.png"

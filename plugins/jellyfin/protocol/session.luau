@@ -955,7 +955,7 @@ function module.handle_primary_image_request(ctx: ApiContext?): ApiResponse
 		return responses.not_found("image not found")
 	end
 	local signed_in = module.require_jellyfin_principal(ctx) ~= nil
-	local cover_info = if signed_in then artwork.get_item_cover_info(item_id) else artwork.get_artwork_info(item_id)
+	local cover_info = if signed_in then artwork.get_item_cover_file(item_id) else artwork.get_artwork_file(item_id)
 	if not cover_info then
 		return responses.not_found("image not found")
 	end
@@ -995,19 +995,19 @@ end
 
 function module.handle_artist_image_request(ctx: ApiContext?): ApiResponse
 	return serve_public_image_by_name(ctx, function(name)
-		return artwork.get_artwork_info(catalog.find_artist_id_by_name(name))
+		return artwork.get_artwork_file(catalog.find_artist_id_by_name(name))
 	end)
 end
 
 function module.handle_person_image_request(ctx: ApiContext?): ApiResponse
 	return serve_public_image_by_name(ctx, function(name)
-		return artwork.get_artwork_info(catalog.find_artist_id_by_name(name))
+		return artwork.get_artwork_file(catalog.find_artist_id_by_name(name))
 	end)
 end
 
 function module.handle_genre_image_request(ctx: ApiContext?): ApiResponse
 	return serve_public_image_by_name(ctx, function(name)
-		return artwork.get_artwork_info(catalog.find_genre_id_by_name(name))
+		return artwork.get_artwork_file(catalog.find_genre_id_by_name(name))
 	end)
 end
 
