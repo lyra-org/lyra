@@ -16,6 +16,8 @@ local stream = api.response.stream_track("track", {
 assert(stream.kind == "stream_track" and stream.track_id == "track")
 assert(stream.options.format == "m4a" and stream.options.public == true)
 assert(api.response.stream_track("track", {}).kind == "stream_track", "empty options")
+local waiting = api.response.stream_track("track", { format = "mp3", wait_for_transcode = true })
+assert(waiting.options.wait_for_transcode == true, "a stream waits for its transcode")
 
 local download = api.response.download_track("track", { format = "flac" })
 assert(download.kind == "download_track" and download.options.format == "flac")
@@ -25,7 +27,7 @@ assert(hls.kind == "hls_playlist" and hls.options.preferred_codecs[1] == "opus")
 
 refuses(
 	"an unknown option",
-	"stream_track options: unknown field 'container'; expected format, preferred_codecs, bitrate_bps, sample_rate_hz, channels, prefer_vbr, start_offset_ms, public",
+	"stream_track options: unknown field 'container'; expected format, preferred_codecs, bitrate_bps, sample_rate_hz, channels, prefer_vbr, start_offset_ms, wait_for_transcode, public",
 	function()
 		return api.response.stream_track("track", { container = "mp3" } :: any)
 	end
@@ -54,6 +56,12 @@ refuses("a codec delivery has no name for", `got "ac3"`, function()
 end)
 refuses("a non-boolean flag", "stream_track options.public must be a boolean, got string", function()
 	return api.response.stream_track("track", { public = "yes" } :: any)
+end)
+refuses("a non-boolean wait", "stream_track options.wait_for_transcode must be a boolean, got string", function()
+	return api.response.stream_track("track", { wait_for_transcode = "yes" } :: any)
+end)
+refuses("a download waiting for its transcode", "download_track options: unknown field 'wait_for_transcode'", function()
+	return api.response.download_track("track", { wait_for_transcode = true } :: any)
 end)
 refuses("a public download", "download_track options: unknown field 'public'", function()
 	return api.response.download_track("track", { public = true } :: any)

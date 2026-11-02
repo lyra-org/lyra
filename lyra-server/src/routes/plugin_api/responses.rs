@@ -250,7 +250,11 @@ async fn serve_track(
             };
             serve_hls_playlist_for_track(request_method, &track_id, &access, options).await
         }
-        TrackResponseOptions::Stream(TrackStreamRequest { public, options }) => {
+        TrackResponseOptions::Stream(TrackStreamRequest {
+            public,
+            wait_for_transcode,
+            options,
+        }) => {
             let (track_id, access) =
                 match stream_track_access(principal, response.client, track_id, public).await {
                     Ok(resolved) => resolved,
@@ -263,6 +267,7 @@ async fn serve_track(
                 &access,
                 options,
                 DeliveryTarget::Stream,
+                wait_for_transcode,
             )
             .await
         }
@@ -281,6 +286,7 @@ async fn serve_track(
                 &access,
                 options,
                 DeliveryTarget::Download,
+                false,
             )
             .await
         }

@@ -404,25 +404,38 @@ pub(crate) async fn get_track_response(
     Ok(responses.remove(0))
 }
 
-fn build_media_url(path: String, token: &str, query: &PlaybackUrlQuery) -> String {
+fn build_media_url(
+    path: String,
+    token: &str,
+    query: &PlaybackUrlQuery,
+    wait_for_transcode: bool,
+) -> String {
     let mut serializer = form_urlencoded::Serializer::new(String::new());
     serializer.append_pair("media_token", token);
     if let Some(start_offset_ms) = query.start_offset_ms {
         serializer.append_pair("start_offset_ms", &start_offset_ms.to_string());
     }
+    if wait_for_transcode {
+        serializer.append_pair("wait_for_transcode", "true");
+    }
     format!("{path}?{}", serializer.finish())
 }
 
 fn build_stream_url(id: &str, token: &str, query: &PlaybackUrlQuery) -> String {
-    build_media_url(format!("/api/stream/{id}"), token, query)
+    build_media_url(
+        format!("/api/stream/{id}"),
+        token,
+        query,
+        query.wait_for_transcode,
+    )
 }
 
 fn build_hls_url(id: &str, token: &str, query: &PlaybackUrlQuery) -> String {
-    build_media_url(format!("/api/stream/{id}/hls.m3u8"), token, query)
+    build_media_url(format!("/api/stream/{id}/hls.m3u8"), token, query, false)
 }
 
 fn build_download_url(id: &str, token: &str, query: &PlaybackUrlQuery) -> String {
-    build_media_url(format!("/api/download/{id}"), token, query)
+    build_media_url(format!("/api/download/{id}"), token, query, false)
 }
 
 fn non_empty(value: Option<&String>) -> Option<String> {
@@ -699,6 +712,14 @@ struct PlaybackUrlQuery {
         schemars(description = "Per-request playback start offset in milliseconds.")
     )]
     start_offset_ms: Option<u64>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Adds `wait_for_transcode=true` to `stream_url`, so a transcode still being encoded is sent only once it is complete, with its length and byte ranges. Defaults to false."
+        )
+    )]
+    #[serde(default)]
+    wait_for_transcode: bool,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -758,7 +779,8 @@ fn create_track_playback_url_docs(op: TransformOperation) -> TransformOperation 
          revoked, the user is removed, or the user loses access to the track, and it answers \
          410 Gone once the track's source file has changed since it was issued. A token also fixes \
          the delivery it was issued for: the URLs carry no format, codec or transcode settings, a \
-         request that adds any is rejected, and only `start_offset_ms` may change per request.\n\n\
+         request that adds any is rejected, and only `start_offset_ms` and, on `stream_url`, \
+         `wait_for_transcode` may change per request.\n\n\
          `stream_delivery` and `download_delivery` describe what their URLs deliver without starting \
          anything: whether the source file is served as it is or transcoded and why, and the \
          delivered container, codec, content type, bitrate, sample rate and channels. They describe \
@@ -1901,7 +1923,7 @@ mod tests {
     }
 
     #[test]
-    fn build_stream_url_carries_only_the_token_and_start_offset() {
+    fn build_stream_url_carries_only_the_token_start_offset_and_wait() {
         let query = PlaybackUrlQuery {
             format: Some("mp3".to_string()),
             codec: Some("copy,mp3".to_string()),
@@ -1911,13 +1933,18 @@ mod tests {
             channels: Some(2),
             prefer_vbr: Some(true),
             start_offset_ms: Some(12_345),
+            wait_for_transcode: true,
         };
 
         let url = build_stream_url("track/id", "token value", &query);
 
         assert_eq!(
             url,
-            "/api/stream/track/id?media_token=token+value&start_offset_ms=12345"
+            "/api/stream/track/id?media_token=token+value&start_offset_ms=12345&wait_for_transcode=true"
+        );
+        assert_eq!(
+            build_download_url("track/id", "token", &query),
+            "/api/download/track/id?media_token=token&start_offset_ms=12345"
         );
         assert_eq!(
             file_delivery_options(&query),
@@ -1948,6 +1975,7 @@ mod tests {
             channels: None,
             prefer_vbr: None,
             start_offset_ms: None,
+            wait_for_transcode: false,
         }
     }
 

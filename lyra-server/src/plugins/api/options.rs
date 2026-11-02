@@ -86,6 +86,7 @@ const STREAM_FIELDS: &[&str] = &[
     "channels",
     "prefer_vbr",
     "start_offset_ms",
+    "wait_for_transcode",
     "public",
 ];
 
@@ -98,11 +99,12 @@ const HLS_FIELDS: &[&str] = &[
     "start_offset_ms",
 ];
 
-/// A `stream_track` response's options: whether it skips the caller's track access check, and
-/// what it serves.
+/// A `stream_track` response's options: whether it skips the caller's track access check, whether
+/// it waits for its transcode to complete, and what it serves.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct TrackStreamRequest {
     pub(crate) public: bool,
+    pub(crate) wait_for_transcode: bool,
     pub(crate) options: ServeTrackOptions,
 }
 
@@ -139,6 +141,8 @@ pub(crate) fn stream_request(
     args::reject_unknown_fields(&table, owner, STREAM_FIELDS)?;
     Ok(TrackStreamRequest {
         public: args::optional_bool(&table, "public", owner)?.unwrap_or(false),
+        wait_for_transcode: args::optional_bool(&table, "wait_for_transcode", owner)?
+            .unwrap_or(false),
         options: serve_options(&table, owner)?,
     })
 }
@@ -270,10 +274,15 @@ pub(crate) fn track_serve_options_interface() -> InterfaceDescriptor {
 }
 
 /// `TrackStreamOptions`, the options of `stream_track` and `playback_sources.decide`: those of
-/// `TrackServeOptions` and `public`.
+/// `TrackServeOptions`, `wait_for_transcode` and `public`.
 #[cfg(feature = "docgen")]
 pub(crate) fn track_stream_options_interface() -> InterfaceDescriptor {
     let mut descriptor = serve_interface("TrackStreamOptions");
+    descriptor.fields.push(option_field(
+        "wait_for_transcode",
+        Option::<bool>::luau_type(),
+        "Sends a transcode still being encoded only once it is complete, with its length and byte ranges, rather than streaming it as it is written. Playback starts only after the whole encode, however long it takes. A HEAD request never waits, so it answers without a length while the transcode is unfinished. Defaults to false.",
+    ));
     descriptor.fields.push(option_field(
         "public",
         Option::<bool>::luau_type(),

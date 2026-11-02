@@ -116,6 +116,7 @@ async fn get_download(
         }
         .bound_to(&access)?,
         DeliveryTarget::Download,
+        false,
     )
     .await
 }

@@ -111,7 +111,8 @@ pub(crate) async fn require_track_access(
 }
 
 /// Serves a track to `target` as `GET` would. A `HEAD` request gets the same decision and
-/// headers without starting FFmpeg, with the length when the transcode is already cached.
+/// headers without starting FFmpeg, with the length when the transcode is already cached. A stream
+/// that waits for its transcode is sent only once the transcode is complete.
 pub(crate) async fn track_response(
     method: &Method,
     headers: &HeaderMap,
@@ -119,13 +120,22 @@ pub(crate) async fn track_response(
     access: &TrackAccess,
     options: ServeTrackOptions,
     target: DeliveryTarget,
+    wait_for_transcode: bool,
 ) -> Result<Response<Body>, AppError> {
     let (source, delivery) = resolve_track_delivery(track_id, access, options, target).await?;
     let response = if delivery.direct_passthrough {
         source_file_response(&source, delivery.content_type, headers).await?
     } else {
-        transcoded::transcoded_response(method, headers, access.caller(), source, delivery, target)
-            .await?
+        transcoded::transcoded_response(
+            method,
+            headers,
+            access.caller(),
+            source,
+            delivery,
+            target,
+            wait_for_transcode,
+        )
+        .await?
     };
     Ok(response.map(counted_as_playing))
 }
@@ -695,6 +705,7 @@ pub(crate) mod tests {
             &crate::services::delivery::TrackAccess::Principal(principal),
             ServeTrackOptions::default(),
             crate::services::delivery::DeliveryTarget::Download,
+            false,
         )
         .await
         .map_err(|error| {
@@ -722,6 +733,7 @@ pub(crate) mod tests {
             )),
             ServeTrackOptions::default(),
             crate::services::delivery::DeliveryTarget::Stream,
+            false,
         )
         .await
         .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
@@ -760,6 +772,7 @@ pub(crate) mod tests {
                 ..ServeTrackOptions::default()
             },
             crate::services::delivery::DeliveryTarget::Stream,
+            false,
         )
         .await
         .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
@@ -780,6 +793,78 @@ pub(crate) mod tests {
                 .and_then(|v| v.to_str().ok()),
             Some("chunked"),
         );
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn stream_waiting_for_transcode_sends_it_complete() -> anyhow::Result<()> {
+        use axum::http::header::{
+            ACCEPT_RANGES,
+            CONTENT_LENGTH,
+            CONTENT_RANGE,
+            RANGE,
+        };
+
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let serve = |method: Method, range: Option<&'static str>| {
+            let track_id = track_id.clone();
+            async move {
+                let mut headers = HeaderMap::new();
+                if let Some(range) = range {
+                    headers.insert(RANGE, range.parse()?);
+                }
+                let response = super::track_response(
+                    &method,
+                    &headers,
+                    &track_id,
+                    &crate::services::delivery::TrackAccess::PublicPluginRoute(Caller::Client(
+                        ClientAddress::default(),
+                    )),
+                    ServeTrackOptions {
+                        format: Some("mp3".to_string()),
+                        bitrate_bps: Some(64_000),
+                        ..ServeTrackOptions::default()
+                    },
+                    crate::services::delivery::DeliveryTarget::Stream,
+                    true,
+                )
+                .await
+                .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
+                let (parts, body) = response.into_parts();
+                let body = axum::body::to_bytes(body, usize::MAX).await?;
+                anyhow::Ok((parts.status, parts.headers, body))
+            }
+        };
+        let cached_files = || {
+            std::fs::read_dir(&STATE.boot.get().transcode_cache_dir)
+                .map(|dir| dir.count())
+                .unwrap_or(0)
+        };
+
+        let (status, head, _) = serve(Method::HEAD, None).await?;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(head[ACCEPT_RANGES], "bytes");
+        assert!(head.get(CONTENT_LENGTH).is_none());
+        assert_eq!(cached_files(), 0, "HEAD must not start an encode");
+
+        let (status, partial_headers, partial) = serve(Method::GET, Some("bytes=10-19")).await?;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(partial_headers[ACCEPT_RANGES], "bytes");
+        assert_eq!(partial_headers[CONTENT_LENGTH], "10");
+
+        let (status, full_headers, full) = serve(Method::GET, None).await?;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(full_headers[ACCEPT_RANGES], "bytes");
+        assert_eq!(full_headers[CONTENT_LENGTH], full.len().to_string());
+        assert_eq!(
+            partial_headers[CONTENT_RANGE],
+            format!("bytes 10-19/{}", full.len())
+        );
+        assert_eq!(&partial[..], &full[10..20]);
 
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())
@@ -1221,6 +1306,7 @@ pub(crate) mod tests {
             )),
             mp3(),
             crate::services::delivery::DeliveryTarget::Stream,
+            false,
         )
         .await
         .expect_err("the caller's allowance is used up")
@@ -1236,6 +1322,7 @@ pub(crate) mod tests {
             )),
             mp3(),
             crate::services::delivery::DeliveryTarget::Stream,
+            false,
         )
         .await
         .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
@@ -1715,6 +1802,7 @@ pub(crate) mod tests {
                 ..ServeTrackOptions::default()
             },
             crate::services::delivery::DeliveryTarget::Stream,
+            false,
         )
         .await
         .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
@@ -1759,6 +1847,7 @@ pub(crate) mod tests {
                 ..ServeTrackOptions::default()
             },
             crate::services::delivery::DeliveryTarget::Stream,
+            false,
         )
         .await
         .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
@@ -1809,6 +1898,7 @@ pub(crate) mod tests {
                     ..ServeTrackOptions::default()
                 },
                 crate::services::delivery::DeliveryTarget::Stream,
+                false,
             )
             .await
             .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
@@ -1848,6 +1938,7 @@ pub(crate) mod tests {
                 ..ServeTrackOptions::default()
             },
             crate::services::delivery::DeliveryTarget::Stream,
+            false,
         )
         .await
         .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
@@ -1886,6 +1977,7 @@ pub(crate) mod tests {
                 ..ServeTrackOptions::default()
             },
             crate::services::delivery::DeliveryTarget::Stream,
+            false,
         )
         .await;
 

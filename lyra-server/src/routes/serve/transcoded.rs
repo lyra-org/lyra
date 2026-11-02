@@ -74,10 +74,10 @@ fn cache_key(
 }
 
 /// Serves the transcode `delivery` describes. A finished transcode is served from the cache with
-/// byte ranges and its length. Otherwise a stream follows the encode as it writes, while a
-/// download waits for it to finish. Requests for the same transcode share one encode, and `HEAD`
-/// never starts one. Starting an encode takes a transcoding permit for `caller`; when none is free
-/// the request is refused with 429 rather than queued.
+/// byte ranges and its length. Otherwise a stream follows the encode as it writes, unless it
+/// waits for the transcode, and a download waits for it to finish. Requests for the same transcode
+/// share one encode, and `HEAD` never starts one. Starting an encode takes a transcoding permit
+/// for `caller`; when none is free the request is refused with 429 rather than queued.
 pub(super) async fn transcoded_response(
     method: &Method,
     headers: &HeaderMap,
@@ -85,7 +85,10 @@ pub(super) async fn transcoded_response(
     source: ValidatedTrackSource,
     delivery: DeliveryDecision,
     target: DeliveryTarget,
+    wait_for_transcode: bool,
 ) -> Result<Response<Body>, AppError> {
+    let streaming = target.is_streaming();
+    let follow_encode = streaming && !wait_for_transcode;
     let key = cache_key(&source, &delivery, target);
     let cache = STATE.generation().transcode_cache.clone();
 
@@ -95,11 +98,10 @@ pub(super) async fn transcoded_response(
             Some(ready) => {
                 open_file_response(ready.file, ready.size, delivery.content_type, headers)
             }
-            None => unfinished_head_response(delivery.content_type, target),
+            None => unfinished_head_response(delivery.content_type, follow_encode),
         };
     }
 
-    let streaming = target.is_streaming();
     let version = source.version.clone();
     let full_path = source.full_path.clone();
     let spec = EncodeSpec {
@@ -130,7 +132,7 @@ pub(super) async fn transcoded_response(
         Lookup::Ready(ready) => {
             open_file_response(ready.file, ready.size, delivery.content_type, headers)
         }
-        Lookup::Encoding(encoding) if streaming => {
+        Lookup::Encoding(encoding) if follow_encode => {
             let mut encoding = encoding;
             encoding.started().await?;
             encoding_stream_response(
@@ -163,9 +165,9 @@ fn refusal_to_app_error(err: anyhow::Error) -> AppError {
 /// The headers a `GET` would answer with while the transcode is not finished, without its length.
 fn unfinished_head_response(
     content_type: &str,
-    target: DeliveryTarget,
+    follow_encode: bool,
 ) -> Result<Response<Body>, AppError> {
-    if target.is_streaming() {
+    if follow_encode {
         return encoding_stream_response(content_type, head_body());
     }
     Ok(Response::builder()

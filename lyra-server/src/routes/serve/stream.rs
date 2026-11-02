@@ -38,7 +38,7 @@ struct StreamQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Scoped media token returned by `POST /api/tracks/{id}/playback-url`. It fixes the format, codec and transcode settings, so a request with one passes none of them; only `start_offset_ms` may vary."
+            description = "Scoped media token returned by `POST /api/tracks/{id}/playback-url`. It fixes the format, codec and transcode settings, so a request with one passes none of them; only `start_offset_ms` and `wait_for_transcode` may vary."
         )
     )]
     media_token: Option<String>,
@@ -85,6 +85,14 @@ struct StreamQuery {
         schemars(description = "Per-request playback start offset in milliseconds.")
     )]
     start_offset_ms: Option<u64>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Sends a transcode still being encoded only once it is complete, with its length and byte ranges, rather than streaming it chunked as it is written. Playback starts only after the whole encode, however long it takes. A `HEAD` request never waits, so it still answers without a length while the transcode is unfinished. Defaults to false."
+        )
+    )]
+    #[serde(default)]
+    wait_for_transcode: bool,
 }
 
 async fn get_stream(
@@ -116,6 +124,7 @@ async fn get_stream(
         }
         .bound_to(&access)?,
         DeliveryTarget::Stream,
+        query.wait_for_transcode,
     )
     .await
 }
@@ -124,7 +133,7 @@ async fn get_stream(
 fn stream_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Stream audio")
         .description(
-            "Streams audio data for the track ID, including cue-derived virtual segments, optionally transcoded to the requested format or codec. Requires either bearer authentication with access to the track or a scoped `media_token` from `POST /api/tracks/{track_id}/playback-url`. The original file streams in any container; transcoded output can be mp3, flac, wav, ogg, webm, aac, m4a, opus, or aiff. Direct-copy stream responses and finished transcodes support byte ranges and report their length; a transcode still being encoded streams chunked, without ranges, as it is written. Transcodes are cached briefly, so repeat and ranged requests for the same output are served from the finished file. HLS playback is available via `/api/stream/{track_id}/hls.m3u8`.",
+            "Streams audio data for the track ID, including cue-derived virtual segments, optionally transcoded to the requested format or codec. Requires either bearer authentication with access to the track or a scoped `media_token` from `POST /api/tracks/{track_id}/playback-url`. The original file streams in any container; transcoded output can be mp3, flac, wav, ogg, webm, aac, m4a, opus, or aiff. Direct-copy stream responses and finished transcodes support byte ranges and report their length; a transcode still being encoded streams chunked, without ranges, as it is written, unless `wait_for_transcode` is set. Transcodes are cached briefly, so repeat and ranged requests for the same output are served from the finished file. HLS playback is available via `/api/stream/{track_id}/hls.m3u8`.",
         )
 }
 
