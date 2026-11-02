@@ -695,7 +695,11 @@ function module.register()
 		if track_id == nil or item == nil then
 			return responses.not_found("item not found")
 		end
-		local ok, lyric_info = pcall(lyrics.get, track_id, nil, false, nil)
+		local ok, lyric_info = pcall(function(): LyricsInfo?
+			local ranked = lyrics.by_track({ track_id })[track_id]
+			local best = if ranked then ranked[1] else nil
+			return if best then lyrics.get({ best.id })[best.id] else nil
+		end)
 		if not ok then
 			return api.response.empty(500)
 		end
@@ -703,7 +707,7 @@ function module.register()
 			return responses.not_found("lyrics not found")
 		end
 
-		return api.response.json(200, lyrics_protocol.to_jellyfin_lyric_dto(item, lyric_info :: LyricsInfo))
+		return api.response.json(200, lyrics_protocol.to_jellyfin_lyric_dto(item, lyric_info))
 	end, { auth = "public", case_insensitive = true })
 	api.post(P .. "/Audio/{itemId}/Lyrics", function(ctx: ApiContext): ApiResponse
 		local track_id, item, resolve_err = lyrics_protocol.resolve_audio_item(ctx)
@@ -726,7 +730,7 @@ function module.register()
 			return responses.bad_request("Extension is required on filename")
 		end
 
-		local ok, lyric_info = pcall(lyrics.upsert_personal, track_id, {
+		local ok, lyric_info = pcall(lyrics.set_personal, track_id, {
 			content_type = content_type,
 			body = body,
 			language = nil,
@@ -734,8 +738,11 @@ function module.register()
 		if not ok then
 			return responses.bad_request(tostring(lyric_info))
 		end
+		if lyric_info == nil then
+			return responses.not_found("item not found")
+		end
 
-		return api.response.json(200, lyrics_protocol.to_jellyfin_lyric_dto(item, lyric_info :: LyricsInfo))
+		return api.response.json(200, lyrics_protocol.to_jellyfin_lyric_dto(item, lyric_info))
 	end, { auth = "public", case_insensitive = true })
 	api.delete(P .. "/Audio/{itemId}/Lyrics", function(ctx: ApiContext): ApiResponse
 		local principal = session.require_jellyfin_principal(ctx)
@@ -753,7 +760,7 @@ function module.register()
 			return api.response.empty(204)
 		end
 
-		local ok = pcall(lyrics.delete_personal_for_track, track_id)
+		local ok = pcall(lyrics.remove_personal, track_id)
 		if not ok then
 			return api.response.empty(500)
 		end

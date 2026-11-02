@@ -23,7 +23,7 @@ rejects(
 	"playback_sessions.on_update requires the lyra.playback_sessions.all scope",
 	function() end
 )
-rejects(lyrics.delete_for_track, "lyrics.delete_for_track requires the lyra.lyrics.all scope", 1)
+rejects(lyrics.remove_all, "lyrics.remove_all requires the lyra.lyrics.all scope", "id")
 rejects(
 	playback_sessions.list_connections,
 	"playback_sessions.list_connections requires the lyra.playback_sessions.all scope"

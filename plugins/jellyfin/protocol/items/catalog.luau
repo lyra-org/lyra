@@ -1344,8 +1344,10 @@ function helpers.to_track_item(
 	if context and context.has_lyrics_prefetch then
 		has_lyrics = context.lyrics_by_track_id[track.id] == true
 	else
-		local ok, value = pcall(lyrics.has, track.id)
-		has_lyrics = ok and value == true
+		local ok, entries = pcall(function(): { lyrics.LyricsSummary }?
+			return lyrics.by_track({ track.id })[track.id]
+		end)
+		has_lyrics = ok and entries ~= nil and #entries > 0
 	end
 	local media_sources: { MediaSourceInfo }? = nil
 	local media_streams: { MediaStreamInfo }? = nil
@@ -1876,11 +1878,17 @@ function helpers.prefetch_track_lyrics(context: ItemContext, seed: RealizationSe
 		return
 	end
 
-	local ok, lookup = pcall(lyrics.has_many, seed.track_ids)
+	local ok, ranked = pcall(function(): { [string]: { lyrics.LyricsSummary } }
+		return lyrics.by_track(seed.track_ids)
+	end)
 	if not ok then
 		return
 	end
 
+	local lookup: LyricsLookup = {}
+	for track_id, entries in ranked do
+		lookup[track_id] = #entries > 0
+	end
 	context.lyrics_by_track_id = lookup
 	context.has_lyrics_prefetch = true
 end

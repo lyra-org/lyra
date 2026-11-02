@@ -22,7 +22,7 @@ use lyra_db::lyrics::{
     WordInput,
 };
 
-const LYRICS_UPLOAD_MAX_BYTES: usize = 64 * 1024;
+pub(crate) const LYRICS_UPLOAD_MAX_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum LyricsUploadError {
@@ -162,12 +162,12 @@ pub(crate) fn delete_personal_lyrics_for_track_by_db_id(
     lyra_db::lyrics::delete_personal(db, track_db_id, owner_db_id).map_err(Into::into)
 }
 
+/// Returns whether the track had any lyrics.
 pub(crate) fn delete_all_lyrics_for_track(
     db: &mut DbAny,
     track_db_id: DbId,
-) -> Result<(), LyricsUploadError> {
-    lyra_db::lyrics::delete_for_track(db, track_db_id)?;
-    Ok(())
+) -> Result<bool, LyricsUploadError> {
+    Ok(lyra_db::lyrics::delete_for_track(db, track_db_id)?)
 }
 
 pub(crate) fn upsert_personal_lyrics_by_db_id(

@@ -1,0 +1,89 @@
+run_as = "listener"
+
+# The listener sees "Album" and its songs; "Secret" is in a library nobody is granted. Song has
+# the shared lyrics, three providers' and another user's personal ones.
+
+[[users]]
+key = "listener"
+
+[[users]]
+key = "other"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener", "other"]
+
+[[libraries]]
+key = "locked"
+name = "Locked"
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+
+[[releases]]
+key = "secret"
+title = "Secret"
+library = "locked"
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+duration_ms = 180000
+
+[[tracks]]
+key = "bare"
+title = "Bare"
+release = "album"
+
+[[tracks]]
+key = "hidden"
+title = "Hidden"
+release = "secret"
+
+[[lyrics]]
+key = "first_plain"
+track = "song"
+provider = "first"
+language = "eng"
+body = "Plain words"
+
+[[lyrics]]
+key = "second_synced"
+track = "song"
+provider = "second"
+language = "eng"
+content_type = "application/lrc"
+body = "[00:01.00]One\n[02:00.00]Two"
+
+[[lyrics]]
+key = "third_french"
+track = "song"
+provider = "third"
+language = "fra"
+body = "Mots"
+
+[[lyrics]]
+key = "shared"
+track = "song"
+body = "Shared words"
+
+[[lyrics]]
+key = "others"
+track = "song"
+user = "other"
+body = "Other words"
+
+[[lyrics]]
+key = "secret_words"
+track = "hidden"
+provider = "first"
+body = "Secret words"
+
+[[lyrics]]
+track = "hidden"
+user = "listener"
+body = "Lost words"

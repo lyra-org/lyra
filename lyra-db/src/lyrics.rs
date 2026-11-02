@@ -1015,12 +1015,13 @@ pub(crate) fn delete_personal_for_owner_in_txn(
     Ok(())
 }
 
+/// Returns whether the track had any lyrics.
 pub(crate) fn delete_for_track_in_txn(
     db: &mut impl DbAccess,
     track_id: DbId,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     if !is_track(db, track_id)? {
-        return Ok(());
+        return Ok(false);
     }
     let ids: Vec<DbId> = db
         .exec(
@@ -1038,15 +1039,17 @@ pub(crate) fn delete_for_track_in_txn(
         .filter(|id| id.0 > 0)
         .collect();
 
+    let any = !ids.is_empty();
     for lyrics_db_id in ids {
         remove_children(db, lyrics_db_id)?;
         db.exec_mut(QueryBuilder::remove().ids(lyrics_db_id).query())?;
     }
-    Ok(())
+    Ok(any)
 }
 
-pub fn delete_for_track(db: &mut DbAny, track_id: DbId) -> anyhow::Result<()> {
-    db.transaction_mut(|t| -> anyhow::Result<()> { delete_for_track_in_txn(t, track_id) })
+/// Returns whether the track had any lyrics.
+pub fn delete_for_track(db: &mut DbAny, track_id: DbId) -> anyhow::Result<bool> {
+    db.transaction_mut(|t| -> anyhow::Result<bool> { delete_for_track_in_txn(t, track_id) })
 }
 
 #[cfg(test)]

@@ -383,7 +383,7 @@ scopes! {
     LyricsAll => {
         id: "lyra.lyrics.all",
         within: Lyrics,
-        functions: &["delete_for_track"],
+        functions: &["remove_all"],
         effects: &[
             Effect::WritesPersonal(PersonalKind::Lyrics, Users::All),
             Effect::WritesLibrary(LibraryKind::Lyrics),
@@ -1505,13 +1505,12 @@ mod tests {
         (
             "lyra/lyrics",
             &[
-                "get(track_id, language, require_synced, provider)",
-                "parse_lrc(text, language)",
-                "upsert_personal(track_id, upload)",
-                "delete_personal_for_track(track_id)",
-                "delete_for_track(track_id) [lyra.lyrics.all]",
-                "has(track_id)",
-                "has_many(track_ids)",
+                "by_track(track_ids, options)",
+                "get(ids)",
+                "parse_lrc(text, options)",
+                "set_personal(track_id, upload)",
+                "remove_personal(track_id)",
+                "remove_all(track_id) [lyra.lyrics.all]",
             ],
         ),
         (

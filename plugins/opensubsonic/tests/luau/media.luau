@@ -56,12 +56,12 @@ assert(type(none) == "table" and none.structuredLyrics == nil, "no lyrics")
 local none_xml = call.raw("getLyricsBySongId", { apiKey = key, id = ids.synced }).body
 assert(string.find(none_xml, "<lyricsList/>", 1, true), none_xml)
 
-lyrics.upsert_personal(ids.synced, {
+lyrics.set_personal(ids.synced, {
 	content_type = "application/lrc",
 	body = "[00:01.00]First line\n[00:02.50]Second line\n",
 	language = "eng",
 })
-lyrics.upsert_personal(ids.plain, { content_type = "text/plain", body = "One\nTwo" })
+lyrics.set_personal(ids.plain, { content_type = "text/plain", body = "One\nTwo" })
 
 local synced = call.ok("getLyricsBySongId", key, { id = ids.synced }).lyricsList.structuredLyrics
 assert(#synced == 1)

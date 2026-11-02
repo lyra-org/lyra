@@ -227,7 +227,7 @@ local function candidate_from_response(response_object: JsonObject?): LyricsCand
 
 	local lyrics_input: ProviderLyricsInput? = nil
 	if synced ~= nil then
-		local ok, parsed = pcall(lyrics_api.parse_lrc, synced, DEFAULT_LANGUAGE)
+		local ok, parsed = pcall(lyrics_api.parse_lrc, synced, { language = DEFAULT_LANGUAGE })
 		if ok and type(parsed) == "table" then
 			lyrics_input = {
 				id = id,

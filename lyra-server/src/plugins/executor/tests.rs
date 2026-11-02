@@ -512,14 +512,18 @@ fn plugin_executor_scopes_personal_lyrics_to_the_dispatch_principal() -> Result<
             r#"
                 local lyrics = require("@lyra/lyrics")
                 local track_id = {track_public_id:?}
-                local provider = lyrics.get(track_id, nil, false, "test_provider")
-                local personal = lyrics.upsert_personal(track_id, {{
+                local function best(options)
+                    local id = lyrics.by_track({{ track_id }}, options)[track_id][1].id
+                    return lyrics.get({{ id }})[id]
+                end
+                local provider = best({{ provider_id = "test_provider" }})
+                local personal = lyrics.set_personal(track_id, {{
                     content_type = "text/plain",
                     body = "alice lyrics",
                     language = "eng",
                 }})
-                local automatic = lyrics.get(track_id, nil, false, nil)
-                local selected_provider = lyrics.get(track_id, nil, false, "test_provider")
+                local automatic = best()
+                local selected_provider = best({{ provider_id = "test_provider" }})
                 return provider.plain_text,
                     provider.provider_id,
                     provider.scope,
@@ -562,13 +566,17 @@ fn plugin_executor_scopes_personal_lyrics_to_the_dispatch_principal() -> Result<
             r#"
                 local lyrics = require("@lyra/lyrics")
                 local track_id = {track_public_id:?}
-                local before = lyrics.get(track_id, nil, false, nil)
-                lyrics.upsert_personal(track_id, {{
+                local function best()
+                    local id = lyrics.by_track({{ track_id }})[track_id][1].id
+                    return lyrics.get({{ id }})[id]
+                end
+                local before = best()
+                lyrics.set_personal(track_id, {{
                     content_type = "text/plain",
                     body = "bob lyrics",
                     language = "eng",
                 }})
-                local after = lyrics.get(track_id, nil, false, nil)
+                local after = best()
                 return before.plain_text, after.plain_text
             "#,
         )
@@ -595,13 +603,17 @@ fn plugin_executor_scopes_personal_lyrics_to_the_dispatch_principal() -> Result<
         format!(
             r#"
                 local lyrics = require("@lyra/lyrics")
-                return lyrics.delete_personal_for_track({track_public_id:?})
+                return lyrics.remove_personal({track_public_id:?})
             "#,
         )
         .into_bytes(),
         inaccessible_alice_context,
     )?;
-    assert_eq!(deleted, vec![luau::Value::Boolean(true)]);
+    assert_eq!(
+        deleted,
+        vec![luau::Value::Boolean(false)],
+        "a track the caller can no longer see answers false"
+    );
 
     let (alice_remaining, bob_remaining) = futures::executor::block_on(async {
         let db = crate::services::STATE.db.read().await;

@@ -1,0 +1,27 @@
+run_as = "admin"
+
+[[users]]
+key = "admin"
+admin = true
+
+[[users]]
+key = "other"
+
+[[releases]]
+key = "album"
+title = "Album"
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+
+[[lyrics]]
+track = "song"
+provider = "first"
+body = "Fetched words"
+
+[[lyrics]]
+track = "song"
+user = "other"
+body = "Other words"

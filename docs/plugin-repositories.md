@@ -56,7 +56,7 @@ user's data rather than that of the users the plugin acts for, and need a
 narrow scope on top of their module's: `lyra.listens.all` for
 `listens.on_update`, `lyra.playback_sessions.all` for
 `playback_sessions.on_update`, and `lyra.lyrics.all` for
-`lyrics.delete_for_track`. A plugin declaring only the module's scope gets
+`lyrics.remove_all`. A plugin declaring only the module's scope gets
 each such function as a stub raising an error that names the scope it
 lacks. Declaring a narrow scope without its module's fails to load.
 

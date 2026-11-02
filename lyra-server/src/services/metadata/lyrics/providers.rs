@@ -574,16 +574,20 @@ pub(crate) async fn rescan(force_refresh: bool, cancel: CancellationToken) -> Re
     let track_ids: Vec<(DbId, String)> = {
         let db = STATE.db.read().await;
         let tracks: Vec<lyra_db::tracks::Track> = roots::members(&*db, Root::Tracks)?;
+        let providers = crate::services::providers::active_providers(&*db)?;
         let mut filtered = Vec::with_capacity(tracks.len());
         for track in tracks {
             let Some(track_db_id) = track.db_id.clone().map(DbId::from) else {
                 continue;
             };
-            if !force_refresh
-                && selection::get_preferred_detail(&db, track_db_id, None, None, None, false)?
+            if !force_refresh {
+                let candidates = selection::visible_for_track(&db, track_db_id, None)?;
+                let ranking = selection::Ranking::default();
+                if selection::pick_preferred(&candidates, &providers, ranking, track.duration_ms)
                     .is_some()
-            {
-                continue;
+                {
+                    continue;
+                }
             }
             filtered.push((track_db_id, track.id));
         }

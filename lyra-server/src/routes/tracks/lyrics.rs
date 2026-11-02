@@ -131,33 +131,33 @@ async fn get_track_lyrics(
     let language_hint = lyrics_service::normalize_language_hint(query.language.as_deref())
         .map_err(|error| AppError::bad_request(error.to_string()))?;
 
-    let winner = lyrics_service::pick_preferred(
-        &candidates,
-        &providers,
-        provider_filter,
-        language_hint.as_deref(),
-        track.duration_ms,
+    let ranking = lyrics_service::Ranking {
+        provider_id: provider_filter,
+        language_hint: language_hint.as_deref(),
         require_synced,
-    )
-    .ok_or_else(|| {
-        let selected_without_format = require_synced
-            && lyrics_service::pick_preferred(
-                &candidates,
-                &providers,
-                provider_filter,
-                language_hint.as_deref(),
-                track.duration_ms,
-                false,
-            )
-            .is_some();
-        if selected_without_format {
-            AppError::not_acceptable(format!(
-                "Selected lyrics do not have meaningful synced content for track: {id}"
-            ))
-        } else {
-            not_found()
-        }
-    })?;
+    };
+    let winner =
+        lyrics_service::pick_preferred(&candidates, &providers, ranking, track.duration_ms)
+            .ok_or_else(|| {
+                let selected_without_format = require_synced
+                    && lyrics_service::pick_preferred(
+                        &candidates,
+                        &providers,
+                        lyrics_service::Ranking {
+                            require_synced: false,
+                            ..ranking
+                        },
+                        track.duration_ms,
+                    )
+                    .is_some();
+                if selected_without_format {
+                    AppError::not_acceptable(format!(
+                        "Selected lyrics do not have meaningful synced content for track: {id}"
+                    ))
+                } else {
+                    not_found()
+                }
+            })?;
 
     let Some(winner_db_id) = winner.db_id.clone().map(Into::into) else {
         return Err(not_found());
@@ -194,20 +194,14 @@ async fn get_track_lyrics_candidates(
     let require_synced = format == "lrc";
     let candidates = lyrics_service::visible_for_track(db, track_db_id, Some(&principal))?;
     let providers = crate::services::providers::active_providers(db)?;
-    let mut items: Vec<_> = lyrics_service::eligible_candidates(
-        &candidates,
-        &providers,
+    let ranking = lyrics_service::Ranking {
         require_synced,
-        track.duration_ms,
-    )
-    .into_iter()
-    .map(|lyrics| lyrics_candidate_summary(lyrics, track.duration_ms))
-    .collect();
-    items.sort_by(|a, b| {
-        a.provider_id
-            .cmp(&b.provider_id)
-            .then_with(|| a.id.cmp(&b.id))
-    });
+        ..lyrics_service::Ranking::default()
+    };
+    let items = lyrics_service::rank(&candidates, &providers, ranking, track.duration_ms)
+        .into_iter()
+        .map(|lyrics| lyrics_candidate_summary(lyrics, track.duration_ms))
+        .collect();
     Ok(Json(LyricsCandidatesResponse { items }))
 }
 
@@ -555,7 +549,8 @@ fn get_track_lyrics_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn get_track_lyrics_candidates_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List visible lyrics candidates").description(
-        "Enumerates stored candidates currently visible and eligible for the caller. The list \
+        "Enumerates stored candidates currently visible and eligible for the caller, best first \
+         in the order that picks the lyrics `GET /api/tracks/{id}/lyrics` returns. The list \
          contains enabled-provider rows, the shared manual row, and only the caller's personal \
          row. `format=lrc` omits candidates without meaningful synced coverage.",
     )
@@ -801,13 +796,20 @@ mod tests {
             .await,
         )?;
         assert_eq!(candidates.items.len(), 3);
-        assert_eq!(
-            candidates
-                .items
-                .iter()
-                .filter(|candidate| matches!(candidate.scope, LyricsScopeResponse::Personal))
-                .count(),
-            1
+        assert!(
+            matches!(
+                (
+                    candidates.items[0].scope,
+                    candidates.items[1].source,
+                    candidates.items[2].source,
+                ),
+                (
+                    LyricsScopeResponse::Personal,
+                    LyricsSourceResponse::Manual,
+                    LyricsSourceResponse::Provider,
+                )
+            ),
+            "candidates come best first"
         );
 
         let provider_response = route_ok(

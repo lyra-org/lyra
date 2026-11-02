@@ -78,24 +78,20 @@ local function lyric_cues_to_json(words: { LyricWordInfo }): { JsonValue }?
 	return cues
 end
 
-local function synced_lyric_lines_to_json(lines: { LyricLineInfo }): ({ JsonValue }, boolean)
+-- Timings only for lyrics the host counts as synced; Jellyfin's `Start` and `Cues` are optional.
+local function lyric_lines_to_json(lines: { LyricLineInfo }, synced: boolean): { JsonValue }
 	local output: { JsonValue } = {}
-	local is_synced = false
 	for _, line in lines do
-		if line.ts_ms > 0 then
-			is_synced = true
-		end
 		local row: JsonObject = {
 			Text = line.text,
-			Start = ms_to_ticks(line.ts_ms),
 		}
-		local cues = lyric_cues_to_json(line.words)
-		if cues then
-			row.Cues = cues
+		if synced then
+			row.Start = ms_to_ticks(line.ts_ms)
+			row.Cues = lyric_cues_to_json(line.words)
 		end
 		table.insert(output, row)
 	end
-	return output, is_synced
+	return output
 end
 
 local function plain_lyric_lines_to_json(text: string): { JsonValue }
@@ -114,11 +110,9 @@ local function plain_lyric_lines_to_json(text: string): { JsonValue }
 end
 
 function module.to_jellyfin_lyric_dto(item: catalog.ItemInfo, lyric_info: LyricsInfo): JsonObject
-	local line_count = #lyric_info.lines
-	local lines, is_synced = synced_lyric_lines_to_json(lyric_info.lines)
-	if line_count == 0 then
-		lines = plain_lyric_lines_to_json(lyric_info.plain_text)
-	end
+	local lines = if #lyric_info.lines == 0
+		then plain_lyric_lines_to_json(lyric_info.plain_text)
+		else lyric_lines_to_json(lyric_info.lines, lyric_info.synced)
 
 	return {
 		Metadata = {
@@ -126,7 +120,7 @@ function module.to_jellyfin_lyric_dto(item: catalog.ItemInfo, lyric_info: Lyrics
 			Album = item.Album,
 			Title = item.Name,
 			Length = item.RunTimeTicks,
-			IsSynced = is_synced,
+			IsSynced = lyric_info.synced,
 		},
 		Lyrics = lines,
 	}

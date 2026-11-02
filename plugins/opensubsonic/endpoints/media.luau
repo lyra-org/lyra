@@ -126,7 +126,9 @@ module.methods = {
 
 	getLyricsBySongId = function(req: Request): ApiResponse
 		local track = find_track(req.params)
-		local info = lyrics.get(track.id)
+		local summaries: { lyrics.LyricsSummary } = lyrics.by_track({ track.id })[track.id] or {}
+		local best = summaries[1]
+		local info = if best then lyrics.get({ best.id })[best.id] else nil
 		local entry: any = nil
 		if info then
 			local projection = credits.projections({ track.id }, { "credits" })[track.id]

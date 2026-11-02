@@ -3,6 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use std::cmp::Ordering;
+
 use agdb::{
     DbAny,
     DbId,
@@ -71,113 +73,178 @@ pub(crate) fn normalize_language_hint(raw: Option<&str>) -> anyhow::Result<Optio
     Ok(Some(lyra_metadata::locale::validate_language(trimmed)?))
 }
 
-pub(crate) fn eligible_candidates<'a>(
-    candidates: &'a [Lyrics],
-    providers: &ActiveProviders,
-    require_synced: bool,
-    duration_ms: Option<u64>,
-) -> Vec<&'a Lyrics> {
-    candidates
-        .iter()
-        .filter(|lyrics| is_eligible(lyrics, providers))
-        .filter(|lyrics| !require_synced || has_meaningful_synced(lyrics, duration_ms))
-        .collect()
+/// What a ranking keeps and prefers.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Ranking<'a> {
+    /// Keeps only this provider's rows, bypassing manual precedence.
+    pub(crate) provider_id: Option<&'a str>,
+    /// Prefers rows in this language; already normalized.
+    pub(crate) language_hint: Option<&'a str>,
+    /// Keeps only rows with meaningful synced content.
+    pub(crate) require_synced: bool,
 }
 
-/// Ordering (first-difference wins): personal, shared manual, language match,
-/// `has_meaningful_synced` (≥ `MIN_SYNCED_LINES` non-zero-ts lines AND
-/// `max_synced_ts_ms` ≥ 50% of duration), provider position,
-/// `updated_at_ms`, `provider_id` asc.
-///
-/// `require_synced = true` filters plain candidates pre-rank for `format=lrc`.
+/// Ordering, best first (first difference wins): personal, shared manual, language match,
+/// `has_meaningful_synced` (≥ `MIN_SYNCED_LINES` non-zero-ts lines AND `max_synced_ts_ms`
+/// ≥ 50% of duration), provider position, newer `updated_at_ms`, `provider_id` asc.
+fn rank_order(
+    a: &Lyrics,
+    b: &Lyrics,
+    providers: &ActiveProviders,
+    language_hint: Option<&str>,
+    duration_ms: Option<u64>,
+) -> Ordering {
+    let tier = |lyrics: &Lyrics| match lyrics.kind {
+        LyricsKind::Personal => 0_u8,
+        LyricsKind::Shared => 1,
+        LyricsKind::Provider => 2,
+    };
+    let language = |lyrics: &Lyrics| {
+        !language_hint.is_some_and(|hint| language_matches(&lyrics.language, hint))
+    };
+    let unsynced = |lyrics: &Lyrics| !has_meaningful_synced(lyrics, duration_ms);
+    let position = |lyrics: &Lyrics| {
+        lyrics
+            .provider_id
+            .as_deref()
+            .and_then(|provider_id| providers.position(provider_id))
+            .unwrap_or(u32::MAX)
+    };
+
+    tier(a)
+        .cmp(&tier(b))
+        .then_with(|| language(a).cmp(&language(b)))
+        .then_with(|| unsynced(a).cmp(&unsynced(b)))
+        .then_with(|| position(a).cmp(&position(b)))
+        .then_with(|| b.updated_at_ms.cmp(&a.updated_at_ms))
+        .then_with(|| a.provider_id.cmp(&b.provider_id))
+}
+
+/// Whether `ranking` keeps `lyrics`. Provider rows are eligible while their provider is active.
+fn keeps(
+    lyrics: &Lyrics,
+    providers: &ActiveProviders,
+    ranking: Ranking<'_>,
+    duration_ms: Option<u64>,
+) -> bool {
+    is_eligible(lyrics, providers)
+        && ranking.provider_id.is_none_or(|provider_id| {
+            lyrics.kind == LyricsKind::Provider
+                && lyrics.provider_id.as_deref() == Some(provider_id)
+        })
+        && (!ranking.require_synced || has_meaningful_synced(lyrics, duration_ms))
+}
+
+/// The `candidates` that `ranking` keeps, best first by [`rank_order`].
 ///
 /// `candidates` must already be visibility-filtered, e.g. by [`visible_for_track`].
+pub(crate) fn rank<'a>(
+    candidates: &'a [Lyrics],
+    providers: &ActiveProviders,
+    ranking: Ranking<'_>,
+    duration_ms: Option<u64>,
+) -> Vec<&'a Lyrics> {
+    let mut ranked: Vec<&Lyrics> = candidates
+        .iter()
+        .filter(|lyrics| keeps(lyrics, providers, ranking, duration_ms))
+        .collect();
+    ranked.sort_by(|a, b| rank_order(a, b, providers, ranking.language_hint, duration_ms));
+    ranked
+}
+
+/// The first of [`rank`]'s rows.
 pub(crate) fn pick_preferred<'a>(
     candidates: &'a [Lyrics],
     providers: &ActiveProviders,
-    provider_id: Option<&str>,
-    language_hint: Option<&str>,
+    ranking: Ranking<'_>,
     duration_ms: Option<u64>,
-    require_synced: bool,
 ) -> Option<&'a Lyrics> {
-    candidates
-        .iter()
-        .filter(|lyrics| is_eligible(lyrics, providers))
-        .filter(|lyrics| {
-            provider_id.is_none_or(|provider_id| {
-                lyrics.kind == LyricsKind::Provider
-                    && lyrics.provider_id.as_deref() == Some(provider_id)
-            })
-        })
-        .filter(|lyrics| !require_synced || has_meaningful_synced(lyrics, duration_ms))
-        .max_by(|a, b| {
-            let tier = |lyrics: &Lyrics| match lyrics.kind {
-                LyricsKind::Provider => 0_u8,
-                LyricsKind::Shared => 1,
-                LyricsKind::Personal => 2,
-            };
-            let a_tier = tier(a);
-            let b_tier = tier(b);
-
-            let a_lang = language_hint.is_some_and(|h| language_matches(&a.language, h));
-            let b_lang = language_hint.is_some_and(|h| language_matches(&b.language, h));
-
-            let a_synced = has_meaningful_synced(a, duration_ms);
-            let b_synced = has_meaningful_synced(b, duration_ms);
-
-            let a_position = a
-                .provider_id
-                .as_deref()
-                .and_then(|provider_id| providers.position(provider_id))
-                .unwrap_or(u32::MAX);
-            let b_position = b
-                .provider_id
-                .as_deref()
-                .and_then(|provider_id| providers.position(provider_id))
-                .unwrap_or(u32::MAX);
-
-            a_tier
-                .cmp(&b_tier)
-                .then_with(|| a_lang.cmp(&b_lang))
-                .then_with(|| a_synced.cmp(&b_synced))
-                .then_with(|| b_position.cmp(&a_position))
-                .then_with(|| a.updated_at_ms.cmp(&b.updated_at_ms))
-                // Lexical tie-break inverted: max_by takes the greater, but we
-                // want the lexically-smaller provider_id to win.
-                .then_with(|| b.provider_id.cmp(&a.provider_id))
-        })
+    rank(candidates, providers, ranking, duration_ms)
+        .into_iter()
+        .next()
 }
 
-pub(crate) fn get_preferred_detail(
+/// A track's lyrics as a viewer ranks them.
+pub(crate) struct RankedLyrics {
+    pub(crate) duration_ms: Option<u64>,
+    /// Best first.
+    pub(crate) lyrics: Vec<Lyrics>,
+}
+
+/// The lyrics of each of `track_db_ids` that `principal` can see and `ranking` keeps, best
+/// first. Tracks that are missing or hidden from `principal` are left out.
+pub(crate) fn ranked_for_tracks(
     db: &DbAny,
-    track_db_id: DbId,
-    viewer: Option<&Principal>,
-    provider_id: Option<&str>,
-    language_hint: Option<&str>,
-    require_synced: bool,
-) -> anyhow::Result<Option<LyricsDetail>> {
-    let Some(track) = lyra_db::tracks::get_by_id(db, track_db_id)? else {
-        return Ok(None);
-    };
-    let candidates = visible_for_track(db, track_db_id, viewer)?;
+    track_db_ids: &[DbId],
+    principal: &Principal,
+    ranking: Ranking<'_>,
+) -> anyhow::Result<Vec<(DbId, RankedLyrics)>> {
+    let owner = principal.require(db)?;
     let providers = crate::services::providers::active_providers(db)?;
-    let language_hint = normalize_language_hint(language_hint)?;
+    let mut ranked = Vec::with_capacity(track_db_ids.len());
+    for &track_db_id in track_db_ids {
+        let Some(track) = lyra_db::tracks::get_by_id(db, track_db_id)? else {
+            continue;
+        };
+        if !crate::services::auth::access::entity_accessible(db, principal, track_db_id)? {
+            continue;
+        }
+        let mut lyrics = lyra_db::lyrics::get_visible_for_track(db, track_db_id, Some(owner))?;
+        lyrics.retain(|lyrics| keeps(lyrics, &providers, ranking, track.duration_ms));
+        lyrics
+            .sort_by(|a, b| rank_order(a, b, &providers, ranking.language_hint, track.duration_ms));
+        ranked.push((
+            track_db_id,
+            RankedLyrics {
+                duration_ms: track.duration_ms,
+                lyrics,
+            },
+        ));
+    }
+    Ok(ranked)
+}
 
-    let Some(winner) = pick_preferred(
-        &candidates,
-        &providers,
-        provider_id,
-        language_hint.as_deref(),
-        track.duration_ms,
-        require_synced,
-    ) else {
-        return Ok(None);
-    };
-    let Some(winner_db_id) = winner.db_id.clone().map(Into::into) else {
-        return Ok(None);
-    };
+/// A lyrics row in full, with what its track adds.
+pub(crate) struct LyricsEntry {
+    pub(crate) track_id: String,
+    pub(crate) duration_ms: Option<u64>,
+    pub(crate) detail: LyricsDetail,
+}
 
-    lyra_db::lyrics::get_detail(db, winner_db_id)
+/// The lyrics rows `lyrics_db_ids` name, in full, when `principal` can see the track and the
+/// row: a personal row only its owner, a provider row while its provider is active. Other ids
+/// are left out.
+pub(crate) fn entries_by_ids(
+    db: &DbAny,
+    lyrics_db_ids: &[DbId],
+    principal: &Principal,
+) -> anyhow::Result<Vec<(DbId, LyricsEntry)>> {
+    let owner = principal.require(db)?;
+    let providers = crate::services::providers::active_providers(db)?;
+    let mut entries = Vec::with_capacity(lyrics_db_ids.len());
+    for &lyrics_db_id in lyrics_db_ids {
+        let Some((track, row)) = lyra_db::lyrics::get_visible(db, lyrics_db_id, Some(owner))?
+        else {
+            continue;
+        };
+        let Some(track_db_id) = track.db_id.map(DbId::from) else {
+            continue;
+        };
+        if !is_eligible(&row, &providers)
+            || !crate::services::auth::access::entity_accessible(db, principal, track_db_id)?
+        {
+            continue;
+        }
+        entries.push((
+            lyrics_db_id,
+            LyricsEntry {
+                track_id: track.id,
+                duration_ms: track.duration_ms,
+                detail: lyra_db::lyrics::detail_of(db, row)?,
+            },
+        ));
+    }
+    Ok(entries)
 }
 
 #[cfg(test)]
@@ -238,10 +305,12 @@ mod tests {
         super::pick_preferred(
             candidates,
             providers,
-            None,
-            language_hint,
+            Ranking {
+                provider_id: None,
+                language_hint,
+                require_synced,
+            },
             duration_ms,
-            require_synced,
         )
     }
 
@@ -402,7 +471,7 @@ mod tests {
         let providers = ActiveProviders::from_configs(vec![provider("live", 1)]);
         let winner = pick_preferred(&cands, &providers, None, Some(200_000), false);
         assert_eq!(winner.map(|w| w.id.as_str()), Some("on"));
-        let eligible = eligible_candidates(&cands, &providers, false, Some(200_000));
+        let eligible = rank(&cands, &providers, Ranking::default(), Some(200_000));
         assert_eq!(eligible.len(), 1);
         assert_eq!(eligible[0].id, "on");
     }
@@ -451,8 +520,11 @@ mod tests {
         let candidates = vec![personal, provider_lyrics];
         let providers = ActiveProviders::from_configs(vec![provider("plug", 0)]);
 
-        let winner =
-            super::pick_preferred(&candidates, &providers, Some("plug"), None, None, false);
+        let ranking = Ranking {
+            provider_id: Some("plug"),
+            ..Ranking::default()
+        };
+        let winner = super::pick_preferred(&candidates, &providers, ranking, None);
         assert_eq!(winner.map(|lyrics| lyrics.id.as_str()), Some("provider"));
     }
 
@@ -470,5 +542,34 @@ mod tests {
         let without_personal = vec![shared, provider_lyrics];
         let winner = pick_preferred(&without_personal, &providers, Some("eng"), None, false);
         assert_eq!(winner.map(|lyrics| lyrics.id.as_str()), Some("shared"));
+    }
+
+    #[test]
+    fn ranking_lists_every_eligible_row_with_the_preferred_one_first() {
+        let cands = vec![
+            lyrics("old", "low", "eng", Provider, 0, 0, 1000),
+            lyrics("fra", "high", "fra", Provider, 80, 120_000, 3000),
+            lyrics("shared", "manual", "fra", Shared, 0, 0, 500),
+            lyrics("synced", "low", "eng", Provider, 80, 120_000, 2000),
+            lyrics("high", "high", "eng", Provider, 0, 0, 1000),
+            lyrics("off", "off", "eng", Provider, 80, 120_000, 9000),
+            lyrics("personal", "manual", "eng", Personal, 0, 0, 100),
+        ];
+        let providers =
+            ActiveProviders::from_configs(vec![provider("high", 0), provider("low", 1)]);
+        let ranking = Ranking {
+            language_hint: Some("eng"),
+            ..Ranking::default()
+        };
+        let ranked: Vec<&str> = rank(&cands, &providers, ranking, Some(200_000))
+            .into_iter()
+            .map(|lyrics| lyrics.id.as_str())
+            .collect();
+        assert_eq!(
+            ranked,
+            ["personal", "shared", "synced", "high", "old", "fra"]
+        );
+        let preferred = super::pick_preferred(&cands, &providers, ranking, Some(200_000));
+        assert_eq!(preferred.map(|lyrics| lyrics.id.as_str()), Some(ranked[0]));
     }
 }

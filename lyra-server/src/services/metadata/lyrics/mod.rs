@@ -10,14 +10,17 @@ mod selection;
 mod upload;
 
 pub(crate) use selection::{
-    eligible_candidates,
-    get_preferred_detail,
+    Ranking,
+    entries_by_ids,
     has_meaningful_synced,
     normalize_language_hint,
     pick_preferred,
+    rank,
+    ranked_for_tracks,
     visible_for_track,
 };
 pub(crate) use upload::{
+    LYRICS_UPLOAD_MAX_BYTES,
     LyricsUploadError,
     delete_all_lyrics_for_track,
     delete_personal_lyrics_for_track_by_db_id,

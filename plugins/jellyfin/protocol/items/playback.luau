@@ -969,8 +969,10 @@ function module.build_audio_media_source(item_id: string?, track: Track?, public
 		else module.resolve_playback_source_for_track(track, true)
 	local has_lyrics = false
 	if track then
-		local ok, value = pcall(lyrics.has, track.id)
-		has_lyrics = ok and value == true
+		local ok, entries = pcall(function(): { lyrics.LyricsSummary }?
+			return lyrics.by_track({ track.id })[track.id]
+		end)
+		has_lyrics = ok and entries ~= nil and #entries > 0
 	end
 	local media_sources, _ =
 		build_media_info(track, source, item_id, if track then track.track_title else item_id, has_lyrics)
@@ -1189,8 +1191,10 @@ function module.build_playback_info(
 
 	local has_lyrics = false
 	if track then
-		local ok, value = pcall(lyrics.has, track.id)
-		has_lyrics = ok and value == true
+		local ok, entries = pcall(function(): { lyrics.LyricsSummary }?
+			return lyrics.by_track({ track.id })[track.id]
+		end)
+		has_lyrics = ok and entries ~= nil and #entries > 0
 	end
 	local media_sources, _ =
 		build_media_info(track, source, item_id, if track then track.track_title else item_id, has_lyrics)
