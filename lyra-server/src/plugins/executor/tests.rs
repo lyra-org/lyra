@@ -372,7 +372,7 @@ fn plugin_executor_refuses_registrations_from_an_ended_run() -> Result<()> {
                 local api = require("@lyra/api")
                 api.get("/ended", function()
                     return api.response.empty(204)
-                end, "public")
+                end, { auth = "public" })
             "# as &[u8],
             CallContext {
                 origin: plugin_origin("demo", "ended.luau"),
@@ -1355,10 +1355,10 @@ fn plugin_executor_rejects_handles_from_another_runtime() -> Result<()> {
                     end)
                     api.get("/{name}", function()
                         return api.response.json(200, {{}})
-                    end, "public")
+                    end, {{ auth = "public" }})
                     api.websocket("/{name}/socket", function(_reader, sender)
                         sender:close()
-                    end, "public")
+                    end, {{ auth = "public" }})
                     mix.Mixer.new("{name}"):blend({{ seeds = {{ mix.SeedType.Track }} }}, function()
                         return {{ tracks = {{}} }}
                     end)
@@ -1501,7 +1501,7 @@ fn plugin_executor_dispatches_registered_api_handler() -> Result<()> {
                 }, {
                     ["x-demo"] = "ok",
                 })
-            end, "public")
+            end, { auth = "public" })
         "#[..],
     )?;
 
@@ -1575,11 +1575,11 @@ async fn plugin_executor_binds_host_resolved_principal_to_api_responses() -> Res
                 api.get("/whoami", function(ctx)
                     local resolved = auth.resolve_auth("{token}")
                     return api.response.json(200, {{ resolved = resolved ~= nil }})
-                end, "public")
+                end, {{ auth = "public" }})
 
                 api.get("/anon", function(ctx)
                     return api.response.json(200, {{}})
-                end, "public")
+                end, {{ auth = "public" }})
             "#
         )
         .into_bytes(),
@@ -1659,7 +1659,7 @@ async fn plugin_executor_treats_expired_session_as_unauthenticated() -> Result<(
                     return api.response.empty(401)
                 end
                 return api.response.empty(204)
-            end, "public")
+            end, { auth = "public" })
         "#[..],
     )?;
     let handler = crate::plugins::api::tests::registered_handler("GET", "/protected")
@@ -1712,7 +1712,7 @@ fn plugin_executor_dispatches_registered_websocket_handler() -> Result<()> {
                 local frame = reader:recv()
                 sender:send(ctx.params.id .. ":" .. frame)
                 sender:close()
-            end, "public")
+            end, { auth = "public" })
         "#[..],
     )?;
 
@@ -1771,11 +1771,11 @@ fn foreground_dispatch_does_not_hide_finished_websocket_cleanup() -> Result<()> 
                 local frame = reader:recv()
                 sender:send(frame)
                 sender:close()
-            end, "public")
+            end, { auth = "public" })
 
             api.get("/ping", function()
                 return api.response.empty(204)
-            end, "public")
+            end, { auth = "public" })
         "#[..],
     )?;
 
@@ -1871,7 +1871,7 @@ async fn websocket_spawned_work_acts_as_the_verified_socket_principal() -> Resul
                         sender:send(if ok then `connections:{#connections}` else "denied")
                     end)
                 end
-            end, "public")
+            end, { auth = "public" })
         "#[..],
     )?;
     let handler = crate::plugins::api::tests::registered_handler("GET", "/socket")
@@ -2367,7 +2367,7 @@ fn plugin_executor_stop_drops_the_plugins_callbacks() -> Result<()> {
             end)
             api.get("/stopped", function()
                 return api.response.json(200, {})
-            end, "public")
+            end, { auth = "public" })
             mix.Mixer.new("stopped-mixer"):blend({ seeds = { mix.SeedType.Track } }, function()
                 return { tracks = {} }
             end)
@@ -2427,7 +2427,7 @@ fn plugin_executor_handle_shutdown_stops_lua_and_the_executor_thread() -> Result
             api.websocket("/socket", function(reader, sender)
                 kept_sender = sender
                 reader:recv()
-            end, "public")
+            end, { auth = "public" })
         "#,
     )?;
     let ticks = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -2756,7 +2756,7 @@ fn cover_artwork_bindings_serve_anonymous_public_routes() -> Result<()> {
                     playlist = covers.artwork({ playlist })[playlist].release_id == release,
                     scoped = pcall(covers.get, { release, playlist }),
                 })
-            end, "public")
+            end, { auth = "public" })
         "#[..],
     )?;
 
@@ -2866,7 +2866,7 @@ fn streamable_bindings_serve_anonymous_public_routes() -> Result<()> {
                     scoped = pcall(tracks.get, { track }),
                     scoped_source = pcall(playback_sources.get, track),
                 })
-            end, "public")
+            end, { auth = "public" })
         "#[..],
     )?;
 

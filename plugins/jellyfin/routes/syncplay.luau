@@ -960,7 +960,7 @@ module.handlers = {} :: { [string]: (ApiContext) -> ApiResponse }
 
 local function route(method: api.ApiMethod, path: string, handler: (ApiContext) -> ApiResponse)
 	module.handlers[`{method} {path}`] = handler
-	api.route(method, P .. path, handler, "public", true)
+	api.route(method, P .. path, handler, { auth = "public", case_insensitive = true })
 end
 
 function module.register(session_entries: { [string]: SessionEntry }, owned_session_resolver: OwnedSessionResolver)

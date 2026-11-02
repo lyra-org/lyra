@@ -6,6 +6,7 @@
 pub(crate) mod options;
 mod registry;
 mod route_key;
+mod route_options;
 mod types;
 
 use self::registry::{
@@ -29,6 +30,11 @@ pub(crate) use self::route_key::{
     RouteKey,
     placeholder_offset,
 };
+use self::route_options::{
+    MAX_BODY_BYTES,
+    RouteOptions,
+    WebSocketRouteOptions,
+};
 use self::types::ApiMethod;
 /// The Luau type of the websocket sender `api.websocket` handlers get.
 #[cfg(feature = "docgen")]
@@ -43,7 +49,9 @@ use self::types::{
     ApiQueryParams,
     ApiRequest,
     ApiResponse,
+    ApiRouteOptions,
     ApiWebSocketHandler,
+    ApiWebSocketOptions,
     ApiWebSocketReader,
     ApiWebSocketSender,
     HlsServeOptions,
@@ -149,9 +157,17 @@ impl LuauTypeInfo for BytesBody {
 
 pub(crate) struct ApiModule;
 
+crate::plugins::limits::module_limits!(&[crate::plugins::limits::Limit {
+    name: "MAX_BODY_BYTES",
+    value: MAX_BODY_BYTES,
+    description: "The largest `max_body_bytes` a route registers with.",
+}]);
+
 #[harmony_macros::module(
     id = "lyra/api",
     docs_feature = "docgen",
+    extend = install_limits,
+    describe = describe_limits,
     userdata(
         crate::plugins::executor::ApiWebSocketReader,
         crate::plugins::executor::ApiWebSocketSender
@@ -160,14 +176,13 @@ pub(crate) struct ApiModule;
 impl ApiModule {
     #[harmony(
         description = "Registers a plugin API route.",
-        args(method: ApiMethod, path: String, handler: ApiHandler, auth_mode: Option<RouteAuthMode>, case_insensitive: Option<bool>)
+        args(method: ApiMethod, path: String, handler: ApiHandler, options: Option<ApiRouteOptions>)
     )]
     fn route(
         method: ApiMethod,
         path: String,
         handler: luau::Function,
-        auth_mode: Option<RouteAuthMode>,
-        case_insensitive: Option<bool>,
+        options: Option<RouteOptions>,
         context: &luau::CallContext,
         vm: &luau::Vm,
     ) -> luau::runtime::Result<()> {
@@ -177,20 +192,18 @@ impl ApiModule {
             method,
             path,
             handler,
-            auth_mode,
-            case_insensitive,
+            options.unwrap_or_default(),
         )
     }
 
     #[harmony(
         description = "Registers a GET API route.",
-        args(path: String, handler: ApiHandler, auth_mode: Option<RouteAuthMode>, case_insensitive: Option<bool>)
+        args(path: String, handler: ApiHandler, options: Option<ApiRouteOptions>)
     )]
     fn get(
         path: String,
         handler: luau::Function,
-        auth_mode: Option<RouteAuthMode>,
-        case_insensitive: Option<bool>,
+        options: Option<RouteOptions>,
         context: &luau::CallContext,
         vm: &luau::Vm,
     ) -> luau::runtime::Result<()> {
@@ -200,20 +213,18 @@ impl ApiModule {
             ApiMethod::Get,
             path,
             handler,
-            auth_mode,
-            case_insensitive,
+            options.unwrap_or_default(),
         )
     }
 
     #[harmony(
         description = "Registers a POST API route.",
-        args(path: String, handler: ApiHandler, auth_mode: Option<RouteAuthMode>, case_insensitive: Option<bool>)
+        args(path: String, handler: ApiHandler, options: Option<ApiRouteOptions>)
     )]
     fn post(
         path: String,
         handler: luau::Function,
-        auth_mode: Option<RouteAuthMode>,
-        case_insensitive: Option<bool>,
+        options: Option<RouteOptions>,
         context: &luau::CallContext,
         vm: &luau::Vm,
     ) -> luau::runtime::Result<()> {
@@ -223,20 +234,18 @@ impl ApiModule {
             ApiMethod::Post,
             path,
             handler,
-            auth_mode,
-            case_insensitive,
+            options.unwrap_or_default(),
         )
     }
 
     #[harmony(
         description = "Registers a PUT API route.",
-        args(path: String, handler: ApiHandler, auth_mode: Option<RouteAuthMode>, case_insensitive: Option<bool>)
+        args(path: String, handler: ApiHandler, options: Option<ApiRouteOptions>)
     )]
     fn put(
         path: String,
         handler: luau::Function,
-        auth_mode: Option<RouteAuthMode>,
-        case_insensitive: Option<bool>,
+        options: Option<RouteOptions>,
         context: &luau::CallContext,
         vm: &luau::Vm,
     ) -> luau::runtime::Result<()> {
@@ -246,20 +255,18 @@ impl ApiModule {
             ApiMethod::Put,
             path,
             handler,
-            auth_mode,
-            case_insensitive,
+            options.unwrap_or_default(),
         )
     }
 
     #[harmony(
         description = "Registers a PATCH API route.",
-        args(path: String, handler: ApiHandler, auth_mode: Option<RouteAuthMode>, case_insensitive: Option<bool>)
+        args(path: String, handler: ApiHandler, options: Option<ApiRouteOptions>)
     )]
     fn patch(
         path: String,
         handler: luau::Function,
-        auth_mode: Option<RouteAuthMode>,
-        case_insensitive: Option<bool>,
+        options: Option<RouteOptions>,
         context: &luau::CallContext,
         vm: &luau::Vm,
     ) -> luau::runtime::Result<()> {
@@ -269,20 +276,18 @@ impl ApiModule {
             ApiMethod::Patch,
             path,
             handler,
-            auth_mode,
-            case_insensitive,
+            options.unwrap_or_default(),
         )
     }
 
     #[harmony(
         description = "Registers a DELETE API route.",
-        args(path: String, handler: ApiHandler, auth_mode: Option<RouteAuthMode>, case_insensitive: Option<bool>)
+        args(path: String, handler: ApiHandler, options: Option<ApiRouteOptions>)
     )]
     fn delete(
         path: String,
         handler: luau::Function,
-        auth_mode: Option<RouteAuthMode>,
-        case_insensitive: Option<bool>,
+        options: Option<RouteOptions>,
         context: &luau::CallContext,
         vm: &luau::Vm,
     ) -> luau::runtime::Result<()> {
@@ -292,20 +297,18 @@ impl ApiModule {
             ApiMethod::Delete,
             path,
             handler,
-            auth_mode,
-            case_insensitive,
+            options.unwrap_or_default(),
         )
     }
 
     #[harmony(
         description = "Registers a HEAD API route.",
-        args(path: String, handler: ApiHandler, auth_mode: Option<RouteAuthMode>, case_insensitive: Option<bool>)
+        args(path: String, handler: ApiHandler, options: Option<ApiRouteOptions>)
     )]
     fn head(
         path: String,
         handler: luau::Function,
-        auth_mode: Option<RouteAuthMode>,
-        case_insensitive: Option<bool>,
+        options: Option<RouteOptions>,
         context: &luau::CallContext,
         vm: &luau::Vm,
     ) -> luau::runtime::Result<()> {
@@ -315,20 +318,18 @@ impl ApiModule {
             ApiMethod::Head,
             path,
             handler,
-            auth_mode,
-            case_insensitive,
+            options.unwrap_or_default(),
         )
     }
 
     #[harmony(
         description = "Registers an OPTIONS API route.",
-        args(path: String, handler: ApiHandler, auth_mode: Option<RouteAuthMode>, case_insensitive: Option<bool>)
+        args(path: String, handler: ApiHandler, options: Option<ApiRouteOptions>)
     )]
     fn options(
         path: String,
         handler: luau::Function,
-        auth_mode: Option<RouteAuthMode>,
-        case_insensitive: Option<bool>,
+        options: Option<RouteOptions>,
         context: &luau::CallContext,
         vm: &luau::Vm,
     ) -> luau::runtime::Result<()> {
@@ -338,19 +339,18 @@ impl ApiModule {
             ApiMethod::Options,
             path,
             handler,
-            auth_mode,
-            case_insensitive,
+            options.unwrap_or_default(),
         )
     }
 
     #[harmony(
         description = "Registers a plugin WebSocket route.",
-        args(path: String, handler: ApiWebSocketHandler, auth_mode: Option<RouteAuthMode>)
+        args(path: String, handler: ApiWebSocketHandler, options: Option<ApiWebSocketOptions>)
     )]
     fn websocket(
         path: String,
         handler: luau::Function,
-        auth_mode: Option<RouteAuthMode>,
+        options: Option<WebSocketRouteOptions>,
         context: &luau::CallContext,
         vm: &luau::Vm,
     ) -> luau::runtime::Result<()> {
@@ -361,7 +361,13 @@ impl ApiModule {
         })?;
         harmony_core::ensure_current_plugin_run(vm, context)?;
         let routes = vm.data().get::<ApiRouteStore>()?;
-        routes.register_websocket(plugin_id, path, handler, auth_mode, context.clone())
+        routes.register_websocket(
+            plugin_id,
+            path,
+            handler,
+            options.and_then(|options| options.auth),
+            context.clone(),
+        )
     }
 
     #[harmony(
@@ -615,8 +621,7 @@ fn register_route(
     method: ApiMethod,
     path: String,
     handler: luau::Function,
-    auth_mode: Option<RouteAuthMode>,
-    case_insensitive: Option<bool>,
+    options: RouteOptions,
 ) -> luau::runtime::Result<()> {
     let plugin_id = context.origin.plugin.clone().ok_or_else(|| {
         crate::plugins::runtime_error("lyra/api routes must be registered from plugin Luau code")
@@ -628,8 +633,9 @@ fn register_route(
         method,
         path,
         handler,
-        auth_mode,
-        case_insensitive: case_insensitive.unwrap_or(false),
+        auth_mode: options.auth,
+        case_insensitive: options.case_insensitive,
+        max_body_bytes: options.max_body_bytes,
         context: context.clone(),
     })
 }
@@ -994,6 +1000,34 @@ fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
         ),
         websocket_sender_interface(),
         interface(
+            "ApiRouteOptions",
+            [
+                described_field(
+                    "auth",
+                    LuauType::optional(RouteAuthMode::luau_type()),
+                    "Whether the route needs an authenticated caller. Defaults to \"required\".",
+                ),
+                described_field(
+                    "case_insensitive",
+                    LuauType::optional(bool::luau_type()),
+                    "Matches the path's literal segments in any case. Defaults to false.",
+                ),
+                described_field(
+                    "max_body_bytes",
+                    LuauType::optional(u64::luau_type()),
+                    "The largest request body the route accepts; a larger one is answered with 413 before the handler runs. Defaults to the server's limit of 256 KiB, and may be at most `MAX_BODY_BYTES`.",
+                ),
+            ],
+        ),
+        interface(
+            "ApiWebSocketOptions",
+            [described_field(
+                "auth",
+                LuauType::optional(RouteAuthMode::luau_type()),
+                "Whether the route needs an authenticated caller. Defaults to \"required\".",
+            )],
+        ),
+        interface(
             "ApiAuth",
             [
                 field("principal", AuthPrincipal::luau_type()),
@@ -1062,6 +1096,15 @@ fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
         name,
         ty,
         description: None,
+    }
+}
+
+#[cfg(feature = "docgen")]
+fn described_field(name: &'static str, ty: LuauType, description: &'static str) -> FieldDescriptor {
+    FieldDescriptor {
+        name,
+        ty,
+        description: Some(description),
     }
 }
 

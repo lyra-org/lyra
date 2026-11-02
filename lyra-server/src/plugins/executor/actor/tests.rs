@@ -93,7 +93,7 @@ fn test_executor() -> Result<TestExecutor> {
                 api.get("/dispatch-wait", function(_ctx)
                     gate.wait()
                     return api.response.json(200, { value = 42 })
-                end, "public")
+                end, { auth = "public" })
             "#[..])?;
             let registry = futures::executor::block_on(
                 crate::services::providers::provider_registry().read_owned(),

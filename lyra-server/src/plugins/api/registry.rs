@@ -32,6 +32,7 @@ pub(super) struct ApiRouteRegistration {
     pub(super) handler: luau::Function,
     pub(super) auth_mode: Option<RouteAuthMode>,
     pub(super) case_insensitive: bool,
+    pub(super) max_body_bytes: Option<usize>,
     pub(super) context: harmony_core::CallContext,
 }
 
@@ -50,6 +51,7 @@ impl ApiRouteStore {
             handler,
             auth_mode,
             case_insensitive,
+            max_body_bytes,
             context,
         } = registration;
         let key = if case_insensitive {
@@ -72,6 +74,7 @@ impl ApiRouteStore {
                     plugin_id: plugin,
                     auth_mode,
                     case_insensitive,
+                    max_body_bytes,
                     handler,
                     kind: RouteKind::Http,
                 })
@@ -104,6 +107,7 @@ impl ApiRouteStore {
                     plugin_id: plugin,
                     auth_mode,
                     case_insensitive: false,
+                    max_body_bytes: None,
                     handler,
                     kind: RouteKind::WebSocket,
                 })
@@ -171,6 +175,8 @@ pub(crate) struct RegisteredRoute {
     pub(crate) plugin_id: crate::services::plugin_scope::PluginId,
     pub(crate) auth_mode: RouteAuthMode,
     pub(crate) case_insensitive: bool,
+    /// The largest request body the route accepts; the server's limit without one.
+    pub(crate) max_body_bytes: Option<usize>,
     pub(crate) handler: PluginCallbackHandle,
     pub(crate) kind: RouteKind,
 }

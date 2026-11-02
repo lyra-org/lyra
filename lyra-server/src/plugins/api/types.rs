@@ -32,6 +32,10 @@ pub(super) struct ApiResponse;
 #[cfg(feature = "docgen")]
 pub(super) struct ApiHandler;
 #[cfg(feature = "docgen")]
+pub(super) struct ApiRouteOptions;
+#[cfg(feature = "docgen")]
+pub(super) struct ApiWebSocketOptions;
+#[cfg(feature = "docgen")]
 pub(super) struct ApiWebSocketHandler;
 #[cfg(feature = "docgen")]
 pub(super) struct ApiWebSocketReader;
@@ -84,6 +88,20 @@ impl LuauTypeInfo for ApiResponse {
 impl LuauTypeInfo for ApiHandler {
     fn luau_type() -> LuauType {
         LuauType::literal("ApiHandler")
+    }
+}
+
+#[cfg(feature = "docgen")]
+impl LuauTypeInfo for ApiRouteOptions {
+    fn luau_type() -> LuauType {
+        LuauType::literal("ApiRouteOptions")
+    }
+}
+
+#[cfg(feature = "docgen")]
+impl LuauTypeInfo for ApiWebSocketOptions {
+    fn luau_type() -> LuauType {
+        LuauType::literal("ApiWebSocketOptions")
     }
 }
 

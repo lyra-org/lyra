@@ -224,6 +224,66 @@ pub(crate) fn optional_timeout(
     Ok(std::time::Duration::from_millis(value as u64))
 }
 
+/// Fails when `table` has a key other than `fields`, naming the accepted ones; `owner` names the
+/// table in errors.
+pub(crate) fn reject_unknown_fields(
+    table: &luau::Table,
+    owner: &str,
+    fields: &[&str],
+) -> luau::runtime::Result<()> {
+    for (key, _) in table.pairs()? {
+        let known = match &key {
+            luau::Value::String(key) => fields.iter().any(|field| field.as_bytes() == key),
+            _ => false,
+        };
+        if !known {
+            let key = match &key {
+                luau::Value::String(key) => format!("'{}'", String::from_utf8_lossy(key)),
+                other => describe(other),
+            };
+            return Err(crate::plugins::runtime_error(format!(
+                "{owner}: unknown field {key}; expected {}",
+                fields.join(", ")
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// `table[key]` as one of `T`'s strings; `owner` names the table in errors.
+pub(crate) fn optional_string_enum<T: harmony_luau::StringEnum>(
+    table: &luau::Table,
+    key: &str,
+    owner: &str,
+) -> luau::runtime::Result<Option<T>> {
+    match table.get(key)? {
+        luau::Value::Nil => Ok(None),
+        luau::Value::String(value) => {
+            string_enum_value(&value, &format!("{owner}.{key}")).map(Some)
+        }
+        other => Err(crate::plugins::runtime_error(format!(
+            "{owner}.{key} must be a string, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+/// `value` as one of `T`'s strings; `name` names it in errors.
+pub(crate) fn string_enum_value<T: harmony_luau::StringEnum>(
+    value: &[u8],
+    name: &str,
+) -> luau::runtime::Result<T> {
+    let value = String::from_utf8_lossy(value);
+    T::from_str(&value).ok_or_else(|| {
+        let expected = T::VALUES
+            .iter()
+            .map(|value| format!("{value:?}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        crate::plugins::runtime_error(format!("{name} must be one of {expected}, got {value:?}"))
+    })
+}
+
 /// A value for an error message: numbers as themselves, anything else by type.
 fn describe(value: &luau::Value) -> String {
     match value {

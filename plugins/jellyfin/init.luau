@@ -359,7 +359,7 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 		sessions[session_id] = nil
 		playback.end_session(session_id)
 	end
-end, "public")
+end, { auth = "public" })
 
 local function public_system_info<T>(extra: T): T & PublicSystemInfo
 	local server_info = server.info()
@@ -466,10 +466,10 @@ api.post(P .. "/Users/AuthenticateByName", function(ctx: ApiContext)
 	end
 
 	return api.response.json(200, session.to_authentication_result(login_result))
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Users/Public", function(): ApiResponse
 	return api.response.json(200, {})
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Users", function(ctx: ApiContext): ApiResponse
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -486,7 +486,7 @@ api.get(P .. "/Users", function(ctx: ApiContext): ApiResponse
 	end
 
 	return api.response.json(200, result)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Users/{id}", function(ctx: ApiContext): ApiResponse
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -511,7 +511,7 @@ api.get(P .. "/Users/{id}", function(ctx: ApiContext): ApiResponse
 		return responses.not_found("user not found")
 	end
 	return api.response.json(200, session.to_jellyfin_user(user))
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 -- The caller's own configuration, or with `userId` another user's; only an admin may change
 -- someone else's.
 local function handle_user_configuration_post(ctx: ApiContext, raw_user_id: string?): ApiResponse
@@ -542,27 +542,27 @@ end
 api.post(P .. "/Users/Configuration", function(ctx: ApiContext): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
 	return handle_user_configuration_post(ctx, requests.parse_query_string(query, { "userId" }, nil))
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.post(P .. "/Users/{userId}/Configuration", function(ctx: ApiContext): ApiResponse
 	local params = if ctx then ctx.params else nil
 	return handle_user_configuration_post(ctx, if params then params.userId else nil)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/QuickConnect/Enabled", function(): ApiResponse
 	return api.response.json(200, false)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.post(P .. "/Users/ForgotPassword", function(): ApiResponse
 	return api.response.json(200, {
 		Action = "ContactAdmin",
 		PinFile = nil,
 		PinExpirationDate = nil,
 	})
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.post(P .. "/Users/ForgotPassword/Pin", function(): ApiResponse
 	return api.response.json(200, {
 		Success = false,
 		UsersReset = {},
 	})
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.post(P .. "/Sessions/Logout", function(ctx: ApiContext)
 	local resolved_auth, token = session.require_jellyfin_auth(ctx)
 	if not resolved_auth or not token then
@@ -572,7 +572,7 @@ api.post(P .. "/Sessions/Logout", function(ctx: ApiContext)
 	auth.logout_session(token)
 
 	return api.response.empty(204)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Auth/Providers", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -586,7 +586,7 @@ api.get(P .. "/Auth/Providers", function(ctx: ApiContext)
 		},
 	}
 	return api.response.json(200, providers)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Auth/PasswordResetProviders", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -600,10 +600,10 @@ api.get(P .. "/Auth/PasswordResetProviders", function(ctx: ApiContext)
 		},
 	}
 	return api.response.json(200, providers)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/System/Info/Public", function(): ApiResponse
 	return api.response.json(200, public_system_info({}))
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/System/Info", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -623,13 +623,13 @@ api.get(P .. "/System/Info", function(ctx: ApiContext)
 			CanLaunchWebBrowser = false,
 		})
 	)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/System/Ping", function(): ApiResponse
 	return api.response.json(200, "Lyra")
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.post(P .. "/System/Ping", function(): ApiResponse
 	return api.response.json(200, "Lyra")
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/System/Endpoint", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -641,7 +641,7 @@ api.get(P .. "/System/Endpoint", function(ctx: ApiContext)
 		IsLocal = in_network,
 		IsInNetwork = in_network,
 	})
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 local BITRATE_TEST_DEFAULT_SIZE = 102400
 local BITRATE_TEST_MIN_SIZE = 1
 local BITRATE_TEST_MAX_SIZE = 100000000
@@ -703,7 +703,7 @@ api.get(P .. "/Playback/BitrateTest", function(ctx: ApiContext)
 	end
 
 	return api.response.bytes(200, build_bitrate_test_body(size :: number))
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Library/VirtualFolders", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -732,7 +732,7 @@ api.get(P .. "/Library/VirtualFolders", function(ctx: ApiContext)
 	end
 
 	return api.response.json(200, folders)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Library/MediaFolders", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -741,7 +741,7 @@ api.get(P .. "/Library/MediaFolders", function(ctx: ApiContext)
 
 	local views = catalog.to_music_view_items(false)
 	return api.response.json(200, catalog.build_item_query_result(views, #views, 0))
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Channels", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -749,8 +749,8 @@ api.get(P .. "/Channels", function(ctx: ApiContext)
 	end
 
 	return api.response.json(200, empty_query_result())
-end, "public", true)
-api.get(P .. "/Devices", session.devices_response, "public", true)
+end, { auth = "public", case_insensitive = true })
+api.get(P .. "/Devices", session.devices_response, { auth = "public", case_insensitive = true })
 api.get(P .. "/Users/Me", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -758,7 +758,7 @@ api.get(P .. "/Users/Me", function(ctx: ApiContext)
 	end
 
 	return api.response.json(200, session.to_jellyfin_user(principal))
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 local function respond_with_user_views(ctx: ApiContext, principal: session.Principal): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
 	local options = items_options.for_user(items_options.parse(query), principal.user_id)
@@ -782,7 +782,7 @@ api.get(P .. "/Users/{id}/Views", function(ctx: ApiContext)
 	end
 
 	return respond_with_user_views(ctx, principal)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/UserViews", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -794,7 +794,7 @@ api.get(P .. "/UserViews", function(ctx: ApiContext)
 	end
 
 	return respond_with_user_views(ctx, principal)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/UserViews/GroupingOptions", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -802,7 +802,7 @@ api.get(P .. "/UserViews/GroupingOptions", function(ctx: ApiContext)
 	end
 
 	return api.response.json(200, {})
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Users/{userId}/GroupingOptions", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -813,7 +813,7 @@ api.get(P .. "/Users/{userId}/GroupingOptions", function(ctx: ApiContext)
 	end
 
 	return api.response.json(200, {})
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 local function handle_root_folder_route(ctx: ApiContext): ApiResponse
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -826,8 +826,8 @@ local function handle_root_folder_route(ctx: ApiContext): ApiResponse
 	return api.response.json(200, root_folder_json(principal.user_id))
 end
 
-api.get(P .. "/Items/Root", handle_root_folder_route, "public", true)
-api.get(P .. "/Users/{userId}/Items/Root", handle_root_folder_route, "public", true)
+api.get(P .. "/Items/Root", handle_root_folder_route, { auth = "public", case_insensitive = true })
+api.get(P .. "/Users/{userId}/Items/Root", handle_root_folder_route, { auth = "public", case_insensitive = true })
 local function respond_with_items_listing(ctx: ApiContext, principal: session.Principal): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
 	local options = items_options.for_user(items_options.parse(query), principal.user_id)
@@ -866,7 +866,7 @@ api.get(P .. "/Users/{userId}/Items", function(ctx: ApiContext)
 	end
 
 	return respond_with_items_listing(ctx, principal)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Items", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -878,7 +878,7 @@ api.get(P .. "/Items", function(ctx: ApiContext)
 	end
 
 	return respond_with_items_listing(ctx, principal)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 local function handle_similar_items_route(ctx: ApiContext): ApiResponse
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -910,9 +910,9 @@ local function handle_similar_items_route(ctx: ApiContext): ApiResponse
 	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
 end
 
-api.get(P .. "/Artists/{itemId}/Similar", handle_similar_items_route, "public", true)
-api.get(P .. "/Items/{itemId}/Similar", handle_similar_items_route, "public", true)
-api.get(P .. "/Albums/{itemId}/Similar", handle_similar_items_route, "public", true)
+api.get(P .. "/Artists/{itemId}/Similar", handle_similar_items_route, { auth = "public", case_insensitive = true })
+api.get(P .. "/Items/{itemId}/Similar", handle_similar_items_route, { auth = "public", case_insensitive = true })
+api.get(P .. "/Albums/{itemId}/Similar", handle_similar_items_route, { auth = "public", case_insensitive = true })
 local function respond_with_instant_mix(ctx: ApiContext, raw_item_id: string?): ApiResponse
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -979,14 +979,18 @@ local function handle_instant_mix_genre_name_route(ctx: ApiContext): ApiResponse
 	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
 end
 
-api.get(P .. "/Items/{itemId}/InstantMix", handle_instant_mix_route, "public", true)
-api.get(P .. "/Songs/{itemId}/InstantMix", handle_instant_mix_route, "public", true)
-api.get(P .. "/Albums/{itemId}/InstantMix", handle_instant_mix_route, "public", true)
-api.get(P .. "/Artists/{itemId}/InstantMix", handle_instant_mix_route, "public", true)
-api.get(P .. "/Playlists/{itemId}/InstantMix", handle_instant_mix_route, "public", true)
-api.get(P .. "/MusicGenres/{name}/InstantMix", handle_instant_mix_genre_name_route, "public", true)
-api.get(P .. "/Artists/InstantMix", handle_instant_mix_query_route, "public", true)
-api.get(P .. "/MusicGenres/InstantMix", handle_instant_mix_query_route, "public", true)
+api.get(P .. "/Items/{itemId}/InstantMix", handle_instant_mix_route, { auth = "public", case_insensitive = true })
+api.get(P .. "/Songs/{itemId}/InstantMix", handle_instant_mix_route, { auth = "public", case_insensitive = true })
+api.get(P .. "/Albums/{itemId}/InstantMix", handle_instant_mix_route, { auth = "public", case_insensitive = true })
+api.get(P .. "/Artists/{itemId}/InstantMix", handle_instant_mix_route, { auth = "public", case_insensitive = true })
+api.get(P .. "/Playlists/{itemId}/InstantMix", handle_instant_mix_route, { auth = "public", case_insensitive = true })
+api.get(
+	P .. "/MusicGenres/{name}/InstantMix",
+	handle_instant_mix_genre_name_route,
+	{ auth = "public", case_insensitive = true }
+)
+api.get(P .. "/Artists/InstantMix", handle_instant_mix_query_route, { auth = "public", case_insensitive = true })
+api.get(P .. "/MusicGenres/InstantMix", handle_instant_mix_query_route, { auth = "public", case_insensitive = true })
 local function respond_with_latest_items(ctx: ApiContext, principal: session.Principal): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
 	local options = items_options.for_user(items_options.parse(query), principal.user_id)
@@ -1005,7 +1009,7 @@ api.get(P .. "/Users/{userId}/Items/Latest", function(ctx: ApiContext)
 	end
 
 	return respond_with_latest_items(ctx, principal)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Users/{userId}/Items/{itemId}", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -1031,7 +1035,7 @@ api.get(P .. "/Users/{userId}/Items/{itemId}", function(ctx: ApiContext)
 	end
 
 	return api.response.json(200, catalog.item_to_json(item))
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Items/{id}", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -1059,7 +1063,7 @@ api.get(P .. "/Items/{id}", function(ctx: ApiContext)
 	end
 
 	return api.response.json(200, catalog.item_to_json(item))
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 
 local function handle_item_user_data_route(ctx: ApiContext): ApiResponse
 	local principal = session.require_jellyfin_principal(ctx)
@@ -1115,8 +1119,12 @@ local function handle_item_user_data_route(ctx: ApiContext): ApiResponse
 	return api.response.json(200, user_data.user_data_to_json(item_user_data))
 end
 
-api.get(P .. "/UserItems/{itemId}/UserData", handle_item_user_data_route, "public", true)
-api.get(P .. "/Users/{userId}/Items/{itemId}/UserData", handle_item_user_data_route, "public", true)
+api.get(P .. "/UserItems/{itemId}/UserData", handle_item_user_data_route, { auth = "public", case_insensitive = true })
+api.get(
+	P .. "/Users/{userId}/Items/{itemId}/UserData",
+	handle_item_user_data_route,
+	{ auth = "public", case_insensitive = true }
+)
 
 local function handle_favorite_item_route(ctx: ApiContext, should_favorite: boolean)
 	local principal = session.require_jellyfin_principal(ctx)
@@ -1164,16 +1172,16 @@ end
 
 api.post(P .. "/UserFavoriteItems/{itemId}", function(ctx: ApiContext)
 	return handle_favorite_item_route(ctx, true)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.post(P .. "/Users/{userId}/FavoriteItems/{itemId}", function(ctx: ApiContext)
 	return handle_favorite_item_route(ctx, true)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.delete(P .. "/UserFavoriteItems/{itemId}", function(ctx: ApiContext)
 	return handle_favorite_item_route(ctx, false)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.delete(P .. "/Users/{userId}/FavoriteItems/{itemId}", function(ctx: ApiContext)
 	return handle_favorite_item_route(ctx, false)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Playlists/{playlistId}/Items", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -1198,10 +1206,14 @@ api.get(P .. "/Playlists/{playlistId}/Items", function(ctx: ApiContext)
 	local options = items_options.for_user(items_options.parse(query), principal.user_id)
 	local items, total_count, start_index = listing.list_playlist_track_items(playlist, options)
 	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
-end, "public", true)
-api.post(P .. "/Playlists", session.handle_create_playlist_route, "public", true)
-api.delete(P .. "/Items/{id}", session.handle_delete_item_route, "public", true)
-api.post(P .. "/Playlists/{playlistId}/Items", session.handle_add_playlist_items_route, "public", true)
+end, { auth = "public", case_insensitive = true })
+api.post(P .. "/Playlists", session.handle_create_playlist_route, { auth = "public", case_insensitive = true })
+api.delete(P .. "/Items/{id}", session.handle_delete_item_route, { auth = "public", case_insensitive = true })
+api.post(
+	P .. "/Playlists/{playlistId}/Items",
+	session.handle_add_playlist_items_route,
+	{ auth = "public", case_insensitive = true }
+)
 api.delete(P .. "/Playlists/{playlistId}/Items", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -1228,7 +1240,7 @@ api.delete(P .. "/Playlists/{playlistId}/Items", function(ctx: ApiContext)
 	end
 
 	return api.response.empty(204)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.post(P .. "/Playlists/{playlistId}/Items/{itemId}/Move/{newIdx}", function(ctx: ApiContext): ApiResponse
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -1263,8 +1275,12 @@ api.post(P .. "/Playlists/{playlistId}/Items/{itemId}/Move/{newIdx}", function(c
 		return responses.not_found("playlist entry not found")
 	end
 	return api.response.empty(204)
-end, "public", true)
-api.post(P .. "/Playlists/{playlistId}", session.handle_update_playlist_route, "public", true)
+end, { auth = "public", case_insensitive = true })
+api.post(
+	P .. "/Playlists/{playlistId}",
+	session.handle_update_playlist_route,
+	{ auth = "public", case_insensitive = true }
+)
 api.get(P .. "/Playlists/{playlistId}", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -1282,7 +1298,7 @@ api.get(P .. "/Playlists/{playlistId}", function(ctx: ApiContext)
 	end
 
 	return api.response.json(200, session.playlist_info_to_json(session.to_playlist_info(playlist)))
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Playlists/{playlistId}/Users/{userId}", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -1318,7 +1334,7 @@ api.get(P .. "/Playlists/{playlistId}/Users/{userId}", function(ctx: ApiContext)
 		200,
 		session.playlist_user_permission_to_json(session.to_playlist_user_permission(playlist, target_user_id))
 	)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Playlists/{playlistId}/Users", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -1342,7 +1358,7 @@ api.get(P .. "/Playlists/{playlistId}/Users", function(ctx: ApiContext)
 	end
 
 	return api.response.json(200, session.playlist_users_to_json(users))
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Artists", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -1356,7 +1372,7 @@ api.get(P .. "/Artists", function(ctx: ApiContext)
 	end
 	local items, total_count, start_index = listing.list_artist_items(options, nil)
 	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Persons", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -1367,7 +1383,7 @@ api.get(P .. "/Persons", function(ctx: ApiContext)
 	local options = items_options.for_user(items_options.parse(query), principal.user_id)
 	local items, total_count, start_index = listing.list_person_items(options)
 	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Artists/AlbumArtists", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -1385,7 +1401,7 @@ api.get(P .. "/Artists/AlbumArtists", function(ctx: ApiContext)
 	end
 	local items, total_count, start_index = listing.list_artist_items(options, "release")
 	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 local function handle_genres_route(ctx: ApiContext): ApiResponse
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -1412,61 +1428,61 @@ end
 
 api.get(P .. "/Genres", function(ctx: ApiContext)
 	return handle_genres_route(ctx)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/MusicGenres", function(ctx: ApiContext)
 	return handle_genres_route(ctx)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Studios", function(ctx: ApiContext)
 	return handle_studios_route(ctx)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Items/{imageId}/Images/Primary", function(ctx: ApiContext)
 	return session.handle_primary_image_request(ctx)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.head(P .. "/Items/{imageId}/Images/Primary", function(ctx: ApiContext)
 	return session.handle_primary_image_request(ctx)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Persons/{name}/Images/{imageType}", function(ctx: ApiContext)
 	return session.handle_person_image_request(ctx)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.head(P .. "/Persons/{name}/Images/{imageType}", function(ctx: ApiContext)
 	return session.handle_person_image_request(ctx)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Persons/{name}/Images/{imageType}/{imageIndex}", function(ctx: ApiContext)
 	return session.handle_person_image_request(ctx)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.head(P .. "/Persons/{name}/Images/{imageType}/{imageIndex}", function(ctx: ApiContext)
 	return session.handle_person_image_request(ctx)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Artists/{name}/Images/{imageType}/{imageIndex}", function(ctx: ApiContext)
 	return session.handle_artist_image_request(ctx)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.head(P .. "/Artists/{name}/Images/{imageType}/{imageIndex}", function(ctx: ApiContext)
 	return session.handle_artist_image_request(ctx)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Genres/{name}/Images/{imageType}", function(ctx: ApiContext)
 	return session.handle_genre_image_request(ctx)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.head(P .. "/Genres/{name}/Images/{imageType}", function(ctx: ApiContext)
 	return session.handle_genre_image_request(ctx)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Genres/{name}/Images/{imageType}/{imageIndex}", function(ctx: ApiContext)
 	return session.handle_genre_image_request(ctx)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.head(P .. "/Genres/{name}/Images/{imageType}/{imageIndex}", function(ctx: ApiContext)
 	return session.handle_genre_image_request(ctx)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/MusicGenres/{name}/Images/{imageType}", function(ctx: ApiContext)
 	return session.handle_genre_image_request(ctx)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.head(P .. "/MusicGenres/{name}/Images/{imageType}", function(ctx: ApiContext)
 	return session.handle_genre_image_request(ctx)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/MusicGenres/{name}/Images/{imageType}/{imageIndex}", function(ctx: ApiContext)
 	return session.handle_genre_image_request(ctx)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.head(P .. "/MusicGenres/{name}/Images/{imageType}/{imageIndex}", function(ctx: ApiContext)
 	return session.handle_genre_image_request(ctx)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 -- Merge rule: Full wins on collision, non-Full fills gaps. Without a live
 -- WS entry there's nowhere to stash caps; 204 silently so non-WS clients
 -- aren't broken.
@@ -1522,10 +1538,10 @@ end
 
 api.post(P .. "/Sessions/Capabilities", function(ctx: ApiContext)
 	return handle_capabilities_post(ctx, false)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.post(P .. "/Sessions/Capabilities/Full", function(ctx: ApiContext)
 	return handle_capabilities_post(ctx, true)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 local function handle_send_command_error(err: unknown): ApiResponse
 	if string.find(tostring(err), "not found") then
 		return responses.not_found("session not found")
@@ -1645,7 +1661,7 @@ api.get(P .. "/Sessions", function(ctx: ApiContext)
 	end
 
 	return api.response.json(200, active_sessions.list_visible(principal, controllable_user_id))
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 
 syncplay.register(sessions, get_owned_session)
 -- Jellyfin clients handle Pause/Unpause, not toggle — resolve PlayPause
@@ -1731,7 +1747,7 @@ api.post(P .. "/Sessions/{sessionId}/Playing/{command}", function(ctx: ApiContex
 		position_ms = math.floor(seek_ticks / 10000)
 	end
 	return dispatch_to_native(principal, session_id, action, position_ms, nil)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.post(P .. "/Sessions/{sessionId}/Command/{command}", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -1760,7 +1776,7 @@ api.post(P .. "/Sessions/{sessionId}/Command/{command}", function(ctx: ApiContex
 		return ws_response
 	end
 	return api.response.empty(204)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.post(P .. "/Sessions/{sessionId}/Command", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -1810,7 +1826,7 @@ api.post(P .. "/Sessions/{sessionId}/Command", function(ctx: ApiContext)
 		end
 	end
 	return api.response.empty(204)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.post(P .. "/Sessions/{sessionId}/Playing", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -1879,18 +1895,26 @@ api.post(P .. "/Sessions/{sessionId}/Playing", function(ctx: ApiContext)
 		return ws_response
 	end
 	return responses.not_found("session not found")
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.post(P .. "/Sessions/Playing", function(ctx: ApiContext)
 	return session.handle_playback_report_route(ctx, "started")
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.post(P .. "/Sessions/Playing/Progress", function(ctx: ApiContext)
 	return session.handle_playback_report_route(ctx, "progress")
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.post(P .. "/Sessions/Playing/Stopped", function(ctx: ApiContext)
 	return session.handle_playback_report_route(ctx, "stopped")
-end, "public", true)
-api.post(P .. "/Sessions/Playing/Ping", session.handle_playback_ping_route, "public", true)
-api.delete(P .. "/Videos/ActiveEncodings", session.handle_stop_encoding_route, "public", true)
+end, { auth = "public", case_insensitive = true })
+api.post(
+	P .. "/Sessions/Playing/Ping",
+	session.handle_playback_ping_route,
+	{ auth = "public", case_insensitive = true }
+)
+api.delete(
+	P .. "/Videos/ActiveEncodings",
+	session.handle_stop_encoding_route,
+	{ auth = "public", case_insensitive = true }
+)
 api.get(P .. "/Items/{id}/PlaybackInfo", function(ctx: ApiContext)
 	local resolved_auth, access_token = session.require_jellyfin_auth(ctx)
 	if not resolved_auth then
@@ -1920,13 +1944,13 @@ api.get(P .. "/Items/{id}/PlaybackInfo", function(ctx: ApiContext)
 		if identity then identity.device_id else nil
 	)
 	return api.response.json(200, response)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Items/{itemId}/File", function(ctx: ApiContext)
 	return session.handle_item_file_stream_request(ctx)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Items/{itemId}/Download", function(ctx: ApiContext)
 	return session.handle_item_download_request(ctx)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 
 -- Returns (value, err) so the handler can distinguish "absent" (value=nil, err=nil)
 -- from "present but malformed/negative" (value=nil, err=string). Zero is returned
@@ -1976,7 +2000,7 @@ api.post(P .. "/Items/{id}/PlaybackInfo", function(ctx: ApiContext)
 		return responses.bad_request(err)
 	end
 	return api.response.json(200, response)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 
 api.get(P .. "/Items/Latest", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
@@ -1987,7 +2011,7 @@ api.get(P .. "/Items/Latest", function(ctx: ApiContext)
 		return session.unauthorized()
 	end
 	return respond_with_latest_items(ctx, principal)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Users/{userId}/Items/Resume", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -1998,7 +2022,7 @@ api.get(P .. "/Users/{userId}/Items/Resume", function(ctx: ApiContext)
 	end
 
 	return api.response.json(200, empty_query_result())
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/UserItems/Resume", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -2009,7 +2033,7 @@ api.get(P .. "/UserItems/Resume", function(ctx: ApiContext)
 	end
 
 	return api.response.json(200, empty_query_result())
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Shows/NextUp", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -2020,7 +2044,7 @@ api.get(P .. "/Shows/NextUp", function(ctx: ApiContext)
 	end
 
 	return api.response.json(200, empty_query_result())
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Items/Suggestions", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -2031,7 +2055,7 @@ api.get(P .. "/Items/Suggestions", function(ctx: ApiContext)
 	end
 
 	return api.response.json(200, empty_query_result())
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Users/{userId}/Suggestions", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -2042,7 +2066,7 @@ api.get(P .. "/Users/{userId}/Suggestions", function(ctx: ApiContext)
 	end
 
 	return api.response.json(200, empty_query_result())
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Items/Counts", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -2065,7 +2089,7 @@ api.get(P .. "/Items/Counts", function(ctx: ApiContext)
 		BoxSetCount = 0,
 		BookCount = 0,
 	})
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 local function respond_with_filters(ctx: ApiContext, legacy: boolean): ApiResponse
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -2086,10 +2110,10 @@ end
 
 api.get(P .. "/Items/Filters", function(ctx: ApiContext)
 	return respond_with_filters(ctx, true)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Items/Filters2", function(ctx: ApiContext)
 	return respond_with_filters(ctx, false)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Items/{id}/Ancestors", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -2116,7 +2140,7 @@ api.get(P .. "/Items/{id}/Ancestors", function(ctx: ApiContext)
 		table.insert(result, catalog.item_to_json(parent))
 	end
 	return api.response.json(200, result)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Items/{itemId}/Intros", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -2124,7 +2148,7 @@ api.get(P .. "/Items/{itemId}/Intros", function(ctx: ApiContext)
 	end
 
 	return api.response.json(200, empty_query_result())
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 -- Lyra has no collections, so every visible item is in none.
 api.get(P .. "/Items/{itemId}/Collections", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
@@ -2143,7 +2167,7 @@ api.get(P .. "/Items/{itemId}/Collections", function(ctx: ApiContext)
 	end
 
 	return api.response.json(200, empty_query_result())
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 local function handle_empty_item_array_route(ctx: ApiContext): ApiResponse
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -2156,10 +2180,26 @@ local function handle_empty_item_array_route(ctx: ApiContext): ApiResponse
 	return api.response.json(200, {})
 end
 
-api.get(P .. "/Items/{itemId}/LocalTrailers", handle_empty_item_array_route, "public", true)
-api.get(P .. "/Users/{userId}/Items/{itemId}/LocalTrailers", handle_empty_item_array_route, "public", true)
-api.get(P .. "/Items/{itemId}/SpecialFeatures", handle_empty_item_array_route, "public", true)
-api.get(P .. "/Users/{userId}/Items/{itemId}/SpecialFeatures", handle_empty_item_array_route, "public", true)
+api.get(
+	P .. "/Items/{itemId}/LocalTrailers",
+	handle_empty_item_array_route,
+	{ auth = "public", case_insensitive = true }
+)
+api.get(
+	P .. "/Users/{userId}/Items/{itemId}/LocalTrailers",
+	handle_empty_item_array_route,
+	{ auth = "public", case_insensitive = true }
+)
+api.get(
+	P .. "/Items/{itemId}/SpecialFeatures",
+	handle_empty_item_array_route,
+	{ auth = "public", case_insensitive = true }
+)
+api.get(
+	P .. "/Users/{userId}/Items/{itemId}/SpecialFeatures",
+	handle_empty_item_array_route,
+	{ auth = "public", case_insensitive = true }
+)
 api.get(P .. "/Artists/{name}", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -2177,7 +2217,7 @@ api.get(P .. "/Artists/{name}", function(ctx: ApiContext)
 		return responses.not_found("artist not found")
 	end
 	return api.response.json(200, catalog.item_to_json(found))
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Persons/{name}", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -2195,7 +2235,7 @@ api.get(P .. "/Persons/{name}", function(ctx: ApiContext)
 		return responses.not_found("person not found")
 	end
 	return api.response.json(200, catalog.item_to_json(found))
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 local function handle_genre_by_name_route(ctx: ApiContext): ApiResponse
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -2215,49 +2255,49 @@ local function handle_genre_by_name_route(ctx: ApiContext): ApiResponse
 	return api.response.json(200, catalog.item_to_json(found))
 end
 
-api.get(P .. "/Genres/{genreName}", handle_genre_by_name_route, "public", true)
-api.get(P .. "/MusicGenres/{genreName}", handle_genre_by_name_route, "public", true)
+api.get(P .. "/Genres/{genreName}", handle_genre_by_name_route, { auth = "public", case_insensitive = true })
+api.get(P .. "/MusicGenres/{genreName}", handle_genre_by_name_route, { auth = "public", case_insensitive = true })
 api.get(P .. "/GetUtcTime", function(): ApiResponse
 	return statics.utc_time_response()
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Localization/Cultures", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
 		return session.unauthorized()
 	end
 	return statics.cultures_response()
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Localization/Countries", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
 		return session.unauthorized()
 	end
 	return statics.countries_response()
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Localization/ParentalRatings", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
 		return session.unauthorized()
 	end
 	return statics.parental_ratings_response()
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Branding/Configuration", function(): ApiResponse
 	return statics.branding_configuration_response()
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Branding/Css", function(): ApiResponse
 	return statics.branding_css_response()
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Branding/Css.css", function(): ApiResponse
 	return statics.branding_css_response()
-end, "public", true)
-api.delete(P .. "/Devices", session.delete_devices_response, "public", true)
-api.get(P .. "/Devices/Info", session.device_info_response, "public", true)
+end, { auth = "public", case_insensitive = true })
+api.delete(P .. "/Devices", session.delete_devices_response, { auth = "public", case_insensitive = true })
+api.get(P .. "/Devices/Info", session.device_info_response, { auth = "public", case_insensitive = true })
 api.get(P .. "/Devices/Options", function(ctx: ApiContext)
 	return session.require_admin(ctx) or preferences.device_options_get(ctx)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.post(P .. "/Devices/Options", function(ctx: ApiContext)
 	return session.require_admin(ctx) or preferences.device_options_set(ctx)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.get(P .. "/DisplayPreferences/{displayPreferencesId}", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -2270,7 +2310,7 @@ api.get(P .. "/DisplayPreferences/{displayPreferencesId}", function(ctx: ApiCont
 		return responses.bad_request("missing displayPreferencesId")
 	end
 	return preferences.display_prefs_get(ctx, principal.user_id, prefs_id)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 api.post(P .. "/DisplayPreferences/{displayPreferencesId}", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -2283,7 +2323,7 @@ api.post(P .. "/DisplayPreferences/{displayPreferencesId}", function(ctx: ApiCon
 		return responses.bad_request("missing displayPreferencesId")
 	end
 	return preferences.display_prefs_set(ctx, principal.user_id, prefs_id)
-end, "public", true)
+end, { auth = "public", case_insensitive = true })
 -- Lyra has no artwork of these types, so upstream would answer 404 to anyone: for an unknown
 -- item, one the caller can't see, or one without the image.
 local function handle_missing_image_route(_ctx: ApiContext): ApiResponse
@@ -2305,19 +2345,25 @@ local NON_PRIMARY_IMAGE_TYPES = {
 	"Profile",
 }
 for _, image_type in NON_PRIMARY_IMAGE_TYPES do
-	api.get(P .. "/Items/{imageId}/Images/" .. image_type, handle_missing_image_route, "public", true)
-	api.head(P .. "/Items/{imageId}/Images/" .. image_type, handle_missing_image_route, "public", true)
+	api.get(
+		P .. "/Items/{imageId}/Images/" .. image_type,
+		handle_missing_image_route,
+		{ auth = "public", case_insensitive = true }
+	)
+	api.head(
+		P .. "/Items/{imageId}/Images/" .. image_type,
+		handle_missing_image_route,
+		{ auth = "public", case_insensitive = true }
+	)
 	api.get(
 		P .. "/Items/{imageId}/Images/" .. image_type .. "/{imageIndex}",
 		handle_missing_image_route,
-		"public",
-		true
+		{ auth = "public", case_insensitive = true }
 	)
 	api.head(
 		P .. "/Items/{imageId}/Images/" .. image_type .. "/{imageIndex}",
 		handle_missing_image_route,
-		"public",
-		true
+		{ auth = "public", case_insensitive = true }
 	)
 end
 

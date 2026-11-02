@@ -665,7 +665,7 @@ function module.register()
 		end
 
 		return api.response.json(200, lyrics_protocol.to_jellyfin_lyric_dto(item, lyric_info :: LyricsInfo))
-	end, "public", true)
+	end, { auth = "public", case_insensitive = true })
 	api.post(P .. "/Audio/{itemId}/Lyrics", function(ctx: ApiContext): ApiResponse
 		local track_id, item, resolve_err = lyrics_protocol.resolve_audio_item(ctx)
 		if resolve_err then
@@ -697,7 +697,7 @@ function module.register()
 		end
 
 		return api.response.json(200, lyrics_protocol.to_jellyfin_lyric_dto(item, lyric_info :: LyricsInfo))
-	end, "public", true)
+	end, { auth = "public", case_insensitive = true })
 	api.delete(P .. "/Audio/{itemId}/Lyrics", function(ctx: ApiContext): ApiResponse
 		local principal = session.require_jellyfin_principal(ctx)
 		if not principal then
@@ -719,38 +719,70 @@ function module.register()
 			return api.response.empty(500)
 		end
 		return api.response.empty(204)
-	end, "public", true)
+	end, { auth = "public", case_insensitive = true })
 	api.get(P .. "/Audio/{itemId}/RemoteSearch/Lyrics", function(ctx: ApiContext): ApiResponse
 		local _track_id, _item, resolve_err = lyrics_protocol.resolve_audio_item(ctx)
 		if resolve_err then
 			return resolve_err
 		end
 		return api.response.json(200, {})
-	end, "public", true)
+	end, { auth = "public", case_insensitive = true })
 	api.post(P .. "/Audio/{itemId}/RemoteSearch/Lyrics/{lyricId}", function(ctx: ApiContext): ApiResponse
 		local _track_id, _item, resolve_err = lyrics_protocol.resolve_audio_item(ctx)
 		if resolve_err then
 			return resolve_err
 		end
 		return responses.not_found("lyrics not found")
-	end, "public", true)
+	end, { auth = "public", case_insensitive = true })
 	api.get(P .. "/Providers/Lyrics/{lyricId}", function(ctx: ApiContext): ApiResponse
 		local principal = session.require_jellyfin_principal(ctx)
 		if not principal then
 			return session.unauthorized()
 		end
 		return responses.not_found("lyrics not found")
-	end, "public", true)
-	api.get(P .. "/Audio/{itemId}/universal", module.handle_universal_route, "public", true)
-	api.head(P .. "/Audio/{itemId}/universal", module.handle_universal_route, "public", true)
-	api.get(P .. "/Audio/{itemId}/stream", module.handle_stream_route, "public", true)
-	api.head(P .. "/Audio/{itemId}/stream", module.handle_stream_route, "public", true)
-	api.get(P .. "/Audio/{itemId}/stream.{container}", module.handle_stream_route, "public", true)
-	api.head(P .. "/Audio/{itemId}/stream.{container}", module.handle_stream_route, "public", true)
-	api.get(P .. "/Audio/{itemId}/master.m3u8", module.handle_hls_master_route, "public", true)
-	api.head(P .. "/Audio/{itemId}/master.m3u8", module.handle_hls_master_route, "public", true)
-	api.get(P .. "/Audio/{itemId}/main.m3u8", module.handle_hls_main_route, "public", true)
-	api.head(P .. "/Audio/{itemId}/main.m3u8", module.handle_hls_main_route, "public", true)
+	end, { auth = "public", case_insensitive = true })
+	api.get(
+		P .. "/Audio/{itemId}/universal",
+		module.handle_universal_route,
+		{ auth = "public", case_insensitive = true }
+	)
+	api.head(
+		P .. "/Audio/{itemId}/universal",
+		module.handle_universal_route,
+		{ auth = "public", case_insensitive = true }
+	)
+	api.get(P .. "/Audio/{itemId}/stream", module.handle_stream_route, { auth = "public", case_insensitive = true })
+	api.head(P .. "/Audio/{itemId}/stream", module.handle_stream_route, { auth = "public", case_insensitive = true })
+	api.get(
+		P .. "/Audio/{itemId}/stream.{container}",
+		module.handle_stream_route,
+		{ auth = "public", case_insensitive = true }
+	)
+	api.head(
+		P .. "/Audio/{itemId}/stream.{container}",
+		module.handle_stream_route,
+		{ auth = "public", case_insensitive = true }
+	)
+	api.get(
+		P .. "/Audio/{itemId}/master.m3u8",
+		module.handle_hls_master_route,
+		{ auth = "public", case_insensitive = true }
+	)
+	api.head(
+		P .. "/Audio/{itemId}/master.m3u8",
+		module.handle_hls_master_route,
+		{ auth = "public", case_insensitive = true }
+	)
+	api.get(
+		P .. "/Audio/{itemId}/main.m3u8",
+		module.handle_hls_main_route,
+		{ auth = "public", case_insensitive = true }
+	)
+	api.head(
+		P .. "/Audio/{itemId}/main.m3u8",
+		module.handle_hls_main_route,
+		{ auth = "public", case_insensitive = true }
+	)
 end
 
 return module

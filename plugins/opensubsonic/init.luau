@@ -8,5 +8,5 @@ local api = require("@lyra/api")
 
 local dispatch = require("@self/dispatch")
 
-api.get("/rest/{method}", dispatch.dispatch, "public")
-api.post("/rest/{method}", dispatch.dispatch, "public")
+api.get("/rest/{method}", dispatch.dispatch, { auth = "public" })
+api.post("/rest/{method}", dispatch.dispatch, { auth = "public" })

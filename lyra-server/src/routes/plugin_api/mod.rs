@@ -37,6 +37,7 @@ use axum::{
         Bytes,
     },
     extract::{
+        DefaultBodyLimit,
         Path,
         Query,
         Request,
@@ -439,7 +440,7 @@ fn describe_probe_conflict(
 fn build_http_method_router(route: &RegisteredRoute) -> Result<MethodRouter> {
     let method_filter = method_filter_for(&route.key.method)?;
     let dispatch_route = route.clone();
-    Ok(on(
+    let router = on(
         method_filter,
         move |method: Method,
               uri: Uri,
@@ -467,7 +468,13 @@ fn build_http_method_router(route: &RegisteredRoute) -> Result<MethodRouter> {
                 .await
             }
         },
-    ))
+    );
+    // The `Bytes` extractor answers a body past the innermost limit with 413, so this replaces
+    // the server's limit for this route alone.
+    Ok(match route.max_body_bytes {
+        Some(limit) => router.layer(DefaultBodyLimit::max(limit)),
+        None => router,
+    })
 }
 
 fn build_websocket_method_router(route: &RegisteredRoute) -> MethodRouter {
@@ -725,6 +732,69 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(actual.as_ref(), body.as_bytes(), "{path}");
+        }
+    }
+
+    fn http_route(path: &str, max_body_bytes: Option<usize>) -> RegisteredRoute {
+        RegisteredRoute {
+            key: RouteKey::new("POST", path).unwrap(),
+            plugin_id: crate::services::plugin_scope::PluginId::new("limits").unwrap(),
+            auth_mode: RouteAuthMode::Required,
+            case_insensitive: false,
+            max_body_bytes,
+            handler: crate::services::plugin_dispatch::PluginCallbackHandle {
+                vm_id: 0,
+                handler_id: 0,
+            },
+            kind: RouteKind::Http,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_route_body_limit_replaces_the_server_limit_for_that_route_alone() {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state().unwrap();
+        let server_limit = 1024;
+        let mut routes = Router::new();
+        for route in [
+            http_route("/default", None),
+            http_route("/large", Some(4 * server_limit)),
+            http_route("/small", Some(16)),
+        ] {
+            routes = routes.route(
+                route.key.path.as_ref(),
+                build_http_method_router(&route).unwrap(),
+            );
+        }
+        let app = Router::new()
+            .fallback_service(routes)
+            .layer(DefaultBodyLimit::max(server_limit));
+
+        // A body the route accepts reaches the handler, which refuses the anonymous caller.
+        for (path, size, status) in [
+            ("/default", server_limit, StatusCode::UNAUTHORIZED),
+            ("/default", server_limit + 1, StatusCode::PAYLOAD_TOO_LARGE),
+            ("/large", 4 * server_limit, StatusCode::UNAUTHORIZED),
+            (
+                "/large",
+                4 * server_limit + 1,
+                StatusCode::PAYLOAD_TOO_LARGE,
+            ),
+            ("/small", 16, StatusCode::UNAUTHORIZED),
+            ("/small", 17, StatusCode::PAYLOAD_TOO_LARGE),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri(path)
+                        .body(Body::from(vec![b'x'; size]))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status, "{path} with {size} bytes");
         }
     }
 
