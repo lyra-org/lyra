@@ -362,7 +362,7 @@ pub fn adopt_missing(db: &mut impl DbAccess, winner: DbId, loser: DbId) -> anyho
         adopted = true;
     }
     if adopted && !had_cover {
-        cover_gained(db, winner)?;
+        cover_gained(db, winner, true)?;
     }
     Ok(())
 }
@@ -371,17 +371,22 @@ fn is_release(db: &impl DbAccess, owner_db_id: DbId) -> anyhow::Result<bool> {
     super::graph::is_kind(db, owner_db_id, "Release")
 }
 
-fn cover_gained(db: &mut impl DbAccess, owner_db_id: DbId) -> anyhow::Result<()> {
+/// Offers a release with a cover to the display covers it can show in. `first` is whether it had
+/// no cover before, so the genre wins its listens earned while it had one are reconsidered.
+fn cover_gained(db: &mut impl DbAccess, owner_db_id: DbId, first: bool) -> anyhow::Result<()> {
     if is_release(db, owner_db_id)? {
         display::sync_release_random_candidates(db, owner_db_id)?;
         display::offer_release_to_playlist_covers(db, owner_db_id)?;
+        if first {
+            display::reclaim_genre_wins_for_release(db, owner_db_id)?;
+        }
     }
     Ok(())
 }
 
 fn cover_lost(db: &mut impl DbAccess, owner_db_id: DbId) -> anyhow::Result<()> {
     if is_release(db, owner_db_id)? {
-        display::mark_genre_profiles_dirty_for_release(db, owner_db_id)?;
+        display::repair_genre_covers_for_release(db, owner_db_id)?;
         display::resync_playlist_covers_for_release(db, owner_db_id)?;
     }
     Ok(())
@@ -506,7 +511,7 @@ pub fn upsert(
         }
     }
 
-    cover_gained(db, owner_db_id)?;
+    cover_gained(db, owner_db_id, edges.is_empty())?;
     Ok(UpsertedCover { cover, replaced })
 }
 

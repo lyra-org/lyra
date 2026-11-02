@@ -184,7 +184,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_genre_stops_showing_a_gone_winner_once_served() -> anyhow::Result<()> {
+    async fn a_genre_whose_winner_file_is_gone_moves_on_once_served() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         crate::services::testing::init_default_test_state()?;
         let dir = tempfile::tempdir()?;
@@ -192,14 +192,29 @@ mod tests {
         covered_releases(&mut db, dir.path())?;
         let genre_db_id = lyra_db::genres::resolve_by_name(&mut db, "Rock")?;
         let genre = lyra_db::genres::get_by_id(&db, genre_db_id)?.expect("genre exists");
+        let (profile_db_id, _) = db_display::get_profile(
+            &db,
+            db_display::DisplayCoverScope::Instance,
+            db_display::DisplayCoverTargetKind::Genre,
+            None,
+            &genre.id,
+        )?
+        .expect("instance profile");
+        let candidates = db_display::candidates_by_random_score(&db, profile_db_id)?;
         let winner = genre_winner(&db, &genre)?;
+        assert_eq!(candidates[0], winner);
         remove_cover_file(&db, winner)?;
         let filter = CoverFilter::new(&Viewer::System).listening(Listens::Instance);
 
         assert!(!serve(&mut db, &filter, genre_db_id)?);
         assert!(lyra_db::covers::get(&db, winner)?.is_none());
         let listed = resolve(&db, &filter, &[genre_db_id])?;
-        assert_ne!(owner(&listed, genre_db_id), Some(winner));
+        assert_eq!(
+            owner(&listed, genre_db_id),
+            Some(candidates[1]),
+            "the genre shows its next candidate at once"
+        );
+        assert!(serve(&mut db, &filter, genre_db_id)?);
         Ok(())
     }
 

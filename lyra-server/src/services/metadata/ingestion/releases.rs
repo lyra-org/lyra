@@ -498,7 +498,6 @@ fn persist_release_inner(
     let mut persisted_track_ids = Vec::new();
     let mut changed_track_ids = Vec::new();
     let mut changed_track_id_set = HashSet::new();
-    let mut target_gained_track = false;
 
     for track in release_tracks {
         let TrackMetadata {
@@ -679,7 +678,6 @@ fn persist_release_inner(
         if release_delta.membership_changed && changed_track_id_set.insert(track_db_id) {
             changed_track_ids.push(track_db_id);
         }
-        target_gained_track |= release_delta.target_added;
         if !persisted_track_ids.contains(&track_db_id) {
             persisted_track_ids.push(track_db_id);
         }
@@ -710,9 +708,6 @@ fn persist_release_inner(
         artist_layer.save(db, artist_db_id)?;
     }
 
-    if target_gained_track {
-        lyra_db::covers::display::mark_genre_profiles_dirty_for_release(db, release_db_id)?;
-    }
     let affected_playlist_ids =
         lyra_db::covers::display::playlist_ids_for_tracks(db, &changed_track_ids)?;
     lyra_db::covers::display::sync_playlist_covers(db, &affected_playlist_ids)?;

@@ -267,7 +267,7 @@ pub fn sync_release_genre_ids(
             continue;
         };
         if !desired_genre_ids.contains(&genre_db_id) {
-            super::covers::display::mark_genre_profiles_dirty_for_release(db, release_id)?;
+            super::covers::display::remove_release_from_genre_covers(db, genre_db_id, release_id)?;
             super::graph::remove_edges_between(db, genre_db_id, release_id)?;
         }
     }

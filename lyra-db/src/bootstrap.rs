@@ -97,7 +97,6 @@ pub const ROOT_COLLECTION_ALIASES: &[&str] = &[
     "playlists",
     "genres",
     "labels",
-    "display_cover_repairs",
     "plugin_settings",
     "server",
     "roles",

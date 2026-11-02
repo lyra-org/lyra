@@ -4,7 +4,10 @@
 // www.meshiplaw.com/lyra.
 
 use std::{
-    collections::HashSet,
+    collections::{
+        HashMap,
+        HashSet,
+    },
     fmt,
     time::{
         SystemTime,
@@ -40,7 +43,6 @@ pub(crate) const ALGORITHM_VERSION: u32 = 1;
 const PROFILE_PREFIX: &str = "cover_profile";
 const CANDIDATE_PREFIX: &str = "cover_candidate";
 const WINNER_PREFIX: &str = "cover_winner";
-const REPAIR_PREFIX: &str = "cover_repair";
 const ROLE_KEY: &str = "role";
 const WINNER_KIND_KEY: &str = "winner_kind";
 const LISTEN_COUNT_KEY: &str = "listen_count";
@@ -50,7 +52,6 @@ const LAST_LISTENED_AT_MS_KEY: &str = "last_listened_at_ms";
 const RANDOM_SCORE_KEY: &str = "random_score";
 const HAS_COVER_KEY: &str = "has_cover";
 const UPDATED_AT_MS_KEY: &str = "updated_at_ms";
-const REPAIR_COLLECTION_ALIAS: &str = "display_cover_repairs";
 
 #[derive(DbElement, Clone, Debug)]
 pub struct DisplayCoverProfile {
@@ -64,21 +65,6 @@ pub struct DisplayCoverProfile {
     pub instance_total_listens: u64,
     pub active_listener_count: u64,
     pub(crate) dirty: Option<bool>,
-    pub(crate) updated_at_ms: u64,
-}
-
-#[derive(DbElement, Clone, Debug)]
-pub(crate) struct DisplayCoverRepair {
-    pub(crate) db_id: Option<NodeId>,
-    pub(crate) id: String,
-    pub(crate) identity: String,
-    pub(crate) target_kind: DisplayCoverTargetKind,
-    pub(crate) target_public_id: String,
-    pub(crate) user_public_id: Option<String>,
-    pub(crate) reason: String,
-    pub(crate) state: String,
-    pub(crate) algorithm_version: u32,
-    pub(crate) created_at_ms: u64,
     pub(crate) updated_at_ms: u64,
 }
 
@@ -298,10 +284,6 @@ fn winner_identity(profile_public_id: &str, winner_kind: DisplayCoverWinnerKind)
     )
 }
 
-fn repair_identity(profile_identity: &str, reason: &str) -> String {
-    format!("{REPAIR_PREFIX}:{profile_identity}:{reason}:{ALGORITHM_VERSION}")
-}
-
 pub fn deterministic_random_score(
     target_kind: DisplayCoverTargetKind,
     target_public_id: &str,
@@ -359,80 +341,6 @@ pub(crate) fn find_profile_by_identity(
     let profile: Option<DisplayCoverProfile> =
         graph::fetch_typed_by_index(db, "identity", identity, "DisplayCoverProfile")?;
     Ok(profile.and_then(|profile| Some((profile.db_id.clone()?.into(), profile))))
-}
-
-fn repair_exists(db: &impl DbAccess, identity: &str) -> anyhow::Result<bool> {
-    let repairs = db.exec(
-        QueryBuilder::search()
-            .index("identity")
-            .value(identity)
-            .limit(1)
-            .where_()
-            .node()
-            .and()
-            .key("db_element_id")
-            .value("DisplayCoverRepair")
-            .query(),
-    )?;
-    Ok(repairs.result > 0)
-}
-
-fn enqueue_repair(
-    db: &mut impl DbAccess,
-    target: &DisplayCoverTarget<'_>,
-    profile_db_id: Option<DbId>,
-    profile_identity: &str,
-    user_public_id: Option<&str>,
-    reason: &str,
-    now_ms: u64,
-) -> anyhow::Result<()> {
-    let identity = repair_identity(profile_identity, reason);
-    if repair_exists(db, &identity)? {
-        return Ok(());
-    }
-    let repair = DisplayCoverRepair {
-        db_id: None,
-        id: nanoid!(),
-        identity,
-        target_kind: target.kind,
-        target_public_id: target.public_id.to_string(),
-        user_public_id: user_public_id.map(ToOwned::to_owned),
-        reason: reason.to_string(),
-        state: "pending".to_string(),
-        algorithm_version: ALGORITHM_VERSION,
-        created_at_ms: now_ms,
-        updated_at_ms: now_ms,
-    };
-    let repair_db_id = db
-        .exec_mut(QueryBuilder::insert().element(&repair).query())?
-        .ids()
-        .first()
-        .copied()
-        .ok_or_else(|| anyhow::anyhow!("display cover repair insert returned no id"))?;
-    db.exec_mut(
-        QueryBuilder::insert()
-            .edges()
-            .from(REPAIR_COLLECTION_ALIAS)
-            .to(repair_db_id)
-            .query(),
-    )?;
-    db.exec_mut(
-        QueryBuilder::insert()
-            .edges()
-            .from(repair_db_id)
-            .to(target.db_id)
-            .query(),
-    )?;
-    if let Some(profile_db_id) = profile_db_id {
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from(repair_db_id)
-                .to(profile_db_id)
-                .query(),
-        )?;
-    }
-    Ok(())
 }
 
 pub fn get_profile(
@@ -1324,52 +1232,237 @@ pub(crate) fn record_genre_listen(
     Ok(())
 }
 
-pub fn mark_genre_profiles_dirty_for_release(
+/// The display cover edges that point at `release_db_id`, with their role, and the genre profile
+/// each leaves from. Edges of playlist profiles are left out.
+fn genre_profile_edges_to(
+    db: &impl DbAccess,
+    release_db_id: DbId,
+) -> anyhow::Result<Vec<(DbElement, DbId, DisplayCoverProfile)>> {
+    let edges = db
+        .exec(
+            QueryBuilder::select()
+                .search()
+                .to(release_db_id)
+                .where_()
+                .edge()
+                .and()
+                .distance(CountComparison::Equal(1))
+                .and()
+                .keys([ROLE_KEY])
+                .query(),
+        )?
+        .elements;
+    let mut profiles = HashMap::new();
+    let mut found = Vec::new();
+    for edge in edges {
+        if edge.to != release_db_id {
+            continue;
+        }
+        let profile_db_id = edge.from;
+        let profile = match profiles.get(&profile_db_id) {
+            Some(profile) => profile,
+            None => {
+                let profile: Option<DisplayCoverProfile> =
+                    graph::fetch_typed_by_id(db, profile_db_id, "DisplayCoverProfile")?;
+                profiles.entry(profile_db_id).or_insert(profile)
+            }
+        };
+        if let Some(profile) = profile
+            && profile.target_kind == DisplayCoverTargetKind::Genre
+        {
+            found.push((edge, profile_db_id, profile.clone()));
+        }
+    }
+    Ok(found)
+}
+
+fn is_role(edge: &DbElement, role: &str) -> bool {
+    matches!(value(edge, ROLE_KEY), Some(DbValue::String(found)) if found == role)
+}
+
+/// A profile's candidate as its winners are ranked.
+struct RankedCandidate {
+    release_db_id: DbId,
+    user_listen_count: u64,
+    instance_listen_count: u64,
+    random_score: u64,
+}
+
+fn ranked_candidates(
+    db: &impl DbAccess,
+    profile_db_id: DbId,
+    leaving: DbId,
+) -> anyhow::Result<Vec<RankedCandidate>> {
+    let edges = db
+        .exec(
+            QueryBuilder::select()
+                .search()
+                .from(profile_db_id)
+                .where_()
+                .edge()
+                .and()
+                .distance(CountComparison::Equal(1))
+                .and()
+                .key(ROLE_KEY)
+                .value("candidate")
+                .query(),
+        )?
+        .elements;
+    Ok(edges
+        .iter()
+        .filter(|edge| edge.to != leaving)
+        .map(|edge| {
+            let candidate = candidate_from_edge(edge);
+            RankedCandidate {
+                release_db_id: edge.to,
+                user_listen_count: candidate.user_listen_count,
+                instance_listen_count: candidate.instance_listen_count,
+                random_score: candidate.random_score,
+            }
+        })
+        .collect())
+}
+
+/// Moves the profile's winners that point at `leaving` to the best of its other candidates that
+/// still has a cover, ranked as the winner kind ranks them, or removes them when none is left.
+fn replace_winners_on(
+    db: &mut impl DbAccess,
+    profile_db_id: DbId,
+    profile: &DisplayCoverProfile,
+    leaving: DbId,
+    now_ms: u64,
+) -> anyhow::Result<()> {
+    let mut candidates = None;
+    for kind in [
+        DisplayCoverWinnerKind::Personal,
+        DisplayCoverWinnerKind::Instance,
+        DisplayCoverWinnerKind::Random,
+    ] {
+        if get_winner(db, profile, kind)?.is_none_or(|winner| winner.release_db_id != leaving) {
+            continue;
+        }
+        let candidates = match &mut candidates {
+            Some(candidates) => candidates,
+            None => candidates.insert(ranked_candidates(db, profile_db_id, leaving)?),
+        };
+        let listens = |candidate: &RankedCandidate| match kind {
+            DisplayCoverWinnerKind::Personal => candidate.user_listen_count,
+            DisplayCoverWinnerKind::Instance => candidate.instance_listen_count,
+            DisplayCoverWinnerKind::Random => 0,
+        };
+        candidates.sort_by(|left, right| {
+            listens(right)
+                .cmp(&listens(left))
+                .then(left.random_score.cmp(&right.random_score))
+                .then(left.release_db_id.0.cmp(&right.release_db_id.0))
+        });
+        let mut next = None;
+        for candidate in candidates.iter() {
+            if kind != DisplayCoverWinnerKind::Random && listens(candidate) == 0 {
+                break;
+            }
+            if super::get(db, candidate.release_db_id)?.is_some() {
+                next = Some(candidate);
+                break;
+            }
+        }
+        match next {
+            Some(candidate) => replace_winner(
+                db,
+                &winner_update(
+                    profile_db_id,
+                    &profile.id,
+                    candidate.release_db_id,
+                    kind,
+                    listens(candidate),
+                    candidate.random_score,
+                    now_ms,
+                ),
+            )?,
+            None => remove_winner(db, &winner_identity(&profile.id, kind))?,
+        }
+    }
+    Ok(())
+}
+
+/// Repairs the genre display covers of a release that lost its cover: each winner that showed it
+/// moves to the next candidate with a cover, in the same transaction, so the genre shows that one
+/// at once. Only the profiles whose winner it was are touched.
+pub(crate) fn repair_genre_covers_for_release(
     db: &mut impl DbAccess,
     release_db_id: DbId,
 ) -> anyhow::Result<()> {
     let now_ms = now_ms();
-    for genre in genres::get_for_release(db, release_db_id)? {
-        let Some(genre_db_id) = genre.db_id.map(DbId::from) else {
+    let mut repaired = HashSet::new();
+    for (edge, profile_db_id, profile) in genre_profile_edges_to(db, release_db_id)? {
+        if is_role(&edge, "winner") && repaired.insert(profile_db_id) {
+            replace_winners_on(db, profile_db_id, &profile, release_db_id, now_ms)?;
+        }
+    }
+    Ok(())
+}
+
+/// Lets a release that gained a cover again compete for the listen-driven genre wins it holds
+/// candidates for, with the listen counts those candidates kept: it wins wherever it now ranks
+/// first. The counts are not changed.
+pub(crate) fn reclaim_genre_wins_for_release(
+    db: &mut impl DbAccess,
+    release_db_id: DbId,
+) -> anyhow::Result<()> {
+    let now_ms = now_ms();
+    for (edge, profile_db_id, profile) in genre_profile_edges_to(db, release_db_id)? {
+        if !is_role(&edge, "candidate") {
             continue;
+        }
+        let candidate = candidate_from_edge(&edge);
+        let (kind, listen_count) = match profile.scope {
+            DisplayCoverScope::User => (
+                DisplayCoverWinnerKind::Personal,
+                candidate.user_listen_count,
+            ),
+            DisplayCoverScope::Instance => (
+                DisplayCoverWinnerKind::Instance,
+                candidate.instance_listen_count,
+            ),
         };
-        let target = DisplayCoverTarget {
-            kind: DisplayCoverTargetKind::Genre,
-            db_id: genre_db_id,
-            public_id: &genre.id,
-        };
-        let profiles: Vec<DisplayCoverProfile> = db
-            .exec(
-                QueryBuilder::select()
-                    .elements::<DisplayCoverProfile>()
-                    .search()
-                    .from(genre_db_id)
-                    .where_()
-                    .neighbor()
-                    .end_where()
-                    .query(),
-            )?
-            .try_into()?;
-        for profile in profiles {
-            let Some(profile_db_id) = profile.db_id.clone().map(DbId::from) else {
-                continue;
-            };
-            if profile.target_kind != DisplayCoverTargetKind::Genre {
-                continue;
-            }
-            let mut profile = profile;
-            profile.dirty = Some(true);
-            profile.updated_at_ms = now_ms;
-            save_profile(db, profile_db_id, &profile)?;
-            enqueue_repair(
-                db,
-                &target,
-                Some(profile_db_id),
-                &profile.identity,
-                None,
-                "release_cover_changed",
+        if listen_count == 0 {
+            continue;
+        }
+        set_winner_if_better(
+            db,
+            &profile,
+            winner_update(
+                profile_db_id,
+                &profile.id,
+                release_db_id,
+                kind,
+                listen_count,
+                candidate.random_score,
                 now_ms,
-            )?;
+            ),
+        )?;
+    }
+    Ok(())
+}
+
+/// Takes a release that is leaving `genre_db_id` out of the genre's display covers: its
+/// candidates go, and each winner that showed it moves to the next candidate with a cover.
+pub(crate) fn remove_release_from_genre_covers(
+    db: &mut impl DbAccess,
+    genre_db_id: DbId,
+    release_db_id: DbId,
+) -> anyhow::Result<()> {
+    let now_ms = now_ms();
+    let mut repaired = HashSet::new();
+    for (edge, profile_db_id, profile) in genre_profile_edges_to(db, release_db_id)? {
+        if !graph::edge_exists(db, genre_db_id, profile_db_id)? {
+            continue;
+        }
+        if is_role(&edge, "candidate") {
+            db.exec_mut(QueryBuilder::remove().ids(edge.id).query())?;
+        }
+        if repaired.insert(profile_db_id) {
+            replace_winners_on(db, profile_db_id, &profile, release_db_id, now_ms)?;
         }
     }
     Ok(())
@@ -1900,49 +1993,246 @@ mod tests {
         Ok(())
     }
 
+    /// Three releases in `genre`, each with a cover and a track the user played `plays` times.
+    fn played_genre(
+        db: &mut agdb::DbAny,
+        genre: &str,
+        plays: [u64; 3],
+    ) -> anyhow::Result<(DbId, DbId, [DbId; 3])> {
+        let user_db_id = users::create(db, &test_user("listener")?)?;
+        let genre_db_id = genres::resolve_by_name(db, genre)?;
+        let mut releases = [DbId(0); 3];
+        let mut listened_at = 1_000;
+        for (index, title) in ["A", "B", "C"].into_iter().enumerate() {
+            let release = insert_release(db, title)?;
+            let track = insert_track(db, title)?;
+            connect(db, release, track)?;
+            genres::link_to_release(db, genre_db_id, release)?;
+            insert_cover(db, release, title)?;
+            for _ in 0..plays[index] {
+                listened_at += 1;
+                record_genre_listen(db, track, user_db_id, listened_at)?;
+            }
+            releases[index] = release;
+        }
+        Ok((user_db_id, genre_db_id, releases))
+    }
+
+    /// The release each winner kind of the genre's user and instance profiles shows, and whether
+    /// both profiles are clean.
+    fn genre_winners(
+        db: &agdb::DbAny,
+        user_db_id: DbId,
+        genre_db_id: DbId,
+    ) -> anyhow::Result<([Option<DbId>; 3], bool)> {
+        let user = users::get_by_id(db, user_db_id)?.expect("user");
+        let genre = genres::get_by_id(db, genre_db_id)?.expect("genre");
+        let (_, user_profile) = get_profile(
+            db,
+            DisplayCoverScope::User,
+            DisplayCoverTargetKind::Genre,
+            Some(&user.id),
+            &genre.id,
+        )?
+        .expect("user profile");
+        let (_, instance) = get_profile(
+            db,
+            DisplayCoverScope::Instance,
+            DisplayCoverTargetKind::Genre,
+            None,
+            &genre.id,
+        )?
+        .expect("instance profile");
+        let winner = |profile: &DisplayCoverProfile, kind| -> anyhow::Result<Option<DbId>> {
+            Ok(get_winner(db, profile, kind)?.map(|winner| winner.release_db_id))
+        };
+        Ok((
+            [
+                winner(&user_profile, DisplayCoverWinnerKind::Personal)?,
+                winner(&instance, DisplayCoverWinnerKind::Instance)?,
+                winner(&instance, DisplayCoverWinnerKind::Random)?,
+            ],
+            profile_is_clean(&user_profile) && profile_is_clean(&instance),
+        ))
+    }
+
+    fn by_random_score(db: &agdb::DbAny, genre_db_id: DbId, releases: &[DbId]) -> Vec<DbId> {
+        let genre = genres::get_by_id(db, genre_db_id)
+            .expect("genre")
+            .expect("genre");
+        let mut scored = releases
+            .iter()
+            .map(|release| {
+                let public_id = releases::get_by_id(db, *release)
+                    .expect("release")
+                    .expect("release")
+                    .id;
+                (
+                    deterministic_random_score(
+                        DisplayCoverTargetKind::Genre,
+                        &genre.id,
+                        &public_id,
+                    ),
+                    *release,
+                )
+            })
+            .collect::<Vec<_>>();
+        scored.sort();
+        scored.into_iter().map(|(_, release)| release).collect()
+    }
+
     #[test]
-    fn cover_removal_dirties_profile_and_enqueues_repair() -> anyhow::Result<()> {
+    fn removing_a_winners_cover_moves_its_wins_to_the_next_release() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        let genre_db_id = genres::resolve_by_name(&mut db, "Pop")?;
-        let release = insert_release(&mut db, "Covered Pop")?;
-        genres::link_to_release(&mut db, genre_db_id, release)?;
-        insert_cover(&mut db, release, "pop")?;
+        let (user, genre, [a, b, c]) = played_genre(&mut db, "Rock", [3, 2, 1])?;
+        let random = by_random_score(&db, genre, &[a, b, c]);
+        assert_eq!(
+            genre_winners(&db, user, genre)?,
+            ([Some(a), Some(a), Some(random[0])], true)
+        );
 
-        let genre = genres::get_by_id(&db, genre_db_id)?.expect("genre should exist");
-        let (_, profile) = get_profile(
+        db.transaction_mut(|t| covers::remove(t, a, covers::CoverSource::Local))?;
+        db.transaction_mut(|t| covers::remove(t, random[0], covers::CoverSource::Local))?;
+
+        let left = [a, b, c]
+            .into_iter()
+            .filter(|release| *release != a && *release != random[0])
+            .collect::<Vec<_>>();
+        let listened = if random[0] == b { c } else { b };
+        assert_eq!(
+            genre_winners(&db, user, genre)?,
+            (
+                [
+                    Some(listened),
+                    Some(listened),
+                    Some(by_random_score(&db, genre, &left)[0])
+                ],
+                true
+            ),
+            "every winner moves on, and the profiles stay clean"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_release_whose_cover_returns_wins_back_its_places() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (user, genre, [a, b, c]) = played_genre(&mut db, "Rock", [20, 5, 0])?;
+        db.transaction_mut(|t| covers::remove(t, a, covers::CoverSource::Local))?;
+        let (winners, _) = genre_winners(&db, user, genre)?;
+        assert_eq!(winners[..2], [Some(b), Some(b)], "B stands in");
+
+        insert_cover(&mut db, a, "A again")?;
+
+        let random = by_random_score(&db, genre, &[a, b, c])[0];
+        assert_eq!(
+            genre_winners(&db, user, genre)?,
+            ([Some(a), Some(a), Some(random)], true),
+            "A ranks first again on its kept listens"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_cover_returning_to_a_genre_without_winners_wins_again() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (user, genre, releases) = played_genre(&mut db, "Rock", [20, 0, 0])?;
+        for release in releases {
+            db.transaction_mut(|t| covers::remove(t, release, covers::CoverSource::Local))?;
+        }
+        assert_eq!(genre_winners(&db, user, genre)?, ([None, None, None], true));
+
+        insert_cover(&mut db, releases[0], "A again")?;
+
+        assert_eq!(
+            genre_winners(&db, user, genre)?,
+            ([Some(releases[0]); 3], true)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_genre_whose_last_cover_goes_has_no_winners() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (user, genre, releases) = played_genre(&mut db, "Rock", [1, 1, 1])?;
+        for release in releases {
+            db.transaction_mut(|t| covers::remove(t, release, covers::CoverSource::Local))?;
+        }
+        assert_eq!(genre_winners(&db, user, genre)?, ([None, None, None], true));
+        Ok(())
+    }
+
+    #[test]
+    fn a_release_leaving_a_genre_leaves_only_its_display_covers() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (user, rock, [a, b, c]) = played_genre(&mut db, "Rock", [3, 2, 1])?;
+        let pop = genres::resolve_by_name(&mut db, "Pop")?;
+        genres::link_to_release(&mut db, pop, a)?;
+        let pop_random = genre_winners_random(&db, pop)?;
+
+        genres::sync_release_genre_ids(&mut db, a, &[pop])?;
+
+        let (winners, clean) = genre_winners(&db, user, rock)?;
+        assert!(clean);
+        assert_eq!(winners[..2], [Some(b), Some(b)]);
+        assert_eq!(winners[2], Some(by_random_score(&db, rock, &[b, c])[0]));
+        let rock_profile = get_profile(
             &db,
+            DisplayCoverScope::Instance,
+            DisplayCoverTargetKind::Genre,
+            None,
+            &genres::get_by_id(&db, rock)?.expect("genre").id,
+        )?
+        .expect("instance profile")
+        .0;
+        assert!(!candidates_by_random_score(&db, rock_profile)?.contains(&a));
+        assert_eq!(genre_winners_random(&db, pop)?, pop_random, "Pop keeps A");
+        Ok(())
+    }
+
+    fn genre_winners_random(db: &agdb::DbAny, genre_db_id: DbId) -> anyhow::Result<Option<DbId>> {
+        let genre = genres::get_by_id(db, genre_db_id)?.expect("genre");
+        let Some((_, profile)) = get_profile(
+            db,
             DisplayCoverScope::Instance,
             DisplayCoverTargetKind::Genre,
             None,
             &genre.id,
         )?
-        .expect("instance profile should exist");
-        assert!(!profile.dirty.unwrap_or(false));
+        else {
+            return Ok(None);
+        };
+        Ok(get_winner(db, &profile, DisplayCoverWinnerKind::Random)?.map(|w| w.release_db_id))
+    }
 
-        covers::remove(&mut db, release, covers::CoverSource::Local)?;
+    #[test]
+    fn deleting_a_winning_release_moves_its_wins_on() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (user, genre, [a, b, c]) = played_genre(&mut db, "Rock", [3, 2, 1])?;
 
-        let (_, profile) = get_profile(
-            &db,
-            DisplayCoverScope::Instance,
-            DisplayCoverTargetKind::Genre,
-            None,
-            &genre.id,
-        )?
-        .expect("instance profile should still exist");
-        assert_eq!(profile.dirty, Some(true));
+        db.transaction_mut(|t| crate::metadata::cascade_remove_entities_in_txn(t, &[a]))?;
 
-        let repairs: Vec<DisplayCoverRepair> = db
-            .exec(
-                QueryBuilder::select()
-                    .elements::<DisplayCoverRepair>()
-                    .search()
-                    .from("display_cover_repairs")
-                    .query(),
-            )?
-            .try_into()?;
-        assert_eq!(repairs.len(), 1);
-        assert_eq!(repairs[0].state, "pending");
-        assert_eq!(repairs[0].reason, "release_cover_changed");
+        assert_eq!(
+            genre_winners(&db, user, genre)?,
+            (
+                [
+                    Some(b),
+                    Some(b),
+                    Some(by_random_score(&db, genre, &[b, c])[0])
+                ],
+                true
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn linking_a_track_keeps_the_genres_profiles_clean() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (user, genre, [a, ..]) = played_genre(&mut db, "Rock", [1, 1, 1])?;
+        let track = insert_track(&mut db, "A2")?;
+        releases::link_track(&mut db, a, track)?;
+        assert!(genre_winners(&db, user, genre)?.1);
         Ok(())
     }
 }

@@ -261,7 +261,6 @@ pub fn link_track(
     track_db_id: DbId,
 ) -> anyhow::Result<()> {
     if super::graph::ensure_owned_edge(db, release_db_id, track_db_id)? {
-        super::covers::display::mark_genre_profiles_dirty_for_release(db, release_db_id)?;
         super::covers::display::offer_release_to_playlists_with_track(
             db,
             release_db_id,
@@ -286,7 +285,6 @@ pub fn unlink_track(
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TrackReleaseDelta {
     pub membership_changed: bool,
-    pub target_added: bool,
 }
 
 /// Make `release_db_id` the track's sole release without publishing per-edge
@@ -314,7 +312,6 @@ pub fn replace_track_release(
     let target_added = super::graph::ensure_owned_edge(db, release_db_id, track_db_id)?;
     Ok(TrackReleaseDelta {
         membership_changed: removed_other || target_added,
-        target_added,
     })
 }
 
