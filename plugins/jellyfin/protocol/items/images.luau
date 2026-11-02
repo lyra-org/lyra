@@ -17,7 +17,7 @@ export type ResolvedCoverInfo = {
 	mime_type: string,
 	hash: string,
 	blurhash: string?,
-	release_id: string?,
+	owner_id: string?,
 }
 
 local module = {}
@@ -38,7 +38,7 @@ function module.normalize_cover_info(raw_cover: covers.Cover?): ResolvedCoverInf
 		mime_type = requests.trim(raw_cover.mime_type) or "application/octet-stream",
 		hash = hash,
 		blurhash = requests.trim(raw_cover.blurhash),
-		release_id = identifiers.encode_jellyfin_item_id(raw_cover.release_id),
+		owner_id = identifiers.encode_jellyfin_item_id(raw_cover.owner_id),
 	}
 end
 

@@ -24,9 +24,11 @@ assert(covers.remove_manual(ids.singer) == true)
 
 -- The caller's own playlist shows its manual cover over the one picked from its releases.
 assert(covers.set_manual(ids.mine, PNG) == true)
-assert(covers.get({ ids.mine })[ids.mine].hash ~= "a")
+local own = covers.get({ ids.mine })[ids.mine]
+assert(own.hash ~= "a" and own.owner_id == ids.mine, "the cover belongs to the playlist itself")
 assert(covers.remove_manual(ids.mine) == true)
-assert(covers.get({ ids.mine })[ids.mine].hash == "a")
+local picked = covers.get({ ids.mine })[ids.mine]
+assert(picked.hash == "a" and picked.owner_id == ids.a, "the playlist shows its release's cover again")
 
 -- What is missing, hidden or of another type is false.
 assert(covers.set_manual("missing-target", PNG) == false)

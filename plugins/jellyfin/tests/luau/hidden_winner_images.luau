@@ -44,8 +44,8 @@ end
 
 -- The case under test: the listener's own pick falls back past the hidden winner.
 local caller_pick = covers.get({ ids.rock }, { listens = "instance" })[ids.rock]
-assert(caller_pick.release_id == ids.shown, "the listener's own pick is the release they see")
-assert(covers.artwork({ ids.rock })[ids.rock].release_id == ids.secret, "the instance picks Secret")
+assert(caller_pick.owner_id == ids.shown, "the listener's own pick is the release they see")
+assert(covers.artwork({ ids.rock })[ids.rock].owner_id == ids.secret, "the instance picks Secret")
 
 local function assert_consistent(item: any, id: string, what: string)
 	local tag = item.ImageTags and item.ImageTags.Primary

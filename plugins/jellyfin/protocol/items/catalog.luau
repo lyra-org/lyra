@@ -113,7 +113,7 @@ type CoverInfo = {
 	mime_type: string,
 	hash: string,
 	blurhash: string?,
-	release_id: string?,
+	owner_id: string?,
 }
 type ArtistRelationMap = { [string]: { Artist }? }
 type ArtistRelationInfoMap = { [string]: { ArtistRelationInfo }? }

@@ -424,7 +424,7 @@ pub(crate) struct CoverInfo {
     mime_type: String,
     hash: String,
     blurhash: Option<String>,
-    release_id: String,
+    owner_id: String,
 }
 
 impl CoverInfo {
@@ -434,7 +434,7 @@ impl CoverInfo {
         owners: &HashMap<DbId, String>,
     ) -> luau::runtime::Result<Self> {
         let ResolvedCover { owner_db_id, cover } = resolved;
-        let release_id = owners
+        let owner_id = owners
             .get(&owner_db_id)
             .cloned()
             .ok_or_else(|| crate::plugins::runtime_error("a cover's owner has no public id"))?;
@@ -443,7 +443,7 @@ impl CoverInfo {
             mime_type: cover.mime_type,
             hash: cover.hash,
             blurhash: cover.blurhash,
-            release_id,
+            owner_id,
         })
     }
 }
@@ -475,10 +475,10 @@ impl DescribeInterface for CoverInfo {
                 ),
                 field("blurhash", Option::<String>::luau_type(), None),
                 field(
-                    "release_id",
+                    "owner_id",
                     String::luau_type(),
                     Some(
-                        "The node the cover belongs to: the item itself, a track's release, or the release a playlist or genre shows.",
+                        "The release, artist or playlist the cover belongs to: the item itself, a track's release, or the release a playlist or genre shows when it has no cover of its own.",
                     ),
                 ),
             ],

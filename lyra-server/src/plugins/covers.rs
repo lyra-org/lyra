@@ -10,6 +10,7 @@ use harmony_luau as luau;
 #[cfg(feature = "docgen")]
 use harmony_luau::{
     DescribeInterface,
+    DescribeTypeAlias,
     FieldDescriptor,
     InterfaceDescriptor,
 };
@@ -20,7 +21,10 @@ use harmony_luau::{
 
 use crate::{
     plugins::{
-        args::UniqueIds,
+        args::{
+            self,
+            UniqueIds,
+        },
         db::{
             SystemDb,
             ViewerDb,
@@ -86,23 +90,33 @@ struct CoverOptions {
     require_file: bool,
 }
 
+#[harmony_macros::string_enum(
+    name = "CoverListens",
+    description = "Whose listens pick a genre's cover: the caller's first, then the instance's (`caller`), or only the instance's (`instance`), so every caller sees the same cover."
+)]
+#[derive(Clone, Copy)]
+enum CoverListens {
+    Caller,
+    Instance,
+}
+
+impl From<CoverListens> for Listens {
+    fn from(listens: CoverListens) -> Self {
+        match listens {
+            CoverListens::Caller => Self::Viewer,
+            CoverListens::Instance => Self::Instance,
+        }
+    }
+}
+
 impl<'vm> luau::FromLuau<'vm> for CoverOptions {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let options: luau::Table = reader.read()?;
-        let listens = match options.get("listens")? {
-            luau::Value::Nil => None,
-            luau::Value::String(value) if value == b"caller" => Some(Listens::Viewer),
-            luau::Value::String(value) if value == b"instance" => Some(Listens::Instance),
-            other => {
-                return Err(crate::plugins::runtime_error(format!(
-                    "listens must be \"caller\" or \"instance\", got {}",
-                    other.type_name()
-                )));
-            }
-        };
+        args::reject_unknown_fields(&options, "options", &["listens", "require_file"])?;
+        let listens = args::optional_string_enum::<CoverListens>(&options, "listens", "options")?
+            .map(Listens::from);
         let require_file =
-            crate::plugins::args::optional_bool(&options, "require_file", "options")?
-                .unwrap_or(false);
+            args::optional_bool(&options, "require_file", "options")?.unwrap_or(false);
         Ok(Self {
             listens,
             require_file,
@@ -249,13 +263,8 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
     let mut options = InterfaceDescriptor::new("CoverOptions", None);
     options.fields.push(FieldDescriptor {
         name: "listens",
-        ty: LuauType::optional(LuauType::union(vec![
-            LuauType::string_literal("caller"),
-            LuauType::string_literal("instance"),
-        ])),
-        description: Some(
-            "Whose listens pick a genre's cover: the caller's first, then the instance's (`caller`, the default), or only the instance's (`instance`), so every caller sees the same cover.",
-        ),
+        ty: Option::<CoverListens>::luau_type(),
+        description: Some("Defaults to `caller`."),
     });
     options.fields.push(FieldDescriptor {
         name: "require_file",
@@ -266,7 +275,7 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
     });
     harmony_luau::render_definition_file_with_support(
         &CoversModule::module_descriptor(),
-        &[],
+        &[CoverListens::type_alias_descriptor()],
         &[options, CoverInfo::interface_descriptor()],
         &[],
     )

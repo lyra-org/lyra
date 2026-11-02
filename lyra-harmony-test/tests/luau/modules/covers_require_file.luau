@@ -6,7 +6,7 @@ local ids = fixture.ids
 
 -- Reads don't look at cover files unless asked to.
 local listed = covers.get({ ids.gone, ids.tgone, ids.kept })
-assert(listed[ids.gone].hash == "gone" and listed[ids.tgone].release_id == ids.gone)
+assert(listed[ids.gone].hash == "gone" and listed[ids.tgone].owner_id == ids.gone)
 
 -- `require_file` leaves out a cover whose file is gone and removes its record, so later reads move on.
 local served = covers.get({ ids.tgone, ids.kept }, { require_file = true })

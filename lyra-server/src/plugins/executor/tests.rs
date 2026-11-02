@@ -2753,7 +2753,7 @@ fn cover_artwork_bindings_serve_anonymous_public_routes() -> Result<()> {
                 local playlist = ctx.params.playlist
                 return api.response.json(200, {
                     cover = covers.artwork({ release })[release] ~= nil,
-                    playlist = covers.artwork({ playlist })[playlist].release_id == release,
+                    playlist = covers.artwork({ playlist })[playlist].owner_id == release,
                     scoped = pcall(covers.get, { release, playlist }),
                 })
             end, { auth = "public" })
