@@ -16,7 +16,7 @@ track_total = 1
 duration_ms = 173606
 
 [expect.release]
-ids = { release_id = "b3180a1a-8a10-45df-b058-c635c26e678b" }
+ids = { release_id = ["b3180a1a-8a10-45df-b058-c635c26e678b", "2a069c7a-f22e-424c-b90b-361ab11bfd87"] }
 
 [expect.artists."66bdd1c9-d1c5-40b7-a487-5061fffbd87d"]
 fields = { artist_name = "Eve", sort_name = "Eve" }

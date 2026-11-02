@@ -13,6 +13,7 @@ local json_helpers = require("./json_helpers")
 local local_release = require("./local_release")
 local musicbrainz_api = require("./musicbrainz_api")
 local resolve = require("./resolve")
+local text_helpers = require("./text_helpers")
 local track_helpers = require("./track_helpers")
 
 type JsonValue = serde.JsonValue
@@ -20,9 +21,11 @@ type JsonObject = { [string]: JsonValue }
 type HttpRequestOptions = http.HttpRequestOptions
 type LocalRelease = local_release.LocalRelease
 type LocalTrack = track_helpers.LocalTrack
+type Release = track_helpers.Release
 
 local as_json_object = json_helpers.as_json_object
 local as_json_array = json_helpers.as_json_array
+local clean_release_title = text_helpers.clean_release_title
 
 local ACOUSTID_API = "https://api.acoustid.org/v2/lookup"
 local ACOUSTID_CLIENT_ID = "hrpiiKRyqd"
@@ -165,7 +168,8 @@ function module.lookup(fingerprint: string, duration_ms: number): AcoustIdResult
 end
 
 -- Tries the recording's releases with a matching track count first, then the
--- rest. Each goes through acceptance, with the recording as evidence.
+-- rest, each by its release group's best edition. Acceptance holds every
+-- edition to the recording: it must be on the edition applied.
 function module.resolve_recording_to_release(recording_id: string, local_release_info: LocalRelease): boolean
 	local local_track_count = #local_release_info.context.tracks
 	-- validate recording ID format
@@ -173,7 +177,8 @@ function module.resolve_recording_to_release(recording_id: string, local_release
 		return false
 	end
 
-	local recording_data = musicbrainz_api.mb_get(`/recording/{http.encode_uri_component(recording_id)}?inc=releases`)
+	local recording_data =
+		musicbrainz_api.mb_get(`/recording/{http.encode_uri_component(recording_id)}?inc=releases+release-groups`)
 	if not recording_data then
 		return false
 	end
@@ -184,35 +189,46 @@ function module.resolve_recording_to_release(recording_id: string, local_release
 	end
 
 	local fingerprinted = local_release.with_verified_recordings(local_release_info, { [recording_id] = true })
-	local matching_ids: { string } = {}
-	local other_ids: { string } = {}
+	local matching: { Release } = {}
+	local others: { Release } = {}
 	for _, release_value in releases do
-		local release = as_json_object(release_value)
-		if release == nil then
+		local raw_release = as_json_object(release_value)
+		if raw_release == nil then
 			continue
 		end
-		local release_id = musicbrainz_api.json_string_field(release, "id")
-		if not release_id then
+		local release = musicbrainz_api.normalize_release(raw_release)
+		if release.id == nil then
 			continue
 		end
-		local track_count = musicbrainz_api.json_number_field(release, "track-count")
+		local track_count = release["track-count"]
 		if track_count and math.floor(track_count) == local_track_count then
-			table.insert(matching_ids, release_id)
+			table.insert(matching, release)
 		else
-			table.insert(other_ids, release_id)
+			table.insert(others, release)
 		end
 	end
 
 	-- A popular recording sits on dozens of releases, mostly compilations;
-	-- each try fetches one, so stop after a few.
+	-- each try browses a release group, so stop after a few, once per group.
+	local search_title = clean_release_title(local_release_info.release_title or "")
 	local tries = 0
-	for _, candidates in { matching_ids, other_ids } do
-		for _, release_id in candidates do
+	local tried_groups: { [string]: boolean } = {}
+	for _, candidates in { matching, others } do
+		for _, release in candidates do
+			local release_group = release["release-group"]
+			local release_group_id = release_group and release_group.id
+			if release_group_id then
+				if tried_groups[release_group_id] then
+					continue
+				end
+				tried_groups[release_group_id] = true
+			end
 			if tries >= MAX_RELEASE_TRIES then
 				return false
 			end
 			tries += 1
-			if resolve.try_release_id(release_id, fingerprinted) then
+			local title = if search_title ~= "" then search_title else nil
+			if resolve.try_release_group(release, fingerprinted, title, nil, true) then
 				return true
 			end
 		end

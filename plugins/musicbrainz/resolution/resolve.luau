@@ -136,6 +136,7 @@ local function try_pick(pick: EditionPick, local_release_info: LocalRelease, anc
 	if
 		localized
 		and acceptance.localization_keeps_recordings(localized, identity)
+		and acceptance.carries_verified_recording(localized, local_release_info)
 		and check(localized, verified_info, identity)
 	then
 		return localized
@@ -146,9 +147,11 @@ end
 -- Applies the best edition from `selected_release`'s release group. The edition
 -- must pass acceptance with `selected_release` as its anchor. A localized
 -- edition stands in for it only if, with its full track list, it keeps the
--- edition's recordings and passes acceptance against it. A browse lists at
--- most a page of the group, so `selected_release`, when it lists its tracks,
--- competes even if the browse left it out.
+-- edition's recordings and passes acceptance against it. Only when the group
+-- offers no edition at all is `selected_release` tried on its own; a selected
+-- edition that is rejected is not replaced by it. A browse lists at most a
+-- page of the group, so `selected_release`, when it lists its tracks, competes
+-- even if the browse left it out.
 function module.try_release_group(
 	selected_release: Release,
 	local_release_info: LocalRelease,
@@ -159,8 +162,17 @@ function module.try_release_group(
 	local track_count = local_release_info.track_count
 	local release_group = selected_release["release-group"]
 	local release_group_id = release_group and release_group.id
+	-- The group's own copy of the release, browsed with every include it needs,
+	-- spares fetching it; a search result's copy may list tracks without them.
+	local function try_selected_release(group_copy: Release?): boolean
+		if group_copy then
+			return module.try_release(group_copy, local_release_info)
+		end
+		local release_id = selected_release.id
+		return release_id ~= nil and module.try_release_id(release_id, local_release_info)
+	end
 	if not release_group_id then
-		return false
+		return try_selected_release(nil)
 	end
 	local listed: { Release } = browse_release_group(release_group_id, track_count == 1, track_count) or {}
 	local group_copy = release_from_candidates(listed, selected_release.id, nil)
@@ -169,7 +181,7 @@ function module.try_release_group(
 		candidates = with_release(listed, selected_release)
 	end
 	if #candidates == 0 then
-		return false
+		return try_selected_release(group_copy)
 	end
 	local edition_anchor = group_copy or selected_release
 	local picks = ranked_release_group_candidates(
@@ -182,7 +194,7 @@ function module.try_release_group(
 		MAX_EDITION_TRIES
 	)
 	if #picks == 0 then
-		return false
+		return try_selected_release(group_copy)
 	end
 	-- The best edition that passes acceptance, as the next best after one the
 	-- local files reject. A failed request ends the walk: nothing is applied.

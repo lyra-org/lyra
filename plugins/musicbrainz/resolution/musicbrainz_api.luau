@@ -437,7 +437,15 @@ module.clock = os.clock
 
 -- What a refresh knows across its requests: whether one failed, and when its
 -- enrichment must end.
-type RefreshState = { failed: boolean, enrichment_deadline: number }
+-- What a refresh knows across its requests: whether one failed, when its
+-- enrichment must end, and the releases and group browses it fetched, so a
+-- release judged again on another path isn't fetched again.
+type RefreshState = {
+	failed: boolean,
+	enrichment_deadline: number,
+	releases: { [string]: Release },
+	browses: { [string]: { Release } },
+}
 
 -- By thread: each refresh handler runs on a thread of its own, while
 -- concurrent refreshes share this module.
@@ -447,7 +455,12 @@ local function refresh_state(): RefreshState
 	local thread = coroutine.running()
 	local state = refresh_states[thread]
 	if state == nil then
-		state = { failed = false, enrichment_deadline = module.clock() + ENRICHMENT_SECONDS }
+		state = {
+			failed = false,
+			enrichment_deadline = module.clock() + ENRICHMENT_SECONDS,
+			releases = {},
+			browses = {},
+		}
 		refresh_states[thread] = state
 	end
 	return state
@@ -546,7 +559,11 @@ local function mark_complete(releases: { Release })
 	end
 end
 
-local function browse_release_group(release_group_id: string, fast_mode: boolean, track_count: number?): { Release }?
+local function browse_release_group_pages(
+	release_group_id: string,
+	fast_mode: boolean,
+	track_count: number?
+): { Release }?
 	local detailed_response = mb_get(`/release?release-group={release_group_id}&inc={RELEASE_INCLUDES}&limit=100`)
 	local detailed_data = if detailed_response then normalize_release_search_result(detailed_response) else nil
 	if detailed_data then
@@ -602,12 +619,28 @@ local function browse_release_group(release_group_id: string, fast_mode: boolean
 	return releases
 end
 
+local function browse_release_group(release_group_id: string, fast_mode: boolean, track_count: number?): { Release }?
+	local browses = refresh_state().browses
+	local key = `{release_group_id}:{fast_mode}:{track_count}`
+	local releases = browses[key] or browse_release_group_pages(release_group_id, fast_mode, track_count)
+	if releases then
+		browses[key] = releases
+	end
+	return releases
+end
+
 local function fetch_release_details(release_id: string): Release?
+	local releases = refresh_state().releases
+	local cached = releases[release_id]
+	if cached then
+		return cached
+	end
 	local release_response = mb_get(`/release/{release_id}?inc={RELEASE_INCLUDES}`)
 	local release = if release_response then normalize_release(release_response) else nil
 	if release then
 		compute_track_count(release)
 		release.complete = true
+		releases[release_id] = release
 	end
 	return release
 end
@@ -620,6 +653,7 @@ module.json_number_field = json_number_field
 module.json_object_field = json_object_field
 module.json_array_field = json_array_field
 module.normalize_release_artist = normalize_release_artist
+module.normalize_release = normalize_release
 module.normalize_artist_search_result = normalize_artist_search_result
 module.normalize_release_search_result = normalize_release_search_result
 module.normalize_recording_search_result = normalize_recording_search_result

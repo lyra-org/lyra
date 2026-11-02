@@ -86,6 +86,35 @@ assert(walk({ listed("jp", "JP"), listed("xw", "XW") }, {
 }) == nil, "nothing applies after a failed request")
 assert(fetches() == 1, `nothing is fetched after the failure, got {fetches()}`)
 
+-- A recording the match rests on, like the one an alias search names, must be
+-- on the edition applied: an edition of another recording ranked above it
+-- gives way to one that carries it.
+local other_version = full("jp", "JP", refresh.JAPANESE_TITLES)
+for _, track in other_version.media[1].tracks do
+	track.recording.id = `other-{track.recording.id}`
+end
+refresh.routes = {
+	{ pattern = `/ws/2/release?release-group={refresh.GROUP}&inc=`, body = { count = 0, releases = {} } },
+	{
+		pattern = `/ws/2/release?release-group={refresh.GROUP}&limit=`,
+		body = { count = 2, releases = { listed("jp", "JP"), listed("xw", "XW") } },
+	},
+	{ pattern = "/ws/2/release/jp?", body = other_version },
+	{ pattern = "/ws/2/release/xw?", body = full("xw", "XW", refresh.JAPANESE_TITLES) },
+}
+table.clear(refresh.saved_ids)
+local resumed, err = coroutine.resume(coroutine.create(function()
+	musicbrainz_api.begin_refresh()
+	local info = local_release.from_context(refresh.monitoring())
+	local verified = local_release.with_verified_recordings(info, { ["recording-1"] = true })
+	local hit = table.clone(listed("xw", "XW"))
+	hit["release-group"] = { id = refresh.GROUP }
+	resolve.try_release_group(hit, verified, "モニタリング", nil, true)
+	musicbrainz_api.end_refresh()
+end))
+assert(resumed, tostring(err))
+assert(refresh.saved_ids.release.release_id == "xw", "the edition carrying the verified recording applies")
+
 -- The search hit kept as the anchor is tried first even when the group's
 -- browse leaves it out; once the files reject it, the browsed editions follow.
 local anchor_full = full("anchor", "JP", WRONG_SONG)

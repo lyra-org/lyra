@@ -45,12 +45,11 @@ local normalize_recording_search_result = musicbrainz_api.normalize_recording_se
 local select_best_release = ranking.select_best_release
 local release_matches_artist_ids = ranking.release_matches_artist_ids
 local try_release = resolve.try_release
-local try_release_id = resolve.try_release_id
 local try_release_group = resolve.try_release_group
 local normalize_lookup_context = local_release.normalize_lookup_context
 
--- Alias search can list many releases; fetching each to check it is slow.
-local MAX_ALIAS_RELEASE_FETCHES = 5
+-- Alias search can list many releases; trying each is slow.
+local MAX_ALIAS_RELEASE_TRIES = 5
 
 local module = {}
 
@@ -459,18 +458,6 @@ function module.search_and_fetch_release(local_release_info: LocalRelease): bool
 			end
 		end
 		if hint_releases_data and hint_releases_data.count > 0 then
-			if track_count > 0 then
-				for _, candidate: Release in hint_releases_data.releases do
-					if
-						titles_match_search(candidate.title, hint_search_title)
-						and compute_track_count(candidate) == track_count
-						and candidate.id
-						and try_release_id(candidate.id, local_release_info)
-					then
-						return true
-					end
-				end
-			end
 			releases_data = hint_releases_data
 			search_title = hint_search_title
 			search_title_has_multibyte = contains_multibyte(search_title)
@@ -698,9 +685,6 @@ function module.search_and_fetch_release(local_release_info: LocalRelease): bool
 		if try_release_group(selected_release, local_release_info, search_title, artist_ids, true) then
 			return true
 		end
-		if selected_release.id and try_release_id(selected_release.id, local_release_info) then
-			return true
-		end
 		selected_release_rejected = true
 	end
 	local skip_arid_fallback = top_artist_id
@@ -770,13 +754,11 @@ function module.search_and_fetch_release(local_release_info: LocalRelease): bool
 			if not fallback_release and #fallback_candidates == 1 then
 				fallback_release = fallback_candidates[1]
 			end
-			if fallback_release then
-				if try_release_group(fallback_release, local_release_info, search_title, fallback_ids, true) then
-					return true
-				end
-				if fallback_release.id and try_release_id(fallback_release.id, local_release_info) then
-					return true
-				end
+			if
+				fallback_release
+				and try_release_group(fallback_release, local_release_info, search_title, fallback_ids, true)
+			then
+				return true
 			end
 		end
 	end
@@ -856,7 +838,7 @@ function module.search_and_fetch_release(local_release_info: LocalRelease): bool
 			end
 			return (a.date or "") < (b.date or "")
 		end)
-		return try_release(fallback_candidates[1], local_release_info)
+		return try_release_group(fallback_candidates[1], local_release_info, search_title, artist_ids, true)
 	end
 	if defer_to_deferred_release and try_artist_year_fallback() then
 		return true
@@ -881,7 +863,8 @@ function module.search_and_fetch_release(local_release_info: LocalRelease): bool
 		end
 		local recording_response = mb_get(`/recording?query={http.encode_uri_component(alias_query)}`)
 		local recording_data = if recording_response then normalize_recording_search_result(recording_response) else nil
-		local fetches = 0
+		local tries = 0
+		local tried_groups: { [string]: boolean } = {}
 		if recording_data then
 			for _, recording: Recording in recording_data.recordings do
 				local recording_releases = recording.releases
@@ -889,6 +872,11 @@ function module.search_and_fetch_release(local_release_info: LocalRelease): bool
 					continue
 				end
 				local recording_is_local_track = local_track_titles[normalize_overlap_title(recording.title)] == true
+				-- The alias names this recording, so the edition applied must carry it.
+				local recording_id = recording.id
+				local verified_info = if recording_id
+					then local_release.with_verified_recordings(local_release_info, { [recording_id] = true })
+					else local_release_info
 				for _, release: Release in recording_releases do
 					local release_id = release.id
 					if
@@ -902,11 +890,20 @@ function module.search_and_fetch_release(local_release_info: LocalRelease): bool
 					then
 						continue
 					end
-					if fetches >= MAX_ALIAS_RELEASE_FETCHES then
+					local release_group = release["release-group"]
+					local release_group_id = release_group and release_group.id
+					if release_group_id then
+						local tried_key = `{recording_id}:{release_group_id}`
+						if tried_groups[tried_key] then
+							continue
+						end
+						tried_groups[tried_key] = true
+					end
+					if tries >= MAX_ALIAS_RELEASE_TRIES then
 						break
 					end
-					fetches += 1
-					if try_release_id(release_id, local_release_info) then
+					tries += 1
+					if try_release_group(release, verified_info, search_title, artist_ids, true) then
 						return true
 					end
 				end
@@ -940,13 +937,11 @@ function module.search_and_fetch_release(local_release_info: LocalRelease): bool
 				if not translit_release then
 					translit_release = translit_data.releases[1]
 				end
-				if translit_release then
-					if try_release_group(translit_release, local_release_info, search_title, translit_ids, false) then
-						return true
-					end
-					if translit_release.id and try_release_id(translit_release.id, local_release_info) then
-						return true
-					end
+				if
+					translit_release
+					and try_release_group(translit_release, local_release_info, search_title, translit_ids, false)
+				then
+					return true
 				end
 			end
 		end
@@ -954,7 +949,7 @@ function module.search_and_fetch_release(local_release_info: LocalRelease): bool
 	if not defer_to_deferred_release and try_artist_year_fallback() then
 		return true
 	end
-	if deferred_release and deferred_release.id and try_release_id(deferred_release.id, local_release_info) then
+	if deferred_release and try_release_group(deferred_release, local_release_info, search_title, artist_ids, true) then
 		return true
 	end
 	return false

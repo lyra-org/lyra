@@ -182,6 +182,12 @@ local function has_verified_recording(release: Release, local_release_info: Loca
 	return recording_ids ~= nil and release_has_any_recording(release, recording_ids)
 end
 
+-- Whether `release` carries a recording the local release is known to be, when
+-- one is known: a release without one can't be it.
+function module.carries_verified_recording(release: Release, local_release_info: LocalRelease): boolean
+	return local_release_info.verified_recording_ids == nil or has_verified_recording(release, local_release_info)
+end
+
 -- Recordings of `release` that stand for local tracks.
 function module.assigned_recording_ids(release: Release, local_tracks: { LocalTrack }): { [string]: boolean }
 	local recording_ids: { [string]: boolean } = {}
@@ -234,6 +240,9 @@ function module.accepts(release: Release, local_release_info: LocalRelease, anch
 	local title_exact = has_local_title and normalize_title(release.title) == normalize_title(local_title)
 	local title_overlap = count_track_title_overlap(local_tracks, release)
 	local verified_recording = has_verified_recording(release, local_release_info)
+	if local_release_info.verified_recording_ids ~= nil and not verified_recording then
+		return false, "lacks the verified recording"
+	end
 	-- The files' own album tag, before a hint from their paths replaces it.
 	local album_tag = local_release_info.context.release_title
 	local album_unnamed = is_blank_text(album_tag) or is_placeholder_text(album_tag)

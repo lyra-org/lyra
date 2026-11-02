@@ -271,7 +271,10 @@ local function select_release_group_candidate(
 	local fits_anchor = acceptance.edition_filter(anchor, local_tracks)
 	local fitting_candidates: { Release } = {}
 	for _, candidate: Release in candidates do
-		if not release_lists_tracks(candidate) or fits_anchor(candidate) then
+		if
+			not release_lists_tracks(candidate)
+			or (fits_anchor(candidate) and acceptance.carries_verified_recording(candidate, local_release_info))
+		then
 			table.insert(fitting_candidates, candidate)
 		end
 	end

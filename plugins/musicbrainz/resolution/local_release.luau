@@ -48,8 +48,7 @@ export type ReleaseContext = {
 -- What is known about a local release before matching it: its context, the
 -- inputs derived from it once per refresh, and evidence that candidate
 -- producers add along the way (the artist search's results, recordings known to
--- be the local audio). `rejected_release_ids` remembers releases acceptance
--- rejected for this evidence; deriving new evidence starts it over.
+-- be the local audio), and the releases acceptance rejected.
 export type LocalRelease = {
 	context: ReleaseContext,
 	artist_name: string?,
@@ -66,6 +65,8 @@ export type LocalRelease = {
 	-- Recordings known to be the local audio: from an AcoustID fingerprint, or
 	-- assigned to local tracks by an edition acceptance already passed.
 	verified_recording_ids: { [string]: boolean }?,
+	-- Releases acceptance rejected against this evidence; deriving new
+	-- evidence starts it over.
 	rejected_release_ids: { [string]: boolean },
 }
 
@@ -238,6 +239,7 @@ function module.from_context(release_context: ReleaseContext): LocalRelease
 	}
 end
 
+-- A copy to refine, judging releases afresh against what it adds.
 local function derive(local_release: LocalRelease): LocalRelease
 	local updated = table.clone(local_release)
 	updated.rejected_release_ids = {}
