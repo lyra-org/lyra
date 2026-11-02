@@ -12,6 +12,10 @@ local normalize_overlap_title = text_helpers.normalize_overlap_title
 
 local module = {}
 
+-- A scanned length under a second is too short to be a song: a truncated or
+-- misread length rather than the track's own, it counts as no length at all.
+local MIN_PLAUSIBLE_LENGTH_MS = 1000
+
 export type LocalArtist = {
 	id: string?,
 	artist_name: string?,
@@ -372,6 +376,34 @@ local function infer_single_disc_remap(local_tracks: { LocalTrack }?, mb_tracks:
 	}
 end
 
+-- Whether local disc and track numbers can place tracks: not when two local
+-- tracks share a position, as discs ripped to folders without disc numbers do,
+-- or when the release has several discs and a local track names none.
+local function positions_reliable(local_tracks: { LocalTrack }, mb_tracks: { FlattenedMbTrack }): boolean
+	local seen: { [string]: boolean } = {}
+	for _, local_track in local_tracks do
+		if local_track.track ~= nil then
+			local key = `{local_track.disc or 0}:{local_track.track}`
+			if seen[key] then
+				return false
+			end
+			seen[key] = true
+		end
+	end
+	local first_disc = mb_tracks[1] and mb_tracks[1].disc
+	for _, mb_track in mb_tracks do
+		if mb_track.disc ~= first_disc then
+			for _, local_track in local_tracks do
+				if local_track.disc == nil then
+					return false
+				end
+			end
+			break
+		end
+	end
+	return true
+end
+
 function module.assign_mb_tracks_to_local_tracks(
 	local_tracks: { LocalTrack },
 	mb_tracks: { FlattenedMbTrack }
@@ -426,19 +458,55 @@ function module.assign_mb_tracks_to_local_tracks(
 		end)
 	end
 
-	local function pass_title_exact()
-		pass_match(function(local_track, candidate)
-			local title = normalize_title(local_track.track_title)
-			return title ~= "" and normalize_title(candidate.title) == title
-		end)
+	-- A title places a track; among tracks of the same title, its track
+	-- number when positions can be trusted, then the length closest to the
+	-- file's. Files with a length to go by are placed first, so one without
+	-- can't take the track another's length singles out.
+	local function pass_title_by_length(trust_numbers: boolean)
+		local function place(with_length: boolean)
+			for local_index, local_track in local_tracks do
+				local title = normalize_title(local_track.track_title)
+				local has_length = local_track.duration_ms ~= nil and local_track.duration_ms >= MIN_PLAUSIBLE_LENGTH_MS
+				if assignments[local_index] ~= nil or title == "" or has_length ~= with_length then
+					continue
+				end
+				local best_index: number? = nil
+				local best_diff = math.huge
+				local best_same_number = false
+				for index, candidate in mb_tracks do
+					if used_mb_indices[index] or normalize_title(candidate.title) ~= title then
+						continue
+					end
+					local local_ms, mb_ms = module.comparable_lengths(local_track, candidate)
+					local diff = if local_ms and mb_ms then math.abs(local_ms - mb_ms) else math.huge
+					local same_number = trust_numbers and candidate.track == local_track.track
+					if
+						best_index == nil
+						or (same_number and not best_same_number)
+						or (same_number == best_same_number and diff < best_diff)
+					then
+						best_index = index
+						best_diff = diff
+						best_same_number = same_number
+					end
+				end
+				if best_index ~= nil then
+					assign(local_index, best_index, mb_tracks[best_index])
+				end
+			end
+		end
+		place(true)
+		place(false)
 	end
 
-	if #local_tracks == 1 then
-		pass_title_exact()
+	if not positions_reliable(local_tracks, mb_tracks) then
+		pass_title_by_length(false)
+	elseif #local_tracks == 1 then
+		pass_title_by_length(true)
 		pass_disc_track()
 	else
 		pass_disc_track()
-		pass_title_exact()
+		pass_title_by_length(true)
 	end
 
 	local next_mb = 1
@@ -566,6 +634,17 @@ function module.assign_release_tracks(
 	local sorted_local: { LocalTrack } = table.clone(local_tracks)
 	module.sort_tracks_for_refresh(sorted_local)
 	return sorted_local, module.assign_mb_tracks_to_local_tracks(sorted_local, module.flatten_release_tracks(release))
+end
+
+-- The local and MusicBrainz lengths of a paired track, if both are known and
+-- the local one can be the track's real length.
+function module.comparable_lengths(local_track: LocalTrack, mb_track: FlattenedMbTrack): (number?, number?)
+	local local_ms = local_track.duration_ms
+	local mb_ms = mb_track.duration_ms
+	if local_ms == nil or mb_ms == nil or local_ms < MIN_PLAUSIBLE_LENGTH_MS then
+		return nil, nil
+	end
+	return local_ms, mb_ms
 end
 
 function module.validate_release_durations(local_tracks: { LocalTrack }, release: Release): boolean
