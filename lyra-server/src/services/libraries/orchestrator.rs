@@ -37,6 +37,7 @@ use tokio::time::{
 };
 
 use crate::{
+    services::CoverSyncOptions,
     services::STATE,
     services::providers::LibraryRefreshOptions,
     services::timestamps::unix_ms_to_rfc3339_u64,
@@ -601,13 +602,6 @@ pub(crate) struct SyncRunStartResponse {
     pub(crate) run: SyncRunSummary,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct LibraryRefreshRunOptions {
-    pub(crate) covers: bool,
-    pub(crate) replace_cover: bool,
-    pub(crate) force_refresh: bool,
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct SyncRunProgress {
     db: DbAsync,
@@ -994,7 +988,8 @@ pub(crate) async fn library_has_active_run(library_id: &str) -> anyhow::Result<b
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum LibraryRun {
     Sync,
-    Refresh(LibraryRefreshRunOptions),
+    /// A refresh fetching these covers.
+    Refresh(CoverSyncOptions),
 }
 
 pub(crate) async fn start_library_sync(
@@ -1065,8 +1060,8 @@ async fn start_locked(
         LibraryRun::Sync => {
             tokio::spawn(run_library_sync(db, library, progress));
         }
-        LibraryRun::Refresh(options) => {
-            tokio::spawn(run_library_refresh(library, progress, options));
+        LibraryRun::Refresh(covers) => {
+            tokio::spawn(run_library_refresh(library, progress, covers));
         }
     }
 
@@ -1097,7 +1092,7 @@ async fn run_library_sync(db: DbAsync, library: Library, progress: SyncRunProgre
 async fn run_library_refresh(
     library: Library,
     progress: SyncRunProgress,
-    options: LibraryRefreshRunOptions,
+    covers: CoverSyncOptions,
 ) {
     let started = Instant::now();
     let Some(library_db_id) = library.db_id else {
@@ -1118,9 +1113,7 @@ async fn run_library_refresh(
     );
     progress.set_status(SyncRunStatus::Planning).await;
     let refresh_options = LibraryRefreshOptions {
-        covers: options.covers,
-        replace_cover: options.replace_cover,
-        force_refresh: options.force_refresh,
+        covers,
         apply_sync_filters: false,
         provider_id: None,
     };

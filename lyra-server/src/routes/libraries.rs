@@ -42,7 +42,8 @@ use crate::{
     },
     services::STATE,
     services::{
-        LibraryRefreshRunOptions,
+        CoverSyncOptions,
+        CoverUpdate,
         SyncRunStartResponse,
         auth::{
             access,
@@ -167,22 +168,24 @@ struct LibraryGrantAccessRequest {
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 struct LibraryRefreshQuery {
     #[serde(default)]
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Replace existing cover images with downloaded provider results when set."
+            description = "The covers to fetch for the refreshed releases and artists: `skip`, `missing` (the default, only where none is set) or `replace`."
         )
     )]
-    replace_cover: bool,
+    covers: CoverUpdate,
     #[serde(default)]
     #[cfg_attr(
         feature = "docgen",
-        schemars(description = "Bypass cached provider cover resolution and refresh it.")
+        schemars(
+            description = "Look covers up again instead of using cached lookups. Rejected with `covers=skip`."
+        )
     )]
-    force_refresh: bool,
+    bypass_cover_cache: bool,
 }
 
 fn library_not_found(id: &str) -> AppError {
@@ -202,13 +205,9 @@ async fn refresh_library(
     Query(query): Query<LibraryRefreshQuery>,
 ) -> Result<Json<SyncRunStartResponse>, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
-    let options = LibraryRefreshRunOptions {
-        covers: true,
-        replace_cover: query.replace_cover,
-        force_refresh: query.force_refresh,
-    };
+    let covers = CoverSyncOptions::new(query.covers, query.bypass_cover_cache)?;
     Ok(Json(
-        control::start(&principal, &library_id, LibraryRun::Refresh(options)).await?,
+        control::start(&principal, &library_id, LibraryRun::Refresh(covers)).await?,
     ))
 }
 
@@ -449,9 +448,9 @@ fn list_libraries_docs(op: TransformOperation) -> TransformOperation {
 fn refresh_library_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Refresh library metadata")
         .description(
-            "Starts a background metadata refresh of every release in a library from all enabled providers.\n\
-            Set `replace_cover` to true to overwrite existing cover images when provider results include cover URLs.\n\
-            While a sync or refresh of the library is running, starts nothing and returns 200 with `started` false and the running one. Requires ManageLibraries and library access.",
+            "Starts a background metadata refresh of every release in a library from all enabled providers, then fetches the covers of the releases and artists it refreshed.\n\
+            `covers` picks the covers: `skip`, `missing` (the default, only where none is set) or `replace`; `bypass_cover_cache=true` looks them up again instead of using cached lookups, and is rejected with 400 alongside `covers=skip`.\n\
+            While a sync or refresh of the library is running, starts nothing and returns 200 with `started` false and the running one, ignoring the parameters. Requires ManageLibraries and library access.",
         )
 }
 
@@ -700,6 +699,78 @@ mod tests {
             serde_json::from_str(r#"{"name":"n"}"#).expect("absent body parses");
         assert_eq!(absent.language, None);
         assert_eq!(absent.country, None);
+    }
+
+    fn query<T: serde::de::DeserializeOwned>(query: &str) -> Result<T, String> {
+        let uri: axum::http::Uri = format!("/?{query}").parse().expect("uri");
+        Query::<T>::try_from_uri(&uri)
+            .map(|Query(query)| query)
+            .map_err(|rejection| rejection.body_text())
+    }
+
+    #[test]
+    fn refresh_query_reads_the_cover_options() {
+        let replace: LibraryRefreshQuery =
+            query("covers=replace&bypass_cover_cache=true").expect("parses");
+        assert_eq!(replace.covers, CoverUpdate::Replace);
+        assert!(replace.bypass_cover_cache);
+
+        let defaults: LibraryRefreshQuery = query("").expect("parses");
+        assert_eq!(defaults.covers, CoverUpdate::Missing);
+        assert!(!defaults.bypass_cover_cache);
+
+        let refresh: LibraryRefreshQuery = query("covers=skip").expect("parses");
+        assert_eq!(refresh.covers, CoverUpdate::Skip);
+
+        let unknown = query::<LibraryRefreshQuery>("covers=all")
+            .err()
+            .expect("rejected");
+        assert!(
+            unknown.contains("`skip`, `missing`, `replace`"),
+            "the rejection names the accepted values: {unknown}"
+        );
+    }
+
+    #[tokio::test]
+    async fn skipping_covers_while_bypassing_their_cache_is_a_bad_request() -> anyhow::Result<()> {
+        use axum::response::IntoResponse;
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        setup_route_test().await?;
+        let manager = create_user_with_permissions(
+            &mut *STATE.db.write().await,
+            "cover-options",
+            vec![Permission::ManageLibraries],
+        )?;
+        let session = crate::services::testing::create_session(manager, Default::default()).await?;
+        let headers = bearer_headers(&session.token);
+
+        let unauthenticated = refresh_library(
+            HeaderMap::new(),
+            Path("library".to_string()),
+            Query(LibraryRefreshQuery {
+                covers: CoverUpdate::Skip,
+                bypass_cover_cache: true,
+            }),
+        )
+        .await
+        .map(|_| ())
+        .expect_err("rejected")
+        .into_response();
+        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+
+        let refresh = refresh_library(
+            headers,
+            Path("library".to_string()),
+            Query(LibraryRefreshQuery {
+                covers: CoverUpdate::Skip,
+                bypass_cover_cache: true,
+            }),
+        )
+        .await;
+        let response = refresh.map(|_| ()).expect_err("rejected").into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        Ok(())
     }
 
     fn bearer_headers(token: &str) -> HeaderMap {

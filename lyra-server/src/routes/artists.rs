@@ -595,7 +595,7 @@ async fn search_artist_covers(
         &STATE.db.get(),
         &id,
         provider_filter,
-        query.force_refresh,
+        query.bypass_cover_cache,
     )
     .await?;
     let results = route_covers::map_provider_cover_search_results(found);
@@ -623,8 +623,8 @@ fn get_artist_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn search_artist_covers_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Search artist cover candidates").description(
-        "Returns provider cover candidates for an artist. Request body (JSON): `{ provider?, force_refresh? }`; an invalid `provider` id is rejected with 400; \
-        `force_refresh=true` bypasses cached provider cover resolution. Providers may return \
+        "Returns provider cover candidates for an artist. Request body (JSON): `{ provider?, bypass_cover_cache? }`; an invalid `provider` id is rejected with 400; \
+        `bypass_cover_cache: true` looks covers up again instead of using cached lookups. Providers may return \
         width, height, and selected_index for automatic selection.",
     )
 }

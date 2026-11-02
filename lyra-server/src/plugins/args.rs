@@ -268,6 +268,21 @@ pub(crate) fn optional_string_enum<T: harmony_luau::StringEnum>(
     }
 }
 
+/// The `covers` and `bypass_cover_cache` fields of a refresh or sync options table; `owner`
+/// names the table in errors.
+pub(crate) fn cover_sync_options(
+    table: &luau::Table,
+    owner: &str,
+) -> luau::runtime::Result<crate::services::CoverSyncOptions> {
+    let update =
+        optional_string_enum::<crate::plugins::types::LuauCoverUpdate>(table, "covers", owner)?
+            .map(Into::into)
+            .unwrap_or_default();
+    let bypass_cache = optional_bool(table, "bypass_cover_cache", owner)?.unwrap_or(false);
+    crate::services::CoverSyncOptions::new(update, bypass_cache)
+        .map_err(|err| crate::plugins::runtime_error(format!("{owner}: {err}")))
+}
+
 /// `value` as one of `T`'s strings; `name` names it in errors.
 pub(crate) fn string_enum_value<T: harmony_luau::StringEnum>(
     value: &[u8],

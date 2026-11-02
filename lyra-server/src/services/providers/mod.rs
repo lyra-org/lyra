@@ -207,16 +207,12 @@ impl RefreshTarget {
     }
 }
 
-#[derive(Clone)]
-pub(crate) enum EntityRefreshMode {
-    MetadataOnly {
-        options: std::collections::HashMap<String, String>,
-    },
-    WithReleaseArtifacts {
-        replace_cover: bool,
-        force_refresh: bool,
-        options: std::collections::HashMap<String, String>,
-    },
+#[derive(Clone, Default)]
+pub(crate) struct EntityRefreshOptions {
+    /// The covers a refreshed release or artist fetches once the providers answered.
+    pub(crate) covers: crate::services::covers::CoverSyncOptions,
+    /// Provider options, keyed `<provider_id>.<option>`.
+    pub(crate) provider_options: std::collections::HashMap<String, String>,
 }
 
 #[cfg(test)]

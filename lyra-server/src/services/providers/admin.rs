@@ -18,7 +18,7 @@ use lyra_db::{
 };
 
 use super::{
-    EntityRefreshMode,
+    EntityRefreshOptions,
     EntityRefreshResult,
     ProviderServiceError,
     RefreshTarget,
@@ -205,7 +205,7 @@ pub(crate) async fn set_entity_locked(
 pub(crate) async fn refresh_entity(
     principal: &Principal,
     entity_id: &str,
-    refresh_mode: EntityRefreshMode,
+    options: EntityRefreshOptions,
 ) -> Result<EntityRefreshResult, ProviderAdminError> {
     let not_found = || ProviderAdminError::EntityNotFound(entity_id.to_string());
     let target = {
@@ -232,7 +232,7 @@ pub(crate) async fn refresh_entity(
         }
     };
 
-    refresh_entity_metadata(target, refresh_mode)
+    refresh_entity_metadata(target, options)
         .await
         .map_err(|error| match error {
             ProviderServiceError::EntityNotFound(_) => not_found(),

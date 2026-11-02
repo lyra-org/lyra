@@ -525,8 +525,9 @@ pub async fn refresh_release(release_id: i64) -> anyhow::Result<()> {
             public_id,
             viewer: services::catalog::Viewer::System,
         },
-        services::providers::EntityRefreshMode::MetadataOnly {
-            options: Default::default(),
+        services::providers::EntityRefreshOptions {
+            covers: services::CoverSyncOptions::SKIP,
+            provider_options: Default::default(),
         },
     )
     .await

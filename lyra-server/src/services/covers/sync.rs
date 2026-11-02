@@ -44,6 +44,7 @@ use lyra_db::{
 use super::{
     CoverPaths,
     CoverSyncOptions,
+    CoverUpdate,
     image::{
         cover_blurhash,
         cover_hash,
@@ -290,8 +291,8 @@ struct ProviderSyncBasis {
 }
 
 /// The basis on which an automatic provider sync may fetch a cover for the owner: never for a
-/// locked owner, and otherwise only when it has no cover at all unless the stored provider
-/// cover is to be replaced.
+/// locked owner or when skipping covers, and otherwise only when it has no cover at all unless
+/// the stored provider cover is to be replaced.
 fn provider_sync_basis(
     db: &agdb::DbAny,
     owner_id: DbId,
@@ -302,8 +303,12 @@ fn provider_sync_basis(
     if covers_locked(db, owner_id)? {
         return Ok(None);
     }
-    if !options.replace_existing && (local_cover.is_some() || has_stored_cover(db, owner_id)?) {
-        return Ok(None);
+    match options.update {
+        CoverUpdate::Skip => return Ok(None),
+        CoverUpdate::Missing if local_cover.is_some() || has_stored_cover(db, owner_id)? => {
+            return Ok(None);
+        }
+        CoverUpdate::Missing | CoverUpdate::Replace => {}
     }
     Ok(Some(ProviderSyncBasis {
         options,
@@ -322,7 +327,7 @@ fn provider_sync_still_allowed(db: &agdb::DbAny, basis: &ProviderSyncBasis) -> R
     {
         return Ok(false);
     }
-    if !basis.options.replace_existing && has_stored_cover(db, basis.owner_id)? {
+    if basis.options.update != CoverUpdate::Replace && has_stored_cover(db, basis.owner_id)? {
         return Ok(false);
     }
     let provider_cover = lyra_db::covers::get_source(db, basis.owner_id, CoverSource::Provider)?
@@ -404,7 +409,7 @@ pub(crate) async fn sync_release_cover_for_tracks(
         let cover_url = match resolve_provider_release_cover_url(
             &provider_id,
             &release_context,
-            options.force_refresh,
+            options.bypass_cache,
         )
         .await
         {
@@ -496,7 +501,7 @@ pub(crate) async fn sync_artist_cover(
         let cover_url = match resolve_provider_artist_cover_url(
             &provider_id,
             &artist_context,
-            options.force_refresh,
+            options.bypass_cache,
         )
         .await
         {
@@ -716,7 +721,7 @@ pub(crate) async fn sync_release_covers_for_library(
             let cover_url = match resolve_provider_release_cover_url(
                 provider_id,
                 release_context,
-                options.force_refresh,
+                options.bypass_cache,
             )
             .await
             {
@@ -1300,8 +1305,8 @@ mod tests {
         let covers_root = root.path().join("covers");
         let target_dir = configured_cover_dir_for_release(&covers_root, release_id);
         let replace = CoverSyncOptions {
-            replace_existing: true,
-            force_refresh: false,
+            update: CoverUpdate::Replace,
+            bypass_cache: false,
         };
         let mut saved = Vec::new();
         for _ in 0..2 {
@@ -1434,8 +1439,8 @@ mod tests {
         let target_dir = configured_cover_dir_for_release(&covers_root, release_id);
         let fetch_missing = CoverSyncOptions::default();
         let replace = CoverSyncOptions {
-            replace_existing: true,
-            force_refresh: false,
+            update: CoverUpdate::Replace,
+            bypass_cache: false,
         };
         let basis = |options| {
             let db = db.clone();
@@ -1473,6 +1478,10 @@ mod tests {
             )?
             .is_none(),
             "a local cover means no fetch"
+        );
+        assert!(
+            basis(CoverSyncOptions::SKIP).await?.is_none(),
+            "skipping covers fetches none, even for a cover-less release"
         );
 
         // A cover arrives while a fetch for a cover-less release is under way.

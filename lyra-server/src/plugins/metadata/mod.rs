@@ -12,7 +12,7 @@ mod registry;
 
 use std::collections::HashMap;
 
-use crate::services::providers::EntityRefreshMode;
+use crate::services::providers::EntityRefreshOptions;
 
 use harmony_luau as luau;
 use harmony_luau::{
@@ -38,19 +38,9 @@ pub(crate) use self::registry::{
 pub(crate) struct MetadataModule;
 
 /// The `options` argument of `refresh`.
-struct EntityRefreshOptions(EntityRefreshMode);
+struct RefreshOptions(EntityRefreshOptions);
 
-impl Default for EntityRefreshOptions {
-    fn default() -> Self {
-        Self(EntityRefreshMode::WithReleaseArtifacts {
-            replace_cover: false,
-            force_refresh: false,
-            options: HashMap::new(),
-        })
-    }
-}
-
-impl<'vm> luau::FromLuau<'vm> for EntityRefreshOptions {
+impl<'vm> luau::FromLuau<'vm> for RefreshOptions {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         use crate::plugins::args;
 
@@ -58,12 +48,7 @@ impl<'vm> luau::FromLuau<'vm> for EntityRefreshOptions {
         args::reject_unknown_fields(
             &options,
             "options",
-            &[
-                "covers",
-                "replace_cover",
-                "force_refresh",
-                "provider_options",
-            ],
+            &["covers", "bypass_cover_cache", "provider_options"],
         )?;
         let provider_options = match options.get("provider_options")? {
             luau::Value::Nil => HashMap::new(),
@@ -90,30 +75,14 @@ impl<'vm> luau::FromLuau<'vm> for EntityRefreshOptions {
                 )));
             }
         };
-        let covers = args::optional_bool(&options, "covers", "options")?.unwrap_or(true);
-        let replace_cover =
-            args::optional_bool(&options, "replace_cover", "options")?.unwrap_or(false);
-        let force_refresh =
-            args::optional_bool(&options, "force_refresh", "options")?.unwrap_or(false);
-        if covers {
-            return Ok(Self(EntityRefreshMode::WithReleaseArtifacts {
-                replace_cover,
-                force_refresh,
-                options: provider_options,
-            }));
-        }
-        if replace_cover || force_refresh {
-            return Err(crate::plugins::runtime_error(
-                "options.replace_cover and options.force_refresh need options.covers",
-            ));
-        }
-        Ok(Self(EntityRefreshMode::MetadataOnly {
-            options: provider_options,
+        Ok(Self(EntityRefreshOptions {
+            covers: args::cover_sync_options(&options, "options")?,
+            provider_options,
         }))
     }
 }
 
-impl LuauTypeInfo for EntityRefreshOptions {
+impl LuauTypeInfo for RefreshOptions {
     fn luau_type() -> LuauType {
         LuauType::named("EntityRefreshOptions")
     }
@@ -158,12 +127,12 @@ impl MetadataModule {
     }
 
     #[harmony(
-        description = "Refreshes the metadata of a release, artist or track from every enabled provider and, for a release or artist, unless `options.covers` is false, its cover, returning once every provider has answered, which may take a while. Returns the entity's type and the providers called, in the order they ran. Returns nil when the entity is missing, hidden from the caller, or of another type. Raises without a calling user with the sync_metadata permission, as the database has them when the call runs. Needs the `lyra.metadata.refresh` scope too.",
+        description = "Refreshes the metadata of a release, artist or track from every enabled provider and, for a release or artist, its cover as `options.covers` asks, returning once every provider has answered, which may take a while. Returns the entity's type and the providers called, in the order they ran. Returns nil when the entity is missing, hidden from the caller, or of another type. Raises without a calling user with the sync_metadata permission, as the database has them when the call runs. Needs the `lyra.metadata.refresh` scope too.",
         returns(Option<EntityRefreshRecord>)
     )]
     async fn refresh(
         entity_id: String,
-        options: Option<EntityRefreshOptions>,
+        options: Option<RefreshOptions>,
         #[context] principal: crate::services::auth::Principal,
     ) -> luau::runtime::Result<luau::Value> {
         use crate::services::providers::{
@@ -171,8 +140,8 @@ impl MetadataModule {
             refresh_entity,
         };
 
-        let mode = options.unwrap_or_default().0;
-        match refresh_entity(&principal, &entity_id, mode).await {
+        let options = options.map(|options| options.0).unwrap_or_default();
+        match refresh_entity(&principal, &entity_id, options).await {
             Ok(result) => {
                 let mut refreshed = luau::OwnedTable::with_capacity(0, 2);
                 refreshed.set_field("entity_type", result.entity_type.as_str());

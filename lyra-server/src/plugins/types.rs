@@ -276,6 +276,13 @@ mirror_string_enum!(
     ]
 );
 
+mirror_string_enum!(
+    LuauCoverUpdate for crate::services::CoverUpdate,
+    "CoverUpdate",
+    description = "Which covers to fetch from the providers: none (`skip`), only where none is set (`missing`), or replacing the providers' covers already there (`replace`).",
+    [Skip, Missing, Replace]
+);
+
 describe_record!(
     LuauRelease for lyra_db::Release,
     "Release",
@@ -613,5 +620,6 @@ mod tests {
             crate::services::libraries::SyncTotalState,
         >();
         assert_spelled_as_serialized::<LuauSyncStage, crate::services::libraries::SyncStageKey>();
+        assert_spelled_as_serialized::<LuauCoverUpdate, crate::services::CoverUpdate>();
     }
 }

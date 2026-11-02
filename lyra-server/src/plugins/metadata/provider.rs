@@ -721,7 +721,7 @@ mod tests {
             entity_type: EntityType::Release,
             query: "loveless",
             include_cover_urls: false,
-            force_refresh: false,
+            bypass_cache: false,
         })
         .await?;
 

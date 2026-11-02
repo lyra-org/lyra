@@ -138,9 +138,9 @@ pub(crate) struct CoverSearchQuery {
     #[serde(default)]
     #[cfg_attr(
         feature = "docgen",
-        schemars(description = "Bypass cached provider cover resolution and refresh it.")
+        schemars(description = "Look covers up again instead of using cached lookups.")
     )]
-    pub(crate) force_refresh: bool,
+    pub(crate) bypass_cover_cache: bool,
 }
 
 impl CoverSearchQuery {
@@ -737,6 +737,17 @@ pub(crate) fn owner_cover_openapi_routes<K: CoverOwnerRoute>() -> aide::axum::Ap
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cover_search_body_names_the_cache_bypass() {
+        let query: CoverSearchQuery =
+            serde_json::from_str(r#"{"provider":"demo","bypass_cover_cache":true}"#)
+                .expect("parses");
+        assert!(query.bypass_cover_cache);
+        assert_eq!(query.provider.as_deref(), Some("demo"));
+        let defaults: CoverSearchQuery = serde_json::from_str("{}").expect("parses");
+        assert!(!defaults.bypass_cover_cache);
+    }
 
     #[test]
     fn cover_to_response_sets_public_url() {

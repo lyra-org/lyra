@@ -56,7 +56,7 @@ assert(synced.finished_at_ms ~= nil and synced.finished_at_ms >= (synced.started
 assert(synced.stage == nil, "a finished run has no stage")
 
 -- A refresh is a run of its own kind; cancelling returns it.
-local refresh = libraries.refresh(shown, { replace_cover = true, force_refresh = false })
+local refresh = libraries.refresh(shown, { covers = "replace", bypass_cover_cache = true })
 assert(refresh ~= nil and refresh.started and refresh.run.kind == "library_refresh")
 local cancelled = libraries.cancel_sync(shown)
 assert(cancelled ~= nil and cancelled.id == refresh.run.id, "the running refresh is cancelled")
@@ -75,7 +75,7 @@ local never = libraries.sync_status({ shown, hidden }, { kind = "library_sync", 
 assert(never[hidden] == nil and never[shown].kind == "library_sync")
 
 -- A refresh without covers runs the providers alone.
-local metadata_only = libraries.refresh(shown, { covers = false })
+local metadata_only = libraries.refresh(shown, { covers = "skip" })
 assert(metadata_only ~= nil and metadata_only.started)
 local finished = ended()
 assert(finished.id == metadata_only.run.id)
@@ -90,6 +90,11 @@ assert(libraries.sync(hidden) == nil)
 assert(libraries.refresh("missing") == nil)
 assert(libraries.cancel_sync(hidden) == nil)
 assert(not pcall(libraries.refresh, shown, { replace = true } :: any), "an unknown option is refused")
-assert(not pcall(libraries.refresh, shown, { force_refresh = 1 } :: any))
-assert(not pcall(libraries.refresh, shown, { covers = false, replace_cover = true }), "replacing needs covers")
+assert(not pcall(libraries.refresh, shown, { bypass_cover_cache = 1 } :: any))
+assert(not pcall(libraries.refresh, shown, { covers = false } :: any), "covers is a string")
+assert(not pcall(libraries.refresh, shown, { covers = "all" } :: any), "an unknown covers value is refused")
+assert(
+	not pcall(libraries.refresh, shown, { covers = "skip", bypass_cover_cache = true }),
+	"bypassing the cache needs covers"
+)
 assert(not pcall(libraries.sync_status, { shown }, { kind = "scan" } :: any), "an unknown kind is refused")

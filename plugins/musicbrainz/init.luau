@@ -235,7 +235,7 @@ end
 
 local function read_cached_cover_release_id(ctx: ProviderCoverContext?): (boolean, string | false | nil)
 	local cover_options = if ctx and type(ctx.cover_options) == "table" then ctx.cover_options else nil
-	if cover_options and cover_options.force_refresh == true then
+	if cover_options and cover_options.bypass_cache == true then
 		return false, nil
 	end
 

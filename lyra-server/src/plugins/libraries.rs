@@ -42,12 +42,12 @@ use crate::{
         },
     },
     services::{
+        CoverSyncOptions,
         auth::{
             Principal,
             access,
         },
         libraries::{
-            LibraryRefreshRunOptions,
             LibraryRun,
             RunFilter,
             SyncRunStartResponse,
@@ -195,7 +195,7 @@ impl LibrariesModule {
     }
 
     #[harmony(
-        description = "Starts a refresh of the metadata of every release in the library from every enabled provider and, unless `options.covers` is false, of the covers of the releases and artists it refreshed, in the background, as `sync` starts a sync.",
+        description = "Starts a refresh of the metadata of every release in the library from every enabled provider and of the covers of the releases and artists it refreshed, as `options.covers` asks, in the background, as `sync` starts a sync.",
         returns(Option<SyncStartRecord>)
     )]
     async fn refresh(
@@ -203,8 +203,8 @@ impl LibrariesModule {
         options: Option<RefreshOptions>,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::Value> {
-        let options = options.unwrap_or_default().0;
-        sync_start(control::start(&principal, &library_id, LibraryRun::Refresh(options)).await)
+        let covers = options.map(|options| options.0).unwrap_or_default();
+        sync_start(control::start(&principal, &library_id, LibraryRun::Refresh(covers)).await)
     }
 
     #[harmony(
@@ -261,41 +261,13 @@ fn run_value(summary: &SyncRunSummary) -> luau::runtime::Result<luau::Value> {
 }
 
 /// The `options` argument of `refresh`.
-struct RefreshOptions(LibraryRefreshRunOptions);
-
-impl Default for RefreshOptions {
-    fn default() -> Self {
-        Self(LibraryRefreshRunOptions {
-            covers: true,
-            replace_cover: false,
-            force_refresh: false,
-        })
-    }
-}
+struct RefreshOptions(CoverSyncOptions);
 
 impl<'vm> luau::FromLuau<'vm> for RefreshOptions {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let options: luau::Table = reader.read()?;
-        args::reject_unknown_fields(
-            &options,
-            "options",
-            &["covers", "replace_cover", "force_refresh"],
-        )?;
-        let covers = args::optional_bool(&options, "covers", "options")?.unwrap_or(true);
-        let replace_cover =
-            args::optional_bool(&options, "replace_cover", "options")?.unwrap_or(false);
-        let force_refresh =
-            args::optional_bool(&options, "force_refresh", "options")?.unwrap_or(false);
-        if !covers && (replace_cover || force_refresh) {
-            return Err(crate::plugins::runtime_error(
-                "options.replace_cover and options.force_refresh need options.covers",
-            ));
-        }
-        Ok(Self(LibraryRefreshRunOptions {
-            covers,
-            replace_cover,
-            force_refresh,
-        }))
+        args::reject_unknown_fields(&options, "options", &["covers", "bypass_cover_cache"])?;
+        Ok(Self(args::cover_sync_options(&options, "options")?))
     }
 }
 
@@ -541,30 +513,27 @@ fn field(name: &'static str, ty: LuauType, description: Option<&'static str>) ->
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     use harmony_luau::DescribeModule;
 
+    let cover_fields = |covers: &'static str| {
+        [
+            field(
+                "covers",
+                Option::<crate::plugins::types::LuauCoverUpdate>::luau_type(),
+                Some(covers),
+            ),
+            field(
+                "bypass_cover_cache",
+                LuauType::optional(bool::luau_type()),
+                Some(
+                    "Look covers up again instead of using what earlier lookups cached. Raises with `covers` `skip`. Default `false`.",
+                ),
+            ),
+        ]
+    };
+
     let mut refresh = InterfaceDescriptor::new("RefreshOptions", None);
-    refresh.fields.extend([
-        field(
-            "covers",
-            LuauType::optional(bool::luau_type()),
-            Some(
-                "Sync the covers of the releases and artists the providers refreshed. Default `true`.",
-            ),
-        ),
-        field(
-            "replace_cover",
-            LuauType::optional(bool::luau_type()),
-            Some(
-                "Replace covers releases already have with the providers' rather than only adding missing ones. Needs `covers`. Default `false`.",
-            ),
-        ),
-        field(
-            "force_refresh",
-            LuauType::optional(bool::luau_type()),
-            Some(
-                "Look provider covers up again rather than reusing what earlier lookups found. Needs `covers`. Default `false`.",
-            ),
-        ),
-    ]);
+    refresh.fields.extend(cover_fields(
+        "The covers to fetch for the releases and artists the providers refreshed. Default `missing`: only where none is set.",
+    ));
 
     let mut status = InterfaceDescriptor::new("SyncStatusOptions", None);
     status.fields.extend([
@@ -587,6 +556,7 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
             LuauSyncRunStatus::type_alias_descriptor(),
             LuauSyncTotalState::type_alias_descriptor(),
             LuauSyncStage::type_alias_descriptor(),
+            crate::plugins::types::LuauCoverUpdate::type_alias_descriptor(),
         ],
         &[
             LibraryRecord::interface_descriptor(),

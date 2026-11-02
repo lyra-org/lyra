@@ -30,7 +30,9 @@ use crate::{
     routes::AppError,
     services::STATE,
     services::{
-        EntityRefreshMode,
+        CoverSyncOptions,
+        CoverUpdate,
+        EntityRefreshOptions,
         EntityType,
         NormalizedProviderArtistSearchResult,
         NormalizedProviderReleaseSearchResult,
@@ -323,9 +325,11 @@ pub struct SearchQuery {
     #[serde(default)]
     #[cfg_attr(
         feature = "docgen",
-        schemars(description = "Bypass cached provider cover resolution and refresh it.")
+        schemars(
+            description = "With `include_cover_urls`, look covers up again instead of using cached lookups."
+        )
     )]
-    pub force_refresh: bool,
+    pub bypass_cover_cache: bool,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -523,7 +527,7 @@ async fn search_provider(
         entity_type: query.entity_type.into(),
         query: &query.q,
         include_cover_urls: query.include_cover_urls,
-        force_refresh: query.force_refresh,
+        bypass_cache: query.bypass_cover_cache,
     })
     .await
     .map_err(|err| match err {
@@ -639,22 +643,24 @@ pub struct RefreshEntityQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Replace existing cover image with provider results for release or artist entity refresh."
+            description = "The cover to fetch for a refreshed release or artist: `skip`, `missing` (the default, only when none is set) or `replace`."
         )
     )]
-    pub replace_cover: bool,
+    pub covers: CoverUpdate,
     #[serde(default)]
     #[cfg_attr(
         feature = "docgen",
-        schemars(description = "Bypass cached provider cover resolution and refresh it.")
+        schemars(
+            description = "Look the cover up again instead of using cached lookups. Rejected with `covers=skip`."
+        )
     )]
-    pub force_refresh: bool,
+    pub bypass_cover_cache: bool,
     #[serde(flatten)]
     #[cfg_attr(feature = "docgen", schemars(skip))]
     pub extra: HashMap<String, String>,
 }
 
-const KNOWN_REFRESH_PARAMS: &[&str] = &["replace_cover", "force_refresh"];
+const KNOWN_REFRESH_PARAMS: &[&str] = &["covers", "bypass_cover_cache"];
 
 async fn refresh_entity(
     headers: HeaderMap,
@@ -662,15 +668,15 @@ async fn refresh_entity(
     Query(query): Query<RefreshEntityQuery>,
 ) -> Result<Json<RefreshResponse>, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
-    let mut options: HashMap<String, String> = query.extra;
-    options.retain(|key, _| !KNOWN_REFRESH_PARAMS.contains(&key.as_str()));
+    let covers = CoverSyncOptions::new(query.covers, query.bypass_cover_cache)?;
+    let mut provider_options: HashMap<String, String> = query.extra;
+    provider_options.retain(|key, _| !KNOWN_REFRESH_PARAMS.contains(&key.as_str()));
     let result = refresh_entity_service(
         &principal,
         &entity_id,
-        EntityRefreshMode::WithReleaseArtifacts {
-            replace_cover: query.replace_cover,
-            force_refresh: query.force_refresh,
-            options,
+        EntityRefreshOptions {
+            covers,
+            provider_options,
         },
     )
     .await?;
@@ -743,8 +749,8 @@ fn unlock_entity_docs(op: TransformOperation) -> TransformOperation {
 fn refresh_entity_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Refresh entity metadata").description(
         "Triggers a metadata refresh for an entity from all enabled providers.\n\n\
-            For release and artist entities, cover downloads replace only missing covers by default.\
-            Set `replace_cover=true` to overwrite an existing cover.\n\n\
+            For release and artist entities, `covers` picks the cover to fetch once the providers answered: `skip`, `missing` (the default, only when none is set) or `replace`. \
+            `bypass_cover_cache=true` looks it up again instead of using cached lookups, and is rejected with 400 alongside `covers=skip`.\n\n\
             Pass provider options listed by `GET /providers` as `<provider_id>.<option>=<value>`; \
             each provider receives only its own declared options.\n\n\
             Answers once every provider has. Returns 404 when the entity is missing or hidden from the caller. Requires SyncMetadata permission.",
@@ -891,6 +897,78 @@ mod tests {
         insert_artist,
         insert_release,
     };
+
+    #[test]
+    fn search_body_names_the_cover_cache_bypass() {
+        let query: SearchQuery = serde_json::from_str(
+            r#"{"type":"release","q":"loveless","include_cover_urls":true,"bypass_cover_cache":true}"#,
+        )
+        .expect("parses");
+        assert!(query.include_cover_urls && query.bypass_cover_cache);
+        let defaults: SearchQuery =
+            serde_json::from_str(r#"{"type":"artist","q":"mbv"}"#).expect("parses");
+        assert!(!defaults.bypass_cover_cache);
+    }
+
+    fn refresh_query(query: &str) -> Result<RefreshEntityQuery, String> {
+        let uri: axum::http::Uri = format!("/?{query}").parse().expect("uri");
+        Query::<RefreshEntityQuery>::try_from_uri(&uri)
+            .map(|Query(query)| query)
+            .map_err(|rejection| rejection.body_text())
+    }
+
+    #[test]
+    fn refresh_query_reads_the_cover_options_beside_provider_options() {
+        let query =
+            refresh_query("covers=replace&bypass_cover_cache=true&demo.mode=deep").expect("parses");
+        assert_eq!(query.covers, CoverUpdate::Replace);
+        assert!(query.bypass_cover_cache);
+        assert_eq!(
+            query.extra.get("demo.mode").map(String::as_str),
+            Some("deep")
+        );
+
+        let defaults = refresh_query("").expect("parses");
+        assert_eq!(defaults.covers, CoverUpdate::Missing);
+        assert!(!defaults.bypass_cover_cache);
+
+        let unknown = refresh_query("covers=always").err().expect("rejected");
+        assert!(
+            unknown.contains("`skip`, `missing`, `replace`"),
+            "{unknown}"
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_skipping_covers_while_bypassing_their_cache_is_a_bad_request()
+    -> anyhow::Result<()> {
+        use axum::response::IntoResponse;
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        let user = lyra_db::users::create(
+            &mut *STATE.db.write().await,
+            &lyra_db::fixtures::test_user("cover-options")?,
+        )?;
+        let session = crate::services::testing::create_session(user, Default::default()).await?;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "Authorization",
+            format!("Bearer {}", session.token).parse()?,
+        );
+        let status = |headers: HeaderMap| async move {
+            let query = refresh_query("covers=skip&bypass_cover_cache=true").expect("parses");
+            refresh_entity(headers, Path("entity".to_string()), Query(query))
+                .await
+                .map(|_| ())
+                .expect_err("rejected")
+                .into_response()
+                .status()
+        };
+        assert_eq!(status(HeaderMap::new()).await, StatusCode::UNAUTHORIZED);
+        assert_eq!(status(headers).await, StatusCode::BAD_REQUEST);
+        Ok(())
+    }
 
     #[test]
     fn parse_provider_filter_accepts_only_valid_provider_ids() {

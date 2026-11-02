@@ -54,7 +54,7 @@ pub(crate) struct ProviderSearchRequest<'a> {
     pub(crate) entity_type: EntityType,
     pub(crate) query: &'a str,
     pub(crate) include_cover_urls: bool,
-    pub(crate) force_refresh: bool,
+    pub(crate) bypass_cache: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -309,7 +309,7 @@ pub(crate) async fn search_provider(
     let provider_id = request.provider_id.to_string();
     let entity_type = request.entity_type;
     let include_cover_urls = request.include_cover_urls;
-    let force_refresh = request.force_refresh;
+    let bypass_cache = request.bypass_cache;
     let query = request.query.to_string();
 
     let result = with_provider_call(
@@ -348,7 +348,7 @@ pub(crate) async fn search_provider(
                     &provider_id,
                     entity_type,
                     &serde_json::json!({ "ids": ids }),
-                    force_refresh,
+                    bypass_cache,
                 )
                 .await
                 {
@@ -402,8 +402,8 @@ pub(crate) fn extract_cover_url(result: &Value) -> Option<String> {
     None
 }
 
-fn cover_handler_context(context: &Value, force_refresh: bool) -> Value {
-    if !force_refresh {
+fn cover_handler_context(context: &Value, bypass_cache: bool) -> Value {
+    if !bypass_cache {
         return context.clone();
     }
 
@@ -412,7 +412,7 @@ fn cover_handler_context(context: &Value, force_refresh: bool) -> Value {
         object.insert(
             "cover_options".to_string(),
             serde_json::json!({
-                "force_refresh": true,
+                "bypass_cache": true,
             }),
         );
     }
@@ -649,10 +649,10 @@ async fn resolve_provider_cover_url(
     provider_id: &str,
     entity_type: EntityType,
     context: &Value,
-    force_refresh: bool,
+    bypass_cache: bool,
 ) -> Result<Option<String>> {
     Ok(
-        search_provider_cover(provider_id, entity_type, context, force_refresh)
+        search_provider_cover(provider_id, entity_type, context, bypass_cache)
             .await?
             .and_then(|result| {
                 result
@@ -665,28 +665,28 @@ async fn resolve_provider_cover_url(
 pub(crate) async fn resolve_provider_release_cover_url(
     provider_id: &str,
     context: &Value,
-    force_refresh: bool,
+    bypass_cache: bool,
 ) -> Result<Option<String>> {
-    resolve_provider_cover_url(provider_id, EntityType::Release, context, force_refresh).await
+    resolve_provider_cover_url(provider_id, EntityType::Release, context, bypass_cache).await
 }
 
 pub(crate) async fn resolve_provider_artist_cover_url(
     provider_id: &str,
     context: &Value,
-    force_refresh: bool,
+    bypass_cache: bool,
 ) -> Result<Option<String>> {
-    resolve_provider_cover_url(provider_id, EntityType::Artist, context, force_refresh).await
+    resolve_provider_cover_url(provider_id, EntityType::Artist, context, bypass_cache).await
 }
 
 async fn search_cover_candidates_for_contexts(
     entity_type: EntityType,
     entity_id: DbId,
     provider_contexts: Vec<(String, Value)>,
-    force_refresh: bool,
+    bypass_cache: bool,
 ) -> Result<Vec<super::ProviderCoverSearchResult>> {
     let mut results = Vec::new();
     for (provider_id, context) in provider_contexts {
-        match search_provider_cover(&provider_id, entity_type, &context, force_refresh).await {
+        match search_provider_cover(&provider_id, entity_type, &context, bypass_cache).await {
             Ok(Some(result)) => results.push(result),
             Ok(None) => {}
             Err(err) => {
@@ -707,10 +707,10 @@ async fn search_provider_cover(
     provider_id: &str,
     entity_type: EntityType,
     context: &Value,
-    force_refresh: bool,
+    bypass_cache: bool,
 ) -> Result<Option<super::ProviderCoverSearchResult>> {
     let cache_key = provider_cover_cache_key(provider_id, entity_type, context);
-    if !force_refresh && let Some(cached) = provider_cover_cache_get(&cache_key).await {
+    if !bypass_cache && let Some(cached) = provider_cover_cache_get(&cache_key).await {
         return Ok(cached);
     }
 
@@ -732,7 +732,7 @@ async fn search_provider_cover(
     let provider_id_owned = provider_id.to_string();
     let handler = spec.handler;
     let timeout = spec.timeout;
-    let handler_context = cover_handler_context(context, force_refresh);
+    let handler_context = cover_handler_context(context, bypass_cache);
     let dispatch = with_provider_call(
         &provider_id_owned.clone(),
         ProviderCallStage::CoverSearch,
@@ -820,7 +820,7 @@ pub(crate) async fn search_release_cover_candidates(
     db: &lyra_db::DbAsync,
     release_public_id: &str,
     provider_filter: Option<&str>,
-    force_refresh: bool,
+    bypass_cache: bool,
 ) -> Result<Vec<super::ProviderCoverSearchResult>> {
     let (release_id, provider_contexts) = {
         let db = db.read().await;
@@ -854,7 +854,7 @@ pub(crate) async fn search_release_cover_candidates(
         EntityType::Release,
         release_id,
         provider_contexts,
-        force_refresh,
+        bypass_cache,
     )
     .await
 }
@@ -863,7 +863,7 @@ pub(crate) async fn search_artist_cover_candidates(
     db: &lyra_db::DbAsync,
     artist_public_id: &str,
     provider_filter: Option<&str>,
-    force_refresh: bool,
+    bypass_cache: bool,
 ) -> Result<Vec<super::ProviderCoverSearchResult>> {
     let (artist_id, provider_contexts) = {
         let db = db.read().await;
@@ -888,7 +888,7 @@ pub(crate) async fn search_artist_cover_candidates(
         EntityType::Artist,
         artist_id,
         provider_contexts,
-        force_refresh,
+        bypass_cache,
     )
     .await
 }
@@ -1063,7 +1063,7 @@ mod tests {
     }
 
     #[test]
-    fn cover_handler_context_adds_force_refresh_option_only_when_requested() {
+    fn cover_handler_context_adds_bypass_cache_option_only_when_requested() {
         let context = json!({
             "ids": {
                 "release_id": "release-123"
@@ -1075,7 +1075,7 @@ mod tests {
 
         let refreshed = cover_handler_context(&context, true);
         assert_eq!(refreshed["ids"]["release_id"], json!("release-123"));
-        assert_eq!(refreshed["cover_options"]["force_refresh"], json!(true));
+        assert_eq!(refreshed["cover_options"]["bypass_cache"], json!(true));
     }
 
     #[test]

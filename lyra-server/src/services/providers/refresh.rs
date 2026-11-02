@@ -69,7 +69,7 @@ use lyra_db::ProviderConfig;
 
 use super::{
     ActiveProviders,
-    EntityRefreshMode,
+    EntityRefreshOptions,
     EntityRefreshResult,
     ProviderServiceError,
     RefreshTarget,
@@ -101,10 +101,8 @@ impl Drop for LibraryRefreshGuard {
 }
 
 pub(crate) struct LibraryRefreshOptions<'a> {
-    /// Whether the refreshed releases' and artists' covers sync after the providers ran.
-    pub(crate) covers: bool,
-    pub(crate) replace_cover: bool,
-    pub(crate) force_refresh: bool,
+    /// The covers the refreshed releases and artists fetch after the providers ran.
+    pub(crate) covers: CoverSyncOptions,
     pub(crate) apply_sync_filters: bool,
     pub(crate) provider_id: Option<&'a str>,
 }
@@ -120,13 +118,9 @@ pub(super) fn resolve_library_id_for_entity(
 
 pub(crate) async fn refresh_entity_metadata(
     target: RefreshTarget,
-    refresh_mode: EntityRefreshMode,
+    options: EntityRefreshOptions,
 ) -> Result<EntityRefreshResult, ProviderServiceError> {
     let node_id = target.db_id;
-    let passed_options = match &refresh_mode {
-        EntityRefreshMode::MetadataOnly { options }
-        | EntityRefreshMode::WithReleaseArtifacts { options, .. } => options.clone(),
-    };
 
     let schemes = id_schemes().await;
     let (entity_type, context, library_db_id) = {
@@ -149,10 +143,11 @@ pub(crate) async fn refresh_entity_metadata(
 
     let providers = read_active_providers().await?;
     let handlers = refresh_callbacks_for(&providers, entity_type, false).await;
-    let options = passed_provider_options(&handlers, &passed_options).await?;
+    let provider_options = passed_provider_options(&handlers, &options.provider_options).await?;
     let mut providers_called = Vec::new();
-    for ((provider_id, handler, _), options) in handlers.into_iter().zip(options) {
-        let context = context_with_options(context.clone(), options);
+    for ((provider_id, handler, _), provider_options) in handlers.into_iter().zip(provider_options)
+    {
+        let context = context_with_options(context.clone(), provider_options);
         dispatch_refresh_callback(&provider_id, handler, context).await?;
         providers_called.push(provider_id);
     }
@@ -164,13 +159,7 @@ pub(crate) async fn refresh_entity_metadata(
         deduplicate_release_scope(library_db_id, &providers_called).await;
     }
 
-    if !providers_called.is_empty()
-        && let EntityRefreshMode::WithReleaseArtifacts {
-            replace_cover,
-            force_refresh,
-            ..
-        } = refresh_mode
-    {
+    if !providers_called.is_empty() && !options.covers.skips() {
         // The providers may have merged the entity away, and its id gone to another node.
         if !target.holds(&*STATE.db.read().await)? {
             tracing::debug!(
@@ -182,16 +171,8 @@ pub(crate) async fn refresh_entity_metadata(
                 providers_called,
             });
         }
-        sync_cover_for_refreshed_entity(
-            node_id,
-            entity_type,
-            library_db_id,
-            CoverSyncOptions {
-                replace_existing: replace_cover,
-                force_refresh,
-            },
-        )
-        .await?;
+        sync_cover_for_refreshed_entity(node_id, entity_type, library_db_id, options.covers)
+            .await?;
     }
 
     Ok(EntityRefreshResult {
@@ -448,7 +429,7 @@ async fn refresh_library_metadata_inner_with_progress(
                 SyncTotalState::Final,
             )
             .await;
-        if release_count > 0 && options.covers {
+        if release_count > 0 && !options.covers.skips() {
             progress
                 .add_stage_total(SyncStageKey::ProviderCover, 1, SyncTotalState::Final)
                 .await;
@@ -589,7 +570,7 @@ async fn refresh_library_metadata_inner_with_progress(
         );
     }
 
-    if release_count > 0 && options.covers {
+    if release_count > 0 && !options.covers.skips() {
         let work_id = if let Some(progress) = &progress {
             progress
                 .start_work(
@@ -731,10 +712,7 @@ async fn sync_library_covers_after_refresh(
 ) -> Result<usize, ProviderServiceError> {
     let (library_root, covers_root) = cover_path_buffers_for_library(Some(library_db_id)).await?;
     let paths = cover_paths(&library_root, &covers_root);
-    let cover_options = CoverSyncOptions {
-        replace_existing: options.replace_cover,
-        force_refresh: options.force_refresh,
-    };
+    let cover_options = options.covers;
     let release_count = sync_and_persist_release_covers_for_library(
         &STATE.db.get(),
         paths,

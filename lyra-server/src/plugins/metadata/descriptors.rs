@@ -70,6 +70,7 @@ fn metadata_type_aliases() -> Vec<TypeAliasDescriptor> {
             "CustomFieldsByProvider",
             map(string(), ty("ProviderCustomFieldsByVersion")),
         ),
+        <crate::plugins::types::LuauCoverUpdate as harmony_luau::DescribeTypeAlias>::type_alias_descriptor(),
         alias("OptionValue", union([boolean(), string(), number()])),
         alias("ProviderSearchResult", map(string(), ty("JsonValue"))),
         alias(
@@ -225,18 +226,13 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
             vec![
                 described_field(
                     "covers",
-                    opt(boolean()),
-                    "Sync a release's or artist's cover once the providers answered. Default `true`.",
+                    opt(ty("CoverUpdate")),
+                    "The cover to fetch for a release or artist once the providers answered. Default `missing`: only when none is set.",
                 ),
                 described_field(
-                    "replace_cover",
+                    "bypass_cover_cache",
                     opt(boolean()),
-                    "Replace the cover a release or artist already has with the providers' rather than only adding a missing one. Needs `covers`. Default `false`.",
-                ),
-                described_field(
-                    "force_refresh",
-                    opt(boolean()),
-                    "Look provider covers up again rather than reusing what earlier lookups found. Needs `covers`. Default `false`.",
+                    "Look the cover up again instead of using what earlier lookups cached. Raises with `covers` `skip`. Default `false`.",
                 ),
                 described_field(
                     "provider_options",
@@ -493,7 +489,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
         ),
         interface(
             "ProviderCoverOptions",
-            vec![field("force_refresh", opt(boolean()))],
+            vec![field("bypass_cache", opt(boolean()))],
         ),
         interface(
             "ProviderCoverLibrary",

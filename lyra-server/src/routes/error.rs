@@ -265,6 +265,12 @@ impl From<ApiKeyServiceError> for AppError {
     }
 }
 
+impl From<crate::services::covers::CoverSyncOptionsError> for AppError {
+    fn from(err: crate::services::covers::CoverSyncOptionsError) -> Self {
+        Self::bad_request(err.to_string())
+    }
+}
+
 impl From<ProviderServiceError> for AppError {
     fn from(err: ProviderServiceError) -> Self {
         match err {

@@ -77,7 +77,6 @@ pub(crate) use state::STATE;
 pub(crate) use system::SystemContext;
 
 pub(crate) use libraries::{
-    LibraryRefreshRunOptions,
     LibrarySyncStatus,
     SyncRunEvent,
     SyncRunStartResponse,
@@ -91,7 +90,7 @@ pub(crate) use libraries::{
 };
 pub(crate) use metadata::cleanup::deduplicate_artists_by_external_id;
 pub(crate) use providers::{
-    EntityRefreshMode,
+    EntityRefreshOptions,
     run_provider_sync,
 };
 
@@ -107,5 +106,6 @@ pub(crate) use covers::providers::{
 pub(crate) use covers::{
     CoverPaths,
     CoverSyncOptions,
+    CoverUpdate,
     clear_cover_search_cache,
 };

@@ -18,6 +18,7 @@ use tokio::{
 };
 
 use crate::{
+    services::CoverSyncOptions,
     services::EntityType,
     services::STATE,
     services::libraries::{
@@ -87,9 +88,7 @@ async fn run_provider_sync_inner(provider_id: &str) -> Result<(), ProviderServic
             .expect("library refresh semaphore closed");
         tasks.spawn(async move {
             let options = LibraryRefreshOptions {
-                covers: true,
-                replace_cover: false,
-                force_refresh: false,
+                covers: CoverSyncOptions::default(),
                 apply_sync_filters: true,
                 provider_id: Some(&provider_id),
             };

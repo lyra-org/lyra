@@ -29,10 +29,53 @@ pub(crate) struct CoverPaths<'a> {
     pub(crate) covers_root: &'a Path,
 }
 
-#[derive(Clone, Copy, Default)]
+/// Which covers a refresh or sync fetches from providers.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CoverUpdate {
+    /// Fetches none.
+    Skip,
+    /// Fetches covers only for what has none.
+    #[default]
+    Missing,
+    /// Replaces the provider covers already there.
+    Replace,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct CoverSyncOptions {
-    pub(crate) replace_existing: bool,
-    pub(crate) force_refresh: bool,
+    update: CoverUpdate,
+    /// Looks covers up again instead of using what earlier lookups cached.
+    bypass_cache: bool,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("bypass_cover_cache needs covers other than \"skip\"")]
+pub(crate) struct CoverSyncOptionsError;
+
+impl CoverSyncOptions {
+    pub(crate) const SKIP: Self = Self {
+        update: CoverUpdate::Skip,
+        bypass_cache: false,
+    };
+
+    pub(crate) fn new(
+        update: CoverUpdate,
+        bypass_cache: bool,
+    ) -> Result<Self, CoverSyncOptionsError> {
+        if update == CoverUpdate::Skip && bypass_cache {
+            return Err(CoverSyncOptionsError);
+        }
+        Ok(Self {
+            update,
+            bypass_cache,
+        })
+    }
+
+    pub(crate) fn skips(self) -> bool {
+        self.update == CoverUpdate::Skip
+    }
 }
 
 #[derive(Clone, Debug, Default)]

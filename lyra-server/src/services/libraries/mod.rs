@@ -16,7 +16,6 @@ pub(crate) use configured::{
     prepare_configured_library,
 };
 pub(crate) use orchestrator::{
-    LibraryRefreshRunOptions,
     LibraryRun,
     LibrarySyncRegistries,
     LibrarySyncStatus,

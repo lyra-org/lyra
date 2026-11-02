@@ -866,10 +866,9 @@ async fn process_release_artifacts(
         run_id: run_id.clone(),
         progress: progress.clone(),
     };
+    // The release's covers sync in a stage of their own.
     let options = LibraryRefreshOptions {
-        covers: true,
-        replace_cover: false,
-        force_refresh: false,
+        covers: CoverSyncOptions::SKIP,
         apply_sync_filters: false,
         provider_id: None,
     };
@@ -1127,10 +1126,7 @@ async fn sync_provider_release_cover(context: &ReleaseArtifactContext<'_>) {
         &release,
         &artists,
         cover_paths,
-        CoverSyncOptions {
-            replace_existing: false,
-            force_refresh: false,
-        },
+        CoverSyncOptions::default(),
     )
     .await
     {
@@ -1855,10 +1851,7 @@ FILE "album.flac" WAVE
                 covers_root: &covers_root,
             },
             library.db_id.expect("library db_id"),
-            CoverSyncOptions {
-                replace_existing: false,
-                force_refresh: false,
-            },
+            CoverSyncOptions::default(),
             None,
         )
         .await;
