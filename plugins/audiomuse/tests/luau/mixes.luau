@@ -1,0 +1,52 @@
+local fixture = ...
+local audiomuse = require("./_audiomuse")
+local mix = require("@lyra/mix")
+
+local ids = fixture.ids
+local titles, take, param, item = audiomuse.titles, audiomuse.take, audiomuse.param, audiomuse.item
+
+audiomuse.register()
+
+-- A single track seed mixes from its similar tracks, leaving out the seed.
+audiomuse.routes = { { pattern = "/api/similar_tracks", body = audiomuse.rows(ids.t1, ids.t3, ids.t2) } }
+assert(titles(mix.blend({ seeds = { ids.t1 }, mixer = "audiomuse", limit = 2 })) == "T3,T2", "similar tracks")
+local request = take()[1]
+assert(request.method == "GET", "similar tracks are a GET")
+assert(param(request.url, "item_id") == item(ids.t1), "the seed's item id")
+assert(param(request.url, "n") == "3", "one more than the limit, for the seed")
+
+-- Seeds AudioMuse hasn't analysed give an empty mix; so does a failing AudioMuse.
+audiomuse.routes = { { pattern = "/api/similar_tracks", status = 404, body = { error = "not found" } } }
+assert(titles(mix.blend({ seeds = { ids.t1 }, mixer = "audiomuse" })) == "", "404 is an empty mix")
+audiomuse.routes = { { pattern = "/api/similar_tracks", status = 500, body = { error = "boom" } } }
+assert(titles(mix.blend({ seeds = { ids.t1 }, mixer = "audiomuse" })) == "", "500 is an empty mix")
+take()
+
+-- Several seeds blend through alchemy: excluded seeds subtract, releases add their first tracks,
+-- and the seeds themselves are left out of the mix.
+audiomuse.routes = { { pattern = "/api/alchemy", body = { results = audiomuse.rows(ids.t4, ids.t2, ids.t5) } } }
+local blended = mix.blend({
+	seeds = { ids.t2, { id = ids.t3, exclude = true } },
+	mixer = "audiomuse",
+	limit = 10,
+})
+assert(titles(blended) == "T4,T5", `alchemy: {titles(blended)}`)
+request = take()[1]
+assert(request.method == "POST" and string.find(request.url, "/api/alchemy", 1, true), "alchemy is a POST")
+local body = request.body
+assert(body.n == 10, "the limit")
+assert(body.subtract_distance == nil, "nothing else unless set")
+assert(#body.items == 2, "one item per seed")
+assert(body.items[1].id == item(ids.t2) and body.items[1].op == "ADD" and body.items[1].type == "song")
+assert(body.items[2].id == item(ids.t3) and body.items[2].op == "SUBTRACT")
+
+mix.blend({ seeds = { ids.solo }, mixer = "audiomuse" })
+body = take()[1].body
+assert(#body.items == 5, "a release adds its first five tracks")
+local added = {}
+for _, entry in body.items do
+	added[entry.id] = entry.op
+end
+for _, key in { "t1", "t2", "t3", "t4", "t5" } do
+	assert(added[item(ids[key])] == "ADD", `{key} adds`)
+end
