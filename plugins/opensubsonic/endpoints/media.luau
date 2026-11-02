@@ -100,19 +100,22 @@ local function structured_lyrics(info: LyricsInfo, track: Track, artist: string?
 	}
 end
 
+-- Methods that answer every error in XML, whatever format the request asks for.
+module.xml_errors = {
+	stream = true,
+} :: { [string]: boolean }
+
 module.methods = {
 	stream = function(req: Request): ApiResponse
 		local track = find_track(req.params)
 		local options = stream_options(req.params)
-		if options then
-			-- The stream answers a request it can't serve with a bare HTTP error; ask first, so the
-			-- client gets a Subsonic one.
-			-- Its errors can name the file on disk, so they stay in the log.
-			local ok, err = pcall(playback_sources.decide, track.id, options)
-			if not ok then
-				warn(`stream of {track.id} refused: {tostring(err)}`)
-				return request.fail(0, REFUSED_OPTIONS)
-			end
+		-- The stream answers a request it can't serve with a bare HTTP error; ask first, so the
+		-- client gets a Subsonic one.
+		-- Its errors can name the file on disk, so they stay in the log.
+		local ok, err = pcall(playback_sources.decide, track.id, options)
+		if not ok then
+			warn(`stream of {track.id} refused: {tostring(err)}`)
+			return request.fail(0, if options then REFUSED_OPTIONS else "The song can't be streamed")
 		end
 		return api.response.stream_track(track.id, options)
 	end,

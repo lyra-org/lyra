@@ -40,15 +40,35 @@ local complete = stream({ id = ids.synced, format = "mp3", estimateContentLength
 assert(complete.options.format == "mp3" and complete.options.wait_for_transcode == true, "waits")
 assert(transcoded.options.wait_for_transcode == nil, "streams as it encodes by default")
 assert(stream({ id = ids.synced, estimateContentLength = "false" }).options == nil, "false asks for nothing")
-assert(call.error_code("stream", key, { id = ids.synced, estimateContentLength = "maybe" }) == 0, "a bad boolean")
+assert(
+	string.find(stream({ id = ids.synced, estimateContentLength = "maybe" }).body, '<error code="0"', 1, true),
+	"a bad boolean"
+)
 
-local refused = call.call("stream", key, { id = ids.synced, format = "bogus" })
-assert(refused.error.code == 0, "an unknown format")
-assert(refused.error.message == "The song can't be streamed with these options", "the host's error stays in the log")
-assert(call.error_code("stream", key, {}) == 10, "stream needs an id")
-assert(call.error_code("stream", key, { id = ids.hidden }) == 70, "a hidden song isn't streamed")
-assert(call.error_code("stream", key, { id = ids.album }) == 70, "an album isn't streamed")
-assert(call.error_code("stream", "not-a-key", { id = ids.synced }) == 44, "streaming needs a key")
+-- `stream` fails in XML whatever the format asked for, as its errors aren't media.
+local function stream_error(params: { [string]: string }): number
+	local failed = stream(params)
+	assert(failed.kind == "text", `stream answered {failed.kind}`)
+	assert(string.find(failed.headers["content-type"], "^text/xml"), failed.headers["content-type"])
+	local code = string.match(failed.body, '<error code="(%d+)"')
+	assert(code, failed.body)
+	return tonumber(code) :: number
+end
+
+local refused = stream({ id = ids.synced, format = "bogus" })
+assert(stream_error({ id = ids.synced, format = "bogus" }) == 0, "an unknown format")
+assert(
+	string.find(refused.body, "The song can't be streamed with these options", 1, true),
+	"the host's error stays in the log"
+)
+assert(stream_error({}) == 10, "stream needs an id")
+assert(stream_error({ id = ids.hidden }) == 70, "a hidden song isn't streamed")
+assert(stream_error({ id = ids.album }) == 70, "an album isn't streamed")
+assert(stream_error({ id = ids.fileless }) == 0, "a song the host can't serve fails before streaming")
+assert(string.find(stream({ id = ids.fileless }).body, "The song can't be streamed\"", 1, true), "refused unasked")
+assert(stream_error({ id = ids.synced, timeOffset = "soon" }) == 0, "a bad offset")
+assert(stream_error({ apiKey = "not-a-key", id = ids.synced }) == 44, "streaming needs a key")
+assert(stream_error({ f = "jsonp", callback = "cb", id = ids.hidden }) == 70, "jsonp asks for nothing else")
 
 -- Lyrics come as one structured entry per language; a song without any has none.
 local none = call.ok("getLyricsBySongId", key, { id = ids.synced }).lyricsList

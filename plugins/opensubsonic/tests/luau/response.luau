@@ -35,7 +35,7 @@ assert(bad_body.error.code == 10)
 local xml = response.ok(query({}), {
 	openSubsonicExtensions = { { name = "apiKeyAuthentication", versions = { 1, 2 } } },
 }) :: any
-assert(string.find(xml.headers["content-type"], "application/xml", 1, true))
+assert(string.find(xml.headers["content-type"], "text/xml", 1, true))
 assert(string.find(xml.body, '^<%?xml version="1.0" encoding="UTF%-8"%?>'))
 assert(string.find(xml.body, 'xmlns="http://subsonic.org/restapi"', 1, true))
 assert(string.find(xml.body, 'status="ok"', 1, true))

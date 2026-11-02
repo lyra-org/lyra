@@ -107,7 +107,7 @@ local function render(query: ApiQueryParams, fields: JsonObject, http_status: nu
 	return api.response.text(
 		http_status,
 		`<?xml version="1.0" encoding="UTF-8"?>{xml}`,
-		{ ["content-type"] = "application/xml; charset=utf-8" }
+		{ ["content-type"] = "text/xml; charset=utf-8" }
 	)
 end
 
@@ -117,6 +117,11 @@ end
 
 function module.failed(query: ApiQueryParams, err: SubsonicError, http_status: number?): ApiResponse
 	return render(query, envelope("failed", { error = err :: any }), http_status or 200)
+end
+
+-- A failure in XML, whatever format the request asks for.
+function module.failed_xml(err: SubsonicError): ApiResponse
+	return render({}, envelope("failed", { error = err :: any }), 200)
 end
 
 return module

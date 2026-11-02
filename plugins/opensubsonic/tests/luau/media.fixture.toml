@@ -79,3 +79,11 @@ track = "plain"
 provider = "other"
 language = "eng"
 body = "Uno"
+
+# Fileless has no file to stream.
+
+[[tracks]]
+key = "fileless"
+title = "Fileless"
+release = "album"
+artists = ["amy"]

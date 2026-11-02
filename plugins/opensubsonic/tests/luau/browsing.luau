@@ -66,7 +66,7 @@ assert(curated.playCount == 0 and curated.userRating == nil, "another user's lis
 
 -- XML carries the same album, with songs as repeated elements.
 local xml = call.raw("getAlbum", { apiKey = key, id = ids.solo }) :: any
-assert(string.find(xml.headers["content-type"], "application/xml", 1, true))
+assert(string.find(xml.headers["content-type"], "text/xml", 1, true))
 assert(string.find(xml.body, `<album `, 1, true), xml.body)
 local _, song_elements = string.gsub(xml.body, "<song ", "")
 assert(song_elements == 2, `two song elements, got {song_elements}`)
