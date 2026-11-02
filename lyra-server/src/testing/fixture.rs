@@ -163,6 +163,9 @@ struct Release {
     genres: Vec<String>,
     /// An image file, relative to the fixture, stored as the release's cover.
     cover: Option<PathBuf>,
+    /// Whether `cover` names a file that doesn't exist, as one deleted after a sync.
+    #[serde(default)]
+    cover_gone: bool,
     /// The cover's blurhash.
     blurhash: Option<String>,
 }
@@ -672,16 +675,21 @@ impl Fixture {
             supply_credits(&mut layer, &keys, &release.artists, &release.credits)?;
             save_local(db, release_db_id, layer)?;
             anyhow::ensure!(
-                release.cover.is_some() || release.blurhash.is_none(),
-                "fixture release `{}` has a blurhash but no cover",
+                release.cover.is_some() || (release.blurhash.is_none() && !release.cover_gone),
+                "fixture release `{}` has a blurhash or cover_gone but no cover",
                 release.key
             );
             if let Some(cover) = &release.cover {
                 let path = self.directory.join(cover);
                 anyhow::ensure!(
-                    path.is_file(),
-                    "fixture cover {} is not a file",
-                    path.display()
+                    path.is_file() != release.cover_gone,
+                    "fixture cover {} {}",
+                    path.display(),
+                    if release.cover_gone {
+                        "exists but is meant to be gone"
+                    } else {
+                        "is not a file"
+                    }
                 );
                 db.transaction_mut(|t| {
                     lyra_db::covers::upsert(
