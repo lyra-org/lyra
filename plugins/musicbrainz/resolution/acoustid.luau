@@ -104,7 +104,7 @@ function module.lookup(fingerprint: string, duration_ms: number): AcoustIdResult
 		},
 	}
 
-	local root = musicbrainz_api.response_object(pcall(http.request, request))
+	local root = musicbrainz_api.response_object(musicbrainz_api.send(request))
 	if root == nil then
 		return nil
 	end

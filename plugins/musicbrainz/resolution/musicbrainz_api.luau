@@ -428,41 +428,78 @@ local function escape_lucene(str: string): string
 	return table.concat(out)
 end
 
--- Threads that saw a request fail. Each refresh handler runs on a thread of its
--- own, while concurrent refreshes share this module.
-local failed_threads: { [thread]: boolean } = setmetatable({}, { __mode = "k" }) :: any
+-- Enrichment ends this many seconds into a refresh, inside the server's
+-- 60-second limit on it, so the refresh ends normally.
+local ENRICHMENT_SECONDS = 50
+
+-- Seconds on a monotonic clock; tests replace it.
+module.clock = os.clock
+
+-- What a refresh knows across its requests: whether one failed, and when its
+-- enrichment must end.
+type RefreshState = { failed: boolean, enrichment_deadline: number }
+
+-- By thread: each refresh handler runs on a thread of its own, while
+-- concurrent refreshes share this module.
+local refresh_states: { [thread]: RefreshState } = setmetatable({}, { __mode = "k" }) :: any
+
+local function refresh_state(): RefreshState
+	local thread = coroutine.running()
+	local state = refresh_states[thread]
+	if state == nil then
+		state = { failed = false, enrichment_deadline = module.clock() + ENRICHMENT_SECONDS }
+		refresh_states[thread] = state
+	end
+	return state
+end
+
+-- Starts a refresh on the running thread.
+function module.begin_refresh()
+	refresh_states[coroutine.running()] = nil
+	refresh_state()
+end
+
+-- Ends the refresh on the running thread.
+function module.end_refresh()
+	refresh_states[coroutine.running()] = nil
+end
 
 -- Records that a request failed, as opposed to answering that nothing matched.
 local function note_request_failure()
-	failed_threads[coroutine.running()] = true
+	refresh_state().failed = true
 end
 
 -- Whether a request failed on the running refresh, so an empty result may not
 -- mean that nothing matches.
 local function request_failed(): boolean
-	return failed_threads[coroutine.running()] == true
+	local state = refresh_states[coroutine.running()]
+	return state ~= nil and state.failed
 end
 
--- The JSON object a request returned, given `pcall(http.request, ...)`. A 404
--- is an answer, not a failure: the entity was removed. Any other failure is
--- recorded for the running refresh.
-local function response_object(ok: boolean, response: any): JsonObject?
+-- The JSON object a request returned, given `pcall(http.request, ...)`, and
+-- whether the request failed. A 404 is an answer, not a failure: the entity
+-- was removed.
+local function decode_response(ok: boolean, response: any): (JsonObject?, boolean)
 	if not ok or type(response) ~= "table" then
-		note_request_failure()
-		return nil
+		return nil, true
 	end
 	if not response.success or response.status_code ~= 200 then
-		if response.status_code ~= 404 then
-			note_request_failure()
-		end
-		return nil
+		return nil, response.status_code ~= 404
 	end
 	local decoded_ok, data = pcall(json.decode, response.body :: string)
 	if not decoded_ok or type(data) ~= "table" then
-		note_request_failure()
-		return nil
+		return nil, true
 	end
-	return data :: JsonObject
+	return data :: JsonObject, false
+end
+
+-- `decode_response`'s object, recording a failure for the running refresh.
+local function response_object(ok: boolean, response: any): JsonObject?
+	local data, failed = decode_response(ok, response)
+	if failed then
+		note_request_failure()
+	end
+	return data
 end
 
 -- `pcall(http.request, options)`; tests replace it to script responses.
@@ -470,33 +507,36 @@ function module.send(options: HttpRequestOptions): (boolean, any)
 	return pcall(http.request, options)
 end
 
-local function request(endpoint: string): (JsonObject?, number)
-	local request_options: HttpRequestOptions = {
+local function send_get(endpoint: string, timeout_ms: number?): (boolean, any)
+	return module.send({
 		url = `{API_BASE}{endpoint}`,
 		method = http.HttpMethod.Get,
 		headers = {
 			Accept = "application/json",
 		},
-	}
-	local ok, response = module.send(request_options)
-	local retries = if ok and type(response) == "table" then response.retries else 0
-	return response_object(ok, response), retries
+		timeout_ms = timeout_ms,
+	})
 end
 
 -- A MusicBrainz API GET request. Once a request has failed on this refresh,
 -- nothing more is sent: a weaker query must not stand in for one that went
 -- unanswered.
-local function mb_get(endpoint: string): (JsonObject?, number)
+local function mb_get(endpoint: string): JsonObject?
 	if request_failed() then
-		return nil, 0
+		return nil
 	end
-	return request(endpoint)
+	return response_object(send_get(endpoint))
 end
 
--- A GET request that enriches a verified release, sent even after a failure:
--- each is independent, and a failed one only leaves its own details out.
-local function enrichment_get(endpoint: string): (JsonObject?, number)
-	return request(endpoint)
+-- A GET request that enriches an applied release, given up at the refresh's
+-- enrichment deadline. It neither checks nor records failures: a failed one
+-- only leaves its own details out.
+local function enrichment_get(endpoint: string): JsonObject?
+	local seconds_left = refresh_state().enrichment_deadline - module.clock()
+	if seconds_left <= 0 then
+		return nil
+	end
+	return (decode_response(send_get(endpoint, math.ceil(seconds_left * 1000))))
 end
 
 local function browse_release_group(release_group_id: string, fast_mode: boolean, track_count: number?): { Release }?
@@ -520,6 +560,10 @@ local function browse_release_group(release_group_id: string, fast_mode: boolean
 	end
 	if needs_all_data then
 		local all_response = mb_get(`/release?release-group={release_group_id}&limit=100`)
+		-- A first page alone could leave out the edition that fits.
+		if all_response == nil and request_failed() then
+			return nil
+		end
 		all_data = if all_response then normalize_release_search_result(all_response) else nil
 	end
 	local releases: { Release } = {}

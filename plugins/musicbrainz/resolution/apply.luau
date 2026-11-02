@@ -17,6 +17,7 @@ local track_helpers = require("./track_helpers")
 type JsonValue = serde.JsonValue
 type JsonObject = { [string]: JsonValue }
 type LocalRelease = local_release.LocalRelease
+type ReleaseContext = local_release.ReleaseContext
 type LocalArtist = track_helpers.LocalArtist
 type LocalTrack = track_helpers.LocalTrack
 type ReleaseArtist = track_helpers.ReleaseArtist
@@ -95,13 +96,38 @@ function module.set_track_id(track_id: string, id_type: string, id_value: string
 	end
 end
 
--- Does nothing once a request has failed on this refresh: an outage must not
--- discard a match that a later refresh would confirm.
-function module.mark_unmatched(node_id: string, id_types: { string })
+local function unmatch(node_id: string, id_types: { string })
 	local current_provider = provider
-	if current_provider ~= nil and not musicbrainz_api.request_failed() then
+	if current_provider ~= nil then
 		current_provider:mark_unmatched(node_id, id_types)
 	end
+end
+
+local TRACK_ID_TYPES = { "recording_id", "release_track_id", "work_id" }
+
+-- Unmatches the release, its tracks and its artists, once nothing matched it.
+-- Does nothing after a failed request: an outage must not discard a match
+-- that a later refresh would confirm.
+function module.unmatch_release(release_context: ReleaseContext)
+	if musicbrainz_api.request_failed() then
+		return
+	end
+	local release_entity_id = release_context.id
+	if release_entity_id ~= nil then
+		unmatch(release_entity_id, { "release_id", "release_group_id" })
+	end
+	for _, track: LocalTrack in release_context.tracks do
+		if track.id then
+			unmatch(track.id, TRACK_ID_TYPES)
+		end
+	end
+	local unmatched_artists: { [string]: boolean } = {}
+	local_release.for_each_local_artist(release_context, function(artist: LocalArtist)
+		if artist.id and not unmatched_artists[artist.id] then
+			unmatched_artists[artist.id] = true
+			unmatch(artist.id, { "artist_id" })
+		end
+	end)
 end
 
 local function artist_type_for_musicbrainz(mb_artist_type: string?): ArtistType?
@@ -125,14 +151,15 @@ local function artist_type_for_musicbrainz(mb_artist_type: string?): ArtistType?
 	return nil
 end
 
-local function set_artist_metadata(
+-- Local artist `artist_id`'s layer for `mb_artist`, unsaved.
+local function artist_layer_for(
 	artist_id: string?,
 	mb_artist: ReleaseArtist?,
 	relation_sets: { RelationSet }?
-): boolean
+): metadata.Layer?
 	local current_provider = provider
 	if not artist_id or mb_artist == nil or not mb_artist.id or current_provider == nil then
-		return false
+		return nil
 	end
 	local artist_layer = current_provider:layer(artist_id)
 	artist_layer:set_field("artist_name", mb_artist.name)
@@ -147,8 +174,7 @@ local function set_artist_metadata(
 	for _, relation_set in relation_sets or {} do
 		artist_layer:set_relations(relation_set.relation_type, relation_set.relations)
 	end
-	artist_layer:save()
-	return true
+	return artist_layer
 end
 
 local function ensure_artist_entity(mb_artist: ReleaseArtist?): string?
@@ -299,34 +325,21 @@ local function artist_relation_sets(artist_id: string, response: JsonObject): { 
 	return relation_sets
 end
 
-local function import_artist_relations_from_response(artist_id: string, response: JsonObject): boolean
-	return set_artist_metadata(artist_id, normalize_release_artist(response), artist_relation_sets(artist_id, response))
-end
-
-local function fetch_and_set_artist_relations(
-	from_artist_id: string,
-	mb_artist_id: string,
-	mb_artist_type: string?
-): boolean
-	if not musicbrainz_artist_type_has_imported_relations(mb_artist_type) then
-		return false
-	end
-
-	local response = enrichment_get(`/artist/{mb_artist_id}?inc=artist-rels`)
-	if response == nil then
-		return false
-	end
-
-	return import_artist_relations_from_response(from_artist_id, response)
+-- Local artist `artist_id`'s layer for the artist `response` describes, with
+-- its relations, unsaved.
+local function artist_layer_from_response(artist_id: string, response: JsonObject): metadata.Layer?
+	local relation_sets = artist_relation_sets(artist_id, response)
+	return artist_layer_for(artist_id, normalize_release_artist(response), relation_sets)
 end
 
 local function refresh_artist_by_id(artist_id: string, mb_artist_id: string): boolean
 	local response = mb_get(`/artist/{mb_artist_id}?inc=artist-rels`)
-	if response == nil then
+	local layer = if response then artist_layer_from_response(artist_id, response) else nil
+	if layer == nil then
 		return false
 	end
-
-	return import_artist_relations_from_response(artist_id, response)
+	layer:save()
+	return true
 end
 
 type Work = { id: string?, relations: { Relation }? }
@@ -356,25 +369,9 @@ local function track_work_from_relations(relations: { Relation }?): Work?
 	return fallback
 end
 
-type RecordingCache = { [string]: RecordingResult | false }
-
-local function fetch_recording_result(recording_id: string?, recording_cache: RecordingCache?): RecordingResult?
-	if type(recording_id) ~= "string" or recording_id == "" then
-		return nil
-	end
-	if recording_cache and recording_cache[recording_id] ~= nil then
-		local cached = recording_cache[recording_id]
-		if cached == false then
-			return nil
-		end
-		return cached :: RecordingResult
-	end
+local function fetch_recording_result(recording_id: string): RecordingResult?
 	local recording_response = enrichment_get(`/recording/{recording_id}?inc=work-rels+work-level-rels+artist-rels`)
-	local result = if recording_response then normalize_recording_result(recording_response) else nil
-	if recording_cache then
-		recording_cache[recording_id] = result or false
-	end
-	return result
+	return if recording_response then normalize_recording_result(recording_response) else nil
 end
 
 type CreditType = metadata.CreditType
@@ -620,6 +617,48 @@ local function match_credit(
 	return nil
 end
 
+-- Defers fetching the work a track's recording performs, with the recording's
+-- relation credits, ahead of the `credits` already set on `track_layer`.
+local function track_work_enrichment(
+	track_layer: metadata.Layer,
+	recording_id: string,
+	credits: CreditSets,
+	credit_roles: { [string]: boolean }
+): () -> ()
+	return function()
+		local result = fetch_recording_result(recording_id)
+		if result == nil then
+			return
+		end
+		local relations = result.relations
+		local work = track_work_from_relations(relations)
+		local track_credits: CreditSets = {}
+		if work and work.id then
+			track_layer:set_id("work_id", work.id)
+			if work.relations then
+				collect_relation_credits(track_credits, work.relations)
+			end
+		else
+			track_layer:set_id("work_id", "")
+		end
+		collect_relation_credits(track_credits, relations)
+		for role_name, role_credits in credits do
+			for _, credit in role_credits do
+				add_credit(track_credits, role_name, credit.artist_id, credit.detail)
+			end
+		end
+		local roles = table.clone(credit_roles)
+		-- Fetched relations are the whole picture for the roles they map to.
+		for _, mapping in MB_RELATION_TO_CREDIT do
+			if mapping then
+				roles[mapping.role] = true
+			end
+		end
+		set_credit_roles(track_layer, track_credits, roles)
+		track_layer:save()
+	end
+end
+
 local function process_release(
 	release: Release,
 	local_release_info: LocalRelease,
@@ -638,6 +677,9 @@ local function process_release(
 	if release_entity_id == nil or release_id == nil then
 		return false
 	end
+	-- Optional fetches for the applied release, run once its match is saved, so
+	-- a slow or failed one can't hold back saving it.
+	local enrichments: { () -> () } = {}
 
 	local rg_info = release_group_info or release["release-group"]
 	local release_layer = current_provider:layer(release_entity_id)
@@ -661,17 +703,6 @@ local function process_release(
 	release_layer:set_field("release_title", release_title)
 
 	local date_str = release.date or (rg_info and rg_info["first-release-date"])
-	local rg_url_data: JsonObject? = nil
-	if not date_str then
-		local rg_id_for_date = release_group_id or (rg_info and rg_info.id)
-		if rg_id_for_date then
-			-- Include url-rels to extract WikiData QID in the same request.
-			rg_url_data = enrichment_get(`/release-group/{rg_id_for_date}?inc=url-rels`)
-			if rg_url_data then
-				date_str = json_string_field(rg_url_data, "first-release-date") or date_str
-			end
-		end
-	end
 	if date_str then
 		release_layer:set_field("release_date", date_str)
 	end
@@ -700,9 +731,6 @@ local function process_release(
 	end
 
 	local primary_type: string? = if rg_info then rg_info["primary-type"] else nil
-	if not primary_type and rg_url_data then
-		primary_type = json_string_field(rg_url_data, "primary-type")
-	end
 	if primary_type then
 		release_layer:set_field("release_type", string.lower(primary_type))
 	end
@@ -711,22 +739,34 @@ local function process_release(
 	local rg_id = release_group_id or (rg_info and rg_info.id)
 	if rg_id then
 		release_layer:set_id("release_group_id", rg_id)
-
-		-- Cooperation: if we already fetched release-group data (date fallback),
-		-- extract WikiData QID from its URL relationships at zero extra cost.
-		-- No dedicated fetch — the WikiData plugin handles releases MB doesn't cover.
-		if rg_url_data then
+	end
+	if rg_id and not date_str then
+		local resolved_rg_id = rg_id
+		table.insert(enrichments, function()
+			-- Include url-rels to extract WikiData QID in the same request. No
+			-- dedicated fetch otherwise: the WikiData plugin covers the rest.
+			local rg_url_data = enrichment_get(`/release-group/{resolved_rg_id}?inc=url-rels`)
+			if rg_url_data == nil then
+				return
+			end
+			local rg_date = json_string_field(rg_url_data, "first-release-date")
+			if rg_date then
+				release_layer:set_field("release_date", rg_date)
+			end
+			local rg_primary_type = json_string_field(rg_url_data, "primary-type")
+			if not primary_type and rg_primary_type then
+				release_layer:set_field("release_type", string.lower(rg_primary_type))
+			end
 			for _, relation in normalize_relations(json_array_field(rg_url_data, "relations")) do
 				local resource = relation.url and relation.url.resource
-				if relation.type == "wikidata" and resource then
-					local qid = string.match(resource, "(Q%d+)$")
-					if qid then
-						release_layer:set_id("wikidata_qid", qid)
-						break
-					end
+				local qid = if relation.type == "wikidata" and resource then string.match(resource, "(Q%d+)$") else nil
+				if qid then
+					release_layer:set_id("wikidata_qid", qid)
+					break
 				end
 			end
-		end
+			release_layer:save()
+		end)
 	end
 	local artist_credits = release["artist-credit"]
 	local artist_created_at_ms: { [string]: number } = {}
@@ -739,12 +779,24 @@ local function process_release(
 	local tagged_artist_mb_ids: { [string]: string } = {}
 	local fetched_relations_for: { [string]: boolean } = {}
 
+	-- Fetches `mb_artist`'s relations for local artist `artist_id` once the
+	-- match is saved, once per MusicBrainz artist in the release.
 	local function maybe_fetch_artist_relations(artist_id: string, mb_artist: ReleaseArtist)
-		if mb_artist.id == nil or fetched_relations_for[mb_artist.id] then
+		local mb_artist_id = mb_artist.id
+		if mb_artist_id == nil or fetched_relations_for[mb_artist_id] then
 			return
 		end
-		fetched_relations_for[mb_artist.id] = true
-		fetch_and_set_artist_relations(artist_id, mb_artist.id, mb_artist["type"])
+		fetched_relations_for[mb_artist_id] = true
+		if not musicbrainz_artist_type_has_imported_relations(mb_artist["type"]) then
+			return
+		end
+		table.insert(enrichments, function()
+			local response = enrichment_get(`/artist/{mb_artist_id}?inc=artist-rels`)
+			local layer = if response then artist_layer_from_response(artist_id, response) else nil
+			if layer then
+				layer:save()
+			end
+		end)
 	end
 
 	local function tag_local_artist(artist_id: string?, mb_artist: ReleaseArtist?): boolean
@@ -752,13 +804,15 @@ local function process_release(
 			return false
 		end
 		ensure_artist_entity(mb_artist)
-		if set_artist_metadata(artist_id, mb_artist) then
-			tagged_artist_ids[artist_id] = true
-			tagged_artist_mb_ids[artist_id] = mb_artist.id
-			maybe_fetch_artist_relations(artist_id, mb_artist)
-			return true
+		local layer = artist_layer_for(artist_id, mb_artist, nil)
+		if layer == nil then
+			return false
 		end
-		return false
+		layer:save()
+		maybe_fetch_artist_relations(artist_id, mb_artist)
+		tagged_artist_ids[artist_id] = true
+		tagged_artist_mb_ids[artist_id] = mb_artist.id
+		return true
 	end
 
 	if artist_credits and release_context.artists then
@@ -853,13 +907,13 @@ local function process_release(
 		local preserve_local_multidisc_position = should_preserve_local_track_positions(local_tracks, release)
 		local preserve_local_position = preserve_single_track_position or preserve_local_multidisc_position
 		local should_lookup_track_work = #local_tracks == 1
-		local recording_cache: RecordingCache = {}
 		local track_artist_count = 0
 
 		for i: number, local_track: LocalTrack in local_tracks do
 			local mb_track = assignments[i]
-			if mb_track and local_track.id then
-				local track_layer = current_provider:layer(local_track.id)
+			local local_track_id = local_track.id
+			if mb_track and local_track_id then
+				local track_layer = current_provider:layer(local_track_id)
 				track_layer:set_field("track_title", mb_track.title)
 				if preserve_local_position then
 					if local_track.disc ~= nil then
@@ -893,11 +947,10 @@ local function process_release(
 					end
 					local work = track_work_from_relations(recording_relations)
 					if should_lookup_track_work and work == nil and recording_relations == nil then
-						local result = fetch_recording_result(mb_track.recording_id, recording_cache)
-						if result then
-							work = track_work_from_relations(result.relations)
-							recording_relations = result.relations
-						end
+						table.insert(
+							enrichments,
+							track_work_enrichment(track_layer, mb_track.recording_id, track_credits, credit_roles)
+						)
 					end
 					if work and work.id then
 						track_layer:set_id("work_id", work.id)
@@ -983,6 +1036,10 @@ local function process_release(
 				end
 				set_credit_roles(track_layer, track_credits, credit_roles)
 				track_layer:save()
+			elseif local_track_id then
+				-- A track the release has no place for doesn't keep a match
+				-- to another release.
+				unmatch(local_track_id, TRACK_ID_TYPES)
 			end
 		end
 
@@ -1022,6 +1079,9 @@ local function process_release(
 		end
 	end
 
+	for _, enrich in enrichments do
+		enrich()
+	end
 	return true
 end
 

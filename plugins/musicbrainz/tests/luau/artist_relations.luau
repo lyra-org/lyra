@@ -1,9 +1,10 @@
 local metadata = require("@lyra/metadata")
 local musicbrainz_api = require("../../resolution/musicbrainz_api")
+local serde = require("@harmony/serde")
 
 local response: { [string]: any } = {}
-musicbrainz_api.mb_get = function(_endpoint: string): (any, number)
-	return response, 200
+musicbrainz_api.send = function(_options: any): (boolean, any)
+	return true, { success = true, status_code = 200, body = serde.json.encode(response), retries = 0 }
 end
 local apply = require("../../resolution/apply")
 

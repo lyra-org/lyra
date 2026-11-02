@@ -26,7 +26,6 @@ local fetch_release_details = musicbrainz_api.fetch_release_details
 local release_from_candidates = release_group.release_from_candidates
 local select_release_group_candidate = release_group.select_release_group_candidate
 local release_lists_tracks = track_helpers.release_lists_tracks
-local assign_release_tracks = track_helpers.assign_release_tracks
 
 local module = {}
 
@@ -52,6 +51,10 @@ local function with_track_list(release: Release): Release?
 end
 
 local function check(release: Release, local_release_info: LocalRelease, anchor: Release?): boolean
+	-- After a failed request nothing is applied, so nothing is worth rejecting.
+	if musicbrainz_api.request_failed() then
+		return false
+	end
 	local accepted, reason = acceptance.accepts(release, local_release_info, anchor)
 	if not accepted then
 		warn(`musicbrainz: rejected release {release.id} "{release.title}": {reason}`)
@@ -80,33 +83,14 @@ function module.try_release(
 end
 
 function module.try_release_id(release_id: string, local_release_info: LocalRelease): boolean
-	if remembered_rejection(release_id, local_release_info, nil) then
-		return false
-	end
-	local release = fetch_release_details(release_id)
-	if not release or not check(release, local_release_info, nil) then
-		return false
-	end
-	return apply.process_release(release, local_release_info)
+	return module.try_release({ id = release_id }, local_release_info)
 end
 
 -- Applies a release the user chose without checking it: acceptance exists to
--- catch wrong guesses, and this one is not a guess. Without acceptance the
--- release may list fewer tracks than the local album, so local tracks it has
--- no place for are unmatched rather than left on a previous match. They are
--- unmatched first, while a failed enrichment request can't hold that back.
+-- catch wrong guesses, and this one is not a guess.
 function module.apply_release_id(release_id: string, local_release_info: LocalRelease): boolean
 	local release = fetch_release_details(release_id)
-	if not release or release.id == nil then
-		return false
-	end
-	local local_tracks, assignments = assign_release_tracks(local_release_info.context.tracks, release)
-	for i, local_track in local_tracks do
-		if assignments[i] == nil and local_track.id then
-			apply.mark_unmatched(local_track.id, { "recording_id", "release_track_id", "work_id" })
-		end
-	end
-	return apply.process_release(release, local_release_info)
+	return release ~= nil and apply.process_release(release, local_release_info)
 end
 
 -- Applies the best edition from `selected_release`'s release group. The edition

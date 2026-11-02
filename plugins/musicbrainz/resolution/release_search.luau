@@ -4,7 +4,6 @@
 -- You can obtain one here:
 -- www.meshiplaw.com/lyra.
 
-local apply = require("./apply")
 local local_release = require("./local_release")
 local musicbrainz_api = require("./musicbrainz_api")
 local ranking = require("./ranking")
@@ -48,7 +47,6 @@ local release_matches_artist_ids = ranking.release_matches_artist_ids
 local try_release = resolve.try_release
 local try_release_id = resolve.try_release_id
 local try_release_group = resolve.try_release_group
-local for_each_local_artist = local_release.for_each_local_artist
 local normalize_lookup_context = local_release.normalize_lookup_context
 
 -- Alias search can list many releases; fetching each to check it is slow.
@@ -132,23 +130,6 @@ function module.search_and_fetch_release(local_release_info: LocalRelease): bool
 	local track_count = local_release_info.track_count
 	local preferred_language = local_release_info.preferred_language
 	local preferred_country = local_release_info.preferred_country
-
-	local marked_artist_ids: { [string]: boolean } = {}
-	local function mark_artist_unmatched(artist: LocalArtist)
-		if artist.id and not marked_artist_ids[artist.id] then
-			marked_artist_ids[artist.id] = true
-			apply.mark_unmatched(artist.id, { "artist_id" })
-		end
-	end
-	local function mark_lookup_ids_unmatched(): boolean
-		for_each_local_artist(release_context, mark_artist_unmatched)
-		for _, track: LocalTrack in release_context.tracks do
-			if track.id then
-				apply.mark_unmatched(track.id, { "recording_id", "release_track_id", "work_id" })
-			end
-		end
-		return false
-	end
 
 	if is_blank_text(artist_name) or is_generic_artist(artist_name) then
 		artist_name = nil
@@ -305,7 +286,7 @@ function module.search_and_fetch_release(local_release_info: LocalRelease): bool
 			artist_ids = { [top_artist_id] = true }
 		end
 		if not artist_ids then
-			return mark_lookup_ids_unmatched()
+			return false
 		end
 		if top_artist_id then
 			top_artist_ids = { [top_artist_id] = true }
@@ -498,7 +479,7 @@ function module.search_and_fetch_release(local_release_info: LocalRelease): bool
 		end
 	end
 	if not releases_data or releases_data.count == 0 then
-		return mark_lookup_ids_unmatched()
+		return false
 	end
 
 	local function medium_count(release: Release): number
@@ -973,7 +954,7 @@ function module.search_and_fetch_release(local_release_info: LocalRelease): bool
 	if deferred_release and deferred_release.id and try_release_id(deferred_release.id, local_release_info) then
 		return true
 	end
-	return mark_lookup_ids_unmatched()
+	return false
 end
 
 return module

@@ -194,6 +194,10 @@ end
 -- Matches the local release through the AcoustID fingerprint of its longest
 -- track, recording the AcoustID track ID when a release is applied.
 local function try_acoustid(local_release_info: LocalRelease): boolean
+	-- After a failed request nothing is applied, so nothing is worth computing.
+	if musicbrainz_api.request_failed() then
+		return false
+	end
 	local tracks = local_release_info.context.tracks
 	local track = acoustid.select_track(tracks)
 	local track_id = track and track.id
@@ -219,6 +223,31 @@ local function try_acoustid(local_release_info: LocalRelease): boolean
 	return true
 end
 
+-- Matches the release, or unmatches it once every way to match it found
+-- nothing. After a failed request each way gives up, keeping what is stored.
+local function refresh_release(release: ReleaseContext, options: { [string]: boolean | number | string }?)
+	local local_release_info = local_release.from_context(release)
+	local manual_release_id = stored_id(musicbrainz_external_ids(release.manual_ids), "release_id")
+	if manual_release_id ~= nil then
+		-- A failed fetch keeps what is stored rather than searching past the user's choice.
+		resolve.apply_release_id(manual_release_id, local_release_info)
+		return
+	end
+
+	local release_id = stored_id(musicbrainz_external_ids(release.external_ids), "release_id")
+	if release_id ~= nil and resolve.try_release_id(release_id, local_release_info) then
+		return
+	end
+	local searchable = local_release_info.artist_name ~= nil or local_release_info.compilation_release
+	if searchable and release_search.search_and_fetch_release(local_release_info) then
+		return
+	end
+	if options and options.acoustid_fingerprint == true and try_acoustid(local_release_info) then
+		return
+	end
+	apply.unmatch_release(release)
+end
+
 function module.register_refresh(provider_instance: Provider): ()
 	apply.set_provider(provider_instance)
 	provider_instance:refresh(metadata.EntityType.Artist, function(ctx: ArtistRefreshContext)
@@ -239,39 +268,9 @@ function module.register_refresh(provider_instance: Provider): ()
 	end)
 
 	provider_instance:refresh(metadata.EntityType.Release, function(ctx: metadata.ReleaseRefreshContext)
-		local release: ReleaseContext = ctx :: ReleaseContext
-		local local_release_info = local_release.from_context(release)
-		local manual_ids = musicbrainz_external_ids(release.manual_ids)
-		local manual_release_id = manual_ids and manual_ids.release_id
-		if type(manual_release_id) == "string" and manual_release_id ~= "" then
-			-- A failed fetch keeps what is stored rather than searching past the user's choice.
-			resolve.apply_release_id(manual_release_id, local_release_info)
-			return nil
-		end
-
-		local release_id = stored_id(musicbrainz_external_ids(release.external_ids), "release_id")
-		if release_id ~= nil and resolve.try_release_id(release_id, local_release_info) then
-			return nil
-		end
-		-- A failed request keeps what is stored: a search can't stand in for it.
-		if musicbrainz_api.request_failed() then
-			return nil
-		end
-
-		local searchable = local_release_info.artist_name ~= nil or local_release_info.compilation_release
-		if searchable and release_search.search_and_fetch_release(local_release_info) then
-			return nil
-		end
-		if musicbrainz_api.request_failed() then
-			return nil
-		end
-		if ctx.options and ctx.options.acoustid_fingerprint == true and try_acoustid(local_release_info) then
-			return nil
-		end
-		local release_entity_id = release.id
-		if release_entity_id ~= nil then
-			apply.mark_unmatched(release_entity_id, { "release_id", "release_group_id" })
-		end
+		musicbrainz_api.begin_refresh()
+		refresh_release(ctx :: ReleaseContext, ctx.options)
+		musicbrainz_api.end_refresh()
 		return nil
 	end, function(ctx: metadata.ReleaseRefreshContext): boolean
 		local release: ReleaseContext = ctx :: ReleaseContext
