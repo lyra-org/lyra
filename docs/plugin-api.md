@@ -45,6 +45,12 @@ modules predate some of them.
   serves, documented as being for that alone, as `tracks.streamable` and `covers.artwork`
   are for public routes.
 
+## Privileged Actions
+
+- A privileged action with effects beyond its module's needs a scope of its own within the
+  module's, named for the action, such as `lyra.libraries.manage` for `libraries.sync` and
+  `lyra.metadata.refresh` for `metadata.refresh`.
+
 ## Arguments and Results
 
 - Optional arguments go in a trailing options table, with each field's default

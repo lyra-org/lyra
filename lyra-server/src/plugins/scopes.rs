@@ -16,7 +16,11 @@
 //! - whether it reaches every user's data rather than the acting users'. Such
 //!   a function gets a narrow scope of its own, `within` its module's, named
 //!   `<module scope>.all`, so plugins that don't call it don't carry its
-//!   effects.
+//!   effects;
+//! - whether it is a privileged action with effects beyond its module's, such
+//!   as starting a library sync. Such a function gets a narrow scope of its
+//!   own as well, named for the action, as `lyra.libraries.manage` and
+//!   `lyra.metadata.refresh` are.
 //!
 //! `gated_module_functions_are_reviewed` lists every function with its
 //! arguments, and the methods of the classes each module declares, and fails
@@ -337,6 +341,18 @@ scopes! {
         module: libraries::LibrariesModule::module_spec,
         effects: &[],
     },
+    LibrariesManage => {
+        id: "lyra.libraries.manage",
+        within: Libraries,
+        functions: &["sync", "refresh", "sync_status", "cancel_sync"],
+        effects: &[
+            Effect::WritesLibrary(LibraryKind::Genres),
+            Effect::WritesLibrary(LibraryKind::RecordLabels),
+            Effect::WritesLibrary(LibraryKind::Lyrics),
+            Effect::WritesLibrary(LibraryKind::Metadata),
+            Effect::WritesLibrary(LibraryKind::Covers),
+        ],
+    },
     Listens => {
         id: "lyra.listens",
         module: listens::ListensModule::module_spec,
@@ -377,6 +393,15 @@ scopes! {
         id: "lyra.metadata",
         module: metadata::MetadataModule::module_spec,
         effects: &[Effect::WritesLibrary(LibraryKind::Metadata)],
+    },
+    MetadataRefresh => {
+        id: "lyra.metadata.refresh",
+        within: Metadata,
+        functions: &["refresh"],
+        effects: &[
+            Effect::WritesLibrary(LibraryKind::Metadata),
+            Effect::WritesLibrary(LibraryKind::Covers),
+        ],
     },
     Mix => {
         id: "lyra.mix",
@@ -939,6 +964,16 @@ mod tests {
             ("lyra.genres", &["Changes the library's genres"]),
             ("lyra.labels", &["Changes the library's record labels"]),
             (
+                "lyra.libraries.manage",
+                &[
+                    "Changes the library's genres",
+                    "Changes the library's record labels",
+                    "Changes the library's lyrics",
+                    "Changes the library's metadata",
+                    "Changes the library's covers",
+                ],
+            ),
+            (
                 "lyra.listens",
                 &[
                     "Reads the listening history of the users it acts for",
@@ -964,6 +999,13 @@ mod tests {
                 ],
             ),
             ("lyra.metadata", &["Changes the library's metadata"]),
+            (
+                "lyra.metadata.refresh",
+                &[
+                    "Changes the library's metadata",
+                    "Changes the library's covers",
+                ],
+            ),
             (
                 "lyra.mix",
                 &["Reads the recent listens of the users it acts for"],
@@ -1096,8 +1138,10 @@ mod tests {
         };
         assert!(load(r#"["lyra.listens","lyra.listens.all"]"#).is_ok());
         for (narrow, parent) in [
+            ("lyra.libraries.manage", "lyra.libraries"),
             ("lyra.listens.all", "lyra.listens"),
             ("lyra.lyrics.all", "lyra.lyrics"),
+            ("lyra.metadata.refresh", "lyra.metadata"),
             ("lyra.playback_sessions.all", "lyra.playback_sessions"),
         ] {
             let error = load(&format!(r#"["{narrow}"]"#)).unwrap_err();
@@ -1430,7 +1474,15 @@ mod tests {
         ),
         (
             "lyra/libraries",
-            &["list()", "get(library_ids)", "by_entity(entity_ids)"],
+            &[
+                "list()",
+                "get(library_ids)",
+                "by_entity(entity_ids)",
+                "sync(library_id) [lyra.libraries.manage]",
+                "refresh(library_id, options) [lyra.libraries.manage]",
+                "sync_status(library_ids, options) [lyra.libraries.manage]",
+                "cancel_sync(library_id) [lyra.libraries.manage]",
+            ],
         ),
         (
             "lyra/listens",
@@ -1466,6 +1518,7 @@ mod tests {
             "lyra/metadata",
             &[
                 "Provider.new(id, options)",
+                "refresh(entity_id, options) [lyra.metadata.refresh]",
                 "Provider:id(spec, generator)",
                 "Provider:search(entity, handler)",
                 "Provider:cover(entity, config, handler)",

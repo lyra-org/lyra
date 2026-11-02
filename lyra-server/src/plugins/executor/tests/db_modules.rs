@@ -1076,6 +1076,19 @@ fn libraries_expose_only_accessible_libraries_to_a_dispatch_principal() -> Resul
     let hidden_public_id = public_id(&db, hidden_db_id)?;
     let shared_track_id = public_id(&db, shared_track_db_id)?;
     let hidden_track_id = public_id(&db, hidden_track_db_id)?;
+    let viewer_db_id = lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("viewer")?)?;
+    lyra_db::libraries::grant_access(
+        &mut db,
+        viewer_db_id,
+        shared_db_id,
+        lyra_db::libraries::AccessKind::ReadWrite,
+    )?;
+    let viewer = crate::services::auth::Principal::for_user(
+        &db,
+        viewer_db_id,
+        Vec::new(),
+        std::collections::HashSet::from([shared_public_id.clone()]),
+    );
     let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
@@ -1087,17 +1100,7 @@ fn libraries_expose_only_accessible_libraries_to_a_dispatch_principal() -> Resul
         origin: plugin_origin("demo", "init.luau".to_string()),
         ..CallContext::default()
     };
-    seed_caller_principal(
-        &mut context,
-        crate::services::auth::Principal::from_parts(
-            agdb::DbId(7),
-            "user-public-id".to_string(),
-            "viewer".to_string(),
-            Vec::new(),
-            None,
-            std::collections::HashSet::from([shared_public_id.clone()]),
-        ),
-    );
+    seed_caller_principal(&mut context, viewer);
     let values = runtime.eval_plugin_source_with_call_context(
         format!(
             r#"

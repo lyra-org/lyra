@@ -108,7 +108,8 @@ pub fn get_by_id(db: &impl super::DbAccess, id: &str) -> anyhow::Result<Option<S
     Ok(runs.into_iter().next())
 }
 
-pub(crate) fn list_for_library(
+/// The library's runs, latest first.
+pub fn list_for_library(
     db: &impl super::DbAccess,
     library_id: &str,
 ) -> anyhow::Result<Vec<SyncRunRecord>> {

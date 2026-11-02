@@ -44,9 +44,9 @@ use crate::{
     services::{
         SyncRunEvent,
         SyncRunSummary,
-        auth::require_manage_libraries_on,
         cancel_sync_run,
         get_sync_run,
+        libraries::control::require_manage_libraries_on,
         subscribe_sync_run_events,
         sync_run_events_after,
     },

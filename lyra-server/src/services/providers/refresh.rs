@@ -101,6 +101,8 @@ impl Drop for LibraryRefreshGuard {
 }
 
 pub(crate) struct LibraryRefreshOptions<'a> {
+    /// Whether the refreshed releases' and artists' covers sync after the providers ran.
+    pub(crate) covers: bool,
     pub(crate) replace_cover: bool,
     pub(crate) force_refresh: bool,
     pub(crate) apply_sync_filters: bool,
@@ -446,7 +448,7 @@ async fn refresh_library_metadata_inner_with_progress(
                 SyncTotalState::Final,
             )
             .await;
-        if release_count > 0 {
+        if release_count > 0 && options.covers {
             progress
                 .add_stage_total(SyncStageKey::ProviderCover, 1, SyncTotalState::Final)
                 .await;
@@ -587,7 +589,7 @@ async fn refresh_library_metadata_inner_with_progress(
         );
     }
 
-    if release_count > 0 {
+    if release_count > 0 && options.covers {
         let work_id = if let Some(progress) = &progress {
             progress
                 .start_work(

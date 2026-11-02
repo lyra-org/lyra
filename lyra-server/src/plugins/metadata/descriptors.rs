@@ -221,6 +221,49 @@ fn metadata_type_aliases() -> Vec<TypeAliasDescriptor> {
 fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
     vec![
         interface(
+            "EntityRefreshOptions",
+            vec![
+                described_field(
+                    "covers",
+                    opt(boolean()),
+                    "Sync a release's or artist's cover once the providers answered. Default `true`.",
+                ),
+                described_field(
+                    "replace_cover",
+                    opt(boolean()),
+                    "Replace the cover a release or artist already has with the providers' rather than only adding a missing one. Needs `covers`. Default `false`.",
+                ),
+                described_field(
+                    "force_refresh",
+                    opt(boolean()),
+                    "Look provider covers up again rather than reusing what earlier lookups found. Needs `covers`. Default `false`.",
+                ),
+                described_field(
+                    "provider_options",
+                    opt(map(string(), string())),
+                    "Provider options, keyed `<provider_id>.<option>`; each provider receives only the options it declared. Default none.",
+                ),
+            ],
+        ),
+        interface(
+            "EntityRefresh",
+            vec![
+                field(
+                    "entity_type",
+                    union([
+                        LuauType::string_literal("release"),
+                        LuauType::string_literal("artist"),
+                        LuauType::string_literal("track"),
+                    ]),
+                ),
+                described_field(
+                    "provider_ids",
+                    array(string()),
+                    "The providers called, in the order they ran.",
+                ),
+            ],
+        ),
+        interface(
             "LayerCreditInput",
             vec![
                 described_field("artist_id", string(), "The credited artist's id."),

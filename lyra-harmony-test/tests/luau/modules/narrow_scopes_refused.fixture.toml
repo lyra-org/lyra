@@ -1,1 +1,7 @@
-without_scopes = ["lyra.listens.all", "lyra.lyrics.all", "lyra.playback_sessions.all"]
+without_scopes = [
+  "lyra.libraries.manage",
+  "lyra.listens.all",
+  "lyra.lyrics.all",
+  "lyra.metadata.refresh",
+  "lyra.playback_sessions.all",
+]

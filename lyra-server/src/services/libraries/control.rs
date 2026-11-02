@@ -16,7 +16,8 @@ use lyra_db::{
 
 use super::orchestrator::{
     self,
-    LibraryRefreshRunOptions,
+    LibraryRun,
+    RunFilter,
     SyncRunStartResponse,
     SyncRunSummary,
 };
@@ -25,7 +26,9 @@ use crate::services::{
     auth::{
         AuthError,
         Principal,
+        Recheck,
         access,
+        require_authenticated,
     },
 };
 
@@ -39,6 +42,15 @@ pub(crate) enum LibraryControlError {
     Internal(#[from] anyhow::Error),
 }
 
+impl From<Recheck> for LibraryControlError {
+    fn from(error: Recheck) -> Self {
+        match error {
+            Recheck::Internal(error) => Self::Internal(error),
+            other => Self::Forbidden(other.to_string()),
+        }
+    }
+}
+
 impl From<LibraryControlError> for AuthError {
     fn from(error: LibraryControlError) -> Self {
         match error {
@@ -49,31 +61,19 @@ impl From<LibraryControlError> for AuthError {
     }
 }
 
-/// The principal as the database has it now, holding `ManageLibraries`. A request outlives the
-/// moment it was authorized, and a plugin may act for a user long after.
-fn current_manager(db: &DbAny, principal: &Principal) -> Result<Principal, LibraryControlError> {
-    let current = principal.current(db).map_err(|error| match error {
-        AuthError::Internal(error) => LibraryControlError::Internal(error),
-        _ => LibraryControlError::Forbidden("the caller is no longer authorized".to_string()),
-    })?;
-    if !lyra_db::roles::has_permission(&current.permissions, Permission::ManageLibraries) {
-        return Err(LibraryControlError::Forbidden(
-            "ManageLibraries permission required".to_string(),
-        ));
-    }
-    Ok(current)
-}
-
-/// The library `library_id` names, when `principal` holds `ManageLibraries` and can see the
-/// library. A missing library, or one hidden from the principal, is not found.
+/// The library `library_id` names, with the principal as the database has it now, when the
+/// principal holds `ManageLibraries` and can see the library. A missing library, or one hidden
+/// from the principal, is not found. A request outlives the moment it was authorized, and a
+/// plugin may act for a user long after.
 pub(crate) fn managed_library(
     db: &DbAny,
     principal: &Principal,
     library_id: &str,
-) -> Result<Library, LibraryControlError> {
-    let current = current_manager(db, principal)?;
-    library_of(db, &current, library_id)?
-        .ok_or_else(|| LibraryControlError::NotFound(library_id.to_string()))
+) -> Result<(Principal, Library), LibraryControlError> {
+    let current = principal.current_with(db, Permission::ManageLibraries)?;
+    let library = library_of(db, &current, library_id)?
+        .ok_or_else(|| LibraryControlError::NotFound(library_id.to_string()))?;
+    Ok((current, library))
 }
 
 fn library_of(
@@ -81,55 +81,68 @@ fn library_of(
     manager: &Principal,
     library_id: &str,
 ) -> Result<Option<Library>, LibraryControlError> {
-    let library_db_id = match access::resolve_library_db_id(db, manager, library_id) {
-        Ok(library_db_id) => library_db_id,
-        Err(access::AccessError::LibraryNotFound(_)) => return Ok(None),
-        Err(access::AccessError::InvalidRequest(message)) => {
-            return Err(LibraryControlError::Forbidden(message));
-        }
-        Err(access::AccessError::Internal(error)) => return Err(error.into()),
-    };
-    Ok(lyra_db::libraries::get_by_id(db, library_db_id)?)
+    match access::resolve_library(db, manager, library_id) {
+        Ok(library) => Ok(Some(library)),
+        Err(access::AccessError::LibraryNotFound(_)) => Ok(None),
+        Err(error) => Err(anyhow::Error::from(error).into()),
+    }
 }
 
-/// Starts a sync of the library. While a run of either kind is active, starts nothing and
-/// returns that run with `started` false.
-pub(crate) async fn sync(
+/// The principal of `bearer` as the database has it now, when it may manage the library
+/// `library_id`, as [`managed_library`] decides.
+pub(crate) async fn require_manage_libraries_on(
+    bearer: Option<&str>,
+    library_id: &str,
+) -> Result<Principal, AuthError> {
+    let principal = require_authenticated(bearer).await?;
+    let db = STATE.db.read().await;
+    let (current, _) = managed_library(&db, &principal, library_id)?;
+    Ok(current)
+}
+
+/// Starts `run` on the library, checking the principal under the lock that serializes starts.
+/// While a run of either kind is active, starts nothing and returns that run with `started`
+/// false.
+pub(crate) async fn start(
     principal: &Principal,
     library_id: &str,
+    run: LibraryRun,
 ) -> Result<SyncRunStartResponse, LibraryControlError> {
-    let library = managed_library(&*STATE.db.read().await, principal, library_id)?;
-    Ok(orchestrator::start_library_sync(STATE.db.get(), library).await?)
+    orchestrator::start_library_run(STATE.db.get(), run, |db| {
+        managed_library(db, principal, library_id).map(|(_, library)| library)
+    })
+    .await
 }
 
-/// Starts a metadata refresh of the library, as [`sync`] starts a sync.
-pub(crate) async fn refresh(
-    principal: &Principal,
-    library_id: &str,
-    options: LibraryRefreshRunOptions,
-) -> Result<SyncRunStartResponse, LibraryControlError> {
-    let library = managed_library(&*STATE.db.read().await, principal, library_id)?;
-    Ok(orchestrator::start_library_refresh(STATE.db.get(), library, options).await?)
-}
-
-/// The active or latest run of each library, or an idle summary for one that never ran, keyed by
-/// library id. Libraries that are missing or hidden from the principal are absent.
+/// The run `filter` picks of each library, or an idle summary for a library without one, keyed
+/// by library id. Libraries that are missing or hidden from the principal are absent.
 pub(crate) async fn sync_status(
     principal: &Principal,
     library_ids: &[String],
+    filter: RunFilter,
 ) -> Result<HashMap<String, SyncRunSummary>, LibraryControlError> {
     let managed = {
         let db = STATE.db.read().await;
-        let current = current_manager(&db, principal)?;
+        let current = principal.current_with(&db, Permission::ManageLibraries)?;
         let mut managed = Vec::with_capacity(library_ids.len());
         for library_id in library_ids {
             if let Some(library) = library_of(&db, &current, library_id)? {
-                managed.push(library.id);
+                managed.push(library);
             }
         }
         managed
     };
-    Ok(orchestrator::library_sync_statuses(&managed).await?)
+    Ok(orchestrator::library_sync_statuses(&managed, filter).await?)
+}
+
+/// Cancels the library's active run and returns its summary; without one, returns what
+/// [`sync_status`] does for the library.
+pub(crate) async fn cancel_sync(
+    principal: &Principal,
+    library_id: &str,
+) -> Result<SyncRunSummary, LibraryControlError> {
+    let (_, library) = managed_library(&*STATE.db.read().await, principal, library_id)?;
+    Ok(orchestrator::cancel_library_run(&library).await?)
 }
 
 #[cfg(test)]
@@ -167,7 +180,7 @@ mod tests {
     }
 
     async fn managed(principal: &Principal, id: &str) -> Result<String, LibraryControlError> {
-        managed_library(&*STATE.db.read().await, principal, id).map(|library| library.id)
+        managed_library(&*STATE.db.read().await, principal, id).map(|(_, library)| library.id)
     }
 
     #[tokio::test]
@@ -211,6 +224,7 @@ mod tests {
         let statuses = sync_status(
             &manager_principal,
             &[shown.clone(), hidden.clone(), "missing".to_string()],
+            RunFilter::default(),
         )
         .await?;
         assert_eq!(statuses.len(), 1);
@@ -218,7 +232,12 @@ mod tests {
         assert_eq!(idle.run.status, orchestrator::SyncRunStatus::Idle);
         assert_eq!(idle.run.id, None);
         assert!(matches!(
-            sync_status(&listener_principal, std::slice::from_ref(&shown)).await,
+            sync_status(
+                &listener_principal,
+                std::slice::from_ref(&shown),
+                RunFilter::default()
+            )
+            .await,
             Err(LibraryControlError::Forbidden(_))
         ));
 
@@ -238,6 +257,28 @@ mod tests {
             managed(&manager_principal, &shown).await,
             Err(LibraryControlError::Forbidden(_))
         ));
+        assert!(matches!(
+            cancel_sync(&manager_principal, &shown).await,
+            Err(LibraryControlError::Forbidden(_))
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_admin_manages_a_library_created_after_its_request_began() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let admin = user_with(
+            &mut *STATE.db.write().await,
+            "admin",
+            vec![Permission::Admin],
+        )?;
+        let principal = user_principal(admin).await?;
+        let (_, created) = library(&mut *STATE.db.write().await, "Later", "/control/later")?;
+
+        assert_eq!(managed(&principal, &created).await?, created);
+        let (current, _) = managed_library(&*STATE.db.read().await, &principal, &created)?;
+        assert!(current.accessible_library_ids.contains(&created));
         Ok(())
     }
 }

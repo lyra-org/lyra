@@ -241,6 +241,41 @@ mirror_string_enum!(
     [Started, Progress, Stopped, Completed]
 );
 
+mirror_string_enum!(
+    LuauSyncRunKind for crate::services::libraries::SyncRunKind,
+    "SyncRunKind",
+    [LibrarySync, LibraryRefresh]
+);
+
+mirror_string_enum!(
+    LuauSyncRunStatus for crate::services::libraries::SyncRunStatus,
+    "SyncRunStatus",
+    [Idle, Queued, Planning, Running, Cancelling, Cancelled, Succeeded, Failed]
+);
+
+mirror_string_enum!(
+    LuauSyncTotalState for crate::services::libraries::SyncTotalState,
+    "SyncTotalState",
+    description = "How far `total_units` is known: still `discovering` work, `estimated` from what was found so far, or `final`.",
+    [Discovering, Estimated, Final]
+);
+
+mirror_string_enum!(
+    LuauSyncStage for crate::services::libraries::SyncStageKey,
+    "SyncStage",
+    [
+        Discover,
+        EntrySync,
+        MetadataParse,
+        MetadataApply,
+        ProviderRefresh,
+        LocalCoverMetadata,
+        Lyrics,
+        ProviderCover,
+        Cleanup,
+    ]
+);
+
 describe_record!(
     LuauRelease for lyra_db::Release,
     "Release",
@@ -566,5 +601,17 @@ mod tests {
             LuauPlaybackEvent,
             crate::services::playback_sessions::PlaybackEvent,
         >();
+        assert_spelled_as_serialized::<
+            LuauRemoteAction,
+            crate::services::remote::constants::RemoteAction,
+        >();
+        assert_spelled_as_serialized::<LuauSyncRunKind, crate::services::libraries::SyncRunKind>();
+        assert_spelled_as_serialized::<LuauSyncRunStatus, crate::services::libraries::SyncRunStatus>(
+        );
+        assert_spelled_as_serialized::<
+            LuauSyncTotalState,
+            crate::services::libraries::SyncTotalState,
+        >();
+        assert_spelled_as_serialized::<LuauSyncStage, crate::services::libraries::SyncStageKey>();
     }
 }

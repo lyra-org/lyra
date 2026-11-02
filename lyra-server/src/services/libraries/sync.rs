@@ -867,6 +867,7 @@ async fn process_release_artifacts(
         progress: progress.clone(),
     };
     let options = LibraryRefreshOptions {
+        covers: true,
         replace_cover: false,
         force_refresh: false,
         apply_sync_filters: false,

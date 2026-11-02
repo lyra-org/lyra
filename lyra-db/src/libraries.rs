@@ -4,10 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 use std::{
-    collections::{
-        HashMap,
-        HashSet,
-    },
+    collections::HashSet,
     path::{
         Component,
         Path,
@@ -256,57 +253,6 @@ pub fn get_by_release(
     Ok(libraries)
 }
 
-/// One library holding each entity, chosen among `allowed` when given, so a caller limited to
-/// some libraries never sees the choice fall on, or fail for, one it cannot see. A library maps
-/// to itself.
-pub fn get_for_entities(
-    db: &impl super::DbAccess,
-    entity_ids: &[DbId],
-    allowed: Option<&HashSet<DbId>>,
-) -> anyhow::Result<HashMap<DbId, Library>> {
-    let unique_ids = super::dedup_positive_ids(entity_ids);
-    if unique_ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-
-    let libraries_by_id: HashMap<DbId, Library> = get(db)?
-        .into_iter()
-        .filter_map(|lib| Some((lib.db_id?, lib)))
-        .filter(|(id, _)| allowed.is_none_or(|allowed| allowed.contains(id)))
-        .collect();
-    if libraries_by_id.is_empty() {
-        return Ok(HashMap::new());
-    }
-
-    let mut result = HashMap::new();
-    for entity_id in unique_ids {
-        if let Some(lib) = libraries_by_id.get(&entity_id) {
-            result.insert(entity_id, lib.clone());
-            continue;
-        }
-
-        let ancestors = db.exec(
-            QueryBuilder::search()
-                .to(entity_id)
-                .where_()
-                .node()
-                .and()
-                .not_beyond()
-                .key("db_element_id")
-                .value("Library")
-                .query(),
-        )?;
-        if let Some(lib) = ancestors
-            .elements
-            .iter()
-            .find_map(|ancestor| libraries_by_id.get(&ancestor.id))
-        {
-            result.insert(entity_id, lib.clone());
-        }
-    }
-
-    Ok(result)
-}
 #[derive(Debug, thiserror::Error)]
 pub enum LibraryCreateError {
     #[error("a library named '{0}' already exists")]

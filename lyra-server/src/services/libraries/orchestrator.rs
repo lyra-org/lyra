@@ -21,7 +21,6 @@ use std::{
 };
 
 use agdb::DbId;
-use anyhow::Context;
 use nanoid::nanoid;
 use serde::{
     Deserialize,
@@ -266,6 +265,14 @@ pub(crate) struct SyncRunInfo {
     pub(crate) finished_at: Option<String>,
     pub(crate) error: Option<String>,
     pub(crate) cancellation_requested: bool,
+    /// `started_at` in Unix milliseconds.
+    #[serde(skip)]
+    #[cfg_attr(feature = "docgen", schemars(skip))]
+    pub(crate) started_at_ms: Option<u64>,
+    /// `finished_at` in Unix milliseconds.
+    #[serde(skip)]
+    #[cfg_attr(feature = "docgen", schemars(skip))]
+    pub(crate) finished_at_ms: Option<u64>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -505,17 +512,19 @@ impl SyncRunState {
     }
 
     fn summary(&self) -> SyncRunSummary {
+        let started_at_ms = (self.status != SyncRunStatus::Idle).then_some(self.started_at_ms);
         SyncRunSummary {
             run: SyncRunInfo {
                 id: (!self.run_id.is_empty()).then(|| self.run_id.clone()),
                 kind: self.kind,
                 library_id: self.library_id.clone(),
                 status: self.status,
-                started_at: (self.status != SyncRunStatus::Idle)
-                    .then(|| unix_ms_to_rfc3339_u64(self.started_at_ms)),
+                started_at: started_at_ms.map(unix_ms_to_rfc3339_u64),
                 finished_at: self.finished_at_ms.map(unix_ms_to_rfc3339_u64),
                 error: self.error.clone(),
                 cancellation_requested: self.cancellation_requested,
+                started_at_ms,
+                finished_at_ms: self.finished_at_ms,
             },
             progress: self.progress_summary(),
             current: self.current(),
@@ -594,6 +603,7 @@ pub(crate) struct SyncRunStartResponse {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct LibraryRefreshRunOptions {
+    pub(crate) covers: bool,
     pub(crate) replace_cover: bool,
     pub(crate) force_refresh: bool,
 }
@@ -980,40 +990,51 @@ pub(crate) async fn library_has_active_run(library_id: &str) -> anyhow::Result<b
     )
 }
 
+/// A run to start on a library.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum LibraryRun {
+    Sync,
+    Refresh(LibraryRefreshRunOptions),
+}
+
 pub(crate) async fn start_library_sync(
     db: DbAsync,
     library: Library,
 ) -> anyhow::Result<SyncRunStartResponse> {
-    start_library_run(db, library, SyncRunKind::LibrarySync, None).await
+    start_library_run(db, LibraryRun::Sync, |db| still_exists(db, library)).await
 }
 
-pub(crate) async fn start_library_refresh(
-    db: DbAsync,
-    library: Library,
-    options: LibraryRefreshRunOptions,
-) -> anyhow::Result<SyncRunStartResponse> {
-    start_library_run(db, library, SyncRunKind::LibraryRefresh, Some(options)).await
+fn still_exists(db: &agdb::DbAny, library: Library) -> anyhow::Result<Library> {
+    let current = library
+        .db_id
+        .map(|id| lyra_db::libraries::get_by_id(db, id))
+        .transpose()?
+        .flatten();
+    anyhow::ensure!(
+        current.is_some_and(|current| current.id == library.id),
+        "library no longer exists"
+    );
+    Ok(library)
 }
 
-async fn start_library_run(
+/// Starts `run` on the library `resolve` picks, unless one of either kind is active there.
+/// `resolve` runs under the lock that serializes starts, with the database read, so whatever it
+/// checks still holds when the run is registered.
+pub(crate) async fn start_library_run<E: From<anyhow::Error>>(
     db: DbAsync,
-    library: Library,
-    kind: SyncRunKind,
-    refresh_options: Option<LibraryRefreshRunOptions>,
-) -> anyhow::Result<SyncRunStartResponse> {
+    run: LibraryRun,
+    resolve: impl FnOnce(&agdb::DbAny) -> Result<Library, E>,
+) -> Result<SyncRunStartResponse, E> {
     let _start_guard = SYNC_START_LOCK.lock().await;
-    {
-        let db_read = db.read().await;
-        let current = library
-            .db_id
-            .map(|id| lyra_db::libraries::get_by_id(&*db_read, id))
-            .transpose()?
-            .flatten();
-        anyhow::ensure!(
-            current.is_some_and(|current| current.id == library.id),
-            "library no longer exists"
-        );
-    }
+    let library = resolve(&*db.read().await)?;
+    Ok(start_locked(db, library, run).await?)
+}
+
+async fn start_locked(
+    db: DbAsync,
+    library: Library,
+    run: LibraryRun,
+) -> anyhow::Result<SyncRunStartResponse> {
     reconcile_interrupted_runs(&db).await?;
     let library_id = library.id.clone();
     if let Some(existing) = active_run_for_library(&db, &library_id).await? {
@@ -1023,6 +1044,10 @@ async fn start_library_run(
         });
     }
 
+    let kind = match run {
+        LibraryRun::Sync => SyncRunKind::LibrarySync,
+        LibraryRun::Refresh(_) => SyncRunKind::LibraryRefresh,
+    };
     let now_ms = now_unix_ms();
     let state = SyncRunState::new(kind, library_id, now_ms);
     let run_id = state.run_id.clone();
@@ -1036,12 +1061,11 @@ async fn start_library_run(
     publish_event(summary.clone()).await;
 
     let progress = SyncRunProgress::new(db.clone(), run_id.clone());
-    match kind {
-        SyncRunKind::LibrarySync => {
+    match run {
+        LibraryRun::Sync => {
             tokio::spawn(run_library_sync(db, library, progress));
         }
-        SyncRunKind::LibraryRefresh => {
-            let options = refresh_options.context("missing library refresh options")?;
+        LibraryRun::Refresh(options) => {
             tokio::spawn(run_library_refresh(library, progress, options));
         }
     }
@@ -1094,6 +1118,7 @@ async fn run_library_refresh(
     );
     progress.set_status(SyncRunStatus::Planning).await;
     let refresh_options = LibraryRefreshOptions {
+        covers: options.covers,
         replace_cover: options.replace_cover,
         force_refresh: options.force_refresh,
         apply_sync_filters: false,
@@ -1238,36 +1263,82 @@ async fn mark_terminal(
     Some(summary)
 }
 
-/// The active or latest sync run of each library, or an idle summary for one that never ran,
-/// keyed by library id. Libraries that do not exist are absent.
+/// Which of a library's runs a status read reports.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct RunFilter {
+    /// Only runs of this kind.
+    pub(crate) kind: Option<SyncRunKind>,
+    /// The latest run that ended, rather than the active one or else the latest.
+    pub(crate) finished: bool,
+}
+
+/// The run of each library `filter` picks, or an idle summary for a library without one, keyed
+/// by library id.
 pub(crate) async fn library_sync_statuses(
-    library_ids: &[String],
+    libraries: &[Library],
+    filter: RunFilter,
 ) -> anyhow::Result<HashMap<String, SyncRunSummary>> {
     let db = STATE.db.get();
     if let Err(err) = reconcile_interrupted_runs(&db).await {
         tracing::warn!(error = %err, "failed to reconcile interrupted sync runs");
     }
-    let mut statuses = HashMap::with_capacity(library_ids.len());
-    for library_id in library_ids {
-        if statuses.contains_key(library_id) || !library_exists(&db, library_id).await? {
+    let mut statuses = HashMap::with_capacity(libraries.len());
+    for library in libraries {
+        if statuses.contains_key(&library.id) {
             continue;
         }
-        let summary = active_or_latest_run_for_library(&db, library_id)
+        let summary = filtered_run_for_library(&db, &library.id, filter)
             .await?
-            .unwrap_or_else(|| SyncRunState::idle(library_id.clone()).summary());
-        statuses.insert(library_id.clone(), summary);
+            .unwrap_or_else(|| {
+                let mut idle = SyncRunState::idle(library.id.clone());
+                idle.kind = filter.kind.unwrap_or(SyncRunKind::LibrarySync);
+                idle.summary()
+            });
+        statuses.insert(library.id.clone(), summary);
     }
     Ok(statuses)
 }
 
-async fn library_exists(db: &DbAsync, library_id: &str) -> anyhow::Result<bool> {
-    let db = db.read().await;
-    Ok(
-        match lyra_db::lookup::find_node_id_by_id(&*db, library_id)? {
-            Some(library_db_id) => lyra_db::libraries::get_by_id(&db, library_db_id)?.is_some(),
-            None => false,
-        },
-    )
+async fn filtered_run_for_library(
+    db: &DbAsync,
+    library_id: &str,
+    filter: RunFilter,
+) -> anyhow::Result<Option<SyncRunSummary>> {
+    let kind_matches = |kind: SyncRunKind| filter.kind.is_none_or(|wanted| wanted == kind);
+    if !filter.finished
+        && let Some(active) = active_run_for_library(db, library_id).await?
+        && kind_matches(active.run.kind)
+    {
+        return Ok(Some(active));
+    }
+    let db_read = db.read().await;
+    for record in lyra_db::sync_runs::list_for_library(&db_read, library_id)? {
+        if !kind_matches(SyncRunKind::from_str(&record.kind)?) {
+            continue;
+        }
+        if filter.finished && SyncRunStatus::from_str(&record.status)?.is_active() {
+            continue;
+        }
+        return record_to_summary(record).map(Some);
+    }
+    Ok(None)
+}
+
+/// Cancels the library's active run and returns its summary. Without an active run, returns the
+/// latest run's summary, or an idle one when the library never ran.
+pub(crate) async fn cancel_library_run(library: &Library) -> anyhow::Result<SyncRunSummary> {
+    let db = STATE.db.get();
+    reconcile_interrupted_runs(&db).await?;
+    if let Some(run_id) = active_run_for_library(&db, &library.id)
+        .await?
+        .and_then(|active| active.run.id)
+        && let Some(summary) = cancel_sync_run(&run_id).await?
+    {
+        return Ok(summary);
+    }
+    Ok(active_or_latest_run_for_library(&db, &library.id)
+        .await?
+        .unwrap_or_else(|| SyncRunState::idle(library.id.clone()).summary()))
 }
 
 async fn active_or_latest_run_for_library(
@@ -1396,6 +1467,8 @@ fn record_to_summary(record: lyra_db::sync_runs::SyncRunRecord) -> anyhow::Resul
             finished_at: record.finished_at_ms.map(unix_ms_to_rfc3339_u64),
             error: record.error,
             cancellation_requested: record.cancellation_requested,
+            started_at_ms: Some(record.started_at_ms),
+            finished_at_ms: record.finished_at_ms,
         },
         progress: SyncRunProgressSummary {
             mode: SyncProgressMode::from_str(&record.progress_mode)?,

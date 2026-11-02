@@ -10,41 +10,74 @@ use harmony_luau as luau;
 #[cfg(feature = "docgen")]
 use harmony_luau::{
     DescribeInterface,
+    DescribeTypeAlias,
     FieldDescriptor,
     InterfaceDescriptor,
 };
 use harmony_luau::{
     LuauType,
     LuauTypeInfo,
+    StringEnum,
 };
 use lyra_db::{
     Library,
     Permission,
 };
+use serde::Serialize;
 
 use crate::{
     plugins::{
-        args::UniqueIds,
+        args::{
+            self,
+            UniqueIds,
+        },
         auth::DispatchPrincipal,
         db::Db,
         ids::Resolved,
+        types::{
+            LuauSyncRunKind,
+            LuauSyncRunStatus,
+            LuauSyncStage,
+            LuauSyncTotalState,
+        },
     },
     services::{
         auth::{
             Principal,
             access,
         },
-        libraries::system_context,
+        libraries::{
+            LibraryRefreshRunOptions,
+            LibraryRun,
+            RunFilter,
+            SyncRunStartResponse,
+            SyncRunSummary,
+            control::{
+                self,
+                LibraryControlError,
+            },
+            system_context,
+        },
     },
 };
 
 pub(crate) struct LibrariesModule;
 
-/// Who reads the libraries: a user, who sees the libraries granted to them and their paths with
-/// `ManageLibraries`, or the system, which sees every library and its path.
+/// Who reads the libraries: a user as the database has them now, who sees the libraries they can
+/// see and their paths with `ManageLibraries`, or the system, which sees every library and its
+/// path.
 struct Reader(Option<Principal>);
 
 impl Reader {
+    fn of(db: &agdb::DbAny, caller: DispatchPrincipal) -> luau::runtime::Result<Self> {
+        let current = caller
+            .0
+            .map(|principal| principal.current(db))
+            .transpose()
+            .map_err(crate::plugins::runtime_error)?;
+        Ok(Self(current))
+    }
+
     fn libraries(&self, db: &impl lyra_db::DbAccess) -> luau::runtime::Result<Vec<Library>> {
         let libraries = match &self.0 {
             Some(principal) => access::libraries(db, principal),
@@ -81,7 +114,7 @@ impl Reader {
 
 #[harmony_macros::module(
     id = "lyra/libraries",
-    description = "The libraries the caller can see.",
+    description = "The libraries the caller can see, and their syncs and metadata refreshes. A library runs one sync or refresh at a time. `sync`, `refresh`, `sync_status` and `cancel_sync` need the `lyra.libraries.manage` scope too, and a calling user with the manage_libraries permission, as the database has them when the call runs.",
     docs_feature = "docgen"
 )]
 impl LibrariesModule {
@@ -93,8 +126,8 @@ impl LibrariesModule {
         #[context] db: Db,
         #[context] caller: DispatchPrincipal,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        let reader = Reader(caller.0);
         let db = db.read().await;
+        let reader = Reader::of(&db, caller)?;
         let mut list = luau::OwnedTable::new();
         for library in reader.libraries(&*db)? {
             list.push_array(reader.record(library)?);
@@ -111,8 +144,8 @@ impl LibrariesModule {
         #[context] db: Db,
         #[context] caller: DispatchPrincipal,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        let reader = Reader(caller.0);
         let db = db.read().await;
+        let reader = Reader::of(&db, caller)?;
         let mut libraries = luau::OwnedTable::new();
         for library in reader.libraries(&*db)? {
             if library_ids.0.contains(&library.id) {
@@ -132,8 +165,8 @@ impl LibrariesModule {
         #[context] db: Db,
         #[context] caller: DispatchPrincipal,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        let reader = Reader(caller.0);
         let db = db.read().await;
+        let reader = Reader::of(&db, caller)?;
         let entities = Resolved::of(&*db, entity_ids.0)?;
         let mut values = Vec::with_capacity(entities.db_ids().len());
         for &entity_db_id in entities.db_ids() {
@@ -149,9 +182,151 @@ impl LibrariesModule {
         }
         Ok(entities.keyed(values))
     }
+
+    #[harmony(
+        description = "Starts a sync of the library in the background: a scan of its files, then the metadata and covers of what changed. While a sync or refresh of the library is running, starts nothing and returns that run with `started` false. Returns nil when the library is missing or hidden from the caller.",
+        returns(Option<SyncStartRecord>)
+    )]
+    async fn sync(
+        library_id: String,
+        #[context] principal: Principal,
+    ) -> luau::runtime::Result<luau::Value> {
+        sync_start(control::start(&principal, &library_id, LibraryRun::Sync).await)
+    }
+
+    #[harmony(
+        description = "Starts a refresh of the metadata of every release in the library from every enabled provider and, unless `options.covers` is false, of the covers of the releases and artists it refreshed, in the background, as `sync` starts a sync.",
+        returns(Option<SyncStartRecord>)
+    )]
+    async fn refresh(
+        library_id: String,
+        options: Option<RefreshOptions>,
+        #[context] principal: Principal,
+    ) -> luau::runtime::Result<luau::Value> {
+        let options = options.unwrap_or_default().0;
+        sync_start(control::start(&principal, &library_id, LibraryRun::Refresh(options)).await)
+    }
+
+    #[harmony(
+        description = "Each library's running sync or refresh, else its latest, else an idle run without an `id` for a library without one, keyed by library id. `options` narrows the runs considered. Libraries that are missing or hidden from the caller are absent.",
+        returns(HashMap<String, SyncRunRecord>)
+    )]
+    async fn sync_status(
+        library_ids: UniqueIds,
+        options: Option<SyncStatusOptions>,
+        #[context] principal: Principal,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let filter = options.map_or_else(RunFilter::default, |options| options.0);
+        let statuses = control::sync_status(&principal, &library_ids.0, filter)
+            .await
+            .map_err(crate::plugins::runtime_error)?;
+        let mut table = luau::OwnedTable::with_capacity(0, statuses.len());
+        for (library_id, summary) in statuses {
+            table.set_field(library_id, run_value(&summary)?);
+        }
+        Ok(table)
+    }
+
+    #[harmony(
+        description = "Asks the library's running sync or refresh to stop and returns it, `cancelling` until it stops. Without one running, cancels nothing and returns what `sync_status` does for the library. Returns nil when the library is missing or hidden from the caller.",
+        returns(Option<SyncRunRecord>)
+    )]
+    async fn cancel_sync(
+        library_id: String,
+        #[context] principal: Principal,
+    ) -> luau::runtime::Result<luau::Value> {
+        match control::cancel_sync(&principal, &library_id).await {
+            Ok(summary) => run_value(&summary),
+            Err(LibraryControlError::NotFound(_)) => Ok(luau::Value::Nil),
+            Err(error) => Err(crate::plugins::runtime_error(error)),
+        }
+    }
 }
 
-#[derive(serde::Serialize)]
+fn sync_start(
+    result: Result<SyncRunStartResponse, LibraryControlError>,
+) -> luau::runtime::Result<luau::Value> {
+    match result {
+        Ok(response) => harmony_luau::serializable_to_luau_owned(SyncStartRecord {
+            started: response.started,
+            run: SyncRunRecord::from(&response.run),
+        }),
+        Err(LibraryControlError::NotFound(_)) => Ok(luau::Value::Nil),
+        Err(error) => Err(crate::plugins::runtime_error(error)),
+    }
+}
+
+fn run_value(summary: &SyncRunSummary) -> luau::runtime::Result<luau::Value> {
+    harmony_luau::serializable_to_luau_owned(SyncRunRecord::from(summary))
+}
+
+/// The `options` argument of `refresh`.
+struct RefreshOptions(LibraryRefreshRunOptions);
+
+impl Default for RefreshOptions {
+    fn default() -> Self {
+        Self(LibraryRefreshRunOptions {
+            covers: true,
+            replace_cover: false,
+            force_refresh: false,
+        })
+    }
+}
+
+impl<'vm> luau::FromLuau<'vm> for RefreshOptions {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let options: luau::Table = reader.read()?;
+        args::reject_unknown_fields(
+            &options,
+            "options",
+            &["covers", "replace_cover", "force_refresh"],
+        )?;
+        let covers = args::optional_bool(&options, "covers", "options")?.unwrap_or(true);
+        let replace_cover =
+            args::optional_bool(&options, "replace_cover", "options")?.unwrap_or(false);
+        let force_refresh =
+            args::optional_bool(&options, "force_refresh", "options")?.unwrap_or(false);
+        if !covers && (replace_cover || force_refresh) {
+            return Err(crate::plugins::runtime_error(
+                "options.replace_cover and options.force_refresh need options.covers",
+            ));
+        }
+        Ok(Self(LibraryRefreshRunOptions {
+            covers,
+            replace_cover,
+            force_refresh,
+        }))
+    }
+}
+
+impl LuauTypeInfo for RefreshOptions {
+    fn luau_type() -> LuauType {
+        LuauType::named("RefreshOptions")
+    }
+}
+
+/// The `options` argument of `sync_status`.
+struct SyncStatusOptions(RunFilter);
+
+impl<'vm> luau::FromLuau<'vm> for SyncStatusOptions {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let options: luau::Table = reader.read()?;
+        args::reject_unknown_fields(&options, "options", &["kind", "finished"])?;
+        Ok(Self(RunFilter {
+            kind: args::optional_string_enum::<LuauSyncRunKind>(&options, "kind", "options")?
+                .map(Into::into),
+            finished: args::optional_bool(&options, "finished", "options")?.unwrap_or(false),
+        }))
+    }
+}
+
+impl LuauTypeInfo for SyncStatusOptions {
+    fn luau_type() -> LuauType {
+        LuauType::named("SyncStatusOptions")
+    }
+}
+
+#[derive(Serialize)]
 struct LibraryRecord {
     id: String,
     name: String,
@@ -171,35 +346,194 @@ impl DescribeInterface for LibraryRecord {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("Library", None);
         descriptor.fields.extend([
-            FieldDescriptor {
-                name: "id",
-                ty: String::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "name",
-                ty: String::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "path",
-                ty: Option::<String>::luau_type(),
-                description: Some(
+            field("id", String::luau_type(), None),
+            field("name", String::luau_type(), None),
+            field(
+                "path",
+                Option::<String>::luau_type(),
+                Some(
                     "The directory the library scans. Nil unless the caller has the manage_libraries permission, or the call runs without a user.",
                 ),
-            },
-            FieldDescriptor {
-                name: "language",
-                ty: Option::<String>::luau_type(),
-                description: Some("The ISO 639 language code of the library's metadata, if set."),
-            },
-            FieldDescriptor {
-                name: "country",
-                ty: Option::<String>::luau_type(),
-                description: Some("The ISO 3166 country code of the library's metadata, if set."),
-            },
+            ),
+            field(
+                "language",
+                Option::<String>::luau_type(),
+                Some("The ISO 639 language code of the library's metadata, if set."),
+            ),
+            field(
+                "country",
+                Option::<String>::luau_type(),
+                Some("The ISO 3166 country code of the library's metadata, if set."),
+            ),
         ]);
         descriptor
+    }
+}
+
+#[derive(Serialize)]
+struct SyncStartRecord {
+    started: bool,
+    run: SyncRunRecord,
+}
+
+impl LuauTypeInfo for SyncStartRecord {
+    fn luau_type() -> LuauType {
+        LuauType::named("SyncStart")
+    }
+}
+
+#[cfg(feature = "docgen")]
+impl DescribeInterface for SyncStartRecord {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("SyncStart", None);
+        descriptor.fields.extend([
+            field(
+                "started",
+                bool::luau_type(),
+                Some("Whether the call started `run`, rather than finding it already running."),
+            ),
+            field(
+                "run",
+                SyncRunRecord::luau_type(),
+                Some("The run started, or the one already running."),
+            ),
+        ]);
+        descriptor
+    }
+}
+
+#[derive(Serialize)]
+struct SyncRunRecord {
+    id: Option<String>,
+    kind: &'static str,
+    status: &'static str,
+    started_at_ms: Option<u64>,
+    finished_at_ms: Option<u64>,
+    error: Option<String>,
+    cancellation_requested: bool,
+    total_state: &'static str,
+    completed_units: u64,
+    failed_units: u64,
+    skipped_units: u64,
+    total_units: u64,
+    stage: Option<&'static str>,
+    subject: Option<String>,
+}
+
+impl From<&SyncRunSummary> for SyncRunRecord {
+    fn from(summary: &SyncRunSummary) -> Self {
+        let run = &summary.run;
+        let progress = &summary.progress;
+        Self {
+            id: run.id.clone(),
+            kind: LuauSyncRunKind::from(run.kind).as_str(),
+            status: LuauSyncRunStatus::from(run.status).as_str(),
+            started_at_ms: run.started_at_ms,
+            finished_at_ms: run.finished_at_ms,
+            error: run.error.clone(),
+            cancellation_requested: run.cancellation_requested,
+            total_state: LuauSyncTotalState::from(progress.total_state).as_str(),
+            completed_units: progress.completed_units,
+            failed_units: progress.failed_units,
+            skipped_units: progress.skipped_units,
+            total_units: progress.total_units,
+            stage: summary
+                .current
+                .as_ref()
+                .map(|current| LuauSyncStage::from(current.stage).as_str()),
+            subject: summary
+                .current
+                .as_ref()
+                .and_then(|current| current.subject.clone()),
+        }
+    }
+}
+
+impl LuauTypeInfo for SyncRunRecord {
+    fn luau_type() -> LuauType {
+        LuauType::named("SyncRun")
+    }
+}
+
+#[cfg(feature = "docgen")]
+impl DescribeInterface for SyncRunRecord {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let count = u64::luau_type;
+        let mut descriptor = InterfaceDescriptor::new("SyncRun", None);
+        descriptor.fields.extend([
+            field(
+                "id",
+                Option::<String>::luau_type(),
+                Some("Nil for the idle run of a library without one."),
+            ),
+            field(
+                "kind",
+                LuauSyncRunKind::luau_type(),
+                Some("A sync scans files; a refresh only asks providers."),
+            ),
+            field(
+                "status",
+                LuauSyncRunStatus::luau_type(),
+                Some("`queued`, `planning`, `running` and `cancelling` are running."),
+            ),
+            field(
+                "started_at_ms",
+                Option::<u64>::luau_type(),
+                Some("Nil for an idle run."),
+            ),
+            field(
+                "finished_at_ms",
+                Option::<u64>::luau_type(),
+                Some("Nil until the run ends."),
+            ),
+            field(
+                "error",
+                Option::<String>::luau_type(),
+                Some("Why a `failed` run failed."),
+            ),
+            field(
+                "cancellation_requested",
+                bool::luau_type(),
+                Some("Whether a running run was asked to stop."),
+            ),
+            field(
+                "total_state",
+                LuauSyncTotalState::luau_type(),
+                Some("How far `total_units` is known."),
+            ),
+            field(
+                "completed_units",
+                count(),
+                Some("Units of work done, across every stage."),
+            ),
+            field("failed_units", count(), Some("Units of work that failed.")),
+            field(
+                "skipped_units",
+                count(),
+                Some("Units of work skipped, including those a finished run left."),
+            ),
+            field("total_units", count(), Some("Units of work found so far.")),
+            field(
+                "stage",
+                Option::<LuauSyncStage>::luau_type(),
+                Some("The stage of the oldest work in progress; nil unless the run is running."),
+            ),
+            field(
+                "subject",
+                Option::<String>::luau_type(),
+                Some("What that work is on, such as a release title, when known."),
+            ),
+        ]);
+        descriptor
+    }
+}
+
+#[cfg(feature = "docgen")]
+fn field(name: &'static str, ty: LuauType, description: Option<&'static str>) -> FieldDescriptor {
+    FieldDescriptor {
+        name,
+        ty,
+        description,
     }
 }
 
@@ -207,10 +541,60 @@ impl DescribeInterface for LibraryRecord {
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     use harmony_luau::DescribeModule;
 
+    let mut refresh = InterfaceDescriptor::new("RefreshOptions", None);
+    refresh.fields.extend([
+        field(
+            "covers",
+            LuauType::optional(bool::luau_type()),
+            Some(
+                "Sync the covers of the releases and artists the providers refreshed. Default `true`.",
+            ),
+        ),
+        field(
+            "replace_cover",
+            LuauType::optional(bool::luau_type()),
+            Some(
+                "Replace covers releases already have with the providers' rather than only adding missing ones. Needs `covers`. Default `false`.",
+            ),
+        ),
+        field(
+            "force_refresh",
+            LuauType::optional(bool::luau_type()),
+            Some(
+                "Look provider covers up again rather than reusing what earlier lookups found. Needs `covers`. Default `false`.",
+            ),
+        ),
+    ]);
+
+    let mut status = InterfaceDescriptor::new("SyncStatusOptions", None);
+    status.fields.extend([
+        field(
+            "kind",
+            Option::<LuauSyncRunKind>::luau_type(),
+            Some("Consider only runs of this kind. Default either."),
+        ),
+        field(
+            "finished",
+            LuauType::optional(bool::luau_type()),
+            Some("Report the latest run that ended, passing over a running one. Default `false`."),
+        ),
+    ]);
+
     harmony_luau::render_definition_file_with_support(
         &LibrariesModule::module_descriptor(),
-        &[],
-        &[LibraryRecord::interface_descriptor()],
+        &[
+            LuauSyncRunKind::type_alias_descriptor(),
+            LuauSyncRunStatus::type_alias_descriptor(),
+            LuauSyncTotalState::type_alias_descriptor(),
+            LuauSyncStage::type_alias_descriptor(),
+        ],
+        &[
+            LibraryRecord::interface_descriptor(),
+            refresh,
+            status,
+            SyncStartRecord::interface_descriptor(),
+            SyncRunRecord::interface_descriptor(),
+        ],
         &[],
     )
 }

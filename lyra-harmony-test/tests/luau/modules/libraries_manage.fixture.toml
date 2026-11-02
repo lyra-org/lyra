@@ -1,0 +1,16 @@
+run_as = "manager"
+
+# The manager manages libraries and sees the empty Shown library; Hidden is granted to no one.
+
+[[users]]
+key = "manager"
+permissions = ["manage_libraries"]
+
+[[libraries]]
+key = "shown"
+name = "Shown"
+users = ["manager"]
+
+[[libraries]]
+key = "hidden"
+name = "Hidden"

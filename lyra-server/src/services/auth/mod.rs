@@ -399,18 +399,6 @@ pub(crate) async fn require_can_create_library(bearer: Option<&str>) -> AuthResu
     require_permission_principal(bearer, Permission::ManageLibraries).await
 }
 
-/// The principal of `bearer`, when it may manage the library `library_public_id`, as
-/// [`crate::services::libraries::control::managed_library`] decides.
-pub(crate) async fn require_manage_libraries_on(
-    bearer: Option<&str>,
-    library_public_id: &str,
-) -> AuthResult<Principal> {
-    let principal = require_principal(bearer).await?;
-    let db = STATE.db.read().await;
-    crate::services::libraries::control::managed_library(&db, &principal, library_public_id)?;
-    Ok(principal)
-}
-
 pub(crate) struct LoginResult {
     pub(crate) token: String,
 }
@@ -1230,9 +1218,12 @@ mod tests {
 
         let session =
             crate::services::testing::create_session(user_db_id, Default::default()).await?;
-        let err = require_manage_libraries_on(Some(&session.token), &library_id)
-            .await
-            .expect_err("manager without library access must not pass scoped guard");
+        let err = crate::services::libraries::control::require_manage_libraries_on(
+            Some(&session.token),
+            &library_id,
+        )
+        .await
+        .expect_err("manager without library access must not pass scoped guard");
         assert!(matches!(err, AuthError::NotFound(_)), "got {err:?}");
 
         {
@@ -1248,7 +1239,11 @@ mod tests {
             })?;
         }
 
-        let principal = require_manage_libraries_on(Some(&session.token), &library_id).await?;
+        let principal = crate::services::libraries::control::require_manage_libraries_on(
+            Some(&session.token),
+            &library_id,
+        )
+        .await?;
         assert_eq!(principal.user_db_id, user_db_id);
         Ok(())
     }

@@ -266,20 +266,29 @@ pub(crate) fn resolve_library_db_id(
     principal: &Principal,
     library_id: &str,
 ) -> Result<DbId, AccessError> {
-    if principal.permissions.contains(&lyra_db::Permission::Admin) {
-        if !principal.accessible_library_ids.contains(library_id) {
-            return Err(AccessError::LibraryNotFound(library_id.to_string()));
-        }
-        let library_db_id = lyra_db::lookup::find_node_id_by_id(db, library_id)?
-            .ok_or_else(|| AccessError::LibraryNotFound(library_id.to_string()))?;
-        lyra_db::libraries::get_by_id(db, library_db_id)?
-            .ok_or_else(|| AccessError::LibraryNotFound(library_id.to_string()))?;
-        return Ok(library_db_id);
-    }
-
-    let user_db_id = principal.require(db).map_err(anyhow::Error::from)?;
-    lyra_db::libraries::find_node_id_accessible_to_user(db, user_db_id, library_id)?
+    resolve_library(db, principal, library_id)?
+        .db_id
         .ok_or_else(|| AccessError::LibraryNotFound(library_id.to_string()))
+}
+
+/// The library `library_id` names, when the principal can see it.
+pub(crate) fn resolve_library(
+    db: &impl lyra_db::DbAccess,
+    principal: &Principal,
+    library_id: &str,
+) -> Result<Library, AccessError> {
+    let not_found = || AccessError::LibraryNotFound(library_id.to_string());
+    let library_db_id = if principal.permissions.contains(&lyra_db::Permission::Admin) {
+        if !principal.accessible_library_ids.contains(library_id) {
+            return Err(not_found());
+        }
+        lyra_db::lookup::find_node_id_by_id(db, library_id)?.ok_or_else(not_found)?
+    } else {
+        let user_db_id = principal.require(db).map_err(anyhow::Error::from)?;
+        lyra_db::libraries::find_node_id_accessible_to_user(db, user_db_id, library_id)?
+            .ok_or_else(not_found)?
+    };
+    lyra_db::libraries::get_by_id(db, library_db_id)?.ok_or_else(not_found)
 }
 
 pub(crate) fn resolve_optional_library_filter(

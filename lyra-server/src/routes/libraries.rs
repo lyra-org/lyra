@@ -45,11 +45,18 @@ use crate::{
         LibraryRefreshRunOptions,
         SyncRunStartResponse,
         auth::{
+            access,
             require_authenticated,
             require_can_create_library,
-            require_manage_libraries_on,
         },
-        libraries::control,
+        libraries::{
+            LibraryRun,
+            RunFilter,
+            control::{
+                self,
+                require_manage_libraries_on,
+            },
+        },
         start_library_sync,
     },
 };
@@ -196,11 +203,12 @@ async fn refresh_library(
 ) -> Result<Json<SyncRunStartResponse>, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
     let options = LibraryRefreshRunOptions {
+        covers: true,
         replace_cover: query.replace_cover,
         force_refresh: query.force_refresh,
     };
     Ok(Json(
-        control::refresh(&principal, &library_id, options).await?,
+        control::start(&principal, &library_id, LibraryRun::Refresh(options)).await?,
     ))
 }
 
@@ -376,11 +384,10 @@ async fn delete_library(
     }
     let removed = {
         let mut db = STATE.db.write().await;
+        // The caller may have lost the permission or the library while waiting on the guard.
+        let (principal, library) = control::managed_library(&db, &principal, &id)?;
         let user_db_id = principal.require(&db)?;
-        let library_db_id = lyra_db::lookup::find_node_id_by_id(&*db, &id)?
-            .ok_or_else(|| library_not_found(&id))?;
-        let library = lyra_db::libraries::get_by_id(&*db, library_db_id)?
-            .ok_or_else(|| library_not_found(&id))?;
+        let library_db_id = library.db_id.ok_or_else(|| library_not_found(&id))?;
         db.transaction_mut(|t| -> Result<_, AppError> {
             if !principal.permissions.contains(&Permission::Admin)
                 && !lyra_db::libraries::user_has_access_in_txn(t, user_db_id, library_db_id)?
@@ -424,10 +431,8 @@ async fn list_libraries(headers: HeaderMap) -> Result<Json<Vec<LibraryResponse>>
         lyra_db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
 
     let db = STATE.db.read().await;
-    let libraries = lyra_db::libraries::get(&db)?;
-    let response: Vec<LibraryResponse> = libraries
+    let response: Vec<LibraryResponse> = access::libraries(&*db, &principal)?
         .into_iter()
-        .filter(|library| principal.accessible_library_ids.contains(&library.id))
         .map(|library| LibraryResponse::from_library(library, include_directory))
         .collect();
     Ok(Json(response))
@@ -455,7 +460,7 @@ async fn get_library_sync_status(
     Path(id): Path<String>,
 ) -> Result<Json<crate::services::LibrarySyncStatus>, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
-    control::sync_status(&principal, std::slice::from_ref(&id))
+    control::sync_status(&principal, std::slice::from_ref(&id), RunFilter::default())
         .await?
         .remove(&id)
         .map(Json)
@@ -467,7 +472,9 @@ async fn start_library_sync_for_library(
     Path(id): Path<String>,
 ) -> Result<Json<SyncRunStartResponse>, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
-    Ok(Json(control::sync(&principal, &id).await?))
+    Ok(Json(
+        control::start(&principal, &id, LibraryRun::Sync).await?,
+    ))
 }
 
 #[cfg(feature = "docgen")]

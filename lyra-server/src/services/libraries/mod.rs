@@ -17,11 +17,15 @@ pub(crate) use configured::{
 };
 pub(crate) use orchestrator::{
     LibraryRefreshRunOptions,
+    LibraryRun,
     LibrarySyncRegistries,
     LibrarySyncStatus,
+    RunFilter,
     SyncRunEvent,
+    SyncRunKind,
     SyncRunProgress,
     SyncRunStartResponse,
+    SyncRunStatus,
     SyncRunSummary,
     SyncStageKey,
     SyncTotalState,

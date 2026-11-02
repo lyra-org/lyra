@@ -1,0 +1,14 @@
+run_as = "listener"
+
+[[users]]
+key = "listener"
+
+[[libraries]]
+key = "shown"
+name = "Shown"
+users = ["listener"]
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "shown"

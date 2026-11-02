@@ -1,0 +1,43 @@
+run_as = "syncer"
+
+# The syncer may sync metadata and sees the Shown library; Hidden is granted to no one.
+
+[[users]]
+key = "syncer"
+permissions = ["sync_metadata"]
+
+[[libraries]]
+key = "shown"
+name = "Shown"
+users = ["syncer"]
+
+[[libraries]]
+key = "hidden"
+name = "Hidden"
+
+[[artists]]
+key = "singer"
+name = "Singer"
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "shown"
+artists = ["singer"]
+
+[[releases]]
+key = "secret"
+title = "Secret"
+library = "hidden"
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+artists = ["singer"]
+
+[[playlists]]
+key = "mine"
+owner = "syncer"
+name = "Mine"
+tracks = ["song"]
