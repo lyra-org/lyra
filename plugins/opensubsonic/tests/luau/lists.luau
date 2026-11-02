@@ -1,5 +1,5 @@
-local fixture = ...
-local call = require("./_call")
+local fixture, harness = ...
+local call = require("./_call")(harness)
 local folders = require("../../catalog/folders")
 
 local ids = fixture.ids

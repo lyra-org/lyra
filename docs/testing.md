@@ -173,12 +173,32 @@ fixture.entries.mix[1]  -- a playlist's entry ids, in order
 ```
 
 A test that needs a second user's view gets its own file and fixture with a different `run_as`.
-Without a fixture, a Luau test runs as a fresh non-admin user over an empty catalog.
+Without a fixture, a Luau test runs as a fresh non-admin user over an empty catalog. The test's
+own calls act for that user throughout.
 
 ## Luau harness
 
 A Luau test's second `...` is a table of helpers for what a test can't reach from Luau. Its
-`sockets` opens and closes plugin websockets in place of a client:
+`plugin` calls the plugin's code as the host dispatches a request: in a thread of its own, acting
+for no user until the code authenticates one. A call into code that authenticates, such as an API
+handler, goes through it, so whom the call authenticates doesn't become the test's user:
+
+```luau
+local fixture, harness = ...
+local dispatch = require("../../dispatch")
+local response = harness.plugin:call(dispatch.dispatch, ctx) -- returns what the handler returns
+```
+
+`plugin:call` isolates only the thread it creates, so a coroutine created outside it and resumed
+inside keeps the test's user.
+
+Its `task` waits whatever scopes the plugin declares, as a test polling for a run to end does:
+
+```luau
+harness.task:wait(0.05) -- yields the test for at least this many seconds
+```
+
+Its `sockets` opens and closes plugin websockets in place of a client:
 
 ```luau
 local fixture, harness = ...

@@ -1,5 +1,5 @@
-local fixture = ...
-local call = require("./_call")
+local fixture, harness = ...
+local call = require("./_call")(harness)
 
 local ids = fixture.ids
 local key = fixture.api_keys.owner_key

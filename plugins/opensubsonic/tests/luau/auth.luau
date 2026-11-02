@@ -1,6 +1,6 @@
-local fixture = ...
+local fixture, harness = ...
 local auth = require("../../protocol/auth")
-local call = require("./_call")
+local call = require("./_call")(harness)
 
 local function query_of(params: { [string]: string })
 	local query = {}
@@ -11,7 +11,7 @@ local function query_of(params: { [string]: string })
 end
 
 local function authenticate(params: { [string]: string })
-	return auth.authenticate(query_of(params))
+	return harness.plugin:call(auth.authenticate, query_of(params))
 end
 
 local function assert_error(params: { [string]: string }, code: number)

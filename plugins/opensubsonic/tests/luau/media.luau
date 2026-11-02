@@ -1,5 +1,5 @@
-local fixture = ...
-local call = require("./_call")
+local fixture, harness = ...
+local call = require("./_call")(harness)
 local lyrics = require("@lyra/lyrics")
 
 local ids = fixture.ids
