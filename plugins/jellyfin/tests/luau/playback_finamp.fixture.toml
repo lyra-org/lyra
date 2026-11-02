@@ -1,0 +1,42 @@
+run_as = "listener"
+
+[[users]]
+key = "listener"
+
+[[api_keys]]
+key = "phone"
+user = "listener"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener"]
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+
+[[tracks]]
+key = "first"
+title = "First"
+release = "album"
+duration_ms = 200000
+
+[[tracks]]
+key = "second"
+title = "Second"
+release = "album"
+duration_ms = 200000
+
+[[tracks]]
+key = "short"
+title = "Short"
+release = "album"
+duration_ms = 2000
+
+[[tracks]]
+key = "after"
+title = "After"
+release = "album"
+duration_ms = 200000

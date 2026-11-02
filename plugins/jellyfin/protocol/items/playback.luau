@@ -1096,7 +1096,7 @@ function module.report_playback_event(
 	local normalized_state: PlaybackState = if normalized_event_name == "started" then "playing" else state
 
 	-- As upstream, a new item replaces the one playing without stopping it. The host keeps the
-	-- replaced play for its late stop report, and pauses it with the session's disconnect.
+	-- replaced play, paused, for its late stop report.
 	local reported, report_error = playbacks.report_session({
 		session_key = session_key :: string,
 		track_id = item_id,
