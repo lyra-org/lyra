@@ -88,6 +88,12 @@ local function json_post_headers(): { [string]: string }
 	return headers
 end
 
+-- Whether AudioMuse answered with a 2xx status; `success` alone only means a response arrived.
+local function response_ok(response: HttpResponse): boolean
+	local status = response.status_code
+	return response.success and status ~= nil and status >= 200 and status < 300
+end
+
 local function safe_json_decode(raw: string): JsonValue?
 	local ok, value = pcall(json.decode, raw)
 	if not ok then
@@ -129,12 +135,12 @@ end
 -- The JSON body of a successful response; `{}` for a 404 (seeds not yet analyzed), nil for a
 -- backend failure.
 local function response_body(label: string, response: HttpResponse): JsonValue?
-	if not response.success then
+	if not response_ok(response) then
 		-- 404 = seed not yet analyzed; distinct from a backend outage.
-		if response.status_code == 404 then
+		if response.success and response.status_code == 404 then
 			return {}
 		end
-		warn(`{label} backend failure: status={response.status_code} kind={response.error_kind or ""}`)
+		warn(`{label} backend failure: status={response.status_code or 0} kind={response.error_kind or ""}`)
 		return nil
 	end
 
@@ -350,7 +356,7 @@ api.get("/audiomuse/health", function(): ApiResponse
 	})
 
 	return api.response.json(response.status_code or 502, {
-		healthy = response.success,
+		healthy = response_ok(response),
 		backend_url = BASE_URL,
 	})
 end)
