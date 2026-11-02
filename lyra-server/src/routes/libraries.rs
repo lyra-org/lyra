@@ -52,7 +52,9 @@ use crate::{
         },
         libraries::{
             LibraryRun,
+            LibrarySyncOptions,
             RunFilter,
+            SyncReleases,
             control::{
                 self,
                 require_manage_libraries_on,
@@ -175,6 +177,35 @@ struct LibraryRefreshQuery {
         feature = "docgen",
         schemars(
             description = "The covers to fetch for the refreshed releases and artists: `skip`, `missing` (the default, only where none is set) or `replace`."
+        )
+    )]
+    covers: CoverUpdate,
+    #[serde(default)]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Look covers up again instead of using cached lookups. Rejected with `covers=skip`."
+        )
+    )]
+    bypass_cover_cache: bool,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Default, Deserialize)]
+struct LibrarySyncQuery {
+    #[serde(default)]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "The releases to ask the providers about: `changed` (the default, those the scan found new or changed) or `all`."
+        )
+    )]
+    releases: SyncReleases,
+    #[serde(default)]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "The covers to fetch for the releases the providers are asked about, and with `releases=all` for their artists too: `skip`, `missing` (the default, only where none is set) or `replace`."
         )
     )]
     covers: CoverUpdate,
@@ -469,10 +500,15 @@ async fn get_library_sync_status(
 async fn start_library_sync_for_library(
     headers: HeaderMap,
     Path(id): Path<String>,
+    Query(query): Query<LibrarySyncQuery>,
 ) -> Result<Json<SyncRunStartResponse>, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
+    let options = LibrarySyncOptions {
+        releases: query.releases,
+        covers: CoverSyncOptions::new(query.covers, query.bypass_cover_cache)?,
+    };
     Ok(Json(
-        control::start(&principal, &id, LibraryRun::Sync).await?,
+        control::start(&principal, &id, LibraryRun::Sync(options)).await?,
     ))
 }
 
@@ -486,7 +522,9 @@ fn get_library_sync_status_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn start_library_sync_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Start library sync")
-        .description("Starts a background library sync. While a sync or refresh of the library is running, starts nothing and returns 200 with `started` false and the running one. Requires ManageLibraries and library access.")
+        .description("Starts a background library sync: a scan of its files, then a metadata refresh from all enabled providers of the releases `releases` picks, `changed` (the default, those the scan found new or changed) or `all`, and their covers.\n\
+            `covers` and `bypass_cover_cache` pick the covers as they do for a library refresh.\n\
+            While a sync or refresh of the library is running, starts nothing and returns 200 with `started` false and the running one, ignoring the parameters. Requires ManageLibraries and library access.")
 }
 
 async fn list_library_access(
@@ -709,13 +747,15 @@ mod tests {
     }
 
     #[test]
-    fn refresh_query_reads_the_cover_options() {
-        let replace: LibraryRefreshQuery =
-            query("covers=replace&bypass_cover_cache=true").expect("parses");
-        assert_eq!(replace.covers, CoverUpdate::Replace);
-        assert!(replace.bypass_cover_cache);
+    fn sync_and_refresh_queries_read_the_cover_options() {
+        let sync: LibrarySyncQuery =
+            query("releases=all&covers=replace&bypass_cover_cache=true").expect("parses");
+        assert_eq!(sync.releases, SyncReleases::All);
+        assert_eq!(sync.covers, CoverUpdate::Replace);
+        assert!(sync.bypass_cover_cache);
 
-        let defaults: LibraryRefreshQuery = query("").expect("parses");
+        let defaults: LibrarySyncQuery = query("").expect("parses");
+        assert_eq!(defaults.releases, SyncReleases::Changed);
         assert_eq!(defaults.covers, CoverUpdate::Missing);
         assert!(!defaults.bypass_cover_cache);
 
@@ -729,6 +769,10 @@ mod tests {
             unknown.contains("`skip`, `missing`, `replace`"),
             "the rejection names the accepted values: {unknown}"
         );
+        let unknown = query::<LibrarySyncQuery>("releases=new")
+            .err()
+            .expect("rejected");
+        assert!(unknown.contains("`changed` or `all`"), "{unknown}");
     }
 
     #[tokio::test]
@@ -760,7 +804,7 @@ mod tests {
         assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
 
         let refresh = refresh_library(
-            headers,
+            headers.clone(),
             Path("library".to_string()),
             Query(LibraryRefreshQuery {
                 covers: CoverUpdate::Skip,
@@ -768,8 +812,20 @@ mod tests {
             }),
         )
         .await;
-        let response = refresh.map(|_| ()).expect_err("rejected").into_response();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let sync = start_library_sync_for_library(
+            headers,
+            Path("library".to_string()),
+            Query(LibrarySyncQuery {
+                covers: CoverUpdate::Skip,
+                bypass_cover_cache: true,
+                ..LibrarySyncQuery::default()
+            }),
+        )
+        .await;
+        for response in [refresh.map(|_| ()), sync.map(|_| ())] {
+            let response = response.expect_err("rejected").into_response();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        }
         Ok(())
     }
 

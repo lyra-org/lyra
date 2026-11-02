@@ -39,6 +39,15 @@ pub(crate) use orchestrator::{
     sync_run_events_after,
     wait_for_running_library_syncs,
 };
+#[cfg(test)]
+pub(crate) use orchestrator::{
+    begin_test_run,
+    end_test_run,
+};
 pub(crate) use roots::confine_to_media_roots;
-pub(crate) use sync::sync_library;
 pub(crate) use sync::system_context;
+pub(crate) use sync::{
+    LibrarySyncOptions,
+    SyncReleases,
+    sync_library,
+};

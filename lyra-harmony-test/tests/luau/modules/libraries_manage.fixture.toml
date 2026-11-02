@@ -1,6 +1,7 @@
 run_as = "manager"
 
-# The manager manages libraries and sees the empty Shown library; Hidden is granted to no one.
+# The manager manages libraries and sees the Shown library and its album; Hidden is granted to
+# no one.
 
 [[users]]
 key = "manager"
@@ -14,3 +15,8 @@ users = ["manager"]
 [[libraries]]
 key = "hidden"
 name = "Hidden"
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "shown"

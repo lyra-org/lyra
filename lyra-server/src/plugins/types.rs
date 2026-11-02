@@ -283,6 +283,13 @@ mirror_string_enum!(
     [Skip, Missing, Replace]
 );
 
+mirror_string_enum!(
+    LuauSyncReleases for crate::services::libraries::SyncReleases,
+    "SyncReleases",
+    description = "Which releases a sync asks the providers about: those the scan found new or changed (`changed`), or every release in the library (`all`).",
+    [Changed, All]
+);
+
 describe_record!(
     LuauRelease for lyra_db::Release,
     "Release",
@@ -621,5 +628,7 @@ mod tests {
         >();
         assert_spelled_as_serialized::<LuauSyncStage, crate::services::libraries::SyncStageKey>();
         assert_spelled_as_serialized::<LuauCoverUpdate, crate::services::CoverUpdate>();
+        assert_spelled_as_serialized::<LuauSyncReleases, crate::services::libraries::SyncReleases>(
+        );
     }
 }

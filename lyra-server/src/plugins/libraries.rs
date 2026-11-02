@@ -35,6 +35,7 @@ use crate::{
         db::Db,
         ids::Resolved,
         types::{
+            LuauSyncReleases,
             LuauSyncRunKind,
             LuauSyncRunStatus,
             LuauSyncStage,
@@ -49,6 +50,7 @@ use crate::{
         },
         libraries::{
             LibraryRun,
+            LibrarySyncOptions,
             RunFilter,
             SyncRunStartResponse,
             SyncRunSummary,
@@ -184,14 +186,16 @@ impl LibrariesModule {
     }
 
     #[harmony(
-        description = "Starts a sync of the library in the background: a scan of its files, then the metadata and covers of what changed. While a sync or refresh of the library is running, starts nothing and returns that run with `started` false. Returns nil when the library is missing or hidden from the caller.",
+        description = "Starts a sync of the library in the background: a scan of its files, then the metadata of the releases `options.releases` picks from every enabled provider and their covers as `options.covers` asks. While a sync or refresh of the library is running, starts nothing and returns that run with `started` false, ignoring `options`. Returns nil when the library is missing or hidden from the caller.",
         returns(Option<SyncStartRecord>)
     )]
     async fn sync(
         library_id: String,
+        options: Option<SyncOptions>,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::Value> {
-        sync_start(control::start(&principal, &library_id, LibraryRun::Sync).await)
+        let options = options.map(|options| options.0).unwrap_or_default();
+        sync_start(control::start(&principal, &library_id, LibraryRun::Sync(options)).await)
     }
 
     #[harmony(
@@ -258,6 +262,34 @@ fn sync_start(
 
 fn run_value(summary: &SyncRunSummary) -> luau::runtime::Result<luau::Value> {
     harmony_luau::serializable_to_luau_owned(SyncRunRecord::from(summary))
+}
+
+/// The `options` argument of `sync`.
+struct SyncOptions(LibrarySyncOptions);
+
+impl<'vm> luau::FromLuau<'vm> for SyncOptions {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let options: luau::Table = reader.read()?;
+        args::reject_unknown_fields(
+            &options,
+            "options",
+            &["releases", "covers", "bypass_cover_cache"],
+        )?;
+        Ok(Self(LibrarySyncOptions {
+            releases: args::optional_string_enum::<LuauSyncReleases>(
+                &options, "releases", "options",
+            )?
+            .map(Into::into)
+            .unwrap_or_default(),
+            covers: args::cover_sync_options(&options, "options")?,
+        }))
+    }
+}
+
+impl LuauTypeInfo for SyncOptions {
+    fn luau_type() -> LuauType {
+        LuauType::named("SyncOptions")
+    }
 }
 
 /// The `options` argument of `refresh`.
@@ -530,6 +562,18 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         ]
     };
 
+    let mut sync = InterfaceDescriptor::new("SyncOptions", None);
+    sync.fields.push(field(
+        "releases",
+        Option::<LuauSyncReleases>::luau_type(),
+        Some(
+            "The releases to ask the providers about. Default `changed`: only those the scan found new or changed.",
+        ),
+    ));
+    sync.fields.extend(cover_fields(
+        "The covers to fetch for the releases the providers are asked about, and with `releases` `all` for their artists too. Default `missing`: only where none is set.",
+    ));
+
     let mut refresh = InterfaceDescriptor::new("RefreshOptions", None);
     refresh.fields.extend(cover_fields(
         "The covers to fetch for the releases and artists the providers refreshed. Default `missing`: only where none is set.",
@@ -557,9 +601,11 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
             LuauSyncTotalState::type_alias_descriptor(),
             LuauSyncStage::type_alias_descriptor(),
             crate::plugins::types::LuauCoverUpdate::type_alias_descriptor(),
+            LuauSyncReleases::type_alias_descriptor(),
         ],
         &[
             LibraryRecord::interface_descriptor(),
+            sync,
             refresh,
             status,
             SyncStartRecord::interface_descriptor(),

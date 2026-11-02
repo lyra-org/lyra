@@ -121,6 +121,7 @@ pub(crate) use links::{
 pub(crate) use refresh::{
     LibraryRefreshOptions,
     refresh_entity_metadata,
+    refresh_library_metadata_after_others,
     refresh_library_metadata_with_progress,
     refresh_release_metadata_for_scan_with_progress,
     release_refresh_provider_ids,
@@ -181,6 +182,17 @@ pub(crate) enum ProviderServiceError {
     InvalidOption(String),
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
+}
+
+impl ProviderServiceError {
+    /// The error as an [`anyhow::Error`], an internal one unwrapped so what it holds, such as a
+    /// run's cancellation, can still be downcast to.
+    pub(crate) fn into_anyhow(self) -> anyhow::Error {
+        match self {
+            Self::Internal(err) => err,
+            other => anyhow::Error::new(other),
+        }
+    }
 }
 
 pub(crate) struct EntityRefreshResult {

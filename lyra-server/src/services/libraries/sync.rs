@@ -64,6 +64,7 @@ use crate::services::{
     },
     providers::{
         LibraryRefreshOptions,
+        refresh_library_metadata_after_others,
         refresh_release_metadata_for_scan_with_progress,
         release_refresh_provider_ids,
     },
@@ -80,6 +81,25 @@ use lyra_db::{
 };
 
 pub(crate) const MAX_CONCURRENT_ALBUM_PIPELINE: usize = 4;
+
+/// Which releases a library sync asks the providers about.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SyncReleases {
+    /// Only the releases the scan found new or changed.
+    #[default]
+    Changed,
+    /// Every release in the library, as a refresh does, once the scan applied the files.
+    All,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct LibrarySyncOptions {
+    pub(crate) releases: SyncReleases,
+    /// The covers the releases the providers are asked about fetch.
+    pub(crate) covers: CoverSyncOptions,
+}
 
 fn trace_run_id(progress: Option<&SyncRunProgress>) -> String {
     progress
@@ -321,9 +341,13 @@ async fn cleanup_metadata_orphans(
     Ok(())
 }
 
+/// Scans the library's files, applies what changed, then asks the providers about the releases
+/// `options.releases` picks. With every release, they refresh as a library refresh does before
+/// the changed ones run their other stages, so none is refreshed twice.
 pub(crate) async fn sync_library_pipeline(
     db: &DbAsync,
     library: &Library,
+    options: LibrarySyncOptions,
     progress: Option<SyncRunProgress>,
 ) -> anyhow::Result<()> {
     let library_db_id = library
@@ -339,15 +363,18 @@ pub(crate) async fn sync_library_pipeline(
         progress.check_cancelled().await?;
     }
     let plans = process_pending_metadata(db, library, progress.clone()).await?;
+    let stages = ReleaseArtifactStages::for_sync(options);
     if let Some(progress) = &progress {
-        let provider_count = release_refresh_provider_ids(None, false).await?.len() as u64;
-        progress
-            .add_stage_total(
-                SyncStageKey::ProviderRefresh,
-                plans.len() as u64 * provider_count,
-                SyncTotalState::Final,
-            )
-            .await;
+        if stages.provider_refresh {
+            let provider_count = release_refresh_provider_ids(None, false).await?.len() as u64;
+            progress
+                .add_stage_total(
+                    SyncStageKey::ProviderRefresh,
+                    plans.len() as u64 * provider_count,
+                    SyncTotalState::Final,
+                )
+                .await;
+        }
         progress
             .add_stage_total(
                 SyncStageKey::LocalCoverMetadata,
@@ -362,17 +389,25 @@ pub(crate) async fn sync_library_pipeline(
                 SyncTotalState::Final,
             )
             .await;
-        progress
-            .add_stage_total(
-                SyncStageKey::ProviderCover,
-                plans.len() as u64,
-                SyncTotalState::Final,
-            )
-            .await;
+        if !stages.covers.skips() {
+            progress
+                .add_stage_total(
+                    SyncStageKey::ProviderCover,
+                    plans.len() as u64,
+                    SyncTotalState::Final,
+                )
+                .await;
+        }
         progress
             .add_stage_total(SyncStageKey::Cleanup, 2, SyncTotalState::Final)
             .await;
-        progress.set_determinate().await;
+        // A sync of every release finalises the totals once its refresh added its own.
+        if stages.provider_refresh {
+            progress.set_determinate().await;
+        }
+    }
+    if options.releases == SyncReleases::All {
+        refresh_every_release(library_db_id, options.covers, progress.clone()).await?;
     }
     futures::stream::iter(plans)
         .for_each_concurrent(MAX_CONCURRENT_ALBUM_PIPELINE, |plan| {
@@ -382,8 +417,15 @@ pub(crate) async fn sync_library_pipeline(
             async move {
                 #[cfg(test)]
                 tests::before_release_artifacts(&plan).await;
-                if process_release_artifacts(&db, library_db_id, &library_path, &plan, progress)
-                    .await
+                if process_release_artifacts(
+                    &db,
+                    library_db_id,
+                    &library_path,
+                    &plan,
+                    stages,
+                    progress,
+                )
+                .await
                 {
                     mark_entries_synced(&db, library_db_id, &plan.entry_ids).await;
                 }
@@ -396,6 +438,79 @@ pub(crate) async fn sync_library_pipeline(
     refresh_gone_covers(db, library, library_db_id).await;
     cleanup_metadata_orphans(db, library_db_id, progress).await?;
     Ok(())
+}
+
+/// Refreshes every release in the library as a library refresh does, adding its stages' totals,
+/// once another refresh of the library, such as a provider sync's, has ended. Fails only when
+/// the run is cancelled: the refresh fails per unit, and anything else failing it is a failed
+/// unit, so the changed releases' stages still run.
+async fn refresh_every_release(
+    library_db_id: DbId,
+    covers: CoverSyncOptions,
+    progress: Option<SyncRunProgress>,
+) -> anyhow::Result<()> {
+    let options = LibraryRefreshOptions {
+        covers,
+        apply_sync_filters: false,
+        provider_id: None,
+    };
+    let Err(err) =
+        refresh_library_metadata_after_others(library_db_id, &options, progress.clone()).await
+    else {
+        return Ok(());
+    };
+    let err = err.into_anyhow();
+    if err.downcast_ref::<SyncRunControlError>().is_some() {
+        return Err(err);
+    }
+    tracing::warn!(
+        library_db_id = library_db_id.0,
+        error = %format_args!("{err:#}"),
+        "sync of every release could not refresh the library"
+    );
+    if let Some(progress) = &progress {
+        progress
+            .add_stage_total(SyncStageKey::ProviderRefresh, 1, SyncTotalState::Final)
+            .await;
+        let details = SyncWorkDetails::new("library_provider_refresh");
+        let work_id = progress
+            .start_work(SyncStageKey::ProviderRefresh, details.clone())
+            .await;
+        progress
+            .fail_work(
+                work_id,
+                SyncStageKey::ProviderRefresh,
+                details,
+                format!("{err:#}"),
+            )
+            .await;
+        progress.set_determinate().await;
+    }
+    Ok(())
+}
+
+/// The stages a changed release runs after the scan applied it.
+#[derive(Clone, Copy)]
+struct ReleaseArtifactStages {
+    provider_refresh: bool,
+    covers: CoverSyncOptions,
+}
+
+impl ReleaseArtifactStages {
+    /// The provider stages run per release only in a sync of the changed releases; one of every
+    /// release leaves them to the library-wide refresh.
+    fn for_sync(options: LibrarySyncOptions) -> Self {
+        match options.releases {
+            SyncReleases::Changed => Self {
+                provider_refresh: true,
+                covers: options.covers,
+            },
+            SyncReleases::All => Self {
+                provider_refresh: false,
+                covers: CoverSyncOptions::SKIP,
+            },
+        }
+    }
 }
 
 /// Searches again for the covers whose file is gone, which the release passes above skip for
@@ -850,6 +965,7 @@ async fn process_release_artifacts(
     library_db_id: DbId,
     library_path: &Path,
     plan: &ReleaseArtifactPlan,
+    stages: ReleaseArtifactStages,
     progress: Option<SyncRunProgress>,
 ) -> bool {
     let run_id = trace_run_id(progress.as_ref());
@@ -866,16 +982,28 @@ async fn process_release_artifacts(
         run_id: run_id.clone(),
         progress: progress.clone(),
     };
-    // The release's covers sync in a stage of their own.
-    let options = LibraryRefreshOptions {
-        covers: CoverSyncOptions::SKIP,
-        apply_sync_filters: false,
-        provider_id: None,
-    };
-
     if is_cancelled(progress.as_ref()).await {
         return false;
     }
+    if stages.provider_refresh {
+        refresh_changed_release(&context).await;
+        if is_cancelled(progress.as_ref()).await {
+            return false;
+        }
+    }
+
+    let local_cover = sync_local_release_cover_metadata(&context).await;
+    dispatch_release_lyrics(library_db_id, release_id, plan, run_id, progress.clone()).await;
+    if !stages.covers.skips() {
+        sync_provider_release_cover(&context, stages.covers).await;
+    }
+    local_cover.is_ok() && !is_cancelled(progress.as_ref()).await
+}
+
+async fn refresh_changed_release(context: &ReleaseArtifactContext<'_>) {
+    let library_db_id = context.library_db_id;
+    let release_id = context.release_id;
+    let run_id = &context.run_id;
     tracing::debug!(
         library_db_id = library_db_id.0,
         run_id = %run_id,
@@ -886,10 +1014,9 @@ async fn process_release_artifacts(
     if let Err(err) = refresh_release_metadata_for_scan_with_progress(
         library_db_id,
         release_id,
-        &options,
-        progress.clone(),
-        release_public_id.clone(),
-        release_title.clone(),
+        context.progress.clone(),
+        context.release_public_id.clone(),
+        context.release_title.clone(),
     )
     .await
     {
@@ -902,14 +1029,6 @@ async fn process_release_artifacts(
             "scan release provider refresh failed"
         );
     }
-    if is_cancelled(progress.as_ref()).await {
-        return false;
-    }
-
-    let local_cover = sync_local_release_cover_metadata(&context).await;
-    dispatch_release_lyrics(library_db_id, release_id, plan, run_id, progress.clone()).await;
-    sync_provider_release_cover(&context).await;
-    local_cover.is_ok() && !is_cancelled(progress.as_ref()).await
 }
 
 /// Records the release's local cover, failing when it can't be resolved or persisted.
@@ -1053,7 +1172,10 @@ async fn dispatch_release_lyrics(
     );
 }
 
-async fn sync_provider_release_cover(context: &ReleaseArtifactContext<'_>) {
+async fn sync_provider_release_cover(
+    context: &ReleaseArtifactContext<'_>,
+    options: CoverSyncOptions,
+) {
     let started = Instant::now();
     let details = context.details("provider_cover");
     let work_id = if let Some(progress) = &context.progress {
@@ -1126,7 +1248,7 @@ async fn sync_provider_release_cover(context: &ReleaseArtifactContext<'_>) {
         &release,
         &artists,
         cover_paths,
-        CoverSyncOptions::default(),
+        options,
     )
     .await
     {
@@ -1173,7 +1295,7 @@ async fn sync_provider_release_cover(context: &ReleaseArtifactContext<'_>) {
 }
 
 pub(crate) async fn sync_library(db: &DbAsync, library: &Library) -> anyhow::Result<()> {
-    sync_library_pipeline(db, library, None).await
+    sync_library_pipeline(db, library, LibrarySyncOptions::default(), None).await
 }
 
 #[cfg(test)]
@@ -1518,7 +1640,12 @@ FILE "album.flac" WAVE
         HOOKS
             .scope(
                 hooks,
-                sync_library_pipeline(&STATE.db.get(), library, progress),
+                sync_library_pipeline(
+                    &STATE.db.get(),
+                    library,
+                    LibrarySyncOptions::default(),
+                    progress,
+                ),
             )
             .await
     }
@@ -1610,6 +1737,117 @@ FILE "album.flac" WAVE
 
         assert_eq!(*hooks.applied.lock().expect("applied"), ["Two"]);
         assert!(synced(&library, &one).await? && synced(&library, &two).await?);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    /// The release ids a provider's refresh handler was called for, sorted.
+    fn refreshed_ids(
+        dispatch: &crate::services::testing::FakePluginDispatch,
+        handler: crate::services::plugin_dispatch::PluginCallbackHandle,
+    ) -> Vec<String> {
+        let mut ids: Vec<String> = dispatch
+            .calls(handler)
+            .iter()
+            .map(|context| context["id"].as_str().expect("release id").to_string())
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sync_of_every_release_refreshes_each_once() -> anyhow::Result<()> {
+        use crate::services::{
+            CoverSyncOptions,
+            EntityType,
+            providers::provider_registry,
+            testing::{
+                FakePluginDispatch,
+                FakeResponse,
+            },
+        };
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("every-release").await?;
+        album_track(&root.join("Old"), "Old")?;
+        sync(&library).await?;
+        album_track(&root.join("New"), "New")?;
+
+        let dispatch = FakePluginDispatch::install();
+        let handler = dispatch.add(FakeResponse::Value(serde_json::Value::Null));
+        lyra_db::providers::register(&mut *STATE.db.write().await, "counting")?;
+        {
+            let registry = provider_registry();
+            let mut registry = registry.write().await;
+            registry.register(
+                crate::services::plugin_scope::PluginId::new("counting_plugin")?,
+                "counting".to_string(),
+                None,
+            )?;
+            registry.set_refresh_callback("counting", EntityType::Release, handler);
+        }
+
+        let options = LibrarySyncOptions {
+            releases: SyncReleases::All,
+            covers: CoverSyncOptions::SKIP,
+        };
+        let progress = super::super::orchestrator::begin_test_run(&library).await;
+        // Another refresh of the library, as a provider sync's, holds it; the sync waits for it.
+        let library_db_id = library.db_id.expect("library db_id");
+        let locks = crate::services::providers::library_refresh_locks();
+        locks.lock().await.insert(library_db_id);
+        let every = tokio::spawn({
+            let library = library.clone();
+            let progress = progress.clone();
+            async move {
+                sync_library_pipeline(&STATE.db.get(), &library, options, Some(progress)).await
+            }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        assert!(!every.is_finished(), "the sync waits for the other refresh");
+        assert!(dispatch.calls(handler).is_empty());
+        locks.lock().await.remove(&library_db_id);
+        every.await??;
+        let run = super::super::orchestrator::get_sync_run(progress.run_id())
+            .await?
+            .expect("run");
+        super::super::orchestrator::end_test_run(&progress).await;
+
+        let releases = {
+            let db = STATE.db.read().await;
+            let mut ids: Vec<String> =
+                lyra_db::releases::get(&db, library.db_id.expect("library db_id"))?
+                    .into_iter()
+                    .map(|release| release.id)
+                    .collect();
+            ids.sort();
+            ids
+        };
+        assert_eq!(releases.len(), 2);
+        assert_eq!(
+            refreshed_ids(&dispatch, handler),
+            releases,
+            "each release, the new one included, is refreshed once"
+        );
+        let settled =
+            run.progress.completed_units + run.progress.failed_units + run.progress.skipped_units;
+        assert_eq!(
+            settled, run.progress.total_units,
+            "every unit counted is settled"
+        );
+
+        // Without every release, only the changed one asks the providers.
+        album_track(&root.join("Newer"), "Newer")?;
+        sync(&library).await?;
+        let calls = refreshed_ids(&dispatch, handler);
+        assert_eq!(calls.len(), 3);
+        assert!(
+            !releases
+                .iter()
+                .any(|id| calls.iter().filter(|call| *call == id).count() > 1),
+            "the unchanged releases are not refreshed again"
+        );
         let _ = std::fs::remove_dir_all(root);
         Ok(())
     }
@@ -1975,7 +2213,13 @@ FILE "album.flac" WAVE
         }
 
         let progress = super::super::orchestrator::begin_test_run(&library).await;
-        sync_library_pipeline(&STATE.db.get(), &library, Some(progress.clone())).await?;
+        sync_library_pipeline(
+            &STATE.db.get(),
+            &library,
+            LibrarySyncOptions::default(),
+            Some(progress.clone()),
+        )
+        .await?;
         let run = super::super::orchestrator::get_sync_run(progress.run_id())
             .await?
             .expect("run");

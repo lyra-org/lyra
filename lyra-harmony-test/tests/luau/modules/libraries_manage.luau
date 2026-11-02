@@ -1,11 +1,34 @@
 local fixture = ...
 local libraries = require("@lyra/libraries")
+local metadata = require("@lyra/metadata")
 local task = require("@harmony/task")
 
 type SyncRun = libraries.SyncRun
 
 local shown = fixture.libraries.shown
 local hidden = fixture.libraries.hidden
+
+-- A refresh of the album waits while `held` is set, keeping its run going.
+local held = false
+local holding = 0
+local provider = metadata.Provider.new("held-refresh")
+provider:refresh(metadata.EntityType.Release, function(_ctx: metadata.ReleaseRefreshContext)
+	holding += 1
+	while held do
+		task.wait(0.02)
+	end
+	return nil
+end)
+
+local function wait_for(done: () -> boolean, what: string)
+	for _ = 1, 200 do
+		if done() then
+			return
+		end
+		task.wait(0.05)
+	end
+	error(`timed out waiting for {what}`)
+end
 
 local function running(run: SyncRun): boolean
 	local status = run.status
@@ -55,13 +78,24 @@ local synced = ended()
 assert(synced.finished_at_ms ~= nil and synced.finished_at_ms >= (synced.started_at_ms :: number))
 assert(synced.stage == nil, "a finished run has no stage")
 
--- A refresh is a run of its own kind; cancelling returns it.
+-- A refresh is a run of its own kind. While it runs, a sync starts nothing, its options ignored,
+-- and cancelling returns the refresh, which ends cancelled.
+held = true
 local refresh = libraries.refresh(shown, { covers = "replace", bypass_cover_cache = true })
 assert(refresh ~= nil and refresh.started and refresh.run.kind == "library_refresh")
+wait_for(function()
+	return holding == 1
+end, "the refresh reaching the provider")
+local ignored = libraries.sync(shown, { releases = "all", covers = "skip" })
+assert(ignored ~= nil and not ignored.started, "a sync starts nothing while the refresh runs")
+assert(ignored.run.id == refresh.run.id, "the running refresh is returned")
 local cancelled = libraries.cancel_sync(shown)
 assert(cancelled ~= nil and cancelled.id == refresh.run.id, "the running refresh is cancelled")
+assert(cancelled.status == "cancelling")
+held = false
 local refreshed = ended()
 assert(refreshed.id == refresh.run.id and refreshed.kind == "library_refresh")
+assert(refreshed.status == "cancelled", `the cancelled refresh ended {refreshed.status}`)
 
 -- With nothing running, cancelling returns the latest run.
 local latest = libraries.cancel_sync(shown)
@@ -85,6 +119,14 @@ local previous = libraries.sync_status({ shown }, { finished = true })[shown]
 assert(not running(previous), "a finished read passes over the running sync")
 ended()
 
+-- A sync of every release is a sync too, with or without covers.
+local every = libraries.sync(shown, { releases = "all", covers = "replace", bypass_cover_cache = true })
+assert(every ~= nil and every.started and every.run.kind == "library_sync")
+assert(ended().id == every.run.id)
+local changed = libraries.sync(shown, { releases = "changed", covers = "skip" })
+assert(changed ~= nil and changed.started)
+assert(ended().id == changed.run.id)
+
 -- Missing and hidden libraries are nil; bad options raise.
 assert(libraries.sync(hidden) == nil)
 assert(libraries.refresh("missing") == nil)
@@ -97,4 +139,7 @@ assert(
 	not pcall(libraries.refresh, shown, { covers = "skip", bypass_cover_cache = true }),
 	"bypassing the cache needs covers"
 )
+assert(not pcall(libraries.sync, shown, { releases = "new" } :: any), "an unknown releases value is refused")
+assert(not pcall(libraries.sync, shown, { covers = "skip", bypass_cover_cache = true }))
+assert(not pcall(libraries.sync, shown, { replace_cover = true } :: any), "an unknown sync option is refused")
 assert(not pcall(libraries.sync_status, { shown }, { kind = "scan" } :: any), "an unknown kind is refused")

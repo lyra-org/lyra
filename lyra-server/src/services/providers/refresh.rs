@@ -212,6 +212,36 @@ pub(crate) async fn refresh_library_metadata_with_progress(
     refresh_library_metadata_inner_with_progress(library_db_id, options, progress).await
 }
 
+/// How often a refresh waiting for another refresh of its library checks again.
+const LIBRARY_REFRESH_LOCK_POLL: Duration = Duration::from_millis(250);
+
+/// [`refresh_library_metadata_with_progress`], first waiting for another refresh of the library,
+/// such as a provider sync's, to end. The wait ends early when the run is cancelled.
+pub(crate) async fn refresh_library_metadata_after_others(
+    library_db_id: DbId,
+    options: &LibraryRefreshOptions<'_>,
+    progress: Option<SyncRunProgress>,
+) -> Result<usize, ProviderServiceError> {
+    loop {
+        if library_refresh_locks()
+            .lock_owned()
+            .await
+            .insert(library_db_id)
+        {
+            break;
+        }
+        if let Some(progress) = &progress
+            && let Err(err) = progress.check_cancelled().await
+        {
+            return Err(ProviderServiceError::Internal(err.into()));
+        }
+        tokio::time::sleep(LIBRARY_REFRESH_LOCK_POLL).await;
+    }
+
+    let _guard = LibraryRefreshGuard { library_db_id };
+    refresh_library_metadata_inner_with_progress(library_db_id, options, progress).await
+}
+
 pub(crate) async fn release_refresh_provider_ids(
     provider_filter: Option<&str>,
     include_sync_filters: bool,
@@ -225,29 +255,11 @@ pub(crate) async fn release_refresh_provider_ids(
         .collect())
 }
 
+/// Refreshes a release a scan found new or changed from every enabled provider, without sync
+/// filters.
 pub(crate) async fn refresh_release_metadata_for_scan_with_progress(
     library_db_id: DbId,
     release_id: DbId,
-    options: &LibraryRefreshOptions<'_>,
-    progress: Option<SyncRunProgress>,
-    release_public_id: Option<String>,
-    release_title: Option<String>,
-) -> Result<usize, ProviderServiceError> {
-    refresh_release_metadata_inner_with_progress(
-        library_db_id,
-        release_id,
-        options,
-        progress,
-        release_public_id,
-        release_title,
-    )
-    .await
-}
-
-async fn refresh_release_metadata_inner_with_progress(
-    library_db_id: DbId,
-    release_id: DbId,
-    options: &LibraryRefreshOptions<'_>,
     progress: Option<SyncRunProgress>,
     release_public_id: Option<String>,
     release_title: Option<String>,
@@ -261,9 +273,8 @@ async fn refresh_release_metadata_inner_with_progress(
         }
     }
 
-    let providers = read_active_providers().await?.only(options.provider_id);
-    let handlers =
-        refresh_callbacks_for(&providers, EntityType::Release, options.apply_sync_filters).await;
+    let providers = read_active_providers().await?;
+    let handlers = refresh_callbacks_for(&providers, EntityType::Release, false).await;
     let schemes = id_schemes().await;
     let mut providers_called = Vec::new();
     let mut context: Option<serde_json::Value> = None;
@@ -438,21 +449,14 @@ async fn refresh_library_metadata_inner_with_progress(
     }
     let mut refreshed_releases = HashSet::new();
     let mut context_cache: HashMap<DbId, serde_json::Value> = HashMap::new();
-    let mut dirty_releases = HashSet::new();
-    let mut release_infos: HashMap<DbId, (Option<String>, Option<String>)> = HashMap::new();
-
-    for release in &releases {
-        let Some(node_id) = release.db_id.clone().map(Into::<DbId>::into) else {
-            continue;
-        };
-        let ctx = {
-            let db = STATE.db.read().await;
-            let public_id = lyra_db::lookup::find_id_by_db_id(&db, node_id)?;
-            release_infos.insert(node_id, (public_id, Some(release.release_title.clone())));
-            build_release_context(&db, node_id, Some(library_db_id), &schemes)?
-        };
-        context_cache.insert(node_id, ctx);
-    }
+    // Every release's context is built on its first pass and rebuilt after a provider refreshed
+    // it.
+    let mut dirty_releases: HashSet<DbId> = releases
+        .iter()
+        .filter_map(|release| release.db_id.clone().map(Into::<DbId>::into))
+        .collect();
+    // Releases without a context: gone or merged away (`None`), or failing to build one.
+    let mut unavailable: HashMap<DbId, Option<String>> = HashMap::new();
 
     for (provider_id, handler, filter) in &handlers {
         let mut pass_touched = HashSet::new();
@@ -467,21 +471,32 @@ async fn refresh_library_metadata_inner_with_progress(
             }
 
             if dirty_releases.remove(&node_id) {
-                let ctx = {
+                let rebuilt = {
                     let db = STATE.db.read().await;
-                    build_release_context(&db, node_id, Some(library_db_id), &schemes)?
+                    // agdb reuses ids, so the node must still be this release.
+                    if lyra_db::lookup::find_id_by_db_id(&db, node_id)?.as_deref()
+                        != Some(release.id.as_str())
+                    {
+                        Err(None)
+                    } else {
+                        build_release_context(&db, node_id, Some(library_db_id), &schemes)
+                            .map_err(|err| Some(format!("{err:#}")))
+                    }
                 };
-                context_cache.insert(node_id, ctx);
+                match rebuilt {
+                    Ok(context) => {
+                        context_cache.insert(node_id, context);
+                    }
+                    Err(reason) => {
+                        context_cache.remove(&node_id);
+                        unavailable.insert(node_id, reason);
+                    }
+                }
             }
-            let Some(context) = context_cache.get(&node_id) else {
-                continue;
-            };
-            let (release_public_id, release_title) =
-                release_infos.get(&node_id).cloned().unwrap_or_default();
             let details = SyncWorkDetails::release(
                 "release_provider_refresh",
-                release_public_id,
-                release_title,
+                Some(release.id.clone()),
+                Some(release.release_title.clone()),
             )
             .provider(provider_id.clone());
             let work_id = if let Some(progress) = &progress {
@@ -490,6 +505,31 @@ async fn refresh_library_metadata_inner_with_progress(
                     .await
             } else {
                 0
+            };
+            let Some(context) = context_cache.get(&node_id) else {
+                match unavailable.get(&node_id).cloned().flatten() {
+                    Some(error) => {
+                        tracing::warn!(
+                            provider_id,
+                            release_db_id = node_id.0,
+                            error = %error,
+                            "release context failed during library refresh"
+                        );
+                        if let Some(progress) = &progress {
+                            progress
+                                .fail_work(work_id, SyncStageKey::ProviderRefresh, details, error)
+                                .await;
+                        }
+                    }
+                    None => {
+                        if let Some(progress) = &progress {
+                            progress
+                                .skip_work(work_id, SyncStageKey::ProviderRefresh, "release_gone")
+                                .await;
+                        }
+                    }
+                }
+                continue;
             };
             let context = context.clone();
 
@@ -570,6 +610,11 @@ async fn refresh_library_metadata_inner_with_progress(
         );
     }
 
+    if let Some(progress) = &progress
+        && let Err(err) = progress.check_cancelled().await
+    {
+        return Err(ProviderServiceError::Internal(err.into()));
+    }
     if release_count > 0 && !options.covers.skips() {
         let work_id = if let Some(progress) = &progress {
             progress
@@ -581,37 +626,30 @@ async fn refresh_library_metadata_inner_with_progress(
         } else {
             0
         };
-        if refreshed_releases.is_empty() {
-            if let Some(progress) = &progress {
-                progress
-                    .skip_work(
-                        work_id,
-                        SyncStageKey::ProviderCover,
-                        "no_refreshed_releases",
-                    )
-                    .await;
-            }
-        } else {
-            match sync_library_covers_after_refresh(library_db_id, options).await {
-                Ok(_count) => {
-                    if let Some(progress) = &progress {
-                        progress
-                            .complete_work(work_id, SyncStageKey::ProviderCover)
-                            .await;
-                    }
+        match sync_library_covers_after_refresh(library_db_id, options).await {
+            Ok(_count) => {
+                if let Some(progress) = &progress {
+                    progress
+                        .complete_work(work_id, SyncStageKey::ProviderCover)
+                        .await;
                 }
-                Err(err) => {
-                    if let Some(progress) = &progress {
-                        progress
-                            .fail_work(
-                                work_id,
-                                SyncStageKey::ProviderCover,
-                                SyncWorkDetails::new("library_provider_cover_refresh"),
-                                format!("{err:#}"),
-                            )
-                            .await;
-                    }
-                    return Err(err);
+            }
+            Err(err) => {
+                let error = format!("{:#}", err.into_anyhow());
+                tracing::warn!(
+                    library_db_id = library_db_id.0,
+                    error = %error,
+                    "library cover sync failed after metadata refresh"
+                );
+                if let Some(progress) = &progress {
+                    progress
+                        .fail_work(
+                            work_id,
+                            SyncStageKey::ProviderCover,
+                            SyncWorkDetails::new("library_provider_cover_refresh"),
+                            error,
+                        )
+                        .await;
                 }
             }
         }
@@ -916,6 +954,25 @@ fn deduplicate_release_scope_locked(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use lyra_db::{
+        fixtures::{
+            connect,
+            insert_release,
+        },
+        test_db::insert_library,
+    };
+    use tokio::sync::Semaphore;
+
+    use super::{
+        CoverSyncOptions,
+        EntityType,
+        LibraryRefreshOptions,
+        PluginCallbackHandle,
+        STATE,
+        provider_registry,
+    };
     use crate::services::testing::{
         FakePluginDispatch,
         FakeResponse,
@@ -939,5 +996,138 @@ mod tests {
             format!("{error:#}").contains("plugin handler deadline expired"),
             "the runtime, having cancelled the handler, answers before the server stops waiting: {error:#}"
         );
+    }
+
+    /// Registers `provider_id` with `handler` as its release refresh handler.
+    async fn register_release_refresher(
+        provider_id: &str,
+        handler: crate::services::plugin_dispatch::PluginCallbackHandle,
+    ) -> anyhow::Result<()> {
+        lyra_db::providers::register(&mut *STATE.db.write().await, provider_id)?;
+        let registry = provider_registry();
+        let mut registry = registry.write().await;
+        registry.register(
+            crate::services::plugin_scope::PluginId::new(format!("{provider_id}_plugin").as_str())?,
+            provider_id.to_string(),
+            None,
+        )?;
+        registry.set_refresh_callback(provider_id, EntityType::Release, handler);
+        Ok(())
+    }
+
+    fn called_ids(dispatch: &FakePluginDispatch, handler: PluginCallbackHandle) -> Vec<String> {
+        dispatch
+            .calls(handler)
+            .iter()
+            .map(|context| context["id"].as_str().expect("release id").to_string())
+            .collect()
+    }
+
+    async fn wait_for_calls(
+        dispatch: &FakePluginDispatch,
+        handler: PluginCallbackHandle,
+        n: usize,
+    ) {
+        for _ in 0..500 {
+            if dispatch.calls(handler).len() >= n {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("handler was not called {n} times");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_release_merged_away_between_providers_is_passed_over() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let dispatch = FakePluginDispatch::install();
+        let gate = Arc::new(Semaphore::new(0));
+        let first = dispatch.add(FakeResponse::Held(
+            gate.clone(),
+            Box::new(FakeResponse::Value(serde_json::Value::Null)),
+        ));
+        let second = dispatch.add(FakeResponse::Value(serde_json::Value::Null));
+        register_release_refresher("first", first).await?;
+        register_release_refresher("second", second).await?;
+        let library = {
+            let mut db = STATE.db.write().await;
+            let library = insert_library(&mut db, "Library", "/library")?;
+            for title in ["One", "Two"] {
+                let release = insert_release(&mut db, title)?;
+                connect(&mut db, library, release)?;
+            }
+            library
+        };
+
+        let refresh = tokio::spawn(async move {
+            let options = LibraryRefreshOptions {
+                covers: CoverSyncOptions::SKIP,
+                apply_sync_filters: false,
+                provider_id: None,
+            };
+            super::refresh_library_metadata(library, &options).await
+        });
+        // The first provider refreshes one release; it is merged away while the provider
+        // refreshes the other.
+        wait_for_calls(&dispatch, first, 1).await;
+        gate.add_permits(1);
+        wait_for_calls(&dispatch, first, 2).await;
+        let first_calls = called_ids(&dispatch, first);
+        {
+            let mut db = STATE.db.write().await;
+            let gone = lyra_db::lookup::find_node_id_by_id(&*db, &first_calls[0])?
+                .expect("release exists");
+            db.exec_mut(agdb::QueryBuilder::remove().ids(gone).query())?;
+        }
+        gate.add_permits(1);
+
+        let refreshed = refresh.await?.map_err(|err| err.into_anyhow())?;
+        assert_eq!(refreshed, 2);
+        assert_eq!(
+            called_ids(&dispatch, second),
+            [first_calls[1].clone()],
+            "the second provider passes over the merged release"
+        );
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_refresh_syncs_covers_even_when_no_provider_refreshed_a_release() -> anyhow::Result<()>
+    {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let library = {
+            let mut db = STATE.db.write().await;
+            let library_id = insert_library(&mut db, "Covers", "/covers-library")?;
+            let release = insert_release(&mut db, "Release")?;
+            connect(&mut db, library_id, release)?;
+            lyra_db::libraries::get_by_id(&db, library_id)?.expect("library")
+        };
+        let progress = crate::services::libraries::begin_test_run(&library).await;
+        let options = LibraryRefreshOptions {
+            covers: CoverSyncOptions::default(),
+            apply_sync_filters: false,
+            provider_id: None,
+        };
+        let refreshed = super::refresh_library_metadata_with_progress(
+            library.db_id.expect("db id"),
+            &options,
+            Some(progress.clone()),
+        )
+        .await
+        .map_err(|err| err.into_anyhow())?;
+        let run = crate::services::libraries::get_sync_run(progress.run_id())
+            .await?
+            .expect("run");
+        crate::services::libraries::end_test_run(&progress).await;
+
+        assert_eq!(refreshed, 0);
+        assert_eq!(
+            (run.progress.completed_units, run.progress.total_units),
+            (1, 1),
+            "the cover step ran"
+        );
+        Ok(())
     }
 }

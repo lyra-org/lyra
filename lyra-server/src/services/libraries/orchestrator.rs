@@ -48,6 +48,7 @@ use lyra_db::{
 };
 
 use super::sync::{
+    LibrarySyncOptions,
     MAX_CONCURRENT_ALBUM_PIPELINE,
     sync_library_pipeline,
 };
@@ -987,7 +988,7 @@ pub(crate) async fn library_has_active_run(library_id: &str) -> anyhow::Result<b
 /// A run to start on a library.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum LibraryRun {
-    Sync,
+    Sync(LibrarySyncOptions),
     /// A refresh fetching these covers.
     Refresh(CoverSyncOptions),
 }
@@ -996,7 +997,10 @@ pub(crate) async fn start_library_sync(
     db: DbAsync,
     library: Library,
 ) -> anyhow::Result<SyncRunStartResponse> {
-    start_library_run(db, LibraryRun::Sync, |db| still_exists(db, library)).await
+    start_library_run(db, LibraryRun::Sync(LibrarySyncOptions::default()), |db| {
+        still_exists(db, library)
+    })
+    .await
 }
 
 fn still_exists(db: &agdb::DbAny, library: Library) -> anyhow::Result<Library> {
@@ -1040,7 +1044,7 @@ async fn start_locked(
     }
 
     let kind = match run {
-        LibraryRun::Sync => SyncRunKind::LibrarySync,
+        LibraryRun::Sync(_) => SyncRunKind::LibrarySync,
         LibraryRun::Refresh(_) => SyncRunKind::LibraryRefresh,
     };
     let now_ms = now_unix_ms();
@@ -1057,8 +1061,8 @@ async fn start_locked(
 
     let progress = SyncRunProgress::new(db.clone(), run_id.clone());
     match run {
-        LibraryRun::Sync => {
-            tokio::spawn(run_library_sync(db, library, progress));
+        LibraryRun::Sync(options) => {
+            tokio::spawn(run_library_sync(db, library, progress, options));
         }
         LibraryRun::Refresh(covers) => {
             tokio::spawn(run_library_refresh(library, progress, covers));
@@ -1071,7 +1075,12 @@ async fn start_locked(
     })
 }
 
-async fn run_library_sync(db: DbAsync, library: Library, progress: SyncRunProgress) {
+async fn run_library_sync(
+    db: DbAsync,
+    library: Library,
+    progress: SyncRunProgress,
+    options: LibrarySyncOptions,
+) {
     let started = Instant::now();
     tracing::info!(
         run_id = progress.run_id(),
@@ -1082,7 +1091,7 @@ async fn run_library_sync(db: DbAsync, library: Library, progress: SyncRunProgre
     );
     progress.set_status(SyncRunStatus::Planning).await;
     let result = async {
-        sync_library_pipeline(&db, &library, Some(progress.clone())).await?;
+        sync_library_pipeline(&db, &library, options, Some(progress.clone())).await?;
         Ok::<(), anyhow::Error>(())
     }
     .await;
@@ -1124,7 +1133,7 @@ async fn run_library_refresh(
     )
     .await
     .map(|_| ())
-    .map_err(anyhow::Error::from);
+    .map_err(crate::services::providers::ProviderServiceError::into_anyhow);
     finish_run(progress, result, started, "library refresh").await;
 }
 

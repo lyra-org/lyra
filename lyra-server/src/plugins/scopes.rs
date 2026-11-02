@@ -1478,7 +1478,7 @@ mod tests {
                 "list()",
                 "get(library_ids)",
                 "by_entity(entity_ids)",
-                "sync(library_id) [lyra.libraries.manage]",
+                "sync(library_id, options) [lyra.libraries.manage]",
                 "refresh(library_id, options) [lyra.libraries.manage]",
                 "sync_status(library_ids, options) [lyra.libraries.manage]",
                 "cancel_sync(library_id) [lyra.libraries.manage]",
