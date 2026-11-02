@@ -66,6 +66,15 @@ refresh.refresh(refresh.monitoring({ external_ids = { musicbrainz = { release_id
 assert(#refresh.events == 1, `nothing follows the failed fetch, sent {#refresh.events}`)
 assert(next(refresh.unmatched) == nil, "the stored match is kept")
 
+-- So does a failed browse of the stored release's group.
+refresh.routes = { { pattern = `/ws/2/release?release-group={refresh.GROUP}&`, body = refresh.UNAVAILABLE } }
+refresh.refresh(refresh.monitoring({
+	external_ids = { musicbrainz = { release_id = refresh.PSEUDO, release_group_id = refresh.GROUP } },
+}))
+assert(#refresh.events == 1, `nothing follows the failed browse, sent {#refresh.events}`)
+assert(next(refresh.saved_ids) == nil, "nothing is applied")
+assert(next(refresh.unmatched) == nil, "the stored match is kept")
+
 -- A failed AcoustID lookup after a search that found nothing keeps every
 -- match, including the track and artist IDs the search would unmatch.
 acoustid.compute_fingerprint = function(_track_id: string): string?

@@ -149,7 +149,8 @@ end
 -- edition stands in for it only if, with its full track list, it keeps the
 -- edition's recordings and passes acceptance against it. Only when the group
 -- offers no edition at all is `selected_release` tried on its own; a selected
--- edition that is rejected is not replaced by it. A browse lists at most a
+-- edition that is rejected is not replaced by it. `browsed` is the group's
+-- releases, when the caller already browsed them. A browse lists at most a
 -- page of the group, so `selected_release`, when it lists its tracks, competes
 -- even if the browse left it out.
 function module.try_release_group(
@@ -157,7 +158,8 @@ function module.try_release_group(
 	local_release_info: LocalRelease,
 	search_title: string?,
 	artist_ids: ArtistIdSet?,
-	keep_selected: boolean
+	keep_selected: boolean,
+	browsed: { Release }?
 ): boolean
 	local track_count = local_release_info.track_count
 	local release_group = selected_release["release-group"]
@@ -174,7 +176,7 @@ function module.try_release_group(
 	if not release_group_id then
 		return try_selected_release(nil)
 	end
-	local listed: { Release } = browse_release_group(release_group_id, track_count == 1, track_count) or {}
+	local listed: { Release } = browsed or browse_release_group(release_group_id, track_count == 1, track_count) or {}
 	local group_copy = release_from_candidates(listed, selected_release.id, nil)
 	local candidates = listed
 	if release_lists_tracks(selected_release) and not (group_copy and group_copy.complete) then

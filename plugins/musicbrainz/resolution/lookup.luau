@@ -63,14 +63,18 @@ local function stored_id(ids: ReleaseIds?, id_type: string): string?
 	return if type(value) == "string" and value ~= "" then value else nil
 end
 
+local function search_title_for(local_release_info: LocalRelease): string?
+	local search_title = clean_release_title(local_release_info.release_title or "")
+	local first_track = local_release_info.context.tracks[1]
+	if search_title == "" and first_track then
+		search_title = clean_release_title(first_track.track_title or "")
+	end
+	return if search_title ~= "" then search_title else nil
+end
+
 local function cover_cache_context_for(local_release_info: LocalRelease): CoverCacheContext
 	local release_context = local_release_info.context
 	local ids = release_context.ids or musicbrainz_external_ids(release_context.external_ids)
-	local search_title = clean_release_title(local_release_info.release_title or "")
-	if search_title == "" and #release_context.tracks > 0 then
-		local first_track = release_context.tracks[1]
-		search_title = if first_track then first_track.track_title or "" else ""
-	end
 
 	return {
 		release_id = stored_id(ids, "release_id"),
@@ -78,7 +82,7 @@ local function cover_cache_context_for(local_release_info: LocalRelease): CoverC
 		track_count = if local_release_info.track_count > 0 then local_release_info.track_count else nil,
 		preferred_language = local_release_info.preferred_language,
 		preferred_country = local_release_info.preferred_country,
-		search_title = if search_title ~= "" then search_title else nil,
+		search_title = search_title_for(local_release_info),
 	}
 end
 
@@ -194,6 +198,50 @@ function module.resolve_cover_release_id(release_context: ReleaseContext): strin
 	return if best_cover_release then best_cover_release.id else nil
 end
 
+-- The stored release with its full track list, and its group
+-- `release_group_id`'s editions to select from when they were browsed.
+local function stored_release_and_group(
+	release_id: string,
+	release_group_id: string?,
+	track_count: number
+): (Release?, { Release }?)
+	local candidates = if release_group_id
+		then browse_release_group(release_group_id, track_count == 1, track_count) or {}
+		else nil
+	local listed = release_from_candidates(candidates, release_id, nil)
+	if listed ~= nil and listed.complete then
+		return listed, candidates
+	end
+	local fetched = fetch_release_details(release_id)
+	local fetched_group = fetched and fetched["release-group"]
+	-- A release moved to another group is selected within its own.
+	if fetched_group == nil or fetched_group.id ~= release_group_id then
+		return fetched, nil
+	end
+	return fetched, candidates
+end
+
+-- Selects the edition again within the stored release's group, so a refresh
+-- moves a release stored as one edition to the edition that fits it best. The
+-- stored edition gets no preference: the context carries its titles, not the
+-- local tags, so they would always agree with it. It stays the final pick
+-- after the editions the group's walk tries, as it may rank past them.
+local function try_stored_release(ids: ReleaseIds, release_id: string, local_release_info: LocalRelease): boolean
+	local stored, candidates =
+		stored_release_and_group(release_id, stored_id(ids, "release_group_id"), local_release_info.track_count)
+	if stored == nil then
+		return false
+	end
+	return resolve.try_release_group(
+		stored,
+		local_release_info,
+		search_title_for(local_release_info),
+		release_artist_ids(stored),
+		false,
+		candidates
+	) or resolve.try_release(stored, local_release_info)
+end
+
 -- Matches the local release through the AcoustID fingerprint of its longest
 -- track, recording the AcoustID track ID when a release is applied.
 local function try_acoustid(local_release_info: LocalRelease): boolean
@@ -237,8 +285,9 @@ local function refresh_release(release: ReleaseContext, options: { [string]: boo
 		return
 	end
 
-	local release_id = stored_id(musicbrainz_external_ids(release.external_ids), "release_id")
-	if release_id ~= nil and resolve.try_release_id(release_id, local_release_info) then
+	local ids = musicbrainz_external_ids(release.external_ids)
+	local release_id = stored_id(ids, "release_id")
+	if ids ~= nil and release_id ~= nil and try_stored_release(ids, release_id, local_release_info) then
 		return
 	end
 	local searchable = local_release_info.artist_name ~= nil or local_release_info.compilation_release

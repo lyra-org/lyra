@@ -5,10 +5,12 @@ local refresh = require("./_refresh")
 local by_group = refresh.release(refresh.OFFICIAL, refresh.JAPANESE_TITLES, { country = "JP", artist_type = "Group" })
 local single_track =
 	refresh.release("single-track", refresh.JAPANESE_TITLES, { country = "JP", artist_type = "Group", track_count = 1 })
-local STORED_OFFICIAL = { external_ids = { musicbrainz = { release_id = refresh.OFFICIAL } } }
+local STORED_OFFICIAL = {
+	external_ids = { musicbrainz = { release_id = refresh.OFFICIAL, release_group_id = refresh.GROUP } },
+}
 
-local function stored(edition: any): refresh.Route
-	return { pattern = `/ws/2/release/{edition.id}?`, body = edition }
+local function group_of(edition: any): refresh.Route
+	return { pattern = `/ws/2/release?release-group={refresh.GROUP}&`, body = { count = 1, releases = { edition } } }
 end
 
 local function assert_saved_before(release_id: string, enrichment_pattern: string)
@@ -22,7 +24,7 @@ end
 
 -- A matched release keeps its match when its enrichment fails.
 refresh.routes = {
-	stored(by_group),
+	group_of(by_group),
 	{ pattern = "/ws/2/release-group/", body = refresh.UNAVAILABLE },
 	{ pattern = "/ws/2/artist/", body = refresh.UNAVAILABLE },
 }
@@ -35,7 +37,7 @@ assert(next(refresh.unmatched) == nil, "nothing is unmatched")
 -- Enrichment that succeeds adds to the saved match: the release group's date
 -- and Wikidata item, and the artist's relations.
 refresh.routes = {
-	stored(by_group),
+	group_of(by_group),
 	{
 		pattern = `/ws/2/release-group/{refresh.GROUP}?`,
 		body = {
@@ -111,10 +113,10 @@ local function at_enrichment(seconds: number)
 	now = 0
 	refresh.routes = {
 		{
-			pattern = `/ws/2/release/{refresh.OFFICIAL}?`,
+			pattern = `/ws/2/release?release-group={refresh.GROUP}&`,
 			body = function(_url: string): any
 				now = seconds
-				return by_group
+				return { count = 1, releases = { by_group } }
 			end,
 		},
 		{
