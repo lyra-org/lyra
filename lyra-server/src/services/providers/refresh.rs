@@ -77,6 +77,12 @@ use super::{
 
 const DEFAULT_METADATA_REFRESH_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// How long past a handler's deadline the server still waits for the plugin
+/// runtime's answer. The runtime answers a late handler only once it has
+/// cancelled its thread, so the provider's call lock, which keeps one
+/// provider's refreshes from overlapping, is released only after that.
+const METADATA_REFRESH_DEADLINE_GRACE: Duration = Duration::from_secs(5);
+
 struct LibraryRefreshGuard {
     library_db_id: DbId,
 }
@@ -809,7 +815,7 @@ async fn dispatch_refresh_callback(
                 }
             };
             tokio::time::timeout(
-                DEFAULT_METADATA_REFRESH_TIMEOUT,
+                DEFAULT_METADATA_REFRESH_TIMEOUT + METADATA_REFRESH_DEADLINE_GRACE,
                 runtime.dispatch_metadata_refresh(MetadataRefreshRequest {
                     handler,
                     context,
@@ -845,7 +851,7 @@ async fn dispatch_sync_filter_callback(
                 .get()
                 .context("plugin runtime is not initialized")?;
             let result = tokio::time::timeout(
-                DEFAULT_METADATA_REFRESH_TIMEOUT,
+                DEFAULT_METADATA_REFRESH_TIMEOUT + METADATA_REFRESH_DEADLINE_GRACE,
                 runtime.dispatch_metadata_refresh(MetadataRefreshRequest {
                     handler,
                     context,
@@ -901,6 +907,34 @@ fn deduplicate_release_scope_locked(
             library_db_id = library_db_id.0,
             error = %format_args!("{err:#}"),
             "release deduplication by external id failed during metadata refresh callback"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::services::testing::{
+        FakePluginDispatch,
+        FakeResponse,
+        init_default_test_state,
+        runtime_test_lock,
+    };
+
+    #[tokio::test(start_paused = true)]
+    async fn a_late_handler_ends_with_the_runtimes_answer() {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state().expect("test state");
+        let dispatch = FakePluginDispatch::install();
+        let handler = dispatch.add(FakeResponse::UntilDeadline);
+
+        let error =
+            super::dispatch_refresh_callback("late-provider", handler, serde_json::json!({}))
+                .await
+                .expect_err("a handler past its deadline fails");
+
+        assert!(
+            format!("{error:#}").contains("plugin handler deadline expired"),
+            "the runtime, having cancelled the handler, answers before the server stops waiting: {error:#}"
         );
     }
 }

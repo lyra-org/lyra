@@ -439,6 +439,8 @@ mod fake_dispatch {
         Held(Arc<Semaphore>, Box<FakeResponse>),
         /// Never answers, so the call ends only when its dispatch is dropped.
         Stall,
+        /// Fails at the request's deadline, as the runtime ends a late handler.
+        UntilDeadline,
     }
 
     /// A plugin runtime that answers metadata refresh dispatches with the
@@ -502,7 +504,9 @@ mod fake_dispatch {
                     release.acquire().await?.forget();
                     response = *then;
                 }
-                FakeResponse::Stall => std::future::pending::<()>().await,
+                FakeResponse::Stall | FakeResponse::UntilDeadline => {
+                    std::future::pending::<()>().await
+                }
             }
         }
     }
@@ -523,6 +527,11 @@ mod fake_dispatch {
                     .entry(handler_id)
                     .or_default()
                     .push(request.context);
+                if let FakeResponse::UntilDeadline = response {
+                    tokio::time::sleep_until(tokio::time::Instant::from_std(request.deadline))
+                        .await;
+                    bail!("plugin handler deadline expired");
+                }
                 Ok(MetadataRefreshResult {
                     values: vec![answer(response).await?],
                 })

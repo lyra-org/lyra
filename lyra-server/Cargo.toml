@@ -87,3 +87,4 @@ rustix = { workspace = true }
 flate2 = { workspace = true }
 lyra-db = { path = "../lyra-db", features = ["testing"] }
 tar = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
