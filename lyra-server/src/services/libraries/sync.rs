@@ -39,6 +39,7 @@ use crate::services::{
     covers::{
         configured_covers_root,
         record_local_release_cover,
+        refresh_gone_covers_for_library,
         sync_release_cover_for_tracks,
     },
     metadata::{
@@ -392,8 +393,26 @@ pub(crate) async fn sync_library_pipeline(
     if let Some(progress) = &progress {
         progress.check_cancelled().await?;
     }
+    refresh_gone_covers(db, library, library_db_id).await;
     cleanup_metadata_orphans(db, library_db_id, progress).await?;
     Ok(())
+}
+
+/// Searches again for the covers whose file is gone, which the release passes above skip for
+/// releases whose audio is unchanged.
+async fn refresh_gone_covers(db: &DbAsync, library: &Library, library_db_id: DbId) {
+    match refresh_gone_covers_for_library(db, library_db_id, Some(&library.path)).await {
+        Ok(removed) => tracing::debug!(
+            library_db_id = library_db_id.0,
+            removed,
+            "scan removed covers whose file is gone"
+        ),
+        Err(err) => tracing::warn!(
+            library_db_id = library_db_id.0,
+            error = %format_args!("{err:#}"),
+            "scan could not refresh covers whose file is gone"
+        ),
+    }
 }
 
 async fn mark_entries_synced(db: &DbAsync, library_db_id: DbId, entry_ids: &[DbId]) {
@@ -1978,6 +1997,53 @@ FILE "album.flac" WAVE
         sync(&library).await?;
         assert_eq!(snapshot(&library).await?[&audio].1.len(), 1);
         assert!(synced(&library, &audio).await?);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resync_forgets_a_deleted_cover_of_an_unchanged_album() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("deleted-cover").await?;
+        let audio = album_track(&root.join("Album"), "Album")?;
+        let cover = root.join("Album/cover.png");
+        std::fs::write(&cover, PNG_1X1)?;
+
+        sync(&library).await?;
+        let entry = entry_for(&library, &audio)
+            .await?
+            .db_id
+            .expect("entry db_id");
+        assert!(release_cover(entry).await?.is_some());
+
+        std::fs::remove_file(&cover)?;
+        sync(&library).await?;
+        assert!(release_cover(entry).await?.is_none());
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resync_finds_the_new_cover_of_an_unchanged_album() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("replaced-cover").await?;
+        let audio = album_track(&root.join("Album"), "Album")?;
+        std::fs::write(root.join("Album/cover.png"), PNG_1X1)?;
+
+        sync(&library).await?;
+        let entry = entry_for(&library, &audio)
+            .await?
+            .db_id
+            .expect("entry db_id");
+        std::fs::remove_file(root.join("Album/cover.png"))?;
+        let replacement = root.join("Album/cover.jpg");
+        std::fs::write(&replacement, PNG_1X1)?;
+        sync(&library).await?;
+
+        let found = release_cover(entry).await?.map(|cover| cover.path);
+        assert_eq!(found, Some(replacement.to_string_lossy().into_owned()));
         let _ = std::fs::remove_dir_all(root);
         Ok(())
     }

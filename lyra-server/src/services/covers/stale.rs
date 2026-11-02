@@ -64,16 +64,13 @@ pub(crate) struct StaleCover {
 }
 
 impl StaleCover {
-    /// The owner's cover from `source`, when its file is confirmed gone.
-    pub(crate) fn read(
-        db: &impl DbAccess,
-        owner_db_id: DbId,
-        source: CoverSource,
-    ) -> anyhow::Result<Option<Self>> {
-        match lyra_db::covers::get_source(db, owner_db_id, source)? {
-            Some(cover) => Self::of(db, owner_db_id, source, &cover),
-            None => Ok(None),
+    /// Each of the owner's covers whose file is confirmed gone.
+    pub(crate) fn read_all(db: &impl DbAccess, owner_db_id: DbId) -> anyhow::Result<Vec<Self>> {
+        let mut stale = Vec::new();
+        for sourced in lyra_db::covers::sources(db, owner_db_id)? {
+            stale.extend(Self::of(db, owner_db_id, sourced.source, &sourced.cover)?);
         }
+        Ok(stale)
     }
 
     /// `cover`, the owner's cover from `source`, when its file is confirmed gone.
@@ -96,6 +93,14 @@ impl StaleCover {
             cover_id: cover.id.clone(),
             path: cover.path.clone(),
         }))
+    }
+
+    pub(crate) fn owner_db_id(&self) -> DbId {
+        self.owner_db_id
+    }
+
+    pub(crate) fn source(&self) -> CoverSource {
+        self.source
     }
 
     /// The stale cover, when the owner read is still there and still holds it, at the same file,
@@ -345,7 +350,7 @@ mod tests {
         let mut stale = Vec::new();
         for owner in [deleted, replaced, kept] {
             stored_cover(&mut db, owner, CoverSource::Local, &gone("old.png"))?;
-            stale.extend(StaleCover::read(&db, owner, CoverSource::Local)?);
+            stale.extend(StaleCover::read_all(&db, owner)?);
         }
         assert_eq!(stale.len(), 3);
         lyra_db::covers::remove_all(&mut db, deleted)?;
@@ -375,7 +380,8 @@ mod tests {
             CoverSource::Local,
             &dir.path().join("gone.png"),
         )?;
-        let stale = StaleCover::read(&db, removed, CoverSource::Local)?.expect("stale");
+        let stale = StaleCover::read_all(&db, removed)?;
+        assert_eq!(stale.len(), 1);
         let other = insert_release(&mut db, "Other")?;
         // Another owner keeps the cover node alive while the first is deleted.
         lyra_db::covers::adopt_missing(&mut db, other, removed)?;
@@ -389,7 +395,7 @@ mod tests {
             Some(cover.id)
         );
 
-        assert_eq!(remove_stale(&mut db, &[stale])?, 0);
+        assert_eq!(remove_stale(&mut db, &stale)?, 0);
         assert!(lyra_db::covers::get(&db, reused)?.is_some());
         Ok(())
     }

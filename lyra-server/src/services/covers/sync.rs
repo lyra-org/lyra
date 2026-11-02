@@ -851,9 +851,9 @@ pub(super) async fn upsert_local_cover_metadata(
     })
 }
 
-/// Records the release's library cover as its local cover, leaving a locked release alone.
-/// When the library shows none, a recorded local cover whose file is positively gone is
-/// removed. Returns the cover found and whether its record changed.
+/// Records the release's library cover as its local cover, leaving a locked release alone, then
+/// removes its covers from any source whose file is confirmed gone. Returns the cover found and
+/// whether its record changed.
 pub(crate) async fn record_local_release_cover(
     db: &lyra_db::DbAsync,
     release_id: DbId,
@@ -870,34 +870,174 @@ pub(crate) async fn record_local_release_cover(
         let tracks = lyra_db::tracks::get_direct(&db_read, release_id)?;
         resolve_local_cover_for_release(&db_read, &tracks, library_root)?
     };
-    let Some(cover_path) = scan else {
-        forget_missing_local_cover(db, release_id).await?;
-        return Ok(None);
+    let recorded = match scan {
+        Some(cover_path) => {
+            let changed = upsert_local_cover_metadata(db, release_id, &cover_path).await?;
+            Some((cover_path, changed))
+        }
+        None => None,
     };
-    let changed = upsert_local_cover_metadata(db, release_id, &cover_path).await?;
-    Ok(Some((cover_path, changed)))
+    forget_gone_covers(db, release_id).await?;
+    Ok(recorded)
 }
 
-/// Removes the release's local cover record when its file is confirmed gone, unless the release
-/// is locked. The library file itself is never touched.
-async fn forget_missing_local_cover(db: &lyra_db::DbAsync, release_id: DbId) -> Result<()> {
+/// Removes the owner's covers from every source whose file is confirmed gone, unless the owner is
+/// locked, so it shows its next cover. Returns how many were removed.
+pub(crate) async fn forget_gone_covers(db: &lyra_db::DbAsync, owner_id: DbId) -> Result<usize> {
     let stale = {
         let db_read = db.read().await;
-        if covers_locked(&db_read, release_id)? {
-            return Ok(());
+        if covers_locked(&db_read, owner_id)? {
+            return Ok(0);
         }
-        StaleCover::read(&*db_read, release_id, CoverSource::Local)?
+        StaleCover::read_all(&*db_read, owner_id)?
     };
-    let Some(stale) = stale else {
-        return Ok(());
-    };
-    let mut db_write = db.write().await;
-    // A release locked since the read keeps its covers.
-    if covers_locked(&db_write, release_id)? {
-        return Ok(());
+    if stale.is_empty() {
+        return Ok(0);
     }
-    super::stale::remove_stale(&mut db_write, &[stale])?;
-    Ok(())
+    let mut db_write = db.write().await;
+    // An owner locked since the read keeps its covers.
+    if covers_locked(&db_write, owner_id)? {
+        return Ok(0);
+    }
+    super::stale::remove_stale(&mut db_write, &stale)
+}
+
+/// A library's stored covers whose file is confirmed gone, as the sweep found them under one read.
+#[derive(Default)]
+struct GoneCovers {
+    /// Local covers, each with the library file found to replace it.
+    replaced: Vec<(StaleCover, PathBuf)>,
+    /// Those with no file to replace them.
+    removed: Vec<StaleCover>,
+    /// The errors of the searches that failed.
+    failed: Vec<anyhow::Error>,
+}
+
+fn find_gone_covers(
+    db: &agdb::DbAny,
+    library_id: DbId,
+    library_root: Option<&Path>,
+) -> Result<GoneCovers> {
+    let mut gone = GoneCovers::default();
+    for release in lyra_db::releases::get(db, library_id)? {
+        let Some(release_id) = release.db_id.map(DbId::from) else {
+            continue;
+        };
+        if release.locked.unwrap_or(false) {
+            continue;
+        }
+        for stale in StaleCover::read_all(db, release_id)? {
+            if stale.source() != CoverSource::Local {
+                gone.removed.push(stale);
+                continue;
+            }
+            let tracks = lyra_db::tracks::get_direct(db, release_id)?;
+            match resolve_local_cover_for_release(db, &tracks, library_root) {
+                Ok(Some(path)) => gone.replaced.push((stale, path)),
+                Ok(None) => gone.removed.push(stale),
+                Err(err) => gone.failed.push(err),
+            }
+        }
+    }
+    for artist in lyra_db::artists::get_by_library(db, library_id)? {
+        let Some(artist_id) = artist.db_id.map(DbId::from) else {
+            continue;
+        };
+        if artist.locked.unwrap_or(false) {
+            continue;
+        }
+        gone.removed.extend(StaleCover::read_all(db, artist_id)?);
+    }
+    Ok(gone)
+}
+
+/// Searches again for the covers of `library_id`'s releases and artists whose file is confirmed
+/// gone, as a library sync's last step, since a sync passes over releases whose audio is
+/// unchanged. A local cover found again in the library replaces the record; any other is removed,
+/// so the owner shows its next cover. Locked owners, and covers changed since they were found gone,
+/// are left alone, and failures are logged rather than stopping the rest. Returns how many covers
+/// were removed.
+pub(crate) async fn refresh_gone_covers_for_library(
+    db: &lyra_db::DbAsync,
+    library_id: DbId,
+    library_root: Option<&Path>,
+) -> Result<usize> {
+    let gone = find_gone_covers(&*db.read().await, library_id, library_root)?;
+    Ok(apply_gone_covers(db, library_id, gone).await)
+}
+
+async fn apply_gone_covers(db: &lyra_db::DbAsync, library_id: DbId, gone: GoneCovers) -> usize {
+    let GoneCovers {
+        replaced,
+        removed,
+        mut failed,
+    } = gone;
+    let computed = tokio::task::spawn_blocking(move || {
+        replaced
+            .into_par_iter()
+            .map(|(stale, path)| {
+                let hash = read_cover_hash(&path)?;
+                let cover = Cover {
+                    db_id: None,
+                    id: nanoid!(),
+                    mime_type: cover_mime_from_path(&path).to_string(),
+                    blurhash: cover_blurhash(&path),
+                    path: path.to_string_lossy().into_owned(),
+                    hash,
+                    provider_id: None,
+                };
+                Ok((stale, cover))
+            })
+            .collect::<Vec<Result<_>>>()
+    })
+    .await;
+    let computed = match computed {
+        Ok(computed) => computed,
+        Err(err) => vec![Err(anyhow!("cover metadata task failed: {err}"))],
+    };
+
+    let mut db_write = db.write().await;
+    for replacement in computed {
+        let result = replacement.and_then(|(stale, cover)| {
+            db_write.transaction_mut(|t| -> Result<()> {
+                // A cover changed, or whose file came back, since the read keeps its record.
+                let still_gone = stale
+                    .current(t)?
+                    .is_some_and(|current| super::stale::confirmed_gone(Path::new(&current.path)));
+                if still_gone && !covers_locked(t, stale.owner_db_id())? {
+                    lyra_db::covers::upsert(t, stale.owner_db_id(), CoverSource::Local, cover)?;
+                }
+                Ok(())
+            })
+        });
+        if let Err(err) = result {
+            failed.push(err);
+        }
+    }
+    let mut removed_count = 0;
+    for stale in &removed {
+        let result = covers_locked(&db_write, stale.owner_db_id()).and_then(|locked| {
+            if locked {
+                return Ok(0);
+            }
+            super::stale::remove_stale(&mut db_write, std::slice::from_ref(stale))
+        });
+        match result {
+            Ok(count) => removed_count += count,
+            Err(err) => failed.push(err),
+        }
+    }
+    drop(db_write);
+
+    if let Some(first) = failed.first() {
+        tracing::warn!(
+            library_id = library_id.0,
+            failed = failed.len(),
+            error = %format_args!("{first:#}"),
+            "covers whose file is gone could not all be searched for, replaced or removed"
+        );
+    }
+    removed_count
 }
 
 struct PendingCover {
@@ -1439,6 +1579,253 @@ mod tests {
         assert!(
             lyra_db::covers::sources(&*db.read().await, release_id)?.is_empty(),
             "the record and its pin go"
+        );
+        Ok(())
+    }
+
+    /// Stores a cover for `owner` from `source` at `path`, which may not exist.
+    async fn stored(
+        db: &lyra_db::DbAsync,
+        owner: DbId,
+        source: CoverSource,
+        path: &Path,
+    ) -> anyhow::Result<Cover> {
+        let mut db_write = db.write().await;
+        Ok(db_write
+            .transaction_mut(|t| {
+                lyra_db::covers::upsert(
+                    t,
+                    owner,
+                    source,
+                    Cover {
+                        db_id: None,
+                        id: nanoid!(),
+                        path: path.to_string_lossy().into_owned(),
+                        mime_type: "image/png".to_string(),
+                        hash: source.as_str().to_string(),
+                        blurhash: None,
+                        provider_id: None,
+                    },
+                )
+            })?
+            .cover)
+    }
+
+    async fn shown_source(
+        db: &lyra_db::DbAsync,
+        owner: DbId,
+    ) -> anyhow::Result<Option<CoverSource>> {
+        let sources = lyra_db::covers::sources(&*db.read().await, owner)?;
+        Ok(lyra_db::covers::shown(&sources).map(|sourced| sourced.source))
+    }
+
+    #[tokio::test]
+    async fn an_entity_sync_forgets_every_source_confirmed_gone() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let dir = tempfile::tempdir()?;
+        let db = lyra_db::DbAsync::new(new_test_db()?);
+        let (release, locked) = {
+            let mut db_write = db.write().await;
+            let release = insert_release(&mut db_write, "Album")?;
+            let locked = lyra_db::fixtures::insert_artist(&mut db_write, "Locked")?;
+            let mut artist = lyra_db::artists::get_by_id(&db_write, locked)?.expect("artist");
+            artist.locked = Some(true);
+            lyra_db::artists::update(&mut db_write, &artist)?;
+            (release, locked)
+        };
+        let local = write_test_cover()?;
+        stored(&db, release, CoverSource::Local, &local).await?;
+        stored(
+            &db,
+            release,
+            CoverSource::Manual,
+            &dir.path().join("manual.png"),
+        )
+        .await?;
+        stored(
+            &db,
+            release,
+            CoverSource::Provider,
+            &dir.path().join("unmounted/provider.png"),
+        )
+        .await?;
+        stored(
+            &db,
+            locked,
+            CoverSource::Provider,
+            &dir.path().join("gone.png"),
+        )
+        .await?;
+
+        assert_eq!(forget_gone_covers(&db, release).await?, 1);
+        assert_eq!(
+            shown_source(&db, release).await?,
+            Some(CoverSource::Provider),
+            "the manual cover is gone, the unmounted provider cover is no evidence"
+        );
+        assert_eq!(
+            forget_gone_covers(&db, locked).await?,
+            0,
+            "a lock keeps covers"
+        );
+        let _ = std_fs::remove_file(local);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_library_sweep_forgets_gone_covers_of_releases_and_artists() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let dir = tempfile::tempdir()?;
+        let db = lyra_db::DbAsync::new(new_test_db()?);
+        let (library, release, unmounted, artist) = {
+            let mut db_write = db.write().await;
+            let library = lyra_db::test_db::insert_library(&mut db_write, "Music", "/music")?;
+            let release = insert_release(&mut db_write, "Album")?;
+            let unmounted = insert_release(&mut db_write, "Unmounted")?;
+            for owner in [release, unmounted] {
+                lyra_db::fixtures::connect(&mut db_write, library, owner)?;
+            }
+            let artist = lyra_db::fixtures::insert_artist(&mut db_write, "Artist")?;
+            lyra_db::fixtures::connect_credit(
+                &mut db_write,
+                release,
+                artist,
+                lyra_db::CreditType::Artist,
+                None,
+                0,
+            )?;
+            (library, release, unmounted, artist)
+        };
+        let local = write_test_cover()?;
+        stored(&db, release, CoverSource::Local, &local).await?;
+        stored(
+            &db,
+            release,
+            CoverSource::Provider,
+            &dir.path().join("gone.png"),
+        )
+        .await?;
+        stored(
+            &db,
+            unmounted,
+            CoverSource::Local,
+            &dir.path().join("unmounted/cover.png"),
+        )
+        .await?;
+        stored(
+            &db,
+            artist,
+            CoverSource::Provider,
+            &dir.path().join("artist.png"),
+        )
+        .await?;
+
+        let removed = refresh_gone_covers_for_library(&db, library, None).await?;
+        assert_eq!(removed, 2);
+        assert_eq!(shown_source(&db, release).await?, Some(CoverSource::Local));
+        assert_eq!(shown_source(&db, artist).await?, None);
+        assert_eq!(
+            shown_source(&db, unmounted).await?,
+            Some(CoverSource::Local),
+            "an unmounted folder is no evidence"
+        );
+        let _ = std_fs::remove_file(local);
+        Ok(())
+    }
+
+    /// A release with a local cover whose file is confirmed gone, as the sweep reads it.
+    async fn release_with_gone_local_cover(
+        db: &lyra_db::DbAsync,
+        dir: &Path,
+        title: &str,
+    ) -> anyhow::Result<(DbId, StaleCover)> {
+        let release = {
+            let mut db_write = db.write().await;
+            insert_release(&mut db_write, title)?
+        };
+        stored(
+            db,
+            release,
+            CoverSource::Local,
+            &dir.join(format!("{title}.png")),
+        )
+        .await?;
+        let mut stale = StaleCover::read_all(&*db.read().await, release)?;
+        assert_eq!(stale.len(), 1);
+        Ok((release, stale.remove(0)))
+    }
+
+    #[tokio::test]
+    async fn a_cover_stored_since_the_sweep_read_is_not_overwritten() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let dir = tempfile::tempdir()?;
+        let db = lyra_db::DbAsync::new(new_test_db()?);
+        let (release, stale) = release_with_gone_local_cover(&db, dir.path(), "Album").await?;
+        let found = write_test_cover()?;
+
+        let refreshed = write_test_cover()?;
+        stored(&db, release, CoverSource::Local, &refreshed).await?;
+        let gone = GoneCovers {
+            replaced: vec![(stale, found.clone())],
+            ..GoneCovers::default()
+        };
+        apply_gone_covers(&db, DbId(0), gone).await;
+
+        let stored = lyra_db::covers::get(&*db.read().await, release)?.map(|cover| cover.path);
+        assert_eq!(stored, Some(refreshed.to_string_lossy().into_owned()));
+        let _ = std_fs::remove_file(found);
+        let _ = std_fs::remove_file(refreshed);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_cover_whose_file_came_back_is_not_replaced() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let dir = tempfile::tempdir()?;
+        let db = lyra_db::DbAsync::new(new_test_db()?);
+        let (release, stale) = release_with_gone_local_cover(&db, dir.path(), "Album").await?;
+        let found = write_test_cover()?;
+
+        let original = dir.path().join("Album.png");
+        std_fs::write(&original, PNG_1X1)?;
+        let gone = GoneCovers {
+            replaced: vec![(stale, found.clone())],
+            ..GoneCovers::default()
+        };
+        apply_gone_covers(&db, DbId(0), gone).await;
+
+        let stored = lyra_db::covers::get(&*db.read().await, release)?.map(|cover| cover.path);
+        assert_eq!(stored, Some(original.to_string_lossy().into_owned()));
+        let _ = std_fs::remove_file(found);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_replacement_does_not_stop_the_other_removals() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let dir = tempfile::tempdir()?;
+        let db = lyra_db::DbAsync::new(new_test_db()?);
+        let (unreadable, unreadable_stale) =
+            release_with_gone_local_cover(&db, dir.path(), "Unreadable").await?;
+        let (removed, removed_stale) =
+            release_with_gone_local_cover(&db, dir.path(), "Removed").await?;
+        let gone = GoneCovers {
+            replaced: vec![(unreadable_stale, dir.path().join("vanished.png"))],
+            removed: vec![removed_stale],
+            failed: Vec::new(),
+        };
+
+        assert_eq!(apply_gone_covers(&db, DbId(0), gone).await, 1);
+        let db_read = db.read().await;
+        assert!(lyra_db::covers::get(&*db_read, removed)?.is_none());
+        assert!(
+            lyra_db::covers::get(&*db_read, unreadable)?.is_some(),
+            "the stale cover stays for the next sync"
         );
         Ok(())
     }

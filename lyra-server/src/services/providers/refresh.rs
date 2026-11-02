@@ -33,7 +33,9 @@ use crate::{
             CoverPaths,
             CoverSyncOptions,
             configured_covers_root,
+            forget_gone_covers,
             record_local_release_cover,
+            refresh_gone_covers_for_library,
             sync_and_persist_release_covers_for_library,
             sync_artist_cover,
             sync_artist_covers_for_library,
@@ -683,6 +685,9 @@ async fn sync_cover_for_refreshed_entity(
             let synced = sync_artist_cover(&STATE.db.get(), &artist, paths, options, None)
                 .await
                 .map_err(ProviderServiceError::Internal)?;
+            forget_gone_covers(&STATE.db.get(), node_id)
+                .await
+                .map_err(ProviderServiceError::Internal)?;
             tracing::debug!(
                 artist_id = node_id.0,
                 synced,
@@ -723,6 +728,9 @@ async fn sync_library_covers_after_refresh(
     )
     .await
     .map_err(ProviderServiceError::Internal)?;
+    refresh_gone_covers_for_library(&STATE.db.get(), library_db_id, paths.library_root)
+        .await
+        .map_err(ProviderServiceError::Internal)?;
     tracing::debug!(
         library_db_id = library_db_id.0,
         release_count,
