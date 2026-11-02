@@ -3,10 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-//! Which player sessions a plugin reports playback for each open plugin socket stands for. Once
-//! the last socket holding a session closes, the session's playback pauses, as a closed connection
-//! of Lyra's own clients pauses its playback. Each session counts the reports accepted for it while
-//! held, so a close leaves alone what a report accepted after it changed.
+//! Which player sessions a plugin reports playback for each open plugin socket claims to stand
+//! for. Once the last socket claiming a session closes, the session's playback pauses, as a closed
+//! connection of Lyra's own clients pauses its playback. Each session counts the reports accepted
+//! for it while claimed, so a close leaves alone what a report accepted after it changed.
 
 use std::{
     collections::{
@@ -36,15 +36,15 @@ impl SocketId {
 
 /// A player session a plugin reports playback for, as reports name it.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct HeldSession {
+pub(crate) struct ClaimedSession {
     pub(crate) plugin_id: String,
     pub(crate) user_public_id: String,
     pub(crate) session_key: String,
 }
 
 #[derive(Debug, Default)]
-struct Holders {
-    /// Counts the reports accepted for the session while it is held or a close of it is pending.
+struct Claimants {
+    /// Counts the reports accepted for the session while it is claimed or a close of it is pending.
     version: u64,
     sockets: HashSet<SocketId>,
     /// Closes of the session that have yet to settle.
@@ -52,131 +52,135 @@ struct Holders {
 }
 
 #[derive(Debug, Default)]
-struct HoldMap {
-    sessions: HashMap<HeldSession, Holders>,
-    sockets: HashMap<SocketId, HashSet<HeldSession>>,
+struct ClaimMap {
+    sessions: HashMap<ClaimedSession, Claimants>,
+    sockets: HashMap<SocketId, HashSet<ClaimedSession>>,
 }
 
-impl HoldMap {
-    /// Counts one close of the session as settled, forgetting the session once nothing holds it.
-    fn release(&mut self, session: &HeldSession) {
-        if let Some(holders) = self.sessions.get_mut(session) {
-            holders.releasing -= 1;
-            if holders.sockets.is_empty() && holders.releasing == 0 {
+impl ClaimMap {
+    /// Counts one close of the session as settled, forgetting the session once nothing claims it.
+    fn release(&mut self, session: &ClaimedSession) {
+        if let Some(claimants) = self.sessions.get_mut(session) {
+            claimants.releasing -= 1;
+            if claimants.sockets.is_empty() && claimants.releasing == 0 {
                 self.sessions.remove(session);
             }
         }
     }
 }
 
-/// Generation-owned session holds.
+/// Generation-owned socket claims.
 #[derive(Default)]
-pub(crate) struct SessionHolds(Arc<Mutex<HoldMap>>);
+pub(crate) struct SocketClaims(Arc<Mutex<ClaimMap>>);
 
-/// A session a closed socket held, and how many reports had been accepted for it when it closed.
-/// Dropped without [`Release::settle`], the close pauses nothing.
+/// A session a closed socket claimed, and how many reports had been accepted for it when it closed.
+/// Dropped without [`ReleasedClaim::settle`], the close pauses nothing.
 #[derive(Debug)]
-pub(crate) struct Release {
-    session: HeldSession,
+pub(crate) struct ReleasedClaim {
+    session: ClaimedSession,
     version: u64,
-    holds: Arc<Mutex<HoldMap>>,
+    claims: Arc<Mutex<ClaimMap>>,
     settled: bool,
 }
 
-impl Release {
-    /// Settles the close, returning the session when the close leaves it unheld and unreported
+impl ReleasedClaim {
+    /// Settles the close, returning the session when the close leaves it unclaimed and unreported
     /// since: then its playback is to pause. Called under the database write lock reports take,
     /// so no report lands between this and the pause.
-    pub(crate) fn settle(mut self) -> Option<HeldSession> {
+    pub(crate) fn settle(mut self) -> Option<ClaimedSession> {
         self.settled = true;
-        let mut holds = self.holds.lock().expect("session holds mutex poisoned");
-        let holders = holds.sessions.get(&self.session)?;
-        let pause = holders.sockets.is_empty() && holders.version == self.version;
-        holds.release(&self.session);
+        let mut claims = self.claims.lock().expect("socket claims mutex poisoned");
+        let claimants = claims.sessions.get(&self.session)?;
+        let pause = claimants.sockets.is_empty() && claimants.version == self.version;
+        claims.release(&self.session);
         pause.then(|| self.session.clone())
     }
 }
 
-impl Drop for Release {
+impl Drop for ReleasedClaim {
     fn drop(&mut self) {
         if !self.settled {
-            self.holds
+            self.claims
                 .lock()
-                .expect("session holds mutex poisoned")
+                .expect("socket claims mutex poisoned")
                 .release(&self.session);
         }
     }
 }
 
-fn holds() -> Arc<Mutex<HoldMap>> {
-    crate::services::STATE.generation().session_holds.0.clone()
+fn claims() -> Arc<Mutex<ClaimMap>> {
+    crate::services::STATE.generation().socket_claims.0.clone()
 }
 
-/// Holds the session for the socket while `open` says the socket is open. A socket marks itself
-/// closed as it releases its holds, under the holds' lock that `open` runs under too, so a socket
-/// that closed holds nothing. Returns whether the socket holds the session.
-pub(crate) fn hold(socket: SocketId, session: HeldSession, open: impl FnOnce() -> bool) -> bool {
-    let handle = holds();
-    let mut holds = handle.lock().expect("session holds mutex poisoned");
+/// Claims the session for the socket while `open` says the socket is open. A socket marks itself
+/// closed as it releases its claims, under the claims' lock that `open` runs under too, so a
+/// socket that closed claims nothing. Returns whether the socket claims the session.
+pub(crate) fn claim(
+    socket: SocketId,
+    session: ClaimedSession,
+    open: impl FnOnce() -> bool,
+) -> bool {
+    let handle = claims();
+    let mut claims = handle.lock().expect("socket claims mutex poisoned");
     if !open() {
         return false;
     }
-    holds
+    claims
         .sessions
         .entry(session.clone())
         .or_default()
         .sockets
         .insert(socket);
-    holds.sockets.entry(socket).or_default().insert(session);
+    claims.sockets.entry(socket).or_default().insert(session);
     true
 }
 
 /// Counts a report accepted for the session of the user `user_public_id` names, resolving it only
-/// while some session is held. Called under the database write lock reports take; the check and
-/// the count share the holds' lock, so a hold taken meanwhile still sees the report.
-pub(crate) fn advance(
+/// while some session is claimed. Called under the database write lock reports take; the check
+/// and the count share the claims' lock, so a claim taken meanwhile still sees the report.
+pub(crate) fn count_report(
     plugin_id: &str,
     session_key: &str,
     user_public_id: impl FnOnce() -> anyhow::Result<Option<String>>,
 ) -> anyhow::Result<()> {
-    let handle = holds();
-    let mut holds = handle.lock().expect("session holds mutex poisoned");
-    if holds.sessions.is_empty() {
+    let handle = claims();
+    let mut claims = handle.lock().expect("socket claims mutex poisoned");
+    if claims.sessions.is_empty() {
         return Ok(());
     }
     let Some(user_public_id) = user_public_id()? else {
         return Ok(());
     };
-    let session = HeldSession {
+    let session = ClaimedSession {
         plugin_id: plugin_id.to_string(),
         user_public_id,
         session_key: session_key.to_string(),
     };
-    if let Some(holders) = holds.sessions.get_mut(&session) {
-        holders.version = holders.version.wrapping_add(1);
+    if let Some(claimants) = claims.sessions.get_mut(&session) {
+        claimants.version = claimants.version.wrapping_add(1);
     }
     Ok(())
 }
 
-/// Closes the socket with `close` and lets go of what it held, both under the holds' lock, so a
+/// Closes the socket with `close` and lets go of what it claimed, both under the claims' lock, so a
 /// report counted after the close is one the releases didn't see.
-pub(crate) fn release_socket(socket: SocketId, close: impl FnOnce()) -> Vec<Release> {
-    let handle = holds();
-    let mut holds = handle.lock().expect("session holds mutex poisoned");
+pub(crate) fn release_socket(socket: SocketId, close: impl FnOnce()) -> Vec<ReleasedClaim> {
+    let handle = claims();
+    let mut claims = handle.lock().expect("socket claims mutex poisoned");
     close();
-    let Some(sessions) = holds.sockets.remove(&socket) else {
+    let Some(sessions) = claims.sockets.remove(&socket) else {
         return Vec::new();
     };
     sessions
         .into_iter()
         .filter_map(|session| {
-            let holders = holds.sessions.get_mut(&session)?;
-            holders.sockets.remove(&socket);
-            holders.releasing += 1;
-            Some(Release {
-                version: holders.version,
+            let claimants = claims.sessions.get_mut(&session)?;
+            claimants.sockets.remove(&socket);
+            claimants.releasing += 1;
+            Some(ReleasedClaim {
+                version: claimants.version,
                 session,
-                holds: handle.clone(),
+                claims: handle.clone(),
                 settled: false,
             })
         })
@@ -187,22 +191,22 @@ pub(crate) fn release_socket(socket: SocketId, close: impl FnOnce()) -> Vec<Rele
 mod tests {
     use super::*;
 
-    fn session(key: &str) -> HeldSession {
-        HeldSession {
+    fn session(key: &str) -> ClaimedSession {
+        ClaimedSession {
             plugin_id: "demo".to_string(),
             user_public_id: "user".to_string(),
             session_key: key.to_string(),
         }
     }
 
-    fn advance_session(key: &str) {
-        advance("demo", key, || Ok(Some("user".to_string()))).expect("advance");
+    fn report_session(key: &str) {
+        count_report("demo", key, || Ok(Some("user".to_string()))).expect("count report");
     }
 
-    fn held_count() -> usize {
-        holds()
+    fn claimed_count() -> usize {
+        claims()
             .lock()
-            .expect("session holds mutex poisoned")
+            .expect("socket claims mutex poisoned")
             .sessions
             .len()
     }
@@ -212,21 +216,21 @@ mod tests {
         let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
         crate::services::testing::init_default_test_state().expect("init test state");
         let (first, second) = (SocketId::next(), SocketId::next());
-        assert!(hold(first, session("device"), || true));
-        assert!(hold(second, session("device"), || true));
-        advance_session("device");
+        assert!(claim(first, session("device"), || true));
+        assert!(claim(second, session("device"), || true));
+        report_session("device");
 
         let released = release_socket(first, || {});
         assert_eq!(released.len(), 1);
         let mut released = released.into_iter();
         assert!(
             released.next().unwrap().settle().is_none(),
-            "another socket still holds the session"
+            "another socket still claims the session"
         );
 
         let released = release_socket(second, || {}).pop().unwrap();
         assert_eq!(released.settle(), Some(session("device")));
-        assert_eq!(held_count(), 0);
+        assert_eq!(claimed_count(), 0);
         assert!(release_socket(second, || {}).is_empty());
     }
 
@@ -235,24 +239,24 @@ mod tests {
         let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
         crate::services::testing::init_default_test_state().expect("init test state");
         let socket = SocketId::next();
-        hold(socket, session("device"), || true);
-        advance_session("device");
+        claim(socket, session("device"), || true);
+        report_session("device");
 
         let released = release_socket(socket, || {}).pop().unwrap();
-        advance_session("device");
-        advance_session("other");
+        report_session("device");
+        report_session("other");
 
         assert!(released.settle().is_none());
-        assert_eq!(held_count(), 0);
+        assert_eq!(claimed_count(), 0);
     }
 
     #[test]
-    fn a_closed_socket_holds_nothing() {
+    fn a_closed_socket_claims_nothing() {
         let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
         crate::services::testing::init_default_test_state().expect("init test state");
         let socket = SocketId::next();
-        assert!(!hold(socket, session("device"), || false));
-        assert_eq!(held_count(), 0);
+        assert!(!claim(socket, session("device"), || false));
+        assert_eq!(claimed_count(), 0);
         assert!(release_socket(socket, || {}).is_empty());
     }
 
@@ -261,11 +265,11 @@ mod tests {
         let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
         crate::services::testing::init_default_test_state().expect("init test state");
         let socket = SocketId::next();
-        hold(socket, session("device"), || true);
+        claim(socket, session("device"), || true);
 
         drop(release_socket(socket, || {}));
 
-        assert_eq!(held_count(), 0);
+        assert_eq!(claimed_count(), 0);
     }
 
     #[test]
@@ -273,20 +277,20 @@ mod tests {
         let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
         crate::services::testing::init_default_test_state().expect("init test state");
         let socket = SocketId::next();
-        hold(socket, session("device"), || true);
+        claim(socket, session("device"), || true);
 
         let (reported, report_done) = std::sync::mpsc::channel();
         let released = release_socket(socket, || {
             let reported = reported.clone();
             std::thread::spawn(move || {
-                advance_session("device");
+                report_session("device");
                 reported.send(()).expect("report signal");
             });
             assert!(
                 report_done
                     .recv_timeout(std::time::Duration::from_millis(100))
                     .is_err(),
-                "a report lands only once the close has seen what it holds"
+                "a report lands only once the close has seen what it claims"
             );
         });
         report_done

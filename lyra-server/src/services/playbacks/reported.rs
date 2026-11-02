@@ -23,13 +23,13 @@ use lyra_db::{
 
 use super::{
     PlaybackError,
-    holds::{
-        self,
-        HeldSession,
-    },
     reporting::{
         self,
         Transition,
+    },
+    socket_claims::{
+        self,
+        ClaimedSession,
     },
 };
 use crate::services::playback_sessions::{
@@ -82,11 +82,11 @@ pub(crate) fn report_reported_playback(
     }
     Ok(match transition {
         Some(transition) => {
-            let counted = holds::advance(plugin_id, session_key, || {
+            let counted = socket_claims::count_report(plugin_id, session_key, || {
                 Ok(lyra_db::users::get_by_id(db, user_db_id)?.map(|user| user.id))
             });
             if let Err(error) = counted {
-                tracing::warn!(%error, "failed to count a report for the sessions sockets hold");
+                tracing::warn!(%error, "failed to count a report for the sessions sockets claim");
             }
             ReportOutcome::Applied(Box::new(reporting::finish(db, transition, None, now_ms)))
         }
@@ -94,25 +94,25 @@ pub(crate) fn report_reported_playback(
     })
 }
 
-/// Pauses what the sessions closed sockets held left playing, for each session that no open socket
-/// holds and that took no report since its socket closed. Returns the sessions it paused.
+/// Pauses what the sessions closed sockets claimed left playing, for each session that no open
+/// socket claims and that took no report since its socket closed. Returns the sessions it paused.
 fn pause_released_sessions(
     db: &mut DbAny,
-    releases: Vec<holds::Release>,
+    releases: Vec<socket_claims::ReleasedClaim>,
     now_ms: u64,
 ) -> Result<(Vec<PlaybackRecord>, Vec<EvictedPlaybackRecord>), PlaybackError> {
-    let unheld = releases
+    let unclaimed = releases
         .into_iter()
-        .filter_map(holds::Release::settle)
+        .filter_map(socket_claims::ReleasedClaim::settle)
         .collect::<Vec<_>>();
     let mut paused = Vec::new();
-    for HeldSession {
+    for ClaimedSession {
         plugin_id,
         user_public_id,
         session_key,
-    } in unheld
+    } in unclaimed
     {
-        // A user deleted since holds nothing.
+        // A user deleted since claims nothing.
         let Some(user_db_id) = lyra_db::users::find_db_id_by_public_id(db, &user_public_id)? else {
             continue;
         };
@@ -127,9 +127,9 @@ fn pause_released_sessions(
     Ok((paused, reporting::cleanup_after_commit(db, now_ms)))
 }
 
-/// Pauses what the sessions a closed plugin socket held left playing, as
+/// Pauses what the sessions a closed plugin socket claimed left playing, as
 /// [`pause_released_sessions`] does, and announces it.
-pub(crate) async fn pause_after_socket_close(releases: Vec<holds::Release>) {
+pub(crate) async fn pause_after_socket_close(releases: Vec<socket_claims::ReleasedClaim>) {
     if releases.is_empty() {
         return;
     }

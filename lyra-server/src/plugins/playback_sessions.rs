@@ -33,7 +33,7 @@ use harmony_core::UserDataBinding;
 use crate::plugins::api::WebSocketSenderType;
 use crate::plugins::args;
 use crate::plugins::executor::ApiWebSocketSender;
-use crate::services::playbacks::holds::HeldSession;
+use crate::services::playbacks::socket_claims::ClaimedSession;
 use crate::{
     plugins::{
         auth::OwnersQuery,
@@ -278,7 +278,7 @@ impl PlaybackSessionsModule {
         })?;
         let sender = ApiWebSocketSender::class().read_userdata(vm, &sender)?;
         let session_key = require_non_empty_string(session_key, "session_key")?;
-        sender.state().hold_session(HeldSession {
+        sender.state().claim_session(ClaimedSession {
             plugin_id: plugin_id.to_string(),
             user_public_id: principal.user_public_id,
             session_key,

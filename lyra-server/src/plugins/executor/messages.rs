@@ -19,7 +19,7 @@ use anyhow::Result;
 use harmony_core::plugin::PluginManifest;
 
 use crate::services::playback_sessions::PlaybackUpdatePayload;
-use crate::services::playbacks::holds;
+use crate::services::playbacks::socket_claims;
 use crate::services::plugin_dispatch::{
     MetadataRefreshRequest,
     MetadataRefreshResult,
@@ -34,7 +34,7 @@ pub(super) struct TaskIdKey(pub(super) u64);
 
 #[derive(Debug)]
 pub(crate) struct WebSocketState {
-    socket: holds::SocketId,
+    socket: socket_claims::SocketId,
     closed: AtomicBool,
     close_signal: tokio::sync::Notify,
 }
@@ -42,7 +42,7 @@ pub(crate) struct WebSocketState {
 impl WebSocketState {
     pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self {
-            socket: holds::SocketId::next(),
+            socket: socket_claims::SocketId::next(),
             closed: AtomicBool::new(false),
             close_signal: tokio::sync::Notify::new(),
         })
@@ -52,17 +52,17 @@ impl WebSocketState {
         self.close_signal.notify_one();
     }
 
-    /// Marks the websocket closed and lets go of the sessions it held, returning what
+    /// Marks the websocket closed and lets go of the sessions it claimed, returning what
     /// [`crate::services::playbacks::pause_after_socket_close`] pauses for them.
     #[must_use]
-    pub(crate) fn mark_closed(&self) -> Vec<holds::Release> {
-        holds::release_socket(self.socket, || self.closed.store(true, Ordering::Release))
+    pub(crate) fn mark_closed(&self) -> Vec<socket_claims::ReleasedClaim> {
+        socket_claims::release_socket(self.socket, || self.closed.store(true, Ordering::Release))
     }
 
-    /// Holds the session until the websocket closes; returns whether it does, which it doesn't
+    /// Claims the session until the websocket closes; returns whether it does, which it doesn't
     /// once closed.
-    pub(crate) fn hold_session(&self, session: holds::HeldSession) -> bool {
-        holds::hold(self.socket, session, || !self.is_closed())
+    pub(crate) fn claim_session(&self, session: socket_claims::ClaimedSession) -> bool {
+        socket_claims::claim(self.socket, session, || !self.is_closed())
     }
 
     pub(crate) fn is_closed(&self) -> bool {

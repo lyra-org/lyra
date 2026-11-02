@@ -205,7 +205,8 @@ async fn first_paused_report_establishes_playback_but_terminal_report_does_not()
 }
 
 #[tokio::test]
-async fn reported_playback_survives_switch_stop_and_runtime_restart() -> anyhow::Result<()> {
+async fn reported_playback_keeps_its_root_across_switch_late_stop_and_resume() -> anyhow::Result<()>
+{
     let (mut db, _guard) = new_scoped_test_db().await?;
     let user = insert_user(&mut db, "alice")?;
     let track_a = insert_track(&mut db, "A", 200_000)?;
@@ -1638,12 +1639,12 @@ fn report_for(
     .ok_or_else(|| anyhow::anyhow!("the report starts a session"))
 }
 
-/// Holds the user's `device:1` session, as the plugin reports it, on a new socket.
-fn hold_device(db: &DbAny, plugin_id: &str, user_db_id: DbId) -> holds::SocketId {
-    let socket = holds::SocketId::next();
-    assert!(holds::hold(
+/// Claims the user's `device:1` session, as the plugin reports it, for a new socket.
+fn claim_device(db: &DbAny, plugin_id: &str, user_db_id: DbId) -> socket_claims::SocketId {
+    let socket = socket_claims::SocketId::next();
+    assert!(socket_claims::claim(
         socket,
-        HeldSession {
+        ClaimedSession {
             plugin_id: plugin_id.to_string(),
             user_public_id: user_public_id(db, user_db_id),
             session_key: "device:1".to_string(),
@@ -1656,10 +1657,10 @@ fn hold_device(db: &DbAny, plugin_id: &str, user_db_id: DbId) -> holds::SocketId
 /// Closes the socket and pauses what its close leaves playing, returning the paused sessions.
 fn close_socket(
     db: &mut DbAny,
-    socket: holds::SocketId,
+    socket: socket_claims::SocketId,
     now_ms: u64,
 ) -> Result<(Vec<PlaybackRecord>, Vec<EvictedPlaybackRecord>), PlaybackError> {
-    pause_released_sessions(db, holds::release_socket(socket, || {}), now_ms)
+    pause_released_sessions(db, socket_claims::release_socket(socket, || {}), now_ms)
 }
 
 #[tokio::test]
@@ -1669,7 +1670,7 @@ async fn a_close_pauses_the_current_session_after_a_replacement_paused_the_previ
     let user = insert_user(&mut db, "alice")?;
     let a = insert_track(&mut db, "A", 200_000)?;
     let b = insert_track(&mut db, "B", 200_000)?;
-    let socket = hold_device(&db, "demo", user);
+    let socket = claim_device(&db, "demo", user);
     let started_a = report_for(&mut db, "demo", user, a, 10_000, 1_000)?;
     let started_b = report_for(&mut db, "demo", user, b, 20_000, 2_000)?;
 
@@ -1735,7 +1736,7 @@ async fn a_close_leaves_other_reporters_of_the_session_key_playing() -> anyhow::
     let own = report_for(&mut db, "demo", user, track, 0, 1_000)?;
     let other_plugin = report_for(&mut db, "other", user, track, 0, 1_000)?;
     let other_user_session = report_for(&mut db, "demo", other_user, track, 0, 1_000)?;
-    let socket = hold_device(&db, "demo", user);
+    let socket = claim_device(&db, "demo", user);
 
     let (paused, _) = close_socket(&mut db, socket, 2_000)?;
 
@@ -1751,7 +1752,7 @@ async fn a_close_leaves_other_reporters_of_the_session_key_playing() -> anyhow::
             lyra_db::playback_sessions::get_by_id(&db, untouched.playback_session_id)?.unwrap();
         assert_eq!(session.state, PlaybackState::Playing);
     }
-    let socket = hold_device(&db, "demo", user);
+    let socket = claim_device(&db, "demo", user);
     let (paused, _) = close_socket(&mut db, socket, 3_000)?;
     assert!(paused.is_empty(), "a paused session stays paused");
     Ok(())
@@ -1763,9 +1764,9 @@ async fn a_close_leaves_a_playback_a_later_report_changed() -> anyhow::Result<()
     let user = insert_user(&mut db, "alice")?;
     let a = insert_track(&mut db, "A", 200_000)?;
     let b = insert_track(&mut db, "B", 200_000)?;
-    let socket = hold_device(&db, "demo", user);
+    let socket = claim_device(&db, "demo", user);
     report_for(&mut db, "demo", user, a, 0, 1_000)?;
-    let released = holds::release_socket(socket, || {});
+    let released = socket_claims::release_socket(socket, || {});
     // The replacement lands in the same millisecond, so only the report count tells them apart.
     let replacement = report_for(&mut db, "demo", user, b, 0, 1_000)?;
 
@@ -1786,7 +1787,7 @@ async fn a_close_leaves_a_resume_in_the_same_millisecond_playing() -> anyhow::Re
     let (mut db, _guard) = new_scoped_test_db().await?;
     let user = insert_user(&mut db, "alice")?;
     let track = insert_track(&mut db, "A", 200_000)?;
-    let socket = hold_device(&db, "demo", user);
+    let socket = claim_device(&db, "demo", user);
     let started = report_for(&mut db, "demo", user, track, 0, 1_000)?;
     let progress = |db: &mut DbAny, state| {
         report_playback_session(
@@ -1808,7 +1809,7 @@ async fn a_close_leaves_a_resume_in_the_same_millisecond_playing() -> anyhow::Re
         )
     };
     progress(&mut db, PlaybackState::Paused)?.expect("the pause is accepted");
-    let released = holds::release_socket(socket, || {});
+    let released = socket_claims::release_socket(socket, || {});
     progress(&mut db, PlaybackState::Playing)?.expect("the resume is accepted");
 
     let (paused, _) = pause_released_sessions(&mut db, released, 2_000)?;
@@ -1820,18 +1821,18 @@ async fn a_close_leaves_a_resume_in_the_same_millisecond_playing() -> anyhow::Re
 }
 
 #[tokio::test]
-async fn a_close_leaves_a_session_another_socket_holds_playing() -> anyhow::Result<()> {
+async fn a_close_leaves_a_session_another_socket_claims_playing() -> anyhow::Result<()> {
     let (mut db, _guard) = new_scoped_test_db().await?;
     let user = insert_user(&mut db, "alice")?;
     let track = insert_track(&mut db, "A", 200_000)?;
-    let first = hold_device(&db, "demo", user);
-    let second = hold_device(&db, "demo", user);
+    let first = claim_device(&db, "demo", user);
+    let second = claim_device(&db, "demo", user);
     let started = report_for(&mut db, "demo", user, track, 0, 1_000)?;
 
     let (paused, _) = close_socket(&mut db, first, 2_000)?;
     assert!(
         paused.is_empty(),
-        "the other socket still holds the session"
+        "the other socket still claims the session"
     );
 
     let (paused, _) = close_socket(&mut db, second, 3_000)?;

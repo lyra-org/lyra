@@ -4,7 +4,8 @@
 // www.meshiplaw.com/lyra.
 
 //! Which track session each of Lyra's own client connections drives, by the connection's user and
-//! session key. Plugin-reported playback keeps its sessions in the database instead.
+//! session key. Plugin-reported playback has none: its playback's current session and the one that
+//! session replaced are edges in the database.
 
 use std::{
     collections::HashMap,
