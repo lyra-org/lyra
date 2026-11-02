@@ -50,7 +50,7 @@ assert(call.error_code("stream", key, { id = ids.hidden }) == 70, "a hidden song
 assert(call.error_code("stream", key, { id = ids.album }) == 70, "an album isn't streamed")
 assert(call.error_code("stream", "not-a-key", { id = ids.synced }) == 44, "streaming needs a key")
 
--- Lyrics come as one structured entry; a song without any has none.
+-- Lyrics come as one structured entry per language; a song without any has none.
 local none = call.ok("getLyricsBySongId", key, { id = ids.synced }).lyricsList
 assert(type(none) == "table" and none.structuredLyrics == nil, "no lyrics")
 local none_xml = call.raw("getLyricsBySongId", { apiKey = key, id = ids.synced }).body
@@ -58,10 +58,10 @@ assert(string.find(none_xml, "<lyricsList/>", 1, true), none_xml)
 
 lyrics.set_personal(ids.synced, {
 	content_type = "application/lrc",
-	body = "[00:01.00]First line\n[00:02.50]Second line\n",
+	body = "[00:01.00]First line\n[01:40.00]Second line\n",
 	language = "eng",
 })
-lyrics.set_personal(ids.plain, { content_type = "text/plain", body = "One\nTwo" })
+lyrics.set_personal(ids.plain, { content_type = "text/plain", body = "One\nTwo", language = "eng" })
 
 local synced = call.ok("getLyricsBySongId", key, { id = ids.synced }).lyricsList.structuredLyrics
 assert(#synced == 1)
@@ -69,17 +69,30 @@ local entry = synced[1]
 assert(entry.synced == true and entry.lang == "eng", `synced {entry.synced} lang {entry.lang}`)
 assert(entry.displayTitle == "Synced" and entry.displayArtist == "Amy")
 assert(#entry.line == 2 and entry.line[1].value == "First line" and entry.line[1].start == 1000)
-assert(entry.line[2].start == 2500)
+assert(entry.line[2].start == 100000)
 
 local synced_xml = call.raw("getLyricsBySongId", { apiKey = key, id = ids.synced }).body
 assert(string.find(synced_xml, '<line start="1000">First line</line>', 1, true), synced_xml)
 local empty_xml = call.raw("getLyricsBySongId", { apiKey = key, id = ids.hidden }).body
 assert(string.find(empty_xml, "<error ", 1, true), "a hidden song's lyrics fail in XML too")
 
-local plain = call.ok("getLyricsBySongId", key, { id = ids.plain }).lyricsList.structuredLyrics[1]
+local by_language = call.ok("getLyricsBySongId", key, { id = ids.plain }).lyricsList.structuredLyrics
+assert(#by_language == 2, `{#by_language} languages`)
+local plain = by_language[1]
 assert(plain.synced == false, "plain lyrics aren't synced")
-assert(plain.lang ~= nil and plain.lang ~= "", "plain lyrics carry a language")
+assert(plain.lang == "eng", "the caller's own lyrics come first")
 assert(#plain.line == 2 and plain.line[1].value == "One" and plain.line[1].start == nil)
+local french = by_language[2]
+assert(french.lang == "fra" and #french.line == 2 and french.line[1].value == "Un")
+
+-- Timed lines that cover too little of the song count as unsynced.
+lyrics.set_personal(ids.synced, {
+	content_type = "application/lrc",
+	body = "[00:01.00]First line\n[00:02.50]Second line\n",
+	language = "eng",
+})
+local thin = call.ok("getLyricsBySongId", key, { id = ids.synced }).lyricsList.structuredLyrics[1]
+assert(thin.synced == false and thin.line[1].start == nil, "thin timing is unsynced")
 
 assert(call.error_code("getLyricsBySongId", key, {}) == 10, "lyrics need an id")
 assert(call.error_code("getLyricsBySongId", key, { id = ids.hidden }) == 70, "a hidden song's lyrics")

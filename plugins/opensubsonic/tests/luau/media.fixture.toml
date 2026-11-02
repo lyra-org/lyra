@@ -64,3 +64,18 @@ key = "hidden"
 title = "Hidden"
 release = "secret"
 file = "song.opus"
+
+# Plain also has fetched lyrics in French and English; the listener's own English ones outrank the
+# fetched English ones.
+
+[[lyrics]]
+track = "plain"
+provider = "lrclib"
+language = "fra"
+body = "Un\nDeux"
+
+[[lyrics]]
+track = "plain"
+provider = "other"
+language = "eng"
+body = "Uno"

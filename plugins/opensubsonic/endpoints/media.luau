@@ -67,16 +67,9 @@ local function stream_options(params: ApiQueryParams): TrackStreamOptions?
 	return if any then options else nil
 end
 
--- Lines in timestamp order when any line has a time, else the text's lines.
+-- Timed lines when the host counts the lyrics as synced, else the lines or the text's lines.
 local function structured_lyrics(info: LyricsInfo, track: Track, artist: string?): any
-	local synced = false
-	for _, line in info.lines do
-		if line.ts_ms > 0 then
-			synced = true
-			break
-		end
-	end
-
+	local synced = info.synced
 	local lines: { any } = {}
 	if synced then
 		for _, line in info.lines do
@@ -124,20 +117,34 @@ module.methods = {
 		return api.response.stream_track(track.id, options)
 	end,
 
+	-- One entry per language, the best ranked of each, in rank order.
 	getLyricsBySongId = function(req: Request): ApiResponse
 		local track = find_track(req.params)
+		local ids: { string } = {}
+		local languages: { [string]: boolean } = {}
 		local summaries: { lyrics.LyricsSummary } = lyrics.by_track({ track.id })[track.id] or {}
-		local best = summaries[1]
-		local info = if best then lyrics.get({ best.id })[best.id] else nil
-		local entry: any = nil
-		if info then
+		for _, summary in summaries do
+			if not languages[summary.language] then
+				languages[summary.language] = true
+				table.insert(ids, summary.id)
+			end
+		end
+		local entries: { any } = {}
+		if #ids > 0 then
+			local infos = lyrics.get(ids)
 			local projection = credits.projections({ track.id }, { "credits" })[track.id]
 			local _, artist = credits.artists(projection)
-			entry = structured_lyrics(info, track, artist)
+			for _, id in ids do
+				local info = infos[id]
+				local entry = if info then structured_lyrics(info, track, artist) else nil
+				if entry then
+					table.insert(entries, entry)
+				end
+			end
 		end
 		return response.ok(
 			req.params,
-			{ lyricsList = if entry then { structuredLyrics = { entry } } else response.EMPTY_OBJECT }
+			{ lyricsList = if #entries > 0 then { structuredLyrics = entries } else response.EMPTY_OBJECT }
 		)
 	end,
 }
