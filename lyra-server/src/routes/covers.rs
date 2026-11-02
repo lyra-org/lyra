@@ -530,7 +530,7 @@ async fn get_cover_candidates<K: CoverOwnerRoute>(
     Path(id): Path<String>,
 ) -> Result<Json<CoverCandidatesResponse>, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
-    let found = selection::candidates(&principal, K::KIND, &id).await?;
+    let found = selection::candidates(&STATE.db.get(), &principal, K::KIND, &id).await?;
     Ok(Json(found.into()))
 }
 
@@ -541,7 +541,8 @@ async fn put_manual_cover<K: CoverOwnerRoute>(
 ) -> Result<Json<CoverCandidatesResponse>, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
     require_image_content_type(&headers)?;
-    let found = selection::set_manual(&principal, K::KIND, &id, body.to_vec()).await?;
+    let found =
+        selection::set_manual(&STATE.db.get(), &principal, K::KIND, &id, body.to_vec()).await?;
     Ok(Json(found.into()))
 }
 
@@ -550,7 +551,7 @@ async fn delete_manual_cover<K: CoverOwnerRoute>(
     Path(id): Path<String>,
 ) -> Result<Json<CoverCandidatesResponse>, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
-    let found = selection::remove_manual(&principal, K::KIND, &id).await?;
+    let found = selection::remove_manual(&STATE.db.get(), &principal, K::KIND, &id).await?;
     Ok(Json(found.into()))
 }
 
@@ -562,8 +563,15 @@ async fn put_provider_cover<K: CoverOwnerRoute>(
     let principal = require_authenticated(bearer_credential(&headers)).await?;
     let provider_id = super::providers::parse_provider_filter(Some(&request.provider_id))?
         .ok_or_else(|| AppError::bad_request("provider_id is required"))?;
-    let found =
-        selection::set_provider(&principal, K::KIND, &id, provider_id, &request.url).await?;
+    let found = selection::set_provider(
+        &STATE.db.get(),
+        &principal,
+        K::KIND,
+        &id,
+        provider_id,
+        &request.url,
+    )
+    .await?;
     Ok(Json(found.into()))
 }
 
@@ -573,7 +581,14 @@ async fn put_cover_selection<K: CoverOwnerRoute>(
     Json(request): Json<CoverSelectionRequest>,
 ) -> Result<Json<CoverCandidatesResponse>, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
-    let found = selection::select(&principal, K::KIND, &id, Some(request.source.into())).await?;
+    let found = selection::select(
+        &STATE.db.get(),
+        &principal,
+        K::KIND,
+        &id,
+        Some(request.source.into()),
+    )
+    .await?;
     Ok(Json(found.into()))
 }
 
@@ -582,7 +597,7 @@ async fn delete_cover_selection<K: CoverOwnerRoute>(
     Path(id): Path<String>,
 ) -> Result<Json<CoverCandidatesResponse>, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
-    let found = selection::select(&principal, K::KIND, &id, None).await?;
+    let found = selection::select(&STATE.db.get(), &principal, K::KIND, &id, None).await?;
     Ok(Json(found.into()))
 }
 

@@ -817,12 +817,13 @@ async fn provider_cover_cache_put(
 }
 
 pub(crate) async fn search_release_cover_candidates(
+    db: &lyra_db::DbAsync,
     release_public_id: &str,
     provider_filter: Option<&str>,
     force_refresh: bool,
 ) -> Result<Vec<super::ProviderCoverSearchResult>> {
     let (release_id, provider_contexts) = {
-        let db = STATE.db.read().await;
+        let db = db.read().await;
         let not_found = || anyhow!("release not found: {release_public_id}");
         let release_id =
             lyra_db::lookup::find_node_id_by_id(&*db, release_public_id)?.ok_or_else(not_found)?;
@@ -859,12 +860,13 @@ pub(crate) async fn search_release_cover_candidates(
 }
 
 pub(crate) async fn search_artist_cover_candidates(
+    db: &lyra_db::DbAsync,
     artist_public_id: &str,
     provider_filter: Option<&str>,
     force_refresh: bool,
 ) -> Result<Vec<super::ProviderCoverSearchResult>> {
     let (artist_id, provider_contexts) = {
-        let db = STATE.db.read().await;
+        let db = db.read().await;
         let not_found = || anyhow!("artist not found: {artist_public_id}");
         let artist_id =
             lyra_db::lookup::find_node_id_by_id(&*db, artist_public_id)?.ok_or_else(not_found)?;

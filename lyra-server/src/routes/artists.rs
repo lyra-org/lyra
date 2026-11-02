@@ -591,8 +591,13 @@ async fn search_artist_covers(
         }
     }
 
-    let found =
-        covers::search_artist_cover_candidates(&id, provider_filter, query.force_refresh).await?;
+    let found = covers::search_artist_cover_candidates(
+        &STATE.db.get(),
+        &id,
+        provider_filter,
+        query.force_refresh,
+    )
+    .await?;
     let results = route_covers::map_provider_cover_search_results(found);
 
     Ok(Json(ArtistCoverSearchResponse {

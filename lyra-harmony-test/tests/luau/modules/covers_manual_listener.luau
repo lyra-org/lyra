@@ -1,0 +1,13 @@
+local fixture = ...
+
+local covers = require("@lyra/covers")
+
+local PNG =
+	"\x89\x50\x4e\x47\x0d\x0a\x1a\x0a\x00\x00\x00\x0d\x49\x48\x44\x52\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90\x77\x53\xde\x00\x00\x00\x0c\x49\x44\x41\x54\x78\x9c\x63\x60\x60\x60\x00\x00\x00\x04\x00\x01\xf6\x17\x38\x55\x00\x00\x00\x00\x49\x45\x4e\x44\xae\x42\x60\x82"
+
+-- Changing a release's cover needs the manage_metadata permission.
+local id = fixture.ids.a
+local ok, err = pcall(covers.set_manual, id, PNG)
+assert(not ok and string.find(tostring(err), "ManageMetadata", 1, true), tostring(err))
+assert(not pcall(covers.remove_manual, id))
+assert(covers.get({ id })[id].hash == "a")

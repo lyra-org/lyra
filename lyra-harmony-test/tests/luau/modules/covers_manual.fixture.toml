@@ -1,0 +1,62 @@
+run_as = "editor"
+
+# The editor manages metadata and sees the Shown library; the other user has a public playlist and
+# a private one.
+
+[[users]]
+key = "editor"
+permissions = ["manage_metadata"]
+
+[[users]]
+key = "other"
+
+[[libraries]]
+key = "shown"
+name = "Shown"
+users = ["editor"]
+
+[[libraries]]
+key = "hidden"
+name = "Hidden"
+
+[[artists]]
+key = "singer"
+name = "Singer"
+
+[[releases]]
+key = "a"
+title = "A"
+library = "shown"
+artists = ["singer"]
+cover = "cover.png"
+
+[[releases]]
+key = "secret"
+title = "Secret"
+library = "hidden"
+cover = "cover.png"
+
+[[tracks]]
+key = "ta"
+title = "TA"
+release = "a"
+artists = ["singer"]
+
+[[playlists]]
+key = "mine"
+owner = "editor"
+name = "Mine"
+tracks = ["ta"]
+
+[[playlists]]
+key = "theirs"
+owner = "other"
+name = "Theirs"
+public = true
+tracks = ["ta"]
+
+[[playlists]]
+key = "private"
+owner = "other"
+name = "Private"
+tracks = ["ta"]

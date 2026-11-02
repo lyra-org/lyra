@@ -171,6 +171,7 @@ data_kinds! {
         Lyrics => ("lyrics", "lyrics"),
         Metadata => ("metadata", "metadata"),
         TrackChains => ("track_chains", "track chains"),
+        Covers => ("covers", "covers"),
     }
 }
 
@@ -288,7 +289,10 @@ scopes! {
     Covers => {
         id: "lyra.covers",
         module: covers::CoversModule::module_spec,
-        effects: &[],
+        effects: &[
+            Effect::WritesLibrary(LibraryKind::Covers),
+            Effect::WritesPersonal(PersonalKind::Playlists, Users::Acting),
+        ],
     },
     Datastore => {
         id: "lyra.datastore",
@@ -919,6 +923,13 @@ mod tests {
                 &["Signs users in to Lyra, checks their credentials and manages their sessions"],
             ),
             (
+                "lyra.covers",
+                &[
+                    "Changes the library's covers",
+                    "Changes the playlists of the users it acts for",
+                ],
+            ),
+            (
                 "lyra.favorites",
                 &[
                     "Reads the favorites of the users it acts for",
@@ -1027,6 +1038,7 @@ mod tests {
                 "lyrics",
                 "metadata",
                 "track_chains",
+                "covers",
             ]
         );
     }
@@ -1342,7 +1354,12 @@ mod tests {
         ("lyra/chromaprint", &["compute(entry_id)"]),
         (
             "lyra/covers",
-            &["get(ids, options)", "artwork(ids, options)"],
+            &[
+                "get(ids, options)",
+                "artwork(ids, options)",
+                "set_manual(id, image)",
+                "remove_manual(id)",
+            ],
         ),
         (
             "lyra/datastore",

@@ -18,6 +18,7 @@ use agdb::{
 };
 use lyra_db::{
     Cover,
+    DbAsync,
     Permission,
     covers::CoverSource,
 };
@@ -39,13 +40,13 @@ use super::{
         configured_covers_root,
     },
     sync::{
+        MAX_COVER_BYTES,
         PreparedCover,
         discard_cover_file,
         download_cover,
     },
 };
 use crate::services::{
-    STATE,
     auth::{
         Principal,
         access,
@@ -126,7 +127,8 @@ enum Access {
 }
 
 /// The owner `id` names, if the principal may read it or, for `Access::Write`, change its covers:
-/// artists and releases with `ManageMetadata` and visibility, playlists as their owner.
+/// artists and releases with `ManageMetadata` and visibility, playlists as their owner. A
+/// playlist the principal cannot see is not found rather than forbidden.
 fn resolve_owner(
     db: &DbAny,
     principal: &Principal,
@@ -168,22 +170,15 @@ fn resolve_owner(
             }
         }
         CoverOwnerKind::Playlist => {
-            if lyra_db::playlists::get_by_id(db, owner_db_id)?.is_none() {
+            if lyra_db::playlists::get_by_id(db, owner_db_id)?.is_none()
+                || !access::playlist_accessible(db, principal, owner_db_id)?
+            {
                 return Err(not_found());
             }
-            match access {
-                Access::Read => {
-                    if !access::playlist_accessible(db, principal, owner_db_id)? {
-                        return Err(not_found());
-                    }
-                }
-                Access::Write => {
-                    if !access::playlist_owned(db, principal, owner_db_id)? {
-                        return Err(CoverSelectionError::Forbidden(
-                            "you do not own this playlist".to_string(),
-                        ));
-                    }
-                }
+            if access == Access::Write && !access::playlist_owned(db, principal, owner_db_id)? {
+                return Err(CoverSelectionError::Forbidden(
+                    "you do not own this playlist".to_string(),
+                ));
             }
         }
     }
@@ -248,11 +243,12 @@ fn collect_candidates(
 
 /// The owner's stored covers per source, which one it shows, and the source it pinned.
 pub(crate) async fn candidates(
+    db: &DbAsync,
     principal: &Principal,
     kind: CoverOwnerKind,
     id: &str,
 ) -> Result<CoverCandidates, CoverSelectionError> {
-    let db = STATE.db.read().await;
+    let db = db.read().await;
     let owner_db_id = resolve_owner(&db, principal, kind, id, Access::Read)?;
     Ok(collect_candidates(&db, principal, kind, owner_db_id)?)
 }
@@ -260,6 +256,7 @@ pub(crate) async fn candidates(
 /// Records a prepared cover once the principal is confirmed, under the write guard, to still
 /// be allowed to change the covers of the same entity `id` named when the request began.
 async fn record_for_owner(
+    db: &DbAsync,
     principal: &Principal,
     kind: CoverOwnerKind,
     id: &str,
@@ -268,7 +265,7 @@ async fn record_for_owner(
     select: bool,
 ) -> Result<CoverCandidates, CoverSelectionError> {
     let covers_root = configured_covers_root();
-    let mut db = STATE.db.write().await;
+    let mut db = db.write().await;
     if resolve_owner(&db, principal, kind, id, Access::Write)? != owner_db_id {
         return Err(CoverSelectionError::NotFound(format!(
             "{} not found: {id}",
@@ -279,16 +276,23 @@ async fn record_for_owner(
     Ok(collect_candidates(&db, principal, kind, owner_db_id)?)
 }
 
-/// Stores `bytes`, which must decode as a JPEG, PNG or WebP image, as the owner's manual cover
-/// and, for artists and releases, pins it.
+/// Stores `bytes`, which must be at most [`MAX_COVER_BYTES`] and decode as a JPEG, PNG or WebP
+/// image, as the owner's manual cover and, for artists and releases, pins it.
 pub(crate) async fn set_manual(
+    db: &DbAsync,
     principal: &Principal,
     kind: CoverOwnerKind,
     id: &str,
     bytes: Vec<u8>,
 ) -> Result<CoverCandidates, CoverSelectionError> {
+    if bytes.len() > MAX_COVER_BYTES {
+        return Err(CoverSelectionError::Invalid(format!(
+            "the image is {} bytes, over the {MAX_COVER_BYTES} byte limit",
+            bytes.len()
+        )));
+    }
     let owner_db_id = {
-        let db = STATE.db.read().await;
+        let db = db.read().await;
         resolve_owner(&db, principal, kind, id, Access::Write)?
     };
     let (bytes, ext) = tokio::task::spawn_blocking(move || {
@@ -307,6 +311,7 @@ pub(crate) async fn set_manual(
     )
     .await?;
     record_for_owner(
+        db,
         principal,
         kind,
         id,
@@ -319,11 +324,12 @@ pub(crate) async fn set_manual(
 
 /// Removes the owner's manual cover, and the pin with it when it pointed there.
 pub(crate) async fn remove_manual(
+    db: &DbAsync,
     principal: &Principal,
     kind: CoverOwnerKind,
     id: &str,
 ) -> Result<CoverCandidates, CoverSelectionError> {
-    let mut db = STATE.db.write().await;
+    let mut db = db.write().await;
     let owner_db_id = resolve_owner(&db, principal, kind, id, Access::Write)?;
     let detached =
         db.transaction_mut(|t| lyra_db::covers::remove(t, owner_db_id, CoverSource::Manual))?;
@@ -338,6 +344,7 @@ pub(crate) async fn remove_manual(
 /// Downloads `url` as the owner's provider cover and pins it. The URL must be one of the
 /// candidates a fresh search of the provider's own cover handler offers for the owner.
 pub(crate) async fn set_provider(
+    db: &DbAsync,
     principal: &Principal,
     kind: CoverOwnerKind,
     id: &str,
@@ -346,7 +353,7 @@ pub(crate) async fn set_provider(
 ) -> Result<CoverCandidates, CoverSelectionError> {
     let entity_type = require_selectable(kind)?;
     let owner_db_id = {
-        let db = STATE.db.read().await;
+        let db = db.read().await;
         resolve_owner(&db, principal, kind, id, Access::Write)?
     };
     if provider_registry()
@@ -363,9 +370,9 @@ pub(crate) async fn set_provider(
 
     let found = match kind {
         CoverOwnerKind::Release => {
-            search_release_cover_candidates(id, Some(provider_id), true).await?
+            search_release_cover_candidates(db, id, Some(provider_id), true).await?
         }
-        _ => search_artist_cover_candidates(id, Some(provider_id), true).await?,
+        _ => search_artist_cover_candidates(db, id, Some(provider_id), true).await?,
     };
     let offered = found
         .iter()
@@ -390,19 +397,20 @@ pub(crate) async fn set_provider(
         Some(provider_id),
     )
     .await?;
-    record_for_owner(principal, kind, id, owner_db_id, prepared, true).await
+    record_for_owner(db, principal, kind, id, owner_db_id, prepared, true).await
 }
 
 /// Pins the stored `source` as the cover the owner shows, or with `None` returns it to the
 /// automatic precedence: manual, then provider, then local.
 pub(crate) async fn select(
+    db: &DbAsync,
     principal: &Principal,
     kind: CoverOwnerKind,
     id: &str,
     source: Option<CoverSource>,
 ) -> Result<CoverCandidates, CoverSelectionError> {
     require_selectable(kind)?;
-    let mut db = STATE.db.write().await;
+    let mut db = db.write().await;
     let owner_db_id = resolve_owner(&db, principal, kind, id, Access::Write)?;
     let selected = db.transaction_mut(|t| lyra_db::covers::select(t, owner_db_id, source))?;
     if !selected {
@@ -419,6 +427,7 @@ mod tests {
 
     use super::*;
     use crate::services::{
+        STATE,
         plugin_scope::PluginId,
         providers::ProviderCoverSpec,
         testing::{
@@ -520,11 +529,12 @@ mod tests {
         let library = tempfile::tempdir()?;
         let admin = user("admin", true).await?;
         let (release_db_id, id, library_cover) = release_with_local_cover(library.path()).await?;
-        let found = candidates(&admin, CoverOwnerKind::Release, &id).await?;
+        let found = candidates(&STATE.db.get(), &admin, CoverOwnerKind::Release, &id).await?;
         assert_eq!(active(&found), Some(Some(CoverSource::Local)));
 
         let provider = store_provider_cover(release_db_id).await?;
         let found = select(
+            &STATE.db.get(),
             &admin,
             CoverOwnerKind::Release,
             &id,
@@ -539,6 +549,7 @@ mod tests {
         );
 
         let found = select(
+            &STATE.db.get(),
             &admin,
             CoverOwnerKind::Release,
             &id,
@@ -572,14 +583,15 @@ mod tests {
         let admin = user("admin", true).await?;
         let (release_db_id, id, library_cover) = release_with_local_cover(library.path()).await?;
         store_provider_cover(release_db_id).await?;
-        let found = candidates(&admin, CoverOwnerKind::Release, &id).await?;
+        let found = candidates(&STATE.db.get(), &admin, CoverOwnerKind::Release, &id).await?;
         assert_eq!(
             active(&found),
             Some(Some(CoverSource::Provider)),
             "provider covers come before local ones"
         );
 
-        let found = set_manual(&admin, CoverOwnerKind::Release, &id, png()).await?;
+        let found =
+            set_manual(&STATE.db.get(), &admin, CoverOwnerKind::Release, &id, png()).await?;
         assert_eq!(found.selection, Some(CoverSource::Manual));
         assert_eq!(active(&found), Some(Some(CoverSource::Manual)));
         let first_manual = stored(&found, CoverSource::Manual)
@@ -588,7 +600,8 @@ mod tests {
             .clone();
         assert!(first_manual.starts_with(&*configured_covers_root().to_string_lossy()));
 
-        let found = set_manual(&admin, CoverOwnerKind::Release, &id, png()).await?;
+        let found =
+            set_manual(&STATE.db.get(), &admin, CoverOwnerKind::Release, &id, png()).await?;
         let second_manual = stored(&found, CoverSource::Manual)
             .expect("manual cover")
             .path
@@ -599,14 +612,14 @@ mod tests {
         );
         assert!(Path::new(&second_manual).is_file());
 
-        let found = remove_manual(&admin, CoverOwnerKind::Release, &id).await?;
+        let found = remove_manual(&STATE.db.get(), &admin, CoverOwnerKind::Release, &id).await?;
         assert_eq!(found.selection, None);
         assert!(stored(&found, CoverSource::Manual).is_none());
         assert!(!Path::new(&second_manual).exists());
         assert_eq!(active(&found), Some(Some(CoverSource::Provider)));
         assert!(library_cover.is_file());
 
-        let error = remove_manual(&admin, CoverOwnerKind::Release, &id)
+        let error = remove_manual(&STATE.db.get(), &admin, CoverOwnerKind::Release, &id)
             .await
             .expect_err("nothing left to remove");
         assert!(matches!(error, CoverSelectionError::NotFound(_)), "{error}");
@@ -623,6 +636,7 @@ mod tests {
         let (_, id, _) = release_with_local_cover(library.path()).await?;
 
         let error = set_manual(
+            &STATE.db.get(),
             &admin,
             CoverOwnerKind::Release,
             &id,
@@ -631,8 +645,19 @@ mod tests {
         .await
         .expect_err("bytes that do not decode are refused");
         assert!(matches!(error, CoverSelectionError::Invalid(_)), "{error}");
+        let error = set_manual(
+            &STATE.db.get(),
+            &admin,
+            CoverOwnerKind::Release,
+            &id,
+            vec![0; MAX_COVER_BYTES + 1],
+        )
+        .await
+        .expect_err("an image over the limit is refused");
+        assert!(matches!(error, CoverSelectionError::Invalid(_)), "{error}");
 
         let error = select(
+            &STATE.db.get(),
             &admin,
             CoverOwnerKind::Release,
             &id,
@@ -648,21 +673,33 @@ mod tests {
             "{error}"
         );
 
-        let error = set_manual(&listener, CoverOwnerKind::Release, &id, png())
-            .await
-            .expect_err("changing a release cover needs ManageMetadata");
+        let error = set_manual(
+            &STATE.db.get(),
+            &listener,
+            CoverOwnerKind::Release,
+            &id,
+            png(),
+        )
+        .await
+        .expect_err("changing a release cover needs ManageMetadata");
         assert!(
             matches!(error, CoverSelectionError::Forbidden(_)),
             "{error}"
         );
-        let error = select(&listener, CoverOwnerKind::Release, &id, None)
-            .await
-            .expect_err("clearing a pin needs ManageMetadata");
+        let error = select(
+            &STATE.db.get(),
+            &listener,
+            CoverOwnerKind::Release,
+            &id,
+            None,
+        )
+        .await
+        .expect_err("clearing a pin needs ManageMetadata");
         assert!(
             matches!(error, CoverSelectionError::Forbidden(_)),
             "{error}"
         );
-        let error = candidates(&listener, CoverOwnerKind::Release, &id)
+        let error = candidates(&STATE.db.get(), &listener, CoverOwnerKind::Release, &id)
             .await
             .expect_err("the release is in no library the listener sees");
         assert!(matches!(error, CoverSelectionError::NotFound(_)), "{error}");
@@ -675,6 +712,7 @@ mod tests {
         init_default_test_state()?;
         let owner = user("owner", false).await?;
         let admin = user("admin", true).await?;
+        let stranger = user("stranger", false).await?;
         let owner_db_id = owner.require(&*STATE.db.read().await)?;
         let playlist_db_id = lyra_db::playlists::create(
             &mut *STATE.db.write().await,
@@ -683,7 +721,7 @@ mod tests {
                 id: nanoid::nanoid!(),
                 name: "Mix".to_string(),
                 description: None,
-                is_public: Some(true),
+                is_public: Some(false),
                 created_at_ms: None,
                 updated_at_ms: None,
             },
@@ -693,15 +731,32 @@ mod tests {
             .expect("playlist exists")
             .id;
 
-        let error = set_manual(&admin, CoverOwnerKind::Playlist, &id, png())
-            .await
-            .expect_err("an admin does not own the playlist");
+        let error = set_manual(
+            &STATE.db.get(),
+            &admin,
+            CoverOwnerKind::Playlist,
+            &id,
+            png(),
+        )
+        .await
+        .expect_err("an admin does not own the playlist");
         assert!(
             matches!(error, CoverSelectionError::Forbidden(_)),
             "{error}"
         );
+        let error = remove_manual(&STATE.db.get(), &stranger, CoverOwnerKind::Playlist, &id)
+            .await
+            .expect_err("another user's private playlist is hidden");
+        assert!(matches!(error, CoverSelectionError::NotFound(_)), "{error}");
 
-        let found = set_manual(&owner, CoverOwnerKind::Playlist, &id, png()).await?;
+        let found = set_manual(
+            &STATE.db.get(),
+            &owner,
+            CoverOwnerKind::Playlist,
+            &id,
+            png(),
+        )
+        .await?;
         assert_eq!(found.selection, None, "playlists have no pin");
         assert_eq!(active(&found), Some(Some(CoverSource::Manual)));
         let path = stored(&found, CoverSource::Manual)
@@ -710,12 +765,12 @@ mod tests {
             .clone();
         assert!(path.contains("playlists"));
         assert!(
-            candidates(&admin, CoverOwnerKind::Playlist, &id)
+            candidates(&STATE.db.get(), &admin, CoverOwnerKind::Playlist, &id)
                 .await
                 .is_ok()
         );
 
-        let error = select(&owner, CoverOwnerKind::Playlist, &id, None)
+        let error = select(&STATE.db.get(), &owner, CoverOwnerKind::Playlist, &id, None)
             .await
             .expect_err("playlists have no provider source to choose from");
         assert!(matches!(error, CoverSelectionError::Invalid(_)), "{error}");
@@ -740,6 +795,7 @@ mod tests {
         let (release_db_id, id, library_cover) = release_with_local_cover(library.path()).await?;
         let provider = store_provider_cover(release_db_id).await?;
         select(
+            &STATE.db.get(),
             &admin,
             CoverOwnerKind::Release,
             &id,
@@ -748,7 +804,7 @@ mod tests {
         .await?;
         std::fs::remove_file(&library_cover)?;
 
-        let found = candidates(&admin, CoverOwnerKind::Release, &id).await?;
+        let found = candidates(&STATE.db.get(), &admin, CoverOwnerKind::Release, &id).await?;
         assert_eq!(found.selection, Some(CoverSource::Local));
         assert_eq!(
             active(&found),
@@ -778,7 +834,7 @@ mod tests {
         );
         drop(db);
 
-        let found = candidates(&admin, CoverOwnerKind::Release, &id).await?;
+        let found = candidates(&STATE.db.get(), &admin, CoverOwnerKind::Release, &id).await?;
         assert_eq!(found.selection, None, "the pin went with the record");
         assert_eq!(active(&found), Some(Some(CoverSource::Provider)));
         Ok(())
@@ -797,9 +853,17 @@ mod tests {
         let prepared = PreparedCover::write(&dir, CoverSource::Manual, "png", &png(), None).await?;
 
         // As when `id`'s release was deleted and its database id reused while the upload ran.
-        let error = record_for_owner(&admin, CoverOwnerKind::Release, &id, other, prepared, true)
-            .await
-            .expect_err("the id names another entity now");
+        let error = record_for_owner(
+            &STATE.db.get(),
+            &admin,
+            CoverOwnerKind::Release,
+            &id,
+            other,
+            prepared,
+            true,
+        )
+        .await
+        .expect_err("the id names another entity now");
         assert!(matches!(error, CoverSelectionError::NotFound(_)), "{error}");
         assert_eq!(
             std::fs::read_dir(&dir)?.count(),
@@ -832,6 +896,7 @@ mod tests {
             lyra_db::roles::assign_role_to_user(&mut db, user_db_id, role)?;
         }
         let error = record_for_owner(
+            &STATE.db.get(),
             &demoted,
             CoverOwnerKind::Release,
             &id,
@@ -854,6 +919,7 @@ mod tests {
             db.transaction_mut(|t| lyra_db::users::delete_user(t, user_db_id))?;
         }
         let error = record_for_owner(
+            &STATE.db.get(),
             &deleted,
             CoverOwnerKind::Release,
             &id,
@@ -894,6 +960,7 @@ mod tests {
         let (release_db_id, id, _) = release_with_local_cover(library.path()).await?;
 
         let error = set_provider(
+            &STATE.db.get(),
             &admin,
             CoverOwnerKind::Release,
             &id,
@@ -928,9 +995,10 @@ mod tests {
             );
         }
 
-        search_release_cover_candidates(&id, Some("provider"), false).await?;
+        search_release_cover_candidates(&STATE.db.get(), &id, Some("provider"), false).await?;
         assert_eq!(dispatch.calls(callback).len(), 1);
         let error = set_provider(
+            &STATE.db.get(),
             &admin,
             CoverOwnerKind::Release,
             &id,

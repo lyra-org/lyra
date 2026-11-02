@@ -1,0 +1,17 @@
+run_as = "listener"
+
+# A listener sees the release but may not change its cover.
+
+[[users]]
+key = "listener"
+
+[[libraries]]
+key = "shown"
+name = "Shown"
+users = ["listener"]
+
+[[releases]]
+key = "a"
+title = "A"
+library = "shown"
+cover = "cover.png"

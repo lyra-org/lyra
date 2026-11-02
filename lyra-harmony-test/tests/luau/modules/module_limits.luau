@@ -1,4 +1,5 @@
 local auth = require("@lyra/auth")
+local covers = require("@lyra/covers")
 local listens = require("@lyra/listens")
 local mix = require("@lyra/mix")
 local playlists = require("@lyra/playlists")
@@ -6,6 +7,7 @@ local releases = require("@lyra/releases")
 
 -- Modules export the limits the host enforces.
 assert(auth.MAX_SESSION_DATA_BYTES == 16 * 1024)
+assert(covers.MAX_IMAGE_BYTES == 20 * 1024 * 1024)
 assert(listens.MAX_PLAYS == 500)
 assert(mix.MAX_SEEDS == 50)
 assert(mix.MAX_QUERY_LENGTH == 512)
