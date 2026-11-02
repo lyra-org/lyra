@@ -1,0 +1,37 @@
+run_as = "listener"
+
+# "Bare" has no artists, genres, type, date or creation time of its own; its track B1 has no
+# file and was added at 300000. "Empty" has no tracks at all. Zed is an artist without a sort name.
+
+[[users]]
+key = "listener"
+
+[[api_keys]]
+key = "listener_key"
+user = "listener"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener"]
+
+[[artists]]
+key = "zed"
+name = "Zed"
+
+[[releases]]
+key = "bare"
+title = "Bare"
+library = "music"
+
+[[releases]]
+key = "empty"
+title = "Empty"
+library = "music"
+artists = ["zed"]
+
+[[tracks]]
+key = "b1"
+title = "B1"
+release = "bare"
+added = 300000

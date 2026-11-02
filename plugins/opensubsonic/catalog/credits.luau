@@ -11,7 +11,7 @@ type JsonObject = { [string]: any }
 type CreditedArtistProjectionInfo = entities.CreditedArtistProjectionInfo
 type EntityProjectionInfo = entities.EntityProjectionInfo
 
-export type ArtistRef = { id: string, name: string }
+export type ArtistRef = { id: string, name: string, sortName: string }
 
 -- Credit types Subsonic files under the `performer` role, with the credit's detail as its sub-role.
 local PERFORMER_TYPES: { [string]: boolean } = {
@@ -20,6 +20,10 @@ local PERFORMER_TYPES: { [string]: boolean } = {
 }
 
 local module = {}
+
+local function ref(artist: entities.Artist): ArtistRef
+	return { id = artist.id, name = artist.artist_name, sortName = artist.sort_name or "" }
+end
 
 -- The projections of these entities the caller can see, keyed by id.
 function module.projections(ids: { string }, include: { string }): { [string]: EntityProjectionInfo }
@@ -57,7 +61,7 @@ function module.artists(projection: EntityProjectionInfo?): ({ ArtistRef }?, str
 		local artist = credited.artist
 		if credited.credit.type == "artist" and not seen[artist.id] then
 			seen[artist.id] = true
-			table.insert(refs, { id = artist.id, name = artist.artist_name })
+			table.insert(refs, ref(artist))
 		end
 	end
 	if #refs == 0 then
@@ -78,14 +82,14 @@ function module.contributors(projection: EntityProjectionInfo?): ({ any }?, stri
 		local artist = credited.artist
 		local contributor: JsonObject = {
 			role = if PERFORMER_TYPES[credit_type] then "performer" else credit_type,
-			artist = { id = artist.id, name = artist.artist_name },
+			artist = ref(artist),
 		}
 		if PERFORMER_TYPES[credit_type] then
 			contributor.subRole = credited.credit.detail
 		end
 		table.insert(contributors, contributor)
 		if credit_type == "composer" then
-			table.insert(composers, { id = artist.id, name = artist.artist_name })
+			table.insert(composers, ref(artist))
 		end
 	end
 	return if #contributors > 0 then contributors else nil, display(composers)

@@ -10,9 +10,11 @@ local genres = require("@lyra/genres")
 local listens = require("@lyra/listens")
 local ratings = require("@lyra/ratings")
 local releases = require("@lyra/releases")
+local tracks = require("@lyra/tracks")
 
 local credits = require("./credits")
 local dates = require("../protocol/dates")
+local response = require("../protocol/response")
 
 type JsonObject = { [string]: any }
 type ReleaseSummary = releases.ReleaseSummary
@@ -60,6 +62,40 @@ local function release_type_name(release_type: ReleaseType?): string?
 	end
 end
 
+-- Stands in for a creation time when neither the release nor any of its tracks has one.
+local UNKNOWN_CREATED = "1970-01-01T00:00:00Z"
+
+local function created_ms(item: { created_at_ms: number?, file_created_at_ms: number? }): number?
+	return item.file_created_at_ms or item.created_at_ms
+end
+
+-- Each release's creation time, else its earliest track's, as `AlbumID3.created` is required.
+local function created_times(summaries: { ReleaseSummary }): { [string]: string }
+	local times: { [string]: string } = {}
+	local missing: { string } = {}
+	for _, summary in summaries do
+		local time = dates.iso8601(created_ms(summary))
+		if time then
+			times[summary.id] = time
+		else
+			table.insert(missing, summary.id)
+		end
+	end
+	if #missing > 0 then
+		for release_id, release_tracks in tracks.by_release(missing) do
+			local earliest: number? = nil
+			for _, track in release_tracks do
+				local time = created_ms(track)
+				if time and (earliest == nil or time < earliest) then
+					earliest = time
+				end
+			end
+			times[release_id] = dates.iso8601(earliest)
+		end
+	end
+	return times
+end
+
 -- The `AlbumID3` of each release, in order.
 function module.list(summaries: { ReleaseSummary }): { JsonObject }
 	if #summaries == 0 then
@@ -75,6 +111,7 @@ function module.list(summaries: { ReleaseSummary }): { JsonObject }
 	local listen_stats = listens.get(ids)
 	local user_ratings = ratings.get(ids)
 	local starred = favorites.get(ids)
+	local created = created_times(summaries)
 
 	local albums: { JsonObject } = {}
 	for _, summary in summaries do
@@ -91,18 +128,20 @@ function module.list(summaries: { ReleaseSummary }): { JsonObject }
 			songCount = summary.track_count,
 			duration = dates.seconds(summary.total_duration),
 			playCount = if stats then stats.count else 0,
+			-- Absent rather than empty when unplayed: "" isn't an ISO 8601 date. Navidrome does the same.
 			played = dates.iso8601(if stats then stats.last_played_at_ms else nil),
-			created = dates.iso8601(summary.file_created_at_ms or summary.created_at_ms),
+			created = created[id] or UNKNOWN_CREATED,
 			starred = dates.iso8601(starred[id]),
 			year = dates.year(summary.release_date),
 			genre = genre,
+			-- Absent rather than 0 when unrated: ratings are 1-5, and 0 is how `setRating` clears one.
 			userRating = user_ratings[id],
-			genres = genre_items,
-			artists = artists,
-			displayArtist = display_artist,
-			releaseTypes = if release_type then { release_type } else nil,
-			sortName = summary.sort_title,
-			releaseDate = dates.item_date(summary.release_date),
+			genres = genre_items or {},
+			artists = artists or {},
+			displayArtist = display_artist or "",
+			releaseTypes = if release_type then { release_type } else {},
+			sortName = summary.sort_title or "",
+			releaseDate = dates.item_date(summary.release_date) or response.EMPTY_OBJECT,
 			isCompilation = summary.release_type == "compilation",
 		}
 		table.insert(albums, item)

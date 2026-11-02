@@ -17,6 +17,7 @@ local albums = require("./albums")
 local credits = require("./credits")
 local dates = require("../protocol/dates")
 local paths = require("./paths")
+local response = require("../protocol/response")
 
 type JsonObject = { [string]: any }
 type EntryInfo = playback_sources.EntryInfo
@@ -58,9 +59,10 @@ local function suffix_of(name: string?): string?
 	return if extension then string.lower(extension) else nil
 end
 
-local function replay_gain(track: Track): JsonObject?
+-- Always present, an empty object without any gain.
+local function replay_gain(track: Track): any
 	if track.track_gain_db == nil and track.album_gain_db == nil then
-		return nil
+		return response.EMPTY_OBJECT
 	end
 	return { trackGain = track.track_gain_db, albumGain = track.album_gain_db }
 end
@@ -141,14 +143,15 @@ function module.list(track_list: { Track }): { JsonObject }
 			suffix = suffix or container,
 			duration = dates.seconds(track.duration_ms),
 			bitRate = if bitrate_bps then math.floor(bitrate_bps / 1000 + 0.5) else nil,
-			bitDepth = if source then source.bit_depth else nil,
-			samplingRate = if source then source.sample_rate_hz else nil,
-			channelCount = if source then source.channel_count else nil,
+			bitDepth = if source then source.bit_depth or 0 else 0,
+			samplingRate = if source then source.sample_rate_hz or 0 else 0,
+			channelCount = if source then source.channel_count or 0 else 0,
 			path = if entry then entry.full_path or relative_paths[entry.id] else nil,
 			isVideo = false,
 			userRating = user_ratings[id],
 			averageRating = average_ratings[id],
 			playCount = if stats then stats.count else 0,
+			-- Absent rather than empty when unplayed: "" isn't an ISO 8601 date. Navidrome does the same.
 			played = dates.iso8601(if stats then stats.last_played_at_ms else nil),
 			discNumber = track.disc,
 			created = dates.iso8601(track.file_created_at_ms or track.created_at_ms),
@@ -157,14 +160,14 @@ function module.list(track_list: { Track }): { JsonObject }
 			artistId = if artists then artists[1].id else nil,
 			type = "music",
 			mediaType = "song",
-			sortName = track.sort_title,
-			genres = genre_items,
-			artists = artists,
-			displayArtist = display_artist,
-			albumArtists = album_artists,
-			displayAlbumArtist = display_album_artist,
-			contributors = contributors,
-			displayComposer = display_composer,
+			sortName = track.sort_title or "",
+			genres = genre_items or {},
+			artists = artists or {},
+			displayArtist = display_artist or "",
+			albumArtists = album_artists or {},
+			displayAlbumArtist = display_album_artist or "",
+			contributors = contributors or {},
+			displayComposer = display_composer or "",
 			replayGain = replay_gain(track),
 		}
 		table.insert(songs, item)

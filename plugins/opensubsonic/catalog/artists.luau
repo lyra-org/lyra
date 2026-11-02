@@ -33,7 +33,7 @@ function module.list(summaries: { ArtistSummary }): { JsonObject }
 			name = summary.artist_name,
 			albumCount = summary.release_count,
 			starred = dates.iso8601(starred[summary.id]),
-			sortName = summary.sort_name,
+			sortName = summary.sort_name or "",
 		}
 		table.insert(items, item)
 	end
