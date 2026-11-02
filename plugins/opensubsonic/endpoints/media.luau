@@ -33,17 +33,21 @@ end
 
 local REFUSED_OPTIONS = "The song can't be streamed with these options"
 
--- The stream options a request asks for; nil serves the file as it is, which `format=raw` asks
--- for whatever else the request says.
+-- The stream options a request asks for; nil asks for none. `format=raw` asks for no encoding
+-- options whatever else the request says.
 local function stream_options(params: ApiQueryParams): TrackStreamOptions?
 	local format = request.param(params, "format")
 	local max_bitrate_kbps = request.int(params, "maxBitRate")
 	local time_offset_s = request.int(params, "timeOffset")
-	if format and string.lower(format) == "raw" then
-		return nil
-	end
 	local options: TrackStreamOptions = {}
 	local any = false
+	if request.bool(params, "estimateContentLength") then
+		options.wait_for_transcode = true
+		any = true
+	end
+	if format and string.lower(format) == "raw" then
+		return if any then options else nil
+	end
 	if format then
 		local delivered = api.delivery_format(format)
 		if delivered == nil then

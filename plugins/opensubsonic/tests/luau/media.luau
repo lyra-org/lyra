@@ -28,6 +28,20 @@ assert(stream({ id = ids.synced, format = "MP4" }).options.format == "m4a", "mp4
 local capped = stream({ id = ids.synced, maxBitRate = "96" })
 assert(capped.options.bitrate_bps == 96000 and capped.options.format == nil, "a bitrate cap alone")
 
+-- `estimateContentLength` always reaches the server, which waits only for a transcode: even the
+-- file as it is gets transcoded when it is a cue sheet's segment.
+local estimated = stream({ id = ids.synced, estimateContentLength = "true" })
+assert(estimated.options.wait_for_transcode == true and estimated.options.format == nil, "alone")
+local raw_estimated = stream({ id = ids.synced, format = "raw", maxBitRate = "128", estimateContentLength = "true" })
+assert(raw_estimated.options.wait_for_transcode == true and raw_estimated.options.bitrate_bps == nil, "raw")
+local segment = stream({ id = ids.segment, estimateContentLength = "true" })
+assert(segment.kind == "stream_track" and segment.options.wait_for_transcode == true, `segment {segment.kind}`)
+local complete = stream({ id = ids.synced, format = "mp3", estimateContentLength = "true" })
+assert(complete.options.format == "mp3" and complete.options.wait_for_transcode == true, "waits")
+assert(transcoded.options.wait_for_transcode == nil, "streams as it encodes by default")
+assert(stream({ id = ids.synced, estimateContentLength = "false" }).options == nil, "false asks for nothing")
+assert(call.error_code("stream", key, { id = ids.synced, estimateContentLength = "maybe" }) == 0, "a bad boolean")
+
 local refused = call.call("stream", key, { id = ids.synced, format = "bogus" })
 assert(refused.error.code == 0, "an unknown format")
 assert(refused.error.message == "The song can't be streamed with these options", "the host's error stays in the log")
