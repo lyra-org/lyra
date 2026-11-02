@@ -180,17 +180,20 @@ pub(super) async fn check_subscription(
         repository,
         entries: Vec::new(),
     }];
-    let mut records = Vec::new();
-    for id in managed_plugin_ids(plugins_dir)? {
-        if let Ok(record) = load_managed_record(plugins_dir, &id)
-            && !record.pinned
-            && find_subscription(&subscribed, &record.origin, record.git_ref.as_deref()).is_some()
-        {
-            records.push((id, record));
+    let (records, manifests) = tokio::task::block_in_place(|| {
+        let mut records = Vec::new();
+        for id in managed_plugin_ids(plugins_dir)? {
+            if let Ok(record) = load_managed_record(plugins_dir, &id)
+                && !record.pinned
+                && find_subscription(&subscribed, &record.origin, record.git_ref.as_deref())
+                    .is_some()
+            {
+                records.push((id, record));
+            }
         }
-    }
+        Ok::<_, PluginRepoError>((records, installed_manifests(plugins_dir)))
+    })?;
     let group: Vec<_> = records.iter().collect();
-    let manifests = installed_manifests(plugins_dir);
     let client = http_client(&server_build())?;
     let mut listed = list_update_source(&client, &spec, &group, UpdateSelection::All)
         .await
@@ -227,12 +230,14 @@ pub(super) async fn check_subscription(
         take_outcome(&source, id, record, &mut report, &mut pending);
     }
     let _guard = MUTATION_LOCK.lock().await;
-    install_updates(
-        pending,
-        plugins_dir,
-        InstalledBy::AutomaticUpdate,
-        &mut report,
-    );
+    tokio::task::block_in_place(|| {
+        install_updates(
+            pending,
+            plugins_dir,
+            InstalledBy::AutomaticUpdate,
+            &mut report,
+        );
+    });
     if !report.updated.is_empty() {
         RELOAD_PENDING.store(true, Ordering::Release);
     }
@@ -402,7 +407,7 @@ mod tests {
         Ok(repo_db::get_by_id(&*STATE.db.read().await, "catalog")?.expect("subscribed"))
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn automatic_checks_install_plain_updates_and_reload_once_nothing_plays()
     -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
@@ -458,7 +463,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn automatic_checks_skip_pinned_held_and_unknown_plugins_quietly() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         crate::plugins::testing::init_default_test_state()?;
@@ -537,7 +542,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn automatic_checks_only_report_updates_while_the_setting_is_off() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         crate::plugins::testing::init_test_state_with_file_settings(
@@ -579,7 +584,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn checks_store_what_they_listed_on_the_subscription_checked() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         crate::plugins::testing::init_default_test_state()?;

@@ -560,7 +560,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn restart_queued_behind_a_reload_uses_the_runtime_it_published() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         let first = publish_startup_runtime().await?;
@@ -582,7 +582,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn startup_and_reload_leave_one_live_runtime_in_either_order() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         for reload_first in [false, true] {
@@ -621,7 +621,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn reload_replaces_a_runtime_whose_thread_is_gone() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         let first = publish_startup_runtime().await?;
@@ -633,7 +633,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn reload_completes_after_its_caller_is_dropped() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         let first = publish_startup_runtime().await?;
@@ -719,7 +719,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn reload_sweeps_the_limits_of_an_uninstalled_plugin() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         publish_startup_runtime().await?;

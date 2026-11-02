@@ -612,7 +612,9 @@ pub(crate) async fn resolve_preview(
     git_ref: Option<&str>,
 ) -> Result<RepositoryPreview, PluginRepoError> {
     let listing = list(url, git_ref, &server_build()).await?;
-    Ok(build_preview(&listing, &STATE.boot.get().plugins_dir))
+    Ok(tokio::task::block_in_place(|| {
+        build_preview(&listing, &STATE.boot.get().plugins_dir)
+    }))
 }
 
 #[derive(Debug, Clone)]
@@ -730,7 +732,8 @@ async fn resolve_selection(
             Some(ids)
         }
     };
-    let held = reinstall_holds(&listing, ids.as_deref(), plugins_dir);
+    let held =
+        tokio::task::block_in_place(|| reinstall_holds(&listing, ids.as_deref(), plugins_dir));
     let ids = if held.is_empty() {
         ids
     } else {
@@ -999,7 +1002,9 @@ pub(crate) async fn install_to_disk(
 ) -> Result<InstallReport, PluginRepoError> {
     let selection = resolve_selection(url, git_ref, selection, build, plugins_dir).await?;
     let _guard = MUTATION_LOCK.lock().await;
-    Ok(install_selected(selection, plugins_dir))
+    Ok(tokio::task::block_in_place(|| {
+        install_selected(selection, plugins_dir)
+    }))
 }
 
 /// Installs previewed plugins and then reloads the plugin runtime so the new
@@ -1020,7 +1025,7 @@ pub(crate) async fn install(
     )
     .await?;
     let guard = MUTATION_LOCK.lock().await;
-    let report = install_selected(selection, plugins_dir);
+    let report = tokio::task::block_in_place(|| install_selected(selection, plugins_dir));
     if !report.installed.is_empty() {
         reload_runtime(guard).await?;
     }
@@ -1379,7 +1384,7 @@ async fn update_plugins_in(
     selection: UpdateSelection<'_>,
 ) -> Result<UpdateReport, PluginRepoError> {
     let ids: BTreeSet<String> = match selection {
-        UpdateSelection::All => managed_plugin_ids(plugins_dir)?,
+        UpdateSelection::All => tokio::task::block_in_place(|| managed_plugin_ids(plugins_dir))?,
         UpdateSelection::Approved([]) => {
             return Err(PluginRepoError::BadRequest(
                 "no plugins selected to update".to_string(),
@@ -1393,16 +1398,19 @@ async fn update_plugins_in(
     let _check = CHECK_LOCK.lock().await;
     let mut report = UpdateReport::default();
     let mut records = Vec::new();
-    for id in ids {
-        match load_managed_record(plugins_dir, &id) {
-            Ok(record) if record.pinned => report.up_to_date.push(id),
-            Ok(record) => records.push((id, record)),
-            Err(error) => report.failed.push(FailedInstall {
-                id,
-                error: error.to_string(),
-            }),
+    let manifests = tokio::task::block_in_place(|| {
+        for id in ids {
+            match load_managed_record(plugins_dir, &id) {
+                Ok(record) if record.pinned => report.up_to_date.push(id),
+                Ok(record) => records.push((id, record)),
+                Err(error) => report.failed.push(FailedInstall {
+                    id,
+                    error: error.to_string(),
+                }),
+            }
         }
-    }
+        installed_manifests(plugins_dir)
+    });
 
     let client = http_client(&server_build())?;
     let mut installed: HashMap<UpdateKey, Vec<&(String, SourceRecord)>> = HashMap::new();
@@ -1413,7 +1421,6 @@ async fn update_plugins_in(
             .or_default()
             .push(plugin);
     }
-    let manifests = installed_manifests(plugins_dir);
     // Hosts that rate-limited a request, with the error their later origins
     // fail with unasked.
     let mut limited_hosts: HashMap<String, String> = HashMap::new();
@@ -1485,7 +1492,9 @@ async fn update_plugins_in(
     }
 
     let guard = MUTATION_LOCK.lock().await;
-    install_updates(pending, plugins_dir, InstalledBy::Request, &mut report);
+    tokio::task::block_in_place(|| {
+        install_updates(pending, plugins_dir, InstalledBy::Request, &mut report);
+    });
     if !report.updated.is_empty() {
         reload_runtime(guard).await?;
     }
@@ -1572,7 +1581,8 @@ fn install_updates(
 /// Uninstalls a repository-managed plugin and reloads the runtime.
 pub(crate) async fn uninstall(plugin_id: &str) -> Result<(), PluginRepoError> {
     let guard = MUTATION_LOCK.lock().await;
-    uninstall_plugin(&STATE.boot.get().plugins_dir, plugin_id).map_err(map_install_error)?;
+    tokio::task::block_in_place(|| uninstall_plugin(&STATE.boot.get().plugins_dir, plugin_id))
+        .map_err(map_install_error)?;
     reload_runtime(guard).await
 }
 
@@ -1663,13 +1673,13 @@ pub(crate) async fn add_repository(
     drop(db);
     record.db_id = Some(db_id);
 
-    Ok(repository_view(
-        Subscription {
-            repository: record,
-            entries: listed.entries,
-        },
-        &installed_now(),
-    ))
+    let subscription = Subscription {
+        repository: record,
+        entries: listed.entries,
+    };
+    Ok(tokio::task::block_in_place(|| {
+        repository_view(subscription, &installed_now())
+    }))
 }
 
 /// The subscribed repositories, with their stored plugins when
@@ -1678,12 +1688,14 @@ pub(crate) async fn list_repositories(
     with_plugins: bool,
 ) -> Result<Vec<RepositoryView>, PluginRepoError> {
     if with_plugins {
-        let installed = installed_now();
-        return Ok(list_subscriptions()
-            .await?
-            .into_iter()
-            .map(|subscription| repository_view(subscription, &installed))
-            .collect());
+        let subscriptions = list_subscriptions().await?;
+        return Ok(tokio::task::block_in_place(|| {
+            let installed = installed_now();
+            subscriptions
+                .into_iter()
+                .map(|subscription| repository_view(subscription, &installed))
+                .collect()
+        }));
     }
     let db = STATE.db.read().await;
     Ok(repo_db::list(&*db)?
@@ -1718,13 +1730,13 @@ pub(crate) async fn get_repository(
         let entries = repo_db::entries(&*db, db_id)?;
         (repository, entries)
     };
-    Ok(repository_view(
-        Subscription {
-            repository,
-            entries,
-        },
-        &installed_now(),
-    ))
+    let subscription = Subscription {
+        repository,
+        entries,
+    };
+    Ok(tokio::task::block_in_place(|| {
+        repository_view(subscription, &installed_now())
+    }))
 }
 
 async fn load_repository(
@@ -1753,13 +1765,13 @@ pub(crate) async fn refresh_repository(
         store_listed(&mut *STATE.db.write().await, repository, &listed)?.ok_or_else(|| {
             PluginRepoError::NotFound(format!("repository not found: {repository_id}"))
         })?;
-    Ok(repository_view(
-        Subscription {
-            repository,
-            entries: listed.entries,
-        },
-        &installed_now(),
-    ))
+    let subscription = Subscription {
+        repository,
+        entries: listed.entries,
+    };
+    Ok(tokio::task::block_in_place(|| {
+        repository_view(subscription, &installed_now())
+    }))
 }
 
 /// A subscription that could not be refreshed.
@@ -2079,7 +2091,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn updates_hold_releases_adding_scopes_until_their_commit_is_approved()
     -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
@@ -2148,7 +2160,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn updates_breaking_an_installed_dependent_are_held_even_when_approved()
     -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
@@ -2198,7 +2210,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn updates_are_held_for_scopes_they_would_let_installed_dependents_reach()
     -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
@@ -2243,7 +2255,7 @@ mod tests {
         Ok(manifest.to_string())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn updates_needing_a_plugin_that_is_not_installed_are_held() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         crate::plugins::testing::init_default_test_state()?;
@@ -2280,7 +2292,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn updates_needing_a_release_that_failed_to_download_are_held() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         crate::plugins::testing::init_default_test_state()?;
@@ -2325,7 +2337,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn reinstalls_breaking_an_installed_dependent_are_held() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         crate::plugins::testing::init_default_test_state()?;
@@ -2379,7 +2391,7 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn update_plugins_reports_pinned_plugins_up_to_date_without_resolving()
     -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
@@ -2702,7 +2714,7 @@ mod tests {
         Ok(entries)
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn update_plugins_reinstalls_newer_releases_and_stores_every_offered_one()
     -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
@@ -2864,7 +2876,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn installs_of_releases_requiring_another_server_fail_alone() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         crate::plugins::testing::init_default_test_state()?;
@@ -2894,7 +2906,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn plugins_with_reserved_ids_are_previewed_with_the_reason_and_fail_to_install()
     -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
@@ -2945,7 +2957,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn release_problems_read_the_same_in_previews_status_and_updates() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         crate::plugins::testing::init_default_test_state()?;
@@ -3110,7 +3122,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn plugins_without_releases_are_listed_with_the_reason_and_fail_to_update()
     -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
@@ -3161,7 +3173,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn update_checks_fail_rate_limited_release_reads_without_downloading()
     -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
@@ -3237,7 +3249,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn update_checks_send_nothing_more_to_a_rate_limited_host() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         crate::plugins::testing::init_default_test_state()?;
@@ -3299,7 +3311,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn installs_fail_plugins_whose_release_changed_or_went_since_the_preview()
     -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
@@ -3657,7 +3669,7 @@ mod tests {
             .collect()
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn subscriptions_show_their_stored_plugins_without_contacting_the_forge()
     -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
@@ -3708,7 +3720,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn subscriptions_stored_before_listings_show_plugins_unnamed() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         crate::plugins::testing::init_default_test_state()?;
@@ -3728,7 +3740,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn subscriptions_store_plugins_their_index_references_elsewhere() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         crate::plugins::testing::init_default_test_state()?;
@@ -3823,7 +3835,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn refreshing_every_repository_stores_listings_and_spares_rate_limited_hosts()
     -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
@@ -3918,7 +3930,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn refreshes_skip_a_repository_removed_while_it_is_listed() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         crate::plugins::testing::init_default_test_state()?;

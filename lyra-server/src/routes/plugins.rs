@@ -1266,11 +1266,9 @@ async fn list_plugins(headers: HeaderMap) -> Result<Json<Vec<PluginManifestRespo
     let subscriptions = repositories_service::list_subscriptions()
         .await
         .map_err(map_repository_error)?;
-    Ok(Json(manifest_responses(
-        manifests.as_ref(),
-        &plugins_dir,
-        &subscriptions,
-    )))
+    Ok(Json(tokio::task::block_in_place(|| {
+        manifest_responses(manifests.as_ref(), &plugins_dir, &subscriptions)
+    })))
 }
 
 /// Whose settings a listing reports, resolved under the guard that reads them.
@@ -2600,7 +2598,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn update_installed_plugins_reports_invalid_ids_as_failed() -> anyhow::Result<()> {
         let _registry_guard = REGISTRY_TEST_GUARD.lock().await;
         let _runtime_guard = runtime_test_lock().await;
@@ -2654,7 +2652,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn plugin_repositories_include_their_stored_plugins_on_request() -> anyhow::Result<()> {
         let _registry_guard = REGISTRY_TEST_GUARD.lock().await;
         let _runtime_guard = runtime_test_lock().await;

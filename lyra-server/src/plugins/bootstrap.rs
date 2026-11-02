@@ -27,14 +27,16 @@ pub(crate) async fn initialize_harmony() -> Result<PluginRuntime> {
             .context("build server info for plugin executor")?;
         let auth_capabilities =
             crate::plugins::auth::AuthCapabilities::from_config(&STATE.config().auth);
-        let (runtime, errors) = crate::plugins::executor::PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
-            plugins_dir,
-            server_info,
-            auth_capabilities,
-            STATE.db.get(),
-            Vec::new(),
-            Some(STATE.settings.clone()),
-        )?;
+        let (runtime, errors) = tokio::task::block_in_place(|| {
+            crate::plugins::executor::PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
+                plugins_dir,
+                server_info,
+                auth_capabilities,
+                STATE.db.get(),
+                Vec::new(),
+                Some(STATE.settings.clone()),
+            )
+        })?;
         for error in errors {
             tracing::warn!(error = %error, "plugin discovery error");
         }
