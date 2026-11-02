@@ -4,6 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 mod configured;
+pub(crate) mod control;
 mod orchestrator;
 mod roots;
 pub(crate) mod scanning;
@@ -26,12 +27,10 @@ pub(crate) use orchestrator::{
     SyncTotalState,
     SyncWorkDetails,
     cancel_sync_run,
-    get_library_sync_status,
     get_sync_run,
     library_has_active_run,
     library_mutation_guard,
     running_library_sync_count,
-    start_library_refresh,
     start_library_sync,
     subscribe_sync_run_events,
     sync_run_events_after,

@@ -49,6 +49,7 @@ use super::{
 use crate::services::{
     auth::{
         Principal,
+        Recheck,
         access,
     },
     catalog::Viewer,
@@ -120,6 +121,15 @@ pub(crate) enum CoverSelectionError {
     Internal(#[from] anyhow::Error),
 }
 
+impl From<Recheck> for CoverSelectionError {
+    fn from(error: Recheck) -> Self {
+        match error {
+            Recheck::Internal(error) => Self::Internal(error),
+            other => Self::Forbidden(other.to_string()),
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Access {
     Read,
@@ -140,23 +150,17 @@ fn resolve_owner(
     // A write checks the caller as the database has it now: a request outlives the moment it
     // was authorized, and an upload or download may take a while.
     let current;
-    let principal = if access == Access::Write {
-        current = principal.current(db).map_err(|err| match err {
-            crate::services::auth::AuthError::Internal(err) => CoverSelectionError::Internal(err),
-            _ => CoverSelectionError::Forbidden("the caller is no longer authorized".to_string()),
-        })?;
-        &current
-    } else {
-        principal
+    let principal = match (access, kind) {
+        (Access::Read, _) => principal,
+        (Access::Write, CoverOwnerKind::Playlist) => {
+            current = principal.recheck(db)?;
+            &current
+        }
+        (Access::Write, _) => {
+            current = principal.current_with(db, Permission::ManageMetadata)?;
+            &current
+        }
     };
-    if access == Access::Write
-        && kind != CoverOwnerKind::Playlist
-        && !lyra_db::roles::has_permission(&principal.permissions, Permission::ManageMetadata)
-    {
-        return Err(CoverSelectionError::Forbidden(
-            "ManageMetadata permission required".to_string(),
-        ));
-    }
     let owner_db_id = lyra_db::lookup::find_node_id_by_id(db, id)?.ok_or_else(not_found)?;
     match kind {
         CoverOwnerKind::Release | CoverOwnerKind::Artist => {

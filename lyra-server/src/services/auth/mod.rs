@@ -219,7 +219,9 @@ impl Principal {
     }
 
     /// The principal as the database has it now, under the caller's guard: the user must still
-    /// exist, and keeps only the permissions and libraries it both had and still has.
+    /// exist, and keeps only the permissions it both had and still has. Its libraries are the
+    /// ones it can see now, so a library created or granted since counts and a revoked one does
+    /// not.
     pub(crate) fn current(&self, db: &agdb::DbAny) -> AuthResult<Principal> {
         let user_db_id = self.require(db)?;
         let user =
@@ -228,11 +230,41 @@ impl Principal {
         current
             .permissions
             .retain(|permission| self.permissions.contains(permission));
-        current
-            .accessible_library_ids
-            .retain(|library_id| self.accessible_library_ids.contains(library_id));
         Ok(current)
     }
+
+    /// [`Principal::current`] for a write that checks the caller as the database has it when the
+    /// write runs.
+    pub(crate) fn recheck(&self, db: &agdb::DbAny) -> Result<Principal, Recheck> {
+        self.current(db).map_err(|error| match error {
+            AuthError::Internal(error) => Recheck::Internal(error),
+            _ => Recheck::Revoked,
+        })
+    }
+
+    /// [`Principal::recheck`], holding `permission`.
+    pub(crate) fn current_with(
+        &self,
+        db: &agdb::DbAny,
+        permission: Permission,
+    ) -> Result<Principal, Recheck> {
+        let current = self.recheck(db)?;
+        if !lyra_db::roles::has_permission(&current.permissions, permission) {
+            return Err(Recheck::Missing(permission));
+        }
+        Ok(current)
+    }
+}
+
+/// Why [`Principal::current_with`] refused the caller.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum Recheck {
+    #[error("the caller is no longer authorized")]
+    Revoked,
+    #[error("{0:?} permission required")]
+    Missing(Permission),
+    #[error(transparent)]
+    Internal(anyhow::Error),
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -367,22 +399,15 @@ pub(crate) async fn require_can_create_library(bearer: Option<&str>) -> AuthResu
     require_permission_principal(bearer, Permission::ManageLibraries).await
 }
 
+/// The principal of `bearer`, when it may manage the library `library_public_id`, as
+/// [`crate::services::libraries::control::managed_library`] decides.
 pub(crate) async fn require_manage_libraries_on(
     bearer: Option<&str>,
     library_public_id: &str,
 ) -> AuthResult<Principal> {
-    let principal = require_permission_principal(bearer, Permission::ManageLibraries).await?;
-
+    let principal = require_principal(bearer).await?;
     let db = STATE.db.read().await;
-    access::resolve_library_db_id(&*db, &principal, library_public_id).map_err(
-        |error| match error {
-            access::AccessError::InvalidRequest(message) => AuthError::Forbidden(message),
-            access::AccessError::LibraryNotFound(id) => {
-                AuthError::NotFound(format!("library not found: {id}"))
-            }
-            access::AccessError::Internal(error) => AuthError::Internal(error),
-        },
-    )?;
+    crate::services::libraries::control::managed_library(&db, &principal, library_public_id)?;
     Ok(principal)
 }
 

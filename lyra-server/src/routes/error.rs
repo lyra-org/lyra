@@ -43,6 +43,7 @@ use crate::services::{
     delivery::DeliveryError,
     entries::EntryServiceError,
     hls::HlsError,
+    libraries::control::LibraryControlError,
     mix::{
         MixError,
         MixerAdminError,
@@ -298,6 +299,12 @@ impl From<CoverSelectionError> for AppError {
             CoverSelectionError::Upstream(message) => Self::bad_gateway(message),
             CoverSelectionError::Internal(err) => err.into(),
         }
+    }
+}
+
+impl From<LibraryControlError> for AppError {
+    fn from(err: LibraryControlError) -> Self {
+        AuthError::from(err).into()
     }
 }
 

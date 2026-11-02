@@ -1238,29 +1238,36 @@ async fn mark_terminal(
     Some(summary)
 }
 
-/// The library's active or latest sync run, or `None` when the library does not exist.
-pub(crate) async fn get_library_sync_status(
-    library_id: &str,
-) -> anyhow::Result<Option<SyncRunSummary>> {
+/// The active or latest sync run of each library, or an idle summary for one that never ran,
+/// keyed by library id. Libraries that do not exist are absent.
+pub(crate) async fn library_sync_statuses(
+    library_ids: &[String],
+) -> anyhow::Result<HashMap<String, SyncRunSummary>> {
     let db = STATE.db.get();
     if let Err(err) = reconcile_interrupted_runs(&db).await {
         tracing::warn!(error = %err, "failed to reconcile interrupted sync runs");
     }
-    let library = {
-        let db_read = db.read().await;
-        match lyra_db::lookup::find_node_id_by_id(&*db_read, library_id)? {
-            Some(library_db_id) => lyra_db::libraries::get_by_id(&db_read, library_db_id)?,
-            None => None,
+    let mut statuses = HashMap::with_capacity(library_ids.len());
+    for library_id in library_ids {
+        if statuses.contains_key(library_id) || !library_exists(&db, library_id).await? {
+            continue;
         }
-    };
-    let Some(library) = library else {
-        return Ok(None);
-    };
-    Ok(Some(
-        active_or_latest_run_for_library(&db, &library.id)
+        let summary = active_or_latest_run_for_library(&db, library_id)
             .await?
-            .unwrap_or_else(|| SyncRunState::idle(library.id).summary()),
-    ))
+            .unwrap_or_else(|| SyncRunState::idle(library_id.clone()).summary());
+        statuses.insert(library_id.clone(), summary);
+    }
+    Ok(statuses)
+}
+
+async fn library_exists(db: &DbAsync, library_id: &str) -> anyhow::Result<bool> {
+    let db = db.read().await;
+    Ok(
+        match lyra_db::lookup::find_node_id_by_id(&*db, library_id)? {
+            Some(library_db_id) => lyra_db::libraries::get_by_id(&db, library_db_id)?.is_some(),
+            None => false,
+        },
+    )
 }
 
 async fn active_or_latest_run_for_library(

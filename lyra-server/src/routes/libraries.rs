@@ -49,8 +49,7 @@ use crate::{
             require_can_create_library,
             require_manage_libraries_on,
         },
-        get_library_sync_status as get_library_sync_status_summary,
-        start_library_refresh,
+        libraries::control,
         start_library_sync,
     },
 };
@@ -195,22 +194,13 @@ async fn refresh_library(
     Path(library_id): Path<String>,
     Query(query): Query<LibraryRefreshQuery>,
 ) -> Result<Json<SyncRunStartResponse>, AppError> {
-    let _principal = require_manage_libraries_on(bearer_credential(&headers), &library_id).await?;
-
-    let library = {
-        let db = STATE.db.read().await;
-        let library_db_id = lyra_db::lookup::find_node_id_by_id(&*db, &library_id)?
-            .ok_or_else(|| AppError::not_found(format!("not found: {library_id}")))?;
-        lyra_db::libraries::get_by_id(&db, library_db_id)?
-            .ok_or_else(|| library_not_found(&library_id))?
-    };
-
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     let options = LibraryRefreshRunOptions {
         replace_cover: query.replace_cover,
         force_refresh: query.force_refresh,
     };
     Ok(Json(
-        start_library_refresh(STATE.db.get(), library, options).await?,
+        control::refresh(&principal, &library_id, options).await?,
     ))
 }
 
@@ -454,8 +444,9 @@ fn list_libraries_docs(op: TransformOperation) -> TransformOperation {
 fn refresh_library_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Refresh library metadata")
         .description(
-            "Triggers a metadata refresh for all releases in a library from all enabled providers.\n\
-            Set `replace_cover` to true to overwrite existing cover images when provider results include cover URLs.",
+            "Starts a background metadata refresh of every release in a library from all enabled providers.\n\
+            Set `replace_cover` to true to overwrite existing cover images when provider results include cover URLs.\n\
+            While a sync or refresh of the library is running, starts nothing and returns 200 with `started` false and the running one. Requires ManageLibraries and library access.",
         )
 }
 
@@ -463,9 +454,10 @@ async fn get_library_sync_status(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<crate::services::LibrarySyncStatus>, AppError> {
-    let _principal = require_manage_libraries_on(bearer_credential(&headers), &id).await?;
-    get_library_sync_status_summary(&id)
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
+    control::sync_status(&principal, std::slice::from_ref(&id))
         .await?
+        .remove(&id)
         .map(Json)
         .ok_or_else(|| library_not_found(&id))
 }
@@ -474,28 +466,21 @@ async fn start_library_sync_for_library(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<SyncRunStartResponse>, AppError> {
-    let _principal = require_manage_libraries_on(bearer_credential(&headers), &id).await?;
-    let library = {
-        let db = STATE.db.read().await;
-        let library_db_id = lyra_db::lookup::find_node_id_by_id(&*db, &id)?
-            .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
-        lyra_db::libraries::get_by_id(&db, library_db_id)?.ok_or_else(|| library_not_found(&id))?
-    };
-
-    Ok(Json(start_library_sync(STATE.db.get(), library).await?))
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
+    Ok(Json(control::sync(&principal, &id).await?))
 }
 
 #[cfg(feature = "docgen")]
 fn get_library_sync_status_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get library sync status").description(
-        "Returns a compact sync status for a library, including run state, aggregate progress, current work, active-unit count, and failure count. Requires ManageLibraries permission.",
+        "Returns a compact sync status for a library, including run state, aggregate progress, current work, active-unit count, and failure count: the active run, else the latest, else an idle status for a library that never ran. Requires ManageLibraries and library access.",
     )
 }
 
 #[cfg(feature = "docgen")]
 fn start_library_sync_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Start library sync")
-        .description("Starts a background library sync. Returns 409 if one is already running.")
+        .description("Starts a background library sync. While a sync or refresh of the library is running, starts nothing and returns 200 with `started` false and the running one. Requires ManageLibraries and library access.")
 }
 
 async fn list_library_access(
