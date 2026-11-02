@@ -120,7 +120,7 @@ local function set_now_playing(listing: Listing, dto: JsonObject, playing: Activ
 	end
 	dto.NowPlayingItem = now_playing
 	dto.PlayState = {
-		PositionTicks = playing.position_ms * 10000,
+		PositionTicks = playing.effective_position_ms * 10000,
 		IsPaused = playing.state == "paused",
 		CanSeek = true,
 	}

@@ -99,7 +99,10 @@ local resumed = report("progress", 50000000)
 assert(resumed == 204, `the device reports again, got {resumed}`)
 local back = listed()
 assert(back and back.Id == session_key, "the resumed session is listed again")
-assert(back.PlayState.IsPaused == false and back.PlayState.PositionTicks == 50000000)
+assert(back.PlayState.IsPaused == false, "the resumed session plays")
+-- A playing position advances from the report.
+local ticks = back.PlayState.PositionTicks
+assert(ticks >= 50000000 and ticks < 60000000, `the position advances from the report, got {ticks}`)
 assert(host_state() == "playing", `the host plays it again, got {host_state()}`)
 
 -- A stop that can't name its item ends what the session played.
