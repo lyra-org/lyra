@@ -62,6 +62,9 @@ pub enum InstalledBy {
 /// the target and promoted by rename, so a failed install never leaves a
 /// half-written plugin directory.
 ///
+/// The caller must have exclusive access to `plugins_dir`, as
+/// [`stage_candidate`] describes.
+///
 /// Returns the source record written into the installed directory.
 pub fn install_candidate(
     candidate: &PluginCandidate,
@@ -76,7 +79,9 @@ pub fn install_candidate(
 
 /// A candidate copied into the staging area of `plugins_dir`, checked to
 /// be able to replace what is installed under its id, and waiting for
-/// [`promote_together`]. Dropping it removes the staged copy.
+/// [`promote_together`]. Dropping it removes the staged copy, so the
+/// exclusive access [`stage_candidate`] requires lasts until it is dropped,
+/// whether promoted or abandoned.
 pub struct StagedInstall {
     id: String,
     plugins_dir: PathBuf,
@@ -109,6 +114,12 @@ impl Drop for StagedInstall {
 
 /// Stages `candidate` for installing into `plugins_dir`, as
 /// [`install_candidate`] does before it promotes it.
+///
+/// Staging and promotion use fixed paths inside `plugins_dir`, so only one
+/// caller at a time may stage, promote, or uninstall there. Locking each
+/// call is not enough: a caller's exclusive access must last from its first
+/// `stage_candidate` through promotion or rollback and the drop of every
+/// [`StagedInstall`] it staged, abandoned ones included.
 pub fn stage_candidate(
     candidate: &PluginCandidate,
     plugins_dir: &Path,
@@ -214,6 +225,9 @@ fn displaced_path(plugins_dir: &Path, id: &str) -> PathBuf {
 /// is installed under its id, all or none: when one cannot be promoted,
 /// those promoted before it are put back as they were.
 ///
+/// The caller must still hold the exclusive access to their `plugins_dir`
+/// that [`stage_candidate`] requires.
+///
 /// Returns the source records written into the installed directories, in
 /// the order of `staged`.
 pub fn promote_together(staged: Vec<StagedInstall>) -> Result<Vec<SourceRecord>, InstallError> {
@@ -309,6 +323,10 @@ fn promote(install: &StagedInstall) -> Result<Promoted, InstallError> {
 /// are refused; deleting those is a deliberate filesystem operation.
 /// Returns the removed record, or `None` when it was present but
 /// unreadable.
+///
+/// The caller must have exclusive access to `plugins_dir`, as
+/// [`stage_candidate`] describes, and stage nothing it has not yet
+/// promoted or dropped.
 pub fn uninstall_plugin(
     plugins_dir: &Path,
     id: &str,
