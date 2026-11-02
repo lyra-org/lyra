@@ -52,11 +52,26 @@ function routes.status(ctx: ApiContext): ApiResponse
 	return api.response.json(response.status_code or 502, client.decode(response.body) or {})
 end
 
+-- Whether AudioMuse answers an authenticated request for the configured server, with each
+-- model's analysis coverage. A failure answers 502 with AudioMuse's status and error, such as a
+-- rejected token or an unknown server.
 function routes.health(): ApiResponse
-	local response = client.get("/api/health")
-	return api.response.json(response.status_code or 502, {
-		healthy = client.ok(response),
+	local response = client.get("/api/models")
+	local body = client.decode(response.body)
+	if client.ok(response) and type(body) == "table" then
+		local models = body :: JsonObject
+		return api.response.json(200, {
+			healthy = true,
+			backend_url = client.base_url(),
+			server_id = models.server_id,
+			models = models.models,
+		})
+	end
+	return api.response.json(502, {
+		healthy = false,
 		backend_url = client.base_url(),
+		backend_status = response.status_code,
+		error = client.error_message(response),
 	})
 end
 

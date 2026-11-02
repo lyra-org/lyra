@@ -66,11 +66,12 @@ local function query_string(params: { [string]: string }): string
 	return "?" .. table.concat(parts, "&")
 end
 
-function client.get(path: string, params: { [string]: string }?): HttpResponse
+function client.get(path: string, params: { [string]: string }?, timeout_ms: number?): HttpResponse
 	return client.send({
 		url = `{config.base_url}{path}{query_string(params or {})}`,
 		method = http.HttpMethod.Get,
 		headers = auth_headers(),
+		timeout_ms = timeout_ms,
 	})
 end
 

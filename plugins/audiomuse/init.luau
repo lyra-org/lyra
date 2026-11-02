@@ -12,6 +12,7 @@ local client = require("@self/client")
 local jellyfin_hex = require("@self/jellyfin_hex")
 local mixes = require("@self/mixes")
 local routes = require("@self/routes")
+local startup = require("@self/startup")
 
 local config = plugins.declare_settings(function(builder)
 	builder:group("connection", "Connection")
@@ -73,6 +74,8 @@ end
 local ids: mixes.TrackIds = if MEDIA_SERVER == "jellyfin"
 	then { encode = jellyfin_hex.nanoid_to_hex, decode = jellyfin_hex.hex_to_nanoid }
 	else { encode = passthrough_id, decode = passthrough_id }
+
+startup.check()
 
 local mixer = mix.Mixer.new("audiomuse", { display_name = "AudioMuse AI" })
 mixes.register(mixer, { ids = ids })
