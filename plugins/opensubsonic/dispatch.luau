@@ -13,6 +13,7 @@ local media = require("./endpoints/media")
 local playlists = require("./endpoints/playlists")
 local request = require("./protocol/request")
 local response = require("./protocol/response")
+local scanning = require("./endpoints/scanning")
 local search = require("./endpoints/search")
 local system = require("./endpoints/system")
 
@@ -25,7 +26,15 @@ local xml_errors: { [string]: boolean } = media.xml_errors
 
 local methods: { [string]: Method } = {}
 for _, family: { [string]: Method } in
-	{ system.methods, browsing.methods, lists.methods, search.methods, media.methods, playlists.methods } :: { { [string]: Method } }
+	{
+		system.methods,
+		browsing.methods,
+		lists.methods,
+		search.methods,
+		media.methods,
+		playlists.methods,
+		scanning.methods,
+	} :: { { [string]: Method } }
 do
 	for name, method in family do
 		methods[name] = method

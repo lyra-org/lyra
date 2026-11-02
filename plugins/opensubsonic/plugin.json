@@ -17,6 +17,7 @@
     "lyra.favorites",
     "lyra.genres",
     "lyra.libraries",
+    "lyra.libraries.manage",
     "lyra.listens",
     "lyra.lyrics",
     "lyra.playback_sources",
