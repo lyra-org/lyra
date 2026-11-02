@@ -33,7 +33,7 @@ pub struct LyricsResponse {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Provider-supplied ID for provider rows; server-controlled singleton ID for manual rows."
+            description = "The lyrics entry's ID, kept while the entry is rewritten: a provider's re-fetch or a new upload to the same scope keeps it."
         )
     )]
     pub id: String,
@@ -43,6 +43,14 @@ pub struct LyricsResponse {
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_id: Option<String>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "The provider's own ID for these lyrics; omitted for manual lyrics."
+        )
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_lyrics_id: Option<String>,
     #[cfg_attr(
         feature = "docgen",
         schemars(description = "Lowercase ISO-639-3 language code; `und` when unknown.")
@@ -102,9 +110,19 @@ pub enum LyricsSourceResponse {
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
 pub struct LyricsCandidateSummaryResponse {
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "The lyrics entry's ID, as `id` in a lyrics response.")
+    )]
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_id: Option<String>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "As `provider_lyrics_id` in a lyrics response.")
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_lyrics_id: Option<String>,
     pub language: String,
     pub scope: LyricsScopeResponse,
     pub source: LyricsSourceResponse,

@@ -378,6 +378,7 @@ fn lyrics_candidate_summary(
     LyricsCandidateSummaryResponse {
         id: lyrics.id.clone(),
         provider_id: lyrics.provider_id.clone(),
+        provider_lyrics_id: lyrics.provider_lyrics_id.clone(),
         language: lyrics.language.clone(),
         scope: LyricsScopeResponse::from_lyrics(lyrics),
         source: LyricsSourceResponse::from_lyrics(lyrics),
@@ -391,6 +392,7 @@ fn lyrics_response_json(detail: lyra_db::lyrics::LyricsDetail) -> Json<LyricsRes
     let scope = LyricsScopeResponse::from_lyrics(&lyrics);
     let source = LyricsSourceResponse::from_lyrics(&lyrics);
     let provider_id = lyrics.provider_id.clone();
+    let provider_lyrics_id = lyrics.provider_lyrics_id.clone();
     let response_lines = lines
         .into_iter()
         .map(|line| LyricsLineResponse {
@@ -411,6 +413,7 @@ fn lyrics_response_json(detail: lyra_db::lyrics::LyricsDetail) -> Json<LyricsRes
     Json(LyricsResponse {
         id: lyrics.id,
         provider_id,
+        provider_lyrics_id,
         language: lyrics.language,
         scope,
         source,
@@ -823,6 +826,8 @@ mod tests {
         let provider_json: serde_json::Value = serde_json::from_slice(&provider_body)?;
         assert_eq!(provider_json["plain_text"], "provider lyrics");
         assert_eq!(provider_json["provider_id"], "route-provider");
+        assert_eq!(provider_json["provider_lyrics_id"], "provider-row");
+        assert_ne!(provider_json["id"], "provider-row");
 
         let fallback_response = route_ok(
             get_track_lyrics(
@@ -858,6 +863,10 @@ mod tests {
         assert_eq!(
             lrc_candidates.items[0].provider_id.as_deref(),
             Some("route-provider")
+        );
+        assert_eq!(
+            lrc_candidates.items[0].provider_lyrics_id.as_deref(),
+            Some("provider-row")
         );
 
         {
