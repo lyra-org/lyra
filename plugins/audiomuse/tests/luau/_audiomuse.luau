@@ -48,8 +48,8 @@ client.send = function(options: http.HttpRequestOptions): http.HttpResponse
 	error(`unexpected request {options.url}`)
 end
 
-function module.configure()
-	client.configure({ base_url = module.BASE_URL, token = "secret" })
+function module.configure(server: string?)
+	client.configure({ base_url = module.BASE_URL, token = "secret", server = server or "" })
 end
 
 -- Registers the AudioMuse mixer as the plugin does with Lyra seen through Jellyfin.

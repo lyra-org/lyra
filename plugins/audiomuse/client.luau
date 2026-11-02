@@ -4,7 +4,8 @@
 -- You can obtain one here:
 -- www.meshiplaw.com/lyra.
 
--- Requests to the AudioMuse API.
+-- Requests to the AudioMuse API. Every request names the configured AudioMuse server, if any:
+-- GETs in the query string, POSTs in the JSON body.
 
 local http = require("@harmony/http")
 local serde = require("@harmony/serde")
@@ -18,6 +19,8 @@ type HttpResponse = http.HttpResponse
 export type Config = {
 	base_url: string,
 	token: string,
+	-- The AudioMuse media server name or id; empty for AudioMuse's default server.
+	server: string,
 }
 
 local client = {}
@@ -25,7 +28,7 @@ local client = {}
 -- Sends a request; tests replace it to answer with scripted responses.
 client.send = http.request :: (HttpRequestOptions) -> HttpResponse
 
-local config: Config = { base_url = "", token = "" }
+local config: Config = { base_url = "", token = "", server = "" }
 
 function client.configure(next_config: Config)
 	config = table.clone(next_config)
@@ -42,9 +45,13 @@ local function auth_headers(): { [string]: string }
 	return {}
 end
 
--- The query string for `params`; values are already strings.
+-- The query string for `params` plus the configured server; values are already strings.
 local function query_string(params: { [string]: string }): string
 	local parts: { string } = {}
+	if config.server ~= "" then
+		params = table.clone(params)
+		params.server = config.server
+	end
 	local names: { string } = {}
 	for name in params do
 		table.insert(names, name)
@@ -69,6 +76,10 @@ end
 
 -- Posts `body` as JSON; AudioMuse's Flask endpoints require `Content-Type: application/json`.
 function client.post(path: string, body: JsonObject): HttpResponse
+	if config.server ~= "" then
+		body = table.clone(body)
+		body.server = config.server
+	end
 	local headers = auth_headers()
 	headers["Content-Type"] = "application/json"
 	return client.send({

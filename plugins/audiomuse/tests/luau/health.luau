@@ -19,9 +19,10 @@ local started = routes.analysis_start({ request = { body_raw = "" } } :: any) ::
 assert(started.status == 200 and started.body.task_id == "t-1", "started")
 local sent = take()[1]
 assert(sent.method == "POST" and sent.raw == "{}", `an empty object, got {sent.raw}`)
+audiomuse.configure("Lyra Home")
 routes.analysis_start({ request = { body_raw = '{"num_recent_albums":2}' } } :: any)
 sent = take()[1]
-assert(sent.body.num_recent_albums == 2, "the client's body")
+assert(sent.body.num_recent_albums == 2 and sent.body.server == "Lyra Home", "the client's body, with the server")
 
 -- A body that isn't a JSON object is refused before it reaches AudioMuse.
 for _, raw in { "[]", "[1]", "3", "not json" } do

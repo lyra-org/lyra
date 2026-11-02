@@ -14,6 +14,7 @@ local request = take()[1]
 assert(request.method == "GET", "similar tracks are a GET")
 assert(param(request.url, "item_id") == item(ids.t1), "the seed's item id")
 assert(param(request.url, "n") == "3", "one more than the limit, for the seed")
+assert(param(request.url, "server") == nil, "server is left to AudioMuse unless set")
 
 -- Seeds AudioMuse hasn't analysed give an empty mix; so does a failing AudioMuse.
 audiomuse.routes = { { pattern = "/api/similar_tracks", status = 404, body = { error = "not found" } } }
@@ -35,7 +36,7 @@ request = take()[1]
 assert(request.method == "POST" and string.find(request.url, "/api/alchemy", 1, true), "alchemy is a POST")
 local body = request.body
 assert(body.n == 10, "the limit")
-assert(body.subtract_distance == nil, "nothing else unless set")
+assert(body.subtract_distance == nil and body.server == nil, "nothing else unless set")
 assert(#body.items == 2, "one item per seed")
 assert(body.items[1].id == item(ids.t2) and body.items[1].op == "ADD" and body.items[1].type == "song")
 assert(body.items[2].id == item(ids.t3) and body.items[2].op == "SUBTRACT")
@@ -50,3 +51,15 @@ end
 for _, key in { "t1", "t2", "t3", "t4", "t5" } do
 	assert(added[item(ids[key])] == "ADD", `{key} adds`)
 end
+
+-- A configured AudioMuse server is named on every request: in a GET's query, in a POST's body.
+audiomuse.configure("Lyra Home")
+audiomuse.routes = {
+	{ pattern = "/api/similar_tracks", body = audiomuse.rows(ids.t2) },
+	{ pattern = "/api/alchemy", body = { results = audiomuse.rows(ids.t4) } },
+}
+mix.blend({ seeds = { ids.t1 }, mixer = "audiomuse" })
+mix.blend({ seeds = { ids.t1, ids.t2 }, mixer = "audiomuse" })
+local requests = take()
+assert(param(requests[1].url, "server") == "Lyra Home", "the server in the query")
+assert(requests[2].body.server == "Lyra Home", "the server in the body")

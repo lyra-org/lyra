@@ -34,6 +34,11 @@ local config = plugins.declare_settings(function(builder)
 			{ value = "opensubsonic", label = "OpenSubsonic" },
 		},
 	})
+	builder:string("server", {
+		label = "AudioMuse server",
+		description = "The name or ID Lyra is registered under in AudioMuse. Empty uses AudioMuse's default server.",
+		default = "",
+	})
 end)
 
 local BASE_URL = config.base_url :: string
@@ -52,6 +57,7 @@ end
 client.configure({
 	base_url = BASE_URL,
 	token = config.token :: string,
+	server = string.match(config.server :: string, "^%s*(.-)%s*$") :: string,
 })
 
 http.set_rate_limit({
