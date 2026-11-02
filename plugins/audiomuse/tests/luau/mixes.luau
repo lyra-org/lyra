@@ -5,7 +5,7 @@ local mix = require("@lyra/mix")
 local ids = fixture.ids
 local titles, take, param, item = audiomuse.titles, audiomuse.take, audiomuse.param, audiomuse.item
 
-audiomuse.register()
+audiomuse.register(false)
 
 -- A single track seed mixes from its similar tracks, leaving out the seed.
 audiomuse.routes = { { pattern = "/api/similar_tracks", body = audiomuse.rows(ids.t1, ids.t3, ids.t2) } }
@@ -51,6 +51,9 @@ end
 for _, key in { "t1", "t2", "t3", "t4", "t5" } do
 	assert(added[item(ids[key])] == "ADD", `{key} adds`)
 end
+
+-- Without CLAP, blends don't take a query.
+audiomuse.fails(mix.blend, { q = "calm piano", mixer = "audiomuse" }, "mixer 'audiomuse' can't serve this mix: query")
 
 -- A configured AudioMuse server is named on every request: in a GET's query, in a POST's body.
 audiomuse.configure("Lyra Home")

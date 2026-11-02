@@ -6,23 +6,30 @@
 
 -- What the plugin checks with AudioMuse as it loads.
 
+local serde = require("@harmony/serde")
+
 local client = require("./client")
+
+type JsonObject = { [string]: serde.JsonValue }
 
 local startup = {}
 
 -- How long the check waits, so an unreachable AudioMuse doesn't hold up loading.
 local CHECK_TIMEOUT_MS = 5000
 
--- Warns when AudioMuse rejects the configured token or server, and returns whether the check
--- passed.
+-- Warns when AudioMuse rejects the configured token or server, and returns whether it has CLAP
+-- text search enabled. An unreachable AudioMuse counts as CLAP being disabled until the plugin
+-- reloads.
 function startup.check(): boolean
 	local response = client.get("/api/models", nil, CHECK_TIMEOUT_MS)
 	local body = if client.ok(response) then client.decode(response.body) else nil
 	if type(body) ~= "table" then
-		warn(`AudioMuse check failed: {client.error_message(response)}`)
+		warn(`AudioMuse check failed: {client.error_message(response)}; text queries are off`)
 		return false
 	end
-	return true
+	local models = (body :: JsonObject).models
+	local clap = if type(models) == "table" then (models :: JsonObject).clap else nil
+	return type(clap) == "table" and (clap :: JsonObject).enabled == true
 end
 
 return startup

@@ -5,7 +5,7 @@ local mix = require("@lyra/mix")
 local ids = fixture.ids
 local titles, take, param, item = audiomuse.titles, audiomuse.take, audiomuse.param, audiomuse.item
 
-audiomuse.register()
+audiomuse.register(false)
 
 -- A path runs from the start track to the end track through AudioMuse's song path, in its order.
 audiomuse.routes = {

@@ -36,11 +36,16 @@ assert(response.status == 502, `status {response.status}`)
 assert(response.body.healthy == false and response.body.backend_status == 400, "unhealthy")
 assert(string.find(response.body.error, "Unknown server 'Lyra Home'", 1, true), response.body.error)
 
--- Loading checks the server.
+-- Loading checks the server, and takes queries only when AudioMuse has CLAP enabled.
 audiomuse.routes = { { pattern = "/api/models", body = MODELS } }
-assert(startup.check() == true, "the check passes")
+assert(startup.check() == false, "CLAP disabled")
+local clap_models = table.clone(MODELS)
+clap_models.models = table.clone(MODELS.models)
+clap_models.models.clap = { enabled = true, global = { count = 5, total = 5, percentage = 100 } }
+audiomuse.routes = { { pattern = "/api/models", body = clap_models } }
+assert(startup.check() == true, "CLAP enabled")
 audiomuse.routes = { { pattern = "/api/models", status = 401, body = { error = "Unauthorized" } } }
-assert(startup.check() == false, "a rejected token fails the check")
+assert(startup.check() == false, "a failed check is CLAP disabled")
 
 -- An analysis starts with the client's body, or an empty object without one.
 audiomuse.configure()

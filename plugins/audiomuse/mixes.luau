@@ -4,8 +4,8 @@
 -- You can obtain one here:
 -- www.meshiplaw.com/lyra.
 
--- The AudioMuse mixer: blends through similar tracks and alchemy, and paths through AudioMuse's
--- song paths.
+-- The AudioMuse mixer: blends through similar tracks, alchemy and CLAP text search, and paths
+-- through AudioMuse's song paths.
 
 local http = require("@harmony/http")
 local mix = require("@lyra/mix")
@@ -31,6 +31,8 @@ export type TrackIds = {
 
 export type MixerConfig = {
 	ids: TrackIds,
+	-- Whether AudioMuse has CLAP text search enabled, so blends take a query.
+	clap: boolean,
 }
 
 local mixes = {}
@@ -133,6 +135,16 @@ local function alchemy(config: MixerConfig, items: { AlchemyItem }, n: number): 
 	return if rows then result_tracks(config.ids, label, rows) else nil
 end
 
+-- The rows of the tracks best matching `query`, best first.
+local function clap_search(query: string, limit: number): { JsonValue }?
+	local label = "clap_search"
+	return body_rows(
+		label,
+		response_body(label, client.post("/api/clap/search", { query = query, limit = limit })),
+		"results"
+	)
+end
+
 -- The track ids a seed stands for: itself, or the first tracks of its release or artist.
 -- Artists are expanded rather than sent as `type = "artist"`, since AudioMuse resolves artist
 -- ids through a name map built from each track's album artist and first artist id, which a Lyra
@@ -174,16 +186,24 @@ local function track_mix(config: MixerConfig, seed_id: string, limit: number): M
 	return without(results or {}, { [seed_id] = true })
 end
 
--- Blends the seeds through AudioMuse's alchemy: excluded seeds subtract, the rest add. Seeds are
--- left out of the mix.
+local function query_mix(config: MixerConfig, query: string, limit: number): MixResult
+	return { tracks = result_tracks(config.ids, "clap_search", clap_search(query, limit) or {}) }
+end
+
+-- Blends the seeds through AudioMuse's alchemy: excluded seeds subtract, the rest add. With a
+-- query, its best CLAP matches that aren't seeds add too, as many as the seeds add (at least one,
+-- at most `SEED_ENTITY_TRACKS`), so the description weighs about as much as the seeds. Seeds leave
+-- room for those matches, and a failed text search fails the mix rather than dropping the query.
+-- Seeds are left out of the mix; matches stay in it.
 local function alchemy_mix(config: MixerConfig, ctx: MixBlendContext, limit: number): MixResult
 	local items: { AlchemyItem } = {}
 	local seed_track_ids: { [string]: boolean } = {}
+	local seed_capacity = if ctx.q then MAX_ALCHEMY_ITEMS - SEED_ENTITY_TRACKS else MAX_ALCHEMY_ITEMS
 	local adds = 0
 	for _, seed in ctx.seeds do
 		local op = if seed.exclude then "SUBTRACT" else "ADD"
 		for _, track_id in seed_tracks(seed) do
-			if #items >= MAX_ALCHEMY_ITEMS then
+			if #items >= seed_capacity then
 				break
 			end
 			local item_id = if seed_track_ids[track_id] then nil else config.ids.encode(track_id)
@@ -193,6 +213,29 @@ local function alchemy_mix(config: MixerConfig, ctx: MixBlendContext, limit: num
 				if op == "ADD" then
 					adds += 1
 				end
+			end
+		end
+	end
+
+	if ctx.q then
+		local wanted = if adds == 0 then SEED_ENTITY_TRACKS else math.min(adds, SEED_ENTITY_TRACKS)
+		-- Ask for enough matches to fill `wanted` after skipping the seeds among them.
+		local rows = clap_search(ctx.q, wanted + #items)
+		if not rows then
+			return { tracks = {} }
+		end
+		local matched: { [string]: boolean } = {}
+		for _, row in rows do
+			if wanted == 0 then
+				break
+			end
+			local item_id = if type(row) == "table" then (row :: JsonObject).item_id else nil
+			local track_id = if type(item_id) == "string" then config.ids.decode(item_id) else nil
+			if track_id and not seed_track_ids[track_id] and not matched[track_id] then
+				matched[track_id] = true
+				table.insert(items, { id = item_id :: string, op = "ADD", type = "song" })
+				wanted -= 1
+				adds += 1
 			end
 		end
 	end
@@ -207,7 +250,10 @@ end
 local function blend(config: MixerConfig, ctx: MixBlendContext): MixResult
 	local limit = ctx.limit or DEFAULT_LIMIT
 	local seeds = ctx.seeds
-	if #seeds == 1 and seeds[1].type == mix.SeedType.Track and not seeds[1].exclude then
+	if ctx.q and #seeds == 0 then
+		return query_mix(config, ctx.q, limit)
+	end
+	if not ctx.q and #seeds == 1 and seeds[1].type == mix.SeedType.Track and not seeds[1].exclude then
 		return track_mix(config, seeds[1].id, limit)
 	end
 	return alchemy_mix(config, ctx, limit)
@@ -259,6 +305,7 @@ function mixes.register(mixer: mix.Mixer, config: MixerConfig)
 		seeds = { mix.SeedType.Track, mix.SeedType.Release, mix.SeedType.Artist },
 		max_seeds = MAX_BLEND_SEEDS,
 		exclude = true,
+		query = config.clap,
 	}, function(ctx: MixBlendContext): MixResult
 		return blend(config, ctx)
 	end)

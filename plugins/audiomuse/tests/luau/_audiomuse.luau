@@ -53,10 +53,11 @@ function module.configure(server: string?)
 end
 
 -- Registers the AudioMuse mixer as the plugin does with Lyra seen through Jellyfin.
-function module.register()
+function module.register(clap: boolean)
 	module.configure()
 	mixes.register(mix.Mixer.new("audiomuse"), {
 		ids = { encode = jellyfin_hex.nanoid_to_hex, decode = jellyfin_hex.hex_to_nanoid },
+		clap = clap,
 	})
 end
 
