@@ -1,0 +1,26 @@
+run_as = "admin"
+
+# Two empty libraries an administrator scans through the "Scan Media Library" task.
+
+[[users]]
+key = "admin"
+admin = true
+
+[[users]]
+key = "listener"
+
+[[api_keys]]
+key = "admin_key"
+user = "admin"
+
+[[api_keys]]
+key = "listener_key"
+user = "listener"
+
+[[libraries]]
+key = "music"
+name = "Music"
+
+[[libraries]]
+key = "talks"
+name = "Talks"

@@ -178,6 +178,22 @@ function module.parse_query_string(query: api.ApiQueryParams?, keys: { string },
 	return module.trim(tostring(value)) or default_value
 end
 
+-- A boolean query parameter as upstream's model binding reads one: `true` or `false` in any case.
+-- Nil without the parameter; any other value comes back second, for a 400.
+function module.parse_query_bool(query: api.ApiQueryParams?, key: string): (boolean?, string?)
+	local raw = module.parse_query_string(query, { key })
+	if raw == nil then
+		return nil, nil
+	end
+	local lower = string.lower(raw)
+	if lower == "true" then
+		return true, nil
+	elseif lower == "false" then
+		return false, nil
+	end
+	return nil, raw
+end
+
 function module.parse_query_int(
 	query: api.ApiQueryParams?,
 	keys: { string },

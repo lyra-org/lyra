@@ -1,0 +1,55 @@
+run_as = "admin"
+
+# Feishin refreshes an album or artist as an administrator; the listener may not.
+
+[[users]]
+key = "admin"
+admin = true
+
+[[users]]
+key = "listener"
+
+[[api_keys]]
+key = "admin_key"
+user = "admin"
+
+[[api_keys]]
+key = "listener_key"
+user = "listener"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener"]
+
+[[artists]]
+key = "singer"
+name = "Singer"
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+artists = ["singer"]
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+artists = ["singer"]
+
+[[playlists]]
+key = "mix"
+owner = "admin"
+name = "Mix"
+tracks = ["song"]
+
+[[playlists]]
+key = "private"
+owner = "listener"
+name = "Private"
+tracks = ["song"]
+
+[[libraries]]
+key = "talks"
+name = "Talks"
