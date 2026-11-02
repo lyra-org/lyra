@@ -99,7 +99,7 @@ pub(crate) use admin::{
     inherit_entity_external_id,
     list_entity_external_ids,
     list_provider_configs,
-    refresh_entity_by_id,
+    refresh_entity,
     set_entity_external_id,
     set_entity_locked,
     update_provider,
@@ -188,9 +188,30 @@ pub(crate) struct EntityRefreshResult {
     pub(crate) providers_called: Vec<String>,
 }
 
+/// The entity a refresh runs for: the node the caller named by `public_id` and `viewer` saw.
+/// agdb reuses ids, so the refresh checks it again under each guard it reads the entity with.
+pub(crate) struct RefreshTarget {
+    pub(crate) db_id: agdb::DbId,
+    pub(crate) public_id: String,
+    pub(crate) viewer: crate::services::catalog::Viewer,
+}
+
+impl RefreshTarget {
+    /// Whether the node is still the entity named and the viewer still sees it.
+    pub(crate) fn holds(&self, db: &agdb::DbAny) -> anyhow::Result<bool> {
+        Ok(
+            lyra_db::lookup::find_id_by_db_id(db, self.db_id)?.as_deref()
+                == Some(self.public_id.as_str())
+                && self.viewer.sees(db, self.db_id)?,
+        )
+    }
+}
+
 #[derive(Clone)]
 pub(crate) enum EntityRefreshMode {
-    MetadataOnly,
+    MetadataOnly {
+        options: std::collections::HashMap<String, String>,
+    },
     WithReleaseArtifacts {
         replace_cover: bool,
         force_refresh: bool,

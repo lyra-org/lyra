@@ -72,6 +72,7 @@ use super::{
     EntityRefreshMode,
     EntityRefreshResult,
     ProviderServiceError,
+    RefreshTarget,
     dedup::deduplicate_releases_by_external_id,
 };
 
@@ -116,17 +117,21 @@ pub(super) fn resolve_library_id_for_entity(
 }
 
 pub(crate) async fn refresh_entity_metadata(
-    node_id: DbId,
+    target: RefreshTarget,
     refresh_mode: EntityRefreshMode,
 ) -> Result<EntityRefreshResult, ProviderServiceError> {
+    let node_id = target.db_id;
     let passed_options = match &refresh_mode {
-        EntityRefreshMode::MetadataOnly => HashMap::new(),
-        EntityRefreshMode::WithReleaseArtifacts { options, .. } => options.clone(),
+        EntityRefreshMode::MetadataOnly { options }
+        | EntityRefreshMode::WithReleaseArtifacts { options, .. } => options.clone(),
     };
 
     let schemes = id_schemes().await;
     let (entity_type, context, library_db_id) = {
         let db = STATE.db.read().await;
+        if !target.holds(&db)? {
+            return Err(ProviderServiceError::EntityNotFound(node_id.0));
+        }
         let library_db_id = resolve_library_id_for_entity(&db, node_id)?;
         let (entity_type, context) =
             build_entity_provider_context(&db, node_id, library_db_id, &schemes).map_err(
@@ -164,6 +169,17 @@ pub(crate) async fn refresh_entity_metadata(
             ..
         } = refresh_mode
     {
+        // The providers may have merged the entity away, and its id gone to another node.
+        if !target.holds(&*STATE.db.read().await)? {
+            tracing::debug!(
+                entity_id = %target.public_id,
+                "entity gone after its refresh; skipping its cover sync"
+            );
+            return Ok(EntityRefreshResult {
+                entity_type,
+                providers_called,
+            });
+        }
         sync_cover_for_refreshed_entity(
             node_id,
             entity_type,

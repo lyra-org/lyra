@@ -516,9 +516,18 @@ pub async fn run_luau_plugin_test_file(
 }
 
 pub async fn refresh_release(release_id: i64) -> anyhow::Result<()> {
+    let db_id = DbId(release_id);
+    let public_id = lyra_db::lookup::find_id_by_db_id(&*STATE.db.read().await, db_id)?
+        .context("release has no public id")?;
     services::providers::refresh_entity_metadata(
-        DbId(release_id),
-        services::providers::EntityRefreshMode::MetadataOnly,
+        services::providers::RefreshTarget {
+            db_id,
+            public_id,
+            viewer: services::catalog::Viewer::System,
+        },
+        services::providers::EntityRefreshMode::MetadataOnly {
+            options: Default::default(),
+        },
     )
     .await
     .map(|_| ())

@@ -3,9 +3,17 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use crate::services::STATE;
+use crate::services::{
+    STATE,
+    auth::{
+        Principal,
+        Recheck,
+    },
+    catalog::Viewer,
+};
 use lyra_db::{
     IdSource,
+    Permission,
     ProviderConfig,
 };
 
@@ -13,6 +21,7 @@ use super::{
     EntityRefreshMode,
     EntityRefreshResult,
     ProviderServiceError,
+    RefreshTarget,
     refresh_entity_metadata,
 };
 
@@ -26,8 +35,19 @@ pub(crate) enum ProviderAdminError {
     ManualIdNotFound(String),
     #[error("External ID value is blank: {0}")]
     BlankIdValue(String),
+    #[error("{0}")]
+    Forbidden(String),
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
+}
+
+impl From<Recheck> for ProviderAdminError {
+    fn from(error: Recheck) -> Self {
+        match error {
+            Recheck::Internal(error) => Self::Internal(error),
+            other => Self::Forbidden(other.to_string()),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -178,22 +198,44 @@ pub(crate) async fn set_entity_locked(
     Ok(())
 }
 
-pub(crate) async fn refresh_entity_by_id(
+/// Refreshes the metadata of the release, artist or track `entity_id` names from every enabled
+/// provider, once they have answered, for a principal holding `SyncMetadata`, as the database
+/// has it now. An entity that is missing, hidden from the principal, or of another type is not
+/// found.
+pub(crate) async fn refresh_entity(
+    principal: &Principal,
     entity_id: &str,
     refresh_mode: EntityRefreshMode,
 ) -> Result<EntityRefreshResult, ProviderAdminError> {
-    let entity_db_id = {
+    let not_found = || ProviderAdminError::EntityNotFound(entity_id.to_string());
+    let target = {
         let db = STATE.db.read().await;
-        lyra_db::lookup::find_node_id_by_id(&db, entity_id)?
-            .ok_or_else(|| ProviderAdminError::EntityNotFound(entity_id.to_string()))?
+        let current = principal.current_with(&db, Permission::SyncMetadata)?;
+        let entity_db_id =
+            lyra_db::lookup::find_node_id_by_id(&*db, entity_id)?.ok_or_else(not_found)?;
+        if !matches!(
+            lyra_db::graph::element_kind(&*db, entity_db_id)?.as_deref(),
+            Some("Release" | "Artist" | "Track")
+        ) {
+            return Err(not_found());
+        }
+        let viewer = Viewer::user(&*db, current).map_err(|_| {
+            ProviderAdminError::Forbidden("the caller is no longer authorized".to_string())
+        })?;
+        if !viewer.sees(&db, entity_db_id)? {
+            return Err(not_found());
+        }
+        RefreshTarget {
+            db_id: entity_db_id,
+            public_id: entity_id.to_string(),
+            viewer,
+        }
     };
 
-    refresh_entity_metadata(entity_db_id, refresh_mode)
+    refresh_entity_metadata(target, refresh_mode)
         .await
         .map_err(|error| match error {
-            ProviderServiceError::EntityNotFound(_) => {
-                ProviderAdminError::EntityNotFound(entity_id.to_string())
-            }
+            ProviderServiceError::EntityNotFound(_) => not_found(),
             ProviderServiceError::Internal(error) => ProviderAdminError::Internal(error),
             other => ProviderAdminError::Internal(anyhow::Error::new(other)),
         })

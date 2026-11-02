@@ -56,7 +56,7 @@ use crate::{
             inherit_entity_external_id as inherit_entity_external_id_service,
             list_entity_external_ids as list_entity_external_ids_service,
             list_provider_configs,
-            refresh_entity_by_id,
+            refresh_entity as refresh_entity_service,
             set_entity_external_id as set_entity_external_id_service,
             set_entity_locked,
             update_provider as update_provider_service,
@@ -661,10 +661,11 @@ async fn refresh_entity(
     Path(entity_id): Path<String>,
     Query(query): Query<RefreshEntityQuery>,
 ) -> Result<Json<RefreshResponse>, AppError> {
-    let _principal = require_sync_metadata(bearer_credential(&headers)).await?;
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
     let mut options: HashMap<String, String> = query.extra;
     options.retain(|key, _| !KNOWN_REFRESH_PARAMS.contains(&key.as_str()));
-    let result = refresh_entity_by_id(
+    let result = refresh_entity_service(
+        &principal,
         &entity_id,
         EntityRefreshMode::WithReleaseArtifacts {
             replace_cover: query.replace_cover,
@@ -745,7 +746,8 @@ fn refresh_entity_docs(op: TransformOperation) -> TransformOperation {
             For release and artist entities, cover downloads replace only missing covers by default.\
             Set `replace_cover=true` to overwrite an existing cover.\n\n\
             Pass provider options listed by `GET /providers` as `<provider_id>.<option>=<value>`; \
-            each provider receives only its own declared options. Requires SyncMetadata permission.",
+            each provider receives only its own declared options.\n\n\
+            Answers once every provider has. Returns 404 when the entity is missing or hidden from the caller. Requires SyncMetadata permission.",
     )
 }
 
@@ -1442,6 +1444,82 @@ mod tests {
             .collect();
         assert_eq!(names, vec!["Zulu Artist", "Alpha Artist"]);
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn refreshing_an_entity_takes_sync_metadata_and_sight_of_it() -> anyhow::Result<()> {
+        use axum::response::IntoResponse;
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        let (syncer, listener, shown, hidden) = {
+            let mut db = STATE.db.write().await;
+            let user = |db: &mut DbAny, name: &str, permissions| -> anyhow::Result<DbId> {
+                let user = lyra_db::users::create(db, &lyra_db::fixtures::test_user(name)?)?;
+                let role = lyra_db::roles::create(
+                    db,
+                    &lyra_db::roles::Role {
+                        db_id: None,
+                        id: nanoid!(),
+                        name: format!("{name}-role"),
+                        permissions,
+                    },
+                )?;
+                lyra_db::roles::assign_role_to_user(db, user, role)?;
+                Ok(user)
+            };
+            let syncer = user(&mut db, "syncer", vec![lyra_db::Permission::SyncMetadata])?;
+            let listener = user(&mut db, "listener", Vec::new())?;
+            let shown_library = lyra_db::test_db::insert_library(&mut db, "Shown", "/shown")?;
+            let hidden_library = lyra_db::test_db::insert_library(&mut db, "Hidden", "/hidden")?;
+            for user in [syncer, listener] {
+                lyra_db::libraries::grant_access(
+                    &mut db,
+                    user,
+                    shown_library,
+                    lyra_db::libraries::AccessKind::ReadWrite,
+                )?;
+            }
+            let shown = insert_release(&mut db, "Shown")?;
+            let hidden = insert_release(&mut db, "Hidden")?;
+            connect(&mut db, shown_library, shown)?;
+            connect(&mut db, hidden_library, hidden)?;
+            let public = |id| lyra_db::lookup::find_id_by_db_id(&*db, id);
+            let (shown, hidden) = (public(shown)?, public(hidden)?);
+            (syncer, listener, shown.expect("id"), hidden.expect("id"))
+        };
+        let token = |user| async move {
+            let session =
+                crate::services::testing::create_session(user, Default::default()).await?;
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                "Authorization",
+                format!("Bearer {}", session.token).parse()?,
+            );
+            anyhow::Ok(headers)
+        };
+        let status = |headers: HeaderMap, id: String| async move {
+            match refresh_entity(headers, Path(id), Query(RefreshEntityQuery::default())).await {
+                Ok(Json(response)) => {
+                    assert!(response.providers_called.is_empty());
+                    StatusCode::OK
+                }
+                Err(error) => error.into_response().status(),
+            }
+        };
+
+        let syncer = token(syncer).await?;
+        assert_eq!(status(syncer.clone(), shown.clone()).await, StatusCode::OK);
+        assert_eq!(status(syncer.clone(), hidden).await, StatusCode::NOT_FOUND);
+        assert_eq!(
+            status(syncer, "missing".to_string()).await,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            status(token(listener).await?, shown).await,
+            StatusCode::FORBIDDEN
+        );
         Ok(())
     }
 }
