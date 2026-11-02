@@ -221,6 +221,7 @@ mod tests {
             position_ms: Some(position_ms),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         }
     }
 

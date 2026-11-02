@@ -452,6 +452,7 @@ fn playback_mutation(
         position_ms,
         duration_ms,
         state,
+        rate_permille: None,
     }
 }
 

@@ -471,6 +471,7 @@ async fn create_playback(
                 position_ms: request.position_ms,
                 duration_ms: request.duration_ms,
                 state: request.state.or(Some(PlaybackState::Playing)),
+                rate_permille: None,
             },
             now_ms: current_ms,
             reporting_connection: reporting_connection(

@@ -18,18 +18,19 @@ use serde::Deserialize;
 mod updates;
 mod workflow;
 
-#[cfg(test)]
 pub(crate) use self::workflow::{
-    collect_playback_records,
-    report_playback,
-};
-pub(crate) use self::workflow::{
+    advanced_in,
     current_position_ms,
     evicted_records,
     pause_playback_in_transaction,
     report_playback_in_transaction,
     resolve_merged_track_ids_for_play_count,
     start_playback_in_transaction,
+};
+#[cfg(test)]
+pub(crate) use self::workflow::{
+    collect_playback_records,
+    report_playback,
 };
 pub(crate) use lyra_db::PlaybackSession;
 use lyra_db::PlaybackState;
@@ -50,6 +51,8 @@ pub(crate) const ACTIVE_SESSION_TTL_MS: u64 = 5 * 60 * 1000;
 pub(crate) const PREVIOUS_PLAYBACK_GRACE_MS: u64 = 30_000;
 /// Playing time a play may be credited beyond the server's elapsed time, to absorb report latency.
 const PLAY_LATENCY_ALLOWANCE_MS: u64 = 5_000;
+/// Normal playback speed, in the thousandths [`PlaybackSession::rate_permille`] counts.
+pub(crate) const NORMAL_RATE_PERMILLE: u32 = 1_000;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum PlaybackServiceError {
@@ -91,6 +94,7 @@ pub(crate) struct PlaybackMutation {
     pub(crate) position_ms: Option<u64>,
     pub(crate) duration_ms: Option<u64>,
     pub(crate) state: Option<PlaybackState>,
+    pub(crate) rate_permille: Option<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -409,6 +413,7 @@ mod tests {
             last_position_ms: position_ms,
             last_position_at_ms: at_ms,
             latency_allowance_used_ms: 0,
+            rate_permille: 1000,
             state: PlaybackState::Playing,
             updated_at_ms: at_ms,
             created_at_ms: 0,
@@ -428,6 +433,165 @@ mod tests {
     }
 
     #[test]
+    fn current_position_advances_at_the_play_rate() {
+        for (rate_permille, expected_ms) in [(500, 15_000), (1_000, 20_000), (2_000, 30_000)] {
+            let playback = PlaybackSession {
+                rate_permille,
+                ..playing_session(10_000, 1_000)
+            };
+            assert_eq!(
+                current_position_ms(&playback, 11_000),
+                expected_ms,
+                "at {rate_permille}"
+            );
+        }
+    }
+
+    #[test]
+    fn playback_mutation_credits_real_time_at_the_play_rate() {
+        for (rate_permille, position_ms) in [(500, 15_000), (1_000, 30_000), (2_000, 60_000)] {
+            let mut playback = PlaybackSession {
+                rate_permille,
+                ..playing_session(0, 1_000)
+            };
+            apply_playback_mutation(
+                &mut playback,
+                &PlaybackMutation {
+                    position_ms: Some(position_ms),
+                    ..PlaybackMutation::default()
+                },
+                31_000,
+            );
+            assert_eq!(playback.played_ms, 30_000, "at {rate_permille}");
+            assert_eq!(
+                playback.latency_allowance_used_ms, 0,
+                "at {rate_permille}, the progress is no seek"
+            );
+        }
+    }
+
+    #[test]
+    fn playback_mutation_credits_progress_at_the_previous_reports_rate() {
+        let mut playback = playing_session(0, 0);
+        // Ten seconds at 1x, then the report switches to 2x.
+        apply_playback_mutation(
+            &mut playback,
+            &PlaybackMutation {
+                position_ms: Some(10_000),
+                rate_permille: Some(2_000),
+                ..PlaybackMutation::default()
+            },
+            10_000,
+        );
+        assert_eq!(playback.played_ms, 10_000);
+        assert_eq!(playback.rate_permille, 2_000);
+
+        // Ten more seconds at 2x; a report without a rate keeps it.
+        apply_playback_mutation(
+            &mut playback,
+            &PlaybackMutation {
+                position_ms: Some(30_000),
+                ..PlaybackMutation::default()
+            },
+            20_000,
+        );
+        assert_eq!(playback.played_ms, 20_000);
+        assert_eq!(playback.rate_permille, 2_000);
+        assert_eq!(playback.latency_allowance_used_ms, 0);
+
+        // A jump past what 2x reaches is still capped like a seek.
+        apply_playback_mutation(
+            &mut playback,
+            &PlaybackMutation {
+                position_ms: Some(130_000),
+                ..PlaybackMutation::default()
+            },
+            30_000,
+        );
+        assert_eq!(playback.played_ms, 30_000 + PLAY_LATENCY_ALLOWANCE_MS);
+    }
+
+    #[test]
+    fn a_rate_change_without_a_position_settles_the_time_at_the_old_rate() {
+        // (old rate, new rate, position reached at +10 s, true position at +20 s)
+        for (old_permille, new_permille, settled_ms, true_ms) in [
+            (2_000, 1_000, 20_000, 30_000),
+            (1_000, 2_000, 10_000, 30_000),
+        ] {
+            let mut playback = PlaybackSession {
+                rate_permille: old_permille,
+                ..playing_session(0, 0)
+            };
+            apply_playback_mutation(
+                &mut playback,
+                &PlaybackMutation {
+                    rate_permille: Some(new_permille),
+                    ..PlaybackMutation::default()
+                },
+                10_000,
+            );
+            assert_eq!(
+                playback.position_ms, settled_ms,
+                "{old_permille} to {new_permille}"
+            );
+            assert_eq!(playback.last_position_at_ms, 10_000);
+            assert_eq!(playback.played_ms, 10_000);
+            assert_eq!(current_position_ms(&playback, 10_000), settled_ms);
+
+            apply_playback_mutation(
+                &mut playback,
+                &PlaybackMutation {
+                    position_ms: Some(true_ms),
+                    ..PlaybackMutation::default()
+                },
+                20_000,
+            );
+            assert_eq!(
+                playback.played_ms, 20_000,
+                "{old_permille} to {new_permille}"
+            );
+            assert_eq!(playback.latency_allowance_used_ms, 0);
+        }
+    }
+
+    #[test]
+    fn a_rate_change_without_a_position_settles_at_most_to_the_tracks_end() {
+        let mut playback = PlaybackSession {
+            rate_permille: 2_000,
+            ..playing_session(290_000, 0)
+        };
+        apply_playback_mutation(
+            &mut playback,
+            &PlaybackMutation {
+                rate_permille: Some(1_000),
+                ..PlaybackMutation::default()
+            },
+            10_000,
+        );
+        assert_eq!(playback.position_ms, 300_000);
+        assert_eq!(playback.played_ms, 5_000);
+    }
+
+    #[test]
+    fn a_rate_change_while_paused_moves_nothing() {
+        let mut playback = PlaybackSession {
+            state: PlaybackState::Paused,
+            ..playing_session(10_000, 0)
+        };
+        apply_playback_mutation(
+            &mut playback,
+            &PlaybackMutation {
+                rate_permille: Some(2_000),
+                ..PlaybackMutation::default()
+            },
+            10_000,
+        );
+        assert_eq!(playback.position_ms, 10_000);
+        assert_eq!(playback.played_ms, 0);
+        assert_eq!(playback.rate_permille, 2_000);
+    }
+
+    #[test]
     fn playback_mutation_counts_sparse_progress_with_elapsed_time_window() {
         let mut playback = PlaybackSession {
             db_id: None,
@@ -441,6 +605,7 @@ mod tests {
             state: PlaybackState::Playing,
             play_id: nanoid::nanoid!(),
             latency_allowance_used_ms: 0,
+            rate_permille: 1000,
             last_position_at_ms: 1_000,
             updated_at_ms: 1_000,
             created_at_ms: 0,
@@ -452,6 +617,7 @@ mod tests {
                 position_ms: Some(150_000),
                 duration_ms: None,
                 state: Some(PlaybackState::Playing),
+                ..PlaybackMutation::default()
             },
             151_000,
         );
@@ -473,6 +639,7 @@ mod tests {
             state: PlaybackState::Playing,
             play_id: nanoid::nanoid!(),
             latency_allowance_used_ms: 0,
+            rate_permille: 1000,
             last_position_at_ms: 1_000,
             updated_at_ms: 1_000,
             created_at_ms: 0,
@@ -484,6 +651,7 @@ mod tests {
                 position_ms: Some(30_000),
                 duration_ms: None,
                 state: Some(PlaybackState::Playing),
+                ..PlaybackMutation::default()
             },
             11_000,
         );
@@ -508,6 +676,7 @@ mod tests {
             played_ms: 0,
             last_position_ms: 0,
             latency_allowance_used_ms: 0,
+            rate_permille: 1000,
             state: PlaybackState::Playing,
             last_position_at_ms: 1_000,
             updated_at_ms: 1_000,
@@ -522,6 +691,7 @@ mod tests {
                     position_ms: Some(report * 4_000),
                     duration_ms: None,
                     state: Some(PlaybackState::Playing),
+                    ..PlaybackMutation::default()
                 },
                 1_000,
             );
@@ -548,6 +718,7 @@ mod tests {
             state: PlaybackState::Playing,
             play_id: nanoid::nanoid!(),
             latency_allowance_used_ms: 0,
+            rate_permille: 1000,
             last_position_at_ms: 1_000,
             updated_at_ms: 1_000,
             created_at_ms: 0,
@@ -559,6 +730,7 @@ mod tests {
                 position_ms: Some(5_000),
                 duration_ms: None,
                 state: Some(PlaybackState::Paused),
+                ..PlaybackMutation::default()
             },
             6_000,
         );
@@ -580,6 +752,7 @@ mod tests {
             state: PlaybackState::Playing,
             play_id: nanoid::nanoid!(),
             latency_allowance_used_ms: 0,
+            rate_permille: 1000,
             last_position_at_ms: 22_000,
             updated_at_ms: 22_000,
             created_at_ms: 0,
@@ -591,6 +764,7 @@ mod tests {
                 position_ms: Some(196_000),
                 duration_ms: None,
                 state: Some(PlaybackState::Stopped),
+                ..PlaybackMutation::default()
             },
             197_000,
         );
@@ -612,6 +786,7 @@ mod tests {
             state: PlaybackState::Paused,
             play_id: nanoid::nanoid!(),
             latency_allowance_used_ms: 0,
+            rate_permille: 1000,
             last_position_at_ms: 22_000,
             updated_at_ms: 22_000,
             created_at_ms: 0,
@@ -623,6 +798,7 @@ mod tests {
                 position_ms: Some(196_000),
                 duration_ms: None,
                 state: Some(PlaybackState::Stopped),
+                ..PlaybackMutation::default()
             },
             197_000,
         );
@@ -643,6 +819,7 @@ mod tests {
             played_ms: 150_000,
             last_position_ms: 150_000,
             latency_allowance_used_ms: 0,
+            rate_permille: 1000,
             state: PlaybackState::Playing,
             last_position_at_ms: 150_000,
             updated_at_ms: 150_000,
@@ -655,6 +832,7 @@ mod tests {
                 position_ms: Some(1_500),
                 duration_ms: None,
                 state: Some(PlaybackState::Playing),
+                ..PlaybackMutation::default()
             },
             151_000,
         );
@@ -681,6 +859,7 @@ mod tests {
             last_position_ms: 0,
             last_position_at_ms: 0,
             latency_allowance_used_ms: 0,
+            rate_permille: 1000,
             state: PlaybackState::Playing,
             updated_at_ms: 0,
             created_at_ms: 0,

@@ -19,6 +19,7 @@ use lyra_db::{
 use super::{
     ActiveEvent,
     EvictedPlaybackRecord,
+    NORMAL_RATE_PERMILLE,
     PLAY_LATENCY_ALLOWANCE_MS,
     PlaybackMutation,
     PlaybackRecord,
@@ -145,13 +146,24 @@ fn within_duration(position_ms: u64, duration_ms: Option<u64>) -> u64 {
     duration_ms.map_or(position_ms, |duration_ms| position_ms.min(duration_ms))
 }
 
-/// The play's position at `now_ms`: its last reported position, advanced while it plays by the
-/// time since that report, within its duration.
+/// How far a play at `rate_permille` moves in `elapsed_ms` of real time.
+pub(crate) fn advanced_in(elapsed_ms: u64, rate_permille: u32) -> u64 {
+    elapsed_ms.saturating_mul(u64::from(rate_permille)) / u64::from(NORMAL_RATE_PERMILLE)
+}
+
+/// The real time a play at `rate_permille` takes to move `advanced_ms`.
+fn time_to_advance(advanced_ms: u64, rate_permille: u32) -> u64 {
+    advanced_ms.saturating_mul(u64::from(NORMAL_RATE_PERMILLE)) / u64::from(rate_permille.max(1))
+}
+
+/// The play's position at `now_ms`: its last reported position, advanced while it plays at its
+/// rate for the time since that report, within its duration.
 pub(crate) fn current_position_ms(playback: &PlaybackSession, now_ms: u64) -> u64 {
     let position_ms = if playback.state == PlaybackState::Playing {
-        playback
-            .position_ms
-            .saturating_add(now_ms.saturating_sub(playback.last_position_at_ms))
+        playback.position_ms.saturating_add(advanced_in(
+            now_ms.saturating_sub(playback.last_position_at_ms),
+            playback.rate_permille,
+        ))
     } else {
         playback.position_ms
     };
@@ -332,7 +344,8 @@ pub(crate) fn collect_playback_records(db: &DbAny) -> ServiceResult<Vec<Playback
 
 /// Applies a report to the session, crediting playing time only for position advanced while the
 /// previous report was playing, and never more than the server's elapsed time plus what is left
-/// of the play's latency allowance.
+/// of the play's latency allowance. Playing time is real time: position advanced counts at the
+/// previous report's rate.
 pub(crate) fn apply_playback_mutation(
     playback: &mut PlaybackSession,
     mutation: &PlaybackMutation,
@@ -340,8 +353,17 @@ pub(crate) fn apply_playback_mutation(
 ) {
     let state = mutation.state.unwrap_or(playback.state);
     let duration_ms = mutation.duration_ms.or(playback.duration_ms);
+    // A rate change without a position settles the time since the last position at the old rate,
+    // as a report of the position it reached would.
+    let reported_position_ms = mutation.position_ms.or_else(|| {
+        (playback.state == PlaybackState::Playing
+            && mutation
+                .rate_permille
+                .is_some_and(|rate_permille| rate_permille != playback.rate_permille))
+        .then(|| current_position_ms(playback, now_ms))
+    });
     let position_ms = within_duration(
-        mutation.position_ms.unwrap_or(playback.position_ms),
+        reported_position_ms.unwrap_or(playback.position_ms),
         duration_ms,
     );
 
@@ -349,13 +371,14 @@ pub(crate) fn apply_playback_mutation(
         // Time spent not playing never counts, however the next report reaches a position.
         playback.last_position_at_ms = now_ms;
     }
-    if mutation.position_ms.is_some() {
+    if reported_position_ms.is_some() {
         if playback.state == PlaybackState::Playing {
             let advanced_ms = position_ms.saturating_sub(playback.last_position_ms);
+            let playing_ms = time_to_advance(advanced_ms, playback.rate_permille);
             let elapsed_ms = now_ms.saturating_sub(playback.last_position_at_ms);
             let remaining_allowance_ms =
                 PLAY_LATENCY_ALLOWANCE_MS.saturating_sub(playback.latency_allowance_used_ms);
-            let credited_ms = advanced_ms.min(elapsed_ms.saturating_add(remaining_allowance_ms));
+            let credited_ms = playing_ms.min(elapsed_ms.saturating_add(remaining_allowance_ms));
             playback.latency_allowance_used_ms = playback
                 .latency_allowance_used_ms
                 .saturating_add(credited_ms.saturating_sub(elapsed_ms));
@@ -368,6 +391,9 @@ pub(crate) fn apply_playback_mutation(
     playback.position_ms = position_ms;
     playback.duration_ms = duration_ms;
     playback.state = state;
+    if let Some(rate_permille) = mutation.rate_permille {
+        playback.rate_permille = rate_permille;
+    }
     playback.updated_at_ms = now_ms;
 }
 
@@ -454,6 +480,7 @@ fn new_playback_session(
         last_position_ms: position_ms,
         state,
         latency_allowance_used_ms: 0,
+        rate_permille: mutation.rate_permille.unwrap_or(NORMAL_RATE_PERMILLE),
         last_position_at_ms: now_ms,
         updated_at_ms: now_ms,
         created_at_ms: now_ms,

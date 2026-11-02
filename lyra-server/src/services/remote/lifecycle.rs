@@ -256,6 +256,7 @@ mod tests {
                         position_ms: Some(0),
                         duration_ms: Some(200_000),
                         state: Some(PlaybackState::Playing),
+                        ..playbacks::PlaybackMutation::default()
                     },
                     now_ms: playbacks::now_ms()?,
                     reporting_connection: Some(crate::services::playbacks::ReportingConnection {
@@ -324,6 +325,7 @@ mod tests {
                         position_ms: Some(0),
                         duration_ms: Some(200_000),
                         state: Some(PlaybackState::Playing),
+                        ..playbacks::PlaybackMutation::default()
                     },
                     now_ms,
                     reporting_connection: Some(crate::services::playbacks::ReportingConnection {

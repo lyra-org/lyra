@@ -1145,6 +1145,7 @@ mod tests {
                     position_ms: Some(30_000),
                     duration_ms: Some(100_000),
                     state: Some(lyra_db::PlaybackState::Playing),
+                    ..playback_sessions::PlaybackMutation::default()
                 },
                 now_ms: 30_000,
                 reporting_connection: None,
@@ -1244,6 +1245,7 @@ mod tests {
                     position_ms: Some(1_000),
                     duration_ms: Some(100_000),
                     state: Some(lyra_db::PlaybackState::Playing),
+                    ..playback_sessions::PlaybackMutation::default()
                 },
                 now_ms: 1_000,
                 reporting_connection: None,

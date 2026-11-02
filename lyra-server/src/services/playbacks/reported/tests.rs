@@ -215,6 +215,7 @@ async fn reported_playback_keeps_its_root_across_switch_late_stop_and_resume() -
         state: Some(PlaybackState::Playing),
         duration_ms: Some(200_000),
         position_ms: Some(0),
+        ..PlaybackMutation::default()
     };
     let a = report_test_playback_session(
         &mut db,
@@ -512,6 +513,7 @@ async fn reported_playback_expires_without_losing_credited_listen() -> anyhow::R
             position_ms: Some(0),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         T0 + 1_000,
     )?;
@@ -545,6 +547,7 @@ async fn reported_playback_expires_without_losing_credited_listen() -> anyhow::R
             position_ms: Some(0),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         T0 + 412_000,
     )?;
@@ -580,6 +583,7 @@ async fn playback_client_name_snapshot_is_persisted_and_stable() -> anyhow::Resu
                 position_ms: Some(0),
                 duration_ms: Some(200_000),
                 state: Some(PlaybackState::Playing),
+                ..PlaybackMutation::default()
             },
             now_ms: 1_000,
             active_event: ActiveEvent::Started,
@@ -601,6 +605,7 @@ async fn playback_client_name_snapshot_is_persisted_and_stable() -> anyhow::Resu
                 position_ms: Some(1_000),
                 duration_ms: None,
                 state: None,
+                ..PlaybackMutation::default()
             },
             now_ms: 2_000,
             active_event: ActiveEvent::Progress,
@@ -627,6 +632,7 @@ async fn report_playback_session_rotates_current_to_previous_on_track_switch() -
             position_ms: Some(0),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         1_000,
     )?
@@ -640,6 +646,7 @@ async fn report_playback_session_rotates_current_to_previous_on_track_switch() -
             position_ms: Some(0),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         2_000,
     )?
@@ -682,6 +689,7 @@ async fn report_playback_session_routes_late_terminal_to_previous_track() -> any
             position_ms: Some(0),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         1_000,
     )?
@@ -697,6 +705,7 @@ async fn report_playback_session_routes_late_terminal_to_previous_track() -> any
             position_ms: Some(0),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         2_000,
     )?
@@ -711,6 +720,7 @@ async fn report_playback_session_routes_late_terminal_to_previous_track() -> any
             position_ms: Some(198_000),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Completed),
+            ..PlaybackMutation::default()
         },
         3_000,
     )?
@@ -738,6 +748,7 @@ async fn report_playback_session_ignores_displaced_previous_progress() -> anyhow
             position_ms: Some(0),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         1_000,
     )?
@@ -752,6 +763,7 @@ async fn report_playback_session_ignores_displaced_previous_progress() -> anyhow
             position_ms: Some(0),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         2_000,
     )?
@@ -766,6 +778,7 @@ async fn report_playback_session_ignores_displaced_previous_progress() -> anyhow
             position_ms: Some(30_000),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         3_000,
     )?;
@@ -796,6 +809,7 @@ async fn report_playback_session_ignores_expired_previous_terminal_update() -> a
             position_ms: Some(0),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         1_000,
     )?
@@ -810,6 +824,7 @@ async fn report_playback_session_ignores_expired_previous_terminal_update() -> a
             position_ms: Some(0),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         2_000,
     )?
@@ -824,6 +839,7 @@ async fn report_playback_session_ignores_expired_previous_terminal_update() -> a
             position_ms: Some(198_000),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Completed),
+            ..PlaybackMutation::default()
         },
         2_000 + PREVIOUS_PLAYBACK_GRACE_MS + 1,
     )?;
@@ -855,6 +871,7 @@ async fn report_playback_session_allows_progress_only_track_switch() -> anyhow::
             position_ms: Some(0),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         1_000,
     )?
@@ -869,6 +886,7 @@ async fn report_playback_session_allows_progress_only_track_switch() -> anyhow::
             position_ms: Some(7_000),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         2_000,
     )?
@@ -966,6 +984,7 @@ async fn report_playback_session_credits_two_listens_for_started_replay() -> any
             position_ms: Some(0),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         T0 + 1_000,
     )?;
@@ -978,6 +997,7 @@ async fn report_playback_session_credits_two_listens_for_started_replay() -> any
             position_ms: Some(60_000),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         T0 + 61_000,
     )?;
@@ -995,6 +1015,7 @@ async fn report_playback_session_credits_two_listens_for_started_replay() -> any
             position_ms: Some(0),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         T0 + 62_000,
     )?;
@@ -1007,6 +1028,7 @@ async fn report_playback_session_credits_two_listens_for_started_replay() -> any
             position_ms: Some(60_000),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         T0 + 122_000,
     )?;
@@ -1034,6 +1056,7 @@ async fn report_playback_session_counts_a_seek_to_start_replay_once() -> anyhow:
             position_ms: Some(0),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         T0 + 1_000,
     )?;
@@ -1046,6 +1069,7 @@ async fn report_playback_session_counts_a_seek_to_start_replay_once() -> anyhow:
             position_ms: Some(60_000),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         T0 + 61_000,
     )?;
@@ -1063,6 +1087,7 @@ async fn report_playback_session_counts_a_seek_to_start_replay_once() -> anyhow:
             position_ms: Some(1_000),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         T0 + 62_000,
     )?;
@@ -1075,6 +1100,7 @@ async fn report_playback_session_counts_a_seek_to_start_replay_once() -> anyhow:
             position_ms: Some(60_000),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         T0 + 122_000,
     )?;
@@ -1105,6 +1131,7 @@ async fn report_playback_session_credits_two_listens_for_started_replay_via_prev
             position_ms: Some(0),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         T0 + 1_000,
     )?
@@ -1119,6 +1146,7 @@ async fn report_playback_session_credits_two_listens_for_started_replay_via_prev
             position_ms: Some(60_000),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         T0 + 61_000,
     )?;
@@ -1133,6 +1161,7 @@ async fn report_playback_session_credits_two_listens_for_started_replay_via_prev
             position_ms: Some(0),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         T0 + 62_000,
     )?;
@@ -1147,6 +1176,7 @@ async fn report_playback_session_credits_two_listens_for_started_replay_via_prev
             position_ms: Some(0),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         T0 + 80_000,
     )?
@@ -1166,6 +1196,7 @@ async fn report_playback_session_credits_two_listens_for_started_replay_via_prev
             position_ms: Some(60_000),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         T0 + 140_000,
     )?;
@@ -1191,6 +1222,7 @@ async fn report_playback_session_does_not_split_started_without_credited_listen(
             position_ms: Some(0),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         1_000,
     )?
@@ -1205,6 +1237,7 @@ async fn report_playback_session_does_not_split_started_without_credited_listen(
             position_ms: Some(5_000),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         6_000,
     )?;
@@ -1219,6 +1252,7 @@ async fn report_playback_session_does_not_split_started_without_credited_listen(
             position_ms: Some(0),
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
+            ..PlaybackMutation::default()
         },
         7_000,
     )?
@@ -1251,6 +1285,7 @@ fn report_play(
                 position_ms: Some(position_ms),
                 duration_ms: Some(200_000),
                 state: Some(PlaybackState::Playing),
+                ..PlaybackMutation::default()
             },
             now_ms,
             active_event: ActiveEvent::Progress,
@@ -1459,6 +1494,7 @@ async fn a_late_report_for_a_replaced_play_is_ignored() -> anyhow::Result<()> {
                 position_ms: Some(5_000),
                 duration_ms: Some(200_000),
                 state: Some(PlaybackState::Playing),
+                ..PlaybackMutation::default()
             },
             // After the previous slot's grace, so the late report can't land there.
             now_ms: T0 + 60_000,
@@ -1540,6 +1576,7 @@ async fn a_named_play_resumes_its_own_stopped_session() -> anyhow::Result<()> {
                     position_ms: Some(position_ms),
                     duration_ms: Some(200_000),
                     state: Some(state),
+                    ..PlaybackMutation::default()
                 },
                 now_ms,
                 active_event: ActiveEvent::Progress,
@@ -1631,6 +1668,7 @@ fn report_for(
                 position_ms: Some(position_ms),
                 duration_ms: Some(200_000),
                 state: Some(PlaybackState::Playing),
+                ..PlaybackMutation::default()
             },
             now_ms,
             active_event: ActiveEvent::Started,
@@ -1864,6 +1902,7 @@ fn report_at(
             position_ms: Some(position_ms),
             duration_ms: lyra_db::tracks::get_by_id(db, track_db_id)?.and_then(|t| t.duration_ms),
             state: Some(state),
+            ..PlaybackMutation::default()
         },
         now_ms,
     )
@@ -1968,6 +2007,7 @@ async fn a_replaced_play_is_credited_since_its_last_report_and_counts() -> anyho
                 position_ms: Some(0),
                 duration_ms: Some(200_000),
                 state: Some(PlaybackState::Playing),
+                ..PlaybackMutation::default()
             },
             now_ms: T0 + 20_000,
             active_event: ActiveEvent::Started,
@@ -2075,6 +2115,47 @@ async fn a_replaced_play_not_playing_is_not_credited() -> anyhow::Result<()> {
     )?;
 
     assert_eq!(stored(&db, &a)?.played_ms, 10_000);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_replaced_play_moves_at_its_rate_and_is_credited_real_time() -> anyhow::Result<()> {
+    let (mut db, _guard) = new_scoped_test_db().await?;
+    let user = insert_user(&mut db, "alice")?;
+    let a_track = insert_track(&mut db, "A", 200_000)?;
+    let b_track = insert_track(&mut db, "B", 200_000)?;
+    let a = report_test_playback_session(
+        &mut db,
+        user,
+        a_track,
+        ActiveEvent::Started,
+        PlaybackMutation {
+            position_ms: Some(0),
+            duration_ms: Some(200_000),
+            state: Some(PlaybackState::Playing),
+            rate_permille: Some(2_000),
+        },
+        T0,
+    )?
+    .expect("A starts");
+    report_at(
+        &mut db,
+        user,
+        b_track,
+        ActiveEvent::Started,
+        PlaybackState::Playing,
+        0,
+        T0 + 40_000,
+    )?;
+
+    let a_now = stored(&db, &a)?;
+    assert_eq!(a_now.position_ms, 80_000);
+    assert_eq!(a_now.played_ms, 40_000);
+    assert_eq!(a_now.latency_allowance_used_ms, 0);
+    assert_eq!(
+        listen_for_play(&db, user, &a.playback.play_id)?.played_ms,
+        40_000
+    );
     Ok(())
 }
 
@@ -2279,6 +2360,7 @@ fn report_named(
                 position_ms,
                 duration_ms: Some(200_000),
                 state: Some(PlaybackState::Playing),
+                ..PlaybackMutation::default()
             },
             now_ms,
             active_event: ActiveEvent::Started,
@@ -2424,6 +2506,7 @@ async fn a_replaced_play_of_unknown_duration_gets_nothing_from_a_late_stop() -> 
         position_ms: Some(position_ms),
         duration_ms: None,
         state: Some(state),
+        ..PlaybackMutation::default()
     };
     let a = report_test_playback_session(
         &mut db,

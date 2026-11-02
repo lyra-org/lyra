@@ -221,7 +221,8 @@ fn demote(current: Option<DbId>, now_ms: u64) -> Option<PreviousSession> {
 }
 
 /// Credits a play its player left playing without a stop report for the time from its last report
-/// to `left_at_ms`, at most what is left of the track, as a report of reaching that position would,
+/// to `left_at_ms`, moving it at its rate up to at most the end of the track, as a report of
+/// reaching that position would,
 /// and leaves it in `then` if given. A play of unknown duration gets no credit; a buffering one
 /// gets none either, but still leaves in `then`. Returns the update when it changed anything; only
 /// its listen is announced.
@@ -235,9 +236,11 @@ fn leave_play(
     let credit_ms = match session.state {
         // At most the elapsed time, so no latency allowance is added on top.
         PlaybackState::Playing => session.duration_ms.map_or(0, |duration_ms| {
-            left_at_ms
-                .saturating_sub(session.last_position_at_ms)
-                .min(duration_ms.saturating_sub(session.last_position_ms))
+            playback_sessions::advanced_in(
+                left_at_ms.saturating_sub(session.last_position_at_ms),
+                session.rate_permille,
+            )
+            .min(duration_ms.saturating_sub(session.last_position_ms))
         }),
         PlaybackState::Buffering => 0,
         PlaybackState::Paused | PlaybackState::Stopped | PlaybackState::Completed => {
@@ -255,8 +258,8 @@ fn leave_play(
             user_db_id,
             mutation: PlaybackMutation {
                 position_ms,
-                duration_ms: None,
                 state: then,
+                ..PlaybackMutation::default()
             },
             now_ms,
             active_event: ActiveEvent::Progress,
@@ -458,9 +461,8 @@ fn transition(
             ReportPlaybackRequest {
                 user_db_id,
                 mutation: PlaybackMutation {
-                    position_ms: mutation.position_ms,
-                    duration_ms: mutation.duration_ms,
                     state: Some(state),
+                    ..mutation.clone()
                 },
                 now_ms,
                 active_event,
@@ -508,9 +510,8 @@ fn transition(
                         client_name,
                         plugin_id: Some(plugin_id.to_string()),
                         mutation: PlaybackMutation {
-                            position_ms: mutation.position_ms,
-                            duration_ms: mutation.duration_ms,
                             state: Some(state),
+                            ..mutation.clone()
                         },
                         now_ms,
                         active_event,

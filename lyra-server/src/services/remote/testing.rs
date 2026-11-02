@@ -109,6 +109,7 @@ pub(crate) async fn drive_new_playback(
                 position_ms: Some(0),
                 duration_ms: Some(100_000),
                 state: Some(PlaybackState::Playing),
+                ..PlaybackMutation::default()
             },
             now_ms,
             reporting_connection: reporting(user, session_key),
@@ -189,6 +190,7 @@ async fn report(
                 position_ms: Some(0),
                 duration_ms: Some(100_000),
                 state: Some(state),
+                ..PlaybackMutation::default()
             },
             now_ms,
             require_full_queue_access: false,

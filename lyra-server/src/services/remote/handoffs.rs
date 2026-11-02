@@ -672,6 +672,7 @@ mod tests {
                 state: lyra_db::PlaybackState::Playing,
                 play_id: nanoid::nanoid!(),
                 latency_allowance_used_ms: 0,
+                rate_permille: 1000,
                 last_position_at_ms: 2,
                 updated_at_ms: 2,
                 created_at_ms: 1,

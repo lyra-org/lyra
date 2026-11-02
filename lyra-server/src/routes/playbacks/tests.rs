@@ -182,6 +182,7 @@ fn active_filter_requires_recent_non_terminal_current_session() {
             state: PlaybackState::Playing,
             play_id: nanoid::nanoid!(),
             latency_allowance_used_ms: 0,
+            rate_permille: 1000,
             last_position_at_ms: current_ms,
             updated_at_ms: current_ms,
             created_at_ms: 1,
@@ -635,6 +636,7 @@ async fn queue_replacement_cannot_overtake_committed_handoff_finish() -> anyhow:
                     position_ms: Some(100),
                     duration_ms: Some(100_000),
                     state: Some(PlaybackState::Playing),
+                    ..PlaybackMutation::default()
                 },
                 now_ms: current_ms,
                 require_full_queue_access: true,
@@ -776,6 +778,7 @@ async fn a_listen_is_announced_even_when_its_handoff_then_fails() -> anyhow::Res
                     position_ms: Some(5_000),
                     duration_ms: Some(10_000),
                     state: Some(PlaybackState::Playing),
+                    ..PlaybackMutation::default()
                 },
                 now_ms: current_ms,
                 require_full_queue_access: true,
@@ -901,6 +904,7 @@ async fn reported_playback_shares_collection_and_rejects_queue_operations() -> a
                     position_ms: Some(1_200),
                     duration_ms: Some(100_000),
                     state: Some(PlaybackState::Playing),
+                    ..PlaybackMutation::default()
                 },
                 now_ms: sessions::now_ms()?,
                 active_event: sessions::ActiveEvent::Started,

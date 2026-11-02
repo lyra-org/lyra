@@ -123,6 +123,7 @@ pub(super) async fn report_progress(
         position_ms: request.position_ms,
         duration_ms: request.duration_ms,
         state: request.state,
+        rate_permille: None,
     };
     let update = playbacks::report_progress(
         &mut db,
