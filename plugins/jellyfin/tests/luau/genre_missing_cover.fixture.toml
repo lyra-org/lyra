@@ -1,0 +1,129 @@
+run_as = "admin"
+
+# Rock holds three releases. "First" and "Second" have a stored cover whose file was deleted
+# since the last sync; only "Kept" still has its file. Three listeners played First most and
+# Second next, so the instance picks First, then Second, then falls back to Kept.
+
+[[users]]
+key = "admin"
+admin = true
+
+[[users]]
+key = "bob"
+
+[[users]]
+key = "carol"
+
+[[users]]
+key = "dave"
+
+[[genres]]
+key = "rock"
+name = "Rock"
+
+[[releases]]
+key = "first"
+title = "First"
+genres = ["rock"]
+cover = "deleted_first.png"
+cover_gone = true
+
+[[releases]]
+key = "second"
+title = "Second"
+genres = ["rock"]
+cover = "deleted_second.png"
+cover_gone = true
+
+[[releases]]
+key = "kept"
+title = "Kept"
+genres = ["rock"]
+cover = "cover.png"
+
+[[tracks]]
+key = "first_track"
+title = "First Track"
+release = "first"
+
+[[tracks]]
+key = "second_track"
+title = "Second Track"
+release = "second"
+
+[[tracks]]
+key = "kept_track"
+title = "Kept Track"
+release = "kept"
+
+[[listens]]
+user = "bob"
+track = "first_track"
+
+[[listens]]
+user = "bob"
+track = "first_track"
+
+[[listens]]
+user = "bob"
+track = "first_track"
+
+[[listens]]
+user = "bob"
+track = "first_track"
+
+[[listens]]
+user = "bob"
+track = "second_track"
+
+[[listens]]
+user = "bob"
+track = "second_track"
+
+[[listens]]
+user = "carol"
+track = "first_track"
+
+[[listens]]
+user = "carol"
+track = "first_track"
+
+[[listens]]
+user = "carol"
+track = "first_track"
+
+[[listens]]
+user = "carol"
+track = "first_track"
+
+[[listens]]
+user = "carol"
+track = "second_track"
+
+[[listens]]
+user = "carol"
+track = "second_track"
+
+[[listens]]
+user = "dave"
+track = "first_track"
+
+[[listens]]
+user = "dave"
+track = "first_track"
+
+[[listens]]
+user = "dave"
+track = "first_track"
+
+[[listens]]
+user = "dave"
+track = "first_track"
+
+[[listens]]
+user = "dave"
+track = "second_track"
+
+[[listens]]
+user = "dave"
+track = "second_track"
