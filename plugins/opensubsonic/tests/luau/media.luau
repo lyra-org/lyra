@@ -74,7 +74,7 @@ assert(stream_error({ id = ids.synced, timeOffset = "soon" }) == 0, "a bad offse
 assert(stream_error({ apiKey = "not-a-key", id = ids.synced }) == 44, "streaming needs a key")
 assert(stream_error({ f = "jsonp", callback = "cb", id = ids.hidden }) == 70, "jsonp asks for nothing else")
 
--- Lyrics come as one structured entry per language; a song without any has none.
+-- Lyrics come as a structured entry each, in rank order; a song without any has none.
 local none = call.ok("getLyricsBySongId", key, { id = ids.synced }).lyricsList
 assert(type(none) == "table" and none.structuredLyrics == nil, "no lyrics")
 local none_xml = call.raw("getLyricsBySongId", { apiKey = key, id = ids.synced }).body
@@ -100,14 +100,16 @@ assert(string.find(synced_xml, '<line start="1000">First line</line>', 1, true),
 local empty_xml = call.raw("getLyricsBySongId", { apiKey = key, id = ids.hidden }).body
 assert(string.find(empty_xml, "<error ", 1, true), "a hidden song's lyrics fail in XML too")
 
-local by_language = call.ok("getLyricsBySongId", key, { id = ids.plain }).lyricsList.structuredLyrics
-assert(#by_language == 2, `{#by_language} languages`)
-local plain = by_language[1]
+local ranked = call.ok("getLyricsBySongId", key, { id = ids.plain }).lyricsList.structuredLyrics
+assert(#ranked == 3, `{#ranked} entries`)
+local plain = ranked[1]
 assert(plain.synced == false, "plain lyrics aren't synced")
 assert(plain.lang == "eng", "the caller's own lyrics come first")
 assert(#plain.line == 2 and plain.line[1].value == "One" and plain.line[1].start == nil)
-local french = by_language[2]
+local french = ranked[2]
 assert(french.lang == "fra" and #french.line == 2 and french.line[1].value == "Un")
+local fetched = ranked[3]
+assert(fetched.lang == "eng" and fetched.line[1].value == "Uno", "a second entry in a language")
 
 -- Timed lines that cover too little of the song count as unsynced.
 lyrics.set_personal(ids.synced, {

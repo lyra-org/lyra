@@ -120,17 +120,13 @@ module.methods = {
 		return api.response.stream_track(track.id, options)
 	end,
 
-	-- One entry per language, the best ranked of each, in rank order.
+	-- Every lyrics entry the caller sees, in rank order.
 	getLyricsBySongId = function(req: Request): ApiResponse
 		local track = find_track(req.params)
 		local ids: { string } = {}
-		local languages: { [string]: boolean } = {}
 		local summaries: { lyrics.LyricsSummary } = lyrics.by_track({ track.id })[track.id] or {}
 		for _, summary in summaries do
-			if not languages[summary.language] then
-				languages[summary.language] = true
-				table.insert(ids, summary.id)
-			end
+			table.insert(ids, summary.id)
 		end
 		local entries: { any } = {}
 		if #ids > 0 then
