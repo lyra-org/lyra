@@ -21,17 +21,10 @@ type Release = track_helpers.Release
 local normalize_title = text_helpers.normalize_title
 local contains_multibyte = text_helpers.contains_multibyte
 local release_has_barcode = text_helpers.release_has_barcode
-local titles_match_search = text_helpers.titles_match_search
 local compute_track_count = track_helpers.compute_track_count
 local medium_has_track_count = track_helpers.medium_has_track_count
-local max_declared_track_total = track_helpers.max_declared_track_total
-local count_track_title_overlap = track_helpers.count_track_title_overlap
-local release_has_track_title = track_helpers.release_has_track_title
 local release_lists_tracks = track_helpers.release_lists_tracks
-local validate_release_durations = track_helpers.validate_release_durations
 local single_track_duration_diff = track_helpers.single_track_duration_diff
-local max_track_count_diff = ranking.max_track_count_diff
-local release_matches_artist_ids = ranking.release_matches_artist_ids
 local select_best_release = ranking.select_best_release
 
 local module = {}
@@ -239,132 +232,6 @@ local function should_keep_selected_release(
 	return true
 end
 
-local function prefer_official_single_track_edition(
-	best: Release?,
-	candidates: { Release },
-	local_tracks: { LocalTrack }?,
-	track_count: number?,
-	preferred_country: string?
-): Release?
-	if not best or best.status ~= "Promotion" then
-		return best
-	end
-	if local_tracks ~= nil and max_declared_track_total(local_tracks) > #local_tracks then
-		return best
-	end
-	if not local_tracks or #local_tracks ~= 1 then
-		return best
-	end
-	local local_title = local_tracks[1] and local_tracks[1].track_title
-	if not local_title or local_title == "" then
-		return best
-	end
-	local preferred: Release? = nil
-	local preferred_score = -1
-	for _, candidate: Release in candidates do
-		if candidate.status ~= "Official" then
-			continue
-		end
-		if not release_has_track_title(candidate, local_title) then
-			continue
-		end
-		local score = 0
-		local candidate_count = compute_track_count(candidate)
-		if track_count ~= nil and candidate_count > 0 then
-			local diff = math.abs(candidate_count - track_count)
-			if diff <= max_track_count_diff(track_count, true) then
-				score += 100 - diff
-			end
-		else
-			score += 50
-		end
-		local cover = candidate["cover-art-archive"]
-		if cover and cover.front then
-			score += 5
-		end
-		if score > preferred_score then
-			preferred_score = score
-			preferred = candidate
-		end
-	end
-	return preferred or best
-end
-
-local function select_partial_release_candidate(
-	candidates: { Release },
-	local_tracks: { LocalTrack }?,
-	track_count: number?,
-	search_title: string?,
-	artist_ids: ArtistIdSet?,
-	selected_release: Release?,
-	preferred_country: string?
-): Release?
-	if local_tracks == nil or #local_tracks == 0 then
-		return nil
-	end
-	local local_track_count = #local_tracks
-	local declared_track_total = max_declared_track_total(local_tracks)
-	if declared_track_total <= local_track_count then
-		return nil
-	end
-	if track_count ~= nil and track_count ~= local_track_count then
-		return nil
-	end
-
-	local best: Release? = nil
-	local best_score = -math.huge
-	for _, candidate: Release in candidates do
-		if candidate.status ~= "Promotion" then
-			continue
-		end
-		if compute_track_count(candidate) ~= local_track_count then
-			continue
-		end
-		if
-			search_title
-			and normalize_title(search_title) ~= ""
-			and not titles_match_search(candidate.title, search_title)
-		then
-			continue
-		end
-		if artist_ids and not release_matches_artist_ids(candidate, artist_ids) then
-			continue
-		end
-		if count_track_title_overlap(local_tracks, candidate) < local_track_count then
-			continue
-		end
-		if not validate_release_durations(local_tracks, candidate) then
-			continue
-		end
-
-		local score = 0
-		if selected_release and candidate.id == selected_release.id then
-			score += 20
-		end
-		if preferred_country and candidate.country == preferred_country then
-			score += 5
-		end
-		if normalize_title(candidate.title) == normalize_title(search_title) then
-			score += 5
-		end
-		if release_has_barcode(candidate) then
-			score += 1
-		end
-		if score > best_score then
-			best_score = score
-			best = candidate
-		elseif score == best_score and best then
-			local candidate_date = candidate.date or ""
-			local best_date = best.date or ""
-			if candidate_date ~= "" and best_date ~= "" and candidate_date < best_date then
-				best = candidate
-			end
-		end
-	end
-
-	return best
-end
-
 local function release_from_candidates(candidates: { Release }?, release_id: string?, fallback: Release?): Release?
 	if candidates == nil or release_id == nil then
 		return fallback
@@ -387,7 +254,8 @@ local function select_release_group_candidate(
 	search_title: string?,
 	artist_ids: ArtistIdSet?,
 	anchor: Release?,
-	keep_selected: boolean
+	keep_selected: boolean,
+	localization_pool: { Release }?
 ): (Release?, Release?)
 	if #candidates == 0 then
 		return nil, nil
@@ -408,18 +276,6 @@ local function select_release_group_candidate(
 		end
 	end
 	candidates = fitting_candidates
-	local partial_release = select_partial_release_candidate(
-		candidates,
-		local_tracks,
-		track_count,
-		search_title,
-		artist_ids,
-		selected_release,
-		preferred_country
-	)
-	if partial_release then
-		return partial_release, partial_release
-	end
 	local best_edition = select_best_release(
 		candidates,
 		track_count,
@@ -461,18 +317,11 @@ local function select_release_group_candidate(
 	-- `identity` is the edition that must pass acceptance; a localized edition
 	-- only stands in for it.
 	local identity: Release = best_edition
-	best_edition = localize_edition(identity, candidates, track_count, preferred_language, preferred_country)
+	-- The edition standing in for `identity` may be any of the group's.
+	local pool = localization_pool or candidates
+	best_edition = localize_edition(identity, pool, track_count, preferred_language, preferred_country)
 	if not best_edition then
 		return nil, nil
-	end
-	local localized = best_edition
-	best_edition =
-		prefer_official_single_track_edition(best_edition, candidates, local_tracks, track_count, preferred_country)
-	if not best_edition then
-		return nil, nil
-	end
-	if best_edition ~= localized then
-		identity = best_edition
 	end
 	if
 		keep_selected
@@ -492,7 +341,59 @@ local function select_release_group_candidate(
 	return best_edition, identity
 end
 
+-- An edition to try, and the localized edition that may stand in for it.
+export type EditionPick = { identity: Release, localized: Release? }
+
+-- Up to `limit` editions of the group to try, best first: each pick the one
+-- `select_release_group_candidate` makes among the identities not yet picked,
+-- with its stand-in from the whole group. The anchor is kept, when
+-- `keep_selected` asks it to be, only until it has been picked, even if the
+-- browse left it out.
+local function ranked_release_group_candidates(
+	candidates: { Release },
+	local_release_info: LocalRelease,
+	search_title: string?,
+	artist_ids: ArtistIdSet?,
+	anchor: Release?,
+	keep_selected: boolean,
+	limit: number
+): { EditionPick }
+	local picks: { EditionPick } = {}
+	local remaining = candidates
+	local anchor_picked = false
+	while #picks < limit and #remaining > 0 do
+		local edition, identity = select_release_group_candidate(
+			remaining,
+			local_release_info,
+			search_title,
+			artist_ids,
+			anchor,
+			keep_selected and not anchor_picked,
+			candidates
+		)
+		if edition == nil or identity == nil then
+			break
+		end
+		table.insert(picks, { identity = identity, localized = if edition ~= identity then edition else nil })
+		local picked_anchor = anchor ~= nil and identity.id == anchor.id
+		anchor_picked = anchor_picked or picked_anchor
+		local rest: { Release } = {}
+		for _, candidate in remaining do
+			if candidate ~= identity and candidate.id ~= identity.id then
+				table.insert(rest, candidate)
+			end
+		end
+		-- Only the anchor, absent from the browse, may be picked without
+		-- leaving the pool smaller.
+		if #rest == #remaining and not picked_anchor then
+			break
+		end
+		remaining = rest
+	end
+	return picks
+end
+
 module.release_from_candidates = release_from_candidates
-module.select_release_group_candidate = select_release_group_candidate
+module.ranked_release_group_candidates = ranked_release_group_candidates
 
 return module

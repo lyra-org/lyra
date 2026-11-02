@@ -127,6 +127,9 @@ export type Release = {
 	["release-group"]: ReleaseGroup?,
 	["text-representation"]: ReleaseTextRepresentation?,
 	["cover-art-archive"]: ReleaseCoverArchive?,
+	-- Fetched or browsed with every include applying it needs, which a search
+	-- result's track list doesn't promise.
+	complete: boolean?,
 }
 
 type FlattenedMbTrack = {

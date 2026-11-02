@@ -581,6 +581,9 @@ function module.search_and_fetch_release(local_release_info: LocalRelease): bool
 				mb_get(`/release?release-group={release_group_id}&inc={musicbrainz_api.RELEASE_INCLUDES}&limit=100`)
 			local group_data = if group_response then normalize_release_search_result(group_response) else nil
 			local group_releases = if group_data then group_data.releases else nil
+			if group_releases then
+				musicbrainz_api.mark_complete(group_releases)
+			end
 			if group_releases and #group_releases > 0 then
 				local best_group_release: Release? = nil
 				local best_group_score = -math.huge

@@ -20,11 +20,12 @@ type ArtistIdSet = local_release.ArtistIdSet
 type LocalRelease = local_release.LocalRelease
 type Release = track_helpers.Release
 type ReleaseGroup = track_helpers.ReleaseGroup
+type EditionPick = release_group.EditionPick
 
 local browse_release_group = musicbrainz_api.browse_release_group
 local fetch_release_details = musicbrainz_api.fetch_release_details
 local release_from_candidates = release_group.release_from_candidates
-local select_release_group_candidate = release_group.select_release_group_candidate
+local ranked_release_group_candidates = release_group.ranked_release_group_candidates
 local release_lists_tracks = track_helpers.release_lists_tracks
 
 local module = {}
@@ -38,9 +39,10 @@ local function remembered_rejection(release_id: string?, local_release_info: Loc
 		and local_release_info.rejected_release_ids[release_id] == true
 end
 
--- `release` with its full track list, fetching it when the listing lacks one.
-local function with_track_list(release: Release): Release?
-	if release_lists_tracks(release) then
+-- `release` with every include applying it needs, fetching it unless it is
+-- complete already.
+local function complete_release(release: Release): Release?
+	if release.complete then
 		return release
 	end
 	local release_id = release.id
@@ -48,6 +50,18 @@ local function with_track_list(release: Release): Release?
 		return nil
 	end
 	return fetch_release_details(release_id)
+end
+
+-- `releases` with `release` in place of any listing of it.
+local function with_release(releases: { Release }, release: Release): { Release }
+	local result: { Release } = {}
+	for _, listed in releases do
+		if listed.id ~= release.id then
+			table.insert(result, listed)
+		end
+	end
+	table.insert(result, release)
+	return result
 end
 
 local function check(release: Release, local_release_info: LocalRelease, anchor: Release?): boolean
@@ -75,7 +89,7 @@ function module.try_release(
 	if remembered_rejection(release.id, local_release_info, nil) then
 		return false
 	end
-	local full_release = with_track_list(release)
+	local full_release = complete_release(release)
 	if not full_release or not check(full_release, local_release_info, nil) then
 		return false
 	end
@@ -93,10 +107,48 @@ function module.apply_release_id(release_id: string, local_release_info: LocalRe
 	return release ~= nil and apply.process_release(release, local_release_info)
 end
 
+-- Editions of a group tried per match, best first. Each may need a full
+-- fetch at the MusicBrainz rate of a request a second, on top of the searches
+-- and browse a refresh already spends of its 60 seconds.
+local MAX_EDITION_TRIES = 3
+
+-- The edition `pick` applies, if its identity passes acceptance against
+-- `anchor`: its localized stand-in when that keeps the identity's recordings
+-- and passes too, else the identity.
+local function try_pick(pick: EditionPick, local_release_info: LocalRelease, anchor: Release): Release?
+	local identity_edition = pick.identity
+	if remembered_rejection(identity_edition.id, local_release_info, anchor) then
+		return nil
+	end
+	local identity = complete_release(identity_edition)
+	if not identity or not check(identity, local_release_info, anchor) then
+		return nil
+	end
+	local stand_in = pick.localized
+	if stand_in == nil or stand_in.id == identity.id then
+		return identity
+	end
+	local localized = complete_release(stand_in)
+	local verified_info = local_release.with_verified_recordings(
+		local_release_info,
+		acceptance.assigned_recording_ids(identity, local_release_info.context.tracks)
+	)
+	if
+		localized
+		and acceptance.localization_keeps_recordings(localized, identity)
+		and check(localized, verified_info, identity)
+	then
+		return localized
+	end
+	return identity
+end
+
 -- Applies the best edition from `selected_release`'s release group. The edition
 -- must pass acceptance with `selected_release` as its anchor. A localized
 -- edition stands in for it only if, with its full track list, it keeps the
--- edition's recordings and passes acceptance against it.
+-- edition's recordings and passes acceptance against it. A browse lists at
+-- most a page of the group, so `selected_release`, when it lists its tracks,
+-- competes even if the browse left it out.
 function module.try_release_group(
 	selected_release: Release,
 	local_release_info: LocalRelease,
@@ -110,37 +162,42 @@ function module.try_release_group(
 	if not release_group_id then
 		return false
 	end
-	local candidates = browse_release_group(release_group_id, track_count == 1, track_count)
-	if not candidates or #candidates == 0 then
+	local listed: { Release } = browse_release_group(release_group_id, track_count == 1, track_count) or {}
+	local group_copy = release_from_candidates(listed, selected_release.id, nil)
+	local candidates = listed
+	if release_lists_tracks(selected_release) and not (group_copy and group_copy.complete) then
+		candidates = with_release(listed, selected_release)
+	end
+	if #candidates == 0 then
 		return false
 	end
-	local anchor = release_from_candidates(candidates, selected_release.id, selected_release)
-	local selected_edition, identity_edition =
-		select_release_group_candidate(candidates, local_release_info, search_title, artist_ids, anchor, keep_selected)
-	if not selected_edition or not identity_edition then
+	local edition_anchor = group_copy or selected_release
+	local picks = ranked_release_group_candidates(
+		candidates,
+		local_release_info,
+		search_title,
+		artist_ids,
+		edition_anchor,
+		keep_selected,
+		MAX_EDITION_TRIES
+	)
+	if #picks == 0 then
 		return false
 	end
-	if remembered_rejection(identity_edition.id, local_release_info, anchor) then
-		return false
-	end
-	local identity = with_track_list(identity_edition)
-	if not identity or not check(identity, local_release_info, anchor) then
-		return false
-	end
-	local edition = identity
-	if selected_edition.id ~= identity.id then
-		local localized = with_track_list(selected_edition)
-		local verified_info = local_release.with_verified_recordings(
-			local_release_info,
-			acceptance.assigned_recording_ids(identity, local_release_info.context.tracks)
-		)
-		if
-			localized
-			and acceptance.localization_keeps_recordings(localized, identity)
-			and check(localized, verified_info, identity)
-		then
-			edition = localized
+	-- The best edition that passes acceptance, as the next best after one the
+	-- local files reject. A failed request ends the walk: nothing is applied.
+	local edition: Release? = nil
+	for _, pick in picks do
+		if musicbrainz_api.request_failed() then
+			return false
 		end
+		edition = try_pick(pick, local_release_info, edition_anchor)
+		if edition then
+			break
+		end
+	end
+	if edition == nil then
+		return false
 	end
 	local best_rg_info = release_group
 	local edition_rg_info = edition["release-group"]

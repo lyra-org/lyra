@@ -539,9 +539,19 @@ local function enrichment_get(endpoint: string): JsonObject?
 	return (decode_response(send_get(endpoint, math.ceil(seconds_left * 1000))))
 end
 
+-- Marks `releases`, asked for with `RELEASE_INCLUDES`, complete.
+local function mark_complete(releases: { Release })
+	for _, release in releases do
+		release.complete = true
+	end
+end
+
 local function browse_release_group(release_group_id: string, fast_mode: boolean, track_count: number?): { Release }?
 	local detailed_response = mb_get(`/release?release-group={release_group_id}&inc={RELEASE_INCLUDES}&limit=100`)
 	local detailed_data = if detailed_response then normalize_release_search_result(detailed_response) else nil
+	if detailed_data then
+		mark_complete(detailed_data.releases)
+	end
 
 	local all_data: ReleaseSearchResult? = nil
 	local release_count = if detailed_data and detailed_data.releases then #detailed_data.releases else 0
@@ -597,6 +607,7 @@ local function fetch_release_details(release_id: string): Release?
 	local release = if release_response then normalize_release(release_response) else nil
 	if release then
 		compute_track_count(release)
+		release.complete = true
 	end
 	return release
 end
@@ -618,6 +629,7 @@ module.escape_lucene = escape_lucene
 module.mb_get = mb_get
 module.enrichment_get = enrichment_get
 module.browse_release_group = browse_release_group
+module.mark_complete = mark_complete
 module.fetch_release_details = fetch_release_details
 
 return module

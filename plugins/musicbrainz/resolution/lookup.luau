@@ -31,7 +31,7 @@ local release_lists_tracks = track_helpers.release_lists_tracks
 local browse_release_group = musicbrainz_api.browse_release_group
 local fetch_release_details = musicbrainz_api.fetch_release_details
 local release_from_candidates = release_group.release_from_candidates
-local select_release_group_candidate = release_group.select_release_group_candidate
+local ranked_release_group_candidates = release_group.ranked_release_group_candidates
 
 export type CoverCacheContext = {
 	release_id: string?,
@@ -175,14 +175,17 @@ function module.resolve_cover_release_id(release_context: ReleaseContext): strin
 		return nil
 	end
 
-	local best_cover_release, identity_release = select_release_group_candidate(
+	local best = ranked_release_group_candidates(
 		cover_candidates,
 		local_release_info,
 		search_title,
 		artist_ids,
 		selected_release,
-		false
-	)
+		false,
+		1
+	)[1]
+	local identity_release = best and best.identity
+	local best_cover_release = best and (best.localized or best.identity)
 	-- A localized edition browsed without its track list is unverified; use the
 	-- edition it would stand in for.
 	if best_cover_release and not release_lists_tracks(best_cover_release) then
