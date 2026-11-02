@@ -158,11 +158,21 @@ impl LuauTypeInfo for BytesBody {
 
 pub(crate) struct ApiModule;
 
-crate::plugins::limits::module_limits!(&[crate::plugins::limits::Limit {
-    name: "MAX_BODY_BYTES",
-    value: MAX_BODY_BYTES,
-    description: "The largest `max_body_bytes` a route registers with.",
-}]);
+/// The largest `response.filler` body, in bytes.
+pub(crate) const MAX_FILLER_BYTES: usize = 100_000_000;
+
+crate::plugins::limits::module_limits!(&[
+    crate::plugins::limits::Limit {
+        name: "MAX_BODY_BYTES",
+        value: MAX_BODY_BYTES,
+        description: "The largest `max_body_bytes` a route registers with.",
+    },
+    crate::plugins::limits::Limit {
+        name: "MAX_FILLER_BYTES",
+        value: MAX_FILLER_BYTES,
+        description: "The largest `size_bytes` of a `response.filler`.",
+    },
+]);
 
 #[harmony_macros::module(
     id = "lyra/api",
@@ -463,6 +473,29 @@ impl ApiModule {
     }
 
     #[harmony(
+        name = "response.filler",
+        description = "Builds a response of `size_bytes` filler bytes, which Lyra generates as it sends them, for clients measuring their throughput. Its content type defaults to application/octet-stream, and its headers may not include the framing headers content-length, content-range, accept-ranges and transfer-encoding. Raises past `MAX_FILLER_BYTES`.",
+        args(status: u16, size_bytes: u64, headers: Option<ApiHeaders>),
+        returns(ApiResponse)
+    )]
+    fn response_filler(
+        status: Status,
+        size_bytes: luau::Value,
+        headers: Option<luau::Value>,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let size_bytes = filler_size(&size_bytes)?;
+        let headers = optional_value(headers);
+        let mut response = kind_table("filler");
+        response.set_field("status", i64::from(status.0));
+        response.set_field("size_bytes", luau::Value::Number(size_bytes as f64));
+        response.set_field(
+            "headers",
+            merge_headers(&[("content-type", "application/octet-stream")], headers)?,
+        );
+        Ok(response)
+    }
+
+    #[harmony(
         name = "response.redirect",
         description = "Builds a redirect response.",
         args(status: u16, location: String, headers: Option<ApiHeaders>),
@@ -672,6 +705,28 @@ fn track_response(
         response.set_field("options", options);
     }
     Ok(response)
+}
+
+/// A filler response's size, at most [`MAX_FILLER_BYTES`].
+pub(crate) fn filler_size(value: &luau::Value) -> luau::runtime::Result<u64> {
+    let size = match value {
+        luau::Value::Integer(size) => u64::try_from(*size).ok(),
+        luau::Value::Number(size) if size.fract() == 0.0 && *size >= 0.0 => Some(*size as u64),
+        _ => None,
+    };
+    match size {
+        Some(size) if size <= MAX_FILLER_BYTES as u64 => Ok(size),
+        _ => {
+            let got = match value {
+                luau::Value::Integer(size) => size.to_string(),
+                luau::Value::Number(size) => size.to_string(),
+                other => other.type_name().to_string(),
+            };
+            Err(crate::plugins::runtime_error(format!(
+                "filler size_bytes must be an integer from 0 to MAX_FILLER_BYTES ({MAX_FILLER_BYTES}), got {got}"
+            )))
+        }
+    }
 }
 
 fn first_query_value(query: &luau::Table, key: &str) -> luau::runtime::Result<Option<String>> {
@@ -917,6 +972,11 @@ fn api_response_aliases() -> Vec<TypeAliasDescriptor> {
                 field("options", LuauType::optional(HlsServeOptions::luau_type())),
             ],
         ),
+        response_alias(
+            "ApiFillerResponse",
+            "filler",
+            [field("size_bytes", u64::luau_type())],
+        ),
         TypeAliasDescriptor::new(
             "ApiResponse",
             LuauType::union(vec![
@@ -929,6 +989,7 @@ fn api_response_aliases() -> Vec<TypeAliasDescriptor> {
                 LuauType::literal("ApiStreamTrackResponse"),
                 LuauType::literal("ApiDownloadTrackResponse"),
                 LuauType::literal("ApiHlsPlaylistResponse"),
+                LuauType::literal("ApiFillerResponse"),
             ]),
             Some("API response returned by route handlers."),
         ),

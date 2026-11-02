@@ -66,7 +66,8 @@ pub(super) async fn plugin_api_response_to_axum(
         | ApiResponseKind::Text
         | ApiResponseKind::Bytes
         | ApiResponseKind::Redirect
-        | ApiResponseKind::File => {}
+        | ApiResponseKind::File
+        | ApiResponseKind::Filler => {}
     }
 
     let principal = response.principal.as_ref();
@@ -116,6 +117,11 @@ pub(super) async fn plugin_api_response_to_axum(
                 Body::from(serde_json::to_vec(&value)?)
             }
             Some(crate::plugins::executor::ApiResponseBody::Bytes(bytes)) => Body::from(bytes),
+            Some(crate::plugins::executor::ApiResponseBody::Filler(size)) => {
+                content_type = Some(HeaderValue::from_static("application/octet-stream"));
+                content_length = Some(HeaderValue::from(size));
+                filler_body(size)
+            }
             None => Body::empty(),
         }
     };
@@ -143,6 +149,17 @@ pub(super) async fn plugin_api_response_to_axum(
     Ok(response_out)
 }
 
+/// `size` zero bytes, sent a chunk at a time from one shared buffer.
+fn filler_body(size: u64) -> Body {
+    static CHUNK: [u8; 64 * 1024] = [0; 64 * 1024];
+    let chunk_len = CHUNK.len() as u64;
+    let chunks = (0..size.div_ceil(chunk_len)).map(move |index| {
+        let len = (size - index * chunk_len).min(chunk_len) as usize;
+        Ok::<_, std::convert::Infallible>(Bytes::from_static(&CHUNK[..len]))
+    });
+    Body::from_stream(futures::stream::iter(chunks))
+}
+
 /// The response's headers, refusing the framing headers on the kinds whose body Lyra frames.
 fn response_headers(response: &ApiHandlerResponse) -> Result<HeaderMap> {
     let framed = matches!(
@@ -151,6 +168,7 @@ fn response_headers(response: &ApiHandlerResponse) -> Result<HeaderMap> {
             | ApiResponseKind::StreamTrack
             | ApiResponseKind::DownloadTrack
             | ApiResponseKind::HlsPlaylist
+            | ApiResponseKind::Filler
     );
     let mut headers = HeaderMap::with_capacity(response.headers.len());
     for (name, value) in &response.headers {
@@ -669,6 +687,64 @@ mod tests {
             options: Some(options),
             ..stream_response(track_id, false)
         }
+    }
+
+    fn filler_response(size: u64, headers: &[(&str, &str)]) -> ApiHandlerResponse {
+        ApiHandlerResponse {
+            kind: ApiResponseKind::Filler,
+            status: 200,
+            headers: headers
+                .iter()
+                .map(|(name, value)| (name.to_string(), value.to_string()))
+                .collect(),
+            body: Some(crate::plugins::executor::ApiResponseBody::Filler(size)),
+            track_id: None,
+            options: None,
+            ..stream_response("", false)
+        }
+    }
+
+    #[tokio::test]
+    async fn filler_responses_stream_the_bytes_they_state() -> anyhow::Result<()> {
+        let headers = axum::http::HeaderMap::new();
+        for size in [0, 1, 64 * 1024, 200_001] {
+            let response = plugin_api_response_to_axum(
+                filler_response(size, &[("x-plugin", "kept")]),
+                &Method::GET,
+                &headers,
+            )
+            .await?;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                header(&response, "content-length"),
+                Some(size.to_string().as_str())
+            );
+            assert_eq!(
+                header(&response, "content-type"),
+                Some("application/octet-stream")
+            );
+            assert_eq!(header(&response, "x-plugin"), Some("kept"));
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+            assert_eq!(body.len() as u64, size);
+            assert!(body.iter().all(|byte| *byte == 0));
+        }
+
+        let typed = plugin_api_response_to_axum(
+            filler_response(3, &[("content-type", "text/plain")]),
+            &Method::GET,
+            &headers,
+        )
+        .await?;
+        assert_eq!(header(&typed, "content-type"), Some("text/plain"));
+
+        let refused = plugin_api_response_to_axum(
+            filler_response(3, &[("content-length", "1")]),
+            &Method::GET,
+            &headers,
+        )
+        .await;
+        assert!(refused.is_err_and(|error| error.to_string().contains("cannot set the")));
+        Ok(())
     }
 
     fn header<'a>(response: &'a axum::response::Response, name: &str) -> Option<&'a str> {

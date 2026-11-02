@@ -167,6 +167,8 @@ pub(crate) struct ApiHandlerRequest {
 pub(crate) enum ApiResponseBody {
     Json(serde_json::Value),
     Bytes(Vec<u8>),
+    /// This many bytes of filler, generated as they are sent.
+    Filler(u64),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -180,6 +182,7 @@ pub(crate) enum ApiResponseKind {
     StreamTrack,
     DownloadTrack,
     HlsPlaylist,
+    Filler,
 }
 
 impl ApiResponseKind {
@@ -194,6 +197,7 @@ impl ApiResponseKind {
             "stream_track" => Self::StreamTrack,
             "download_track" => Self::DownloadTrack,
             "hls_playlist" => Self::HlsPlaylist,
+            "filler" => Self::Filler,
             _ => return None,
         })
     }
@@ -209,6 +213,7 @@ impl ApiResponseKind {
             Self::StreamTrack => "stream_track",
             Self::DownloadTrack => "download_track",
             Self::HlsPlaylist => "hls_playlist",
+            Self::Filler => "filler",
         }
     }
 }

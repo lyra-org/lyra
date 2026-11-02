@@ -1298,6 +1298,7 @@ mod tests {
                 "response.empty(status, headers)",
                 "response.text(status, body, headers)",
                 "response.bytes(status, body, headers)",
+                "response.filler(status, size_bytes, headers)",
                 "response.redirect(status, location, headers)",
                 "response.file(status, path, headers, transform)",
                 "response.stream_track(track_id, options)",

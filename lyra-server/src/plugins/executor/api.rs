@@ -228,6 +228,9 @@ pub(super) fn parse_api_response(
                 other.type_name()
             ),
         },
+        ApiResponseKind::Filler => Some(ApiResponseBody::Filler(crate::plugins::api::filler_size(
+            &table.get("size_bytes")?,
+        )?)),
         ApiResponseKind::Redirect
         | ApiResponseKind::File
         | ApiResponseKind::StreamTrack
