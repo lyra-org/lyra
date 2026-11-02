@@ -59,7 +59,12 @@ function module.dispatch(ctx: ApiContext): ApiResponse
 		end
 	end
 
-	local resolved, err = auth_protocol.authenticate(params)
+	local authenticated, resolved_or_error, err = pcall(auth_protocol.authenticate, params)
+	if not authenticated then
+		warn(`{name} authentication failed: {tostring(resolved_or_error)}`)
+		return failed(response.error(0, "Internal server error"))
+	end
+	local resolved = resolved_or_error :: auth_protocol.ResolvedAuth?
 	if not resolved then
 		return failed(err :: response.SubsonicError)
 	end

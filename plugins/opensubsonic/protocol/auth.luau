@@ -11,14 +11,15 @@ local request = require("./request")
 local response = require("./response")
 
 type ApiQueryParams = api.ApiQueryParams
-type ResolvedAuth = auth.ResolvedAuth
+export type ResolvedAuth = auth.ResolvedAuth
 type SubsonicError = response.SubsonicError
 
 local module = {
 	HELP_URL = "https://git.lyra.pub/lyra/lyra/-/blob/main/plugins/opensubsonic/README.md#signing-in",
 }
 
--- `enc:` passwords are hex-encoded.
+-- `enc:` passwords are hex-encoded. Nil for anything that doesn't decode to ASCII, as no API key
+-- does and the host takes only UTF-8.
 local function decode_password(value: string): string?
 	local hex = string.match(value, "^enc:(.*)$")
 	if not hex then
@@ -27,11 +28,10 @@ local function decode_password(value: string): string?
 	if #hex % 2 ~= 0 or not string.match(hex, "^%x*$") then
 		return nil
 	end
-	return (
-		string.gsub(hex, "%x%x", function(pair: string): string
-			return string.char(tonumber(pair, 16) :: number)
-		end)
-	)
+	local decoded = string.gsub(hex, "%x%x", function(pair: string): string
+		return string.char(tonumber(pair, 16) :: number)
+	end)
+	return if string.find(decoded, "[\128-\255]") then nil else decoded
 end
 
 local function resolve_api_key(key: string): ResolvedAuth?

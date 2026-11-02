@@ -50,6 +50,7 @@ assert_user({ u = "owner", p = `enc:{hex(phone)}` }, "owner")
 assert_error({ u = "other", p = phone }, 40)
 assert_error({ u = "owner", p = "password" }, 40)
 assert_error({ u = "owner", p = "enc:zz" }, 40)
+assert_error({ u = "owner", p = "enc:ff" }, 40)
 assert_error({ p = phone }, 10)
 
 -- Tokens need the password itself.
@@ -94,3 +95,19 @@ local bare_stream = call.raw("stream", { apiKey = phone, f = "json", c = "test" 
 assert(string.find(bare_stream.body, "Required parameter is missing: v", 1, true), bare_stream.body)
 local extensions = call.raw("getOpenSubsonicExtensions", { f = "json" }, { bare = true })
 assert((serde.json.decode(extensions.body) :: any)["subsonic-response"].status == "ok", "public without them")
+
+-- A password that isn't text fails as a wrong one, in XML for a stream.
+local undecodable = call.raw("stream", { u = "owner", p = "enc:ff", f = "json" })
+assert(undecodable.kind == "text" and string.find(undecodable.headers["content-type"], "^text/xml"))
+assert(string.find(undecodable.body, '<error code="40"', 1, true), undecodable.body)
+
+-- An error raised while authenticating still answers as Subsonic, here from a form field that
+-- decodes to bytes the host refuses.
+local raised = call.raw("stream", {}, {
+	http_method = "POST",
+	headers = { ["content-type"] = "application/x-www-form-urlencoded" },
+	body = "apiKey=%FF&v=1.16.1&c=test&f=json",
+	bare = true,
+})
+assert(raised.kind == "text" and string.find(raised.headers["content-type"], "^text/xml"))
+assert(string.find(raised.body, '<error code="0"', 1, true), raised.body)
