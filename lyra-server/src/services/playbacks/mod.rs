@@ -1160,6 +1160,72 @@ mod tests {
     }
 
     #[test]
+    fn a_play_continued_without_the_flag_keeps_counting_as_declared() -> anyhow::Result<()> {
+        let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+        crate::services::testing::init_default_test_state()?;
+        let (mut db, user_db_id, track_db_id, _, track_id, _) = setup()?;
+        // A realistic time; listens need starts after 2010.
+        let t0 = 1_800_000_000_000;
+        let play_id = nanoid::nanoid!();
+        let created = create_playback(
+            &mut db,
+            CreatePlaybackRequest {
+                id: nanoid::nanoid!(),
+                play_id: play_id.clone(),
+                user_db_id,
+                client_name: None,
+                queue: ValidatedQueue {
+                    snapshot: QueueSnapshot::single(track_id),
+                    current_track_db_id: track_db_id,
+                },
+                mutation: playback_sessions::PlaybackMutation {
+                    position_ms: Some(0),
+                    state: Some(lyra_db::PlaybackState::Playing),
+                    counts_as_listen: Some(false),
+                    ..playback_sessions::PlaybackMutation::default()
+                },
+                now_ms: t0,
+                reporting_connection: None,
+            },
+        )?;
+        let playback_db_id = created.playback.db_id.expect("persisted playback");
+        let progress = |counts_as_listen: Option<bool>, now_ms: u64| ReportProgressRequest {
+            playback_db_id,
+            play_id: play_id.clone(),
+            user_db_id,
+            client_name: None,
+            queue_revision: 1,
+            current_track_db_id: track_db_id,
+            mutation: playback_sessions::PlaybackMutation {
+                position_ms: Some(now_ms - t0),
+                counts_as_listen,
+                ..playback_sessions::PlaybackMutation::default()
+            },
+            now_ms,
+            require_full_queue_access: false,
+            reporting_connection: None,
+        };
+
+        // As a handoff target continues the play it was handed, without the flag.
+        let continued = report_progress(&mut db, progress(None, t0 + 60_000))?;
+        assert_eq!(
+            continued.session.playback_session_id,
+            created.session.playback_session_id
+        );
+        assert!(!continued.session.playback.counts_as_listen);
+        assert_eq!(continued.session.playback.played_ms, 60_000);
+        assert!(lyra_db::listens::find_by_play_id(&db, user_db_id, &play_id)?.is_none());
+
+        assert!(matches!(
+            report_progress(&mut db, progress(Some(true), t0 + 70_000)),
+            Err(PlaybackError::Session(
+                playback_sessions::PlaybackServiceError::BadRequest(_)
+            ))
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn replacing_queue_heals_unresolvable_current_session_edge() -> anyhow::Result<()> {
         let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
         crate::services::testing::init_default_test_state()?;

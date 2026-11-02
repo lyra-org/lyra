@@ -222,6 +222,7 @@ impl PlaybackSessionsModule {
             duration_ms: request.duration_ms,
             state: request.state,
             rate_permille,
+            counts_as_listen: None,
         };
 
         let mut db = db.write_outside_catalog().await;

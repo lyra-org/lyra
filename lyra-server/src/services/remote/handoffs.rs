@@ -673,6 +673,7 @@ mod tests {
                 play_id: nanoid::nanoid!(),
                 latency_allowance_used_ms: 0,
                 rate_permille: 1000,
+                counts_as_listen: true,
                 last_position_at_ms: 2,
                 updated_at_ms: 2,
                 created_at_ms: 1,

@@ -171,13 +171,16 @@ pub(crate) fn current_position_ms(playback: &PlaybackSession, now_ms: u64) -> u6
 }
 
 /// Records the session's play as a listen once it qualifies, returning the new listen for the
-/// transaction's owner to announce after commit.
+/// transaction's owner to announce after commit. A play declared not to count records nothing.
 fn record_listen(
     db: &mut impl lyra_db::DbAccess,
     playback_record: &PlaybackRecord,
     now_ms: u64,
 ) -> ServiceResult<Option<lyra_db::Listen>> {
     let playback = &playback_record.playback;
+    if !playback.counts_as_listen {
+        return Ok(None);
+    }
     let outcome = map_internal(crate::services::listens::record(
         db,
         playback_record.user_db_id,
@@ -481,6 +484,7 @@ fn new_playback_session(
         state,
         latency_allowance_used_ms: 0,
         rate_permille: mutation.rate_permille.unwrap_or(NORMAL_RATE_PERMILLE),
+        counts_as_listen: mutation.counts_as_listen.unwrap_or(true),
         last_position_at_ms: now_ms,
         updated_at_ms: now_ms,
         created_at_ms: now_ms,
@@ -527,6 +531,15 @@ pub(crate) fn report_playback_in_transaction(
         return Err(PlaybackServiceError::not_found(format!(
             "playback session not found: {}",
             playback_session_id.0
+        )));
+    }
+    if mutation
+        .counts_as_listen
+        .is_some_and(|counts_as_listen| counts_as_listen != playback.counts_as_listen)
+    {
+        return Err(PlaybackServiceError::bad_request(format!(
+            "counts_as_listen is {} for play {}; it cannot change during a play",
+            playback.counts_as_listen, playback.play_id
         )));
     }
 

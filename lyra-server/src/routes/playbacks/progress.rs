@@ -127,6 +127,7 @@ pub(super) async fn report_progress(
         duration_ms: request.duration_ms,
         state: request.state,
         rate_permille,
+        counts_as_listen: None,
     };
     let update = playbacks::report_progress(
         &mut db,

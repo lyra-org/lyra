@@ -480,6 +480,7 @@ async fn create_playback(
                 duration_ms: request.duration_ms,
                 state: request.state.or(Some(PlaybackState::Playing)),
                 rate_permille,
+                counts_as_listen: None,
             },
             now_ms: current_ms,
             reporting_connection: reporting_connection(

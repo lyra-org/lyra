@@ -2134,6 +2134,7 @@ async fn a_replaced_play_moves_at_its_rate_and_is_credited_real_time() -> anyhow
             duration_ms: Some(200_000),
             state: Some(PlaybackState::Playing),
             rate_permille: Some(2_000),
+            counts_as_listen: None,
         },
         T0,
     )?
@@ -2658,5 +2659,234 @@ async fn a_report_after_an_early_stop_resumes_the_play_and_counts_once() -> anyh
         135_000 + 19_700,
         "the listen keeps the play's longest playing time"
     );
+    Ok(())
+}
+
+const UNCOUNTED_PLAY_ID: &str = "uncounted-play-0001";
+
+fn report_uncounted(
+    db: &mut DbAny,
+    user_db_id: DbId,
+    track_db_id: DbId,
+    (active_event, state): (ActiveEvent, PlaybackState),
+    position_ms: u64,
+    counts_as_listen: Option<bool>,
+    now_ms: u64,
+) -> Result<ReportOutcome, PlaybackError> {
+    report_reported_playback(
+        db,
+        ReportedPlaybackRequest {
+            plugin_id: "external",
+            user_db_id,
+            session_key: "auth:1",
+            track_db_id,
+            play_id: Some(UNCOUNTED_PLAY_ID),
+            client_name: None,
+            mutation: PlaybackMutation {
+                position_ms: Some(position_ms),
+                duration_ms: Some(200_000),
+                state: Some(state),
+                counts_as_listen,
+                ..PlaybackMutation::default()
+            },
+            now_ms,
+            active_event,
+        },
+    )
+}
+
+fn applied(outcome: Result<ReportOutcome, PlaybackError>) -> anyhow::Result<PlaybackRecord> {
+    match outcome? {
+        ReportOutcome::Applied(update) => Ok(update.session),
+        ReportOutcome::Ignored(_) => anyhow::bail!("the report applies"),
+    }
+}
+
+#[tokio::test]
+async fn a_play_declared_not_to_count_records_no_listen_when_stopped() -> anyhow::Result<()> {
+    let (mut db, _guard) = new_scoped_test_db().await?;
+    let dispatch = crate::services::testing::record_plugin_dispatch();
+    let user = insert_user(&mut db, "alice")?;
+    let track = insert_track(&mut db, "A", 200_000)?;
+    let started = applied(report_uncounted(
+        &mut db,
+        user,
+        track,
+        (ActiveEvent::Started, PlaybackState::Playing),
+        0,
+        Some(false),
+        T0,
+    ))?;
+    assert!(!started.playback.counts_as_listen);
+
+    // Later reports may leave the flag out or repeat it.
+    applied(report_uncounted(
+        &mut db,
+        user,
+        track,
+        (ActiveEvent::Progress, PlaybackState::Playing),
+        100_000,
+        None,
+        T0 + 100_000,
+    ))?;
+    let stopped = applied(report_uncounted(
+        &mut db,
+        user,
+        track,
+        (ActiveEvent::Progress, PlaybackState::Stopped),
+        200_000,
+        Some(false),
+        T0 + 200_000,
+    ))?;
+
+    assert_eq!(
+        stopped.playback.played_ms, 200_000,
+        "the play is still accounted"
+    );
+    assert!(!stopped.playback.counts_as_listen);
+    assert_eq!(listen_count(&db, user, track)?, 0);
+    assert!(dispatch.listen_updates().is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_report_cannot_change_whether_its_play_counts() -> anyhow::Result<()> {
+    let (mut db, _guard) = new_scoped_test_db().await?;
+    let user = insert_user(&mut db, "alice")?;
+    let track = insert_track(&mut db, "A", 200_000)?;
+    applied(report_uncounted(
+        &mut db,
+        user,
+        track,
+        (ActiveEvent::Started, PlaybackState::Playing),
+        0,
+        Some(false),
+        T0,
+    ))?;
+
+    let changed = report_uncounted(
+        &mut db,
+        user,
+        track,
+        (ActiveEvent::Progress, PlaybackState::Playing),
+        100_000,
+        Some(true),
+        T0 + 100_000,
+    );
+    assert!(matches!(
+        changed,
+        Err(PlaybackError::Session(PlaybackServiceError::BadRequest(ref message)))
+            if message.contains("counts_as_listen")
+    ));
+    let session_db_id = lyra_db::playback_sessions::find_by_play_id(&db, user, UNCOUNTED_PLAY_ID)?
+        .expect("the play keeps its session");
+    let session = lyra_db::playback_sessions::get_by_id(&db, session_db_id)?.expect("stored");
+    assert!(!session.counts_as_listen);
+    assert_eq!(session.played_ms, 0, "the refused report changed nothing");
+    assert_eq!(listen_count(&db, user, track)?, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_replaced_or_lapsed_play_declared_not_to_count_records_no_listen() -> anyhow::Result<()> {
+    let (mut db, _guard) = new_scoped_test_db().await?;
+    let user = insert_user(&mut db, "alice")?;
+    let replaced = insert_track(&mut db, "Replaced", 200_000)?;
+    let lapsed = insert_track(&mut db, "Lapsed", 200_000)?;
+    let a = applied(report_uncounted(
+        &mut db,
+        user,
+        replaced,
+        (ActiveEvent::Started, PlaybackState::Playing),
+        0,
+        Some(false),
+        T0,
+    ))?;
+
+    let b = report_test_playback_session(
+        &mut db,
+        user,
+        lapsed,
+        ActiveEvent::Started,
+        PlaybackMutation {
+            position_ms: Some(0),
+            duration_ms: Some(200_000),
+            state: Some(PlaybackState::Playing),
+            counts_as_listen: Some(false),
+            ..PlaybackMutation::default()
+        },
+        T0 + 100_000,
+    )?
+    .expect("B starts");
+    assert_eq!(
+        stored(&db, &a)?.played_ms,
+        100_000,
+        "the replaced play is credited"
+    );
+    assert_eq!(listen_count(&db, user, replaced)?, 0);
+
+    expire_all_lapsed(
+        &mut db,
+        T0 + 100_000 + lyra_db::playbacks::REPORTED_PLAYBACK_TTL_MS + 1,
+    )?;
+    assert!(
+        stored(&db, &b)?.played_ms >= 100_000,
+        "the lapsed play is credited"
+    );
+    assert_eq!(listen_count(&db, user, lapsed)?, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_submitted_play_counts_after_its_live_play_was_declared_not_to() -> anyhow::Result<()> {
+    let (mut db, _guard) = new_scoped_test_db().await?;
+    let user = insert_user(&mut db, "alice")?;
+    let track = insert_track(&mut db, "A", 200_000)?;
+    applied(report_uncounted(
+        &mut db,
+        user,
+        track,
+        (ActiveEvent::Started, PlaybackState::Playing),
+        0,
+        Some(false),
+        T0,
+    ))?;
+    applied(report_uncounted(
+        &mut db,
+        user,
+        track,
+        (ActiveEvent::Progress, PlaybackState::Stopped),
+        100_000,
+        None,
+        T0 + 100_000,
+    ))?;
+    assert_eq!(listen_count(&db, user, track)?, 0);
+
+    let principal = crate::services::auth::Principal::for_user(
+        &db,
+        user,
+        vec![lyra_db::Permission::Admin],
+        std::collections::HashSet::new(),
+    );
+    let track_public_id = lyra_db::lookup::find_id_by_db_id(&db, track)?.expect("track id");
+    let outcomes = crate::services::listens::record_submitted(
+        &mut db,
+        &principal,
+        user,
+        vec![crate::services::listens::SubmittedPlay {
+            play_id: UNCOUNTED_PLAY_ID.to_string(),
+            track: lyra_db::ResolveId::Nanoid(track_public_id),
+            started_at_ms: T0,
+            played_ms: 100_000,
+        }],
+        T0 + 200_000,
+    )?;
+    assert!(matches!(
+        outcomes.get(UNCOUNTED_PLAY_ID),
+        Some(crate::services::listens::SubmissionOutcome::Judged(
+            crate::services::listens::RecordOutcome::Recorded(_)
+        ))
+    ));
+    assert_eq!(listen_count(&db, user, track)?, 1);
     Ok(())
 }

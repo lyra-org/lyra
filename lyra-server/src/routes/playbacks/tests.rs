@@ -183,6 +183,7 @@ fn active_filter_requires_recent_non_terminal_current_session() {
             play_id: nanoid::nanoid!(),
             latency_allowance_used_ms: 0,
             rate_permille: 1000,
+            counts_as_listen: true,
             last_position_at_ms: current_ms,
             updated_at_ms: current_ms,
             created_at_ms: 1,
