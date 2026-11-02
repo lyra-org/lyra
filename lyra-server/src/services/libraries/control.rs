@@ -4,7 +4,8 @@
 // www.meshiplaw.com/lyra.
 
 //! Syncing, refreshing and cancelling library runs on a user's behalf, with the one check of
-//! who may manage a library that the REST routes and plugins share.
+//! who may manage a library that the REST routes and plugins share, and reading run status for
+//! whoever can see a library.
 
 use std::collections::HashMap;
 
@@ -78,10 +79,10 @@ pub(crate) fn managed_library(
 
 fn library_of(
     db: &DbAny,
-    manager: &Principal,
+    principal: &Principal,
     library_id: &str,
 ) -> Result<Option<Library>, LibraryControlError> {
-    match access::resolve_library(db, manager, library_id) {
+    match access::resolve_library(db, principal, library_id) {
         Ok(library) => Ok(Some(library)),
         Err(access::AccessError::LibraryNotFound(_)) => Ok(None),
         Err(error) => Err(anyhow::Error::from(error).into()),
@@ -115,24 +116,50 @@ pub(crate) async fn start(
 }
 
 /// The run `filter` picks of each library, or an idle summary for a library without one, keyed
-/// by library id. Libraries that are missing or hidden from the principal are absent.
+/// by library id. Libraries that are missing or hidden from the principal, as the database has it
+/// now, are absent; without a principal, as for the system, none is hidden. A principal without
+/// `ManageLibraries` gets no run error or current subject, since they can name paths.
 pub(crate) async fn sync_status(
-    principal: &Principal,
+    principal: Option<&Principal>,
     library_ids: &[String],
     filter: RunFilter,
 ) -> Result<HashMap<String, SyncRunSummary>, LibraryControlError> {
-    let managed = {
+    let (visible, shows_details) = {
         let db = STATE.db.read().await;
-        let current = principal.current_with(&db, Permission::ManageLibraries)?;
-        let mut managed = Vec::with_capacity(library_ids.len());
-        for library_id in library_ids {
-            if let Some(library) = library_of(&db, &current, library_id)? {
-                managed.push(library);
+        match principal {
+            Some(principal) => {
+                let current = principal.recheck(&db)?;
+                let mut visible = Vec::with_capacity(library_ids.len());
+                for library_id in library_ids {
+                    if let Some(library) = library_of(&db, &current, library_id)? {
+                        visible.push(library);
+                    }
+                }
+                let manages = lyra_db::roles::has_permission(
+                    &current.permissions,
+                    Permission::ManageLibraries,
+                );
+                (visible, manages)
+            }
+            None => {
+                let visible = access::system_libraries(&*db, &super::system_context())?
+                    .into_iter()
+                    .filter(|library| library_ids.contains(&library.id))
+                    .collect();
+                (visible, true)
             }
         }
-        managed
     };
-    Ok(orchestrator::library_sync_statuses(&managed, filter).await?)
+    let mut statuses = orchestrator::library_sync_statuses(&visible, filter).await?;
+    if !shows_details {
+        for summary in statuses.values_mut() {
+            summary.run.error = None;
+            if let Some(current) = &mut summary.current {
+                current.subject = None;
+            }
+        }
+    }
+    Ok(statuses)
 }
 
 /// Cancels the library's active run and returns its summary; without one, returns what
@@ -222,7 +249,7 @@ mod tests {
         ));
 
         let statuses = sync_status(
-            &manager_principal,
+            Some(&manager_principal),
             &[shown.clone(), hidden.clone(), "missing".to_string()],
             RunFilter::default(),
         )
@@ -231,15 +258,29 @@ mod tests {
         let idle = &statuses[&shown];
         assert_eq!(idle.run.status, orchestrator::SyncRunStatus::Idle);
         assert_eq!(idle.run.id, None);
-        assert!(matches!(
-            sync_status(
-                &listener_principal,
-                std::slice::from_ref(&shown),
-                RunFilter::default()
-            )
-            .await,
-            Err(LibraryControlError::Forbidden(_))
-        ));
+        let listener_idle = sync_status(
+            Some(&listener_principal),
+            &[shown.clone(), hidden.clone()],
+            RunFilter::default(),
+        )
+        .await?;
+        assert_eq!(
+            listener_idle.len(),
+            1,
+            "a listener sees the libraries it can see"
+        );
+        assert_eq!(
+            listener_idle[&shown].run.status,
+            orchestrator::SyncRunStatus::Idle
+        );
+
+        let system = sync_status(
+            None,
+            &[shown.clone(), hidden.clone(), "missing".to_string()],
+            RunFilter::default(),
+        )
+        .await?;
+        assert_eq!(system.len(), 2, "the system sees every library");
 
         // The principal the caller holds keeps its grants, but the database's role decides.
         {
@@ -261,6 +302,75 @@ mod tests {
             cancel_sync(&manager_principal, &shown).await,
             Err(LibraryControlError::Forbidden(_))
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_status_names_errors_and_subjects_only_to_managers() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let (manager, listener, library) = {
+            let mut db = STATE.db.write().await;
+            let manager = user_with(&mut db, "manager", vec![Permission::ManageLibraries])?;
+            let listener = user_with(&mut db, "listener", Vec::new())?;
+            let (library_db_id, _) = library(&mut db, "Shown", "/control/shown")?;
+            for user in [manager, listener] {
+                lyra_db::libraries::grant_access(
+                    &mut db,
+                    user,
+                    library_db_id,
+                    lyra_db::libraries::AccessKind::ReadWrite,
+                )?;
+            }
+            let library = lyra_db::libraries::get_by_id(&*db, library_db_id)?.expect("library");
+            (manager, listener, library)
+        };
+        let progress = orchestrator::begin_test_run(&library).await;
+        progress
+            .set_test_error("cannot read /control/shown/a")
+            .await;
+        progress
+            .start_work(
+                orchestrator::SyncStageKey::EntrySync,
+                orchestrator::SyncWorkDetails::new("entry_group_sync")
+                    .source_dir(Some("/control/shown/a".to_string())),
+            )
+            .await;
+        let status = |principal: Option<Principal>| {
+            let id = library.id.clone();
+            async move {
+                sync_status(
+                    principal.as_ref(),
+                    std::slice::from_ref(&id),
+                    RunFilter::default(),
+                )
+                .await
+                .map(|mut statuses| statuses.remove(&id).expect("status"))
+            }
+        };
+
+        let system = status(None).await?;
+        assert_eq!(
+            system.run.error.as_deref(),
+            Some("cannot read /control/shown/a"),
+            "the system sees every library and its run's error"
+        );
+
+        let managed = status(Some(user_principal(manager).await?)).await?;
+        assert_eq!(
+            managed.run.error.as_deref(),
+            Some("cannot read /control/shown/a")
+        );
+        let current = managed.current.expect("current work");
+        assert_eq!(current.subject.as_deref(), Some("/control/shown/a"));
+
+        let listened = status(Some(user_principal(listener).await?)).await?;
+        assert_eq!(listened.run.id, managed.run.id);
+        assert_eq!(listened.run.error, None);
+        let current = listened.current.expect("current work");
+        assert_eq!(current.stage, orchestrator::SyncStageKey::EntrySync);
+        assert_eq!(current.subject, None);
+        orchestrator::end_test_run(&progress).await;
         Ok(())
     }
 

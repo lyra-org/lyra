@@ -86,6 +86,9 @@ assert(refresh ~= nil and refresh.started and refresh.run.kind == "library_refre
 wait_for(function()
 	return holding == 1
 end, "the refresh reaching the provider")
+local refreshing = libraries.sync_status({ shown })[shown]
+assert(refreshing.stage == "provider_refresh", `stage {refreshing.stage}`)
+assert(refreshing.subject == "Album", `a manager sees what the run works on, not {refreshing.subject}`)
 local ignored = libraries.sync(shown, { releases = "all", covers = "skip" })
 assert(ignored ~= nil and not ignored.started, "a sync starts nothing while the refresh runs")
 assert(ignored.run.id == refresh.run.id, "the running refresh is returned")

@@ -7,3 +7,7 @@ key = "listener"
 key = "shown"
 name = "Shown"
 users = ["listener"]
+
+[[libraries]]
+key = "hidden"
+name = "Hidden"

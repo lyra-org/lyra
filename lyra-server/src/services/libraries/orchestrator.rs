@@ -701,6 +701,12 @@ impl SyncRunProgress {
         work_id
     }
 
+    #[cfg(test)]
+    pub(crate) async fn set_test_error(&self, error: &str) {
+        self.mutate(|state| state.error = Some(error.to_string()))
+            .await;
+    }
+
     pub(crate) async fn complete_work(&self, work_id: u64, stage: SyncStageKey) {
         self.finish_work(work_id, stage, WorkOutcome::Complete)
             .await;

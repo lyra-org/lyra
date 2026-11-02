@@ -490,11 +490,15 @@ async fn get_library_sync_status(
     Path(id): Path<String>,
 ) -> Result<Json<crate::services::LibrarySyncStatus>, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
-    control::sync_status(&principal, std::slice::from_ref(&id), RunFilter::default())
-        .await?
-        .remove(&id)
-        .map(Json)
-        .ok_or_else(|| library_not_found(&id))
+    control::sync_status(
+        Some(&principal),
+        std::slice::from_ref(&id),
+        RunFilter::default(),
+    )
+    .await?
+    .remove(&id)
+    .map(Json)
+    .ok_or_else(|| library_not_found(&id))
 }
 
 async fn start_library_sync_for_library(
@@ -515,7 +519,7 @@ async fn start_library_sync_for_library(
 #[cfg(feature = "docgen")]
 fn get_library_sync_status_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get library sync status").description(
-        "Returns a compact sync status for a library, including run state, aggregate progress, current work, active-unit count, and failure count: the active run, else the latest, else an idle status for a library that never ran. Requires ManageLibraries and library access.",
+        "Returns a compact sync status for a library, including run state, aggregate progress, current work, active-unit count, and failure count: the active run, else the latest, else an idle status for a library that never ran. Requires library access. `run.error` and `current.subject` are null unless the caller has ManageLibraries.",
     )
 }
 

@@ -111,7 +111,7 @@ impl Reader {
 
 #[harmony_macros::module(
     id = "lyra/libraries",
-    description = "The libraries the caller can see, and their syncs and metadata refreshes. A library runs one sync or refresh at a time. `sync`, `refresh`, `sync_status` and `cancel_sync` need the `lyra.libraries.manage` scope too, and a calling user with the manage_libraries permission, as the database has them when the call runs.",
+    description = "The libraries the caller can see, and their syncs and metadata refreshes. A library runs one sync or refresh at a time. `sync`, `refresh` and `cancel_sync` need the `lyra.libraries.manage` scope too, and a calling user with the manage_libraries permission, as the database has them when the call runs.",
     docs_feature = "docgen"
 )]
 impl LibrariesModule {
@@ -213,10 +213,10 @@ impl LibrariesModule {
     async fn sync_status(
         library_ids: UniqueIds,
         options: Option<SyncStatusOptions>,
-        #[context] principal: Principal,
+        #[context] caller: DispatchPrincipal,
     ) -> luau::runtime::Result<luau::OwnedTable> {
         let filter = options.map_or_else(RunFilter::default, |options| options.0);
-        let statuses = control::sync_status(&principal, &library_ids.0, filter)
+        let statuses = control::sync_status(caller.0.as_ref(), &library_ids.0, filter)
             .await
             .map_err(crate::plugins::runtime_error)?;
         let mut table = luau::OwnedTable::with_capacity(0, statuses.len());
@@ -488,7 +488,9 @@ impl DescribeInterface for SyncRunRecord {
             field(
                 "error",
                 Option::<String>::luau_type(),
-                Some("Why a `failed` run failed."),
+                Some(
+                    "Why a `failed` run failed. Nil unless the caller has the manage_libraries permission, or the call runs without a user.",
+                ),
             ),
             field(
                 "cancellation_requested",
@@ -520,7 +522,9 @@ impl DescribeInterface for SyncRunRecord {
             field(
                 "subject",
                 Option::<String>::luau_type(),
-                Some("What that work is on, such as a release title, when known."),
+                Some(
+                    "What that work is on, such as a release title, when known. Nil unless the caller has the manage_libraries permission, or the call runs without a user.",
+                ),
             ),
         ]);
         descriptor

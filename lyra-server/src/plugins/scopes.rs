@@ -366,7 +366,7 @@ scopes! {
     LibrariesManage => {
         id: "lyra.libraries.manage",
         within: Libraries,
-        functions: &["sync", "refresh", "sync_status", "cancel_sync"],
+        functions: &["sync", "refresh", "cancel_sync"],
         effects: &[
             Effect::WritesLibrary(LibraryKind::Genres),
             Effect::WritesLibrary(LibraryKind::RecordLabels),
@@ -1518,7 +1518,7 @@ mod tests {
                 "by_entity(entity_ids)",
                 "sync(library_id, options) [lyra.libraries.manage]",
                 "refresh(library_id, options) [lyra.libraries.manage]",
-                "sync_status(library_ids, options) [lyra.libraries.manage]",
+                "sync_status(library_ids, options)",
                 "cancel_sync(library_id) [lyra.libraries.manage]",
             ],
         ),

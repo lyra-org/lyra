@@ -19,7 +19,6 @@ end
 
 rejects(libraries.sync, "libraries.sync requires the lyra.libraries.manage scope", "id")
 rejects(libraries.refresh, "libraries.refresh requires the lyra.libraries.manage scope", "id")
-rejects(libraries.sync_status, "libraries.sync_status requires the lyra.libraries.manage scope", {})
 rejects(libraries.cancel_sync, "libraries.cancel_sync requires the lyra.libraries.manage scope", "id")
 rejects(metadata.refresh, "metadata.refresh requires the lyra.metadata.refresh scope", "id")
 rejects(covers.set_manual, "covers.set_manual requires the lyra.covers.manage scope", "id", "image")
@@ -46,6 +45,7 @@ rejects(
 
 -- The rest of each module stays available.
 assert(#libraries.list() == 0)
+assert(next(libraries.sync_status({ "missing" })) == nil)
 assert(next(covers.get({ "missing" })) == nil)
 assert(genres.query({}).total == 0)
 assert(genres.find_by_name("Rock") == nil)
