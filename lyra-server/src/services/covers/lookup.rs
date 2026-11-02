@@ -71,7 +71,10 @@ mod tests {
     use crate::services::{
         auth::Principal,
         catalog::Viewer,
-        covers::display::Listens,
+        covers::{
+            display::Listens,
+            stale,
+        },
     };
     use lyra_db::{
         Cover,
@@ -168,6 +171,72 @@ mod tests {
 
         let listed = resolve(&db, &filter, &[genre_db_id])?;
         assert_eq!(owner(&listed, genre_db_id), Some(winner));
+        Ok(())
+    }
+
+    /// Serves the bytes of `item`'s cover as an image route does: a file confirmed gone serves
+    /// nothing and its record is removed.
+    fn serve(db: &mut DbAny, filter: &CoverFilter<'_>, item: DbId) -> anyhow::Result<bool> {
+        let mut found = resolve(db, filter, &[item])?;
+        let stale_covers = stale::keep_present(&*db, &mut found)?;
+        stale::remove_stale(db, &stale_covers)?;
+        Ok(found.contains_key(&item))
+    }
+
+    #[tokio::test]
+    async fn a_genre_stops_showing_a_gone_winner_once_served() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let dir = tempfile::tempdir()?;
+        let mut db = new_test_db()?;
+        covered_releases(&mut db, dir.path())?;
+        let genre_db_id = lyra_db::genres::resolve_by_name(&mut db, "Rock")?;
+        let genre = lyra_db::genres::get_by_id(&db, genre_db_id)?.expect("genre exists");
+        let winner = genre_winner(&db, &genre)?;
+        remove_cover_file(&db, winner)?;
+        let filter = CoverFilter::new(&Viewer::System).listening(Listens::Instance);
+
+        assert!(!serve(&mut db, &filter, genre_db_id)?);
+        assert!(lyra_db::covers::get(&db, winner)?.is_none());
+        let listed = resolve(&db, &filter, &[genre_db_id])?;
+        assert_ne!(owner(&listed, genre_db_id), Some(winner));
+        Ok(())
+    }
+
+    #[test]
+    fn a_playlist_whose_winner_file_is_gone_moves_on_once_served() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let mut db = new_test_db()?;
+        let releases = covered_releases(&mut db, dir.path())?;
+        let owner_db_id = lyra_db::users::create(&mut db, &test_user("owner")?)?;
+        let playlist_db_id = lyra_db::playlists::create(
+            &mut db,
+            &lyra_db::Playlist {
+                db_id: None,
+                id: nanoid::nanoid!(),
+                name: "Mix".to_string(),
+                description: None,
+                is_public: Some(false),
+                created_at_ms: None,
+                updated_at_ms: None,
+            },
+            owner_db_id,
+        )?;
+        for (_, track) in &releases {
+            db.transaction_mut(|t| lyra_db::playlists::add_track(t, playlist_db_id, *track))?;
+        }
+        db_display::sync_playlist_cover(&mut db, playlist_db_id)?;
+        let sources = db_display::playlist_cover_sources(&db, playlist_db_id)?;
+        remove_cover_file(&db, sources[0].1)?;
+        let filter = CoverFilter::new(&Viewer::System);
+
+        let listed = resolve(&db, &filter, &[playlist_db_id])?;
+        assert_eq!(owner(&listed, playlist_db_id), Some(sources[0].1));
+        assert!(!serve(&mut db, &filter, playlist_db_id)?);
+
+        let listed = resolve(&db, &filter, &[playlist_db_id])?;
+        assert_eq!(owner(&listed, playlist_db_id), Some(sources[1].1));
+        assert!(serve(&mut db, &filter, playlist_db_id)?);
         Ok(())
     }
 

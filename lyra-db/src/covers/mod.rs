@@ -264,6 +264,38 @@ pub fn select(
     Ok(true)
 }
 
+/// The owners of the cover `cover_db_id`, each with the source it holds the cover as; more than
+/// one after duplicate entities merged.
+pub fn owners(db: &impl DbAccess, cover_db_id: DbId) -> anyhow::Result<Vec<(DbId, CoverSource)>> {
+    let result = db.exec(
+        QueryBuilder::select()
+            .search()
+            .to(cover_db_id)
+            .where_()
+            .edge()
+            .and()
+            .distance(CountComparison::Equal(1))
+            .and()
+            .keys([SOURCE_KEY])
+            .query(),
+    )?;
+    let mut owners = Vec::new();
+    for element in result.elements {
+        if element.to != cover_db_id {
+            continue;
+        }
+        for kv in &element.values {
+            if kv.key.string().map(String::as_str) == Ok(SOURCE_KEY) {
+                let raw = kv.value.string()?;
+                let source = CoverSource::parse(raw)
+                    .ok_or_else(|| anyhow::anyhow!("unknown cover source '{raw}'"))?;
+                owners.push((element.from, source));
+            }
+        }
+    }
+    Ok(owners)
+}
+
 fn owner_count(db: &impl DbAccess, cover_db_id: DbId) -> anyhow::Result<usize> {
     Ok(db
         .exec(
@@ -825,6 +857,31 @@ mod tests {
         let fresh = insert_owner(&mut db)?;
         adopt_missing(&mut db, fresh, loser)?;
         assert_eq!(selection(&db, fresh)?, Some(CoverSource::Manual));
+        Ok(())
+    }
+
+    #[test]
+    fn owners_lists_every_owner_of_a_shared_cover_with_its_source() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let winner = insert_owner(&mut db)?;
+        let loser = insert_owner(&mut db)?;
+        let shared = upsert_cover(
+            &mut db,
+            loser,
+            CoverSource::Provider,
+            cover("shared", "/covers/1/provider.jpg"),
+        )?
+        .cover;
+        adopt_missing(&mut db, winner, loser)?;
+
+        let mut found = owners(&db, shared.db_id.expect("cover id"))?;
+        found.sort_by_key(|(owner, _)| owner.0);
+        let mut expected = vec![
+            (winner, CoverSource::Provider),
+            (loser, CoverSource::Provider),
+        ];
+        expected.sort_by_key(|(owner, _)| owner.0);
+        assert_eq!(found, expected);
         Ok(())
     }
 

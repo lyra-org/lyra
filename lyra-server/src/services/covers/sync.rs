@@ -63,11 +63,11 @@ use super::{
     resolve::{
         configured_cover_dir_for_artist,
         configured_cover_dir_for_release,
-        cover_file_gone,
         covers_locked,
         has_stored_cover,
         resolve_local_cover_for_release,
     },
+    stale::StaleCover,
 };
 
 pub(crate) const MAX_COVER_BYTES: usize = 20 * 1024 * 1024;
@@ -878,25 +878,25 @@ pub(crate) async fn record_local_release_cover(
     Ok(Some((cover_path, changed)))
 }
 
-/// Removes the release's local cover record when its file is positively gone, unless the
-/// release is now locked. The library file itself is never touched.
+/// Removes the release's local cover record when its file is confirmed gone, unless the release
+/// is locked. The library file itself is never touched.
 async fn forget_missing_local_cover(db: &lyra_db::DbAsync, release_id: DbId) -> Result<()> {
-    let gone = {
+    let stale = {
         let db_read = db.read().await;
-        lyra_db::covers::get_source(&*db_read, release_id, CoverSource::Local)?
-            .is_some_and(|cover| cover_file_gone(Path::new(&cover.path)))
+        if covers_locked(&db_read, release_id)? {
+            return Ok(());
+        }
+        StaleCover::read(&*db_read, release_id, CoverSource::Local)?
     };
-    if !gone {
+    let Some(stale) = stale else {
         return Ok(());
-    }
+    };
     let mut db_write = db.write().await;
-    if covers_locked(&db_write, release_id)?
-        || lyra_db::covers::get_source(&*db_write, release_id, CoverSource::Local)?
-            .is_none_or(|cover| !cover_file_gone(Path::new(&cover.path)))
-    {
+    // A release locked since the read keeps its covers.
+    if covers_locked(&db_write, release_id)? {
         return Ok(());
     }
-    db_write.transaction_mut(|t| lyra_db::covers::remove(t, release_id, CoverSource::Local))?;
+    super::stale::remove_stale(&mut db_write, &[stale])?;
     Ok(())
 }
 

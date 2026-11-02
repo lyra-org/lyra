@@ -732,13 +732,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn readers_show_the_pinned_record_without_looking_at_its_file() -> anyhow::Result<()> {
+    async fn a_pinned_cover_whose_file_is_gone_gives_way_once_served() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         init_default_test_state()?;
         let library = tempfile::tempdir()?;
         let admin = user("admin", true).await?;
         let (release_db_id, id, library_cover) = release_with_local_cover(library.path()).await?;
-        store_provider_cover(release_db_id).await?;
+        let provider = store_provider_cover(release_db_id).await?;
         select(
             &admin,
             CoverOwnerKind::Release,
@@ -750,26 +750,37 @@ mod tests {
 
         let found = candidates(&admin, CoverOwnerKind::Release, &id).await?;
         assert_eq!(found.selection, Some(CoverSource::Local));
-        assert_eq!(active(&found), Some(Some(CoverSource::Local)));
+        assert_eq!(
+            active(&found),
+            Some(Some(CoverSource::Local)),
+            "listings read the stored records"
+        );
         let local = found
             .candidates
             .iter()
             .find(|candidate| candidate.source == Some(CoverSource::Local))
-            .expect("the local record stays");
+            .expect("the local record stays until served");
         assert!(!local.available, "candidates report the missing file");
-        let db = STATE.db.read().await;
-        let found = super::super::lookup::resolve(
-            &db,
-            &CoverFilter::new(&Viewer::System),
-            &[release_db_id],
-        )?;
+
+        let mut db = STATE.db.write().await;
+        let filter = CoverFilter::new(&Viewer::System);
+        let mut served = super::super::lookup::resolve(&db, &filter, &[release_db_id])?;
+        let stale = super::super::stale::keep_present(&*db, &mut served)?;
+        assert!(served.is_empty(), "the image is not served");
+        super::super::stale::remove_stale(&mut db, &stale)?;
+        let found = super::super::lookup::resolve(&db, &filter, &[release_db_id])?;
         assert_eq!(
             found
                 .get(&release_db_id)
                 .map(|cover| cover.cover.path.clone()),
-            Some(library_cover.to_string_lossy().into_owned()),
-            "listings read the stored records"
+            Some(provider.path.clone()),
+            "the next source shows"
         );
+        drop(db);
+
+        let found = candidates(&admin, CoverOwnerKind::Release, &id).await?;
+        assert_eq!(found.selection, None, "the pin went with the record");
+        assert_eq!(active(&found), Some(Some(CoverSource::Provider)));
         Ok(())
     }
 

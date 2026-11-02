@@ -10,6 +10,7 @@ pub(crate) mod providers;
 mod resolve;
 pub(crate) mod selection;
 pub(crate) mod shown;
+pub(crate) mod stale;
 mod sync;
 
 use std::path::Path;

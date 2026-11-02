@@ -1,0 +1,23 @@
+run_as = "owner"
+
+# "Gone" has a stored cover whose file was deleted; its track has none of its own.
+
+[[users]]
+key = "owner"
+admin = true
+
+[[releases]]
+key = "gone"
+title = "Gone"
+cover = "deleted_cover.png"
+cover_gone = true
+
+[[releases]]
+key = "kept"
+title = "Kept"
+cover = "cover.png"
+
+[[tracks]]
+key = "tgone"
+title = "TGone"
+release = "gone"

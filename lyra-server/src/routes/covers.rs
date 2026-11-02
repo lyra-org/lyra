@@ -71,6 +71,7 @@ use crate::{
                 self,
                 CoverTarget,
             },
+            stale,
         },
     },
 };
@@ -305,6 +306,9 @@ async fn get_public_cover(
     };
     let path = PathBuf::from(&cover.path);
     if !path.is_file() {
+        if stale::confirmed_gone(&path) {
+            stale::remove_stale_cover(&mut *STATE.db.write().await, &cover.id)?;
+        }
         return Err(AppError::not_found(format!("Cover not found: {id}")));
     }
 
@@ -429,7 +433,7 @@ pub struct CoverCandidateResponse {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Whether the image file is there. A stored cover whose file is missing keeps its place, and a pin to it, but is passed over for the next cover until the file returns or is replaced."
+            description = "Whether the image file is there. A cover whose file is confirmed gone is still listed, and still `active` if it would show, until serving its image, or a sync of an unlocked owner, removes it together with any pin to it."
         )
     )]
     pub available: bool,
@@ -599,7 +603,7 @@ fn get_cover_candidates_docs<K: CoverOwnerRoute>(op: TransformOperation) -> Tran
     };
     op.summary(&format!("List {} cover candidates", K::NAME))
         .description(&format!(
-            "Returns the {name}'s stored covers, at most one per source, as `{{ candidates, selection }}`. Each candidate carries its `source`, whether it is `active` (the cover `inc=covers` returns), whether its image file is `available`, the `provider_id` of a provider cover, and its `cover` with the public image URL. The {name} shows its pinned `selection`, else its manual cover, else its provider cover, else its local cover, passing over any whose file is missing; such a cover keeps its record and pin and shows again once the file is back.{generated} 404 if the {name} is not found or not visible.",
+            "Returns the {name}'s stored covers, at most one per source, as `{{ candidates, selection }}`. Each candidate carries its `source`, whether it is `active` (the cover `inc=covers` returns), whether its image file is `available`, the `provider_id` of a provider cover, and its `cover` with the public image URL. The {name} shows its pinned `selection`, else its manual cover, else its provider cover, else its local cover. Listings read the stored covers without looking at their files; a cover whose file is confirmed gone is removed, with any pin to it, when its image is served or, unless the {name} is locked, when a sync finds it; the {name} then shows its next cover.{generated} 404 if the {name} is not found or not visible.",
             name = K::NAME
         ))
 }
@@ -736,6 +740,58 @@ mod tests {
             response.url,
             format!("/api/covers/cover-1?v={}", "a".repeat(64))
         );
+    }
+
+    #[tokio::test]
+    async fn serving_removes_a_cover_only_once_its_file_is_confirmed_gone() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let dir = tempfile::tempdir()?;
+        let (gone, unmounted) = {
+            let mut db = STATE.db.write().await;
+            let mut stored = Vec::new();
+            for (title, path) in [
+                ("Gone", dir.path().join("gone.png")),
+                ("Unmounted", dir.path().join("unmounted/cover.png")),
+            ] {
+                let release = lyra_db::fixtures::insert_release(&mut db, title)?;
+                let cover = db.transaction_mut(|t| {
+                    lyra_db::covers::upsert(
+                        t,
+                        release,
+                        CoverSource::Local,
+                        lyra_db::Cover {
+                            db_id: None,
+                            id: nanoid::nanoid!(),
+                            path: path.to_string_lossy().into_owned(),
+                            mime_type: "image/png".to_string(),
+                            hash: title.to_string(),
+                            blurhash: None,
+                            provider_id: None,
+                        },
+                    )
+                })?;
+                stored.push((release, cover.cover.id));
+            }
+            (stored[0].clone(), stored[1].clone())
+        };
+
+        for (_, cover_id) in [&gone, &unmounted] {
+            let served = get_public_cover(
+                HeaderMap::new(),
+                Path(cover_id.clone()),
+                Query(CoverQuery::default()),
+            )
+            .await;
+            assert!(served.is_err(), "nothing is served without its file");
+        }
+        let db = STATE.db.read().await;
+        assert!(lyra_db::covers::get(&*db, gone.0)?.is_none());
+        assert!(
+            lyra_db::covers::get(&*db, unmounted.0)?.is_some(),
+            "an unmounted directory is no evidence"
+        );
+        Ok(())
     }
 
     async fn admin_headers() -> anyhow::Result<HeaderMap> {

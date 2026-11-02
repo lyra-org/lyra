@@ -110,25 +110,6 @@ fn find_cover_in_directory(dir: &Path) -> Result<Option<PathBuf>> {
     Ok(candidates.into_iter().next().map(|(_, path)| path))
 }
 
-/// Whether the cover file at `path` is positively gone: its directory lists without error and
-/// the file itself is not there. A directory that is missing or fails to list, as on a library
-/// that is unavailable, is no evidence.
-pub(crate) fn cover_file_gone(path: &Path) -> bool {
-    let Some(dir) = path.parent() else {
-        return false;
-    };
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return false;
-    };
-    if entries.into_iter().any(|entry| entry.is_err()) {
-        return false;
-    }
-    matches!(
-        std::fs::symlink_metadata(path),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound
-    )
-}
-
 pub(crate) fn cover_dirs_for_release(
     db: &DbAny,
     tracks: &[Track],
