@@ -442,9 +442,22 @@ pub(super) async fn resolve_public_id(public_id: &str) -> Option<ConnectionSnaps
 }
 
 pub(crate) async fn unregister(connection_id: ConnectionId) -> Option<ConnectionHandle> {
-    let handle = REGISTRY.write().await.remove(connection_id)?;
+    unregister_with(connection_id, |_| ())
+        .await
+        .map(|(handle, ())| handle)
+}
+
+/// [`unregister`], running `before_removal` on the connection while it is still registered.
+pub(crate) async fn unregister_with<T>(
+    connection_id: ConnectionId,
+    before_removal: impl FnOnce(&ConnectionHandle) -> T,
+) -> Option<(ConnectionHandle, T)> {
+    let mut registry = REGISTRY.write().await;
+    let observed = before_removal(registry.connections.get(&connection_id)?);
+    let handle = registry.remove(connection_id)?;
+    drop(registry);
     playback_sessions::notify_connection_change(&handle.user_public_id);
-    Some(handle)
+    Some((handle, observed))
 }
 
 fn request_close(close: &CloseSender, reason: CloseReason) {

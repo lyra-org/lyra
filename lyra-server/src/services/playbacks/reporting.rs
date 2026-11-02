@@ -148,13 +148,15 @@ pub(super) fn pause_left_sessions(
     Ok(paused)
 }
 
-/// Pauses the playback a closed connection of Lyra's own clients drove, and unbinds it. Plugin
-/// sessions sharing the session key are left alone. Does nothing once the user is gone; deleting
-/// a user clears its bindings.
+/// Pauses the playback a closed connection of Lyra's own clients drove, and unbinds it, unless a
+/// report rebound its session key since it closed with the binding epoch `binding_epoch_at_close`.
+/// Plugin sessions sharing the session key are left alone. Does nothing once the user is gone;
+/// deleting a user clears its bindings.
 pub(crate) fn pause_disconnected_connection(
     db: &mut DbAny,
     user_public_id: &str,
     session_key: &str,
+    binding_epoch_at_close: Option<u64>,
     now_ms: u64,
 ) -> Result<(Vec<PlaybackRecord>, Vec<EvictedPlaybackRecord>), PlaybackError> {
     let Some(user_db_id) = lyra_db::users::find_db_id_by_public_id(db, user_public_id)? else {
@@ -162,7 +164,9 @@ pub(crate) fn pause_disconnected_connection(
     };
     let key = ConnectionKey::new(user_public_id, session_key);
     let mut paused = Vec::new();
-    if let Some(binding) = bindings::get(&key) {
+    if let Some(binding) = bindings::get(&key)
+        .filter(|binding| Some(binding.current_binding_epoch) == binding_epoch_at_close)
+    {
         let bound = |id: Option<DbId>, public_id: Option<&str>| -> anyhow::Result<_> {
             let Some(id) = id else {
                 return Ok(None);
@@ -254,6 +258,11 @@ mod tests {
         .session)
     }
 
+    fn binding_epoch(user_public_id: &str, session_key: &str) -> Option<u64> {
+        bindings::get(&ConnectionKey::new(user_public_id, session_key))
+            .map(|binding| binding.current_binding_epoch)
+    }
+
     #[test]
     fn a_closed_connection_pauses_only_its_own_playback() -> anyhow::Result<()> {
         let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
@@ -281,9 +290,10 @@ mod tests {
             anyhow::bail!("the plugin's report is applied");
         };
         let native = drive(&mut db, user_db_id, "device:1", 20_000, 2_000)?;
+        let epoch = binding_epoch(&user_public_id, "device:1");
 
         let (paused, evicted) =
-            pause_disconnected_connection(&mut db, &user_public_id, "device:1", 4_000)?;
+            pause_disconnected_connection(&mut db, &user_public_id, "device:1", epoch, 4_000)?;
 
         assert!(evicted.is_empty());
         assert_eq!(paused.len(), 1);
@@ -315,9 +325,10 @@ mod tests {
         let user_db_id = lyra_db::users::create(&mut db, &user)?;
         let first = drive(&mut db, user_db_id, "device:1", 10_000, 1_000)?;
         let second = drive(&mut db, user_db_id, "device:1", 20_000, 2_000)?;
+        let epoch = binding_epoch(&user_public_id, "device:1");
 
         let (paused, _) =
-            pause_disconnected_connection(&mut db, &user_public_id, "device:1", 5_000)?;
+            pause_disconnected_connection(&mut db, &user_public_id, "device:1", epoch, 5_000)?;
 
         let paused_at = |session: &PlaybackRecord| {
             paused

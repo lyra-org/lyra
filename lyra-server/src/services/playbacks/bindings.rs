@@ -11,6 +11,10 @@ use std::{
     sync::{
         Arc,
         RwLock,
+        atomic::{
+            AtomicU64,
+            Ordering,
+        },
     },
 };
 
@@ -33,6 +37,7 @@ pub(crate) struct ConnectionBinding {
     /// Cleared when the current player reports an observation or its binding changes.
     /// The connection is degraded if a dispatched command exceeds the timeout.
     pub(crate) command_dispatched_at_ms: Option<u64>,
+    /// Unique to each bind, across all bindings.
     pub(crate) current_binding_epoch: u64,
 }
 
@@ -72,6 +77,8 @@ struct OwnedConnectionKey {
 }
 
 type BindingMap = HashMap<OwnedConnectionKey, ConnectionBinding>;
+
+static NEXT_BINDING_EPOCH: AtomicU64 = AtomicU64::new(1);
 
 /// Generation-owned connection bindings.
 #[derive(Default)]
@@ -176,7 +183,7 @@ pub(crate) fn bind_current(
 
     entry.updated_at_ms = now_ms;
     entry.command_dispatched_at_ms = None;
-    entry.current_binding_epoch = entry.current_binding_epoch.wrapping_add(1);
+    entry.current_binding_epoch = NEXT_BINDING_EPOCH.fetch_add(1, Ordering::Relaxed);
 
     if entry.current_playback_session_id != Some(playback_session_id) {
         entry.previous_playback_session_id = entry.current_playback_session_id;

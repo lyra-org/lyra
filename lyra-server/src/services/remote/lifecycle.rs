@@ -20,6 +20,10 @@ use crate::services::playback_sessions::{
     self as playbacks,
     unsubscribe_playback_events,
 };
+use crate::services::playbacks::bindings::{
+    self,
+    ConnectionKey,
+};
 
 pub(crate) enum AuthStatus {
     /// Carries the re-resolved library access set so a long-lived connection
@@ -47,7 +51,39 @@ pub(crate) async fn check_auth(
     }
 }
 
-async fn pause_playback_of_disconnected_connection(handle: &registry::ConnectionHandle) {
+/// A connection taken out of the registry, with the epoch its session key's binding had just
+/// before. A report binding the key after that changes the epoch, so the close leaves it alone.
+struct ClosedConnection {
+    handle: registry::ConnectionHandle,
+    binding_epoch: Option<u64>,
+}
+
+async fn close(connection_id: ConnectionId) -> Option<ClosedConnection> {
+    close_then(connection_id, async {}).await
+}
+
+/// [`close`], running `after_removal` once the connection has left the registry.
+async fn close_then(
+    connection_id: ConnectionId,
+    after_removal: impl Future<Output = ()>,
+) -> Option<ClosedConnection> {
+    let (handle, binding_epoch) = registry::unregister_with(connection_id, |handle| {
+        bindings::get(&ConnectionKey::new(
+            &handle.user_public_id,
+            &handle.session_key,
+        ))
+        .map(|binding| binding.current_binding_epoch)
+    })
+    .await?;
+    after_removal.await;
+    Some(ClosedConnection {
+        handle,
+        binding_epoch,
+    })
+}
+
+async fn pause_playback_of_disconnected_connection(closed: &ClosedConnection) {
+    let handle = &closed.handle;
     let now_ms = match playbacks::now_ms() {
         Ok(now_ms) => now_ms,
         Err(err) => {
@@ -68,6 +104,7 @@ async fn pause_playback_of_disconnected_connection(handle: &registry::Connection
             &mut db,
             &handle.user_public_id,
             &handle.session_key,
+            closed.binding_epoch,
             now_ms,
         )
     };
@@ -108,15 +145,14 @@ pub(crate) async fn confirm_registration(
 /// Releases what a closed connection held and pauses the playback it was driving.
 pub(crate) async fn disconnect(connection_id: ConnectionId, user_public_id: &str) {
     unsubscribe_playback_events(user_public_id);
-    let handle = registry::unregister(connection_id).await;
-    if let Some(handle) = &handle {
+    if let Some(closed) = close(connection_id).await {
         tracing::info!(
             connection_id,
-            user_public_id = %handle.user_public_id,
-            session_key = %handle.session_key,
+            user_public_id = %closed.handle.user_public_id,
+            session_key = %closed.handle.session_key,
             "websocket disconnected"
         );
-        pause_playback_of_disconnected_connection(handle).await;
+        pause_playback_of_disconnected_connection(&closed).await;
     }
 }
 
@@ -228,10 +264,10 @@ mod tests {
             .session
         };
 
-        let handle = registry::unregister(alice_connection.connection_id)
+        let closed = close(alice_connection.connection_id)
             .await
             .expect("alice's connection is registered");
-        pause_playback_of_disconnected_connection(&handle).await;
+        pause_playback_of_disconnected_connection(&closed).await;
 
         let db = STATE.db.read().await;
         let persisted =
@@ -241,6 +277,84 @@ mod tests {
             persisted.state,
             PlaybackState::Playing,
             "a deleted user's disconnect must not pause the DbId's next owner"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_report_once_the_close_began_keeps_its_playback_playing() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_library_test_state(std::path::PathBuf::from(".")).await?;
+        for connection in registry::list_connections().await {
+            registry::unregister(connection.connection_id).await;
+        }
+
+        let alice = lyra_db::fixtures::test_user("alice")?;
+        let alice_public_id = alice.id.clone();
+        let alice_db_id = {
+            let mut db = STATE.db.write().await;
+            lyra_db::users::create(&mut db, &alice)?
+        };
+        let connection = registry::register(
+            alice_public_id.clone(),
+            None,
+            "device".to_string(),
+            watch::channel(None).0,
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let play = |db: &mut agdb::DbAny, now_ms: u64| -> anyhow::Result<_> {
+            let track_db_id = lyra_db::fixtures::insert_track(db, "Track")?;
+            let track_id = lyra_db::lookup::find_id_by_db_id(&*db, track_db_id)?.expect("track id");
+            Ok(crate::services::playbacks::create_playback(
+                db,
+                crate::services::playbacks::CreatePlaybackRequest {
+                    id: nanoid::nanoid!(),
+                    play_id: nanoid::nanoid!(),
+                    user_db_id: alice_db_id,
+                    client_name: None,
+                    queue: crate::services::playbacks::ValidatedQueue {
+                        snapshot: crate::services::playbacks::QueueSnapshot::single(track_id),
+                        current_track_db_id: track_db_id,
+                    },
+                    mutation: playbacks::PlaybackMutation {
+                        position_ms: Some(0),
+                        duration_ms: Some(200_000),
+                        state: Some(PlaybackState::Playing),
+                    },
+                    now_ms,
+                    reporting_connection: Some(crate::services::playbacks::ReportingConnection {
+                        user_public_id: alice_public_id.clone(),
+                        session_key: "device".to_string(),
+                    }),
+                },
+            )?
+            .session)
+        };
+        let now_ms = playbacks::now_ms()?;
+        play(&mut *STATE.db.write().await, now_ms)?;
+
+        let mut after_close = None;
+        let closed = close_then(connection.connection_id, async {
+            after_close = Some(play(&mut *STATE.db.write().await, now_ms + 1));
+        })
+        .await
+        .expect("the connection is registered");
+        let after_close = after_close.expect("the report ran")?;
+        pause_playback_of_disconnected_connection(&closed).await;
+
+        let db = STATE.db.read().await;
+        let state = |session: &playbacks::PlaybackRecord| -> anyhow::Result<_> {
+            Ok(
+                lyra_db::playback_sessions::get_by_id(&*db, session.playback_session_id)?
+                    .expect("the session persists")
+                    .state,
+            )
+        };
+        assert_eq!(
+            state(&after_close)?,
+            PlaybackState::Playing,
+            "a report accepted after the close is not paused by it"
         );
         Ok(())
     }
