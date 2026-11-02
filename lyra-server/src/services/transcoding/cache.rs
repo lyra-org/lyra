@@ -72,6 +72,7 @@ use super::capacity::{
     Saturated,
     TranscodePermit,
 };
+use crate::services::auth::caller::Caller;
 
 const ENCODE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// How long an encode nobody is reading keeps running, so a client that drops and reconnects
@@ -326,21 +327,30 @@ impl TranscodeCache {
     }
 
     /// The finished or running transcode for `key`, starting `spec`'s encode into `dir` when
-    /// there is neither. Starting needs a permit from `admit`; when it refuses, the refusal is
-    /// the error and nothing starts.
+    /// there is neither. Starting needs a permit from `admit`. When it refuses a caller at its own
+    /// limit, that caller's encodes nobody reads or waits on are stopped to make room, one at a
+    /// time; any other refusal is the error and nothing starts.
     pub(crate) fn get_or_start(
         self: &Arc<Self>,
         key: CacheKey,
         dir: &Path,
         spec: EncodeSpec,
-        admit: impl FnOnce() -> Result<TranscodePermit, Saturated>,
+        admit: impl Fn() -> Result<TranscodePermit, Saturated>,
     ) -> anyhow::Result<Lookup> {
         let (job, write_file, reader) = {
             let mut entries = self.entries();
             if let Some(found) = self.open(&mut entries, &key)? {
                 return Ok(found);
             }
-            let permit = admit()?;
+            let permit = loop {
+                match admit() {
+                    Ok(permit) => break permit,
+                    Err(Saturated {
+                        at_own_limit: Some(caller),
+                    }) if stop_unread_encode(&entries, &caller) => {}
+                    Err(refused) => return Err(refused.into()),
+                }
+            };
             std::fs::create_dir_all(dir)?;
             self.refuse_unless_startable(dir, &spec.input_path)?;
             let part_id = self.next_part_id.fetch_add(1, Ordering::Relaxed);
@@ -649,6 +659,38 @@ impl TranscodeCache {
             remove_file(&path);
         }
     }
+}
+
+/// Stops one of `caller`'s running encodes that nobody reads or waits on, the one with the least
+/// written, giving up its permit. Readers attach only under the entries lock, so none can reach it
+/// meanwhile.
+fn stop_unread_encode(entries: &HashMap<CacheKey, Entry>, caller: &Caller) -> bool {
+    let unread = entries
+        .iter()
+        .filter_map(|(key, entry)| match entry {
+            Entry::Encoding(job) if !job.abort.load(Ordering::Acquire) => Some((key, job)),
+            Entry::Encoding(_) | Entry::Ready(_) => None,
+        })
+        .filter(|(_, job)| {
+            job.readers
+                .lock()
+                .expect("transcode readers poisoned")
+                .count
+                == 0
+                && job
+                    .permit
+                    .lock()
+                    .expect("transcode permit poisoned")
+                    .as_ref()
+                    .is_some_and(|permit| permit.is_charged_to(caller))
+        })
+        .min_by_key(|(key, job)| (written(job), &key.0));
+    let Some((_, job)) = unread else {
+        return false;
+    };
+    tracing::debug!("stopping an unread transcode to make room for its caller's next one");
+    job.stop();
+    true
 }
 
 /// Sweeps `cache` periodically for as long as it lives.
@@ -1012,12 +1054,9 @@ impl EncodingTranscode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::{
-        auth::caller::Caller,
-        transcoding::capacity::{
-            Limits,
-            TranscodeCapacity,
-        },
+    use crate::services::transcoding::capacity::{
+        Limits,
+        TranscodeCapacity,
     };
     use lyra_ffmpeg::{
         AudioCodec,
@@ -1109,6 +1148,16 @@ mod tests {
         dir: &Path,
         key: &str,
         spec: EncodeSpec,
+    ) -> EncodingTranscode {
+        start_with(cache, dir, key, spec, admit)
+    }
+
+    fn start_with(
+        cache: &Arc<TranscodeCache>,
+        dir: &Path,
+        key: &str,
+        spec: EncodeSpec,
+        admit: impl Fn() -> Result<TranscodePermit, Saturated>,
     ) -> EncodingTranscode {
         match cache
             .get_or_start(CacheKey::of(&key), dir, spec, admit)
@@ -1648,6 +1697,176 @@ mod tests {
         job.stop();
 
         drop(capacity.try_acquire(one, &Caller::User("listener".to_string()))?);
+        Ok(())
+    }
+
+    /// A running encode of `key` charged to `caller`, with `written` bytes so far, whose waiting
+    /// request has gone.
+    fn left_behind(
+        cache: &Arc<TranscodeCache>,
+        dir: &Path,
+        key: &str,
+        permit: TranscodePermit,
+        written: u64,
+    ) -> anyhow::Result<Arc<Job>> {
+        let job = test_job(dir, &format!("{key}.part"))?;
+        *job.permit.lock().expect("permit") = Some(permit);
+        job.progress.send_replace(Progress::Encoding { written });
+        cache
+            .entries()
+            .insert(CacheKey::of(&key), Entry::Encoding(Arc::clone(&job)));
+        let waiting = EncodingTranscode::attach(cache, &job)?;
+        waiting.keep_running();
+        drop(waiting);
+        Ok(job)
+    }
+
+    fn user(name: &str) -> Caller {
+        Caller::User(name.to_string())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_caller_out_of_slots_stops_its_own_unread_encode_with_the_least_written()
+    -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let cache = Arc::new(TranscodeCache::with_budget(LARGE, ABANDONED_ENCODE_GRACE));
+        let capacity = Arc::new(TranscodeCapacity::default());
+        let limits = Limits {
+            global: 0,
+            per_user: 3,
+        };
+        let acquire = || capacity.try_acquire(limits, &user("amy"));
+        let further = left_behind(&cache, dir.path(), "further", acquire()?, 200)?;
+        let least = left_behind(&cache, dir.path(), "least", acquire()?, 10)?;
+        let middle = left_behind(&cache, dir.path(), "middle", acquire()?, 100)?;
+
+        let next = cache.get_or_start(
+            CacheKey::of(&"next"),
+            dir.path(),
+            mp3_spec(fixture(), 128),
+            acquire,
+        )?;
+
+        assert!(least.abort.load(Ordering::Acquire));
+        assert!(least.permit.lock().expect("permit").is_none());
+        for kept in [&further, &middle] {
+            assert!(!kept.abort.load(Ordering::Acquire));
+            assert!(kept.permit.lock().expect("permit").is_some());
+        }
+        let Lookup::Encoding(next) = next else {
+            panic!("a new key starts an encode");
+        };
+        next.finished().await?;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn encodes_still_read_or_charged_to_others_are_never_stopped_for_room()
+    -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let cache = Arc::new(TranscodeCache::with_budget(LARGE, ABANDONED_ENCODE_GRACE));
+        let capacity = Arc::new(TranscodeCapacity::default());
+        let limits = Limits {
+            global: 0,
+            per_user: 1,
+        };
+        let read = left_behind(
+            &cache,
+            dir.path(),
+            "read",
+            capacity.try_acquire(limits, &user("amy"))?,
+            0,
+        )?;
+        let reader = EncodingTranscode::attach(&cache, &read)?;
+        let others = left_behind(
+            &cache,
+            dir.path(),
+            "others",
+            capacity.try_acquire(limits, &user("bob"))?,
+            0,
+        )?;
+
+        let refused = cache.get_or_start(
+            CacheKey::of(&"next"),
+            dir.path(),
+            mp3_spec(fixture(), 128),
+            || capacity.try_acquire(limits, &user("amy")),
+        );
+
+        assert!(refused.is_err_and(|err| err.is::<Saturated>()));
+        assert!(!read.abort.load(Ordering::Acquire));
+        assert!(!others.abort.load(Ordering::Acquire));
+        drop(reader);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_global_limit_stops_no_unread_encode() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let cache = Arc::new(TranscodeCache::with_budget(LARGE, ABANDONED_ENCODE_GRACE));
+        let capacity = Arc::new(TranscodeCapacity::default());
+        let limits = Limits {
+            global: 1,
+            per_user: 0,
+        };
+        let unread = left_behind(
+            &cache,
+            dir.path(),
+            "unread",
+            capacity.try_acquire(limits, &user("amy"))?,
+            0,
+        )?;
+
+        let refused = cache.get_or_start(
+            CacheKey::of(&"next"),
+            dir.path(),
+            mp3_spec(fixture(), 128),
+            || capacity.try_acquire(limits, &user("amy")),
+        );
+
+        assert!(refused.is_err_and(|err| err.is::<Saturated>()));
+        assert!(!unread.abort.load(Ordering::Acquire));
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_stopped_unread_encode_is_cleaned_up_like_an_abandoned_one() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let cache = Arc::new(TranscodeCache::with_budget(LARGE, ABANDONED_ENCODE_GRACE));
+        let capacity = Arc::new(TranscodeCapacity::default());
+        let limits = Limits {
+            global: 0,
+            per_user: 1,
+        };
+        let acquire = || capacity.try_acquire(limits, &user("amy"));
+        let input = long_wav(dir.path(), 60)?;
+        let waiting = start_with(&cache, dir.path(), "waited", flac_spec(input), acquire);
+        waiting.keep_running();
+        let waited = Arc::clone(&waiting.reader.job);
+        drop(waiting);
+
+        let next = start_with(
+            &cache,
+            dir.path(),
+            "next",
+            mp3_spec(fixture(), 128),
+            acquire,
+        );
+
+        assert!(
+            waited.abort.load(Ordering::Acquire),
+            "a minute of audio is still encoding, so it is stopped for the next one"
+        );
+        next.finished().await?;
+        let mut progress = waited.progress.subscribe();
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            progress.wait_for(|progress| matches!(progress, Progress::Failed(_))),
+        )
+        .await??;
+        assert!(cache.find_ready(&CacheKey::of(&"waited"))?.is_none());
+        assert!(!waited.part_path.exists());
+        assert_eq!(cache.encoding_bytes.load(Ordering::Acquire), 0);
         Ok(())
     }
 }

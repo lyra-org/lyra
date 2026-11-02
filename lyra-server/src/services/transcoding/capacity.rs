@@ -82,6 +82,14 @@ pub(crate) struct TranscodePermit {
     accounts: Vec<Account>,
 }
 
+impl TranscodePermit {
+    pub(crate) fn is_charged_to(&self, caller: &Caller) -> bool {
+        self.accounts
+            .iter()
+            .any(|account| matches!(account, Account::Caller(charged) if charged == caller))
+    }
+}
+
 impl Drop for TranscodePermit {
     fn drop(&mut self) {
         {
@@ -101,9 +109,13 @@ impl Drop for TranscodePermit {
 }
 
 /// No permit was free: the server, the caller, or anonymous callers together are at their limit.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Default, thiserror::Error)]
 #[error("too many transcodes are running; retry shortly")]
-pub(crate) struct Saturated;
+pub(crate) struct Saturated {
+    /// The caller, when it is a user and its own limit refused it. Anonymous callers can share an
+    /// address, so their encodes are never anyone's own.
+    pub(crate) at_own_limit: Option<Caller>,
+}
 
 static CAPACITY: LazyLock<Arc<TranscodeCapacity>> =
     LazyLock::new(|| Arc::new(TranscodeCapacity::default()));
@@ -142,14 +154,17 @@ impl TranscodeCapacity {
     ) -> Result<TranscodePermit, Saturated> {
         let accounts = caller.accounts().collect::<Vec<_>>();
         let mut active = self.lock();
-        if !below(limits.global, active.total) {
-            return Err(Saturated);
-        }
         for account in &accounts {
             let count = active.by_account.get(account).copied().unwrap_or(0);
             if !limits.allow(account, count) {
-                return Err(Saturated);
+                return Err(Saturated {
+                    at_own_limit: matches!(account, Account::Caller(Caller::User(_)))
+                        .then(|| caller.clone()),
+                });
             }
+        }
+        if !below(limits.global, active.total) {
+            return Err(Saturated::default());
         }
         for account in &accounts {
             *active.by_account.entry(account.clone()).or_default() += 1;
@@ -171,7 +186,7 @@ pub(crate) fn notify_changed() {
 pub(crate) async fn acquire_shared() -> Result<TranscodePermit, Saturated> {
     tokio::time::timeout(SHARED_WAIT, CAPACITY.acquire(Limits::current))
         .await
-        .map_err(|_| Saturated)
+        .map_err(|_| Saturated::default())
 }
 
 /// A permit for a progressive encode charged to `caller`, without waiting.
@@ -250,10 +265,16 @@ mod tests {
 
         let first = capacity.try_acquire(limits, &user("amy")).expect("free");
         let second = capacity.try_acquire(limits, &user("amy")).expect("free");
-        assert!(capacity.try_acquire(limits, &user("amy")).is_err());
+        assert!(
+            capacity
+                .try_acquire(limits, &user("amy"))
+                .is_err_and(|refused| refused.at_own_limit == Some(user("amy")))
+        );
         let other = capacity.try_acquire(limits, &user("bob")).expect("free");
         assert!(
-            capacity.try_acquire(limits, &unknown()).is_err(),
+            capacity
+                .try_acquire(limits, &unknown())
+                .is_err_and(|refused| refused.at_own_limit.is_none()),
             "the global limit binds anonymous encodes"
         );
 
@@ -275,7 +296,9 @@ mod tests {
             capacity.try_acquire(limits, &unknown()).expect("free"),
         ];
         assert!(
-            capacity.try_acquire(limits, &unknown()).is_err(),
+            capacity
+                .try_acquire(limits, &unknown())
+                .is_err_and(|refused| refused.at_own_limit.is_none()),
             "anonymous encodes are limited like one user's"
         );
         let user = capacity
@@ -317,7 +340,7 @@ mod tests {
         assert!(
             capacity
                 .try_acquire(limits, &client("203.0.113.2"))
-                .is_err(),
+                .is_err_and(|refused| refused.at_own_limit.is_none()),
             "anonymous clients never take more than half of the pool"
         );
         let user = capacity
