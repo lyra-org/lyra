@@ -6,6 +6,8 @@
 //! Playback a plugin reports for a player session it tracks, keyed by the user, the plugin and the
 //! plugin's session key. The playback keeps the player's current track session and, for a grace
 //! period after a track change, the one it replaced, so late reports of that track still land.
+//! Only a start begins a new play of the track playing: any other report after its play stopped
+//! resumes that play, so it counts at most one listen.
 
 use agdb::{
     DbAny,
@@ -40,6 +42,7 @@ use crate::services::playback_sessions::{
     PlaybackServiceError,
     ReportPlaybackRequest,
     StartPlaybackRequest,
+    TransactionPlaybackUpdate,
 };
 
 #[derive(Clone, Debug)]
@@ -69,7 +72,15 @@ pub(crate) fn report_reported_playback(
     let now_ms = request.now_ms;
     let (plugin_id, user_db_id, session_key) =
         (request.plugin_id, request.user_db_id, request.session_key);
-    Ok(match db.transaction_mut(|t| transition(t, request))? {
+    let (left, transition) = db.transaction_mut(|t| {
+        let mut left = expire_lapsed(t, user_db_id, now_ms)?;
+        let transition = transition(t, request, &mut left)?;
+        Ok::<_, PlaybackError>((left, transition))
+    })?;
+    for update in &left {
+        update.announce_recorded_listen();
+    }
+    Ok(match transition {
         Some(transition) => {
             let counted = holds::advance(plugin_id, session_key, || {
                 Ok(lyra_db::users::get_by_id(db, user_db_id)?.map(|user| user.id))
@@ -151,9 +162,9 @@ pub(crate) async fn pause_after_socket_close(releases: Vec<holds::Release>) {
 }
 
 /// Pauses the playback the plugin reports for the user's player session, as a closed connection
-/// of Lyra's own clients pauses its playback: the playing current session at `now_ms`, and the
-/// session it replaced at the time it was replaced. Returns the sessions it paused; the playback
-/// stays, so the player can resume it.
+/// of Lyra's own clients pauses its playback: the playing current session at `now_ms`. The session
+/// it replaced was paused when it was replaced. Returns the sessions it paused; the playback stays,
+/// so the player can resume it.
 fn disconnect_reported_session(
     db: &mut DbAny,
     plugin_id: &str,
@@ -161,27 +172,21 @@ fn disconnect_reported_session(
     session_key: &str,
     now_ms: u64,
 ) -> Result<Vec<PlaybackRecord>, PlaybackError> {
-    let mut left = Vec::new();
-    if let Some(root_db_id) =
+    let Some(root_db_id) =
         lyra_db::playbacks::get_reported(db, user_db_id, plugin_id, session_key, now_ms)?
             .and_then(|root| root.db_id)
-    {
-        let current_id = lyra_db::playbacks::get_current_session_id(db, root_db_id)?;
-        if let Some((session, _)) = current_id
-            .map(|id| reporting::stored_session(db, id))
-            .transpose()?
-            .flatten()
-        {
-            left.push((session, now_ms));
-        }
-        if let Some(previous) = lyra_db::playbacks::get_previous_session(db, root_db_id)?
-            && Some(previous.session_db_id) != current_id
-            && let Some((session, _)) = reporting::stored_session(db, previous.session_db_id)?
-        {
-            left.push((session, previous.demoted_at_ms));
-        }
-    }
-    reporting::pause_left_sessions(db, user_db_id, left)
+    else {
+        return Ok(Vec::new());
+    };
+    let current = lyra_db::playbacks::get_current_session_id(db, root_db_id)?
+        .map(|id| reporting::stored_session(db, id))
+        .transpose()?
+        .flatten();
+    reporting::pause_left_sessions(
+        db,
+        user_db_id,
+        current.map(|(session, _)| (session, now_ms)),
+    )
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -215,9 +220,127 @@ fn demote(current: Option<DbId>, now_ms: u64) -> Option<PreviousSession> {
     })
 }
 
+/// Credits a play its player left playing without a stop report for the time from its last report
+/// to `left_at_ms`, at most what is left of the track, as a report of reaching that position would,
+/// and leaves it in `then` if given. A play of unknown duration gets no credit. Returns the update
+/// when it changed anything; only its listen is announced.
+fn leave_play(
+    db: &mut impl lyra_db::DbAccess,
+    user_db_id: DbId,
+    session: PlaybackSession,
+    left_at_ms: u64,
+    then: Option<PlaybackState>,
+) -> Result<Option<TransactionPlaybackUpdate>, PlaybackError> {
+    if session.state != PlaybackState::Playing {
+        return Ok(None);
+    }
+    // At most the elapsed time, so no latency allowance is added on top.
+    let credit_ms = session.duration_ms.map_or(0, |duration_ms| {
+        left_at_ms
+            .saturating_sub(session.last_position_at_ms)
+            .min(duration_ms.saturating_sub(session.last_position_ms))
+    });
+    let position_ms = (credit_ms > 0).then(|| session.last_position_ms + credit_ms);
+    if position_ms.is_none() && then.is_none() {
+        return Ok(None);
+    }
+    let now_ms = left_at_ms.max(session.updated_at_ms);
+    Ok(Some(playback_sessions::report_playback_in_transaction(
+        db,
+        ReportPlaybackRequest {
+            user_db_id,
+            mutation: PlaybackMutation {
+                position_ms,
+                duration_ms: None,
+                state: then,
+            },
+            now_ms,
+            active_event: ActiveEvent::Progress,
+        },
+        session,
+    )?))
+}
+
+/// Credits the track session a new play replaced for what it played since its last report, and
+/// pauses it there, as a track switch of Lyra's own clients pauses the play it replaces.
+fn leave_replaced(
+    db: &mut impl lyra_db::DbAccess,
+    user_db_id: DbId,
+    replaced: Option<Held>,
+    now_ms: u64,
+    left: &mut Vec<TransactionPlaybackUpdate>,
+) -> Result<(), PlaybackError> {
+    if let Some(replaced) = replaced {
+        left.extend(leave_play(
+            db,
+            user_db_id,
+            replaced.session,
+            now_ms,
+            Some(PlaybackState::Paused),
+        )?);
+    }
+    Ok(())
+}
+
+/// Opens a report's transaction: the user's lapsed reported playbacks go first, so they hold no
+/// capacity against the limits. A current play each left playing is credited up to when it
+/// lapsed; returns those updates, to announce after commit.
+pub(super) fn expire_lapsed(
+    db: &mut impl lyra_db::DbAccess,
+    user_db_id: DbId,
+    now_ms: u64,
+) -> Result<Vec<TransactionPlaybackUpdate>, PlaybackError> {
+    let expired = lyra_db::playbacks::expire_reported_for_user(db, user_db_id, now_ms)?;
+    credit_lapsed(db, expired)
+}
+
+fn credit_lapsed(
+    db: &mut impl lyra_db::DbAccess,
+    expired: Vec<lyra_db::playbacks::ExpiredReported>,
+) -> Result<Vec<TransactionPlaybackUpdate>, PlaybackError> {
+    let mut credited = Vec::new();
+    for expired in expired {
+        let Some((session, _)) = expired
+            .current_session_db_id
+            .map(|id| reporting::stored_session(db, id))
+            .transpose()?
+            .flatten()
+        else {
+            continue;
+        };
+        let lapsed_at_ms = expired
+            .updated_at_ms
+            .saturating_add(lyra_db::playbacks::REPORTED_PLAYBACK_TTL_MS);
+        credited.extend(leave_play(
+            db,
+            expired.user_db_id,
+            session,
+            lapsed_at_ms,
+            None,
+        )?);
+    }
+    Ok(credited)
+}
+
+/// Expires every user's lapsed reported playbacks, crediting what each left playing as
+/// [`expire_lapsed`] does, and announces the listens that recorded.
+pub(crate) fn expire_all_lapsed(db: &mut DbAny, now_ms: u64) -> Result<(), PlaybackError> {
+    let credited = db.transaction_mut(|t| {
+        let expired = lyra_db::playbacks::expire_reported(t, now_ms)?;
+        credit_lapsed(t, expired)
+    })?;
+    for update in &credited {
+        update.announce_recorded_listen();
+    }
+    Ok(())
+}
+
+/// Applies the report. Plays it replaced are credited and paused into `left`, for their listens
+/// to be announced after commit.
 fn transition(
     db: &mut impl lyra_db::DbAccess,
     request: ReportedPlaybackRequest<'_>,
+    left: &mut Vec<TransactionPlaybackUpdate>,
 ) -> Result<Option<Transition>, PlaybackError> {
     let ReportedPlaybackRequest {
         plugin_id,
@@ -231,7 +354,6 @@ fn transition(
         active_event,
     } = request;
 
-    reporting::expire_lapsed(db, user_db_id, now_ms)?;
     if lyra_db::users::get_by_id(db, user_db_id)?.is_none() {
         return Err(
             PlaybackServiceError::NotFound(format!("user not found: {}", user_db_id.0)).into(),
@@ -305,8 +427,9 @@ fn transition(
             if active_event == ActiveEvent::Started && mutation.state.is_none() {
                 state = PlaybackState::Playing;
             }
-            // A named play resumes its own session; without a name, it reopens as a new play.
-            if play_id.is_none() {
+            // Only a start without a play id begins a new play; any other report, or a named
+            // start, resumes the stopped play.
+            if active_event == ActiveEvent::Started && play_id.is_none() {
                 target = None;
             }
         } else if active_event == ActiveEvent::Started
@@ -316,6 +439,13 @@ fn transition(
             // Without a play id, a start after the play counted begins a new play.
             target = None;
         }
+    }
+    // A replaced play was paused at its replacement; its start plays it again.
+    if target == Some(Target::Previous)
+        && active_event == ActiveEvent::Started
+        && mutation.state.is_none()
+    {
+        state = PlaybackState::Playing;
     }
 
     let report = |db: &mut _, held: Held| {
@@ -352,6 +482,7 @@ fn transition(
             if promoted {
                 previous = demote(current_held.as_ref().and(current), now_ms);
                 current = Some(held.playback_session_id);
+                leave_replaced(db, user_db_id, current_held.take(), now_ms, left)?;
             }
             let updated = report(db, held)?;
             if promoted {
@@ -389,6 +520,7 @@ fn transition(
                 };
                 if current_held.is_some() {
                     previous = demote(current, now_ms);
+                    leave_replaced(db, user_db_id, current_held.take(), now_ms, left)?;
                 }
                 current = Some(started.playback.playback_session_id);
                 current_observed = true;

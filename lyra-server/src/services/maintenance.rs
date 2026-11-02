@@ -71,9 +71,7 @@ async fn sweep_stale_playback_sessions(db: &DbAsync, now_ms: u64) {
     let evicted = {
         // Removes playbacks and playback sessions only.
         let mut db_write = db.write_outside_catalog().await;
-        if let Err(err) =
-            db_write.transaction_mut(|t| lyra_db::playbacks::expire_reported(t, now_ms))
-        {
+        if let Err(err) = crate::services::playbacks::expire_all_lapsed(&mut db_write, now_ms) {
             tracing::warn!(error = %err, "reported playback sweep failed");
         }
         match crate::services::playbacks::cleanup_evicted_playbacks(&mut db_write, now_ms) {

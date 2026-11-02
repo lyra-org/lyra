@@ -39,17 +39,6 @@ pub(super) struct Transition {
     pub(super) displaced_session: Option<DetachedSession>,
 }
 
-/// Opens a report's transaction: the user's lapsed reported playbacks go first, so they hold no
-/// capacity against the limits.
-pub(super) fn expire_lapsed(
-    db: &mut impl lyra_db::DbAccess,
-    user_db_id: DbId,
-    now_ms: u64,
-) -> Result<(), PlaybackError> {
-    lyra_db::playbacks::expire_reported_for_user(db, user_db_id, now_ms)?;
-    Ok(())
-}
-
 /// Finishes a committed report: announces the listens it recorded, binds the reporting
 /// connection, unbinds the sessions it ended or displaced, and evicts stale sessions.
 pub(super) fn finish(

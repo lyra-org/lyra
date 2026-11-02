@@ -23,6 +23,7 @@ use super::{
     count_for_user_up_to_limit,
     delete_in_transaction,
     get_by_id,
+    get_current_session_id,
     get_owner_id,
     insert,
 };
@@ -111,6 +112,8 @@ pub fn get_reported(
     )
 }
 
+/// Binds a new reported playback. The caller expires the user's lapsed ones first, with
+/// [`expire_reported_for_user`], so they hold no capacity.
 pub fn insert_reported(
     db: &mut impl DbAccess,
     user_db_id: DbId,
@@ -119,7 +122,6 @@ pub fn insert_reported(
     current_session_db_id: DbId,
     now_ms: u64,
 ) -> anyhow::Result<Playback> {
-    expire_reported_for_user(db, user_db_id, now_ms)?;
     anyhow::ensure!(
         get_reported(db, user_db_id, plugin_id, session_key, now_ms)?.is_none(),
         "reported playback binding already exists"
@@ -165,11 +167,20 @@ pub fn insert_reported(
     Ok(playback)
 }
 
+/// A reported playback expiry removed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExpiredReported {
+    pub user_db_id: DbId,
+    /// The track session it held current, which outlives it until eviction.
+    pub current_session_db_id: Option<DbId>,
+    pub updated_at_ms: u64,
+}
+
 pub fn expire_reported_for_user(
     db: &mut impl DbAccess,
     user_db_id: DbId,
     now_ms: u64,
-) -> anyhow::Result<usize> {
+) -> anyhow::Result<Vec<ExpiredReported>> {
     let cutoff = now_ms.saturating_sub(REPORTED_PLAYBACK_TTL_MS);
     let expired = db
         .exec(
@@ -189,13 +200,13 @@ pub fn expire_reported_for_user(
                 .query(),
         )?
         .ids();
-    for id in &expired {
-        delete_in_transaction(db, *id)?;
-    }
-    Ok(expired.len())
+    remove_expired(db, expired)
 }
 
-pub fn expire_reported(db: &mut impl DbAccess, now_ms: u64) -> anyhow::Result<usize> {
+pub fn expire_reported(
+    db: &mut impl DbAccess,
+    now_ms: u64,
+) -> anyhow::Result<Vec<ExpiredReported>> {
     let cutoff = now_ms.saturating_sub(REPORTED_PLAYBACK_TTL_MS);
     let expired = db
         .exec(
@@ -214,8 +225,25 @@ pub fn expire_reported(db: &mut impl DbAccess, now_ms: u64) -> anyhow::Result<us
                 .query(),
         )?
         .ids();
-    for id in &expired {
-        delete_in_transaction(db, *id)?;
+    remove_expired(db, expired)
+}
+
+fn remove_expired(
+    db: &mut impl DbAccess,
+    playback_db_ids: Vec<DbId>,
+) -> anyhow::Result<Vec<ExpiredReported>> {
+    let mut expired = Vec::with_capacity(playback_db_ids.len());
+    for id in playback_db_ids {
+        let playback =
+            get_by_id(db, id)?.ok_or_else(|| anyhow::anyhow!("missing playback {}", id.0))?;
+        let user_db_id = get_owner_id(db, id)?
+            .ok_or_else(|| anyhow::anyhow!("playback {} has no owner", id.0))?;
+        expired.push(ExpiredReported {
+            user_db_id,
+            current_session_db_id: get_current_session_id(db, id)?,
+            updated_at_ms: playback.updated_at_ms,
+        });
+        delete_in_transaction(db, id)?;
     }
-    Ok(expired.len())
+    Ok(expired)
 }

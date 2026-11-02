@@ -36,6 +36,7 @@ pub(crate) use active::list_active;
 pub(crate) use reported::{
     ReportOutcome,
     ReportedPlaybackRequest,
+    expire_all_lapsed,
     pause_after_socket_close,
     report_reported_playback,
 };
@@ -246,7 +247,6 @@ pub(crate) fn create_playback(
     };
 
     let transition = db.transaction_mut(|t| {
-        reporting::expire_lapsed(t, user_db_id, now_ms)?;
         if lyra_db::playbacks::count_for_user_up_to_limit(t, user_db_id)?
             >= lyra_db::playbacks::MAX_PLAYBACKS_PER_USER
         {

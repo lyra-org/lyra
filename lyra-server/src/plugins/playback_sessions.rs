@@ -182,7 +182,7 @@ impl PlaybackSessionsModule {
     }
 
     #[harmony(
-        description = "Reports an observation for a plugin's player context. Returns (public /api/me/playbacks ID, nil) when accepted, (nil, nil) when ignored, or (nil, rejection reason) when admission is refused. Internal failures raise an error. Track changes retain the context ID; stopped contexts expire after five minutes without an accepted current observation.",
+        description = "Reports an observation for a plugin's player context. Returns (public /api/me/playbacks ID, nil) when accepted, (nil, nil) when ignored, or (nil, rejection reason) when admission is refused. Internal failures raise an error. Track changes retain the context ID; stopped contexts expire after five minutes without an accepted current observation. A position past the duration reads as the end. Without a `play_id`, only a `started` observation begins a new play of the track playing; any other observation after its play stopped resumes that play, so it counts at most one listen. A play left playing when another play replaces it, or when its context expires, is credited for the time since its last report, at most what was left of its track; only the listen this records is announced. A replaced play pauses there, so a late report credits it nothing more, and its start resumes it.",
         returns(Option<String>, Option<String>)
     )]
     async fn report_session(
@@ -261,7 +261,7 @@ impl PlaybackSessionsModule {
     }
 
     #[harmony(
-        description = "Holds the player session `session_key` the plugin reports playback for, as `report_session` names it, for the dispatch principal while the websocket `sender` stays open. When the websocket closes and no other open websocket holds the session, what the plugin reported for it pauses, as a closed connection of Lyra's own clients pauses its playback: a playing track session pauses at its last reported position, and the one it replaced at the time it was replaced. A report accepted for the session after the websocket closed keeps what it reported, and the playback stays for the player to resume. Does nothing once the websocket is closed.",
+        description = "Holds the player session `session_key` the plugin reports playback for, as `report_session` names it, for the dispatch principal while the websocket `sender` stays open. When the websocket closes and no other open websocket holds the session, what the plugin reported for it pauses, as a closed connection of Lyra's own clients pauses its playback: a playing track session pauses at its last reported position; the one it replaced paused when it was replaced. A report accepted for the session after the websocket closed keeps what it reported, and the playback stays for the player to resume. Does nothing once the websocket is closed.",
         args(sender: WebSocketSenderType, session_key: String)
     )]
     fn hold_session(

@@ -23,6 +23,7 @@ use super::DbAccess;
 
 mod reported;
 pub use reported::{
+    ExpiredReported,
     REPORTED_PLAYBACK_TTL_MS,
     ReportedPlaybackLimitReached,
     ReportedSource,
@@ -1149,7 +1150,11 @@ mod tests {
         assert!(get_reported(&db, user_id, "external", "device", expired_at)?.is_none());
         assert_eq!(
             db.transaction_mut(|t| expire_reported_for_user(t, user_id, expired_at))?,
-            1
+            vec![ExpiredReported {
+                user_db_id: user_id,
+                current_session_db_id: Some(session_id),
+                updated_at_ms: 1,
+            }]
         );
         assert!(get_by_id(&db, reported.db_id.unwrap())?.is_none());
         assert!(get_by_id(&db, native_id)?.is_some());
@@ -1170,7 +1175,14 @@ mod tests {
             let expired = insert_reported(t, user_id, "reporter", "expired", session_id, 1)?;
             Ok((expired, live))
         })?;
-        assert_eq!(db.transaction_mut(|t| expire_reported(t, now_ms))?, 1);
+        assert_eq!(
+            db.transaction_mut(|t| expire_reported(t, now_ms))?,
+            vec![ExpiredReported {
+                user_db_id: user_id,
+                current_session_db_id: Some(session_id),
+                updated_at_ms: 1,
+            }]
+        );
         assert!(get_by_id(&db, expired.db_id.unwrap())?.is_none());
         assert!(get_by_id(&db, live.db_id.unwrap())?.is_some());
         assert!(crate::playback_sessions::get_by_id(&db, session_id)?.is_some());
@@ -1219,14 +1231,9 @@ mod tests {
         );
         assert!(get_reported(&db, user_id, "reporter", "0", 1)?.is_some());
         let replacement = db.transaction_mut(|t| {
-            insert_reported(
-                t,
-                user_id,
-                "reporter",
-                "new",
-                session_id,
-                REPORTED_PLAYBACK_TTL_MS + 2,
-            )
+            let now_ms = REPORTED_PLAYBACK_TTL_MS + 2;
+            expire_reported_for_user(t, user_id, now_ms)?;
+            insert_reported(t, user_id, "reporter", "new", session_id, now_ms)
         })?;
         assert!(replacement.queue().is_none());
         assert_eq!(count_for_user_up_to_limit(&db, user_id)?, 2);

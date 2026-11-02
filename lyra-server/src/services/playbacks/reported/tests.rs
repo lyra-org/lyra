@@ -310,9 +310,9 @@ async fn reported_playback_survives_switch_stop_and_runtime_restart() -> anyhow:
         6_000,
     )?
     .unwrap();
-    assert_ne!(
-        restarted.playback_session_public_id,
-        b.playback_session_public_id
+    assert_eq!(
+        restarted.playback_session_public_id, b.playback_session_public_id,
+        "a report after the stop resumes the play; only a start begins a new one"
     );
     assert_eq!(
         lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", 6_000)?
@@ -401,10 +401,11 @@ async fn terminal_current_resumes_without_promoting_previous_progress() -> anyho
             now,
         )?
         .unwrap();
-        assert_ne!(
-            resumed.playback_session_public_id,
-            prior.playback_session_public_id
+        assert_eq!(
+            resumed.playback_session_public_id, prior.playback_session_public_id,
+            "a report after the stop resumes the same play"
         );
+        assert_eq!(resumed.playback.play_id, prior.playback.play_id);
         assert_eq!(resumed.playback.state, state);
         assert_eq!(
             lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", now)?
@@ -771,7 +772,10 @@ async fn report_playback_session_ignores_displaced_previous_progress() -> anyhow
 
     let persisted = lyra_db::playback_sessions::get_by_id(&db, started_a.playback_session_id)?
         .expect("playback should exist");
-    assert_eq!(persisted.position_ms, 0);
+    assert_eq!(
+        persisted.position_ms, 1_000,
+        "the replacement credited the second A played; the displaced progress is ignored"
+    );
     Ok(())
 }
 
@@ -826,7 +830,11 @@ async fn report_playback_session_ignores_expired_previous_terminal_update() -> a
 
     let persisted = lyra_db::playback_sessions::get_by_id(&db, started_a.playback_session_id)?
         .expect("playback should exist");
-    assert_eq!(persisted.state, PlaybackState::Playing);
+    assert_eq!(
+        persisted.state,
+        PlaybackState::Paused,
+        "paused at its replacement, and the expired stop doesn't end it"
+    );
     Ok(())
 }
 
@@ -1291,7 +1299,10 @@ async fn a_new_play_id_starts_a_new_session_for_the_same_track() -> anyhow::Resu
     assert_eq!(counts.get(&track).copied(), Some(2));
     let first_listen = listen_for_play(&db, user, "first-play-000001")?;
     assert_eq!(first_listen.started_at_ms, T0);
-    assert_eq!(first_listen.played_ms, 40_000);
+    assert_eq!(
+        first_listen.played_ms, 50_000,
+        "the second play's start credits the first the 10 s since its last report"
+    );
     let second_listen = listen_for_play(&db, user, "second-play-00001")?;
     assert_eq!(second_listen.started_at_ms, T0 + 50_000);
     assert_eq!(second_listen.played_ms, 35_000);
@@ -1652,8 +1663,8 @@ fn close_socket(
 }
 
 #[tokio::test]
-async fn a_close_pauses_the_current_session_and_the_previous_at_its_demotion() -> anyhow::Result<()>
-{
+async fn a_close_pauses_the_current_session_after_a_replacement_paused_the_previous()
+-> anyhow::Result<()> {
     let (mut db, _guard) = new_scoped_test_db().await?;
     let user = insert_user(&mut db, "alice")?;
     let a = insert_track(&mut db, "A", 200_000)?;
@@ -1665,26 +1676,24 @@ async fn a_close_pauses_the_current_session_and_the_previous_at_its_demotion() -
     let (paused, evicted) = close_socket(&mut db, socket, 5_000)?;
 
     assert!(evicted.is_empty());
-    let paused_at = |session: &PlaybackRecord| {
-        paused
-            .iter()
-            .find(|paused| paused.playback_session_id == session.playback_session_id)
-            .map(|paused| {
-                (
-                    paused.playback.state,
-                    paused.playback.position_ms,
-                    paused.playback.played_ms,
-                    paused.playback.updated_at_ms,
-                )
-            })
+    let state = |session: &lyra_db::PlaybackSession| {
+        (
+            session.state,
+            session.position_ms,
+            session.played_ms,
+            session.updated_at_ms,
+        )
     };
     assert_eq!(
-        paused_at(&started_a),
-        Some((PlaybackState::Paused, 10_000, 0, 2_000))
+        state(&stored(&db, &started_a)?),
+        (PlaybackState::Paused, 11_000, 1_000, 2_000),
+        "B's start credited A the second it played since its report, and paused it"
     );
+    assert_eq!(paused.len(), 1, "only the current session was left playing");
+    assert_eq!(paused[0].playback_session_id, started_b.playback_session_id);
     assert_eq!(
-        paused_at(&started_b),
-        Some((PlaybackState::Paused, 20_000, 0, 5_000))
+        state(&paused[0].playback),
+        (PlaybackState::Paused, 20_000, 0, 5_000)
     );
     let root = lyra_db::playbacks::get_reported(&db, user, "demo", "device:1", 5_000)?
         .expect("the playback stays for the player to resume");
@@ -1832,6 +1841,696 @@ async fn a_close_leaves_a_session_another_socket_holds_playing() -> anyhow::Resu
             .map(|paused| paused.playback_session_id)
             .collect::<Vec<_>>(),
         [started.playback_session_id]
+    );
+    Ok(())
+}
+
+fn report_at(
+    db: &mut DbAny,
+    user_db_id: DbId,
+    track_db_id: DbId,
+    active_event: ActiveEvent,
+    state: PlaybackState,
+    position_ms: u64,
+    now_ms: u64,
+) -> anyhow::Result<Option<PlaybackRecord>> {
+    report_test_playback_session(
+        db,
+        user_db_id,
+        track_db_id,
+        active_event,
+        PlaybackMutation {
+            position_ms: Some(position_ms),
+            duration_ms: lyra_db::tracks::get_by_id(db, track_db_id)?.and_then(|t| t.duration_ms),
+            state: Some(state),
+        },
+        now_ms,
+    )
+}
+
+fn stored(db: &DbAny, record: &PlaybackRecord) -> anyhow::Result<lyra_db::PlaybackSession> {
+    lyra_db::playback_sessions::get_by_id(db, record.playback_session_id)?
+        .ok_or_else(|| anyhow::anyhow!("the session is kept"))
+}
+
+fn listen_count(db: &DbAny, user_db_id: DbId, track_db_id: DbId) -> anyhow::Result<u64> {
+    Ok(
+        lyra_db::listens::get_counts(db, &[track_db_id], user_db_id)?
+            .get(&track_db_id)
+            .copied()
+            .unwrap_or(0),
+    )
+}
+
+#[tokio::test]
+async fn a_reported_position_past_the_duration_reads_as_the_end() -> anyhow::Result<()> {
+    let (mut db, _guard) = new_scoped_test_db().await?;
+    let user = insert_user(&mut db, "alice")?;
+    let track = insert_track(&mut db, "A", 200_000)?;
+    report_at(
+        &mut db,
+        user,
+        track,
+        ActiveEvent::Started,
+        PlaybackState::Playing,
+        0,
+        T0,
+    )?;
+    report_at(
+        &mut db,
+        user,
+        track,
+        ActiveEvent::Progress,
+        PlaybackState::Playing,
+        150_000,
+        T0 + 150_000,
+    )?;
+
+    let ended = report_at(
+        &mut db,
+        user,
+        track,
+        ActiveEvent::Progress,
+        PlaybackState::Completed,
+        200_040,
+        T0 + 200_040,
+    )?
+    .expect("the overshooting stop applies");
+
+    assert_eq!(ended.playback.state, PlaybackState::Completed);
+    assert_eq!(ended.playback.position_ms, 200_000);
+    assert_eq!(ended.playback.played_ms, 200_000);
+
+    let other = insert_track(&mut db, "B", 200_000)?;
+    let started = report_at(
+        &mut db,
+        user,
+        other,
+        ActiveEvent::Started,
+        PlaybackState::Playing,
+        200_500,
+        T0 + 300_000,
+    )?
+    .expect("an overshooting start applies");
+    assert_eq!(started.playback.position_ms, 200_000);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_replaced_play_is_credited_since_its_last_report_and_counts() -> anyhow::Result<()> {
+    let (mut db, _guard) = new_scoped_test_db().await?;
+    let dispatch = crate::services::testing::record_plugin_dispatch();
+    let user = insert_user(&mut db, "alice")?;
+    let short = insert_track(&mut db, "Short", 60_000)?;
+    let next = insert_track(&mut db, "Next", 200_000)?;
+    let a = report_at(
+        &mut db,
+        user,
+        short,
+        ActiveEvent::Started,
+        PlaybackState::Playing,
+        0,
+        T0,
+    )?
+    .expect("A starts");
+
+    let Some(ReportOutcome::Applied(update)) = Some(report_reported_playback(
+        &mut db,
+        ReportedPlaybackRequest {
+            plugin_id: "external",
+            user_db_id: user,
+            session_key: "auth:1",
+            track_db_id: next,
+            play_id: None,
+            client_name: None,
+            mutation: PlaybackMutation {
+                position_ms: Some(0),
+                duration_ms: Some(200_000),
+                state: Some(PlaybackState::Playing),
+            },
+            now_ms: T0 + 20_000,
+            active_event: ActiveEvent::Started,
+        },
+    )?) else {
+        anyhow::bail!("B's start applies");
+    };
+
+    assert!(
+        update.displaced_session.is_none(),
+        "only the credited play's listen is announced, not its session"
+    );
+    let a_now = stored(&db, &a)?;
+    assert_eq!(a_now.played_ms, 20_000);
+    assert_eq!(a_now.position_ms, 20_000);
+    assert_eq!(
+        a_now.state,
+        PlaybackState::Paused,
+        "paused at its replacement"
+    );
+    let listen = listen_for_play(&db, user, &a.playback.play_id)?;
+    assert_eq!(listen.played_ms, 20_000);
+    assert_eq!(
+        dispatch.listen_updates().len(),
+        1,
+        "the listen is announced"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_replaced_play_is_credited_at_most_to_its_tracks_end() -> anyhow::Result<()> {
+    let (mut db, _guard) = new_scoped_test_db().await?;
+    let user = insert_user(&mut db, "alice")?;
+    let short = insert_track(&mut db, "Short", 60_000)?;
+    let next = insert_track(&mut db, "Next", 200_000)?;
+    let a = report_at(
+        &mut db,
+        user,
+        short,
+        ActiveEvent::Started,
+        PlaybackState::Playing,
+        0,
+        T0,
+    )?
+    .expect("A starts");
+    report_at(
+        &mut db,
+        user,
+        short,
+        ActiveEvent::Progress,
+        PlaybackState::Playing,
+        50_000,
+        T0 + 50_000,
+    )?;
+    report_at(
+        &mut db,
+        user,
+        next,
+        ActiveEvent::Started,
+        PlaybackState::Playing,
+        0,
+        T0 + 100_000,
+    )?;
+
+    let a_now = stored(&db, &a)?;
+    assert_eq!(a_now.played_ms, 60_000);
+    assert_eq!(a_now.position_ms, 60_000);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_replaced_play_not_playing_is_not_credited() -> anyhow::Result<()> {
+    let (mut db, _guard) = new_scoped_test_db().await?;
+    let user = insert_user(&mut db, "alice")?;
+    let a_track = insert_track(&mut db, "A", 200_000)?;
+    let b_track = insert_track(&mut db, "B", 200_000)?;
+    let a = report_at(
+        &mut db,
+        user,
+        a_track,
+        ActiveEvent::Started,
+        PlaybackState::Playing,
+        0,
+        T0,
+    )?
+    .expect("A starts");
+    report_at(
+        &mut db,
+        user,
+        a_track,
+        ActiveEvent::Progress,
+        PlaybackState::Paused,
+        10_000,
+        T0 + 10_000,
+    )?;
+    report_at(
+        &mut db,
+        user,
+        b_track,
+        ActiveEvent::Started,
+        PlaybackState::Playing,
+        0,
+        T0 + 60_000,
+    )?;
+
+    assert_eq!(stored(&db, &a)?.played_ms, 10_000);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_late_stop_of_a_credited_replaced_play_adds_no_time_twice() -> anyhow::Result<()> {
+    let (mut db, _guard) = new_scoped_test_db().await?;
+    let user = insert_user(&mut db, "alice")?;
+    let a_track = insert_track(&mut db, "A", 200_000)?;
+    let b_track = insert_track(&mut db, "B", 200_000)?;
+    let a = report_at(
+        &mut db,
+        user,
+        a_track,
+        ActiveEvent::Started,
+        PlaybackState::Playing,
+        0,
+        T0,
+    )?
+    .expect("A starts");
+    report_at(
+        &mut db,
+        user,
+        a_track,
+        ActiveEvent::Progress,
+        PlaybackState::Playing,
+        60_000,
+        T0 + 60_000,
+    )?;
+    report_at(
+        &mut db,
+        user,
+        b_track,
+        ActiveEvent::Started,
+        PlaybackState::Playing,
+        0,
+        T0 + 100_000,
+    )?;
+    assert_eq!(stored(&db, &a)?.played_ms, 100_000);
+
+    let stopped = report_at(
+        &mut db,
+        user,
+        a_track,
+        ActiveEvent::Progress,
+        PlaybackState::Stopped,
+        100_000,
+        T0 + 101_000,
+    )?
+    .expect("the late stop lands on the replaced play");
+
+    assert_eq!(stopped.playback_session_id, a.playback_session_id);
+    assert_eq!(stopped.playback.state, PlaybackState::Stopped);
+    assert_eq!(stopped.playback.played_ms, 100_000);
+    assert_eq!(
+        listen_for_play(&db, user, &a.playback.play_id)?.played_ms,
+        100_000
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_lapsed_play_is_credited_up_to_its_tracks_end_and_counts() -> anyhow::Result<()> {
+    let (mut db, _guard) = new_scoped_test_db().await?;
+    let dispatch = crate::services::testing::record_plugin_dispatch();
+    let user = insert_user(&mut db, "alice")?;
+    let short = insert_track(&mut db, "Short", 60_000)?;
+    let a = report_at(
+        &mut db,
+        user,
+        short,
+        ActiveEvent::Started,
+        PlaybackState::Playing,
+        0,
+        T0,
+    )?
+    .expect("A starts");
+    report_at(
+        &mut db,
+        user,
+        short,
+        ActiveEvent::Progress,
+        PlaybackState::Playing,
+        10_000,
+        T0 + 10_000,
+    )?;
+    assert_eq!(listen_count(&db, user, short)?, 0);
+
+    let later = T0 + 10_000 + lyra_db::playbacks::REPORTED_PLAYBACK_TTL_MS + 1;
+    let other = insert_track(&mut db, "Other", 200_000)?;
+    report_at(
+        &mut db,
+        user,
+        other,
+        ActiveEvent::Started,
+        PlaybackState::Playing,
+        0,
+        later,
+    )?;
+
+    let a_now = stored(&db, &a)?;
+    assert_eq!(a_now.played_ms, 60_000);
+    assert_eq!(a_now.position_ms, 60_000);
+    assert!(
+        a_now.updated_at_ms < later,
+        "the credit is dated to the lapse, not the sweep"
+    );
+    assert_eq!(listen_count(&db, user, short)?, 1);
+    assert_eq!(
+        dispatch.listen_updates().len(),
+        1,
+        "the listen is announced"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_sweep_credits_a_lapsed_play_once() -> anyhow::Result<()> {
+    let (mut db, _guard) = new_scoped_test_db().await?;
+    let user = insert_user(&mut db, "alice")?;
+    let short = insert_track(&mut db, "Short", 60_000)?;
+    let a = report_at(
+        &mut db,
+        user,
+        short,
+        ActiveEvent::Started,
+        PlaybackState::Playing,
+        0,
+        T0,
+    )?
+    .expect("A starts");
+
+    let lapsed = T0 + lyra_db::playbacks::REPORTED_PLAYBACK_TTL_MS + 1;
+    crate::services::playbacks::expire_all_lapsed(&mut db, lapsed)?;
+    assert_eq!(stored(&db, &a)?.played_ms, 60_000);
+    assert_eq!(listen_count(&db, user, short)?, 1);
+
+    crate::services::playbacks::expire_all_lapsed(&mut db, lapsed + 1_000)?;
+    assert_eq!(stored(&db, &a)?.played_ms, 60_000);
+    Ok(())
+}
+
+fn report_named(
+    db: &mut DbAny,
+    user_db_id: DbId,
+    track_db_id: DbId,
+    play_id: &str,
+    position_ms: Option<u64>,
+    now_ms: u64,
+) -> anyhow::Result<Option<PlaybackRecord>> {
+    report_playback_session(
+        db,
+        ReportedPlaybackRequest {
+            plugin_id: "external",
+            user_db_id,
+            session_key: "auth:1",
+            track_db_id,
+            play_id: Some(play_id),
+            client_name: None,
+            mutation: PlaybackMutation {
+                position_ms,
+                duration_ms: Some(200_000),
+                state: Some(PlaybackState::Playing),
+            },
+            now_ms,
+            active_event: ActiveEvent::Started,
+        },
+    )
+}
+
+#[tokio::test]
+async fn a_promoted_play_accrues_nothing_while_it_was_replaced() -> anyhow::Result<()> {
+    let (mut db, _guard) = new_scoped_test_db().await?;
+    let user = insert_user(&mut db, "alice")?;
+    let a_track = insert_track(&mut db, "A", 200_000)?;
+    let b_track = insert_track(&mut db, "B", 200_000)?;
+    let c_track = insert_track(&mut db, "C", 200_000)?;
+    let a =
+        report_named(&mut db, user, a_track, "promoted-play-a-01", Some(0), T0)?.expect("A starts");
+    report_named(
+        &mut db,
+        user,
+        b_track,
+        "promoted-play-b-01",
+        Some(0),
+        T0 + 10_000,
+    )?;
+    assert_eq!(stored(&db, &a)?.played_ms, 10_000);
+
+    let promoted = report_named(
+        &mut db,
+        user,
+        a_track,
+        "promoted-play-a-01",
+        None,
+        T0 + 30_000,
+    )?
+    .expect("A's start brings it back");
+    assert_eq!(promoted.playback_session_id, a.playback_session_id);
+    assert_eq!(promoted.playback.played_ms, 10_000);
+
+    report_named(
+        &mut db,
+        user,
+        c_track,
+        "promoted-play-c-01",
+        Some(0),
+        T0 + 40_000,
+    )?;
+    assert_eq!(
+        stored(&db, &a)?.played_ms,
+        20_000,
+        "A played 0-10 s and 30-40 s, not the 20 s B played"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_promoted_play_with_a_position_accrues_nothing_while_it_was_replaced()
+-> anyhow::Result<()> {
+    let (mut db, _guard) = new_scoped_test_db().await?;
+    let user = insert_user(&mut db, "alice")?;
+    let a_track = insert_track(&mut db, "A", 200_000)?;
+    let b_track = insert_track(&mut db, "B", 200_000)?;
+    let a =
+        report_named(&mut db, user, a_track, "promoted-play-a-02", Some(0), T0)?.expect("A starts");
+    report_named(
+        &mut db,
+        user,
+        b_track,
+        "promoted-play-b-02",
+        Some(0),
+        T0 + 10_000,
+    )?;
+
+    let promoted = report_named(
+        &mut db,
+        user,
+        a_track,
+        "promoted-play-a-02",
+        Some(40_000),
+        T0 + 30_000,
+    )?
+    .expect("A's start brings it back");
+
+    assert_eq!(promoted.playback_session_id, a.playback_session_id);
+    assert_eq!(promoted.playback.played_ms, 10_000);
+    assert_eq!(promoted.playback.position_ms, 40_000);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_late_stop_past_the_credited_position_adds_nothing_after_the_replacement()
+-> anyhow::Result<()> {
+    let (mut db, _guard) = new_scoped_test_db().await?;
+    let user = insert_user(&mut db, "alice")?;
+    let a_track = insert_track(&mut db, "A", 200_000)?;
+    let b_track = insert_track(&mut db, "B", 200_000)?;
+    let a = report_at(
+        &mut db,
+        user,
+        a_track,
+        ActiveEvent::Started,
+        PlaybackState::Playing,
+        0,
+        T0,
+    )?
+    .expect("A starts");
+    report_at(
+        &mut db,
+        user,
+        b_track,
+        ActiveEvent::Started,
+        PlaybackState::Playing,
+        0,
+        T0 + 100_000,
+    )?;
+
+    let stopped = report_at(
+        &mut db,
+        user,
+        a_track,
+        ActiveEvent::Progress,
+        PlaybackState::Stopped,
+        103_000,
+        T0 + 101_000,
+    )?
+    .expect("the late stop lands on the replaced play");
+
+    assert_eq!(stopped.playback_session_id, a.playback_session_id);
+    assert_eq!(stopped.playback.position_ms, 103_000);
+    assert_eq!(
+        stopped.playback.played_ms, 100_000,
+        "B was playing after the replacement"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_replaced_play_of_unknown_duration_gets_nothing_from_a_late_stop() -> anyhow::Result<()> {
+    let (mut db, _guard) = new_scoped_test_db().await?;
+    let user = insert_user(&mut db, "alice")?;
+    let a_track = insert_track(&mut db, "A", 200_000)?;
+    let b_track = insert_track(&mut db, "B", 200_000)?;
+    let unknown_duration = |position_ms, state| PlaybackMutation {
+        position_ms: Some(position_ms),
+        duration_ms: None,
+        state: Some(state),
+    };
+    let a = report_test_playback_session(
+        &mut db,
+        user,
+        a_track,
+        ActiveEvent::Started,
+        unknown_duration(0, PlaybackState::Playing),
+        T0,
+    )?
+    .expect("A starts");
+    report_at(
+        &mut db,
+        user,
+        b_track,
+        ActiveEvent::Started,
+        PlaybackState::Playing,
+        0,
+        T0 + 60_000,
+    )?;
+    assert_eq!(stored(&db, &a)?.played_ms, 0);
+
+    let stopped = report_test_playback_session(
+        &mut db,
+        user,
+        a_track,
+        ActiveEvent::Progress,
+        unknown_duration(70_000, PlaybackState::Stopped),
+        T0 + 61_000,
+    )?
+    .expect("the late stop lands on the replaced play");
+
+    assert_eq!(stopped.playback_session_id, a.playback_session_id);
+    assert_eq!(stopped.playback.state, PlaybackState::Stopped);
+    assert_eq!(
+        stopped.playback.played_ms, 0,
+        "paused at its replacement, it accrues nothing after"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_start_without_a_state_resumes_the_paused_replaced_play() -> anyhow::Result<()> {
+    let (mut db, _guard) = new_scoped_test_db().await?;
+    let user = insert_user(&mut db, "alice")?;
+    let a_track = insert_track(&mut db, "A", 200_000)?;
+    let b_track = insert_track(&mut db, "B", 200_000)?;
+    let a =
+        report_named(&mut db, user, a_track, "resumed-play-a-001", Some(0), T0)?.expect("A starts");
+    report_named(
+        &mut db,
+        user,
+        b_track,
+        "resumed-play-b-001",
+        Some(0),
+        T0 + 10_000,
+    )?;
+
+    let resumed = report_playback_session(
+        &mut db,
+        ReportedPlaybackRequest {
+            plugin_id: "external",
+            user_db_id: user,
+            session_key: "auth:1",
+            track_db_id: a_track,
+            play_id: Some("resumed-play-a-001"),
+            client_name: None,
+            mutation: PlaybackMutation::default(),
+            now_ms: T0 + 20_000,
+            active_event: ActiveEvent::Started,
+        },
+    )?
+    .expect("A's start brings it back");
+
+    assert_eq!(resumed.playback_session_id, a.playback_session_id);
+    assert_eq!(resumed.playback.state, PlaybackState::Playing);
+    assert_eq!(resumed.playback.played_ms, 10_000);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_report_after_an_early_stop_resumes_the_play_and_counts_once() -> anyhow::Result<()> {
+    let (mut db, _guard) = new_scoped_test_db().await?;
+    let user = insert_user(&mut db, "alice")?;
+    let track = insert_track(&mut db, "A", 200_000)?;
+    let next = insert_track(&mut db, "B", 200_000)?;
+    let a = report_at(
+        &mut db,
+        user,
+        track,
+        ActiveEvent::Started,
+        PlaybackState::Playing,
+        0,
+        T0,
+    )?
+    .expect("A starts");
+    report_at(
+        &mut db,
+        user,
+        track,
+        ActiveEvent::Progress,
+        PlaybackState::Completed,
+        200_000,
+        T0 + 130_000,
+    )?
+    .expect("the early stop ends the play");
+    assert_eq!(listen_count(&db, user, track)?, 1);
+
+    let paused = report_at(
+        &mut db,
+        user,
+        track,
+        ActiveEvent::Progress,
+        PlaybackState::Paused,
+        132_000,
+        T0 + 130_200,
+    )?
+    .expect("a pause after the stop applies");
+    assert_eq!(paused.playback_session_id, a.playback_session_id);
+    assert_eq!(paused.playback.play_id, a.playback.play_id);
+    report_at(
+        &mut db,
+        user,
+        track,
+        ActiveEvent::Progress,
+        PlaybackState::Playing,
+        132_000,
+        T0 + 130_300,
+    )?;
+    report_at(
+        &mut db,
+        user,
+        next,
+        ActiveEvent::Started,
+        PlaybackState::Playing,
+        0,
+        T0 + 150_000,
+    )?;
+
+    assert_eq!(
+        listen_count(&db, user, track)?,
+        1,
+        "the resumed play counts once"
+    );
+    let resumed = stored(&db, &a)?;
+    assert_eq!(resumed.state, PlaybackState::Paused);
+    assert_eq!(resumed.played_ms, 135_000 + 19_700);
+    assert_eq!(
+        listen_for_play(&db, user, &a.playback.play_id)?.played_ms,
+        135_000 + 19_700,
+        "the listen keeps the play's longest playing time"
     );
     Ok(())
 }
