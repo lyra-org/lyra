@@ -186,21 +186,13 @@ pub fn sources(db: &impl DbAccess, owner_db_id: DbId) -> anyhow::Result<Vec<Sour
         .unwrap_or_default())
 }
 
-/// The cover to show from an owner's `sources`, skipping those `available` rejects: the pinned
-/// source's, else the first in precedence order.
-pub fn shown(
-    sources: &[SourcedCover],
-    mut available: impl FnMut(&Cover) -> bool,
-) -> Option<&SourcedCover> {
-    if let Some(pinned) = sources.iter().find(|sourced| sourced.selected)
-        && available(&pinned.cover)
-    {
-        return Some(pinned);
-    }
+/// The cover to show from an owner's `sources`: the pinned source's, else the first in
+/// precedence order.
+pub fn shown(sources: &[SourcedCover]) -> Option<&SourcedCover> {
     sources
         .iter()
-        .filter(|sourced| !sourced.selected)
-        .find(|sourced| available(&sourced.cover))
+        .find(|sourced| sourced.selected)
+        .or_else(|| sources.first())
 }
 
 /// The owner's cover from `source`.
@@ -223,28 +215,16 @@ pub fn selection(db: &impl DbAccess, owner_db_id: DbId) -> anyhow::Result<Option
         .map(|sourced| sourced.source))
 }
 
-/// The cover the owner shows by its records alone: its pinned source's, else the first in
-/// precedence order. Readers that serve the image skip covers whose file is missing with
-/// [`shown`].
+/// The cover the owner shows: its pinned source's, else the first in precedence order. Read from
+/// the records alone; a record whose file is confirmed gone is removed by the reader that finds
+/// it, so the next source shows.
 pub fn get(db: &impl DbAccess, owner_db_id: DbId) -> anyhow::Result<Option<Cover>> {
     let sources = sources(db, owner_db_id)?;
-    Ok(shown(&sources, |_| true).map(|sourced| sourced.cover.clone()))
+    Ok(shown(&sources).map(|sourced| sourced.cover.clone()))
 }
 
 pub fn get_by_public_id(db: &impl DbAccess, id: &str) -> anyhow::Result<Option<Cover>> {
     super::graph::fetch_typed_by_index(db, "id", id, "Cover")
-}
-
-pub fn get_many(
-    db: &impl super::DbAccess,
-    owner_db_ids: &[DbId],
-) -> anyhow::Result<HashMap<DbId, Cover>> {
-    Ok(sources_many(db, owner_db_ids)?
-        .into_iter()
-        .filter_map(|(owner_db_id, sources)| {
-            shown(&sources, |_| true).map(|sourced| (owner_db_id, sourced.cover.clone()))
-        })
-        .collect())
 }
 
 /// Pins `source` as the cover the owner shows, or clears the pin with `None`. Returns false,
@@ -849,7 +829,7 @@ mod tests {
     }
 
     #[test]
-    fn a_pin_whose_file_is_missing_falls_through_but_stays() -> anyhow::Result<()> {
+    fn a_removed_pin_falls_back_to_precedence() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let owner = insert_owner(&mut db)?;
         upsert_cover(
@@ -865,12 +845,11 @@ mod tests {
             cover("provider", "/covers/1/provider.jpg"),
         )?;
         select(&mut db, owner, Some(CoverSource::Local))?;
-        let stored = sources(&db, owner)?;
+        assert_eq!(shown_id(&db, owner)?.as_deref(), Some("local"));
 
-        let shown_id = shown(&stored, |cover| cover.id != "local").map(|s| s.cover.id.as_str());
-        assert_eq!(shown_id, Some("provider"));
-        assert!(shown(&stored, |_| false).is_none());
-        assert_eq!(selection(&db, owner)?, Some(CoverSource::Local));
+        db.transaction_mut(|t| remove(t, owner, CoverSource::Local))?;
+        assert_eq!(shown_id(&db, owner)?.as_deref(), Some("provider"));
+        assert_eq!(selection(&db, owner)?, None);
         Ok(())
     }
 

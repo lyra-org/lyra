@@ -3,8 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashMap;
-
 use agdb::{
     DbAny,
     DbId,
@@ -43,7 +41,7 @@ fn profile_for_genre(
 
 fn winner_cover(
     db: &DbAny,
-    filter: &mut CoverFilter<'_>,
+    filter: &CoverFilter<'_>,
     profile: &db_display::DisplayCoverProfile,
     kind: DisplayCoverWinnerKind,
 ) -> anyhow::Result<Option<(db_display::DisplayCoverWinner, ResolvedCover)>> {
@@ -66,20 +64,18 @@ fn listening_user(viewer: &Viewer, listens: Listens) -> Option<&str> {
 
 pub(crate) fn cover_for_genre(
     db: &DbAny,
-    filter: &mut CoverFilter<'_>,
+    filter: &CoverFilter<'_>,
     genre: &lyra_db::genres::Genre,
-    listens: Listens,
 ) -> anyhow::Result<Option<ResolvedCover>> {
-    select_genre_cover(db, filter, genre, listens, STATE.config().instance_stats)
+    select_genre_cover(db, filter, genre, STATE.config().instance_stats)
 }
 
 /// Without `instance_stats`, other users' listens neither pick the cover nor raise the bar the
 /// user's own listens must clear; the instance profile only supplies the deterministic fallback.
 fn select_genre_cover(
     db: &DbAny,
-    filter: &mut CoverFilter<'_>,
+    filter: &CoverFilter<'_>,
     genre: &lyra_db::genres::Genre,
-    listens: Listens,
     instance_stats: bool,
 ) -> anyhow::Result<Option<ResolvedCover>> {
     let instance_profile = profile_for_genre(db, DisplayCoverScope::Instance, None, &genre.id)?;
@@ -88,7 +84,7 @@ fn select_genre_cover(
         .map(|(_, profile)| profile)
         .filter(|_| instance_stats);
 
-    if let Some(user_public_id) = listening_user(filter.viewer(), listens)
+    if let Some(user_public_id) = listening_user(filter.viewer(), filter.listens())
         && let Some((_, user_profile)) =
             profile_for_genre(db, DisplayCoverScope::User, Some(user_public_id), &genre.id)?
         && super::profile_is_current(&user_profile)
@@ -132,26 +128,6 @@ fn select_genre_cover(
             .into_iter()
             .filter(|release_db_id| *release_db_id != random_winner.release_db_id),
     )
-}
-
-pub(crate) fn covers_for_genres(
-    db: &DbAny,
-    filter: &mut CoverFilter<'_>,
-    genres: &[lyra_db::genres::Genre],
-    listens: Listens,
-) -> anyhow::Result<HashMap<DbId, ResolvedCover>> {
-    let instance_stats = STATE.config().instance_stats;
-    let mut covers = HashMap::new();
-    for genre in genres {
-        let Some(genre_db_id) = genre.db_id.clone().map(DbId::from) else {
-            continue;
-        };
-        let Some(cover) = select_genre_cover(db, filter, genre, listens, instance_stats)? else {
-            continue;
-        };
-        covers.insert(genre_db_id, cover);
-    }
-    Ok(covers)
 }
 
 #[cfg(test)]
@@ -284,10 +260,7 @@ mod tests {
         let genre = rock(&mut db)?;
         let viewer = viewer(&db, user_db_id, vec![Permission::Admin], &[])?;
 
-        let cover = || {
-            cover_for_genre(&db, &mut CoverFilter::new(&viewer), &genre, Listens::Viewer)
-                .map(picked)
-        };
+        let cover = || cover_for_genre(&db, &CoverFilter::new(&viewer), &genre).map(picked);
         assert_eq!(cover()?, Some(popular));
 
         let mut config = STATE.config().as_ref().clone();
@@ -320,7 +293,7 @@ mod tests {
         let viewer = viewer(&db, user_db_id, vec![Permission::Admin], &[])?;
 
         let pick = |viewer: &Viewer, listens| {
-            cover_for_genre(&db, &mut CoverFilter::new(viewer), &genre, listens).map(picked)
+            cover_for_genre(&db, &CoverFilter::new(viewer).listening(listens), &genre).map(picked)
         };
         assert_eq!(pick(&viewer, Listens::Viewer)?, Some(other));
         assert_eq!(pick(&viewer, Listens::Instance)?, Some(winner));
@@ -359,15 +332,8 @@ mod tests {
             releases.into_iter().filter(|release| *release != winner),
         )?;
 
-        let genre_db_id = genre.db_id.clone().map(DbId::from).expect("genre id");
-        let listed = covers_for_genres(
-            &db,
-            &mut CoverFilter::new(&viewer),
-            &[genre],
-            Listens::Viewer,
-        )?;
         assert_eq!(
-            listed.get(&genre_db_id).map(|cover| cover.owner_db_id),
+            picked(cover_for_genre(&db, &CoverFilter::new(&viewer), &genre)?),
             Some(visible[0])
         );
         Ok(())
@@ -404,9 +370,8 @@ mod tests {
         let pick = |library| {
             cover_for_genre(
                 &db,
-                &mut CoverFilter::new(&Viewer::System).in_library(library),
+                &CoverFilter::new(&Viewer::System).in_library(library),
                 &genre,
-                Listens::Viewer,
             )
             .map(picked)
         };

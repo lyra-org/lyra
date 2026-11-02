@@ -29,7 +29,10 @@ use crate::{
         types::CoverInfo,
     },
     services::covers::{
-        display::Listens,
+        display::{
+            CoverFilter,
+            Listens,
+        },
         lookup,
     },
 };
@@ -67,12 +70,12 @@ impl LuauTypeInfo for CoverOptions {
 
 #[harmony_macros::module(
     id = "lyra/covers",
-    description = "Item covers, read from disk by plugins that serve the image themselves. Releases and artists have their own cover, a track shows its release's, and a playlist or genre shows the cover of one release in it: a playlist's is picked deterministically from its tracks' releases, a genre's from listens when they are enough, else deterministically. A cover whose file is gone is left out and forgotten.",
+    description = "Item covers, read from disk by plugins that serve the image themselves. Releases and artists have their own cover; a track its own, else that of the first of its releases the caller can see, by release id; a playlist its uploaded cover, else, like a genre, the cover of one release in it: a playlist's is picked deterministically from its tracks' releases, a genre's from listens when they are enough, else deterministically. Covers are read from their stored records, without looking at the files: an owner's pinned source, else the first of manual, provider and local.",
     docs_feature = "docgen"
 )]
 impl CoversModule {
     #[harmony(
-        description = "The covers of the items the caller can see, keyed by id. Items without a cover, unknown ids and items of other types are absent. A playlist or genre shows a release the caller can see. Without a resolved caller, a client dispatch is refused.",
+        description = "The covers of the items the caller can see, keyed by id. Items without a cover, unknown ids and items of other types are absent. A track, playlist or genre shows a release the caller can see. Without a resolved caller, a client dispatch is refused.",
         returns(HashMap<String, CoverInfo>)
     )]
     async fn get(
@@ -104,15 +107,15 @@ async fn covers(
 ) -> luau::runtime::Result<luau::OwnedTable> {
     let (db, viewer) = db.read().await?;
     let ids = Resolved::of(&*db, ids.0.clone())?;
-    let found = lookup::resolve(&db, &viewer, ids.db_ids(), listens)?;
+    let filter = CoverFilter::new(&viewer).listening(listens);
+    let found = lookup::resolve(&db, &filter, ids.db_ids())?;
     let owner_ids = found
-        .covers
         .values()
         .map(|cover| cover.owner_db_id)
         .collect::<Vec<_>>();
     let owners = crate::plugins::ids::public_ids(&*db, &owner_ids)?;
-    let mut covers = Vec::with_capacity(found.covers.len());
-    for (id, cover) in found.covers {
+    let mut covers = Vec::with_capacity(found.len());
+    for (id, cover) in found {
         covers.push((
             id,
             harmony_luau::serializable_to_luau_owned(CoverInfo::new(cover, &owners)?)?,

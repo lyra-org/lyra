@@ -57,12 +57,17 @@ use crate::{
                 Releases,
             },
         },
-        covers,
+        covers::{
+            self,
+            ResolvedCover,
+            shown::CoverTarget,
+        },
         pagination::SnapshotKey,
         releases,
     },
 };
 use lyra_db::Permission;
+use std::collections::HashMap;
 
 mod chains;
 mod similarity;
@@ -234,31 +239,76 @@ fn resolve_genre_id_filter(
     Ok(resolved)
 }
 
+/// The covers the responses of `details` show: each release's own, and its artists' and track
+/// artists', as included.
+pub(crate) fn release_cover_targets(
+    details: &[releases::ReleaseDetails],
+    include_covers: bool,
+    include_artist_covers: bool,
+    targets: &mut Vec<CoverTarget<'_>>,
+) {
+    for detail in details {
+        if include_covers {
+            targets.push(CoverTarget::Release(detail.release_db_id));
+        }
+        if !include_artist_covers {
+            continue;
+        }
+        let track_artists = detail.track_artists.iter().flat_map(HashMap::values);
+        for artists in detail.artists.iter().chain(track_artists) {
+            targets.extend(
+                super::db_ids_from_credited_artists(artists)
+                    .into_iter()
+                    .map(CoverTarget::Artist),
+            );
+        }
+    }
+}
+
+/// The responses of `details`, with the covers included resolved together.
+pub(crate) fn release_responses(
+    db: &DbAny,
+    principal: &Principal,
+    details: Vec<releases::ReleaseDetails>,
+    include_covers: bool,
+    include_artist_covers: bool,
+    include_genres: bool,
+    include_entry_paths: bool,
+) -> Result<Vec<ReleaseResponse>, AppError> {
+    let mut targets = Vec::new();
+    release_cover_targets(
+        &details,
+        include_covers,
+        include_artist_covers,
+        &mut targets,
+    );
+    let covers = route_covers::resolve_principal_covers(db, principal, &targets)?;
+    let mut items = Vec::with_capacity(details.len());
+    for detail in details {
+        items.push(detail_to_release_response(
+            db,
+            detail,
+            &covers,
+            include_covers,
+            include_artist_covers,
+            include_genres,
+            include_entry_paths,
+        )?);
+    }
+    Ok(items)
+}
+
+/// `detail`'s response, with its covers taken from `covers`, which holds those of
+/// [`release_cover_targets`].
 pub(crate) fn detail_to_release_response(
     db: &DbAny,
     detail: releases::ReleaseDetails,
+    covers: &HashMap<DbId, ResolvedCover>,
     include_covers: bool,
     include_artist_covers: bool,
     include_genres: bool,
     include_entry_paths: bool,
 ) -> anyhow::Result<ReleaseResponse> {
-    let artist_covers = if include_artist_covers {
-        let mut artist_db_ids = Vec::new();
-        if let Some(artists) = detail.artists.as_ref() {
-            artist_db_ids.extend(super::db_ids_from_credited_artists(artists));
-        }
-        if let Some(track_artists) = detail.track_artists.as_ref() {
-            for artists in track_artists.values() {
-                artist_db_ids.extend(super::db_ids_from_credited_artists(artists));
-            }
-        }
-        Some(crate::services::covers::lookup::shown_covers(
-            db,
-            &artist_db_ids,
-        )?)
-    } else {
-        None
-    };
     let entries = detail.entries.map(|entries| {
         entries
             .into_iter()
@@ -266,7 +316,7 @@ pub(crate) fn detail_to_release_response(
             .collect::<Vec<EntryResponse>>()
     });
 
-    let cover = route_covers::build_cover_response(db, detail.release_db_id, include_covers)?;
+    let cover = route_covers::cover_field(covers, include_covers, Some(detail.release_db_id));
     let genres = if include_genres {
         lyra_db::genres::get_names_for_release(db, detail.release_db_id)?
     } else {
@@ -282,7 +332,7 @@ pub(crate) fn detail_to_release_response(
         cover,
         artists: detail
             .artists
-            .map(|v| super::credited_artist_responses(v, artist_covers.as_ref())),
+            .map(|v| super::credited_artist_responses(v, covers, include_artist_covers)),
         tracks: detail
             .tracks
             .map(|tracks| -> anyhow::Result<_> {
@@ -294,7 +344,8 @@ pub(crate) fn detail_to_release_response(
                             let db_id = track.db_id.clone().map(DbId::from)?;
                             Some(super::credited_artist_responses(
                                 m.get(&db_id)?.clone(),
-                                artist_covers.as_ref(),
+                                covers,
+                                include_artist_covers,
                             ))
                         });
                         let mut resp = chains.response(track);
@@ -420,18 +471,15 @@ pub(crate) fn release_page(
         )
     };
     let details = releases::list_details_for_releases(db, includes, release_items)?;
-
-    let mut items: Vec<ReleaseResponse> = Vec::with_capacity(details.len());
-    for detail in details {
-        items.push(detail_to_release_response(
-            db,
-            detail,
-            include_covers,
-            include_artist_covers,
-            include_genres,
-            include_entry_paths,
-        )?);
-    }
+    let items = release_responses(
+        db,
+        principal,
+        details,
+        include_covers,
+        include_artist_covers,
+        include_genres,
+        include_entry_paths,
+    )?;
 
     Ok(PageResponse { items, next_cursor })
 }
@@ -496,14 +544,16 @@ async fn get_release(
     let detail = releases::get_details(db, release_db_id, includes)?
         .ok_or_else(|| AppError::not_found(format!("Release not found: {}", id)))?;
 
-    Ok(Json(detail_to_release_response(
+    let mut responses = release_responses(
         db,
-        detail,
+        &principal,
+        vec![detail],
         include_covers,
         include_artist_covers,
         include_genres,
         include_entry_paths,
-    )?))
+    )?;
+    Ok(Json(responses.remove(0)))
 }
 
 async fn search_release_covers(
@@ -1361,31 +1411,52 @@ mod tests {
         Ok(())
     }
 
+    fn release_cover(
+        db: &DbAny,
+        release_db_id: DbId,
+        include: bool,
+    ) -> anyhow::Result<Option<Option<crate::routes::responses::CoverResponse>>> {
+        let covers = crate::services::covers::shown::resolve(
+            db,
+            &crate::services::covers::display::CoverFilter::new(
+                &crate::services::catalog::Viewer::System,
+            ),
+            &[CoverTarget::Release(release_db_id)],
+        )?;
+        Ok(route_covers::cover_field(
+            &covers,
+            include,
+            Some(release_db_id),
+        ))
+    }
+
     #[test]
-    fn build_cover_response_omits_when_not_requested() -> anyhow::Result<()> {
+    fn a_cover_not_requested_is_left_out() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let release_db_id = insert_release_node(&mut db)?;
-        let cover = route_covers::build_cover_response(&db, release_db_id, false)?;
-        assert!(cover.is_none());
+        insert_cover_for_release(&mut db, release_db_id)?;
+        assert!(release_cover(&db, release_db_id, false)?.is_none());
         Ok(())
     }
 
     #[test]
-    fn build_cover_response_returns_null_when_missing() -> anyhow::Result<()> {
+    fn a_missing_cover_is_null() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let release_db_id = insert_release_node(&mut db)?;
-        let cover = route_covers::build_cover_response(&db, release_db_id, true)?;
-        assert!(matches!(cover, Some(None)));
+        assert!(matches!(
+            release_cover(&db, release_db_id, true)?,
+            Some(None)
+        ));
         Ok(())
     }
 
     #[test]
-    fn build_cover_response_returns_cover_metadata() -> anyhow::Result<()> {
+    fn a_cover_carries_its_metadata() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let release_db_id = insert_release_node(&mut db)?;
         insert_cover_for_release(&mut db, release_db_id)?;
 
-        let cover = route_covers::build_cover_response(&db, release_db_id, true)?
+        let cover = release_cover(&db, release_db_id, true)?
             .flatten()
             .ok_or_else(|| anyhow::anyhow!("expected cover metadata"))?;
 

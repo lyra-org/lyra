@@ -27,7 +27,6 @@ use super::{
         CoverFilter,
         playlists::generated_cover_for_playlist,
     },
-    lookup::cover_file_available,
     providers::{
         EntityType,
         search_artist_cover_candidates,
@@ -200,6 +199,11 @@ fn require_selectable(kind: CoverOwnerKind) -> Result<EntityType, CoverSelection
     })
 }
 
+/// Whether the cover's image file is there, as candidates report it.
+fn cover_file_available(cover: &Cover) -> bool {
+    std::fs::metadata(&cover.path).is_ok_and(|meta| meta.is_file())
+}
+
 fn collect_candidates(
     db: &DbAny,
     principal: &Principal,
@@ -211,8 +215,7 @@ fn collect_candidates(
         .iter()
         .find(|sourced| sourced.selected)
         .map(|sourced| sourced.source);
-    let shown_id = lyra_db::covers::shown(&stored, cover_file_available)
-        .map(|sourced| sourced.cover.id.clone());
+    let shown_id = lyra_db::covers::shown(&stored).map(|sourced| sourced.cover.id.clone());
     let mut candidates = stored
         .into_iter()
         .map(|sourced| CoverCandidate {
@@ -227,7 +230,7 @@ fn collect_candidates(
     {
         let viewer = Viewer::user(db, principal.clone())?;
         if let Some(generated) =
-            generated_cover_for_playlist(db, &mut CoverFilter::new(&viewer), &playlist)?
+            generated_cover_for_playlist(db, &CoverFilter::new(&viewer), &playlist)?
         {
             candidates.push(CoverCandidate {
                 source: None,
@@ -729,13 +732,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_missing_file_is_passed_over_but_kept_with_its_pin() -> anyhow::Result<()> {
+    async fn readers_show_the_pinned_record_without_looking_at_its_file() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         init_default_test_state()?;
         let library = tempfile::tempdir()?;
         let admin = user("admin", true).await?;
         let (release_db_id, id, library_cover) = release_with_local_cover(library.path()).await?;
-        let provider = store_provider_cover(release_db_id).await?;
+        store_provider_cover(release_db_id).await?;
         select(
             &admin,
             CoverOwnerKind::Release,
@@ -746,42 +749,26 @@ mod tests {
         std::fs::remove_file(&library_cover)?;
 
         let found = candidates(&admin, CoverOwnerKind::Release, &id).await?;
-        assert_eq!(found.selection, Some(CoverSource::Local), "the pin stays");
-        assert_eq!(active(&found), Some(Some(CoverSource::Provider)));
+        assert_eq!(found.selection, Some(CoverSource::Local));
+        assert_eq!(active(&found), Some(Some(CoverSource::Local)));
         let local = found
             .candidates
             .iter()
             .find(|candidate| candidate.source == Some(CoverSource::Local))
             .expect("the local record stays");
-        assert!(!local.available);
+        assert!(!local.available, "candidates report the missing file");
         let db = STATE.db.read().await;
-        assert_eq!(
-            super::super::lookup::shown_cover(&*db, release_db_id)?.map(|cover| cover.path),
-            Some(provider.path.clone()),
-            "readers show the next cover"
-        );
         let found = super::super::lookup::resolve(
             &db,
-            &Viewer::System,
+            &CoverFilter::new(&Viewer::System),
             &[release_db_id],
-            super::super::display::Listens::Instance,
         )?;
         assert_eq!(
             found
-                .covers
                 .get(&release_db_id)
                 .map(|cover| cover.cover.path.clone()),
-            Some(provider.path.clone())
-        );
-        assert!(lyra_db::covers::get_source(&*db, release_db_id, CoverSource::Local)?.is_some());
-        drop(db);
-
-        std::fs::write(&library_cover, png())?;
-        let found = candidates(&admin, CoverOwnerKind::Release, &id).await?;
-        assert_eq!(
-            active(&found),
-            Some(Some(CoverSource::Local)),
-            "the pinned cover shows again once its file is back"
+            Some(library_cover.to_string_lossy().into_owned()),
+            "listings read the stored records"
         );
         Ok(())
     }

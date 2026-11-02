@@ -3,8 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashMap;
-
 use agdb::{
     DbAny,
     DbId,
@@ -24,7 +22,7 @@ use lyra_db::covers::display::{
 /// A playlist's cover: the one its owner uploaded, else its generated display cover.
 pub(crate) fn cover_for_playlist(
     db: &DbAny,
-    filter: &mut CoverFilter<'_>,
+    filter: &CoverFilter<'_>,
     playlist: &lyra_db::Playlist,
 ) -> anyhow::Result<Option<ResolvedCover>> {
     let Some(playlist_db_id) = playlist.db_id.clone().map(DbId::from) else {
@@ -42,7 +40,7 @@ pub(crate) fn cover_for_playlist(
 /// When the filter rejects the stored winner, the next source it lets through stands in.
 pub(crate) fn generated_cover_for_playlist(
     db: &DbAny,
-    filter: &mut CoverFilter<'_>,
+    filter: &CoverFilter<'_>,
     playlist: &lyra_db::Playlist,
 ) -> anyhow::Result<Option<ResolvedCover>> {
     let Some(playlist_db_id) = playlist.db_id.clone().map(DbId::from) else {
@@ -74,24 +72,6 @@ pub(crate) fn generated_cover_for_playlist(
             .map(|(_, release_db_id)| release_db_id)
             .filter(|release_db_id| *release_db_id != winner.release_db_id),
     )
-}
-
-pub(crate) fn covers_for_playlists(
-    db: &DbAny,
-    filter: &mut CoverFilter<'_>,
-    playlists: &[lyra_db::Playlist],
-) -> anyhow::Result<HashMap<DbId, ResolvedCover>> {
-    let mut covers = HashMap::new();
-    for playlist in playlists {
-        let Some(playlist_db_id) = playlist.db_id.clone().map(DbId::from) else {
-            continue;
-        };
-        let Some(cover) = cover_for_playlist(db, filter, playlist)? else {
-            continue;
-        };
-        covers.insert(playlist_db_id, cover);
-    }
-    Ok(covers)
 }
 
 #[cfg(test)]
@@ -166,7 +146,7 @@ mod tests {
         let (release, track) = covered_track(&mut db, "only")?;
         let playlist = playlist(&mut db, owner, &[track])?;
 
-        let cover = cover_for_playlist(&db, &mut CoverFilter::new(&Viewer::System), &playlist)?;
+        let cover = cover_for_playlist(&db, &CoverFilter::new(&Viewer::System), &playlist)?;
         assert_eq!(cover.map(|cover| cover.owner_db_id), Some(release));
         Ok(())
     }
@@ -206,11 +186,8 @@ mod tests {
             Principal::for_user(&db, owner, Vec::new(), HashSet::from([shown_public_id]));
         let viewer = Viewer::user(&db, principal)?;
 
-        let listed = covers_for_playlists(&db, &mut CoverFilter::new(&viewer), &[playlist])?;
-        assert_eq!(
-            listed.get(&playlist_db_id).map(|cover| cover.owner_db_id),
-            Some(sources[1])
-        );
+        let cover = cover_for_playlist(&db, &CoverFilter::new(&viewer), &playlist)?;
+        assert_eq!(cover.map(|cover| cover.owner_db_id), Some(sources[1]));
         Ok(())
     }
 }

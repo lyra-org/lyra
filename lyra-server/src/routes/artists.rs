@@ -63,11 +63,16 @@ use crate::{
             },
             pipeline::Catalog,
         },
-        covers,
+        covers::{
+            self,
+            ResolvedCover,
+            shown::CoverTarget,
+        },
         pagination::SnapshotKey,
         releases as release_service,
     },
 };
+use std::collections::HashMap;
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
@@ -266,12 +271,19 @@ fn filter_accessible_relations(
     Ok(filtered)
 }
 
-fn artist_detail_to_response(
+/// An artist's details without what the caller can't see, with its releases' details when its
+/// release responses carry more than the release.
+struct ArtistParts {
+    detail: artist_service::ArtistDetails,
+    release_details: Option<Vec<release_service::ReleaseDetails>>,
+}
+
+fn prepare_artist(
     db: &DbAny,
     principal: &Principal,
     mut detail: artist_service::ArtistDetails,
     includes: ArtistRouteIncludes,
-) -> anyhow::Result<ArtistResponse> {
+) -> anyhow::Result<ArtistParts> {
     if let Some(releases) = detail.releases.take() {
         detail.releases = Some(filter_accessible_releases(db, principal, releases)?);
     }
@@ -281,18 +293,9 @@ fn artist_detail_to_response(
     if let Some(relations) = detail.relations.take() {
         detail.relations = Some(filter_accessible_relations(db, principal, relations)?);
     }
-
-    let artist_db_id = detail.artist.db_id.clone().map(DbId::from);
-    let cover = match artist_db_id {
-        Some(artist_db_id) => {
-            route_covers::build_cover_response(db, artist_db_id, includes.covers)?
-        }
-        None if includes.covers => Some(None),
-        None => None,
-    };
-    let releases = match detail.releases {
+    let release_details = match detail.releases.take() {
         Some(releases) if includes.release_artists || includes.release_covers => {
-            let release_details = release_service::list_details_for_releases(
+            Some(release_service::list_details_for_releases(
                 db,
                 release_service::ReleaseIncludes {
                     artists: includes.release_artists,
@@ -301,53 +304,108 @@ fn artist_detail_to_response(
                     entries: false,
                 },
                 releases,
-            )?;
-            Some(
-                release_details
-                    .into_iter()
-                    .map(|detail| {
-                        route_releases::detail_to_release_response(
-                            db,
-                            detail,
-                            includes.release_covers,
-                            includes.artist_covers,
-                            false,
-                            false,
-                        )
-                    })
-                    .collect::<anyhow::Result<Vec<_>>>()?,
-            )
+            )?)
         }
-        Some(releases) => Some(releases.into_iter().map(ReleaseResponse::from).collect()),
-        None => None,
+        releases => {
+            detail.releases = releases;
+            None
+        }
     };
-    let relation_covers = if includes.relation_covers {
-        let related_artist_db_ids = detail
-            .relations
-            .as_ref()
-            .map(|relations| {
+    Ok(ArtistParts {
+        detail,
+        release_details,
+    })
+}
+
+/// The responses of `details`, with the covers included resolved together.
+fn artist_responses(
+    db: &DbAny,
+    principal: &Principal,
+    details: Vec<artist_service::ArtistDetails>,
+    includes: ArtistRouteIncludes,
+) -> Result<Vec<ArtistResponse>, AppError> {
+    let parts = details
+        .into_iter()
+        .map(|detail| prepare_artist(db, principal, detail, includes))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let mut targets = Vec::new();
+    for part in &parts {
+        if includes.covers
+            && let Some(artist_db_id) = part.detail.artist.db_id.clone().map(DbId::from)
+        {
+            targets.push(CoverTarget::Artist(artist_db_id));
+        }
+        if includes.relation_covers
+            && let Some(relations) = &part.detail.relations
+        {
+            targets.extend(
                 relations
                     .iter()
                     .filter_map(|relation| relation.artist.db_id.clone().map(DbId::from))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        Some(crate::services::covers::lookup::shown_covers(
-            db,
-            &related_artist_db_ids,
-        )?)
-    } else {
-        None
+                    .map(CoverTarget::Artist),
+            );
+        }
+        if let Some(release_details) = &part.release_details {
+            route_releases::release_cover_targets(
+                release_details,
+                includes.release_covers,
+                includes.artist_covers,
+                &mut targets,
+            );
+        }
+    }
+    let covers = route_covers::resolve_principal_covers(db, principal, &targets)?;
+    let mut items = Vec::with_capacity(parts.len());
+    for part in parts {
+        items.push(artist_to_response(db, part, includes, &covers)?);
+    }
+    Ok(items)
+}
+
+fn artist_to_response(
+    db: &DbAny,
+    parts: ArtistParts,
+    includes: ArtistRouteIncludes,
+    covers: &HashMap<DbId, ResolvedCover>,
+) -> anyhow::Result<ArtistResponse> {
+    let ArtistParts {
+        detail,
+        release_details,
+    } = parts;
+    let cover = route_covers::cover_field(
+        covers,
+        includes.covers,
+        detail.artist.db_id.clone().map(DbId::from),
+    );
+    let releases = match release_details {
+        Some(release_details) => Some(
+            release_details
+                .into_iter()
+                .map(|detail| {
+                    route_releases::detail_to_release_response(
+                        db,
+                        detail,
+                        covers,
+                        includes.release_covers,
+                        includes.artist_covers,
+                        false,
+                        false,
+                    )
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?,
+        ),
+        None => detail
+            .releases
+            .map(|releases| releases.into_iter().map(ReleaseResponse::from).collect()),
     };
     let relations = detail.relations.map(|v| {
         v.into_iter()
             .map(|r| {
-                let related_artist_db_id = r.artist.db_id.clone().map(DbId::from);
-                let cover = relation_covers.as_ref().map(|covers| {
-                    related_artist_db_id
-                        .and_then(|id| covers.get(&id).cloned())
-                        .map(route_covers::cover_to_response)
-                });
+                let cover = route_covers::cover_field(
+                    covers,
+                    includes.relation_covers,
+                    r.artist.db_id.clone().map(DbId::from),
+                );
                 ArtistRelationResponse {
                     relation_type: r.relation_type,
                     attributes: r.attributes,
@@ -448,11 +506,7 @@ pub(crate) fn artist_page(
         )
     };
     let details = artist_service::list_details_for_artists(db, includes.service, artists)?;
-
-    let mut items = Vec::with_capacity(details.len());
-    for detail in details {
-        items.push(artist_detail_to_response(db, principal, detail, includes)?);
-    }
+    let items = artist_responses(db, principal, details, includes)?;
     Ok(PageResponse { items, next_cursor })
 }
 
@@ -471,7 +525,8 @@ pub(crate) async fn get_artist_response(
     let detail = artist_service::get_details(db, artist_db_id, includes.service)?
         .ok_or_else(|| AppError::not_found(format!("Artist not found: {}", id)))?;
 
-    Ok(artist_detail_to_response(db, principal, detail, includes)?)
+    let mut responses = artist_responses(db, principal, vec![detail], includes)?;
+    Ok(responses.remove(0))
 }
 
 async fn get_artists(

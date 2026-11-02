@@ -56,6 +56,7 @@ use crate::services::{
         ResolvedAuth,
         require_auth,
     },
+    covers::ResolvedCover,
     entities::ResolvedCreditedArtist,
 };
 use agdb::DbId;
@@ -128,19 +129,16 @@ pub(crate) fn db_ids_from_credited_artists<'a>(
 
 pub(crate) fn credited_artist_responses(
     artists: Vec<ResolvedCreditedArtist>,
-    artist_covers: Option<&HashMap<DbId, lyra_db::Cover>>,
+    artist_covers: &HashMap<DbId, ResolvedCover>,
+    include_covers: bool,
 ) -> Vec<responses::ArtistResponse> {
     artists
         .into_iter()
         .map(|artist| {
             let artist_db_id = artist.artist.db_id.clone().map(DbId::from);
             let mut response = responses::ArtistResponse::from(artist);
-            if let Some(artist_covers) = artist_covers {
-                response.cover = Some(
-                    artist_db_id
-                        .and_then(|id| artist_covers.get(&id).cloned())
-                        .map(covers::cover_to_response),
-                );
+            if include_covers {
+                response.cover = covers::cover_field(artist_covers, true, artist_db_id);
             }
             response
         })

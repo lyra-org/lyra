@@ -117,19 +117,15 @@ pub(super) async fn get_similar_releases(
         }
     }
     let details = releases::list_details_for_releases(&db, includes, accessible)?;
-    let responses = details
-        .into_iter()
-        .map(|detail| {
-            super::detail_to_release_response(
-                &db,
-                detail,
-                include_covers,
-                include_artist_covers,
-                include_genres,
-                include_entry_paths,
-            )
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
+    let responses = super::release_responses(
+        &db,
+        &principal,
+        details,
+        include_covers,
+        include_artist_covers,
+        include_genres,
+        include_entry_paths,
+    )?;
     Ok(Json(responses))
 }
 

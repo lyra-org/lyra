@@ -47,16 +47,14 @@ use crate::{
             pipeline::Catalog,
         },
         covers::{
-            self as cover_services,
-            display::{
-                CoverFilter,
-                Listens,
-            },
+            display::CoverFilter,
+            shown::CoverTarget,
         },
         pagination::SnapshotKey,
     },
 };
 use lyra_db::genres;
+use std::collections::HashMap;
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
@@ -234,14 +232,14 @@ async fn list_genres(
         (genres, page.next_cursor)
     };
     let covers = if inc.covers {
-        Some(cover_services::display::genres::covers_for_genres(
+        let targets = genres.iter().map(CoverTarget::Genre).collect::<Vec<_>>();
+        route_covers::resolve_covers(
             db,
-            &mut CoverFilter::new(&viewer).in_library(library_scope),
-            &genres,
-            Listens::Viewer,
-        )?)
+            &CoverFilter::new(&viewer).in_library(library_scope),
+            &targets,
+        )?
     } else {
-        None
+        HashMap::new()
     };
 
     let items: Vec<GenreResponse> = genres
@@ -250,11 +248,7 @@ async fn list_genres(
             let genre_db_id = genre.db_id.clone().map(DbId::from);
             let mut response = genre_to_response(genre);
             if inc.covers {
-                response.cover = Some(
-                    genre_db_id
-                        .and_then(|genre_db_id| covers.as_ref()?.get(&genre_db_id).cloned())
-                        .map(|resolved| route_covers::cover_to_response(resolved.cover)),
-                );
+                response.cover = route_covers::cover_field(&covers, true, genre_db_id);
             }
             response
         })
@@ -302,16 +296,9 @@ async fn get_genre(
         None
     };
     let cover = if inc.covers {
-        let viewer = catalog::Viewer::user(db, principal.clone())?;
-        Some(
-            cover_services::display::genres::cover_for_genre(
-                db,
-                &mut CoverFilter::new(&viewer),
-                &genre,
-                Listens::Viewer,
-            )?
-            .map(|resolved| route_covers::cover_to_response(resolved.cover)),
-        )
+        let covers =
+            route_covers::resolve_principal_covers(db, &principal, &[CoverTarget::Genre(&genre)])?;
+        route_covers::cover_field(&covers, true, Some(genre_db_id))
     } else {
         None
     };

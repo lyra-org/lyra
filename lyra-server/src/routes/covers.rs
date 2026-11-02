@@ -31,9 +31,17 @@ use serde::{
     Deserialize,
     Serialize,
 };
-use std::path::{
-    Path as FsPath,
-    PathBuf,
+use std::{
+    collections::HashMap,
+    path::{
+        Path as FsPath,
+        PathBuf,
+    },
+};
+
+use agdb::{
+    DbAny,
+    DbId,
 };
 
 use crate::{
@@ -45,13 +53,23 @@ use crate::{
     },
     services::STATE,
     services::{
-        auth::require_authenticated,
+        auth::{
+            Principal,
+            require_authenticated,
+        },
+        catalog::Viewer,
         covers::{
             self,
+            ResolvedCover,
+            display::CoverFilter,
             selection::{
                 self,
                 CoverCandidates,
                 CoverOwnerKind,
+            },
+            shown::{
+                self,
+                CoverTarget,
             },
         },
     },
@@ -186,18 +204,40 @@ pub(crate) fn cover_to_response(cover: lyra_db::Cover) -> CoverResponse {
     }
 }
 
-pub(crate) fn build_cover_response(
-    db: &impl lyra_db::DbAccess,
-    owner_db_id: agdb::DbId,
-    include_covers: bool,
-) -> anyhow::Result<Option<Option<CoverResponse>>> {
-    if !include_covers {
-        return Ok(None);
-    }
+/// The covers `targets` show through `filter`, keyed by target id.
+pub(crate) fn resolve_covers(
+    db: &DbAny,
+    filter: &CoverFilter<'_>,
+    targets: &[CoverTarget<'_>],
+) -> Result<HashMap<DbId, ResolvedCover>, AppError> {
+    Ok(shown::resolve(db, filter, targets)?)
+}
 
-    Ok(Some(
-        covers::lookup::shown_cover(db, owner_db_id)?.map(cover_to_response),
-    ))
+/// The covers `targets` show to `principal`, keyed by target id. The principal's viewer is looked
+/// up only when a target's cover may come from releases.
+pub(crate) fn resolve_principal_covers(
+    db: &DbAny,
+    principal: &Principal,
+    targets: &[CoverTarget<'_>],
+) -> Result<HashMap<DbId, ResolvedCover>, AppError> {
+    if !targets.iter().any(CoverTarget::derived) {
+        return resolve_covers(db, &CoverFilter::new(&Viewer::System), targets);
+    }
+    let viewer = Viewer::user(db, principal.clone())?;
+    resolve_covers(db, &CoverFilter::new(&viewer), targets)
+}
+
+/// A response's `cover` field for `db_id`: left out unless `include`, else its cover in `covers`.
+pub(crate) fn cover_field(
+    covers: &HashMap<DbId, ResolvedCover>,
+    include: bool,
+    db_id: Option<DbId>,
+) -> Option<Option<CoverResponse>> {
+    include.then(|| {
+        db_id
+            .and_then(|db_id| covers.get(&db_id))
+            .map(|resolved| cover_to_response(resolved.cover.clone()))
+    })
 }
 
 pub(crate) fn map_provider_cover_search_results(

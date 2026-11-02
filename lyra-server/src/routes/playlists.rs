@@ -40,10 +40,7 @@ use std::{
 };
 
 use crate::routes::request::bearer_credential;
-use crate::services::catalog::{
-    self,
-    SortSpec,
-};
+use crate::services::catalog::SortSpec;
 use crate::services::playlists::SortKey as PlaylistSortKey;
 use crate::{
     routes::responses::{
@@ -66,10 +63,7 @@ use crate::{
             Principal,
             require_principal,
         },
-        covers::{
-            self as cover_services,
-            display::CoverFilter,
-        },
+        covers::shown::CoverTarget,
         entities::resolve_track_artists,
         pagination::SnapshotKey,
         playlists,
@@ -602,14 +596,13 @@ async fn get_playlists(
     }
     let mut owners = playlists::owner_ids(db, &playlist_db_ids)?;
     let covers = if inc.covers {
-        let viewer = catalog::Viewer::user(db, principal.clone())?;
-        Some(cover_services::display::playlists::covers_for_playlists(
-            db,
-            &mut CoverFilter::new(&viewer),
-            &page_playlists,
-        )?)
+        let targets = page_playlists
+            .iter()
+            .map(CoverTarget::Playlist)
+            .collect::<Vec<_>>();
+        route_covers::resolve_principal_covers(db, &principal, &targets)?
     } else {
-        None
+        HashMap::new()
     };
 
     let mut items = Vec::with_capacity(page_playlists.len());
@@ -624,12 +617,7 @@ async fn get_playlists(
         } else {
             None
         };
-        let cover = covers.as_ref().map(|covers| {
-            covers
-                .get(&playlist_db_id)
-                .cloned()
-                .map(|resolved| route_covers::cover_to_response(resolved.cover))
-        });
+        let cover = route_covers::cover_field(&covers, inc.covers, Some(playlist_db_id));
         items.push(playlist_to_response(
             playlist,
             tracks,
@@ -668,15 +656,12 @@ async fn get_playlist(
         None
     };
     let cover = if inc.covers {
-        let viewer = catalog::Viewer::user(db, principal.clone())?;
-        Some(
-            cover_services::display::playlists::cover_for_playlist(
-                db,
-                &mut CoverFilter::new(&viewer),
-                &playlist,
-            )?
-            .map(|resolved| route_covers::cover_to_response(resolved.cover)),
-        )
+        let covers = route_covers::resolve_principal_covers(
+            db,
+            &principal,
+            &[CoverTarget::Playlist(&playlist)],
+        )?;
+        route_covers::cover_field(&covers, true, Some(playlist_db_id))
     } else {
         None
     };

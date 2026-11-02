@@ -9,6 +9,7 @@ pub(crate) mod lookup;
 pub(crate) mod providers;
 mod resolve;
 pub(crate) mod selection;
+pub(crate) mod shown;
 mod sync;
 
 use std::path::Path;

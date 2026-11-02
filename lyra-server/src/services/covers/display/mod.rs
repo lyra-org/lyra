@@ -70,12 +70,12 @@ fn profile_is_current(profile: &DisplayCoverProfile) -> bool {
     lyra_db::covers::display::profile_is_clean(profile)
 }
 
-/// The releases a display cover may come from: those the viewer sees, only in `library` when
-/// set, that show a cover whose file is there. Every step of a selection skips the releases it
-/// rejects.
+/// The releases a cover may be derived from: those the viewer sees, only in `library` when set.
+/// Every step of a selection skips the releases it rejects. `listens` picks genre covers.
 pub(crate) struct CoverFilter<'a> {
     viewer: &'a Viewer,
     library: Option<DbId>,
+    listens: Listens,
 }
 
 impl<'a> CoverFilter<'a> {
@@ -83,6 +83,7 @@ impl<'a> CoverFilter<'a> {
         Self {
             viewer,
             library: None,
+            listens: Listens::Viewer,
         }
     }
 
@@ -90,13 +91,21 @@ impl<'a> CoverFilter<'a> {
         Self { library, ..self }
     }
 
+    pub(crate) fn listening(self, listens: Listens) -> Self {
+        Self { listens, ..self }
+    }
+
     pub(crate) fn viewer(&self) -> &'a Viewer {
         self.viewer
     }
 
+    pub(crate) fn listens(&self) -> Listens {
+        self.listens
+    }
+
     /// The cover of `release_db_id` when the filter lets it through.
     fn release_cover(
-        &mut self,
+        &self,
         db: &DbAny,
         release_db_id: DbId,
     ) -> anyhow::Result<Option<ResolvedCover>> {
@@ -111,20 +120,22 @@ impl<'a> CoverFilter<'a> {
         self.owned_cover(db, release_db_id)
     }
 
-    /// The cover `owner_db_id` shows itself. The caller has already established that the viewer
-    /// sees the owner.
-    fn owned_cover(
-        &mut self,
+    /// The cover `owner_db_id` shows itself, by its stored records. The caller has already
+    /// established that the viewer sees the owner.
+    pub(super) fn owned_cover(
+        &self,
         db: &DbAny,
         owner_db_id: DbId,
     ) -> anyhow::Result<Option<ResolvedCover>> {
-        Ok(super::lookup::shown_cover(db, owner_db_id)?
-            .map(|cover| ResolvedCover { owner_db_id, cover }))
+        Ok(
+            lyra_db::covers::get(db, owner_db_id)?
+                .map(|cover| ResolvedCover { owner_db_id, cover }),
+        )
     }
 
     /// The first of `release_db_ids` the filter lets through.
-    fn first_release_cover(
-        &mut self,
+    pub(super) fn first_release_cover(
+        &self,
         db: &DbAny,
         release_db_ids: impl IntoIterator<Item = DbId>,
     ) -> anyhow::Result<Option<ResolvedCover>> {

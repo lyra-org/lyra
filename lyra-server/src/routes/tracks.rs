@@ -73,10 +73,15 @@ use crate::{
                 Tracks,
             },
         },
+        covers::{
+            ResolvedCover,
+            shown::CoverTarget,
+        },
         pagination::SnapshotKey,
         tracks as track_service,
     },
 };
+use std::collections::HashMap;
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
@@ -227,48 +232,67 @@ fn resolve_optional_release_filter(
 }
 
 fn release_to_response(
-    db: &impl lyra_db::DbAccess,
     release: lyra_db::Release,
+    covers: &HashMap<DbId, ResolvedCover>,
     include_cover: bool,
-) -> anyhow::Result<ReleaseResponse> {
-    let cover = if include_cover {
-        match release.db_id.clone().map(DbId::from) {
-            Some(release_db_id) => route_covers::build_cover_response(db, release_db_id, true)?,
-            None => Some(None),
-        }
-    } else {
-        None
-    };
+) -> ReleaseResponse {
+    let cover =
+        route_covers::cover_field(covers, include_cover, release.db_id.clone().map(DbId::from));
     let mut response = ReleaseResponse::from(release);
     response.cover = cover;
-    Ok(response)
+    response
 }
 
-pub(crate) fn track_detail_to_response(
-    db: &impl lyra_db::DbAccess,
-    detail: track_service::TrackDetails,
+/// The responses of `details`, with the covers included resolved together.
+pub(crate) fn track_responses(
+    db: &DbAny,
+    principal: &Principal,
+    details: Vec<track_service::TrackDetails>,
     includes: TrackRouteIncludes,
     chains: &TrackChains,
-) -> anyhow::Result<TrackResponse> {
-    let artist_covers = match detail.artists.as_ref() {
-        Some(artists) if includes.artist_covers => {
-            Some(crate::services::covers::lookup::shown_covers(
-                db,
-                &super::db_ids_from_credited_artists(artists),
-            )?)
+) -> Result<Vec<TrackResponse>, AppError> {
+    let mut targets = Vec::new();
+    for detail in &details {
+        if includes.release_covers
+            && let Some(releases) = &detail.releases
+        {
+            targets.extend(
+                releases
+                    .iter()
+                    .filter_map(|release| release.db_id.clone().map(DbId::from))
+                    .map(CoverTarget::Release),
+            );
         }
-        _ => None,
-    };
-    let releases = detail
-        .releases
-        .map(|releases| {
-            releases
-                .into_iter()
-                .map(|release| release_to_response(db, release, includes.release_covers))
-                .collect::<anyhow::Result<Vec<_>>>()
-        })
-        .transpose()?;
-    Ok(TrackResponse {
+        if includes.artist_covers
+            && let Some(artists) = &detail.artists
+        {
+            targets.extend(
+                super::db_ids_from_credited_artists(artists)
+                    .into_iter()
+                    .map(CoverTarget::Artist),
+            );
+        }
+    }
+    let covers = route_covers::resolve_principal_covers(db, principal, &targets)?;
+    Ok(details
+        .into_iter()
+        .map(|detail| track_detail_to_response(detail, &covers, includes, chains))
+        .collect())
+}
+
+fn track_detail_to_response(
+    detail: track_service::TrackDetails,
+    covers: &HashMap<DbId, ResolvedCover>,
+    includes: TrackRouteIncludes,
+    chains: &TrackChains,
+) -> TrackResponse {
+    let releases = detail.releases.map(|releases| {
+        releases
+            .into_iter()
+            .map(|release| release_to_response(release, covers, includes.release_covers))
+            .collect()
+    });
+    TrackResponse {
         chain: chains.get(&detail.track),
         id: detail.track.id.clone(),
         title: detail.track.track_title,
@@ -282,8 +306,8 @@ pub(crate) fn track_detail_to_response(
         releases,
         artists: detail
             .artists
-            .map(|v| super::credited_artist_responses(v, artist_covers.as_ref())),
-    })
+            .map(|v| super::credited_artist_responses(v, covers, includes.artist_covers)),
+    }
 }
 
 pub(crate) async fn list_track_responses(
@@ -356,10 +380,7 @@ pub(crate) fn track_page(
     let details = track_service::list_details_for_tracks(db, includes.service, tracks)?;
 
     let chains = TrackChains::of(db, details.iter().map(|detail| &detail.track))?;
-    let mut items = Vec::with_capacity(details.len());
-    for detail in details {
-        items.push(track_detail_to_response(db, detail, includes, &chains)?);
-    }
+    let items = track_responses(db, principal, details, includes, &chains)?;
     Ok(PageResponse { items, next_cursor })
 }
 
@@ -379,7 +400,8 @@ pub(crate) async fn get_track_response(
         .ok_or_else(|| AppError::not_found(format!("Track not found: {}", id)))?;
 
     let chains = TrackChains::of(db, [&detail.track])?;
-    Ok(track_detail_to_response(db, detail, includes, &chains)?)
+    let mut responses = track_responses(db, principal, vec![detail], includes, &chains)?;
+    Ok(responses.remove(0))
 }
 
 fn build_media_url(path: String, token: &str, query: &PlaybackUrlQuery) -> String {

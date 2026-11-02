@@ -70,10 +70,7 @@ async fn post_mix(
     let tracks = filter_accessible_tracks(db, &principal, tracks)?;
     let details = track_service::list_details_for_tracks(db, includes.service, tracks)?;
     let chains = TrackChains::of(db, details.iter().map(|detail| &detail.track))?;
-    let responses = details
-        .into_iter()
-        .map(|detail| route_tracks::track_detail_to_response(db, detail, includes, &chains))
-        .collect::<anyhow::Result<Vec<_>>>()?;
+    let responses = route_tracks::track_responses(db, &principal, details, includes, &chains)?;
     Ok(Json(responses))
 }
 
