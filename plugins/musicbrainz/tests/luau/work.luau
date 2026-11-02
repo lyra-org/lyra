@@ -1,9 +1,15 @@
 local apply = require("../../resolution/apply")
 local local_release = require("../../resolution/local_release")
+local metadata = require("@lyra/metadata")
 
 local work_ids: { [string]: string } = {}
+local ensured: { [string]: any } = {}
 local function noop() end
 apply.set_provider(setmetatable({
+	ensure_artist = function(_self: any, request: any): string?
+		ensured[request.id_value] = request
+		return nil
+	end,
 	layer = function(_self: any, node_id: string): any
 		return setmetatable({
 			set_id = function(_layer: any, id_type: string, id_value: string)
@@ -64,3 +70,10 @@ local performance = { ["target-type"] = "work", type = "performance", work = { i
 assert(applied_work_id({ performance }) == "work", "a performed work is set")
 assert(applied_work_id({}) == "", "relations without a work clear the work")
 assert(applied_work_id(nil) == nil, "unfetched relations keep the work")
+
+-- An artist a relation credits is ensured with its type, so its match keeps it.
+local vocal =
+	{ ["target-type"] = "artist", type = "vocal", artist = { id = "singer", name = "Singer", type = "Person" } }
+applied_work_id({ performance, vocal })
+local singer = ensured.singer
+assert(singer and singer.artist_type == metadata.ArtistType.Person, "the credited artist keeps its type")

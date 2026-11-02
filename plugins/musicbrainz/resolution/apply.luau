@@ -520,6 +520,7 @@ local function collect_relation_credits(sets: CreditSets, relations: { Relation 
 			id = artist.id,
 			name = artist.name,
 			["sort-name"] = artist["sort-name"],
+			["type"] = artist["type"],
 		} :: ReleaseArtist)
 		if not artist_id then
 			continue
