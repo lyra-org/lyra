@@ -8,7 +8,6 @@ use std::sync::Arc;
 use std::sync::RwLock as StdRwLock;
 use std::time::{
     Duration,
-    Instant,
     SystemTime,
 };
 
@@ -33,11 +32,16 @@ use percent_encoding::{
 };
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
+use std::sync::{
+    Mutex as StdMutex,
+    MutexGuard,
+    PoisonError,
+};
 use tokio::sync::{
     OwnedSemaphorePermit,
-    RwLock,
     Semaphore,
 };
+use tokio::time::Instant;
 
 /// Raw response body bytes that report as `string` in Luau type annotations.
 #[derive(Clone, Debug, Default)]
@@ -81,10 +85,22 @@ static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
 });
 
 // TODO(provider-cooldown): persist per-domain state so cooldowns survive restart.
-static RATE_LIMITER: LazyLock<Arc<RwLock<RateLimiter>>> =
-    LazyLock::new(|| Arc::new(RwLock::new(RateLimiter::new())));
-static CONCURRENCY_LIMITER: LazyLock<Arc<RwLock<ConcurrencyLimiter>>> =
-    LazyLock::new(|| Arc::new(RwLock::new(ConcurrencyLimiter::new())));
+// Held only briefly and never across an await, so plain mutexes: a request
+// queues for its turn to pace on the domain's own `DomainState::turn`.
+static RATE_LIMITER: LazyLock<StdMutex<RateLimiter>> =
+    LazyLock::new(|| StdMutex::new(RateLimiter::new()));
+static CONCURRENCY_LIMITER: LazyLock<StdMutex<ConcurrencyLimiter>> =
+    LazyLock::new(|| StdMutex::new(ConcurrencyLimiter::new()));
+
+fn rate_limiter() -> MutexGuard<'static, RateLimiter> {
+    RATE_LIMITER.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn concurrency_limiter() -> MutexGuard<'static, ConcurrencyLimiter> {
+    CONCURRENCY_LIMITER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
 static DEFAULT_USER_AGENT: LazyLock<StdRwLock<Option<String>>> =
     LazyLock::new(|| StdRwLock::new(None));
 
@@ -186,6 +202,10 @@ impl<T> OwnedLimits<T> {
 /// limits are swept and set again.
 struct DomainState {
     configs: OwnedLimits<RateLimitConfig>,
+    /// Requests pace one at a time, in the order they ask: only the one
+    /// holding the turn waits for a slot, and one that gives up leaves the
+    /// queue without holding back those behind it.
+    turn: Arc<tokio::sync::Mutex<()>>,
     next_allowed: Instant,
     server_remaining: Option<u32>,
     server_reset_at: Option<Instant>,
@@ -222,6 +242,7 @@ impl RateLimiter {
             .entry(domain)
             .or_insert_with(|| DomainState {
                 configs: OwnedLimits::default(),
+                turn: Arc::default(),
                 next_allowed: Instant::now(),
                 server_remaining: None,
                 server_reset_at: None,
@@ -252,6 +273,10 @@ impl RateLimiter {
         self.domains.get(domain).and_then(DomainState::config)
     }
 
+    fn turn(&self, domain: &str) -> Option<Arc<tokio::sync::Mutex<()>>> {
+        self.domains.get(domain).map(|state| state.turn.clone())
+    }
+
     fn update_from_response(&mut self, domain: &str, info: ServerRateLimitInfo) {
         let Some(state) = self.domains.get_mut(domain) else {
             return;
@@ -266,6 +291,9 @@ impl RateLimiter {
         state.server_reset_at = Some(info.reset_at);
     }
 
+    /// Takes the domain's next request slot, or returns how long to wait before
+    /// asking again. A wait reserves nothing, so a waiter that gives up, as a
+    /// request past its `timeout_ms` does, holds back no later request.
     fn acquire(&mut self, domain: &str) -> Option<Duration> {
         let state = self.domains.get_mut(domain)?;
         let requests_per_second = state.config()?.requests_per_second;
@@ -279,9 +307,7 @@ impl RateLimiter {
         let interval = match (state.server_remaining, state.server_reset_at) {
             (Some(remaining), Some(reset_at)) if reset_at > now => {
                 if remaining == 0 {
-                    let wait = reset_at - now;
-                    state.next_allowed = reset_at + static_interval;
-                    return Some(wait);
+                    return Some(reset_at - now);
                 }
                 let time_until_reset = reset_at - now;
                 let server_interval = time_until_reset / remaining;
@@ -291,9 +317,7 @@ impl RateLimiter {
         };
 
         if now < state.next_allowed {
-            let wait_time = state.next_allowed - now;
-            state.next_allowed += interval;
-            Some(wait_time)
+            Some(state.next_allowed - now)
         } else {
             state.next_allowed = now + interval;
             None
@@ -754,7 +778,7 @@ async fn acquire_concurrency_permit(domain: Option<&str>) -> Option<OwnedSemapho
     let host = domain?;
     loop {
         let semaphore = {
-            let limiter = CONCURRENCY_LIMITER.read().await;
+            let limiter = concurrency_limiter();
             match limiter.get(host) {
                 Some(s) => s,
                 None => {
@@ -777,6 +801,22 @@ async fn acquire_concurrency_permit(domain: Option<&str>) -> Option<OwnedSemapho
     }
 }
 
+/// Waits for `domain`'s next request slot and takes it, in turn behind the
+/// requests that asked before.
+async fn pace(domain: &str) {
+    let Some(turn) = rate_limiter().turn(domain) else {
+        return;
+    };
+    let _turn = turn.lock().await;
+    loop {
+        let wait_time = rate_limiter().acquire(domain);
+        let Some(wait_time) = wait_time else {
+            return;
+        };
+        tokio::time::sleep(wait_time).await;
+    }
+}
+
 /// Drives the rate-limit + retry + concurrency-cap loop. `request_fn` is
 /// called once per attempt; production passes [`execute_single_request`] while
 /// tests inject a deterministic fake to exercise retry/permit-hold paths
@@ -794,7 +834,7 @@ where
     let _concurrency_permit = acquire_concurrency_permit(domain.as_deref()).await;
 
     let config = if let Some(ref d) = domain {
-        let limiter = RATE_LIMITER.read().await;
+        let limiter = rate_limiter();
         limiter.get_config(d).cloned()
     } else {
         None
@@ -809,11 +849,7 @@ where
 
     loop {
         if let (Some(d), Some(_)) = (&domain, &config) {
-            let mut limiter = RATE_LIMITER.write().await;
-            if let Some(wait_time) = limiter.acquire(d) {
-                drop(limiter);
-                tokio::time::sleep(wait_time).await;
-            }
+            pace(d).await;
         }
 
         let response = request_fn(options.clone()).await;
@@ -821,7 +857,7 @@ where
         if let Some(ref d) = domain
             && let Some(info) = parse_rate_limit_headers(&response.headers)
         {
-            let mut limiter = RATE_LIMITER.write().await;
+            let mut limiter = rate_limiter();
             limiter.update_from_response(d, info);
         }
 
@@ -1127,7 +1163,7 @@ async fn configure_rate_limit(
         initial_backoff: Duration::from_millis(options.backoff_ms.unwrap_or(1000)),
     };
 
-    let mut limiter = RATE_LIMITER.write().await;
+    let mut limiter = rate_limiter();
     limiter.set_config(domain, config, plugin_id);
 
     Ok(())
@@ -1143,7 +1179,7 @@ async fn configure_max_in_flight(
 
     let host = host_key(&options.host);
 
-    let mut limiter = CONCURRENCY_LIMITER.write().await;
+    let mut limiter = concurrency_limiter();
     limiter.set_limit(host, options.max_in_flight as usize, plugin_id);
 
     Ok(())
@@ -1459,7 +1495,7 @@ impl HttpHeaderMap {
 /// True when `plugin_id` holds a `set_rate_limit` entry for at least one
 /// domain. Plugin surfaces gate on this before registering.
 pub async fn has_rate_limit_for_plugin(plugin_id: &str) -> bool {
-    let limiter = RATE_LIMITER.read().await;
+    let limiter = rate_limiter();
     limiter.has_entry_for_plugin(plugin_id)
 }
 
@@ -1467,35 +1503,25 @@ pub async fn has_rate_limit_for_plugin(plugin_id: &str) -> bool {
 /// longer counts for [`has_rate_limit_for_plugin`] until the plugin sets it
 /// again.
 pub async fn mark_plugin_limits_stale(plugin_id: &str) {
-    RATE_LIMITER.write().await.mark_plugin_stale(plugin_id);
-    CONCURRENCY_LIMITER
-        .write()
-        .await
-        .mark_plugin_stale(plugin_id);
+    rate_limiter().mark_plugin_stale(plugin_id);
+    concurrency_limiter().mark_plugin_stale(plugin_id);
 }
 
 /// Drops the limits of `plugin_id` still stale. Each host falls back to the
 /// strictest limit its other owners hold.
 pub async fn remove_stale_plugin_limits(plugin_id: &str) {
-    RATE_LIMITER.write().await.remove_stale_plugin(plugin_id);
-    CONCURRENCY_LIMITER
-        .write()
-        .await
-        .remove_stale_plugin(plugin_id);
+    rate_limiter().remove_stale_plugin(plugin_id);
+    concurrency_limiter().remove_stale_plugin(plugin_id);
 }
 
 /// Whether `plugin_id` holds any limit, stale or live.
 #[doc(hidden)]
 pub async fn test_holds_any_limit(plugin_id: &str) -> bool {
-    let rate = RATE_LIMITER
-        .read()
-        .await
+    let rate = rate_limiter()
         .domains
         .values()
         .any(|state| state.configs.has_any(plugin_id));
-    let concurrency = CONCURRENCY_LIMITER
-        .read()
-        .await
+    let concurrency = concurrency_limiter()
         .entries
         .values()
         .any(|entry| entry.limits.has_any(plugin_id));
@@ -1504,7 +1530,7 @@ pub async fn test_holds_any_limit(plugin_id: &str) -> bool {
 
 #[doc(hidden)]
 pub async fn test_seed_rate_limit(domain: impl Into<String>, plugin_id: impl Into<Arc<str>>) {
-    let mut limiter = RATE_LIMITER.write().await;
+    let mut limiter = rate_limiter();
     limiter.set_config(
         domain.into(),
         RateLimitConfig {
@@ -1707,10 +1733,9 @@ pub fn render_luau_definition() -> Result<String, std::fmt::Error> {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{
-        Duration,
-        Instant,
-    };
+    use std::time::Duration;
+
+    use tokio::time::Instant;
 
     use harmony_core::UserDataBinding;
 
@@ -1791,7 +1816,7 @@ mod tests {
 
         assert!(super::has_rate_limit_for_plugin("luau-http-plugin").await);
         {
-            let limiter = super::CONCURRENCY_LIMITER.read().await;
+            let limiter = super::concurrency_limiter();
             assert_eq!(max_in_flight(&limiter, "example.com"), Some(2));
         }
         let mut values = vm.eval(
@@ -1944,7 +1969,7 @@ mod tests {
             domain,
             super::ServerRateLimitInfo {
                 remaining: 0,
-                reset_at: std::time::Instant::now() + std::time::Duration::from_secs(60),
+                reset_at: tokio::time::Instant::now() + std::time::Duration::from_secs(60),
             },
         );
         remove_plugin(&mut limiter, "demo");
@@ -1999,7 +2024,7 @@ mod tests {
     async fn concurrency_tightening_moves_waiters_to_the_tighter_cap() {
         let host = "permit-tighten-test.example";
         {
-            let mut limiter = super::CONCURRENCY_LIMITER.write().await;
+            let mut limiter = super::concurrency_limiter();
             limiter.set_limit(host.to_string(), 2, Some("loose".into()));
         }
         let first = super::acquire_concurrency_permit(Some(host)).await;
@@ -2009,7 +2034,7 @@ mod tests {
         assert!(!waiter.is_finished());
 
         {
-            let mut limiter = super::CONCURRENCY_LIMITER.write().await;
+            let mut limiter = super::concurrency_limiter();
             limiter.set_limit(host.to_string(), 1, Some("strict".into()));
         }
         let permit = waiter.await.expect("waiter task");
@@ -2034,7 +2059,7 @@ mod tests {
     async fn concurrency_waiters_go_uncapped_only_when_the_host_has_no_cap() {
         let host = "permit-removed-test.example";
         {
-            let mut limiter = super::CONCURRENCY_LIMITER.write().await;
+            let mut limiter = super::concurrency_limiter();
             limiter.set_limit(host.to_string(), 1, Some("demo".into()));
         }
         let _held = super::acquire_concurrency_permit(Some(host)).await;
@@ -2054,12 +2079,12 @@ mod tests {
         // Unique host to avoid bleed with siblings sharing the global limiter.
         let host = "permit-shared-test.example".to_string();
         {
-            let mut limiter = super::CONCURRENCY_LIMITER.write().await;
+            let mut limiter = super::concurrency_limiter();
             limiter.set_limit(host.clone(), 1, None);
         }
 
         let sem = {
-            let limiter = super::CONCURRENCY_LIMITER.read().await;
+            let limiter = super::concurrency_limiter();
             limiter.get(&host).expect("cap registered above")
         };
         assert_eq!(sem.available_permits(), 1);
@@ -2105,11 +2130,11 @@ mod tests {
         let url = format!("https://{host}/x");
 
         {
-            let mut limiter = super::CONCURRENCY_LIMITER.write().await;
+            let mut limiter = super::concurrency_limiter();
             limiter.set_limit(host.clone(), 1, None);
         }
         {
-            let mut limiter = super::RATE_LIMITER.write().await;
+            let mut limiter = super::rate_limiter();
             limiter.set_config(
                 host.clone(),
                 super::RateLimitConfig {
@@ -2167,7 +2192,7 @@ mod tests {
             .expect("first attempt must fire and signal");
 
         let sem = {
-            let limiter = super::CONCURRENCY_LIMITER.read().await;
+            let limiter = super::concurrency_limiter();
             limiter.get(&host).expect("cap registered above")
         };
         assert!(
@@ -2356,7 +2381,7 @@ mod tests {
             _ => ok(b"limited"),
         })
         .await;
-        super::RATE_LIMITER.write().await.set_config(
+        super::rate_limiter().set_config(
             "localhost".to_string(),
             super::RateLimitConfig {
                 requests_per_second: 100.0,
@@ -2435,7 +2460,10 @@ mod tests {
         assert_eq!(error.kind(), "request");
     }
 
-    fn options_with_timeout(url: &str, timeout_ms: u64) -> super::HttpRequestOptions {
+    // The timing tests below run on tokio's paused clock: sleeps end when the
+    // runtime has nothing else to do, so durations are exact, not raced.
+
+    fn options_with_timeout(url: &str, timeout_ms: Option<u64>) -> super::HttpRequestOptions {
         super::HttpRequestOptions {
             url: url.to_string(),
             method: super::HttpMethod::Get,
@@ -2443,13 +2471,12 @@ mod tests {
             headers: None,
             cookies: None,
             max_body_bytes: None,
-            timeout_ms: Some(timeout_ms),
+            timeout_ms,
         }
     }
 
-    async fn set_test_rate_limit(host: &str, requests_per_second: f64, backoff: Duration) {
-        let mut limiter = super::RATE_LIMITER.write().await;
-        limiter.set_config(
+    fn set_test_rate_limit(host: &str, requests_per_second: f64, backoff: Duration) {
+        super::rate_limiter().set_config(
             host.to_string(),
             super::RateLimitConfig {
                 requests_per_second,
@@ -2471,46 +2498,47 @@ mod tests {
         )
     }
 
-    fn assert_timed_out(response: &super::HttpResponse, started: Instant) {
+    fn assert_timed_out(response: &super::HttpResponse, started: Instant, timeout: Duration) {
         assert!(!response.success);
         assert_eq!(response.error_kind.as_deref(), Some("timeout"));
         assert_eq!(response.status_code, None);
-        assert!(
-            started.elapsed() < Duration::from_secs(2),
-            "the request ends at its timeout, not when its wait would"
+        assert_eq!(
+            started.elapsed(),
+            timeout,
+            "the request ends at its timeout"
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn timeout_bounds_rate_limit_pacing() {
         let host = "timeout-pacing-test.example";
-        set_test_rate_limit(host, 0.2, Duration::from_millis(1)).await;
-        assert_eq!(super::RATE_LIMITER.write().await.acquire(host), None);
+        set_test_rate_limit(host, 0.2, Duration::from_millis(1));
+        assert_eq!(super::rate_limiter().acquire(host), None);
 
         let started = Instant::now();
         let response = super::run_request(
-            options_with_timeout(&format!("https://{host}/x"), 100),
+            options_with_timeout(&format!("https://{host}/x"), Some(100)),
             |_| async { ok_response() },
         )
         .await;
-        assert_timed_out(&response, started);
+        assert_timed_out(&response, started, Duration::from_millis(100));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn timeout_bounds_retry_backoff() {
         let host = "timeout-backoff-test.example";
-        set_test_rate_limit(host, 1000.0, Duration::from_secs(1000)).await;
+        set_test_rate_limit(host, 1000.0, Duration::from_secs(1000));
 
         let started = Instant::now();
         let response = super::run_request(
-            options_with_timeout(&format!("https://{host}/x"), 100),
+            options_with_timeout(&format!("https://{host}/x"), Some(100)),
             |_| async { super::HttpResponse::error("retry", Some(503), "unavailable".into()) },
         )
         .await;
-        assert_timed_out(&response, started);
+        assert_timed_out(&response, started, Duration::from_millis(100));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn timeout_bounds_retry_after() {
         use std::sync::Arc;
         use std::sync::atomic::{
@@ -2519,12 +2547,12 @@ mod tests {
         };
 
         let host = "timeout-retry-after-test.example";
-        set_test_rate_limit(host, 1000.0, Duration::from_millis(1)).await;
+        set_test_rate_limit(host, 1000.0, Duration::from_millis(1));
         let attempts = Arc::new(AtomicUsize::new(0));
 
         let started = Instant::now();
         let response = super::run_request(
-            options_with_timeout(&format!("https://{host}/x"), 100),
+            options_with_timeout(&format!("https://{host}/x"), Some(100)),
             |_| {
                 let attempts = attempts.clone();
                 async move {
@@ -2540,7 +2568,7 @@ mod tests {
             },
         )
         .await;
-        assert_timed_out(&response, started);
+        assert_timed_out(&response, started, Duration::from_millis(100));
         assert_eq!(
             attempts.load(Ordering::SeqCst),
             1,
@@ -2548,10 +2576,10 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn a_request_within_its_timeout_answers_as_usual() {
         let response = super::run_request(
-            options_with_timeout("https://timeout-in-time-test.example/x", 1000),
+            options_with_timeout("https://timeout-in-time-test.example/x", Some(1000)),
             |_| async { ok_response() },
         )
         .await;
@@ -2559,7 +2587,7 @@ mod tests {
         assert_eq!(response.status_code, Some(200));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn timeout_bounds_a_whole_redirect_chain() {
         use std::sync::Arc;
         use std::sync::atomic::{
@@ -2569,13 +2597,12 @@ mod tests {
 
         let first = "timeout-chain-first.example";
         let second = "timeout-chain-second.example";
-        set_test_rate_limit(second, 1000.0, Duration::from_millis(1)).await;
         let hops = Arc::new(AtomicUsize::new(0));
 
-        // Each hop answers within 60 ms; the chain of them doesn't within 100.
+        // Each hop answers in 60 ms; the chain of them doesn't within 100.
         let started = Instant::now();
         let response = super::run_request(
-            options_with_timeout(&format!("https://{first}/start"), 100),
+            options_with_timeout(&format!("https://{first}/start"), Some(100)),
             |opts| {
                 let hops = hops.clone();
                 async move {
@@ -2599,8 +2626,145 @@ mod tests {
             },
         )
         .await;
-        assert_timed_out(&response, started);
+        assert_timed_out(&response, started, Duration::from_millis(100));
         assert_eq!(hops.load(Ordering::SeqCst), 2, "the timeout spans the hops");
+    }
+
+    /// Starts a request per entry of `timeouts` on `host`, in order, each
+    /// queued before the next starts, and returns when each was admitted
+    /// (sent), or `None` for one that timed out.
+    async fn admissions(host: &str, timeouts: &[Option<u64>]) -> Vec<Option<Duration>> {
+        let started = Instant::now();
+        let mut requests = Vec::new();
+        for timeout_ms in timeouts {
+            let url = format!("https://{host}/x");
+            let timeout_ms = *timeout_ms;
+            requests.push(tokio::spawn(async move {
+                let admitted = std::sync::Arc::new(std::sync::Mutex::new(None));
+                let response = super::run_request(options_with_timeout(&url, timeout_ms), |_| {
+                    let admitted = admitted.clone();
+                    async move {
+                        *admitted.lock().unwrap() = Some(started.elapsed());
+                        ok_response()
+                    }
+                })
+                .await;
+                let admitted = *admitted.lock().unwrap();
+                if response.success { admitted } else { None }
+            }));
+            // Lets the request reach the domain's queue before the next starts.
+            tokio::task::yield_now().await;
+        }
+        let mut results = Vec::new();
+        for request in requests {
+            results.push(request.await.expect("request completes"));
+        }
+        results
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn paced_requests_are_admitted_in_arrival_order() {
+        let host = "pacing-order-test.example";
+        set_test_rate_limit(host, 10.0, Duration::from_millis(1));
+        assert_eq!(super::rate_limiter().acquire(host), None);
+
+        let admitted = admissions(host, &[None, None, None, None]).await;
+        let ms = |n: u64| Some(Duration::from_millis(n));
+        assert_eq!(
+            admitted,
+            vec![ms(100), ms(200), ms(300), ms(400)],
+            "one slot per interval, oldest first, so none waits behind later arrivals"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_request_arriving_as_a_slot_opens_waits_behind_older_ones() {
+        let host = "pacing-arrival-test.example";
+        set_test_rate_limit(host, 10.0, Duration::from_millis(1));
+        assert_eq!(super::rate_limiter().acquire(host), None);
+        let started = Instant::now();
+
+        // Starts at the 100 ms slot, its timer ahead of the waiters' own.
+        let late = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let admitted = std::sync::Arc::new(std::sync::Mutex::new(None));
+            super::run_request(
+                options_with_timeout(&format!("https://{host}/x"), None),
+                |_| {
+                    let admitted = admitted.clone();
+                    async move {
+                        *admitted.lock().unwrap() = Some(started.elapsed());
+                        ok_response()
+                    }
+                },
+            )
+            .await;
+            let admitted = *admitted.lock().unwrap();
+            admitted
+        });
+        tokio::task::yield_now().await;
+        let waiting = admissions(host, &[None, None]).await;
+        let ms = |n: u64| Some(Duration::from_millis(n));
+        assert_eq!(waiting, vec![ms(100), ms(200)]);
+        assert_eq!(
+            late.await.expect("late request completes"),
+            ms(300),
+            "the newcomer queues behind the requests already waiting"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_waiter_that_gives_up_frees_its_place() {
+        let host = "pacing-cancel-test.example";
+        set_test_rate_limit(host, 2.0, Duration::from_millis(1));
+        assert_eq!(super::rate_limiter().acquire(host), None);
+
+        // The second gives up at 600 ms while waiting for the 1000 ms slot.
+        let admitted = admissions(host, &[None, Some(600), None]).await;
+        let ms = |n: u64| Some(Duration::from_millis(n));
+        assert_eq!(
+            admitted,
+            vec![ms(500), None, ms(1000)],
+            "the slot it waited for goes to the next in line"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn timed_out_pacing_waits_hold_back_no_later_request() {
+        let host = "timeout-reservation-test.example";
+        set_test_rate_limit(host, 2.0, Duration::from_millis(1));
+        assert_eq!(super::rate_limiter().acquire(host), None);
+
+        let mut timeouts = vec![Some(50); 5];
+        timeouts.push(None);
+        let admitted = admissions(host, &timeouts).await;
+        assert_eq!(&admitted[..5], &[None; 5]);
+        assert_eq!(
+            admitted[5],
+            Some(Duration::from_millis(500)),
+            "the next slot goes to the waiter left, not one per waiter that gave up"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_exhausted_server_quota_holds_requests_until_its_reset() {
+        let host = "pacing-reset-test.example";
+        set_test_rate_limit(host, 10.0, Duration::from_millis(1));
+        super::rate_limiter().update_from_response(
+            host,
+            super::ServerRateLimitInfo {
+                remaining: 0,
+                reset_at: Instant::now() + Duration::from_secs(2),
+            },
+        );
+
+        let admitted = admissions(host, &[None, None]).await;
+        let ms = |n: u64| Some(Duration::from_millis(n));
+        assert_eq!(
+            admitted,
+            vec![ms(2000), ms(2100)],
+            "the reset, then one interval on"
+        );
     }
 
     #[test]
