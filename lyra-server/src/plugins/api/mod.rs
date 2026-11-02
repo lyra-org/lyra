@@ -817,7 +817,10 @@ fn collect_headers(custom: luau::Value) -> luau::runtime::Result<luau::OwnedTabl
 }
 
 fn headers_has_field(headers: &luau::OwnedTable, name: &str) -> bool {
-    headers.fields().iter().any(|(key, _)| key == name)
+    headers
+        .fields()
+        .iter()
+        .any(|(key, _)| key.eq_ignore_ascii_case(name))
 }
 
 fn is_nil(value: &luau::Value) -> bool {
