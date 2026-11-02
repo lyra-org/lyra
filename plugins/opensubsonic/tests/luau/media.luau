@@ -45,6 +45,10 @@ assert(
 	"a bad boolean"
 )
 
+-- `timeOffset` takes fractional seconds, to the millisecond.
+assert(stream({ id = ids.synced, timeOffset = "1.2345" }).options.start_offset_ms == 1234, "a fractional offset")
+assert(stream({ id = ids.synced, timeOffset = "0.5" }).options.start_offset_ms == 500, "under a second")
+
 -- `stream` fails in XML whatever the format asked for, as its errors aren't media.
 local function stream_error(params: { [string]: string }): number
 	local failed = stream(params)

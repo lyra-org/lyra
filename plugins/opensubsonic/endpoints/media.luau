@@ -38,7 +38,7 @@ local REFUSED_OPTIONS = "The song can't be streamed with these options"
 local function stream_options(params: ApiQueryParams): TrackStreamOptions?
 	local format = request.param(params, "format")
 	local max_bitrate_kbps = request.int(params, "maxBitRate")
-	local time_offset_s = request.int(params, "timeOffset")
+	local time_offset_s = request.number(params, "timeOffset")
 	local options: TrackStreamOptions = {}
 	local any = false
 	if request.bool(params, "estimateContentLength") then
@@ -61,7 +61,7 @@ local function stream_options(params: ApiQueryParams): TrackStreamOptions?
 		any = true
 	end
 	if time_offset_s and time_offset_s > 0 then
-		options.start_offset_ms = time_offset_s * 1000
+		options.start_offset_ms = math.floor(time_offset_s * 1000)
 		any = true
 	end
 	return if any then options else nil

@@ -135,6 +135,19 @@ local function parse_int(name: string, value: string): number
 	return number
 end
 
+-- A finite number, which may have a fraction.
+function module.number(params: ApiQueryParams, name: string): number?
+	local value = module.param(params, name)
+	if not value then
+		return nil
+	end
+	local number = tonumber(value)
+	if not number or number ~= number or math.abs(number) == math.huge then
+		return module.fail(0, `Invalid number for {name}: {value}`)
+	end
+	return number
+end
+
 function module.int(params: ApiQueryParams, name: string): number?
 	local value = module.param(params, name)
 	return if value then parse_int(name, value) else nil
