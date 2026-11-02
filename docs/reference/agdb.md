@@ -160,6 +160,14 @@ project-local guidance for using agdb in Lyra.
 - `remove().index(key)` is a no-op if the index does not exist.
 - Index lookup is **exact match** (key + value); further conditions only
   filter the hits. See [Index Search](#index-search).
+- Every entry sharing a value lands in one cluster of the index's multimap,
+  so inserting or removing an indexed element is O(n) in the number of
+  elements holding the same value, and building an index over a
+  low-cardinality key is quadratic. This is by design
+  ([agdb#2028](https://github.com/agnesoft/agdb/issues/2028)).
+- Index only keys that are unique or nearly unique, and only when something
+  looks elements up by them. Reach elements that share a value through graph
+  edges and filter on the key there.
 
 ## Insert Queries
 

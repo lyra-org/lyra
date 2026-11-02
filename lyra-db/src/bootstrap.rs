@@ -109,18 +109,12 @@ const CORE_INDEXES: &[&str] = &[
     "scan_name",
     super::artists::SCAN_ALIAS_HOLDER,
     "label_scan_name",
-    "tag",
     "tag_owner_name", // composite "{owner_public_id}:{normalized_name}" for O(log N) tag lookup
     // Required for library uniqueness lookups: `select().elements::<T>().search()`
     // filters output but doesn't stop traversal, so without these the checks
     // walk the entire libraries subgraph on every create/update.
     "name_key",
     "path_key",
-    "provider_id",
-    "source_id",
-    "track_id",
-    "state",
-    "session_alias",
     "username",
     "key_hash",
     "token_hash",

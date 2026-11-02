@@ -33,6 +33,10 @@ use super::super::{
     artists::relations::ArtistRelationType,
     credits::CreditType,
     entities::MetadataEntityType,
+    roots::{
+        self,
+        Root,
+    },
 };
 
 /// An artist layer's incoming relations by type: the artists that relate to
@@ -233,14 +237,47 @@ fn find_id<T: LayerElement>(
 }
 
 pub fn entity_ids_for_source(db: &impl DbAccess, source_id: &str) -> anyhow::Result<Vec<DbId>> {
-    let layer_ids = super::super::indexes::node_ids(db, "source_id", source_id)?;
-    let mut entity_ids = Vec::with_capacity(layer_ids.len());
-    for layer_id in layer_ids {
+    let mut entity_ids = Vec::new();
+    for layer_id in layer_ids_for_source::<ReleaseLayer>(db, Root::Releases, source_id)?
+        .into_iter()
+        .chain(layer_ids_for_source::<TrackLayer>(
+            db,
+            Root::Tracks,
+            source_id,
+        )?)
+        .chain(layer_ids_for_source::<ArtistLayer>(
+            db,
+            Root::Artists,
+            source_id,
+        )?)
+    {
         entity_ids.extend(owner_id(db, layer_id)?);
     }
     entity_ids.sort_unstable();
     entity_ids.dedup();
     Ok(entity_ids)
+}
+
+/// The `T` layers that `source_id` contributed to members of `root`.
+fn layer_ids_for_source<T: LayerElement>(
+    db: &impl DbAccess,
+    root: Root,
+    source_id: &str,
+) -> anyhow::Result<Vec<DbId>> {
+    Ok(db
+        .exec(
+            QueryBuilder::search()
+                .from(root.alias())
+                .where_()
+                .distance(roots::MEMBER_CHILDREN)
+                .and()
+                .element::<T>()
+                .and()
+                .key("source_id")
+                .value(source_id)
+                .query(),
+        )?
+        .ids())
 }
 
 /// Saves `layer` as its source's layer on the entity, replacing any previous
