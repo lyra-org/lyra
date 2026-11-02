@@ -686,6 +686,15 @@ impl DeliveryDecision {
     }
 }
 
+/// The source's own format and codec, when that codec is lossless and the transcoder can encode it
+/// into that format. A lossy source is left to the request's preferences: re-encoding it in its own
+/// codec has no rate control matched to the source.
+fn lossless_source_encoding(source: &ValidatedTrackSource) -> Option<(AudioFormat, AudioCodec)> {
+    let format = source.entry_format?;
+    let codec = source.source_codec.filter(AudioCodec::is_lossless)?;
+    (codec.ffmpeg_encoder().is_some() && format.supports_codec(codec)).then_some((format, codec))
+}
+
 /// Resolves the delivery decision for a source that already has any request
 /// start offset applied.
 ///
@@ -693,7 +702,9 @@ impl DeliveryDecision {
 /// first pass — once more with `copy` off, because a trimmed source or any
 /// transcode knob rules `copy` out. The copy-off answer is also what the
 /// transcode policy is derived from, so a bitrate cap is validated against the
-/// codec that would actually encode it.
+/// codec that would actually encode it. When only trimming rules `copy` out, a
+/// lossless source is re-encoded in its own format and codec where it can be, so
+/// a slice of a file the client could have played as it is stays lossless.
 pub(crate) fn resolve_delivery(
     validated: &ValidatedRequest,
     source: &ValidatedTrackSource,
@@ -758,10 +769,17 @@ pub(crate) fn resolve_delivery(
         || policy.channels.is_some();
     let copy_ruled_out = trimmed || forcing_transcode;
 
-    let (output_format, codec) = if copy_selected && copy_ruled_out {
-        (transcode_output_format, transcode_codec)
+    let (output_format, codec, policy) = if copy_selected && copy_ruled_out {
+        match lossless_source_encoding(source).filter(|_| !forcing_transcode) {
+            Some((format, codec)) => (
+                format,
+                codec,
+                apply_transcode_policy(knobs, codec, source.into())?,
+            ),
+            None => (transcode_output_format, transcode_codec, policy),
+        }
     } else {
-        (copy_output_format, copy_codec)
+        (copy_output_format, copy_codec, policy)
     };
 
     if matches!(codec, AudioCodec::Copy) && !allow_copy {
@@ -1726,6 +1744,63 @@ mod tests {
         assert!(!unlisted.direct_passthrough);
         assert_eq!(unlisted.output_format, AudioFormat::M4a);
         assert_eq!(unlisted.codec, AudioCodec::Aac);
+    }
+
+    #[test]
+    fn resolve_delivery_reencodes_a_trimmed_source_in_its_own_codec() {
+        let mut flac = flac_source(Some(1_000), None);
+        flac.format.container = Some(SourceContainer::Flac);
+        flac.format.codec = Some(SourceCodec::Flac);
+
+        let decision = stream_with_copy_profiles(&flac, Some("copy,opus"), "flac/flac")
+            .expect("a trimmed flac resolves");
+        assert!(!decision.direct_passthrough);
+        assert_eq!(decision.output_format, AudioFormat::Flac);
+        assert_eq!(decision.codec, AudioCodec::Flac);
+        assert_eq!(decision.reasons.names(), vec!["range"]);
+
+        let unlisted = stream_with_copy_profiles(&flac, Some("copy,opus"), "m4a/aac")
+            .expect("an unlisted trimmed flac resolves");
+        assert_eq!(unlisted.codec, AudioCodec::Opus);
+    }
+
+    #[test]
+    fn resolve_delivery_follows_the_preferences_for_a_trimmed_lossy_source() {
+        let mut vorbis = flac_source(Some(1_000), None);
+        vorbis.entry_format = Some(AudioFormat::Ogg);
+        vorbis.source_codec = Some(AudioCodec::Vorbis);
+        vorbis.format.sample_rate_hz = Some(22_050);
+        vorbis.format.channel_count = Some(1);
+        vorbis.format.bitrate_bps = Some(48_000);
+        let validated =
+            validate_request(None, Some("copy,opus".to_string()), None).expect("parses");
+
+        let decision = resolve_delivery(
+            &validated,
+            &vorbis,
+            TranscodeKnobs::default(),
+            DeliveryTarget::Stream,
+        )
+        .expect("a trimmed vorbis resolves");
+        assert_eq!(decision.codec, AudioCodec::Opus);
+    }
+
+    #[test]
+    fn resolve_delivery_follows_the_preferences_when_a_knob_rules_out_copy() {
+        let validated =
+            validate_request(None, Some("copy,opus".to_string()), None).expect("parses");
+        let decision = resolve_delivery(
+            &validated,
+            &flac_source(Some(1_000), None),
+            TranscodeKnobs {
+                channels: Some(1),
+                ..TranscodeKnobs::default()
+            },
+            DeliveryTarget::Stream,
+        )
+        .expect("a downmixed trimmed flac resolves");
+        assert_eq!(decision.output_format, AudioFormat::Opus);
+        assert_eq!(decision.codec, AudioCodec::Opus);
     }
 
     #[test]
