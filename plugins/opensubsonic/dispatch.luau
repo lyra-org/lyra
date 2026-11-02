@@ -53,6 +53,12 @@ function module.dispatch(ctx: ApiContext): ApiResponse
 		return if xml_errors[name] then response.failed_xml(err) else response.failed(params, err)
 	end
 
+	for _, required in { "v", "c" } do
+		if not request.param(params, required) then
+			return failed(response.error(10, `Required parameter is missing: {required}`))
+		end
+	end
+
 	local resolved, err = auth_protocol.authenticate(params)
 	if not resolved then
 		return failed(err :: response.SubsonicError)

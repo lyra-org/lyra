@@ -13,12 +13,18 @@ local function query_of(params: Params): { [string]: { string } }
 	return query
 end
 
--- The raw response to a method call.
+-- The raw response to a method call, with the protocol version and client name unless the call
+-- gives its own or `bare` asks for neither.
 function module.raw(
 	method: string,
 	params: Params,
-	options: { http_method: string?, headers: { [string]: string }?, body: string? }?
+	options: { http_method: string?, headers: { [string]: string }?, body: string?, bare: boolean? }?
 ): any
+	if not (options and options.bare) then
+		params = table.clone(params)
+		params.v = params.v or "1.16.1"
+		params.c = params.c or "test"
+	end
 	return dispatch.dispatch({
 		plugin_id = "opensubsonic",
 		request = {
@@ -35,7 +41,7 @@ end
 
 -- The decoded `subsonic-response` of a JSON call authenticated with `key`.
 function module.call(method: string, key: string, params: Params?): any
-	local query: Params = { apiKey = key, f = "json", v = "1.16.1", c = "test" }
+	local query: Params = { apiKey = key, f = "json" }
 	for name, value in params or {} do
 		query[name] = value
 	end

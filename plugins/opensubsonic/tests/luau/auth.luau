@@ -1,5 +1,6 @@
 local fixture = ...
 local auth = require("../../protocol/auth")
+local call = require("./_call")
 
 local function query_of(params: { [string]: string })
 	local query = {}
@@ -68,10 +69,28 @@ assert_error({ apiKey = "" }, 44)
 assert_error({ u = "owner", p = "" }, 40)
 
 -- `tokenInfo` checks the key it describes.
-local call = require("./_call")
 assert(call.error_code("tokenInfo", "not-a-key") == 44, "an invalid key")
 assert(call.ok("tokenInfo", phone).tokenInfo.username ~= nil, "a valid key")
 
 -- Errors a key would fix point at the plugin's sign-in docs.
 local _, token_error = authenticate({ u = "owner", t = "26719a1196d2a940705a59634eb18eab", s = "c19b2d" })
 assert(token_error ~= nil and token_error.helpUrl == auth.HELP_URL)
+
+-- Every authenticated method needs the protocol version and the client's name, checked before the
+-- credentials; the extensions list doesn't.
+local serde = require("@harmony/serde")
+local function failure(method: string, params: { [string]: string }): any
+	local body = (serde.json.decode(call.raw(method, params, { bare = true }).body) :: any)["subsonic-response"]
+	assert(body.status == "failed", `{method} succeeded`)
+	return body.error
+end
+local missing_v = failure("ping", { apiKey = phone, f = "json", c = "test" })
+assert(missing_v.code == 10 and missing_v.message == "Required parameter is missing: v", missing_v.message)
+local missing_c = failure("ping", { apiKey = phone, f = "json", v = "1.16.1" })
+assert(missing_c.code == 10 and missing_c.message == "Required parameter is missing: c", missing_c.message)
+assert(failure("ping", { apiKey = phone, f = "json", v = "", c = "test" }).code == 10, "an empty v")
+assert(failure("ping", { apiKey = "not-a-key", f = "json" }).code == 10, "before the credentials")
+local bare_stream = call.raw("stream", { apiKey = phone, f = "json", c = "test" }, { bare = true })
+assert(string.find(bare_stream.body, "Required parameter is missing: v", 1, true), bare_stream.body)
+local extensions = call.raw("getOpenSubsonicExtensions", { f = "json" }, { bare = true })
+assert((serde.json.decode(extensions.body) :: any)["subsonic-response"].status == "ok", "public without them")

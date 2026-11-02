@@ -111,7 +111,8 @@ assert(playlist(ids.mine).songCount == named.songCount, "a blank name leaves the
 local form = call.raw("createPlaylist", {}, {
 	http_method = "POST",
 	headers = { ["content-type"] = "application/x-www-form-urlencoded; charset=utf-8" },
-	body = `apiKey={key}&f=json&name=Form+list%21&songId={ids.a}&songId={ids.b}`,
+	body = `apiKey={key}&v=1.16.1&c=test&f=json&name=Form+list%21&songId={ids.a}&songId={ids.b}`,
+	bare = true,
 })
 local serde = require("@harmony/serde")
 local form_body = (serde.json.decode(form.body) :: any)["subsonic-response"]
