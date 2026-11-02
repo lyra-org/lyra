@@ -76,6 +76,7 @@ struct PlaybackSessionReportRequest {
     position_ms: Option<u64>,
     duration_ms: Option<u64>,
     state: Option<lyra_db::PlaybackState>,
+    rate: Option<f64>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -99,6 +100,7 @@ struct ActivePlaybackInfo {
     effective_position_ms: u64,
     duration_ms: Option<u64>,
     state: lyra_db::PlaybackState,
+    rate: f64,
     started_at_ms: u64,
     updated_at_ms: u64,
     client_name: Option<String>,
@@ -114,6 +116,7 @@ struct PlaybackInfo {
     effective_position_ms: u64,
     duration_ms: Option<u64>,
     state: lyra_db::PlaybackState,
+    rate: f64,
 }
 
 #[derive(Serialize)]
@@ -209,7 +212,17 @@ impl PlaybackSessionsModule {
         let active_event = playbacks::classify_active_event(request.event)
             .map_err(crate::plugins::runtime_error)?;
         let current_ms = playbacks::now_ms().map_err(crate::plugins::runtime_error)?;
-        let mutation = playback_mutation(request.position_ms, request.duration_ms, request.state);
+        let rate_permille = request
+            .rate
+            .map(playbacks::rate_permille)
+            .transpose()
+            .map_err(crate::plugins::runtime_error)?;
+        let mutation = playbacks::PlaybackMutation {
+            position_ms: request.position_ms,
+            duration_ms: request.duration_ms,
+            state: request.state,
+            rate_permille,
+        };
 
         let mut db = db.write_outside_catalog().await;
         let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
@@ -324,6 +337,7 @@ impl PlaybackSessionsModule {
                     ),
                     duration_ms: current.playback.duration_ms,
                     state: current.playback.state,
+                    rate: playbacks::rate_multiple(current.playback.rate_permille),
                 });
             result.push(ConnectionInfo {
                 playback_id: connection.playback_id().map(str::to_string),
@@ -388,6 +402,7 @@ impl PlaybackSessionsModule {
                     effective_position_ms,
                     duration_ms: active.session.duration_ms,
                     state: active.session.state,
+                    rate: playbacks::rate_multiple(active.session.rate_permille),
                     started_at_ms: active.session.created_at_ms,
                     updated_at_ms: active.session.updated_at_ms,
                     client_name: active.session.client_name,
@@ -441,19 +456,6 @@ impl PlaybackSessionsModule {
 
 fn required<T>(value: Option<T>, field: &str, action: &str) -> luau::runtime::Result<T> {
     value.ok_or_else(|| crate::plugins::runtime_error(format!("{field} required for {action}")))
-}
-
-fn playback_mutation(
-    position_ms: Option<u64>,
-    duration_ms: Option<u64>,
-    state: Option<lyra_db::PlaybackState>,
-) -> playbacks::PlaybackMutation {
-    playbacks::PlaybackMutation {
-        position_ms,
-        duration_ms,
-        state,
-        rate_permille: None,
-    }
 }
 
 /// The verified principal's database id, and the users `owners` covers whose playback it may read.
@@ -645,7 +647,7 @@ impl DescribeInterface for ActivePlaybackInfo {
             FieldDescriptor {
                 name: "effective_position_ms",
                 ty: u64::luau_type(),
-                description: Some("The position now: `position_ms` advanced while playing by the time since it was reported, within the duration."),
+                description: Some("The position now: `position_ms` advanced while playing, at its rate, by the time since it was reported, within the duration."),
             },
             FieldDescriptor {
                 name: "duration_ms",
@@ -656,6 +658,11 @@ impl DescribeInterface for ActivePlaybackInfo {
                 name: "state",
                 ty: LuauPlaybackState::luau_type(),
                 description: None,
+            },
+            FieldDescriptor {
+                name: "rate",
+                ty: f64::luau_type(),
+                description: Some("Playback speed as a multiple of normal speed."),
             },
             FieldDescriptor {
                 name: "started_at_ms",
@@ -715,7 +722,7 @@ impl DescribeInterface for PlaybackInfo {
             FieldDescriptor {
                 name: "effective_position_ms",
                 ty: u64::luau_type(),
-                description: Some("The position now: `position_ms` advanced while playing by the time since it was reported, within the duration."),
+                description: Some("The position now: `position_ms` advanced while playing, at its rate, by the time since it was reported, within the duration."),
             },
             FieldDescriptor {
                 name: "duration_ms",
@@ -726,6 +733,11 @@ impl DescribeInterface for PlaybackInfo {
                 name: "state",
                 ty: LuauPlaybackState::luau_type(),
                 description: None,
+            },
+            FieldDescriptor {
+                name: "rate",
+                ty: f64::luau_type(),
+                description: Some("Playback speed as a multiple of normal speed."),
             },
         ]);
         descriptor
@@ -818,6 +830,11 @@ fn playback_request_fields<const N: usize>(leading: [FieldDescriptor; N]) -> Vec
             ty: Option::<LuauPlaybackState>::luau_type(),
             description: None,
         },
+        FieldDescriptor {
+            name: "rate",
+            ty: Option::<f64>::luau_type(),
+            description: Some(playbacks::RATE_DESCRIPTION),
+        },
     ]);
     fields
 }
@@ -836,6 +853,7 @@ pub(crate) struct PlaybackUpdate<'a> {
     client_name: Option<&'a str>,
     position_ms: u64,
     duration_ms: Option<u64>,
+    rate: f64,
     played_ms: u64,
     updated_at_ms: u64,
 }
@@ -855,6 +873,7 @@ impl<'a> From<&'a crate::services::playback_sessions::PlaybackUpdatePayload>
             client_name: payload.client_name.as_deref(),
             position_ms: payload.position_ms,
             duration_ms: payload.duration_ms,
+            rate: payload.rate,
             played_ms: payload.played_ms,
             updated_at_ms: payload.updated_at_ms,
         }
@@ -904,6 +923,11 @@ impl DescribeInterface for LuauPlaybackUpdatePayload {
                 },
                 field("position_ms", u64::luau_type()),
                 field("duration_ms", Option::<u64>::luau_type()),
+                FieldDescriptor {
+                    name: "rate",
+                    ty: f64::luau_type(),
+                    description: Some("Playback speed as a multiple of normal speed."),
+                },
                 field("played_ms", u64::luau_type()),
                 field("updated_at_ms", u64::luau_type()),
             ],

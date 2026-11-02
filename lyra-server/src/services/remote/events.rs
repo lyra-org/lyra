@@ -539,6 +539,7 @@ mod tests {
             client_name: None,
             position_ms: 0,
             duration_ms: Some(1_000),
+            rate: 1.0,
             played_ms: 0,
             updated_at_ms: 0,
         }

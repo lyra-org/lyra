@@ -76,6 +76,8 @@ use lyra_db::PlaybackState;
 
 #[cfg(feature = "docgen")]
 use crate::services::listens::PLAY_ID_DESCRIPTION;
+#[cfg(feature = "docgen")]
+use crate::services::playback_sessions::RATE_DESCRIPTION;
 #[cfg(test)]
 const ACTIVE_PLAYBACK_TIMEOUT_MS: u64 = sessions::ACTIVE_SESSION_TTL_MS;
 
@@ -94,6 +96,8 @@ struct PlaybackCreateRequest {
     position_ms: Option<u64>,
     duration_ms: Option<u64>,
     state: Option<PlaybackState>,
+    #[cfg_attr(feature = "docgen", schemars(description = RATE_DESCRIPTION))]
+    rate: Option<f64>,
     connection_session_key: Option<String>,
 }
 
@@ -126,10 +130,12 @@ struct CurrentPlaybackResponse {
     position_ms: u64,
     duration_ms: Option<u64>,
     state: PlaybackState,
+    /// Playback speed as a multiple of normal speed.
+    rate: f64,
     played_ms: u64,
     updated_at: String,
-    /// The position now: `position_ms` advanced while playing by the time since it was reported,
-    /// within the duration.
+    /// The position now: `position_ms` advanced while playing, at its rate, by the time since it was
+    /// reported, within the duration.
     effective_position_ms: u64,
 }
 
@@ -240,6 +246,7 @@ fn current_to_response(
         position_ms: playback.position_ms,
         duration_ms: playback.duration_ms,
         state: playback.state,
+        rate: sessions::rate_multiple(playback.rate_permille),
         played_ms: playback.played_ms,
         updated_at: crate::services::timestamps::unix_ms_to_rfc3339_u64(playback.updated_at_ms),
         effective_position_ms: sessions::current_position_ms(playback, server_now_ms),
@@ -454,6 +461,7 @@ async fn create_playback(
 ) -> Result<(StatusCode, Json<PlaybackResponse>), AppError> {
     let auth = require_auth(bearer_credential(&headers)).await?;
     require_play_id(&request.play_id)?;
+    let rate_permille = request.rate.map(sessions::rate_permille).transpose()?;
     let current_ms = now_ms()?;
     let mut db = STATE.db.write().await;
     let user_db_id = auth.principal.require(&db)?;
@@ -471,7 +479,7 @@ async fn create_playback(
                 position_ms: request.position_ms,
                 duration_ms: request.duration_ms,
                 state: request.state.or(Some(PlaybackState::Playing)),
-                rate_permille: None,
+                rate_permille,
             },
             now_ms: current_ms,
             reporting_connection: reporting_connection(

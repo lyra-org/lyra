@@ -53,6 +53,11 @@ pub(crate) const PREVIOUS_PLAYBACK_GRACE_MS: u64 = 30_000;
 const PLAY_LATENCY_ALLOWANCE_MS: u64 = 5_000;
 /// Normal playback speed, in the thousandths [`PlaybackSession::rate_permille`] counts.
 pub(crate) const NORMAL_RATE_PERMILLE: u32 = 1_000;
+/// The slowest and fastest playback rates a report may give, as multiples of normal speed.
+pub(crate) const MIN_RATE: f64 = 0.25;
+pub(crate) const MAX_RATE: f64 = 4.0;
+/// The playback rate contract, for API and plugin documentation.
+pub(crate) const RATE_DESCRIPTION: &str = "Playback speed as a multiple of normal speed, from 0.25 to 4, kept to three decimals. A play starts at 1 unless its first report gives one; a report without one keeps the last. Positions advance at this rate, while the playing time a listen counts stays real time.";
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum PlaybackServiceError {
@@ -95,6 +100,21 @@ pub(crate) struct PlaybackMutation {
     pub(crate) duration_ms: Option<u64>,
     pub(crate) state: Option<PlaybackState>,
     pub(crate) rate_permille: Option<u32>,
+}
+
+/// A reported playback rate, a multiple of normal speed, in the thousandths sessions store.
+pub(crate) fn rate_permille(rate: f64) -> ServiceResult<u32> {
+    if !(MIN_RATE..=MAX_RATE).contains(&rate) {
+        return Err(PlaybackServiceError::bad_request(format!(
+            "rate must be from {MIN_RATE} to {MAX_RATE}, got {rate}"
+        )));
+    }
+    Ok((rate * f64::from(NORMAL_RATE_PERMILLE)).round() as u32)
+}
+
+/// A stored playback rate as a multiple of normal speed.
+pub(crate) fn rate_multiple(rate_permille: u32) -> f64 {
+    f64::from(rate_permille) / f64::from(NORMAL_RATE_PERMILLE)
 }
 
 #[derive(Clone, Debug)]

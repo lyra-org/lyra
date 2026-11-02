@@ -266,6 +266,7 @@ async fn response_keeps_initiating_and_controlling_client_names_distinct() -> an
             position_ms: Some(0),
             duration_ms: Some(100_000),
             state: Some(PlaybackState::Playing),
+            rate: None,
             connection_session_key: Some("controller-session".to_string()),
         }),
     )
@@ -321,6 +322,7 @@ async fn create_replace_queue_and_advance_current_track() -> anyhow::Result<()> 
             position_ms: Some(0),
             duration_ms: Some(100_000),
             state: Some(PlaybackState::Playing),
+            rate: None,
             connection_session_key: None,
         }),
     )
@@ -374,6 +376,7 @@ async fn create_replace_queue_and_advance_current_track() -> anyhow::Result<()> 
             position_ms: Some(500),
             duration_ms: Some(90_000),
             state: Some(PlaybackState::Playing),
+            rate: None,
             connection_session_key: None,
             handoff_token: None,
         }),
@@ -393,6 +396,67 @@ async fn create_replace_queue_and_advance_current_track() -> anyhow::Result<()> 
 }
 
 #[tokio::test]
+async fn playback_rate_is_kept_until_reported_and_bounded() -> anyhow::Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    let fixture = setup_admin_with_tracks().await?;
+    let headers = fixture.headers;
+    let create = |rate: Option<f64>| PlaybackCreateRequest {
+        play_id: TEST_PLAY_ID.to_string(),
+        queue: QueueSnapshot::single(fixture.first_track_id.clone()),
+        position_ms: Some(0),
+        duration_ms: Some(100_000),
+        state: Some(PlaybackState::Playing),
+        rate,
+        connection_session_key: None,
+    };
+    let Err(too_slow) = create_playback(headers.clone(), Json(create(Some(0.1)))).await else {
+        anyhow::bail!("a rate below the bound is refused");
+    };
+    let too_slow = too_slow.into_response();
+    assert_eq!(too_slow.status(), StatusCode::BAD_REQUEST);
+
+    let (_, Json(created)) = create_playback(headers.clone(), Json(create(Some(2.0))))
+        .await
+        .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    assert_eq!(created.current.as_ref().unwrap().rate, 2.0);
+
+    let progress = |rate: Option<f64>| PlaybackProgressRequest {
+        play_id: TEST_PLAY_ID.to_string(),
+        queue_revision: 1,
+        track_id: None,
+        position_ms: Some(1_000),
+        duration_ms: None,
+        state: None,
+        rate,
+        connection_session_key: None,
+        handoff_token: None,
+    };
+    let Json(kept) = report_progress(
+        headers.clone(),
+        Path(created.id.clone()),
+        Json(progress(None)),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    assert_eq!(kept.current.as_ref().unwrap().rate, 2.0);
+    let Json(changed) = report_progress(
+        headers.clone(),
+        Path(created.id.clone()),
+        Json(progress(Some(1.25))),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    assert_eq!(changed.current.as_ref().unwrap().rate, 1.25);
+    let Err(too_fast) = report_progress(headers, Path(created.id), Json(progress(Some(4.5)))).await
+    else {
+        anyhow::bail!("a rate above the bound is refused");
+    };
+    let too_fast = too_fast.into_response();
+    assert_eq!(too_fast.status(), StatusCode::BAD_REQUEST);
+    Ok(())
+}
+
+#[tokio::test]
 async fn same_track_handoff_completes_on_exact_tokened_progress() -> anyhow::Result<()> {
     let _guard = crate::services::testing::runtime_test_lock().await;
     let fixture = setup_admin_with_tracks().await?;
@@ -404,6 +468,7 @@ async fn same_track_handoff_completes_on_exact_tokened_progress() -> anyhow::Res
             position_ms: Some(0),
             duration_ms: Some(100_000),
             state: Some(PlaybackState::Playing),
+            rate: None,
             connection_session_key: Some("target-session".to_string()),
         }),
     )
@@ -459,6 +524,7 @@ async fn same_track_handoff_completes_on_exact_tokened_progress() -> anyhow::Res
             position_ms: Some(100),
             duration_ms: Some(100_000),
             state: Some(PlaybackState::Playing),
+            rate: None,
             connection_session_key: Some("other-session".to_string()),
             handoff_token: Some(handoff_token.clone()),
         }),
@@ -480,6 +546,7 @@ async fn same_track_handoff_completes_on_exact_tokened_progress() -> anyhow::Res
             position_ms: Some(100),
             duration_ms: Some(100_000),
             state: Some(PlaybackState::Playing),
+            rate: None,
             connection_session_key: Some("target-session".to_string()),
             handoff_token: Some(handoff_token.clone()),
         }),
@@ -504,6 +571,7 @@ async fn changed_track_handoff_progress_creates_session_and_completes() -> anyho
             position_ms: Some(0),
             duration_ms: Some(100_000),
             state: Some(PlaybackState::Playing),
+            rate: None,
             connection_session_key: None,
         }),
     )
@@ -554,6 +622,7 @@ async fn changed_track_handoff_progress_creates_session_and_completes() -> anyho
             position_ms: Some(0),
             duration_ms: Some(90_000),
             state: Some(PlaybackState::Playing),
+            rate: None,
             connection_session_key: Some("target-session".to_string()),
             handoff_token: Some(handoff_token.clone()),
         }),
@@ -582,6 +651,7 @@ async fn queue_replacement_cannot_overtake_committed_handoff_finish() -> anyhow:
             position_ms: Some(0),
             duration_ms: Some(100_000),
             state: Some(PlaybackState::Playing),
+            rate: None,
             connection_session_key: None,
         }),
     )
@@ -724,6 +794,7 @@ async fn a_listen_is_announced_even_when_its_handoff_then_fails() -> anyhow::Res
             position_ms: Some(0),
             duration_ms: Some(10_000),
             state: Some(PlaybackState::Playing),
+            rate: None,
             connection_session_key: None,
         }),
     )
@@ -823,6 +894,7 @@ async fn stale_revision_is_rejected_before_handoff_is_queued() -> anyhow::Result
             position_ms: Some(0),
             duration_ms: Some(100_000),
             state: Some(PlaybackState::Playing),
+            rate: None,
             connection_session_key: None,
         }),
     )
@@ -880,6 +952,7 @@ async fn reported_playback_shares_collection_and_rejects_queue_operations() -> a
             position_ms: Some(0),
             duration_ms: Some(100_000),
             state: Some(PlaybackState::Playing),
+            rate: None,
             connection_session_key: None,
         }),
     )
@@ -980,6 +1053,7 @@ async fn reported_playback_shares_collection_and_rejects_queue_operations() -> a
             position_ms: Some(2_000),
             duration_ms: None,
             state: Some(PlaybackState::Playing),
+            rate: None,
             connection_session_key: None,
             handoff_token: None,
         }),
@@ -1075,6 +1149,7 @@ async fn malformed_play_ids_are_rejected() -> anyhow::Result<()> {
                 position_ms: Some(0),
                 duration_ms: Some(100_000),
                 state: Some(PlaybackState::Playing),
+                rate: None,
                 connection_session_key: None,
             }),
         )
@@ -1098,6 +1173,7 @@ async fn progress_with_a_new_play_id_starts_a_new_track_session() -> anyhow::Res
             position_ms: Some(0),
             duration_ms: Some(100_000),
             state: Some(PlaybackState::Playing),
+            rate: None,
             connection_session_key: None,
         }),
     )
@@ -1113,6 +1189,7 @@ async fn progress_with_a_new_play_id_starts_a_new_track_session() -> anyhow::Res
         position_ms: Some(1_000),
         duration_ms: Some(100_000),
         state: Some(PlaybackState::Playing),
+        rate: None,
         connection_session_key: None,
         handoff_token: None,
     };
@@ -1189,6 +1266,7 @@ async fn a_position_past_the_duration_reads_as_the_end() -> anyhow::Result<()> {
             position_ms: Some(100_040),
             duration_ms: Some(100_000),
             state: Some(PlaybackState::Playing),
+            rate: None,
             connection_session_key: None,
         }),
     )
@@ -1206,6 +1284,7 @@ async fn a_position_past_the_duration_reads_as_the_end() -> anyhow::Result<()> {
             position_ms: Some(100_050),
             duration_ms: None,
             state: Some(PlaybackState::Completed),
+            rate: None,
             connection_session_key: None,
             handoff_token: None,
         }),

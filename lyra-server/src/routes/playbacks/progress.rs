@@ -25,6 +25,8 @@ pub(super) struct PlaybackProgressRequest {
     pub(super) position_ms: Option<u64>,
     pub(super) duration_ms: Option<u64>,
     pub(super) state: Option<PlaybackState>,
+    #[cfg_attr(feature = "docgen", schemars(description = RATE_DESCRIPTION))]
+    pub(super) rate: Option<f64>,
     pub(super) connection_session_key: Option<String>,
     #[cfg_attr(
         feature = "docgen",
@@ -42,6 +44,7 @@ pub(super) async fn report_progress(
 ) -> Result<Json<PlaybackResponse>, AppError> {
     let auth = require_auth(bearer_credential(&headers)).await?;
     require_play_id(&request.play_id)?;
+    let rate_permille = request.rate.map(sessions::rate_permille).transpose()?;
     let principal = &auth.principal;
     let current_ms = now_ms()?;
     let connection_session_key =
@@ -123,7 +126,7 @@ pub(super) async fn report_progress(
         position_ms: request.position_ms,
         duration_ms: request.duration_ms,
         state: request.state,
-        rate_permille: None,
+        rate_permille,
     };
     let update = playbacks::report_progress(
         &mut db,

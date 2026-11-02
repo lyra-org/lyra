@@ -473,6 +473,7 @@ mod tests {
             client_name: None,
             position_ms: 42,
             duration_ms: Some(100),
+            rate: 1.0,
             played_ms: 42,
             updated_at_ms: 10,
         }
