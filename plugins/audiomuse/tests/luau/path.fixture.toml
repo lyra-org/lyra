@@ -1,0 +1,56 @@
+run_as = "listener"
+
+# "Solo" by Amy holds T1 to T5 in the listener's library.
+
+[[users]]
+key = "listener"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener"]
+
+[[artists]]
+key = "amy"
+name = "Amy"
+
+[[releases]]
+key = "solo"
+title = "Solo"
+library = "music"
+artists = ["amy"]
+
+[[tracks]]
+key = "t1"
+title = "T1"
+release = "solo"
+track = 1
+artists = ["amy"]
+
+[[tracks]]
+key = "t2"
+title = "T2"
+release = "solo"
+track = 2
+artists = ["amy"]
+
+[[tracks]]
+key = "t3"
+title = "T3"
+release = "solo"
+track = 3
+artists = ["amy"]
+
+[[tracks]]
+key = "t4"
+title = "T4"
+release = "solo"
+track = 4
+artists = ["amy"]
+
+[[tracks]]
+key = "t5"
+title = "T5"
+release = "solo"
+track = 5
+artists = ["amy"]

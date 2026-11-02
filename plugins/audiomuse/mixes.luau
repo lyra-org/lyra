@@ -4,7 +4,8 @@
 -- You can obtain one here:
 -- www.meshiplaw.com/lyra.
 
--- The AudioMuse mixer: blends through similar tracks and alchemy.
+-- The AudioMuse mixer: blends through similar tracks and alchemy, and paths through AudioMuse's
+-- song paths.
 
 local http = require("@harmony/http")
 local mix = require("@lyra/mix")
@@ -17,8 +18,10 @@ type JsonValue = serde.JsonValue
 type JsonObject = { [string]: JsonValue }
 type HttpResponse = http.HttpResponse
 type MixBlendContext = mix.MixBlendContext
+type MixPathContext = mix.MixPathContext
 type MixResult = mix.MixResult
 type MixResultTrack = mix.MixResultTrack
+type Options = { [string]: boolean | string | number }
 
 -- Converts between Lyra track ids and the ids AudioMuse knows tracks by on its media server.
 export type TrackIds = {
@@ -102,6 +105,15 @@ local function body_rows(label: string, body: JsonValue?, key: string?): { JsonV
 		return nil
 	end
 	return rows :: { JsonValue }
+end
+
+-- An option the request set, as AudioMuse's query string spells it.
+local function flag(options: Options, name: string): string?
+	local value = options[name]
+	if type(value) == "boolean" then
+		return if value then "true" else "false"
+	end
+	return nil
 end
 
 local function similar_tracks(config: MixerConfig, item_id: string, n: number): { MixResultTrack }?
@@ -201,14 +213,58 @@ local function blend(config: MixerConfig, ctx: MixBlendContext): MixResult
 	return alchemy_mix(config, ctx, limit)
 end
 
--- Registers the blend handler on `mixer`.
+local function path(config: MixerConfig, ctx: MixPathContext): MixResult
+	local start_id, end_id = ctx.seeds[1].id, ctx.seeds[2].id
+	local start_item, end_item = config.ids.encode(start_id), config.ids.encode(end_id)
+	if not start_item or not end_item then
+		warn(`path: seeds {start_id}, {end_id} could not be encoded; returning empty mix`)
+		return { tracks = {} }
+	end
+	local options: Options = ctx.options or {}
+	local params: { [string]: string } = { start_song_id = start_item, end_song_id = end_item }
+	if ctx.limit then
+		params.max_steps = tostring(ctx.limit)
+	end
+	if type(options.path_space) == "string" then
+		params.path_space = options.path_space
+	end
+	local fix_size = flag(options, "path_fix_size")
+	if fix_size then
+		params.path_fix_size = fix_size
+	end
+	local label = `find_path({start_item}, {end_item})`
+	local rows = body_rows(label, response_body(label, client.get("/api/find_path", params)), "path")
+	return { tracks = if rows then result_tracks(config.ids, label, rows) else {} }
+end
+
+-- Registers the blend and path handlers on `mixer`, and the options they read.
 function mixes.register(mixer: mix.Mixer, config: MixerConfig)
+	mixer:declare_option({
+		name = "path_space",
+		label = "Path through",
+		type = "choice",
+		options = {
+			{ value = "audio", label = "Sound" },
+			{ value = "lyrics", label = "Lyrics" },
+		},
+		default = "audio",
+	})
+	mixer:declare_option({
+		name = "path_fix_size",
+		label = "Paths take exactly the steps asked for",
+		type = "boolean",
+	})
+
 	mixer:blend({
 		seeds = { mix.SeedType.Track, mix.SeedType.Release, mix.SeedType.Artist },
 		max_seeds = MAX_BLEND_SEEDS,
 		exclude = true,
 	}, function(ctx: MixBlendContext): MixResult
 		return blend(config, ctx)
+	end)
+
+	mixer:path({ seeds = { mix.SeedType.Track } }, function(ctx: MixPathContext): MixResult
+		return path(config, ctx)
 	end)
 end
 

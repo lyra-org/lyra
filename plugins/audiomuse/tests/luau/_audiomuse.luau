@@ -103,4 +103,10 @@ function module.titles(tracks: { mix.Track }?): string
 	return table.concat(names, ",")
 end
 
+function module.fails(call: any, request: any, message: string)
+	local ok, err = pcall(call, request)
+	assert(not ok, `expected an error naming "{message}"`)
+	assert(string.find(tostring(err), message, 1, true), `error {err}`)
+end
+
 return module
