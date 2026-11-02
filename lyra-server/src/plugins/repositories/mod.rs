@@ -225,7 +225,8 @@ fn map_install_error(error: InstallError) -> PluginRepoError {
         InstallError::NotInstalled { .. } => PluginRepoError::NotFound(error.to_string()),
         InstallError::NotManaged { .. }
         | InstallError::OriginMismatch { .. }
-        | InstallError::CaseCollision { .. } => PluginRepoError::Conflict(error.to_string()),
+        | InstallError::CaseCollision { .. }
+        | InstallError::PreviousOnly { .. } => PluginRepoError::Conflict(error.to_string()),
         InstallError::Io { .. } => PluginRepoError::Internal(anyhow::Error::new(error)),
     }
 }

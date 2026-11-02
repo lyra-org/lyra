@@ -40,6 +40,10 @@ pub enum InstallError {
         "plugin id '{id}' collides with installed directory '{existing}' on case-insensitive filesystems"
     )]
     CaseCollision { id: String, existing: String },
+    #[error(
+        "plugin '{id}' is not installed, but its previous installation remains at `{previous}`"
+    )]
+    PreviousOnly { id: String, previous: PathBuf },
     #[error("{context}: {source}")]
     Io {
         context: String,
@@ -119,7 +123,9 @@ impl Drop for StagedInstall {
 /// caller at a time may stage, promote, or uninstall there. Locking each
 /// call is not enough: a caller's exclusive access must last from its first
 /// `stage_candidate` through promotion or rollback and the drop of every
-/// [`StagedInstall`] it staged, abandoned ones included.
+/// [`StagedInstall`] it staged, abandoned ones included. A caller holds at
+/// most one live [`StagedInstall`] per plugin id: staging an id again
+/// replaces the earlier staged copy, which that handle's drop then deletes.
 pub fn stage_candidate(
     candidate: &PluginCandidate,
     plugins_dir: &Path,
@@ -160,7 +166,9 @@ pub fn stage_candidate(
     }
 
     let target = plugins_dir.join(id);
-    if path_exists(&target)? {
+    let displaced = displaced_path(plugins_dir, id);
+    let installed = path_exists(&target)?;
+    if installed {
         match managed_state(&target)? {
             Managed::Local => {
                 return Err(InstallError::NotManaged { id: id.to_string() });
@@ -175,6 +183,12 @@ pub fn stage_candidate(
             Managed::Record(_) | Managed::Broken => {}
         }
     }
+    if path_exists(&displaced)? && (!installed || resolves_to(&target, &displaced)?) {
+        return Err(InstallError::PreviousOnly {
+            id: id.to_string(),
+            previous: displaced,
+        });
+    }
 
     let mut record = candidate.source.clone();
     record.installed_at = installed_at;
@@ -182,7 +196,6 @@ pub fn stage_candidate(
 
     let staging_root = plugins_dir.join(STAGING_DIRNAME);
     let staged = staging_root.join(id);
-    let displaced = displaced_path(plugins_dir, id);
     if path_exists(&staged)? {
         std::fs::remove_dir_all(&staged).map_err(|source| InstallError::Io {
             context: format!("Could not remove directory `{}`", staged.display()),
@@ -410,6 +423,17 @@ fn path_exists(path: &Path) -> Result<bool, InstallError> {
     })
 }
 
+/// Whether `path` resolves to `other`, as a symlink to it does.
+fn resolves_to(path: &Path, other: &Path) -> Result<bool, InstallError> {
+    let canonical = |path: &Path| {
+        std::fs::canonicalize(path).map_err(|source| InstallError::Io {
+            context: format!("Could not resolve `{}`", path.display()),
+            source,
+        })
+    };
+    Ok(canonical(path)? == canonical(other)?)
+}
+
 fn copy_dir(from: &Path, to: &Path) -> Result<(), InstallError> {
     std::fs::create_dir_all(to).map_err(|source| InstallError::Io {
         context: format!("Could not create directory `{}`", to.display()),
@@ -594,6 +618,90 @@ mod tests {
                 .join("bar")
                 .exists()
         );
+    }
+
+    #[tokio::test]
+    async fn refuses_to_stage_over_the_only_previous_installation() {
+        let (_server, resolved) = resolved_foo().await;
+        let plugins_dir = TempDir::new().unwrap();
+        install_candidate(
+            &resolved.candidates[0],
+            plugins_dir.path(),
+            None,
+            InstalledBy::Request,
+        )
+        .unwrap();
+        let previous = displaced_path(plugins_dir.path(), "foo");
+        std::fs::create_dir_all(plugins_dir.path().join(STAGING_DIRNAME)).unwrap();
+        std::fs::rename(plugins_dir.path().join("foo"), &previous).unwrap();
+
+        let Err(err) = stage_candidate(
+            &resolved.candidates[0],
+            plugins_dir.path(),
+            None,
+            InstalledBy::Request,
+        ) else {
+            panic!("staging over the only previous installation must fail");
+        };
+        assert!(matches!(err, InstallError::PreviousOnly { .. }), "{err}");
+        assert!(previous.join("init.luau").is_file());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn refuses_to_stage_when_the_target_links_to_the_previous_installation() {
+        let (_server, resolved) = resolved_foo().await;
+        let plugins_dir = TempDir::new().unwrap();
+        install_candidate(
+            &resolved.candidates[0],
+            plugins_dir.path(),
+            None,
+            InstalledBy::Request,
+        )
+        .unwrap();
+        let target = plugins_dir.path().join("foo");
+        let previous = displaced_path(plugins_dir.path(), "foo");
+        std::fs::create_dir_all(plugins_dir.path().join(STAGING_DIRNAME)).unwrap();
+        std::fs::rename(&target, &previous).unwrap();
+        std::os::unix::fs::symlink(&previous, &target).unwrap();
+
+        let Err(err) = stage_candidate(
+            &resolved.candidates[0],
+            plugins_dir.path(),
+            None,
+            InstalledBy::Request,
+        ) else {
+            panic!("staging over a link to the only previous installation must fail");
+        };
+        assert!(matches!(err, InstallError::PreviousOnly { .. }), "{err}");
+        assert!(previous.join("init.luau").is_file());
+    }
+
+    #[tokio::test]
+    async fn stages_over_a_stale_previous_installation() {
+        let (_server, resolved) = resolved_foo().await;
+        let plugins_dir = TempDir::new().unwrap();
+        install_candidate(
+            &resolved.candidates[0],
+            plugins_dir.path(),
+            None,
+            InstalledBy::Request,
+        )
+        .unwrap();
+        let previous = displaced_path(plugins_dir.path(), "foo");
+        std::fs::create_dir_all(&previous).unwrap();
+        std::fs::write(previous.join("stale.txt"), "stale").unwrap();
+
+        let staged = stage_candidate(
+            &resolved.candidates[0],
+            plugins_dir.path(),
+            None,
+            InstalledBy::Request,
+        )
+        .unwrap();
+        assert!(!previous.exists());
+        drop(staged);
+        assert!(plugins_dir.path().join("foo/init.luau").is_file());
     }
 
     #[tokio::test]
