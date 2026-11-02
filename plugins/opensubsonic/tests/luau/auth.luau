@@ -1,12 +1,16 @@
 local fixture = ...
 local auth = require("../../protocol/auth")
 
-local function authenticate(params: { [string]: string })
+local function query_of(params: { [string]: string })
 	local query = {}
 	for name, value in params do
 		query[name] = { value }
 	end
-	return auth.authenticate(query)
+	return query
+end
+
+local function authenticate(params: { [string]: string })
+	return auth.authenticate(query_of(params))
 end
 
 local function assert_error(params: { [string]: string }, code: number)
@@ -52,6 +56,21 @@ assert_error({ u = "owner", t = "26719a1196d2a940705a59634eb18eab", s = "c19b2d"
 assert_error({ u = "owner", p = phone, t = "26719a1196d2a940705a59634eb18eab", s = "c19b2d" }, 43)
 
 assert_error({}, 10)
+
+-- A mechanism counts as given even with an empty value.
+assert_error({ apiKey = phone, u = "" }, 43)
+assert_error({ apiKey = phone, p = "" }, 43)
+assert_error({ apiKey = phone, t = "" }, 43)
+assert_error({ apiKey = phone, s = "" }, 43)
+assert_error({ u = "owner", p = phone, t = "" }, 43)
+assert_error({ u = "owner", p = phone, s = "" }, 43)
+assert_error({ apiKey = "" }, 44)
+assert_error({ u = "owner", p = "" }, 40)
+
+-- `tokenInfo` checks the key it describes.
+local call = require("./_call")
+assert(call.error_code("tokenInfo", "not-a-key") == 44, "an invalid key")
+assert(call.ok("tokenInfo", phone).tokenInfo.username ~= nil, "a valid key")
 
 -- Errors a key would fix point at the plugin's sign-in docs.
 local _, token_error = authenticate({ u = "owner", t = "26719a1196d2a940705a59634eb18eab", s = "c19b2d" })

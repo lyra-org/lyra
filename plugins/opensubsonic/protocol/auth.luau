@@ -39,8 +39,13 @@ local function resolve_api_key(key: string): ResolvedAuth?
 	return if resolved and resolved.credential.kind == "api_key" then resolved else nil
 end
 
+local function present(query: ApiQueryParams, name: string): boolean
+	return query[name] ~= nil
+end
+
 -- API keys are the only accepted secret, sent as `apiKey` or as the `p` of the key's owner.
--- Lyra can't verify `t`/`s`, which needs the password itself.
+-- Lyra can't verify `t`/`s`, which needs the password itself. With Lyra's auth disabled, every
+-- request acts as the default user, whatever credentials it sends.
 function module.authenticate(query: ApiQueryParams): (ResolvedAuth?, SubsonicError?)
 	if not auth.capabilities().enabled then
 		local resolved = auth.resolve_auth(nil)
@@ -50,40 +55,39 @@ function module.authenticate(query: ApiQueryParams): (ResolvedAuth?, SubsonicErr
 		return resolved, nil
 	end
 
-	local api_key = request.param(query, "apiKey")
-	local username = request.param(query, "u")
-	local password = request.param(query, "p")
-	local token = request.param(query, "t")
-	local salt = request.param(query, "s")
 	local help_url = module.HELP_URL
+	local conflict = response.error(43, "Multiple conflicting authentication mechanisms provided")
 
-	if api_key then
-		if username or password or token or salt then
-			return nil, response.error(43, "Multiple conflicting authentication mechanisms provided")
+	if present(query, "apiKey") then
+		if present(query, "u") or present(query, "p") or present(query, "t") or present(query, "s") then
+			return nil, conflict
 		end
-		local resolved = resolve_api_key(api_key)
+		local api_key = request.param(query, "apiKey")
+		local resolved = if api_key then resolve_api_key(api_key) else nil
 		if not resolved then
 			return nil, response.error(44, "Invalid API key", help_url)
 		end
 		return resolved, nil
 	end
 
-	if password then
-		if token or salt then
-			return nil, response.error(43, "Multiple conflicting authentication mechanisms provided")
+	if present(query, "p") then
+		if present(query, "t") or present(query, "s") then
+			return nil, conflict
 		end
+		local username = request.param(query, "u")
 		if not username then
 			return nil, response.error(10, "Required parameter is missing: u")
 		end
+		local password = request.param_or_empty(query, "p") :: string
 		local key = decode_password(password)
-		local resolved = if key then resolve_api_key(key) else nil
+		local resolved = if key and key ~= "" then resolve_api_key(key) else nil
 		if not resolved or string.lower(resolved.principal.username) ~= string.lower(username) then
 			return nil, response.error(40, "Wrong username or password; use an API key as the password", help_url)
 		end
 		return resolved, nil
 	end
 
-	if token or salt then
+	if present(query, "t") or present(query, "s") then
 		return nil, response.error(41, "Token authentication is not supported; use an API key", help_url)
 	end
 
