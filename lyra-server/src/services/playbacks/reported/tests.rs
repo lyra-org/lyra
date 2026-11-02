@@ -2079,6 +2079,48 @@ async fn a_replaced_play_not_playing_is_not_credited() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn a_replaced_buffering_play_pauses_without_credit() -> anyhow::Result<()> {
+    let (mut db, _guard) = new_scoped_test_db().await?;
+    let user = insert_user(&mut db, "alice")?;
+    let a_track = insert_track(&mut db, "A", 200_000)?;
+    let b_track = insert_track(&mut db, "B", 200_000)?;
+    let a = report_at(
+        &mut db,
+        user,
+        a_track,
+        ActiveEvent::Started,
+        PlaybackState::Playing,
+        0,
+        T0,
+    )?
+    .expect("A starts");
+    report_at(
+        &mut db,
+        user,
+        a_track,
+        ActiveEvent::Progress,
+        PlaybackState::Buffering,
+        10_000,
+        T0 + 10_000,
+    )?;
+    report_at(
+        &mut db,
+        user,
+        b_track,
+        ActiveEvent::Started,
+        PlaybackState::Playing,
+        0,
+        T0 + 60_000,
+    )?;
+
+    let a_now = stored(&db, &a)?;
+    assert_eq!(a_now.state, PlaybackState::Paused);
+    assert_eq!(a_now.played_ms, 10_000);
+    assert_eq!(a_now.position_ms, 10_000);
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_late_stop_of_a_credited_replaced_play_adds_no_time_twice() -> anyhow::Result<()> {
     let (mut db, _guard) = new_scoped_test_db().await?;
     let user = insert_user(&mut db, "alice")?;

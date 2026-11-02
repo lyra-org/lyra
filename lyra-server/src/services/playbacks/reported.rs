@@ -222,8 +222,9 @@ fn demote(current: Option<DbId>, now_ms: u64) -> Option<PreviousSession> {
 
 /// Credits a play its player left playing without a stop report for the time from its last report
 /// to `left_at_ms`, at most what is left of the track, as a report of reaching that position would,
-/// and leaves it in `then` if given. A play of unknown duration gets no credit. Returns the update
-/// when it changed anything; only its listen is announced.
+/// and leaves it in `then` if given. A play of unknown duration gets no credit; a buffering one
+/// gets none either, but still leaves in `then`. Returns the update when it changed anything; only
+/// its listen is announced.
 fn leave_play(
     db: &mut impl lyra_db::DbAccess,
     user_db_id: DbId,
@@ -231,15 +232,18 @@ fn leave_play(
     left_at_ms: u64,
     then: Option<PlaybackState>,
 ) -> Result<Option<TransactionPlaybackUpdate>, PlaybackError> {
-    if session.state != PlaybackState::Playing {
-        return Ok(None);
-    }
-    // At most the elapsed time, so no latency allowance is added on top.
-    let credit_ms = session.duration_ms.map_or(0, |duration_ms| {
-        left_at_ms
-            .saturating_sub(session.last_position_at_ms)
-            .min(duration_ms.saturating_sub(session.last_position_ms))
-    });
+    let credit_ms = match session.state {
+        // At most the elapsed time, so no latency allowance is added on top.
+        PlaybackState::Playing => session.duration_ms.map_or(0, |duration_ms| {
+            left_at_ms
+                .saturating_sub(session.last_position_at_ms)
+                .min(duration_ms.saturating_sub(session.last_position_ms))
+        }),
+        PlaybackState::Buffering => 0,
+        PlaybackState::Paused | PlaybackState::Stopped | PlaybackState::Completed => {
+            return Ok(None);
+        }
+    };
     let position_ms = (credit_ms > 0).then(|| session.last_position_ms + credit_ms);
     if position_ms.is_none() && then.is_none() {
         return Ok(None);
