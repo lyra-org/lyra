@@ -118,9 +118,15 @@ local function flag(options: Options, name: string): string?
 	return nil
 end
 
-local function similar_tracks(config: MixerConfig, item_id: string, n: number): { MixResultTrack }?
+local function similar_tracks(config: MixerConfig, item_id: string, n: number, options: Options): { MixResultTrack }?
 	local label = `similar_tracks({item_id})`
 	local params: { [string]: string } = { item_id = item_id, n = tostring(n) }
+	for _, name in { "eliminate_duplicates", "mood_similarity", "radius_similarity" } do
+		local value = flag(options, name)
+		if value then
+			params[name] = value
+		end
+	end
 	local rows = body_rows(label, response_body(label, client.get("/api/similar_tracks", params)))
 	return if rows then result_tracks(config.ids, label, rows) else nil
 end
@@ -128,9 +134,12 @@ end
 -- An item of an alchemy blend: a song by AudioMuse item id, added to or subtracted from the blend.
 type AlchemyItem = { id: string, op: string, type: string }
 
-local function alchemy(config: MixerConfig, items: { AlchemyItem }, n: number): { MixResultTrack }?
+local function alchemy(config: MixerConfig, items: { AlchemyItem }, n: number, options: Options): { MixResultTrack }?
 	local label = `alchemy({#items} items)`
 	local body: JsonObject = { items = items :: any, n = n }
+	if type(options.temperature) == "number" then
+		body.temperature = options.temperature
+	end
 	local rows = body_rows(label, response_body(label, client.post("/api/alchemy", body)), "results")
 	return if rows then result_tracks(config.ids, label, rows) else nil
 end
@@ -176,13 +185,13 @@ local function without(results: { MixResultTrack }, excluded: { [string]: boolea
 	return { tracks = kept }
 end
 
-local function track_mix(config: MixerConfig, seed_id: string, limit: number): MixResult
+local function track_mix(config: MixerConfig, seed_id: string, limit: number, options: Options): MixResult
 	local item_id = config.ids.encode(seed_id)
 	if not item_id then
 		warn(`track mix: seed {seed_id} could not be encoded; returning empty mix`)
 		return { tracks = {} }
 	end
-	local results = similar_tracks(config, item_id, limit + 1)
+	local results = similar_tracks(config, item_id, limit + 1, options)
 	return without(results or {}, { [seed_id] = true })
 end
 
@@ -195,7 +204,7 @@ end
 -- at most `SEED_ENTITY_TRACKS`), so the description weighs about as much as the seeds. Seeds leave
 -- room for those matches, and a failed text search fails the mix rather than dropping the query.
 -- Seeds are left out of the mix; matches stay in it.
-local function alchemy_mix(config: MixerConfig, ctx: MixBlendContext, limit: number): MixResult
+local function alchemy_mix(config: MixerConfig, ctx: MixBlendContext, limit: number, options: Options): MixResult
 	local items: { AlchemyItem } = {}
 	local seed_track_ids: { [string]: boolean } = {}
 	local seed_capacity = if ctx.q then MAX_ALCHEMY_ITEMS - SEED_ENTITY_TRACKS else MAX_ALCHEMY_ITEMS
@@ -244,19 +253,20 @@ local function alchemy_mix(config: MixerConfig, ctx: MixBlendContext, limit: num
 	if adds == 0 then
 		return { tracks = {} }
 	end
-	return without(alchemy(config, items, limit) or {}, seed_track_ids)
+	return without(alchemy(config, items, limit, options) or {}, seed_track_ids)
 end
 
 local function blend(config: MixerConfig, ctx: MixBlendContext): MixResult
 	local limit = ctx.limit or DEFAULT_LIMIT
+	local options: Options = ctx.options or {}
 	local seeds = ctx.seeds
 	if ctx.q and #seeds == 0 then
 		return query_mix(config, ctx.q, limit)
 	end
 	if not ctx.q and #seeds == 1 and seeds[1].type == mix.SeedType.Track and not seeds[1].exclude then
-		return track_mix(config, seeds[1].id, limit)
+		return track_mix(config, seeds[1].id, limit, options)
 	end
-	return alchemy_mix(config, ctx, limit)
+	return alchemy_mix(config, ctx, limit, options)
 end
 
 local function path(config: MixerConfig, ctx: MixPathContext): MixResult
@@ -285,6 +295,26 @@ end
 
 -- Registers the blend and path handlers on `mixer`, and the options they read.
 function mixes.register(mixer: mix.Mixer, config: MixerConfig)
+	mixer:declare_option({
+		name = "eliminate_duplicates",
+		label = "Limit songs per artist (single-track mixes)",
+		type = "boolean",
+	})
+	mixer:declare_option({
+		name = "mood_similarity",
+		label = "Match mood (single-track mixes)",
+		type = "boolean",
+	})
+	mixer:declare_option({
+		name = "radius_similarity",
+		label = "Radius similarity (single-track mixes)",
+		type = "boolean",
+	})
+	mixer:declare_option({
+		name = "temperature",
+		label = "Blend temperature (0 always picks the closest songs)",
+		type = "number",
+	})
 	mixer:declare_option({
 		name = "path_space",
 		label = "Path through",
