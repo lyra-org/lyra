@@ -1173,6 +1173,47 @@ async fn progress_with_a_new_play_id_starts_a_new_track_session() -> anyhow::Res
     Ok(())
 }
 
+#[tokio::test]
+async fn a_position_past_the_duration_reads_as_the_end() -> anyhow::Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    let fixture = setup_admin_with_tracks().await?;
+    let (_, Json(created)) = create_playback(
+        fixture.headers.clone(),
+        Json(PlaybackCreateRequest {
+            play_id: TEST_PLAY_ID.to_string(),
+            queue: QueueSnapshot::single(fixture.first_track_id.clone()),
+            position_ms: Some(100_040),
+            duration_ms: Some(100_000),
+            state: Some(PlaybackState::Playing),
+            connection_session_key: None,
+        }),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    assert_eq!(created.current.as_ref().unwrap().position_ms, 100_000);
+
+    let Json(ended) = report_progress(
+        fixture.headers,
+        Path(created.id),
+        Json(PlaybackProgressRequest {
+            play_id: TEST_PLAY_ID.to_string(),
+            queue_revision: 1,
+            track_id: Some(fixture.first_track_id),
+            position_ms: Some(100_050),
+            duration_ms: None,
+            state: Some(PlaybackState::Completed),
+            connection_session_key: None,
+            handoff_token: None,
+        }),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    let current = ended.current.as_ref().unwrap();
+    assert_eq!(current.position_ms, 100_000);
+    assert_eq!(current.state, PlaybackState::Completed);
+    Ok(())
+}
+
 async fn current_session_id(playback_public_id: &str) -> anyhow::Result<Option<DbId>> {
     let db = STATE.db.read().await;
     let playback_db_id = lyra_db::lookup::find_node_id_by_id(&*db, playback_public_id)?

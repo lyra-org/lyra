@@ -139,18 +139,10 @@ fn map_internal<T>(result: anyhow::Result<T>) -> ServiceResult<T> {
     result.map_err(PlaybackServiceError::internal)
 }
 
-pub(crate) fn ensure_position_within_duration(
-    position_ms: u64,
-    duration_ms: Option<u64>,
-) -> ServiceResult<()> {
-    if let Some(duration_ms) = duration_ms
-        && position_ms > duration_ms
-    {
-        return Err(PlaybackServiceError::bad_request(
-            "position_ms cannot be greater than duration_ms",
-        ));
-    }
-    Ok(())
+/// A player's position past the duration reads as the end: its decoded length can differ from
+/// the stored one.
+fn within_duration(position_ms: u64, duration_ms: Option<u64>) -> u64 {
+    duration_ms.map_or(position_ms, |duration_ms| position_ms.min(duration_ms))
 }
 
 /// Records the session's play as a listen once it qualifies, returning the new listen for the
@@ -332,11 +324,13 @@ pub(crate) fn apply_playback_mutation(
     playback: &mut PlaybackSession,
     mutation: &PlaybackMutation,
     now_ms: u64,
-) -> ServiceResult<()> {
+) {
     let state = mutation.state.unwrap_or(playback.state);
-    let position_ms = mutation.position_ms.unwrap_or(playback.position_ms);
     let duration_ms = mutation.duration_ms.or(playback.duration_ms);
-    ensure_position_within_duration(position_ms, duration_ms)?;
+    let position_ms = within_duration(
+        mutation.position_ms.unwrap_or(playback.position_ms),
+        duration_ms,
+    );
 
     if playback.state != PlaybackState::Playing {
         // Time spent not playing never counts, however the next report reaches a position.
@@ -362,8 +356,6 @@ pub(crate) fn apply_playback_mutation(
     playback.duration_ms = duration_ms;
     playback.state = state;
     playback.updated_at_ms = now_ms;
-
-    Ok(())
 }
 
 pub(crate) fn start_playback_in_transaction(
@@ -400,7 +392,7 @@ pub(crate) fn start_playback_in_transaction(
     {
         return Err(PlaybackServiceError::PlayConflict(play_id));
     }
-    let playback = new_playback_session(play_id, client_name, plugin_id, mutation, now_ms)?;
+    let playback = new_playback_session(play_id, client_name, plugin_id, mutation, now_ms);
 
     let playback_session_id = map_internal(lyra_db::playback_sessions::insert(
         db,
@@ -433,12 +425,11 @@ fn new_playback_session(
     plugin_id: Option<String>,
     mutation: PlaybackMutation,
     now_ms: u64,
-) -> ServiceResult<PlaybackSession> {
+) -> PlaybackSession {
     let state = mutation.state.unwrap_or(PlaybackState::Playing);
-    let position_ms = mutation.position_ms.unwrap_or(0);
-    ensure_position_within_duration(position_ms, mutation.duration_ms)?;
+    let position_ms = within_duration(mutation.position_ms.unwrap_or(0), mutation.duration_ms);
 
-    Ok(PlaybackSession {
+    PlaybackSession {
         db_id: None,
         id: nanoid!(),
         play_id,
@@ -453,7 +444,7 @@ fn new_playback_session(
         last_position_at_ms: now_ms,
         updated_at_ms: now_ms,
         created_at_ms: now_ms,
-    })
+    }
 }
 
 #[cfg(test)]
@@ -499,7 +490,7 @@ pub(crate) fn report_playback_in_transaction(
         )));
     }
 
-    apply_playback_mutation(&mut playback, &mutation, now_ms)?;
+    apply_playback_mutation(&mut playback, &mutation, now_ms);
     map_internal(lyra_db::playback_sessions::update(db, &playback))?;
     let track_db_id = map_internal(lyra_db::playback_sessions::get_track_id(
         db,

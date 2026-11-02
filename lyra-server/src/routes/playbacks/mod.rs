@@ -79,6 +79,9 @@ use crate::services::listens::PLAY_ID_DESCRIPTION;
 #[cfg(test)]
 const ACTIVE_PLAYBACK_TIMEOUT_MS: u64 = sessions::ACTIVE_SESSION_TTL_MS;
 
+#[cfg(feature = "docgen")]
+const POSITION_MS_DESCRIPTION: &str = "Position in the current track. A position past the duration, this report's or else the stored one, reads as the end.";
+
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
 struct PlaybackCreateRequest {
@@ -87,6 +90,7 @@ struct PlaybackCreateRequest {
     #[cfg_attr(feature = "docgen", schemars(description = PLAY_ID_DESCRIPTION))]
     play_id: String,
     #[serde(default)]
+    #[cfg_attr(feature = "docgen", schemars(description = POSITION_MS_DESCRIPTION))]
     position_ms: Option<u64>,
     duration_ms: Option<u64>,
     state: Option<PlaybackState>,

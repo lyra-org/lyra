@@ -422,8 +422,7 @@ mod tests {
                 state: Some(PlaybackState::Playing),
             },
             151_000,
-        )
-        .expect("mutation should succeed");
+        );
 
         assert_eq!(playback.played_ms, 150_000);
     }
@@ -455,8 +454,7 @@ mod tests {
                 state: Some(PlaybackState::Playing),
             },
             11_000,
-        )
-        .expect("mutation should succeed");
+        );
 
         assert_eq!(playback.played_ms, 15_000);
         assert_eq!(
@@ -494,8 +492,7 @@ mod tests {
                     state: Some(PlaybackState::Playing),
                 },
                 1_000,
-            )
-            .expect("mutation should succeed");
+            );
         }
 
         assert_eq!(playback.played_ms, PLAY_LATENCY_ALLOWANCE_MS);
@@ -532,8 +529,7 @@ mod tests {
                 state: Some(PlaybackState::Paused),
             },
             6_000,
-        )
-        .expect("mutation should succeed");
+        );
 
         assert_eq!(playback.played_ms, 5_000);
     }
@@ -565,8 +561,7 @@ mod tests {
                 state: Some(PlaybackState::Stopped),
             },
             197_000,
-        )
-        .expect("mutation should succeed");
+        );
 
         assert_eq!(playback.played_ms, 196_000);
     }
@@ -598,8 +593,7 @@ mod tests {
                 state: Some(PlaybackState::Stopped),
             },
             197_000,
-        )
-        .expect("mutation should succeed");
+        );
 
         assert_eq!(playback.played_ms, 22_000);
     }
@@ -631,8 +625,7 @@ mod tests {
                 state: Some(PlaybackState::Playing),
             },
             151_000,
-        )
-        .expect("mutation should succeed");
+        );
 
         assert_eq!(playback.played_ms, 150_000);
         assert_eq!(playback.last_position_ms, 1_500);
@@ -678,8 +671,7 @@ mod tests {
                 30_000,
             ),
         ] {
-            apply_playback_mutation(&mut playback, &mutation, now_ms)
-                .expect("mutation should succeed");
+            apply_playback_mutation(&mut playback, &mutation, now_ms);
         }
 
         assert_eq!(playback.played_ms, 30_000);
@@ -701,8 +693,7 @@ mod tests {
                     ..PlaybackMutation::default()
                 },
                 now_ms,
-            )
-            .expect("mutation should succeed");
+            );
         }
 
         assert_eq!(

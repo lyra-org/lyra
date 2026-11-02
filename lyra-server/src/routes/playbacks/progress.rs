@@ -21,6 +21,7 @@ pub(super) struct PlaybackProgressRequest {
     pub(super) track_id: Option<String>,
     #[cfg_attr(feature = "docgen", schemars(description = PLAY_ID_DESCRIPTION))]
     pub(super) play_id: String,
+    #[cfg_attr(feature = "docgen", schemars(description = POSITION_MS_DESCRIPTION))]
     pub(super) position_ms: Option<u64>,
     pub(super) duration_ms: Option<u64>,
     pub(super) state: Option<PlaybackState>,
