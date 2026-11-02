@@ -28,6 +28,7 @@ pub(crate) async fn initialize_harmony() -> Result<PluginRuntime> {
         let auth_capabilities =
             crate::plugins::auth::AuthCapabilities::from_config(&STATE.config().auth);
         let (runtime, errors) = tokio::task::block_in_place(|| {
+            warn_orphaned_installs(&plugins_dir);
             crate::plugins::executor::PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
                 plugins_dir,
                 server_info,
@@ -45,6 +46,19 @@ pub(crate) async fn initialize_harmony() -> Result<PluginRuntime> {
             .manifests
             .replace(Arc::from(runtime.plugin_manifests().await?));
         Ok(runtime)
+    }
+}
+
+/// Warns of each plugin an interrupted install left only as its previous
+/// installation, which installs refuse to replace.
+fn warn_orphaned_installs(plugins_dir: &std::path::Path) {
+    match harmony_repository::orphaned_installs(plugins_dir) {
+        Ok(orphaned) => {
+            for (id, previous) in orphaned {
+                tracing::warn!(plugin = %id, previous = %previous.display(), "plugin is not installed, but its previous installation remains");
+            }
+        }
+        Err(error) => tracing::warn!(%error, "could not check for interrupted plugin installs"),
     }
 }
 
