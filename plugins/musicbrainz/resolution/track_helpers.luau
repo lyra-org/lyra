@@ -12,6 +12,9 @@ local normalize_overlap_title = text_helpers.normalize_overlap_title
 
 local module = {}
 
+-- How far a track's length may be from its file's.
+module.TRACK_LENGTH_TOLERANCE_MS = 5000
+
 -- A scanned length under a second is too short to be a song: a truncated or
 -- misread length rather than the track's own, it counts as no length at all.
 local MIN_PLAUSIBLE_LENGTH_MS = 1000
@@ -133,6 +136,9 @@ type FlattenedMbTrack = {
 	release_track_id: string?,
 	recording_id: string?,
 	recording_relations: { Relation }?,
+	recording_video: boolean,
+	-- Whether it ends its medium, where a hidden track may follow it.
+	medium_last: boolean,
 	duration_ms: number?,
 	artist_credits: { ReleaseArtistCredit }?,
 }
@@ -147,7 +153,7 @@ type DiscRemap = {
 	mb_disc: number,
 }
 
-type TrackAssignments = {
+export type TrackAssignments = {
 	[number]: FlattenedMbTrack,
 }
 
@@ -267,7 +273,7 @@ function module.flatten_release_tracks(release: Release): { FlattenedMbTrack }
 		if medium_tracks == nil then
 			continue
 		end
-		for _, track in medium_tracks do
+		for index, track in medium_tracks do
 			local recording = track.recording
 			table.insert(mb_tracks, {
 				title = track.title,
@@ -276,6 +282,8 @@ function module.flatten_release_tracks(release: Release): { FlattenedMbTrack }
 				release_track_id = track.id,
 				recording_id = recording and recording.id,
 				recording_relations = recording and recording.relations,
+				recording_video = recording ~= nil and recording.video == true,
+				medium_last = index == #medium_tracks,
 				duration_ms = track.length,
 				artist_credits = track["artist-credit"],
 			})
@@ -636,6 +644,70 @@ function module.assign_release_tracks(
 	return sorted_local, module.assign_mb_tracks_to_local_tracks(sorted_local, module.flatten_release_tracks(release))
 end
 
+-- How far a paired track's length may stray from its file's. With the same
+-- title, version included, a gap is sleeve rounding, vinyl timing or a pregap,
+-- so it may be large, though not an edit of another length; with another
+-- title, the length is the evidence. A medium's last track may run longer by
+-- a hidden track after silence, which takes a minute at least.
+local SAME_TITLE_MIN_TOLERANCE_MS = 30000
+local SAME_TITLE_TOLERANCE_SHARE = 0.15
+local HIDDEN_TRACK_MIN_MS = 60000
+
+-- Whether a paired track's length agrees with its file's.
+-- Whether a paired track's length agrees with its file's. A hidden track
+-- only accounts for the extra length of a track known to be the file's: its
+-- title, version included, or its recording among `verified_recording_ids`.
+function module.track_lengths_agree(
+	local_track: LocalTrack,
+	mb_track: FlattenedMbTrack,
+	verified_recording_ids: { [string]: boolean }?
+): boolean
+	local local_ms, mb_ms = module.comparable_lengths(local_track, mb_track)
+	if local_ms == nil or mb_ms == nil then
+		return true
+	end
+	local diff = math.abs(local_ms - mb_ms)
+	local title = normalize_title(local_track.track_title)
+	local same_title = title ~= "" and title == normalize_title(mb_track.title)
+	local recording_id = mb_track.recording_id
+	local verified = verified_recording_ids ~= nil
+		and recording_id ~= nil
+		and verified_recording_ids[recording_id] == true
+	if (same_title or verified) and mb_track.medium_last and mb_ms - local_ms >= HIDDEN_TRACK_MIN_MS then
+		return true
+	end
+	if same_title then
+		return diff <= math.max(SAME_TITLE_MIN_TOLERANCE_MS, math.max(local_ms, mb_ms) * SAME_TITLE_TOLERANCE_SHARE)
+	end
+	return diff <= module.TRACK_LENGTH_TOLERANCE_MS
+end
+
+-- Whether every track of a pairing `assign_release_tracks` made agrees in
+-- length with its file.
+function module.paired_lengths_agree(
+	sorted_local: { LocalTrack },
+	assignments: TrackAssignments,
+	verified_recording_ids: { [string]: boolean }?
+): boolean
+	for i, local_track in sorted_local do
+		local mb_track = assignments[i]
+		if mb_track and not module.track_lengths_agree(local_track, mb_track, verified_recording_ids) then
+			return false
+		end
+	end
+	return true
+end
+
+-- Whether every paired track's length agrees with its file's.
+function module.validate_release_durations(local_tracks: { LocalTrack }, release: Release): boolean
+	if not module.release_lists_tracks(release) then
+		return true
+	end
+	return module.paired_lengths_agree(module.assign_release_tracks(local_tracks, release))
+end
+
+-- How many local tracks have a length to compare with their assigned
+-- MusicBrainz track, and the largest difference among them.
 -- The local and MusicBrainz lengths of a paired track, if both are known and
 -- the local one can be the track's real length.
 function module.comparable_lengths(local_track: LocalTrack, mb_track: FlattenedMbTrack): (number?, number?)
@@ -647,42 +719,17 @@ function module.comparable_lengths(local_track: LocalTrack, mb_track: FlattenedM
 	return local_ms, mb_ms
 end
 
-function module.validate_release_durations(local_tracks: { LocalTrack }, release: Release): boolean
-	if not module.release_lists_tracks(release) then
-		return true
-	end
-	local sorted_local, assignments = module.assign_release_tracks(local_tracks, release)
-	local compared = 0
-	local failed = 0
-	for i, local_track in sorted_local do
-		local mb_track = assignments[i]
-		if mb_track and mb_track.duration_ms and local_track.duration_ms then
-			compared += 1
-			local diff = math.abs(mb_track.duration_ms - local_track.duration_ms)
-			local max_dur = math.max(mb_track.duration_ms, local_track.duration_ms)
-			local relative = if max_dur > 0 then diff / max_dur else 0
-			if relative > 0.30 and diff > 15000 then
-				failed += 1
-			end
-		end
-	end
-	if compared < 2 then
-		return true
-	end
-	return failed <= compared / 2
-end
-
--- How many local tracks have a length to compare with their assigned
--- MusicBrainz track, and the largest difference among them.
-function module.max_assigned_duration_diff(local_tracks: { LocalTrack }, release: Release): (number, number)
-	local sorted_local, assignments = module.assign_release_tracks(local_tracks, release)
+function module.max_paired_length_diff(sorted_local: { LocalTrack }, assignments: TrackAssignments): (number, number)
 	local compared = 0
 	local max_diff = 0
 	for i, local_track in sorted_local do
 		local mb_track = assignments[i]
-		if mb_track and mb_track.duration_ms and local_track.duration_ms then
-			compared += 1
-			max_diff = math.max(max_diff, math.abs(mb_track.duration_ms - local_track.duration_ms))
+		if mb_track then
+			local local_ms, mb_ms = module.comparable_lengths(local_track, mb_track)
+			if local_ms and mb_ms then
+				compared += 1
+				max_diff = math.max(max_diff, math.abs(mb_ms - local_ms))
+			end
 		end
 	end
 	return compared, max_diff
@@ -721,20 +768,22 @@ function module.should_preserve_local_track_positions(local_tracks: { LocalTrack
 	return release_media_count == 1 and (local_max_disc > 1 or local_declared_disc_total > 1)
 end
 
+-- The length difference of a lone local track from its pairing, if any.
+function module.single_paired_length_diff(sorted_local: { LocalTrack }, assignments: TrackAssignments): number?
+	local local_track = sorted_local[1]
+	local matched = assignments[1]
+	if #sorted_local ~= 1 or local_track == nil or matched == nil then
+		return nil
+	end
+	local local_ms, mb_ms = module.comparable_lengths(local_track, matched)
+	return if local_ms and mb_ms then math.abs(mb_ms - local_ms) else nil
+end
+
 function module.single_track_duration_diff(local_tracks: { LocalTrack }?, release: Release?): number?
 	if not local_tracks or #local_tracks ~= 1 or not release then
 		return nil
 	end
-	local local_track = local_tracks[1]
-	if local_track.duration_ms == nil then
-		return nil
-	end
-	local _, assignments = module.assign_release_tracks({ local_track }, release)
-	local matched = assignments[1]
-	if not matched or matched.duration_ms == nil then
-		return nil
-	end
-	return math.abs(matched.duration_ms - local_track.duration_ms)
+	return module.single_paired_length_diff(module.assign_release_tracks(local_tracks, release))
 end
 
 function module.compute_track_count(release: Release): number

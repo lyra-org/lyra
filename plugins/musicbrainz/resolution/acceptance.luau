@@ -16,11 +16,8 @@ type LocalRelease = local_release.LocalRelease
 type LocalTrack = track_helpers.LocalTrack
 type ReleaseArtistCredit = track_helpers.ReleaseArtistCredit
 type Release = track_helpers.Release
+type TrackAssignments = track_helpers.TrackAssignments
 
--- Provisional: how far a track's length may be from the local track's and
--- still count as the same recording. Applies to one-track releases, and to
--- every track when lengths are the only evidence beyond the artist.
-local TRACK_DURATION_TOLERANCE_MS = 5000
 -- Share of local track titles a larger release must contain to match a subset of it.
 local SUBSET_TITLE_OVERLAP_RATIO = 0.8
 -- Share of recordings a localized edition must keep from the edition it replaces.
@@ -37,9 +34,10 @@ local compute_track_count = track_helpers.compute_track_count
 local medium_has_track_count = track_helpers.medium_has_track_count
 local max_declared_track_total = track_helpers.max_declared_track_total
 local count_track_title_overlap = track_helpers.count_track_title_overlap
-local validate_release_durations = track_helpers.validate_release_durations
-local single_track_duration_diff = track_helpers.single_track_duration_diff
-local max_assigned_duration_diff = track_helpers.max_assigned_duration_diff
+local paired_lengths_agree = track_helpers.paired_lengths_agree
+local single_paired_length_diff = track_helpers.single_paired_length_diff
+local max_paired_length_diff = track_helpers.max_paired_length_diff
+local TRACK_LENGTH_TOLERANCE_MS = track_helpers.TRACK_LENGTH_TOLERANCE_MS
 local release_lists_tracks = track_helpers.release_lists_tracks
 local release_has_any_recording = track_helpers.release_has_any_recording
 local flatten_release_tracks = track_helpers.flatten_release_tracks
@@ -174,9 +172,9 @@ end
 -- Whether track lengths alone single out the release, as they must when its
 -- titles are transliterated or translated: at least half the local tracks
 -- compare, all within tolerance. Missing lengths are no evidence.
-local function lengths_identify(release: Release, local_tracks: { LocalTrack }): boolean
-	local compared, max_diff = max_assigned_duration_diff(local_tracks, release)
-	return compared > 0 and compared >= math.ceil(#local_tracks / 2) and max_diff <= TRACK_DURATION_TOLERANCE_MS
+local function lengths_identify(sorted_local: { LocalTrack }, assignments: TrackAssignments): boolean
+	local compared, max_diff = max_paired_length_diff(sorted_local, assignments)
+	return compared > 0 and compared >= math.ceil(#sorted_local / 2) and max_diff <= TRACK_LENGTH_TOLERANCE_MS
 end
 
 local function has_verified_recording(release: Release, local_release_info: LocalRelease): boolean
@@ -222,6 +220,13 @@ function module.accepts(release: Release, local_release_info: LocalRelease, anch
 	end
 	local local_tracks = local_release_info.context.tracks
 	local local_count = #local_tracks
+	local sorted_local, assignments = assign_release_tracks(local_tracks, release)
+	-- Local files are audio, so a music video can't be one of them.
+	for _, mb_track in assignments do
+		if mb_track.recording_video then
+			return false, `track "{mb_track.title}" is a video recording`
+		end
+	end
 
 	local local_title = clean_release_title(local_release_info.release_title)
 	local has_local_title = not is_blank_text(local_title)
@@ -248,11 +253,14 @@ function module.accepts(release: Release, local_release_info: LocalRelease, anch
 	end
 
 	if local_count == 1 then
-		local diff = single_track_duration_diff(local_tracks, release)
-		if diff ~= nil and diff > TRACK_DURATION_TOLERANCE_MS then
+		local diff = single_paired_length_diff(sorted_local, assignments)
+		if diff ~= nil and diff > TRACK_LENGTH_TOLERANCE_MS then
 			return false, `duration differs by {diff} ms`
 		end
-	elseif local_count > 1 and not validate_release_durations(local_tracks, release) then
+	elseif
+		local_count > 1
+		and not paired_lengths_agree(sorted_local, assignments, local_release_info.verified_recording_ids)
+	then
 		return false, "durations disagree"
 	end
 
@@ -265,7 +273,7 @@ function module.accepts(release: Release, local_release_info: LocalRelease, anch
 	local identified = title_exact
 		or title_overlap > 0
 		or verified_recording
-		or (artist_ok and (title_agrees or lengths_identify(release, local_tracks)))
+		or (artist_ok and (title_agrees or lengths_identify(sorted_local, assignments)))
 	if not identified then
 		return false, "no title, track, or recording agreement, and lengths don't identify it"
 	end
