@@ -71,6 +71,8 @@ pub struct Fixture {
     ratings: Vec<Rating>,
     #[serde(default)]
     tags: Vec<Tag>,
+    #[serde(default)]
+    lyrics: Vec<LyricsEntry>,
     /// The directory fixture paths resolve against.
     #[serde(skip)]
     directory: PathBuf,
@@ -257,6 +259,23 @@ struct Tag {
     name: String,
 }
 
+/// A lyrics entry of a track: a provider's, a user's personal one, or else the shared one.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LyricsEntry {
+    /// The fixture key of the entry's public id.
+    key: Option<String>,
+    track: String,
+    /// The provider that fetched it, registered and enabled in order of first appearance.
+    provider: Option<String>,
+    /// The user whose personal entry it is.
+    user: Option<String>,
+    language: Option<String>,
+    /// As an upload's `Content-Type` names it; `text/plain` by default.
+    content_type: Option<String>,
+    body: String,
+}
+
 /// What the test receives as its chunk's first `...`: user and library ids, API key secrets, session
 /// tokens, connection ids and entity ids by fixture key, and each playlist's entry ids in order.
 #[derive(Debug, Default, Serialize)]
@@ -333,6 +352,7 @@ struct Keys {
     libraries: BTreeMap<String, DbId>,
     entities: BTreeMap<String, (DbId, lyra_db::favorites::FavoriteKind)>,
     genres: BTreeMap<String, String>,
+    lyrics: BTreeMap<String, DbId>,
 }
 
 impl Keys {
@@ -365,7 +385,8 @@ impl Keys {
                 && !self.connections.contains(key)
                 && !self.libraries.contains_key(key)
                 && !self.entities.contains_key(key)
-                && !self.genres.contains_key(key),
+                && !self.genres.contains_key(key)
+                && !self.lyrics.contains_key(key),
             "fixture key `{key}` is used twice"
         );
         Ok(())
@@ -484,6 +505,7 @@ impl Fixture {
             libraries: BTreeMap::new(),
             entities: BTreeMap::new(),
             genres: BTreeMap::new(),
+            lyrics: BTreeMap::new(),
         };
         let mut seeded = Seeded::default();
 
@@ -877,10 +899,56 @@ impl Fixture {
             )?;
         }
 
+        for entry in &self.lyrics {
+            let (track_db_id, _) = keys.entity(&entry.track)?;
+            let track = lyra_db::tracks::get_by_id(db, track_db_id)?
+                .with_context(|| format!("lyrics track `{}` is not a track", entry.track))?;
+            let input = services::metadata::lyrics::input_from_upload(
+                entry.content_type.as_deref().unwrap_or("text/plain"),
+                entry.body.as_bytes(),
+                entry.language.clone(),
+                1,
+            )
+            .map_err(|error| anyhow::anyhow!("lyrics of `{}`: {error}", entry.track))?;
+            let lyrics_db_id = match (&entry.provider, &entry.user) {
+                (Some(_), Some(_)) => {
+                    anyhow::bail!("lyrics of `{}` name a provider and a user", entry.track)
+                }
+                (Some(provider), None) => {
+                    lyra_db::providers::register(db, provider)?;
+                    lyra_db::lyrics::upsert_from_plugin(
+                        db,
+                        track_db_id,
+                        input,
+                        format!("{provider}-lyrics"),
+                        provider,
+                        track.duration_ms,
+                    )?
+                }
+                (None, Some(user)) => lyra_db::lyrics::upsert_personal(
+                    db,
+                    track_db_id,
+                    input,
+                    keys.user(user)?,
+                    track.duration_ms,
+                )?,
+                (None, None) => {
+                    lyra_db::lyrics::upsert_shared(db, track_db_id, input, track.duration_ms)?
+                }
+            };
+            if let Some(key) = &entry.key {
+                keys.claim(key)?;
+                keys.lyrics.insert(key.clone(), lyrics_db_id);
+            }
+        }
+
         let public_id = |db_id: DbId| {
             lyra_db::lookup::find_id_by_db_id(db, db_id)?.context("fixture node has a public id")
         };
         for (key, (db_id, _)) in &keys.entities {
+            seeded.ids.insert(key.clone(), public_id(*db_id)?);
+        }
+        for (key, db_id) in &keys.lyrics {
             seeded.ids.insert(key.clone(), public_id(*db_id)?);
         }
         for (key, name) in &keys.genres {

@@ -148,6 +148,15 @@ value = 4            # 1 through 5
 user = "owner"
 target = "solo"      # any artist, release, track or playlist key, seen by the user or not
 name = "Vinyl"
+
+[[lyrics]]
+key = "fetched"      # optional; the entry's public id goes in `ids`
+track = "s1"
+provider = "lrclib"  # optional; a provider's entry, the provider enabled in order of first appearance
+user = "owner"       # optional; the user's personal entry. Without provider or user, the shared one
+language = "eng"     # optional; `und` by default
+content_type = "application/lrc" # optional; as an upload names it, `text/plain` by default
+body = "[00:01.00]One\n[01:40.00]Two"
 ```
 
 ```luau
@@ -157,7 +166,7 @@ fixture.libraries.music -- the library's public id
 fixture.api_keys.phone  -- an API key's secret
 fixture.sessions.laptop -- a session's token
 fixture.connections.speaker -- a connection's public id
-fixture.ids.s1          -- an entity's or library's public id, by fixture key
+fixture.ids.s1          -- an entity's, library's or lyrics entry's public id, by fixture key
 fixture.entries.mix[1]  -- a playlist's entry ids, in order
 ```
 
