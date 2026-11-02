@@ -450,6 +450,7 @@ fn file_delivery_options(query: &PlaybackUrlQuery) -> DeliveryOptions {
     DeliveryOptions {
         format: non_empty(query.format.as_ref()),
         codec: non_empty(query.codec.as_ref()),
+        copy_profiles: query.copy_profiles.clone(),
         bitrate_bps: query.bitrate_bps,
         sample_rate_hz: query.sample_rate_hz,
         channels: query.channels,
@@ -462,6 +463,7 @@ fn hls_delivery_options(query: &PlaybackUrlQuery) -> DeliveryOptions {
     DeliveryOptions {
         format: None,
         codec: non_empty(query.hls_codec.as_ref()),
+        copy_profiles: None,
         ..file_delivery_options(query)
     }
 }
@@ -505,7 +507,11 @@ fn resolve_playback_transports(
     query: &PlaybackUrlQuery,
     source: delivery::ValidatedTrackSource,
 ) -> Result<PlaybackTransports, AppError> {
-    let stream_request = delivery::validate_request(query.format.clone(), query.codec.clone())?;
+    let stream_request = delivery::validate_request(
+        query.format.clone(),
+        query.codec.clone(),
+        query.copy_profiles.clone(),
+    )?;
     let source = delivery::apply_request_start_offset(source, query.start_offset_ms)?;
     let knobs = playback_transcode_knobs(query);
 
@@ -533,7 +539,7 @@ fn resolve_playback_transports(
     // Parsed last so an unusable hls_codec never outranks a stream-request error, then
     // checked against the real profile so an hls_url is only minted when the playlist
     // handler would answer the same way.
-    let hls_request = delivery::validate_request(None, query.hls_codec.clone())?;
+    let hls_request = delivery::validate_request(None, query.hls_codec.clone(), None)?;
     delivery::resolve_hls_profile(&source, &hls_request, knobs)?;
 
     Ok(PlaybackTransports {
@@ -679,6 +685,13 @@ struct PlaybackUrlQuery {
         )
     )]
     codec: Option<String>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Optional comma-separated `container/codec` pairs the client plays as they are (e.g. m4a/aac,ogg/opus,flac/flac), named as `source.container` and `source.codec` of a delivery description. When given, `copy` sends the source unconverted to `stream_url` and `download_url` only if its pair is listed, so a source whose codec is unknown is always converted, and an empty list copies nothing; otherwise any source may be copied. `hls_url` ignores it."
+        )
+    )]
+    copy_profiles: Option<String>,
     #[cfg_attr(
         feature = "docgen",
         schemars(
@@ -1927,6 +1940,7 @@ mod tests {
         let query = PlaybackUrlQuery {
             format: Some("mp3".to_string()),
             codec: Some("copy,mp3".to_string()),
+            copy_profiles: Some("mp3/mp3".to_string()),
             hls_codec: Some("aac".to_string()),
             bitrate_bps: Some(128_000),
             sample_rate_hz: Some(44_100),
@@ -1951,6 +1965,7 @@ mod tests {
             DeliveryOptions {
                 format: Some("mp3".to_string()),
                 codec: Some("copy,mp3".to_string()),
+                copy_profiles: Some("mp3/mp3".to_string()),
                 bitrate_bps: Some(128_000),
                 sample_rate_hz: Some(44_100),
                 channels: Some(2),
@@ -1959,6 +1974,7 @@ mod tests {
         );
         assert_eq!(hls_delivery_options(&query).codec.as_deref(), Some("aac"));
         assert_eq!(hls_delivery_options(&query).format, None);
+        assert_eq!(hls_delivery_options(&query).copy_profiles, None);
     }
 
     fn playback_url_query(
@@ -1969,6 +1985,7 @@ mod tests {
         PlaybackUrlQuery {
             format: format.map(str::to_string),
             codec: codec.map(str::to_string),
+            copy_profiles: None,
             hls_codec: hls_codec.map(str::to_string),
             bitrate_bps: None,
             sample_rate_hz: None,
@@ -2053,6 +2070,25 @@ mod tests {
             transports.stream.is_some(),
             "the original m4a file streams as it is"
         );
+    }
+
+    #[test]
+    fn resolve_playback_transports_converts_a_source_outside_the_copy_profiles() {
+        let mut source = flac_playback_source();
+        source.entry_format = Some(lyra_ffmpeg::AudioFormat::M4a);
+        source.source_codec = Some(lyra_ffmpeg::AudioCodec::Alac);
+        source.format.container = Some(lyra_db::track_sources::SourceContainer::M4a);
+        source.format.codec = Some(lyra_db::track_sources::SourceCodec::Alac);
+        let query = PlaybackUrlQuery {
+            copy_profiles: Some("m4a/aac".to_string()),
+            ..playback_url_query(None, Some("copy,aac"), Some("copy"))
+        };
+
+        let transports = resolve_playback_transports(&query, source).expect("an alac m4a resolves");
+        let stream = transports.stream.expect("the m4a streams");
+        assert!(stream.transcode);
+        assert_eq!(stream.codec, Some("aac"));
+        assert!(transports.download.transcode);
     }
 
     #[test]

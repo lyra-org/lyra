@@ -86,6 +86,7 @@ impl MediaTokenHolder {
 pub(crate) struct DeliveryOptions {
     pub(crate) format: Option<String>,
     pub(crate) codec: Option<String>,
+    pub(crate) copy_profiles: Option<String>,
     pub(crate) bitrate_bps: Option<u32>,
     pub(crate) sample_rate_hz: Option<u32>,
     pub(crate) channels: Option<u32>,

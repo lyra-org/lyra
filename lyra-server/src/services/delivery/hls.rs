@@ -49,6 +49,7 @@ impl HlsPlaylistOptions {
         reject_unbound_options(&DeliveryOptions {
             format: None,
             codec: self.codec,
+            copy_profiles: None,
             bitrate_bps: self.bitrate_bps,
             sample_rate_hz: self.sample_rate_hz,
             channels: self.channels,
@@ -110,7 +111,7 @@ pub(crate) async fn resolve_hls(
             .ok_or_else(|| {
                 DeliveryError::service_unavailable("HLS requires a known positive track duration")
             })?;
-    let validated = validate_request(None, codec)?;
+    let validated = validate_request(None, codec, None)?;
     let knobs = TranscodeKnobs {
         bitrate_bps,
         sample_rate_hz,

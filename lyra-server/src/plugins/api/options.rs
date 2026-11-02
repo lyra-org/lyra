@@ -203,6 +203,7 @@ fn serve_options(table: &luau::Table, owner: &str) -> luau::runtime::Result<Serv
         format: args::optional_string_enum::<DeliveryFormat>(table, "format", owner)?
             .map(|format| format.as_str().to_string()),
         codec: codecs(table, owner)?,
+        copy_profiles: None,
         bitrate_bps: optional_u32(table, "bitrate_bps", owner)?,
         sample_rate_hz: optional_u32(table, "sample_rate_hz", owner)?,
         channels: optional_u32(table, "channels", owner)?,

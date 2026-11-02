@@ -3,6 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use lyra_db::track_sources::{
+    SourceCodec,
+    SourceContainer,
+};
 use lyra_ffmpeg::{
     AudioCodec,
     AudioFormat,
@@ -22,6 +26,63 @@ const DEFAULT_VBR_CHANNELS: u32 = 2;
 pub(crate) struct ValidatedRequest {
     pub(crate) format: Option<AudioFormat>,
     pub(crate) preferred_codecs: Vec<AudioCodec>,
+    /// The sources `copy` may send as they are; `None` lets it send any.
+    pub(crate) copy_profiles: Option<Vec<CopyProfile>>,
+}
+
+impl ValidatedRequest {
+    fn allows_copy_of(&self, source: &ValidatedTrackSource) -> bool {
+        let Some(profiles) = &self.copy_profiles else {
+            return true;
+        };
+        let (Some(container), Some(codec)) = (source.format.container, source.format.codec) else {
+            return false;
+        };
+        profiles.contains(&CopyProfile { container, codec })
+    }
+}
+
+/// A source container and codec a client plays as they are, named as a delivery describes its
+/// source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CopyProfile {
+    container: SourceContainer,
+    codec: SourceCodec,
+}
+
+fn parse_copy_profiles(
+    copy_profiles: Option<String>,
+) -> Result<Option<Vec<CopyProfile>>, DeliveryError> {
+    let Some(copy_profiles) = copy_profiles else {
+        return Ok(None);
+    };
+
+    copy_profiles
+        .split(',')
+        .map(str::trim)
+        .filter(|profile| !profile.is_empty())
+        .map(|profile| {
+            let (container, codec) = profile.split_once('/').ok_or_else(|| {
+                DeliveryError::bad_request(format!(
+                    "Invalid copy profile: {profile}. Expected container/codec, such as m4a/aac."
+                ))
+            })?;
+            let container = SourceContainer::parse(container).ok_or_else(|| {
+                DeliveryError::bad_request(format!(
+                    "Unsupported copy profile container: {container}. Supported containers: {:?}",
+                    SourceContainer::VALUES
+                ))
+            })?;
+            let codec = SourceCodec::parse(codec).ok_or_else(|| {
+                DeliveryError::bad_request(format!(
+                    "Unsupported copy profile codec: {codec}. Supported codecs: {:?}",
+                    SourceCodec::VALUES
+                ))
+            })?;
+            Ok(CopyProfile { container, codec })
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
 }
 
 fn parse_preferred_codecs(codec: Option<String>) -> Result<Vec<AudioCodec>, DeliveryError> {
@@ -71,6 +132,7 @@ fn incompatible_codecs_error(
 pub(crate) fn validate_request(
     format: Option<String>,
     codec: Option<String>,
+    copy_profiles: Option<String>,
 ) -> Result<ValidatedRequest, DeliveryError> {
     let format = match format {
         Some(fmt) => {
@@ -86,9 +148,11 @@ pub(crate) fn validate_request(
         None => None,
     };
     let preferred_codecs = parse_preferred_codecs(codec)?;
+    let copy_profiles = parse_copy_profiles(copy_profiles)?;
     Ok(ValidatedRequest {
         format,
         preferred_codecs,
+        copy_profiles,
     })
 }
 
@@ -636,19 +700,32 @@ pub(crate) fn resolve_delivery(
     knobs: TranscodeKnobs,
     target: DeliveryTarget,
 ) -> Result<DeliveryDecision, DeliveryError> {
+    let allow_copy = validated.allows_copy_of(source);
+    if !allow_copy
+        && !validated.preferred_codecs.is_empty()
+        && validated
+            .preferred_codecs
+            .iter()
+            .all(|codec| matches!(codec, AudioCodec::Copy))
+    {
+        return Err(DeliveryError::bad_request(
+            "The source is not in copy_profiles, and codec names no codec to convert it to",
+        ));
+    }
+
     let copy_output_format = resolve_output_format(
         validated.format,
         &validated.preferred_codecs,
         source.entry_format,
         &source.full_path,
-        true,
+        allow_copy,
     )?;
 
     let copy_codec = resolve_codec(
         &validated.preferred_codecs,
         copy_output_format,
         source.entry_format,
-        true,
+        allow_copy,
     )?;
     let copy_selected = matches!(copy_codec, AudioCodec::Copy);
 
@@ -686,6 +763,13 @@ pub(crate) fn resolve_delivery(
     } else {
         (copy_output_format, copy_codec)
     };
+
+    if matches!(codec, AudioCodec::Copy) && !allow_copy {
+        return Err(DeliveryError::bad_request(format!(
+            "Format '{}' only copies its source, and the source is not in copy_profiles",
+            output_format.extension()
+        )));
+    }
 
     let direct_passthrough = matches!(codec, AudioCodec::Copy)
         && source.entry_format == Some(output_format)
@@ -745,6 +829,10 @@ mod tests {
     use crate::services::delivery::{
         DeliveryError,
         ValidatedTrackSource,
+    };
+    use lyra_db::track_sources::{
+        SourceCodec,
+        SourceContainer,
     };
     use lyra_ffmpeg::{
         AudioCodec,
@@ -1357,6 +1445,7 @@ mod tests {
         let validated = validate_request(
             Some("webm".to_string()),
             Some("copy, opus,vorbis".to_string()),
+            None,
         )
         .expect("ordered codec preferences should parse");
         assert_eq!(validated.format, Some(AudioFormat::Webm));
@@ -1459,7 +1548,7 @@ mod tests {
     #[test]
     fn resolve_delivery_reports_direct_passthrough_for_untouched_source() {
         let source = flac_source(None, None);
-        let validated = validate_request(None, None).expect("empty request parses");
+        let validated = validate_request(None, None, None).expect("empty request parses");
         let decision = resolve_delivery(
             &validated,
             &source,
@@ -1478,7 +1567,7 @@ mod tests {
     #[test]
     fn resolve_delivery_drops_passthrough_when_a_knob_forces_transcoding() {
         let source = flac_source(None, None);
-        let validated = validate_request(None, None).expect("empty request parses");
+        let validated = validate_request(None, None, None).expect("empty request parses");
         let decision = resolve_delivery(
             &validated,
             &source,
@@ -1502,7 +1591,7 @@ mod tests {
     #[test]
     fn resolve_delivery_drops_passthrough_for_cue_ranges() {
         let source = flac_source(Some(10_000), Some(30_000));
-        let validated = validate_request(None, None).expect("empty request parses");
+        let validated = validate_request(None, None, None).expect("empty request parses");
         let decision = resolve_delivery(
             &validated,
             &source,
@@ -1519,7 +1608,7 @@ mod tests {
     fn resolve_delivery_rejects_a_non_streamable_final_format() {
         let source = flac_source(None, None);
         // This is otherwise a valid remux decision; only the stream target cannot carry it.
-        let validated = validate_request(Some("caf".to_string()), None).expect("caf parses");
+        let validated = validate_request(Some("caf".to_string()), None, None).expect("caf parses");
 
         let err = resolve_delivery(
             &validated,
@@ -1549,7 +1638,7 @@ mod tests {
         let mut m4a = flac_source(None, None);
         m4a.entry_format = Some(AudioFormat::M4a);
         m4a.source_codec = Some(AudioCodec::Alac);
-        let validated = validate_request(None, None).expect("empty request parses");
+        let validated = validate_request(None, None, None).expect("empty request parses");
 
         let decision = resolve_delivery(
             &validated,
@@ -1562,12 +1651,158 @@ mod tests {
         assert_eq!(decision.content_type, "audio/mp4");
     }
 
+    fn m4a_source(codec: Option<SourceCodec>) -> ValidatedTrackSource {
+        let mut source = flac_source(None, None);
+        source.entry_format = Some(AudioFormat::M4a);
+        source.source_codec = codec.and_then(crate::services::playback_sources::transcoder_codec);
+        source.format.container = Some(SourceContainer::M4a);
+        source.format.codec = codec;
+        source
+    }
+
+    fn stream_with_copy_profiles(
+        source: &ValidatedTrackSource,
+        codec: Option<&str>,
+        copy_profiles: &str,
+    ) -> Result<DeliveryDecision, DeliveryError> {
+        let validated = validate_request(
+            None,
+            codec.map(str::to_string),
+            Some(copy_profiles.to_string()),
+        )
+        .expect("the request parses");
+        resolve_delivery(
+            &validated,
+            source,
+            TranscodeKnobs::default(),
+            DeliveryTarget::Stream,
+        )
+    }
+
+    #[test]
+    fn resolve_delivery_copies_a_source_whose_pair_is_listed() {
+        let decision = stream_with_copy_profiles(
+            &m4a_source(Some(SourceCodec::Aac)),
+            None,
+            "flac/flac, m4a/aac",
+        )
+        .expect("an aac m4a resolves");
+        assert!(decision.direct_passthrough);
+    }
+
+    #[test]
+    fn resolve_delivery_converts_a_source_whose_pair_is_not_listed() {
+        let decision =
+            stream_with_copy_profiles(&m4a_source(Some(SourceCodec::Alac)), None, "m4a/aac")
+                .expect("an alac m4a resolves");
+        assert!(!decision.direct_passthrough);
+        assert_eq!(decision.output_format, AudioFormat::M4a);
+        assert_eq!(decision.codec, AudioCodec::Aac);
+        assert_eq!(decision.reasons.names(), vec!["codec"]);
+    }
+
+    #[test]
+    fn resolve_delivery_converts_a_source_with_an_unknown_codec() {
+        let decision = stream_with_copy_profiles(&m4a_source(None), Some("copy,aac"), "m4a/aac")
+            .expect("an m4a of unknown codec resolves");
+        assert!(!decision.direct_passthrough);
+        assert_eq!(decision.codec, AudioCodec::Aac);
+    }
+
+    #[test]
+    fn resolve_delivery_converts_to_the_preferred_codec_when_the_pair_is_not_listed() {
+        let mut ogg_opus = flac_source(None, None);
+        ogg_opus.entry_format = Some(AudioFormat::Opus);
+        ogg_opus.source_codec = Some(AudioCodec::Opus);
+        ogg_opus.format.container = Some(SourceContainer::Ogg);
+        ogg_opus.format.codec = Some(SourceCodec::Opus);
+
+        let listed = stream_with_copy_profiles(&ogg_opus, Some("copy,aac"), "ogg/opus")
+            .expect("a listed ogg opus resolves");
+        assert!(listed.direct_passthrough);
+
+        let unlisted = stream_with_copy_profiles(&ogg_opus, Some("copy,aac"), "m4a/opus")
+            .expect("an unlisted ogg opus resolves");
+        assert!(!unlisted.direct_passthrough);
+        assert_eq!(unlisted.output_format, AudioFormat::M4a);
+        assert_eq!(unlisted.codec, AudioCodec::Aac);
+    }
+
+    #[test]
+    fn resolve_delivery_rejects_copy_alone_when_the_pair_is_not_listed() {
+        let err = stream_with_copy_profiles(
+            &m4a_source(Some(SourceCodec::Alac)),
+            Some("copy"),
+            "m4a/aac",
+        )
+        .expect_err("nothing to convert to");
+        assert_eq!(
+            bad_request_message(err),
+            "The source is not in copy_profiles, and codec names no codec to convert it to"
+        );
+    }
+
+    #[test]
+    fn resolve_delivery_copies_nothing_for_an_empty_copy_profile_list() {
+        let decision =
+            stream_with_copy_profiles(&m4a_source(Some(SourceCodec::Aac)), Some("copy,aac"), "")
+                .expect("an aac m4a resolves");
+        assert!(!decision.direct_passthrough);
+        assert_eq!(decision.codec, AudioCodec::Aac);
+    }
+
+    #[test]
+    fn resolve_delivery_rejects_caf_when_the_pair_is_not_listed() {
+        let validated =
+            validate_request(Some("caf".to_string()), None, Some("m4a/aac".to_string()))
+                .expect("the request parses");
+        let err = resolve_delivery(
+            &validated,
+            &m4a_source(Some(SourceCodec::Alac)),
+            TranscodeKnobs::default(),
+            DeliveryTarget::Download,
+        )
+        .expect_err("caf only copies");
+        assert_eq!(
+            bad_request_message(err),
+            "Format 'caf' only copies its source, and the source is not in copy_profiles"
+        );
+    }
+
+    #[test]
+    fn validate_request_reads_copy_profiles() {
+        for copy_profiles in ["", " ", ",,"] {
+            let validated =
+                validate_request(None, None, Some(copy_profiles.to_string())).expect("parses");
+            assert_eq!(
+                validated.copy_profiles,
+                Some(Vec::new()),
+                "{copy_profiles:?}"
+            );
+        }
+
+        for (copy_profiles, message) in [
+            (
+                "m4a",
+                "Invalid copy profile: m4a. Expected container/codec, such as m4a/aac.",
+            ),
+            ("mp4/aac", "Unsupported copy profile container: mp4."),
+            ("m4a/ac3", "Unsupported copy profile codec: ac3."),
+        ] {
+            let err = validate_request(None, None, Some(copy_profiles.to_string()))
+                .err()
+                .expect("the copy profile is rejected");
+            let actual = bad_request_message(err);
+            assert!(actual.starts_with(message), "{actual}");
+        }
+    }
+
     #[test]
     fn resolve_delivery_streams_an_encoded_m4a() {
         let mut mp3 = flac_source(None, None);
         mp3.entry_format = Some(AudioFormat::Mp3);
         mp3.source_codec = Some(AudioCodec::Mp3);
-        let validated = validate_request(None, Some("copy,aac".to_string())).expect("parses");
+        let validated = validate_request(None, Some("copy,aac".to_string()), None).expect("parses");
         let downmix = TranscodeKnobs {
             channels: Some(1),
             ..TranscodeKnobs::default()
@@ -1587,7 +1822,8 @@ mod tests {
         source.source_codec = Some(AudioCodec::Wma);
         source.format.bitrate_bps = Some(768_000);
         source.format.channel_count = Some(2);
-        let validated = validate_request(None, Some("opus".to_string())).expect("opus parses");
+        let validated =
+            validate_request(None, Some("opus".to_string()), None).expect("opus parses");
 
         let decision = resolve_delivery(
             &validated,
@@ -1614,7 +1850,7 @@ mod tests {
     fn resolve_delivery_reports_effective_lossy_encoder_settings() {
         let source = flac_source(None, None);
         let validated =
-            validate_request(Some("mp3".to_string()), None).expect("mp3 request parses");
+            validate_request(Some("mp3".to_string()), None, None).expect("mp3 request parses");
         let decision = resolve_delivery(
             &validated,
             &source,

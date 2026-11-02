@@ -21,7 +21,6 @@ macro_rules! source_format_enum {
 
         impl $name {
             /// Every value, as stored and as plugins see it.
-            #[cfg(feature = "docgen")]
             pub const VALUES: &[&str] = &[$($value,)+];
 
             pub fn as_str(self) -> &'static str {
@@ -30,14 +29,20 @@ macro_rules! source_format_enum {
                 }
             }
 
-            fn from_db_str(value: &str) -> Result<Self, DbError> {
+            pub fn parse(value: &str) -> Option<Self> {
                 match value {
-                    $($value => Ok(Self::$variant),)+
-                    _ => Err(DbError::serialization(
+                    $($value => Some(Self::$variant),)+
+                    _ => None,
+                }
+            }
+
+            fn from_db_str(value: &str) -> Result<Self, DbError> {
+                Self::parse(value).ok_or_else(|| {
+                    DbError::serialization(
                         agdb::DbErrorType::TypeError,
                         format!(concat!("invalid ", stringify!($name), " value '{}'"), value),
-                    )),
-                }
+                    )
+                })
             }
         }
 

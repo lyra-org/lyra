@@ -111,13 +111,14 @@ pub(crate) async fn resolve_track_delivery(
     let ServeTrackOptions {
         format,
         codec,
+        copy_profiles,
         bitrate_bps,
         sample_rate_hz,
         channels,
         prefer_vbr,
         start_offset_ms,
     } = options;
-    let validated = validate_request(format, codec)?;
+    let validated = validate_request(format, codec, copy_profiles)?;
     let source = apply_request_start_offset(
         validate_and_get_track_source(track_id, access).await?,
         start_offset_ms,

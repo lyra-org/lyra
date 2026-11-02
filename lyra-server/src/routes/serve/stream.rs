@@ -59,6 +59,13 @@ struct StreamQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
+            description = "Optional comma-separated `container/codec` pairs the client plays as they are (e.g. m4a/aac,ogg/opus,flac/flac), named as `source.container` and `source.codec` of a delivery description. When given, `copy` sends the source unconverted only if its pair is listed, so a source whose codec is unknown is always converted, and an empty list copies nothing; otherwise any source may be copied."
+        )
+    )]
+    copy_profiles: Option<String>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
             description = "Target bitrate cap in bits per second. Applied for lossy outputs when below the source bitrate; ignored for lossless codecs or when above source."
         )
     )]
@@ -116,6 +123,7 @@ async fn get_stream(
         ServeTrackOptions {
             format: query.format,
             codec: query.codec,
+            copy_profiles: query.copy_profiles,
             bitrate_bps: query.bitrate_bps,
             sample_rate_hz: query.sample_rate_hz,
             channels: query.channels,

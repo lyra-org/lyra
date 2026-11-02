@@ -13,6 +13,7 @@ use crate::services::auth::media_tokens::DeliveryOptions;
 pub(crate) struct ServeTrackOptions {
     pub(crate) format: Option<String>,
     pub(crate) codec: Option<String>,
+    pub(crate) copy_profiles: Option<String>,
     pub(crate) bitrate_bps: Option<u32>,
     pub(crate) sample_rate_hz: Option<u32>,
     pub(crate) channels: Option<u32>,
@@ -25,6 +26,7 @@ impl ServeTrackOptions {
         DeliveryOptions {
             format: self.format.clone(),
             codec: self.codec.clone(),
+            copy_profiles: self.copy_profiles.clone(),
             bitrate_bps: self.bitrate_bps,
             sample_rate_hz: self.sample_rate_hz,
             channels: self.channels,
@@ -42,6 +44,7 @@ impl ServeTrackOptions {
         let DeliveryOptions {
             format,
             codec,
+            copy_profiles,
             bitrate_bps,
             sample_rate_hz,
             channels,
@@ -50,6 +53,7 @@ impl ServeTrackOptions {
         Ok(Self {
             format,
             codec,
+            copy_profiles,
             bitrate_bps,
             sample_rate_hz,
             channels,
