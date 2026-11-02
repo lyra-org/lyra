@@ -3,14 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use harmony_luau::{
-    DescribeInterface,
-    FieldDescriptor,
-    InterfaceDescriptor,
-    LuauType,
-    LuauTypeInfo,
-};
-
 pub(crate) mod api;
 pub(crate) mod args;
 pub(crate) mod artists;
@@ -39,6 +31,7 @@ pub(crate) mod lyrics;
 pub(crate) mod manifests;
 pub(crate) mod metadata;
 pub(crate) mod mix;
+pub(crate) mod options;
 pub(crate) mod playback_sessions;
 pub(crate) mod playback_sources;
 pub(crate) mod playlists;
@@ -85,43 +78,6 @@ pub(crate) fn current_plugin(
     let plugin_id = crate::services::plugin_scope::PluginId::new(plugin_id)?;
     harmony_core::ensure_current_plugin_run(vm, context)?;
     Ok(plugin_id)
-}
-
-pub(crate) struct OptionConfig;
-
-impl LuauTypeInfo for OptionConfig {
-    fn luau_type() -> LuauType {
-        LuauType::literal("OptionConfig")
-    }
-}
-
-impl DescribeInterface for OptionConfig {
-    fn interface_descriptor() -> InterfaceDescriptor {
-        let mut descriptor = InterfaceDescriptor::new("OptionConfig", None);
-        descriptor.fields.extend([
-            FieldDescriptor {
-                name: "name",
-                ty: String::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "label",
-                ty: String::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "type",
-                ty: String::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "requires_settings",
-                ty: Option::<Vec<String>>::luau_type(),
-                description: None,
-            },
-        ]);
-        descriptor
-    }
 }
 
 #[cfg(test)]

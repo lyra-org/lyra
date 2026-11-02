@@ -23,10 +23,13 @@ use harmony_luau::{
 };
 
 use crate::{
-    plugins::OptionConfig,
     plugins::args::{
         self,
         JsonArg,
+    },
+    plugins::options::{
+        OptionConfig,
+        parse_option_declaration,
     },
     plugins::types::LuauMixSeedType,
     services::auth::Principal,
@@ -41,10 +44,6 @@ use crate::{
         MixRequestFields,
         MixShape,
         MixViewer,
-    },
-    services::options::{
-        OptionDeclaration,
-        OptionType,
     },
     services::plugin_dispatch::PluginCallbackHandle,
     services::plugin_scope::PluginId,
@@ -550,70 +549,6 @@ fn request_fields(
     Ok(fields)
 }
 
-fn parse_option_declaration(config: &luau::Table) -> luau::runtime::Result<OptionDeclaration> {
-    let name = required_string_field(config, "name")?;
-    let label = required_string_field(config, "label")?;
-    let option_type = match required_string_field(config, "type")?.as_str() {
-        "boolean" => OptionType::Boolean,
-        "number" => OptionType::Number,
-        "string" => OptionType::String,
-        other => {
-            return Err(crate::plugins::runtime_error(format!(
-                "unsupported mix option type '{other}'; expected boolean, number, or string"
-            )));
-        }
-    };
-    let default = match config.get("default")? {
-        luau::Value::Nil => serde_json::Value::Null,
-        value => harmony_serde::luau_to_json(&value, 0)?,
-    };
-    let requires_settings = match config.get("requires_settings")? {
-        luau::Value::Nil => Vec::new(),
-        luau::Value::Table(table) => {
-            let mut values = Vec::new();
-            for (key, value) in table.pairs()? {
-                if !matches!(key, luau::Value::Integer(_) | luau::Value::Number(_)) {
-                    continue;
-                }
-                let luau::Value::String(value) = value else {
-                    continue;
-                };
-                values.push(String::from_utf8(value).map_err(crate::plugins::runtime_error)?);
-            }
-            values
-        }
-        other => {
-            return Err(crate::plugins::runtime_error(format!(
-                "mix option requires_settings must be an array table, got {}",
-                other.type_name()
-            )));
-        }
-    };
-
-    Ok(OptionDeclaration {
-        name,
-        label,
-        option_type,
-        default,
-        requires_settings,
-    })
-}
-
-fn required_string_field(table: &luau::Table, key: &'static str) -> luau::runtime::Result<String> {
-    match table.get(key)? {
-        luau::Value::String(value) => {
-            String::from_utf8(value).map_err(crate::plugins::runtime_error)
-        }
-        luau::Value::Nil => Err(crate::plugins::runtime_error(format!(
-            "mix option '{key}' is required"
-        ))),
-        other => Err(crate::plugins::runtime_error(format!(
-            "mix option '{key}' must be a string, got {}",
-            other.type_name()
-        ))),
-    }
-}
-
 fn tracks_to_luau(tracks: Option<Vec<Track>>) -> luau::runtime::Result<luau::Value> {
     let Some(tracks) = tracks else {
         return Ok(luau::Value::Nil);
@@ -799,6 +734,7 @@ fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
     };
     vec![
         OptionConfig::interface_descriptor(),
+        crate::plugins::options::OptionChoiceConfig::interface_descriptor(),
         interface(
             "MixerOptions",
             "Options for `Mixer.new`.",

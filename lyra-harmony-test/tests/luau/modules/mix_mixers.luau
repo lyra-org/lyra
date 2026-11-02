@@ -47,6 +47,14 @@ wide:blend({
 	return result(ids.s5, ids.h1, ids.s4, ids.s3)
 end)
 
+wide:declare_option({
+	name = "space",
+	label = "Space",
+	type = "choice",
+	options = { { value = "audio", label = "Audio" }, { value = "lyrics", label = "Lyrics" } },
+	default = "audio",
+})
+
 -- "narrow" blends a single track or playlist seed.
 local narrow = mix.Mixer.new("narrow")
 narrow:declare_option({ name = "boost", label = "Boost", type = "boolean" })
@@ -88,6 +96,20 @@ fails(
 	mix.blend,
 	{ seeds = { ids.s2 }, options = { ["narrow.boost"] = "yes" } },
 	"option 'narrow.boost' must be a boolean"
+)
+
+-- A choice takes only its listed values.
+mix.blend({ seeds = { ids.s2, ids.s3 }, options = { ["wide.space"] = "lyrics" } })
+assert(seen.wide.options and seen.wide.options.space == "lyrics", "a listed choice")
+fails(
+	mix.blend,
+	{ seeds = { ids.s2, ids.s3 }, options = { ["wide.space"] = "video" } },
+	"option 'wide.space' must be one of 'audio', 'lyrics'"
+)
+fails(
+	mix.blend,
+	{ seeds = { ids.s2, ids.s3 }, options = { ["wide.space"] = 1 } },
+	"option 'wide.space' must be a string"
 )
 
 -- A mixer that comes up empty passes the mix to the next one that takes it.

@@ -40,7 +40,6 @@ use super::parsing::{
     parse_id_spec,
     parse_id_url_template,
     parse_lyrics_spec,
-    parse_option_declaration,
     parse_similar_releases_spec,
     required_table_string,
     string_array_from_table,
@@ -268,7 +267,7 @@ fn declare_option_callback(
     config: luau::Table,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(vm, context, &provider.plugin_id, &provider.provider_id)?;
-    let option = parse_option_declaration(&config)?;
+    let option = crate::plugins::options::parse_option_declaration(&config)?;
 
     let provider = provider.clone();
     Ok(luau::ScheduledFuture::new(async move {

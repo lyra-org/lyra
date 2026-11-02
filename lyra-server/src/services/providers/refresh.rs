@@ -142,9 +142,10 @@ pub(crate) async fn refresh_entity_metadata(
 
     let providers = read_active_providers().await?;
     let handlers = refresh_callbacks_for(&providers, entity_type, false).await;
+    let options = passed_provider_options(&handlers, &passed_options).await?;
     let mut providers_called = Vec::new();
-    for (provider_id, handler, _) in handlers {
-        let context = context_with_options(context.clone(), &provider_id, &passed_options).await;
+    for ((provider_id, handler, _), options) in handlers.into_iter().zip(options) {
+        let context = context_with_options(context.clone(), options);
         dispatch_refresh_callback(&provider_id, handler, context).await?;
         providers_called.push(provider_id);
     }
@@ -317,7 +318,7 @@ async fn refresh_release_metadata_inner_with_progress(
         } else {
             0
         };
-        let context = context_with_options(context.clone(), provider_id, &HashMap::new()).await;
+        let context = context.clone();
         let should_run = if let Some(filter) = filter {
             match dispatch_sync_filter_callback(provider_id, *filter, context.clone()).await {
                 Ok(value) => value,
@@ -491,7 +492,7 @@ async fn refresh_library_metadata_inner_with_progress(
             } else {
                 0
             };
-            let context = context_with_options(context.clone(), provider_id, &HashMap::new()).await;
+            let context = context.clone();
 
             let should_run = if let Some(filter) = filter {
                 match dispatch_sync_filter_callback(provider_id, *filter, context.clone()).await {
@@ -773,23 +774,29 @@ async fn refresh_callbacks_for(
         .collect()
 }
 
-async fn context_with_options(
-    mut context: serde_json::Value,
-    provider_id: &str,
+/// Each handler's provider's options, checked for every provider before any of them runs.
+async fn passed_provider_options(
+    handlers: &[(String, PluginCallbackHandle, Option<PluginCallbackHandle>)],
     passed_options: &HashMap<String, String>,
-) -> serde_json::Value {
-    if passed_options.is_empty() {
-        return context;
-    }
+) -> Result<Vec<serde_json::Map<String, serde_json::Value>>, ProviderServiceError> {
+    let registry = provider_registry().read_owned().await;
+    handlers
+        .iter()
+        .map(|(provider_id, _, _)| {
+            provider_options(
+                provider_id,
+                registry.get_options(provider_id),
+                passed_options,
+            )
+            .map_err(ProviderServiceError::InvalidOption)
+        })
+        .collect()
+}
 
-    let options = {
-        let registry = provider_registry().read_owned().await;
-        provider_options(
-            provider_id,
-            registry.get_options(provider_id),
-            passed_options,
-        )
-    };
+fn context_with_options(
+    mut context: serde_json::Value,
+    options: serde_json::Map<String, serde_json::Value>,
+) -> serde_json::Value {
     if options.is_empty() {
         return context;
     }

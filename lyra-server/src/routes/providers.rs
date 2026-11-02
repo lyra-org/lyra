@@ -84,10 +84,21 @@ pub struct OptionResponse {
     pub label: String,
     #[serde(rename = "type")]
     pub option_type: String,
+    /// The values a `choice` option takes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<Vec<OptionChoiceResponse>>,
     pub default: serde_json::Value,
     pub available: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unavailable_reason: Option<String>,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+#[non_exhaustive]
+pub struct OptionChoiceResponse {
+    pub value: String,
+    pub label: String,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -402,10 +413,18 @@ pub(super) fn option_responses(
             OptionResponse {
                 name: opt.name.clone(),
                 label: opt.label.clone(),
-                option_type: match &opt.option_type {
-                    OptionType::Boolean => "boolean".to_string(),
-                    OptionType::String => "string".to_string(),
-                    OptionType::Number => "number".to_string(),
+                option_type: opt.option_type.name().to_string(),
+                options: match &opt.option_type {
+                    OptionType::Choice(choices) => Some(
+                        choices
+                            .iter()
+                            .map(|choice| OptionChoiceResponse {
+                                value: choice.value.clone(),
+                                label: choice.label.clone(),
+                            })
+                            .collect(),
+                    ),
+                    _ => None,
                 },
                 default: opt.default.clone(),
                 available,

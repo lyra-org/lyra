@@ -177,6 +177,8 @@ pub(crate) enum ProviderServiceError {
     RefreshAlreadyRunning(i64),
     #[error("No refresh handler for provider '{0}'")]
     NoRefreshHandler(String),
+    #[error("{0}")]
+    InvalidOption(String),
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }

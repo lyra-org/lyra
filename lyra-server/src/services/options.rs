@@ -8,6 +8,42 @@ pub(crate) enum OptionType {
     Boolean,
     String,
     Number,
+    /// A string, one of the listed values.
+    Choice(Vec<OptionChoice>),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct OptionChoice {
+    pub(crate) value: std::string::String,
+    pub(crate) label: std::string::String,
+}
+
+impl OptionType {
+    pub(crate) fn name(&self) -> &'static str {
+        match self {
+            OptionType::Boolean => "boolean",
+            OptionType::String => "string",
+            OptionType::Number => "number",
+            OptionType::Choice(_) => "choice",
+        }
+    }
+}
+
+/// Checks that `value` is one of `choices`, naming `subject` and the accepted values when it isn't.
+pub(crate) fn check_choice(
+    subject: &str,
+    choices: &[OptionChoice],
+    value: &str,
+) -> Result<(), std::string::String> {
+    if choices.iter().any(|choice| choice.value == value) {
+        return Ok(());
+    }
+    let accepted = choices
+        .iter()
+        .map(|choice| format!("'{}'", choice.value))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(format!("{subject} must be one of {accepted}"))
 }
 
 #[derive(Clone, Debug)]
@@ -19,9 +55,13 @@ pub(crate) struct OptionDeclaration {
     pub(crate) requires_settings: Vec<std::string::String>,
 }
 
-/// Coerces a raw query string value to the declared option type.
-pub(crate) fn coerce_option_value(raw: &str, option_type: &OptionType) -> serde_json::Value {
-    match option_type {
+/// Coerces a raw query string value to the declared option type; a choice outside its list fails.
+fn coerce_option_value(
+    key: &str,
+    raw: &str,
+    option_type: &OptionType,
+) -> Result<serde_json::Value, std::string::String> {
+    Ok(match option_type {
         OptionType::Boolean => serde_json::Value::Bool(
             raw.eq_ignore_ascii_case("true") || raw == "1" || raw.eq_ignore_ascii_case("yes"),
         ),
@@ -32,24 +72,30 @@ pub(crate) fn coerce_option_value(raw: &str, option_type: &OptionType) -> serde_
             .map(|n| serde_json::json!(n))
             .unwrap_or(serde_json::Value::Null),
         OptionType::String => serde_json::Value::String(raw.to_string()),
-    }
+        OptionType::Choice(choices) => {
+            check_choice(&format!("option '{key}'"), choices, raw)?;
+            serde_json::Value::String(raw.to_string())
+        }
+    })
 }
 
 /// The options passed for `provider_id`, keyed by declared name. Callers pass
-/// options as `<provider_id>.<name>`, so each provider gets only its own.
+/// options as `<provider_id>.<name>`, so each provider gets only its own; a choice outside its
+/// list fails.
 pub(crate) fn provider_options(
     provider_id: &str,
     declared: &[OptionDeclaration],
     passed: &std::collections::HashMap<std::string::String, std::string::String>,
-) -> serde_json::Map<std::string::String, serde_json::Value> {
+) -> Result<serde_json::Map<std::string::String, serde_json::Value>, std::string::String> {
     declared
         .iter()
         .filter_map(|decl| {
-            let raw = passed.get(&format!("{provider_id}.{}", decl.name))?;
-            Some((
-                decl.name.clone(),
-                coerce_option_value(raw, &decl.option_type),
-            ))
+            let key = format!("{provider_id}.{}", decl.name);
+            let raw = passed.get(&key)?;
+            Some(
+                coerce_option_value(&key, raw, &decl.option_type)
+                    .map(|value| (decl.name.clone(), value)),
+            )
         })
         .collect()
 }
@@ -95,7 +141,7 @@ pub(crate) fn check_passed_options(
 
 /// The JSON options passed for `owner_id`, keyed by declared name. Callers pass options as
 /// `<owner_id>.<name>`, so each owner gets only its own; a value that isn't its option's declared
-/// type fails.
+/// type, or a choice outside its list, fails.
 pub(crate) fn typed_options(
     owner_id: &str,
     declared: &[OptionDeclaration],
@@ -113,14 +159,12 @@ pub(crate) fn typed_options(
                     .as_f64()
                     .map(|number| serde_json::json!(number))
                     .unwrap_or(serde_json::Value::Null)),
-                (option_type, _) => Err(format!(
-                    "option '{key}' must be a {}",
-                    match option_type {
-                        OptionType::Boolean => "boolean",
-                        OptionType::String => "string",
-                        OptionType::Number => "number",
-                    }
-                )),
+                (OptionType::Choice(choices), value) => value
+                    .as_str()
+                    .ok_or_else(|| format!("option '{key}' must be a string"))
+                    .and_then(|choice| check_choice(&format!("option '{key}'"), choices, choice))
+                    .map(|()| value.clone()),
+                (option_type, _) => Err(format!("option '{key}' must be a {}", option_type.name())),
             };
             Some(value.map(|value| (decl.name.clone(), value)))
         })
@@ -166,7 +210,8 @@ mod tests {
                 ("fingerprint", "false"),
                 ("musicbrainz.undeclared", "true"),
             ]),
-        );
+        )
+        .expect("provider options");
 
         assert_eq!(options.len(), 2);
         assert_eq!(options["fingerprint"], serde_json::json!(true));
@@ -180,9 +225,65 @@ mod tests {
             "musicbrainz",
             &declared,
             &passed(&[("theaudiodb.fingerprint", "true")]),
-        );
+        )
+        .expect("provider options");
 
         assert!(options.is_empty());
+    }
+
+    fn space() -> OptionType {
+        OptionType::Choice(
+            ["audio", "lyrics"]
+                .map(|value| OptionChoice {
+                    value: value.to_string(),
+                    label: value.to_string(),
+                })
+                .to_vec(),
+        )
+    }
+
+    #[test]
+    fn provider_options_take_only_listed_choices() {
+        let declared = [declaration("space", space())];
+        let options = provider_options(
+            "similar",
+            &declared,
+            &passed(&[("similar.space", "lyrics")]),
+        )
+        .expect("listed choice");
+        assert_eq!(options["space"], serde_json::json!("lyrics"));
+        assert_eq!(
+            provider_options("similar", &declared, &passed(&[("similar.space", "video")])),
+            Err("option 'similar.space' must be one of 'audio', 'lyrics'".to_string())
+        );
+    }
+
+    #[test]
+    fn typed_options_take_only_listed_choices() {
+        let declared = [declaration("space", space())];
+        let options = typed_options(
+            "similar",
+            &declared,
+            &HashMap::from([("similar.space".to_string(), serde_json::json!("audio"))]),
+        )
+        .expect("listed choice");
+        assert_eq!(options["space"], serde_json::json!("audio"));
+        assert_eq!(
+            typed_options(
+                "similar",
+                &declared,
+                &HashMap::from([("similar.space".to_string(), serde_json::json!("video"))]),
+            ),
+            Err("option 'similar.space' must be one of 'audio', 'lyrics'".to_string())
+        );
+        assert_eq!(
+            typed_options(
+                "similar",
+                &declared,
+                &HashMap::from([("similar.space".to_string(), serde_json::json!(1))]),
+            ),
+            Err("option 'similar.space' must be a string".to_string())
+        );
     }
 
     #[test]

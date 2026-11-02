@@ -282,6 +282,7 @@ impl From<ProviderServiceError> for AppError {
             ProviderServiceError::NoRefreshHandler(provider_id) => {
                 Self::not_found(format!("No refresh handler for provider '{provider_id}'"))
             }
+            ProviderServiceError::InvalidOption(message) => Self::bad_request(message),
             ProviderServiceError::Internal(err) => err.into(),
         }
     }

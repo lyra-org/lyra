@@ -5,6 +5,7 @@
 
 use harmony_luau::{
     ClassDescriptor,
+    DescribeInterface,
     DescribeModule,
     FieldDescriptor,
     FunctionParameter,
@@ -302,16 +303,8 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
                 ),
             ],
         },
-        interface(
-            "OptionConfig",
-            vec![
-                field("name", string()),
-                field("label", string()),
-                field("type", string()),
-                field("default", opt(ty("OptionValue"))),
-                field("requires_settings", opt(array(string()))),
-            ],
-        ),
+        crate::plugins::options::OptionConfig::interface_descriptor(),
+        crate::plugins::options::OptionChoiceConfig::interface_descriptor(),
         interface(
             "ReleaseRefreshLookupHints",
             vec![

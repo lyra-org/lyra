@@ -223,6 +223,7 @@ mod tests {
             mix_registry,
         },
         options::{
+            OptionChoice,
             OptionDeclaration,
             OptionType,
         },
@@ -274,6 +275,27 @@ mod tests {
                     },
                 )
                 .map_err(anyhow::Error::msg)?;
+            registry
+                .declare_option(
+                    "similar",
+                    OptionDeclaration {
+                        name: "space".to_string(),
+                        label: "Space".to_string(),
+                        option_type: OptionType::Choice(vec![
+                            OptionChoice {
+                                value: "audio".to_string(),
+                                label: "Audio".to_string(),
+                            },
+                            OptionChoice {
+                                value: "lyrics".to_string(),
+                                label: "Lyrics".to_string(),
+                            },
+                        ]),
+                        default: serde_json::json!("audio"),
+                        requires_settings: Vec::new(),
+                    },
+                )
+                .map_err(anyhow::Error::msg)?;
         }
         let session =
             crate::services::testing::create_session(user_db_id, Default::default()).await?;
@@ -312,6 +334,16 @@ mod tests {
                     "default": 2,
                     "available": false,
                     "unavailable_reason": "missing settings: token",
+                }, {
+                    "name": "space",
+                    "label": "Space",
+                    "type": "choice",
+                    "options": [
+                        { "value": "audio", "label": "Audio" },
+                        { "value": "lyrics", "label": "Lyrics" },
+                    ],
+                    "default": "audio",
+                    "available": true,
                 }],
                 "blend": {
                     "seeds": ["track", "artist"],

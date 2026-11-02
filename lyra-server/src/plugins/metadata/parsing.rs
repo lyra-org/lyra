@@ -8,7 +8,6 @@ use std::time::Duration;
 use agdb::DbId;
 use harmony_core::UserDataBinding;
 use harmony_luau as luau;
-use serde_json::Value as JsonValue;
 
 use crate::plugins::args::{
     optional_bool,
@@ -19,10 +18,6 @@ use crate::services::{
     EntityType,
     covers::providers::DEFAULT_COVER_HANDLER_TIMEOUT,
     metadata::lyrics::providers::DEFAULT_HANDLER_TIMEOUT,
-    options::{
-        OptionDeclaration,
-        OptionType,
-    },
     providers::{
         DEFAULT_SIMILAR_RELEASES_HANDLER_TIMEOUT,
         MAX_SIMILAR_RELEASES_HANDLER_TIMEOUT,
@@ -256,56 +251,6 @@ pub(super) fn parse_id_url_template(bytes: Vec<u8>) -> luau::runtime::Result<Str
     validate_id_link_template(&template)
         .map_err(|err| crate::plugins::runtime_error(format!("provider:id {err}")))?;
     Ok(template)
-}
-
-pub(super) fn parse_option_declaration(
-    config: &luau::Table,
-) -> luau::runtime::Result<OptionDeclaration> {
-    let name = required_string(config, "name")?;
-    let label = required_string(config, "label")?;
-    let option_type = match required_string(config, "type")?.as_str() {
-        "boolean" => OptionType::Boolean,
-        "string" => OptionType::String,
-        "number" => OptionType::Number,
-        other => {
-            return Err(crate::plugins::runtime_error(format!(
-                "declare_option: unsupported type '{other}', expected 'boolean', 'string', or 'number'"
-            )));
-        }
-    };
-    let default = match (option_type.clone(), config.get("default")?) {
-        (_, luau::Value::Nil) => JsonValue::Null,
-        (OptionType::Boolean, luau::Value::Boolean(value)) => JsonValue::Bool(value),
-        (OptionType::Number, luau::Value::Integer(value)) => serde_json::json!(value),
-        (OptionType::Number, luau::Value::Number(value)) => serde_json::json!(value),
-        (OptionType::String, luau::Value::String(bytes)) => {
-            JsonValue::String(String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?)
-        }
-        (expected, actual) => {
-            return Err(crate::plugins::runtime_error(format!(
-                "declare_option: default value type mismatch for '{name}': expected {expected:?}, got {}",
-                actual.type_name()
-            )));
-        }
-    };
-    let requires_settings = match config.get("requires_settings")? {
-        luau::Value::Nil => Vec::new(),
-        luau::Value::Table(table) => string_array_from_table(&table)?,
-        other => {
-            return Err(crate::plugins::runtime_error(format!(
-                "declare_option: requires_settings must be a string array, got {}",
-                other.type_name()
-            )));
-        }
-    };
-
-    Ok(OptionDeclaration {
-        name,
-        label,
-        option_type,
-        default,
-        requires_settings,
-    })
 }
 
 fn required_string(table: &luau::Table, key: &str) -> luau::runtime::Result<String> {
