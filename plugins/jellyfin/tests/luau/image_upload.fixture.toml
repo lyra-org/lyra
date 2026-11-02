@@ -1,0 +1,56 @@
+run_as = "editor"
+
+# The editor manages metadata. "Album" by "Singer" has a cover; "Mine" is the editor's playlist,
+# "Theirs" another user's public one, and "Private" another user's private one.
+
+[[users]]
+key = "editor"
+permissions = ["manage_metadata"]
+
+[[users]]
+key = "other"
+
+[[api_keys]]
+key = "editor_key"
+user = "editor"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["editor"]
+
+[[artists]]
+key = "singer"
+name = "Singer"
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+artists = ["singer"]
+cover = "cover.png"
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+artists = ["singer"]
+
+[[playlists]]
+key = "mine"
+owner = "editor"
+name = "Mine"
+tracks = ["song"]
+
+[[playlists]]
+key = "theirs"
+owner = "other"
+name = "Theirs"
+public = true
+tracks = ["song"]
+
+[[playlists]]
+key = "private"
+owner = "other"
+name = "Private"
+tracks = ["song"]
