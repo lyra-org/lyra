@@ -411,17 +411,32 @@ pub(crate) fn ensure_provider_artist(
         }
     };
 
-    let fields = [
-        (MetadataField::ArtistName, artist_name.map(Into::into)),
-        (MetadataField::ArtistType, artist_type.map(Into::into)),
-        (MetadataField::SortName, sort_name.map(Into::into)),
-        (MetadataField::Description, description.map(Into::into)),
-    ]
-    .into_iter()
-    .filter_map(|(field, value): (_, Option<FieldValue>)| {
-        Some((field, Some(FieldInput::Value(value?))))
-    })
-    .collect::<FieldInputs>();
+    // Ensuring adds to what the provider knows of the artist: a field the
+    // request supplies replaces the provider's own, and one it leaves out keeps
+    // the stored value, so a partial credit doesn't erase a fuller match.
+    let mut fields = lyra_db::metadata::layers::get_for_entity(db, artist_db_id)?
+        .into_iter()
+        .find(|layer| layer.source_id == provider_id)
+        .map(|layer| {
+            layer
+                .fields
+                .into_iter()
+                .map(|(field, value)| (field, value.map(FieldInput::Value)))
+                .collect::<FieldInputs>()
+        })
+        .unwrap_or_default();
+    fields.extend(
+        [
+            (MetadataField::ArtistName, artist_name.map(Into::into)),
+            (MetadataField::ArtistType, artist_type.map(Into::into)),
+            (MetadataField::SortName, sort_name.map(Into::into)),
+            (MetadataField::Description, description.map(Into::into)),
+        ]
+        .into_iter()
+        .filter_map(|(field, value): (_, Option<FieldValue>)| {
+            Some((field, Some(FieldInput::Value(value?))))
+        }),
+    );
 
     save_provider_layer(
         db,

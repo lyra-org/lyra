@@ -70,3 +70,21 @@ assert(found == fixture.ids.beyonce, `expected the scanned artist, got {found}`)
 found = provider:ensure_artist({ id_type = "artist_id", id_value = "zoe", artist_name = "Zoe\u{308}" })
 local created = artists.get({ found })[found]
 assert(created.scan_name == "Zo\u{eb}" and created.artist_name == "Zo\u{eb}", `got {created.scan_name}`)
+
+-- A new artist takes what the request supplies.
+found = provider:ensure_artist({
+	id_type = "artist_id",
+	id_value = "nina",
+	artist_name = "Nina",
+	sort_name = "Nina, The",
+	artist_type = ArtistType.Group,
+})
+local nina = artists.get({ found })[found]
+assert(nina.sort_name == "Nina, The" and nina.artist_type == "group", `got {nina.sort_name}, {nina.artist_type}`)
+
+-- Ensuring it again with less, as a credit naming only the artist does, keeps
+-- what the provider stored.
+assert(provider:ensure_artist({ id_type = "artist_id", id_value = "nina", artist_name = "Nina" }) == found)
+nina = artists.get({ found })[found]
+assert(nina.sort_name == "Nina, The", `the sort name is kept, got {nina.sort_name}`)
+assert(nina.artist_type == "group", `the type is kept, got {nina.artist_type}`)
