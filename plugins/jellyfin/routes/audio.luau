@@ -686,86 +686,100 @@ function module.handle_hls_main_route(ctx: ApiContext): ApiResponse
 	return api.response.hls_playlist(request.track_id, request.options)
 end
 
-function module.register()
-	api.get(P .. "/Audio/{itemId}/Lyrics", function(ctx: ApiContext): ApiResponse
-		local track_id, item, resolve_err = lyrics_protocol.resolve_audio_item(ctx)
-		if resolve_err then
-			return resolve_err
-		end
-		if track_id == nil or item == nil then
-			return responses.not_found("item not found")
-		end
-		local ok, lyric_info = pcall(function(): LyricsInfo?
-			local ranked = lyrics.by_track({ track_id })[track_id]
-			local best = if ranked then ranked[1] else nil
-			return if best then lyrics.get({ best.id })[best.id] else nil
-		end)
-		if not ok then
-			return api.response.empty(500)
-		end
-		if lyric_info == nil then
-			return responses.not_found("lyrics not found")
-		end
+function module.handle_lyrics_get_route(ctx: ApiContext): ApiResponse
+	local track_id, item, resolve_err = lyrics_protocol.resolve_audio_item(ctx)
+	if resolve_err then
+		return resolve_err
+	end
+	if track_id == nil or item == nil then
+		return responses.not_found("item not found")
+	end
+	local ok, lyric_info = pcall(function(): LyricsInfo?
+		local ranked = lyrics.by_track({ track_id })[track_id]
+		local best = if ranked then ranked[1] else nil
+		return if best then lyrics.get({ best.id })[best.id] else nil
+	end)
+	if not ok then
+		return api.response.empty(500)
+	end
+	if lyric_info == nil then
+		return responses.not_found("lyrics not found")
+	end
 
-		return api.response.json(200, lyrics_protocol.to_jellyfin_lyric_dto(item, lyric_info))
-	end, { auth = "public", case_insensitive = true })
-	api.post(P .. "/Audio/{itemId}/Lyrics", function(ctx: ApiContext): ApiResponse
-		local track_id, item, resolve_err = lyrics_protocol.resolve_audio_item(ctx)
-		if resolve_err then
-			return resolve_err
-		end
-		if track_id == nil or item == nil then
-			return responses.not_found("item not found")
-		end
-		local body = if ctx and ctx.request then ctx.request.body_raw else nil
-		if type(body) ~= "string" or #body == 0 then
-			return responses.bad_request("No lyrics uploaded")
-		end
+	return api.response.json(200, lyrics_protocol.to_jellyfin_lyric_dto(item, lyric_info))
+end
 
-		local content_type, content_type_err = lyrics_protocol.resolve_upload_content_type(ctx)
-		if content_type_err then
-			return content_type_err
-		end
-		if not content_type then
-			return responses.bad_request("Extension is required on filename")
-		end
+function module.handle_lyrics_post_route(ctx: ApiContext): ApiResponse
+	local track_id, item, resolve_err = lyrics_protocol.resolve_audio_item(ctx)
+	if resolve_err then
+		return resolve_err
+	end
+	if track_id == nil or item == nil then
+		return responses.not_found("item not found")
+	end
+	local body = if ctx and ctx.request then ctx.request.body_raw else nil
+	if type(body) ~= "string" or #body == 0 then
+		return responses.bad_request("No lyrics uploaded")
+	end
 
-		local ok, lyric_info = pcall(lyrics.set_personal, track_id, {
-			content_type = content_type,
-			body = body,
-			language = nil,
-		})
-		if not ok then
-			return responses.bad_request(tostring(lyric_info))
-		end
-		if lyric_info == nil then
-			return responses.not_found("item not found")
-		end
+	local content_type, content_type_err = lyrics_protocol.resolve_upload_content_type(ctx)
+	if content_type_err then
+		return content_type_err
+	end
+	if not content_type then
+		return responses.bad_request("Extension is required on filename")
+	end
 
-		return api.response.json(200, lyrics_protocol.to_jellyfin_lyric_dto(item, lyric_info))
-	end, { auth = "public", case_insensitive = true })
-	api.delete(P .. "/Audio/{itemId}/Lyrics", function(ctx: ApiContext): ApiResponse
-		local principal = session.require_jellyfin_principal(ctx)
-		if not principal then
-			return session.unauthorized()
-		end
-		if not session.require_matching_user_scope(ctx, principal) then
-			return session.unauthorized()
-		end
+	local ok, lyric_info = pcall(lyrics.set_personal, track_id, {
+		content_type = content_type,
+		body = body,
+		language = nil,
+	})
+	if not ok then
+		return responses.bad_request(tostring(lyric_info))
+	end
+	if lyric_info == nil then
+		return responses.not_found("item not found")
+	end
 
-		local params = if ctx then ctx.params else nil
-		local raw_item_id = if params then params.itemId else nil
-		local track_id = item_ids.decode_jellyfin_item_id(raw_item_id)
-		if track_id == nil then
-			return api.response.empty(204)
-		end
+	return api.response.json(200, lyrics_protocol.to_jellyfin_lyric_dto(item, lyric_info))
+end
 
-		local ok = pcall(lyrics.remove_personal, track_id)
-		if not ok then
-			return api.response.empty(500)
-		end
+function module.handle_lyrics_delete_route(ctx: ApiContext): ApiResponse
+	local principal = session.require_jellyfin_principal(ctx)
+	if not principal then
+		return session.unauthorized()
+	end
+	if not session.require_matching_user_scope(ctx, principal) then
+		return session.unauthorized()
+	end
+
+	local params = if ctx then ctx.params else nil
+	local raw_item_id = if params then params.itemId else nil
+	local track_id = item_ids.decode_jellyfin_item_id(raw_item_id)
+	if track_id == nil then
 		return api.response.empty(204)
-	end, { auth = "public", case_insensitive = true })
+	end
+
+	local ok = pcall(lyrics.remove_personal, track_id)
+	if not ok then
+		return api.response.empty(500)
+	end
+	return api.response.empty(204)
+end
+
+function module.register()
+	api.get(P .. "/Audio/{itemId}/Lyrics", module.handle_lyrics_get_route, { auth = "public", case_insensitive = true })
+	api.post(
+		P .. "/Audio/{itemId}/Lyrics",
+		module.handle_lyrics_post_route,
+		{ auth = "public", case_insensitive = true }
+	)
+	api.delete(
+		P .. "/Audio/{itemId}/Lyrics",
+		module.handle_lyrics_delete_route,
+		{ auth = "public", case_insensitive = true }
+	)
 	api.get(P .. "/Audio/{itemId}/RemoteSearch/Lyrics", function(ctx: ApiContext): ApiResponse
 		local _track_id, _item, resolve_err = lyrics_protocol.resolve_audio_item(ctx)
 		if resolve_err then
