@@ -474,6 +474,7 @@ mod tests {
             position_ms: 42,
             duration_ms: Some(100),
             rate: 1.0,
+            counts_as_listen: true,
             played_ms: 42,
             updated_at_ms: 10,
         }

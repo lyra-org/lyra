@@ -56,6 +56,8 @@ pub(crate) const NORMAL_RATE_PERMILLE: u32 = 1_000;
 /// The slowest and fastest playback rates a report may give, as multiples of normal speed.
 pub(crate) const MIN_RATE: f64 = 0.25;
 pub(crate) const MAX_RATE: f64 = 4.0;
+/// The `counts_as_listen` contract, for API and plugin documentation.
+pub(crate) const COUNTS_AS_LISTEN_DESCRIPTION: &str = "Whether the play may count as a listen; default true. Set by the report that starts the play, such as one in a sleep playlist or on a device that shouldn't count: false records no listen of the play however long it plays, while it still shows as playing. A later report of the play may leave it out or repeat it; a different value is an error.";
 /// The playback rate contract, for API and plugin documentation.
 pub(crate) const RATE_DESCRIPTION: &str = "Playback speed as a multiple of normal speed, from 0.25 to 4, kept to three decimals. A play starts at 1 unless its first report gives one; a report without one keeps the last. Positions advance at this rate, while the playing time a listen counts stays real time.";
 
@@ -68,6 +70,14 @@ pub(crate) enum PlaybackServiceError {
     /// The play already has a session that isn't the one being reported to.
     #[error("play {0} already has a session")]
     PlayConflict(String),
+    /// A report of the play gave a `counts_as_listen` other than the one its start declared.
+    #[error(
+        "counts_as_listen is {counts_as_listen} for play {play_id}; it cannot change during a play"
+    )]
+    CountsAsListenConflict {
+        play_id: String,
+        counts_as_listen: bool,
+    },
     #[error(transparent)]
     Internal(anyhow::Error),
 }

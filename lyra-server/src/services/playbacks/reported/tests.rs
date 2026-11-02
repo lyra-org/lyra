@@ -2775,8 +2775,12 @@ async fn a_report_cannot_change_whether_its_play_counts() -> anyhow::Result<()> 
     );
     assert!(matches!(
         changed,
-        Err(PlaybackError::Session(PlaybackServiceError::BadRequest(ref message)))
-            if message.contains("counts_as_listen")
+        Err(PlaybackError::Session(
+            PlaybackServiceError::CountsAsListenConflict {
+                counts_as_listen: false,
+                ..
+            }
+        ))
     ));
     let session_db_id = lyra_db::playback_sessions::find_by_play_id(&db, user, UNCOUNTED_PLAY_ID)?
         .expect("the play keeps its session");

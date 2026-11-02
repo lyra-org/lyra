@@ -165,6 +165,8 @@ pub(crate) struct PlaybackUpdatePayload {
     pub duration_ms: Option<u64>,
     /// Playback speed as a multiple of normal speed.
     pub rate: f64,
+    /// Whether the play may count as a listen, as the report that started it declared.
+    pub counts_as_listen: bool,
     pub played_ms: u64,
     pub updated_at_ms: u64,
 }
@@ -185,6 +187,7 @@ pub(crate) fn playback_to_payload(
         position_ms: playback.playback.position_ms,
         duration_ms: playback.playback.duration_ms,
         rate: playbacks::rate_multiple(playback.playback.rate_permille),
+        counts_as_listen: playback.playback.counts_as_listen,
         played_ms: playback.playback.played_ms,
         updated_at_ms: playback.playback.updated_at_ms,
     }
@@ -288,6 +291,7 @@ mod tests {
             position_ms: 0,
             duration_ms: None,
             rate: 1.0,
+            counts_as_listen: true,
             played_ms: 0,
             updated_at_ms: 0,
         }

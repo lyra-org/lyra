@@ -77,6 +77,7 @@ struct PlaybackSessionReportRequest {
     duration_ms: Option<u64>,
     state: Option<lyra_db::PlaybackState>,
     rate: Option<f64>,
+    counts_as_listen: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -101,6 +102,7 @@ struct ActivePlaybackInfo {
     duration_ms: Option<u64>,
     state: lyra_db::PlaybackState,
     rate: f64,
+    counts_as_listen: bool,
     started_at_ms: u64,
     updated_at_ms: u64,
     client_name: Option<String>,
@@ -117,6 +119,7 @@ struct PlaybackInfo {
     duration_ms: Option<u64>,
     state: lyra_db::PlaybackState,
     rate: f64,
+    counts_as_listen: bool,
 }
 
 #[derive(Serialize)]
@@ -187,7 +190,7 @@ impl PlaybackSessionsModule {
     }
 
     #[harmony(
-        description = "Reports an observation for a plugin's player context. Returns (public /api/me/playbacks ID, nil) when accepted, (nil, nil) when ignored, or (nil, rejection reason) when admission is refused. Internal failures raise an error. Track changes retain the context ID; stopped contexts expire after five minutes without an accepted current observation. A position past the duration reads as the end. Without a `play_id`, only a `started` observation begins a new play of the track playing; any other observation after its play stopped resumes that play, so it counts at most one listen. A play left playing when another play replaces it, or when its context expires, is credited for the time since its last report, at most what was left of its track; only the listen this records is announced. A replaced play pauses there, so a late report credits it nothing more, and its start resumes it.",
+        description = "Reports an observation for a plugin's player context. Returns (public /api/me/playbacks ID, nil) when accepted, (nil, nil) when ignored, or (nil, rejection reason) when admission is refused. Raises an error when the report gives its play a `counts_as_listen` other than the one its start declared. Internal failures raise an error. Track changes retain the context ID; stopped contexts expire after five minutes without an accepted current observation. A position past the duration reads as the end. Without a `play_id`, only a `started` observation begins a new play of the track playing; any other observation after its play stopped resumes that play, so it counts at most one listen. A play left playing when another play replaces it, or when its context expires, is credited for the time since its last report, at most what was left of its track; only the listen this records is announced. A replaced play pauses there, so a late report credits it nothing more, and its start resumes it.",
         returns(Option<String>, Option<String>)
     )]
     async fn report_session(
@@ -222,7 +225,7 @@ impl PlaybackSessionsModule {
             duration_ms: request.duration_ms,
             state: request.state,
             rate_permille,
-            counts_as_listen: None,
+            counts_as_listen: request.counts_as_listen,
         };
 
         let mut db = db.write_outside_catalog().await;
@@ -339,6 +342,7 @@ impl PlaybackSessionsModule {
                     duration_ms: current.playback.duration_ms,
                     state: current.playback.state,
                     rate: playbacks::rate_multiple(current.playback.rate_permille),
+                    counts_as_listen: current.playback.counts_as_listen,
                 });
             result.push(ConnectionInfo {
                 playback_id: connection.playback_id().map(str::to_string),
@@ -404,6 +408,7 @@ impl PlaybackSessionsModule {
                     duration_ms: active.session.duration_ms,
                     state: active.session.state,
                     rate: playbacks::rate_multiple(active.session.rate_permille),
+                    counts_as_listen: active.session.counts_as_listen,
                     started_at_ms: active.session.created_at_ms,
                     updated_at_ms: active.session.updated_at_ms,
                     client_name: active.session.client_name,
@@ -666,6 +671,11 @@ impl DescribeInterface for ActivePlaybackInfo {
                 description: Some("Playback speed as a multiple of normal speed."),
             },
             FieldDescriptor {
+                name: "counts_as_listen",
+                ty: bool::luau_type(),
+                description: Some("Whether the play may count as a listen, as the report that started it declared."),
+            },
+            FieldDescriptor {
                 name: "started_at_ms",
                 ty: u64::luau_type(),
                 description: Some("When the track session started."),
@@ -739,6 +749,11 @@ impl DescribeInterface for PlaybackInfo {
                 name: "rate",
                 ty: f64::luau_type(),
                 description: Some("Playback speed as a multiple of normal speed."),
+            },
+            FieldDescriptor {
+                name: "counts_as_listen",
+                ty: bool::luau_type(),
+                description: Some("Whether the play may count as a listen, as the report that started it declared."),
             },
         ]);
         descriptor
@@ -836,6 +851,11 @@ fn playback_request_fields<const N: usize>(leading: [FieldDescriptor; N]) -> Vec
             ty: Option::<f64>::luau_type(),
             description: Some(playbacks::RATE_DESCRIPTION),
         },
+        FieldDescriptor {
+            name: "counts_as_listen",
+            ty: Option::<bool>::luau_type(),
+            description: Some(playbacks::COUNTS_AS_LISTEN_DESCRIPTION),
+        },
     ]);
     fields
 }
@@ -855,6 +875,7 @@ pub(crate) struct PlaybackUpdate<'a> {
     position_ms: u64,
     duration_ms: Option<u64>,
     rate: f64,
+    counts_as_listen: bool,
     played_ms: u64,
     updated_at_ms: u64,
 }
@@ -875,6 +896,7 @@ impl<'a> From<&'a crate::services::playback_sessions::PlaybackUpdatePayload>
             position_ms: payload.position_ms,
             duration_ms: payload.duration_ms,
             rate: payload.rate,
+            counts_as_listen: payload.counts_as_listen,
             played_ms: payload.played_ms,
             updated_at_ms: payload.updated_at_ms,
         }
@@ -928,6 +950,13 @@ impl DescribeInterface for LuauPlaybackUpdatePayload {
                     name: "rate",
                     ty: f64::luau_type(),
                     description: Some("Playback speed as a multiple of normal speed."),
+                },
+                FieldDescriptor {
+                    name: "counts_as_listen",
+                    ty: bool::luau_type(),
+                    description: Some(
+                        "Whether the play may count as a listen, as the report that started it declared.",
+                    ),
                 },
                 field("played_ms", u64::luau_type()),
                 field("updated_at_ms", u64::luau_type()),

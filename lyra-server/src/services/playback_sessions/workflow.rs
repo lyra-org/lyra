@@ -537,10 +537,10 @@ pub(crate) fn report_playback_in_transaction(
         .counts_as_listen
         .is_some_and(|counts_as_listen| counts_as_listen != playback.counts_as_listen)
     {
-        return Err(PlaybackServiceError::bad_request(format!(
-            "counts_as_listen is {} for play {}; it cannot change during a play",
-            playback.counts_as_listen, playback.play_id
-        )));
+        return Err(PlaybackServiceError::CountsAsListenConflict {
+            play_id: playback.play_id,
+            counts_as_listen: playback.counts_as_listen,
+        });
     }
 
     apply_playback_mutation(&mut playback, &mutation, now_ms);

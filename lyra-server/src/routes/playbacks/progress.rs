@@ -27,6 +27,8 @@ pub(super) struct PlaybackProgressRequest {
     pub(super) state: Option<PlaybackState>,
     #[cfg_attr(feature = "docgen", schemars(description = RATE_DESCRIPTION))]
     pub(super) rate: Option<f64>,
+    #[cfg_attr(feature = "docgen", schemars(description = COUNTS_AS_LISTEN_DESCRIPTION))]
+    pub(super) counts_as_listen: Option<bool>,
     pub(super) connection_session_key: Option<String>,
     #[cfg_attr(
         feature = "docgen",
@@ -127,7 +129,7 @@ pub(super) async fn report_progress(
         duration_ms: request.duration_ms,
         state: request.state,
         rate_permille,
-        counts_as_listen: None,
+        counts_as_listen: request.counts_as_listen,
     };
     let update = playbacks::report_progress(
         &mut db,

@@ -1219,7 +1219,7 @@ mod tests {
         assert!(matches!(
             report_progress(&mut db, progress(Some(true), t0 + 70_000)),
             Err(PlaybackError::Session(
-                playback_sessions::PlaybackServiceError::BadRequest(_)
+                playback_sessions::PlaybackServiceError::CountsAsListenConflict { .. }
             ))
         ));
         Ok(())
