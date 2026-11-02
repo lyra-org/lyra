@@ -480,6 +480,9 @@ struct HttpRequestOptions {
     headers: Option<HttpHeaderMap>,
     cookies: Option<HttpHeaderMap>,
     max_body_bytes: Option<usize>,
+    /// Bounds the whole request, every redirect hop included, with the waits
+    /// for pacing, concurrency caps, retries, backoff and `Retry-After`.
+    timeout_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -887,10 +890,42 @@ fn jittered_backoff(cap: Duration) -> Duration {
 /// chain runs under the limits of the host it reaches.
 async fn execute_request(plugin: Option<&str>, options: HttpRequestOptions) -> HttpResponse {
     let span = tracing::debug_span!("http_request", plugin, url = %options.url);
-    tracing::Instrument::instrument(follow_redirects(options), span).await
+    let request = run_request(options, |opts| async move {
+        execute_single_request(&opts).await
+    });
+    tracing::Instrument::instrument(request, span).await
 }
 
-async fn follow_redirects(mut options: HttpRequestOptions) -> HttpResponse {
+/// Runs `options` and the redirects it leads to within its `timeout_ms`,
+/// answering a `timeout` error once it runs out. `request_fn` sends each
+/// attempt; tests pass a fake in place of [`execute_single_request`].
+async fn run_request<F, Fut>(options: HttpRequestOptions, request_fn: F) -> HttpResponse
+where
+    F: Fn(HttpRequestOptions) -> Fut,
+    Fut: std::future::Future<Output = HttpResponse>,
+{
+    let Some(timeout_ms) = options.timeout_ms else {
+        return follow_redirects(options, request_fn).await;
+    };
+    tokio::time::timeout(
+        Duration::from_millis(timeout_ms),
+        follow_redirects(options, request_fn),
+    )
+    .await
+    .unwrap_or_else(|_| {
+        HttpResponse::error(
+            "timeout",
+            None,
+            format!("request timed out after {timeout_ms} ms"),
+        )
+    })
+}
+
+async fn follow_redirects<F, Fut>(mut options: HttpRequestOptions, request_fn: F) -> HttpResponse
+where
+    F: Fn(HttpRequestOptions) -> Fut,
+    Fut: std::future::Future<Output = HttpResponse>,
+{
     let mut visited: Vec<url::Url> = Vec::new();
     loop {
         let url = match url::Url::parse(&options.url) {
@@ -911,10 +946,7 @@ async fn follow_redirects(mut options: HttpRequestOptions) -> HttpResponse {
             return HttpResponse::error("redirect", None, reason);
         }
 
-        let response = execute_request_loop(options.clone(), |opts| async move {
-            execute_single_request(&opts).await
-        })
-        .await;
+        let response = execute_request_loop(options.clone(), &request_fn).await;
         let Some(next) = redirect_target(&response, &url) else {
             return response;
         };
@@ -1041,6 +1073,7 @@ pub async fn request_as(plugin_id: &str, request: Request) -> Result<Response, E
         headers: None,
         cookies: None,
         max_body_bytes: request.max_body_bytes,
+        timeout_ms: None,
     };
     let response = execute_request(Some(plugin_id), options).await;
     match (response.success, response.status_code) {
@@ -1198,6 +1231,7 @@ fn request_options_from_luau(
         headers: optional_header_map_field(table, "headers")?,
         cookies: optional_header_map_field(table, "cookies")?,
         max_body_bytes: None,
+        timeout_ms: optional_u64_field(table, "timeout_ms")?,
     })
 }
 
@@ -1518,6 +1552,13 @@ impl DescribeInterface for HttpRequestOptions {
                 ty: Option::<HttpHeaderMap>::luau_type(),
                 description: None,
             },
+            FieldDescriptor {
+                name: "timeout_ms",
+                ty: Option::<u64>::luau_type(),
+                description: Some(
+                    "Bounds the whole request, every redirect hop included, with the waits for pacing, concurrency caps, retries, backoff and `Retry-After`; past it the response fails with `error_kind` `timeout`.",
+                ),
+            },
         ]);
         descriptor
     }
@@ -1666,6 +1707,11 @@ pub fn render_luau_definition() -> Result<String, std::fmt::Error> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{
+        Duration,
+        Instant,
+    };
+
     use harmony_core::UserDataBinding;
 
     use super::HttpModule;
@@ -2083,6 +2129,7 @@ mod tests {
             headers: None,
             cookies: None,
             max_body_bytes: None,
+            timeout_ms: None,
         };
 
         let attempt_counter = Arc::new(AtomicUsize::new(0));
@@ -2287,6 +2334,7 @@ mod tests {
             headers: None,
             cookies: None,
             max_body_bytes: None,
+            timeout_ms: None,
         }
     }
 
@@ -2385,6 +2433,174 @@ mod tests {
             .await
             .expect_err("file URLs are refused");
         assert_eq!(error.kind(), "request");
+    }
+
+    fn options_with_timeout(url: &str, timeout_ms: u64) -> super::HttpRequestOptions {
+        super::HttpRequestOptions {
+            url: url.to_string(),
+            method: super::HttpMethod::Get,
+            body: None,
+            headers: None,
+            cookies: None,
+            max_body_bytes: None,
+            timeout_ms: Some(timeout_ms),
+        }
+    }
+
+    async fn set_test_rate_limit(host: &str, requests_per_second: f64, backoff: Duration) {
+        let mut limiter = super::RATE_LIMITER.write().await;
+        limiter.set_config(
+            host.to_string(),
+            super::RateLimitConfig {
+                requests_per_second,
+                retry_status_codes: vec![503],
+                max_retries: 3,
+                initial_backoff: backoff,
+            },
+            None,
+        );
+    }
+
+    fn ok_response() -> super::HttpResponse {
+        super::HttpResponse::success(
+            200,
+            "OK".into(),
+            super::HttpHeaderMap::default(),
+            super::HttpHeaderMap::default(),
+            Vec::new(),
+        )
+    }
+
+    fn assert_timed_out(response: &super::HttpResponse, started: Instant) {
+        assert!(!response.success);
+        assert_eq!(response.error_kind.as_deref(), Some("timeout"));
+        assert_eq!(response.status_code, None);
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "the request ends at its timeout, not when its wait would"
+        );
+    }
+
+    #[tokio::test]
+    async fn timeout_bounds_rate_limit_pacing() {
+        let host = "timeout-pacing-test.example";
+        set_test_rate_limit(host, 0.2, Duration::from_millis(1)).await;
+        assert_eq!(super::RATE_LIMITER.write().await.acquire(host), None);
+
+        let started = Instant::now();
+        let response = super::run_request(
+            options_with_timeout(&format!("https://{host}/x"), 100),
+            |_| async { ok_response() },
+        )
+        .await;
+        assert_timed_out(&response, started);
+    }
+
+    #[tokio::test]
+    async fn timeout_bounds_retry_backoff() {
+        let host = "timeout-backoff-test.example";
+        set_test_rate_limit(host, 1000.0, Duration::from_secs(1000)).await;
+
+        let started = Instant::now();
+        let response = super::run_request(
+            options_with_timeout(&format!("https://{host}/x"), 100),
+            |_| async { super::HttpResponse::error("retry", Some(503), "unavailable".into()) },
+        )
+        .await;
+        assert_timed_out(&response, started);
+    }
+
+    #[tokio::test]
+    async fn timeout_bounds_retry_after() {
+        use std::sync::Arc;
+        use std::sync::atomic::{
+            AtomicUsize,
+            Ordering,
+        };
+
+        let host = "timeout-retry-after-test.example";
+        set_test_rate_limit(host, 1000.0, Duration::from_millis(1)).await;
+        let attempts = Arc::new(AtomicUsize::new(0));
+
+        let started = Instant::now();
+        let response = super::run_request(
+            options_with_timeout(&format!("https://{host}/x"), 100),
+            |_| {
+                let attempts = attempts.clone();
+                async move {
+                    attempts.fetch_add(1, Ordering::SeqCst);
+                    let mut response =
+                        super::HttpResponse::error("retry", Some(503), "unavailable".into());
+                    response
+                        .headers
+                        .0
+                        .insert("retry-after".to_string(), "120".to_string());
+                    response
+                }
+            },
+        )
+        .await;
+        assert_timed_out(&response, started);
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            1,
+            "the timeout cuts the wait short"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_request_within_its_timeout_answers_as_usual() {
+        let response = super::run_request(
+            options_with_timeout("https://timeout-in-time-test.example/x", 1000),
+            |_| async { ok_response() },
+        )
+        .await;
+        assert!(response.success);
+        assert_eq!(response.status_code, Some(200));
+    }
+
+    #[tokio::test]
+    async fn timeout_bounds_a_whole_redirect_chain() {
+        use std::sync::Arc;
+        use std::sync::atomic::{
+            AtomicUsize,
+            Ordering,
+        };
+
+        let first = "timeout-chain-first.example";
+        let second = "timeout-chain-second.example";
+        set_test_rate_limit(second, 1000.0, Duration::from_millis(1)).await;
+        let hops = Arc::new(AtomicUsize::new(0));
+
+        // Each hop answers within 60 ms; the chain of them doesn't within 100.
+        let started = Instant::now();
+        let response = super::run_request(
+            options_with_timeout(&format!("https://{first}/start"), 100),
+            |opts| {
+                let hops = hops.clone();
+                async move {
+                    hops.fetch_add(1, Ordering::SeqCst);
+                    tokio::time::sleep(Duration::from_millis(60)).await;
+                    let mut response = super::HttpResponse::success(
+                        302,
+                        "Found".into(),
+                        super::HttpHeaderMap::default(),
+                        super::HttpHeaderMap::default(),
+                        Vec::new(),
+                    );
+                    let next = if opts.url.contains(first) {
+                        format!("https://{second}/next")
+                    } else {
+                        format!("https://{first}/start?again")
+                    };
+                    response.headers.0.insert("location".to_string(), next);
+                    response
+                }
+            },
+        )
+        .await;
+        assert_timed_out(&response, started);
+        assert_eq!(hops.load(Ordering::SeqCst), 2, "the timeout spans the hops");
     }
 
     #[test]
