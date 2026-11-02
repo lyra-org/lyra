@@ -24,6 +24,7 @@ pub(crate) use self::workflow::{
     report_playback,
 };
 pub(crate) use self::workflow::{
+    current_position_ms,
     evicted_records,
     pause_playback_in_transaction,
     report_playback_in_transaction,
@@ -393,6 +394,37 @@ mod tests {
         assert_eq!(merged, vec![track_db_id]);
 
         Ok(())
+    }
+
+    fn playing_session(position_ms: u64, at_ms: u64) -> PlaybackSession {
+        PlaybackSession {
+            db_id: None,
+            id: nanoid!(),
+            play_id: nanoid!(),
+            client_name: None,
+            plugin_id: None,
+            position_ms,
+            duration_ms: Some(300_000),
+            played_ms: 0,
+            last_position_ms: position_ms,
+            last_position_at_ms: at_ms,
+            latency_allowance_used_ms: 0,
+            state: PlaybackState::Playing,
+            updated_at_ms: at_ms,
+            created_at_ms: 0,
+        }
+    }
+
+    #[test]
+    fn current_position_advances_from_the_last_reported_position_while_playing() {
+        let mut playback = playing_session(10_000, 1_000);
+        // A report without a position leaves the position's time alone.
+        playback.updated_at_ms = 5_000;
+        assert_eq!(current_position_ms(&playback, 11_000), 20_000);
+        assert_eq!(current_position_ms(&playback, 1_000_000), 300_000);
+
+        playback.state = PlaybackState::Paused;
+        assert_eq!(current_position_ms(&playback, 11_000), 10_000);
     }
 
     #[test]

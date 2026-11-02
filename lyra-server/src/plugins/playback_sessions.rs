@@ -96,6 +96,7 @@ struct ActivePlaybackInfo {
     username: String,
     track_id: String,
     position_ms: u64,
+    effective_position_ms: u64,
     duration_ms: Option<u64>,
     state: lyra_db::PlaybackState,
     started_at_ms: u64,
@@ -110,6 +111,7 @@ struct ActivePlaybackInfo {
 struct PlaybackInfo {
     track_id: String,
     position_ms: u64,
+    effective_position_ms: u64,
     duration_ms: Option<u64>,
     state: lyra_db::PlaybackState,
 }
@@ -316,6 +318,10 @@ impl PlaybackSessionsModule {
                 .map(|current| PlaybackInfo {
                     track_id: current.track_public_id,
                     position_ms: current.playback.position_ms,
+                    effective_position_ms: playbacks::current_position_ms(
+                        &current.playback,
+                        now_ms,
+                    ),
                     duration_ms: current.playback.duration_ms,
                     state: current.playback.state,
                 });
@@ -367,6 +373,7 @@ impl PlaybackSessionsModule {
             .into_iter()
             .map(|active| {
                 let connection = connections::controller(&connections, &active.playback_id);
+                let effective_position_ms = playbacks::current_position_ms(&active.session, now_ms);
                 ActivePlaybackInfo {
                     session_key: active
                         .reported_session_key
@@ -378,6 +385,7 @@ impl PlaybackSessionsModule {
                     username: active.username,
                     track_id: active.track_id,
                     position_ms: active.session.position_ms,
+                    effective_position_ms,
                     duration_ms: active.session.duration_ms,
                     state: active.session.state,
                     started_at_ms: active.session.created_at_ms,
@@ -634,6 +642,11 @@ impl DescribeInterface for ActivePlaybackInfo {
                 description: Some("The position at the last report."),
             },
             FieldDescriptor {
+                name: "effective_position_ms",
+                ty: u64::luau_type(),
+                description: Some("The position now: `position_ms` advanced while playing by the time since it was reported, within the duration."),
+            },
+            FieldDescriptor {
                 name: "duration_ms",
                 ty: Option::<u64>::luau_type(),
                 description: None,
@@ -696,7 +709,12 @@ impl DescribeInterface for PlaybackInfo {
             FieldDescriptor {
                 name: "position_ms",
                 ty: u64::luau_type(),
-                description: None,
+                description: Some("The position at the last report."),
+            },
+            FieldDescriptor {
+                name: "effective_position_ms",
+                ty: u64::luau_type(),
+                description: Some("The position now: `position_ms` advanced while playing by the time since it was reported, within the duration."),
             },
             FieldDescriptor {
                 name: "duration_ms",

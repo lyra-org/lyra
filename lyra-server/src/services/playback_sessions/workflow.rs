@@ -145,6 +145,19 @@ fn within_duration(position_ms: u64, duration_ms: Option<u64>) -> u64 {
     duration_ms.map_or(position_ms, |duration_ms| position_ms.min(duration_ms))
 }
 
+/// The play's position at `now_ms`: its last reported position, advanced while it plays by the
+/// time since that report, within its duration.
+pub(crate) fn current_position_ms(playback: &PlaybackSession, now_ms: u64) -> u64 {
+    let position_ms = if playback.state == PlaybackState::Playing {
+        playback
+            .position_ms
+            .saturating_add(now_ms.saturating_sub(playback.last_position_at_ms))
+    } else {
+        playback.position_ms
+    };
+    within_duration(position_ms, playback.duration_ms)
+}
+
 /// Records the session's play as a listen once it qualifies, returning the new listen for the
 /// transaction's owner to announce after commit.
 fn record_listen(

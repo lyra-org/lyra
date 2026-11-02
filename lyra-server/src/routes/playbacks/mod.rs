@@ -128,6 +128,8 @@ struct CurrentPlaybackResponse {
     state: PlaybackState,
     played_ms: u64,
     updated_at: String,
+    /// The position now: `position_ms` advanced while playing by the time since it was reported,
+    /// within the duration.
     effective_position_ms: u64,
 }
 
@@ -225,21 +227,6 @@ fn resolve_id(db: &impl lyra_db::DbAccess, db_id: DbId) -> anyhow::Result<String
         .ok_or_else(|| anyhow::anyhow!("entity missing id for DbId {}", db_id.0))
 }
 
-fn extrapolated_position_ms(
-    position_ms: u64,
-    duration_ms: Option<u64>,
-    state: PlaybackState,
-    updated_at_ms: u64,
-    server_now_ms: u64,
-) -> u64 {
-    let position_ms = if state == PlaybackState::Playing {
-        position_ms.saturating_add(server_now_ms.saturating_sub(updated_at_ms))
-    } else {
-        position_ms
-    };
-    duration_ms.map_or(position_ms, |duration_ms| position_ms.min(duration_ms))
-}
-
 fn current_to_response(
     current: &playbacks::CurrentSession,
     server_now_ms: u64,
@@ -255,13 +242,7 @@ fn current_to_response(
         state: playback.state,
         played_ms: playback.played_ms,
         updated_at: crate::services::timestamps::unix_ms_to_rfc3339_u64(playback.updated_at_ms),
-        effective_position_ms: extrapolated_position_ms(
-            playback.position_ms,
-            playback.duration_ms,
-            playback.state,
-            playback.updated_at_ms,
-            server_now_ms,
-        ),
+        effective_position_ms: sessions::current_position_ms(playback, server_now_ms),
     }
 }
 
