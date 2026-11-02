@@ -21,7 +21,7 @@ use serde::Deserialize;
 use tokio::sync::watch;
 
 use crate::services::{
-    auth,
+    auth::socket_tickets,
     remote::{
         constants::{
             CloseReason,
@@ -38,7 +38,7 @@ use crate::plugins::api::RouteKey;
 
 #[derive(Deserialize)]
 struct WsQuery {
-    token: Option<String>,
+    ticket: String,
     session_key: String,
 }
 
@@ -47,27 +47,21 @@ async fn ws_upgrade(
     Query(query): Query<WsQuery>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, AppError> {
-    let resolved = auth::resolve_auth_from_bearer(query.token.as_deref())
-        .await?
-        .ok_or_else(|| AppError::unauthorized("invalid or missing token"))?;
-
-    if matches!(resolved.credential, auth::AuthCredential::ApiKey { .. }) {
-        return Err(AppError::forbidden(
-            "api key credentials are not accepted on the websocket upgrade; use a session token",
-        ));
-    }
-
-    let client_name = resolved.client_name.clone();
-    let principal = resolved.into_principal();
+    origin::validate(&headers).map_err(AppError::forbidden)?;
 
     let session_key = query.session_key.trim().to_string();
     if session_key.is_empty() {
         return Err(AppError::bad_request("session_key must be non-empty"));
     }
 
-    origin::validate(&headers).map_err(AppError::forbidden)?;
+    let resolved = socket_tickets::redeem(&query.ticket)
+        .await?
+        .ok_or_else(|| AppError::unauthorized("invalid or expired ticket"))?;
 
-    let token = query.token.clone();
+    let client_name = resolved.client_name.clone();
+    let credential = resolved.credential.clone();
+    let principal = resolved.into_principal();
+
     let user_public_id = principal.user_public_id.clone();
 
     Ok(ws
@@ -137,7 +131,7 @@ async fn ws_upgrade(
                 result.public_id,
                 principal,
                 close_rx,
-                token,
+                credential,
                 result.command_rx,
             )
             .await;

@@ -22,7 +22,10 @@ use tokio::time::{
     interval_at,
 };
 
-use crate::services::auth::Principal;
+use crate::services::auth::{
+    AuthCredential,
+    Principal,
+};
 use crate::services::playback_sessions::{
     self,
     subscribe_playback_events,
@@ -110,7 +113,7 @@ pub(super) async fn run(
     public_id: String,
     mut principal: Principal,
     mut close: watch::Receiver<Option<CloseReason>>,
-    token: Option<String>,
+    credential: AuthCredential,
     mut command_rx: mpsc::Receiver<OutgoingMessage>,
 ) {
     let mut ping_interval = interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
@@ -251,7 +254,7 @@ pub(super) async fn run(
                 }
 
                 _ = auth_interval.tick() => {
-                    match lifecycle::check_auth(&token, &user_public_id).await {
+                    match lifecycle::check_auth(&credential, &user_public_id).await {
                         AuthStatus::Valid(refreshed_library_ids) => {
                             consecutive_auth_errors = 0;
                             principal.accessible_library_ids = refreshed_library_ids;

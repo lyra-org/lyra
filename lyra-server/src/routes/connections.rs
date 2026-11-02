@@ -8,15 +8,28 @@ use aide::transform::TransformOperation;
 use axum::{
     Json,
     Router,
-    http::HeaderMap,
-    routing::get,
+    http::{
+        HeaderMap,
+        StatusCode,
+    },
+    routing::{
+        get,
+        post,
+    },
 };
+use serde::Serialize;
 
 use crate::routes::request::bearer_credential;
 use crate::{
-    routes::AppError,
+    routes::{
+        AppError,
+        forbid_api_key_credential,
+    },
     services::{
-        auth::require_principal,
+        auth::{
+            require_principal,
+            socket_tickets,
+        },
         playback_sessions,
         remote::connections::{
             self,
@@ -34,6 +47,25 @@ async fn list_connections(headers: HeaderMap) -> Result<Json<Vec<Connection>>, A
     Ok(Json(connections.iter().map(|c| c.resource()).collect()))
 }
 
+#[derive(Serialize)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+struct TicketResponse {
+    ticket: String,
+    expires_at: String,
+}
+
+async fn create_ticket(headers: HeaderMap) -> Result<(StatusCode, Json<TicketResponse>), AppError> {
+    let auth = forbid_api_key_credential(&headers).await?;
+    let issued = socket_tickets::issue(&auth);
+    Ok((
+        StatusCode::CREATED,
+        Json(TicketResponse {
+            ticket: issued.ticket,
+            expires_at: crate::services::timestamps::unix_secs_to_rfc3339_i64(issued.expires_at),
+        }),
+    ))
+}
+
 #[cfg(feature = "docgen")]
 fn list_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List connections").description(
@@ -41,15 +73,31 @@ fn list_docs(op: TransformOperation) -> TransformOperation {
     )
 }
 
+#[cfg(feature = "docgen")]
+fn create_ticket_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Create connection ticket")
+        .description(
+            "Returns a single-use ticket that opens one WebSocket as the caller: connect to `/ws?ticket=<ticket>&session_key=<key>` before `expires_at`, 30 seconds after issue. The socket stays open while the session that obtained the ticket does. API keys cannot obtain tickets.",
+        )
+        .response::<201, Json<TicketResponse>>()
+}
+
 pub(super) fn me_connection_routes() -> Router {
-    Router::new().route("/", get(list_connections))
+    Router::new()
+        .route("/", get(list_connections))
+        .route("/tickets", post(create_ticket))
 }
 
 #[cfg(feature = "docgen")]
 pub(super) fn me_connection_openapi_routes() -> aide::axum::ApiRouter {
-    use aide::axum::routing::get_with;
+    use aide::axum::routing::{
+        get_with,
+        post_with,
+    };
 
-    aide::axum::ApiRouter::new().api_route("/", get_with(list_connections, list_docs))
+    aide::axum::ApiRouter::new()
+        .api_route("/", get_with(list_connections, list_docs))
+        .api_route("/tickets", post_with(create_ticket, create_ticket_docs))
 }
 
 #[cfg(test)]

@@ -75,6 +75,7 @@ pub(crate) mod caller;
 pub(crate) mod media_tokens;
 pub(crate) mod owners;
 pub(crate) mod sessions;
+pub(crate) mod socket_tickets;
 
 pub(crate) fn random_hex_secret<const BYTES: usize>() -> String {
     let mut bytes = [0u8; BYTES];
@@ -272,6 +273,22 @@ impl AuthCredential {
             Self::Default => Ok(!STATE.config().auth.enabled),
         }
     }
+}
+
+/// The principal of `user_public_id` as `credential` authenticates them now, read under the
+/// caller's guard, or `None` when the user is gone or the credential no longer authenticates them.
+pub(crate) fn live_principal(
+    db: &impl lyra_db::DbAccess,
+    user_public_id: &str,
+    credential: &AuthCredential,
+) -> anyhow::Result<Option<Principal>> {
+    let Some(user_db_id) = lyra_db::users::find_db_id_by_public_id(db, user_public_id)? else {
+        return Ok(None);
+    };
+    if !credential.is_live(db, user_db_id)? {
+        return Ok(None);
+    }
+    Principal::load(db, user_db_id)
 }
 
 #[derive(Clone, Debug)]

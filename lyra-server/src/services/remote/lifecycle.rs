@@ -12,10 +12,7 @@ use super::registry::{
     ConnectionId,
 };
 use crate::services::STATE;
-use crate::services::auth::{
-    self,
-    AuthError,
-};
+use crate::services::auth;
 use crate::services::playback_sessions::{
     self as playbacks,
     unsubscribe_playback_events,
@@ -34,20 +31,25 @@ pub(crate) enum AuthStatus {
 }
 
 pub(crate) async fn check_auth(
-    token: &Option<String>,
-    expected_user_public_id: &str,
+    credential: &auth::AuthCredential,
+    user_public_id: &str,
 ) -> AuthStatus {
-    match auth::resolve_auth_from_bearer(token.as_deref()).await {
-        Ok(Some(auth)) => {
-            if auth.principal.user_public_id == expected_user_public_id {
-                AuthStatus::Valid(auth.principal.accessible_library_ids)
-            } else {
-                AuthStatus::Revoked
+    let principal = {
+        let db = STATE.db.read().await;
+        auth::live_principal(&*db, user_public_id, credential)
+    };
+    match principal {
+        Ok(Some(principal)) => {
+            if let auth::AuthCredential::Session { public_id } = credential {
+                auth::sessions::touch_last_seen(public_id).await;
             }
+            AuthStatus::Valid(principal.accessible_library_ids)
         }
         Ok(None) => AuthStatus::Revoked,
-        Err(AuthError::SessionExpired) => AuthStatus::Revoked,
-        Err(_) => AuthStatus::Error,
+        Err(error) => {
+            tracing::warn!(error = %error, "websocket auth check failed");
+            AuthStatus::Error
+        }
     }
 }
 
@@ -178,9 +180,10 @@ mod tests {
         let token = crate::services::testing::create_session(user_db_id, Default::default())
             .await?
             .token;
+        let credential = auth::require_auth(Some(&token)).await?.credential;
 
         assert!(matches!(
-            check_auth(&Some(token.clone()), &user_public_id).await,
+            check_auth(&credential, &user_public_id).await,
             AuthStatus::Valid(ref ids) if ids.is_empty()
         ));
 
@@ -201,7 +204,7 @@ mod tests {
             })?
         };
 
-        let AuthStatus::Valid(refreshed) = check_auth(&Some(token), &user_public_id).await else {
+        let AuthStatus::Valid(refreshed) = check_auth(&credential, &user_public_id).await else {
             anyhow::bail!("session should still be valid");
         };
         assert!(refreshed.contains(&library_id));

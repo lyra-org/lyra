@@ -76,14 +76,7 @@ impl MediaTokenHolder {
         &self,
         db: &impl lyra_db::DbAccess,
     ) -> anyhow::Result<Option<Principal>> {
-        let Some(user_db_id) = lyra_db::users::find_db_id_by_public_id(db, &self.user_public_id)?
-        else {
-            return Ok(None);
-        };
-        if !self.credential.is_live(db, user_db_id)? {
-            return Ok(None);
-        }
-        Principal::load(db, user_db_id)
+        super::live_principal(db, &self.user_public_id, &self.credential)
     }
 }
 

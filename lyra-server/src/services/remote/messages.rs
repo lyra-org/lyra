@@ -229,7 +229,7 @@ impl ResponseMessage {
     title = "Lyra WebSocket Remote Control",
     // The derive requires a literal; `lyra_server::asyncapi_spec` sets the package version.
     version = "0.0.0",
-    description = "WebSocket protocol for native playback session reporting and remote control between connections."
+    description = "WebSocket protocol for native playback session reporting and remote control between connections. Connect to `/ws?ticket=<ticket>&session_key=<key>` with a ticket from `POST /api/me/connections/tickets`."
 )]
 #[asyncapi_server(
     name = "default",

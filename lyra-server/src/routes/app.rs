@@ -385,6 +385,7 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("PUT", "/api/me/playbacks/{id}/queue"),
     ("POST", "/api/me/playbacks/{id}/progress"),
     ("GET", "/api/me/connections/"),
+    ("POST", "/api/me/connections/tickets"),
     ("GET", "/api/me/plugins/settings"),
     ("GET", "/api/me/plugins/{plugin_id}/settings"),
     ("PATCH", "/api/me/plugins/{plugin_id}/settings"),
