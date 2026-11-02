@@ -93,10 +93,11 @@ end
 -- Applies a release the user chose without checking it: acceptance exists to
 -- catch wrong guesses, and this one is not a guess. Without acceptance the
 -- release may list fewer tracks than the local album, so local tracks it has
--- no place for are unmatched rather than left on a previous match.
+-- no place for are unmatched rather than left on a previous match. They are
+-- unmatched first, while a failed enrichment request can't hold that back.
 function module.apply_release_id(release_id: string, local_release_info: LocalRelease): boolean
 	local release = fetch_release_details(release_id)
-	if not release or not apply.process_release(release, local_release_info) then
+	if not release or release.id == nil then
 		return false
 	end
 	local local_tracks, assignments = assign_release_tracks(local_release_info.context.tracks, release)
@@ -105,7 +106,7 @@ function module.apply_release_id(release_id: string, local_release_info: LocalRe
 			apply.mark_unmatched(local_track.id, { "recording_id", "release_track_id", "work_id" })
 		end
 	end
-	return true
+	return apply.process_release(release, local_release_info)
 end
 
 -- Applies the best edition from `selected_release`'s release group. The edition

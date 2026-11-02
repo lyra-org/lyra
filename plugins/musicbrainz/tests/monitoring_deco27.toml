@@ -1,0 +1,43 @@
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "DECO27 - Monitoring (2024-11-22) [WEB FLAC]/01. モニタリング.flac"
+album = "モニタリング"
+album_artists = ["DECO*27"]
+artists = ["DECO*27"]
+title = "モニタリング"
+date = "2024"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 2
+duration_ms = 176800
+
+[[raw_tags]]
+file_path = "DECO27 - Monitoring (2024-11-22) [WEB FLAC]/02. モニタリング -Instrumental-.flac"
+album = "モニタリング"
+album_artists = ["DECO*27"]
+artists = ["DECO*27"]
+title = "モニタリング -Instrumental-"
+date = "2024"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 2
+duration_ms = 176613
+
+[expect.release]
+ids = { release_group_id = "d65df2c5-8f90-4cc5-ab69-e6a40fd77054", release_id = "abc82aa3-74e2-4e61-a661-3d0493cebf8a" }
+fields = { release_title = "モニタリング", release_date = "2024-11-23" }
+
+[expect.artists."bd247ab3-c22d-4b5d-a6fd-437771cacbbe"]
+fields = { artist_name = "DECO*27", sort_name = "deco27" }
+
+[expect.tracks."fb364193-b965-4eac-ab2b-4884d2b5417e"]
+fields = { disc = 1, track = 1, track_title = "モニタリング" }
+
+[expect.tracks."b408f059-3892-42de-a9ad-b304651846c9"]
+fields = { disc = 1, track = 2, track_title = "モニタリング -Instrumental-" }

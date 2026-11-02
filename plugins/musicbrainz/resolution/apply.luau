@@ -39,6 +39,7 @@ type RelationSet = { relation_type: ArtistRelationType, relations: { LayerRelati
 local ArtistType = metadata.ArtistType
 local ArtistRelationType = metadata.ArtistRelationType
 
+local enrichment_get = musicbrainz_api.enrichment_get
 local mb_get = musicbrainz_api.mb_get
 local json_string_field = musicbrainz_api.json_string_field
 local json_array_field = musicbrainz_api.json_array_field
@@ -311,7 +312,7 @@ local function fetch_and_set_artist_relations(
 		return false
 	end
 
-	local response = mb_get(`/artist/{mb_artist_id}?inc=artist-rels`)
+	local response = enrichment_get(`/artist/{mb_artist_id}?inc=artist-rels`)
 	if response == nil then
 		return false
 	end
@@ -368,7 +369,7 @@ local function fetch_recording_result(recording_id: string?, recording_cache: Re
 		end
 		return cached :: RecordingResult
 	end
-	local recording_response = mb_get(`/recording/{recording_id}?inc=work-rels+work-level-rels+artist-rels`)
+	local recording_response = enrichment_get(`/recording/{recording_id}?inc=work-rels+work-level-rels+artist-rels`)
 	local result = if recording_response then normalize_recording_result(recording_response) else nil
 	if recording_cache then
 		recording_cache[recording_id] = result or false
@@ -627,7 +628,9 @@ local function process_release(
 ): boolean
 	local release_context = local_release_info.context
 	local current_provider = provider
-	if current_provider == nil then
+	-- After a failed request the candidate may stand in for one that went
+	-- unchecked, so nothing is applied.
+	if current_provider == nil or musicbrainz_api.request_failed() then
 		return false
 	end
 	local release_entity_id = release_context.id
@@ -663,7 +666,7 @@ local function process_release(
 		local rg_id_for_date = release_group_id or (rg_info and rg_info.id)
 		if rg_id_for_date then
 			-- Include url-rels to extract WikiData QID in the same request.
-			rg_url_data = mb_get(`/release-group/{rg_id_for_date}?inc=url-rels`)
+			rg_url_data = enrichment_get(`/release-group/{rg_id_for_date}?inc=url-rels`)
 			if rg_url_data then
 				date_str = json_string_field(rg_url_data, "first-release-date") or date_str
 			end

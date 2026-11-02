@@ -57,6 +57,12 @@ local function musicbrainz_artist_id(external_ids: ExternalIdsByProvider?): stri
 	return if type(artist_id) == "string" and artist_id ~= "" then artist_id else nil
 end
 
+-- An ID among `ids`, without the empty ID that marks an entity unmatched.
+local function stored_id(ids: ReleaseIds?, id_type: string): string?
+	local value = ids and ids[id_type]
+	return if type(value) == "string" and value ~= "" then value else nil
+end
+
 local function cover_cache_context_for(local_release_info: LocalRelease): CoverCacheContext
 	local release_context = local_release_info.context
 	local ids = release_context.ids or musicbrainz_external_ids(release_context.external_ids)
@@ -67,12 +73,8 @@ local function cover_cache_context_for(local_release_info: LocalRelease): CoverC
 	end
 
 	return {
-		release_id = if ids and type(ids.release_id) == "string" and ids.release_id ~= "" then ids.release_id else nil,
-		release_group_id = if ids
-				and type(ids.release_group_id) == "string"
-				and ids.release_group_id ~= ""
-			then ids.release_group_id
-			else nil,
+		release_id = stored_id(ids, "release_id"),
+		release_group_id = stored_id(ids, "release_group_id"),
 		track_count = if local_release_info.track_count > 0 then local_release_info.track_count else nil,
 		preferred_language = local_release_info.preferred_language,
 		preferred_country = local_release_info.preferred_country,
@@ -247,15 +249,20 @@ function module.register_refresh(provider_instance: Provider): ()
 			return nil
 		end
 
-		local musicbrainz_ids = musicbrainz_external_ids(release.external_ids)
-		if musicbrainz_ids and musicbrainz_ids.release_id then
-			if resolve.try_release_id(musicbrainz_ids.release_id, local_release_info) then
-				return nil
-			end
+		local release_id = stored_id(musicbrainz_external_ids(release.external_ids), "release_id")
+		if release_id ~= nil and resolve.try_release_id(release_id, local_release_info) then
+			return nil
+		end
+		-- A failed request keeps what is stored: a search can't stand in for it.
+		if musicbrainz_api.request_failed() then
+			return nil
 		end
 
 		local searchable = local_release_info.artist_name ~= nil or local_release_info.compilation_release
 		if searchable and release_search.search_and_fetch_release(local_release_info) then
+			return nil
+		end
+		if musicbrainz_api.request_failed() then
 			return nil
 		end
 		if ctx.options and ctx.options.acoustid_fingerprint == true and try_acoustid(local_release_info) then
@@ -269,6 +276,7 @@ function module.register_refresh(provider_instance: Provider): ()
 	end, function(ctx: metadata.ReleaseRefreshContext): boolean
 		local release: ReleaseContext = ctx :: ReleaseContext
 		local musicbrainz_ids = musicbrainz_external_ids(release.external_ids)
+		-- An empty ID marks the release unmatched: only an explicit refresh retries it.
 		if musicbrainz_ids and musicbrainz_ids.release_id then
 			return false
 		end

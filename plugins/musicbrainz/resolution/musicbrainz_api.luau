@@ -465,8 +465,12 @@ local function response_object(ok: boolean, response: any): JsonObject?
 	return data :: JsonObject
 end
 
--- Helper for MusicBrainz API GET requests.
-local function mb_get(endpoint: string): (JsonObject?, number)
+-- `pcall(http.request, options)`; tests replace it to script responses.
+function module.send(options: HttpRequestOptions): (boolean, any)
+	return pcall(http.request, options)
+end
+
+local function request(endpoint: string): (JsonObject?, number)
 	local request_options: HttpRequestOptions = {
 		url = `{API_BASE}{endpoint}`,
 		method = http.HttpMethod.Get,
@@ -474,9 +478,25 @@ local function mb_get(endpoint: string): (JsonObject?, number)
 			Accept = "application/json",
 		},
 	}
-	local ok, response = pcall(http.request, request_options)
+	local ok, response = module.send(request_options)
 	local retries = if ok and type(response) == "table" then response.retries else 0
 	return response_object(ok, response), retries
+end
+
+-- A MusicBrainz API GET request. Once a request has failed on this refresh,
+-- nothing more is sent: a weaker query must not stand in for one that went
+-- unanswered.
+local function mb_get(endpoint: string): (JsonObject?, number)
+	if request_failed() then
+		return nil, 0
+	end
+	return request(endpoint)
+end
+
+-- A GET request that enriches a verified release, sent even after a failure:
+-- each is independent, and a failed one only leaves its own details out.
+local function enrichment_get(endpoint: string): (JsonObject?, number)
+	return request(endpoint)
 end
 
 local function browse_release_group(release_group_id: string, fast_mode: boolean, track_count: number?): { Release }?
@@ -552,6 +572,7 @@ module.normalize_recording_result = normalize_recording_result
 module.normalize_relations = normalize_relations
 module.escape_lucene = escape_lucene
 module.mb_get = mb_get
+module.enrichment_get = enrichment_get
 module.browse_release_group = browse_release_group
 module.fetch_release_details = fetch_release_details
 
