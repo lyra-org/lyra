@@ -56,6 +56,7 @@ module.EMPTY_OBJECT = serde.empty_object()
 local XML_TEXT_FIELDS: { [string]: string } = {
 	genre = "value",
 	line = "value",
+	lyrics = "value",
 }
 
 -- Elements whose fields of these names are child elements holding text rather than attributes.

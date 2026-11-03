@@ -5,6 +5,8 @@
 -- www.meshiplaw.com/lyra.
 
 local api = require("@lyra/api")
+local artists = require("@lyra/artists")
+local entities = require("@lyra/entities")
 local lyrics = require("@lyra/lyrics")
 local playback_sources = require("@lyra/playback_sources")
 local tracks = require("@lyra/tracks")
@@ -16,10 +18,12 @@ local response = require("../protocol/response")
 
 type ApiQueryParams = api.ApiQueryParams
 type ApiResponse = api.ApiResponse
+type EntityProjectionInfo = entities.EntityProjectionInfo
 type ImageTransformOptions = api.ImageTransformOptions
 type LyricsInfo = lyrics.LyricsInfo
 type Request = request.Request
 type Track = tracks.Track
+type TrackQuery = tracks.TrackQuery
 type TrackStreamOptions = api.TrackStreamOptions
 
 local module = {}
@@ -102,6 +106,94 @@ local function structured_lyrics(info: LyricsInfo, track: Track, artist: string?
 	}
 end
 
+-- Same-named artists, and same-titled songs in pages, that a `getLyrics` lookup reads at most.
+local LYRICS_ARTISTS = 100
+local LYRICS_SONGS = 1000
+local LYRICS_PAGE = 100
+
+-- Whether one of the `named` artists is credited as `artist` on the song `projection` is of.
+local function performs(projection: EntityProjectionInfo?, named: { [string]: boolean }): boolean
+	for _, ref in credits.artists(projection) or {} do
+		if named[ref.id] then
+			return true
+		end
+	end
+	return false
+end
+
+-- The best ranked lyrics of the first visible song titled `title`, in name order, that has any,
+-- with the song and its credits projection. Names compare as an exact search match does. When
+-- `artist` is given, only songs crediting an artist of that name as a song's `artist` count;
+-- credits of other types, and the album's artists, don't.
+local function lyrics_named(title: string, artist: string?): (Track?, LyricsInfo?, EntityProjectionInfo?)
+	local query: TrackQuery = { name = title, limit = LYRICS_PAGE }
+	local named: { [string]: boolean }? = nil
+	if artist then
+		local ids: { string } = {}
+		local found: { [string]: boolean } = {}
+		for _, summary in artists.query({ name = artist, limit = LYRICS_ARTISTS }).items do
+			table.insert(ids, summary.id)
+			found[summary.id] = true
+		end
+		if #ids == 0 then
+			return nil, nil, nil
+		end
+		query.artist_ids = ids
+		query.credit_role = "track"
+		named = found
+	end
+	local offset = 0
+	while offset < LYRICS_SONGS do
+		query.offset = offset
+		local page = tracks.query(query)
+		local ids: { string } = {}
+		for _, track in page.items do
+			table.insert(ids, track.id)
+		end
+		local projections = if named then credits.projections(ids, { "credits" }) else {}
+		local candidates: { Track } = {}
+		local candidate_ids: { string } = {}
+		for _, track in page.items do
+			if named == nil or performs(projections[track.id], named) then
+				table.insert(candidates, track)
+				table.insert(candidate_ids, track.id)
+			end
+		end
+		local summaries = if #candidate_ids > 0 then lyrics.by_track(candidate_ids) else {}
+		for _, track in candidates do
+			local ranked: { lyrics.LyricsSummary } = summaries[track.id] or {}
+			local best = ranked[1]
+			local info = if best then lyrics.get({ best.id })[best.id] else nil
+			if info then
+				local projection = projections[track.id] or credits.projections({ track.id }, { "credits" })[track.id]
+				return track, info, projection
+			end
+		end
+		offset += #page.items
+		if #page.items == 0 or offset >= page.total then
+			break
+		end
+	end
+	return nil, nil, nil
+end
+
+-- The text of a lyrics entry, its timed lines' texts for lyrics that came only as those.
+local function lyrics_text(info: LyricsInfo): string
+	if info.plain_text ~= "" or #info.lines == 0 then
+		return info.plain_text
+	end
+	local texts: { string } = {}
+	for _, line in info.lines do
+		table.insert(texts, line.text)
+	end
+	return table.concat(texts, "\n")
+end
+
+local function can_download(req: Request): boolean
+	local permissions = req.auth.principal.permissions
+	return table.find(permissions, "admin") ~= nil or table.find(permissions, "download") ~= nil
+end
+
 -- The largest bound the host takes; no image is that large, and none is scaled up.
 local MAX_IMAGE_SIZE = 4294967295
 
@@ -117,6 +209,7 @@ end
 
 -- Methods that answer every error in XML, whatever format the request asks for.
 module.xml_errors = {
+	download = true,
 	getCoverArt = true,
 	stream = true,
 } :: { [string]: boolean }
@@ -134,6 +227,39 @@ module.methods = {
 			return request.fail(0, if options then REFUSED_OPTIONS else "The song can't be streamed")
 		end
 		return api.response.stream_track(track.id, options)
+	end,
+
+	-- The file as it is, for callers allowed to download.
+	download = function(req: Request): ApiResponse
+		if not can_download(req) then
+			return request.fail(50, "Only users allowed to download can download songs")
+		end
+		local track = find_track(req.params)
+		-- As with `stream`, ask first, so the client gets a Subsonic error rather than a bare one.
+		local ok, err = pcall(playback_sources.decide, track.id, nil)
+		if not ok then
+			warn(`download of {track.id} refused: {tostring(err)}`)
+			return request.fail(0, "The song can't be downloaded")
+		end
+		return api.response.download_track(track.id)
+	end,
+
+	-- The best ranked lyrics of the first song titled `title`, by an artist named `artist` when
+	-- given, that has any; an empty element when none does.
+	getLyrics = function(req: Request): ApiResponse
+		local title = request.param(req.params, "title")
+		local artist = request.param(req.params, "artist")
+		if not title then
+			return response.ok(req.params, { lyrics = response.EMPTY_OBJECT })
+		end
+		local track, info, projection = lyrics_named(title, artist)
+		if not (track and info) then
+			return response.ok(req.params, { lyrics = response.EMPTY_OBJECT })
+		end
+		local _, display_artist = credits.artists(projection)
+		return response.ok(req.params, {
+			lyrics = { artist = display_artist, title = track.track_title, value = lyrics_text(info) },
+		})
 	end,
 
 	-- The image as stored, or scaled down to fit `size` on both sides. A size of 0 or less asks

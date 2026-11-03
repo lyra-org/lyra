@@ -26,3 +26,8 @@ to 1,000 songs around its current song.
 Saving an empty queue deletes only that client's queue, after which `getPlayQueue` returns the most
 recent queue of another client, if there is one. Other servers keep one queue per user, which an
 empty save clears.
+
+## Downloading
+
+Clients download songs as their original files, which takes the download permission on your Lyra
+account. Without it, a download fails with error 50, while streaming still works.

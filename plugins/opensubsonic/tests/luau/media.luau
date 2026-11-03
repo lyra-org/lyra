@@ -131,3 +131,81 @@ for _, extension in (serde.json.decode(extensions.body) :: any)["subsonic-respon
 	names[extension.name] = extension.versions[1]
 end
 assert(names.songLyrics == 1 and names.formPost == 1 and names.transcodeOffset == 1 and names.apiKeyAuthentication == 1)
+
+-- `download` serves the file as it is to callers allowed to download, failing in XML as `stream`
+-- does.
+local downloader = fixture.api_keys.downloader_key
+local function download(api_key: string, params: { [string]: string }): any
+	local query: { [string]: string } = { apiKey = api_key, f = "json" }
+	for name, value in params do
+		query[name] = value
+	end
+	return call.raw("download", query)
+end
+local function download_error(api_key: string, params: { [string]: string }): number
+	local failed = download(api_key, params)
+	assert(failed.kind == "text", `download answered {failed.kind}`)
+	assert(string.find(failed.headers["content-type"], "^text/xml"), failed.headers["content-type"])
+	local code = string.match(failed.body, '<error code="(%d+)"')
+	assert(code, failed.body)
+	return tonumber(code) :: number
+end
+
+local downloaded = download(downloader, { id = ids.synced, format = "mp3", maxBitRate = "128" })
+assert(downloaded.kind == "download_track" and downloaded.track_id == ids.synced, `download kind {downloaded.kind}`)
+assert(downloaded.options == nil, "a download is never transcoded")
+assert(download_error(key, { id = ids.synced }) == 50, "the listener may not download")
+assert(download_error(downloader, {}) == 10, "download needs an id")
+assert(download_error(downloader, { id = ids.hidden }) == 70, "a hidden song isn't downloaded")
+assert(download_error(downloader, { id = ids.album }) == 70, "an album isn't downloaded")
+assert(download_error(downloader, { id = ids.fileless }) == 0, "a song the host can't serve")
+assert(download_error("not-a-key", { id = ids.synced }) == 44, "downloading needs a key")
+
+-- `getLyrics` finds a visible song by its exact title and, when given, an artist's name, ignoring
+-- case, and answers its best ranked lyrics as text.
+local function lyrics_of(params: { [string]: string }): any
+	return call.ok("getLyrics", key, params).lyrics
+end
+
+local found = lyrics_of({ artist = "Amy", title = "Plain" })
+assert(found.artist == "Amy" and found.title == "Plain" and found.value == "One\nTwo", `lyrics {found.value}`)
+assert(lyrics_of({ artist = "amy", title = "PLAIN" }).value == "One\nTwo", "ignoring case")
+local by_title = lyrics_of({ title = "Synced" })
+assert(by_title.title == "Synced" and by_title.value == "First line\nSecond line", `timed lines {by_title.value}`)
+
+local function nothing(params: { [string]: string }, label: string)
+	local result = lyrics_of(params)
+	assert(type(result) == "table" and next(result) == nil, label)
+end
+nothing({ artist = "Bob", title = "Plain" }, "another artist")
+nothing({ artist = "Amy", title = "Pla" }, "a partial title")
+nothing({ artist = "Amy" }, "no title")
+nothing({}, "no parameters")
+nothing({ title = "Hidden" }, "a hidden song")
+nothing({ title = "Segment" }, "a song without lyrics")
+
+-- Only the song's own artists count: not its other credits, nor its album's artists.
+nothing({ artist = "Amy", title = "Home" }, "a composer isn't the artist")
+nothing({ artist = "Amy", title = "Away" }, "an album artist isn't the song's")
+local home = lyrics_of({ artist = "Bob", title = "Home" })
+assert(home.artist == "Bob" and home.value == "Home lyrics", `home {home.artist}`)
+assert(lyrics_of({ artist = "Bob", title = "Away" }).value == "Away lyrics", "the song's artist")
+local duet = lyrics_of({ artist = "Amy", title = "Duet" })
+assert(duet.artist == "Bob, Amy" and duet.value == "Duet lyrics", `duet {duet.artist}`)
+
+-- Case folds beyond ASCII, for titles and artists alike.
+local joga = lyrics_of({ artist = "BJÖRK", title = "JÓGA" })
+assert(joga.artist == "Björk" and joga.title == "Jóga" and joga.value == "Jóga lyrics", `joga {joga.value}`)
+
+-- Every same-titled song is a candidate, not only the first few: the one song with lyrics comes
+-- last of 60 in name order.
+for _, params in { { title = "Same" }, { artist = "amy", title = "SAME" } } do
+	local same = lyrics_of(params)
+	assert(same.title == "same" and same.value == "Last of the same", `same {same.value}`)
+end
+
+local lyrics_xml = call.raw("getLyrics", { apiKey = key, artist = "Amy", title = "Plain" }).body
+assert(string.find(lyrics_xml, ">One\nTwo</lyrics>", 1, true), lyrics_xml)
+assert(string.find(lyrics_xml, 'artist="Amy"', 1, true) and string.find(lyrics_xml, 'title="Plain"', 1, true))
+local nothing_xml = call.raw("getLyrics", { apiKey = key, title = "Segment" }).body
+assert(string.find(nothing_xml, "<lyrics/>", 1, true), nothing_xml)

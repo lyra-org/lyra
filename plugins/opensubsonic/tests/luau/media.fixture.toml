@@ -1,19 +1,27 @@
 run_as = "listener"
 
-# The listener sees "Album" and its songs Synced, Plain and Segment, a span of its file as a cue
-# sheet's; "Secret" is in a library nobody is granted.
+# The listener and the downloader, who may download, see "Album" and its songs Synced, Plain and
+# Segment, a span of its file as a cue sheet's; "Secret" is in a library nobody is granted.
 
 [[users]]
 key = "listener"
+
+[[users]]
+key = "downloader"
+permissions = ["download"]
 
 [[api_keys]]
 key = "listener_key"
 user = "listener"
 
+[[api_keys]]
+key = "downloader_key"
+user = "downloader"
+
 [[libraries]]
 key = "music"
 name = "Music"
-users = ["listener"]
+users = ["listener", "downloader"]
 
 [[libraries]]
 key = "locked"
@@ -28,6 +36,10 @@ key = "album"
 title = "Album"
 library = "music"
 artists = ["amy"]
+
+[[artists]]
+key = "bob"
+name = "Bob"
 
 [[releases]]
 key = "secret"
@@ -87,3 +99,424 @@ key = "fileless"
 title = "Fileless"
 release = "album"
 artists = ["amy"]
+
+# Amy is only Home's composer and Away's album artist; Bob performs both, with Amy on Duet.
+
+[[tracks]]
+key = "home"
+title = "Home"
+release = "album"
+artists = ["bob"]
+credits = [{ artist = "amy", type = "composer" }]
+
+[[tracks]]
+key = "away"
+title = "Away"
+release = "album"
+artists = ["bob"]
+
+[[tracks]]
+key = "duet"
+title = "Duet"
+release = "album"
+artists = ["bob", "amy"]
+
+[[lyrics]]
+track = "home"
+body = "Home lyrics"
+
+[[lyrics]]
+track = "away"
+body = "Away lyrics"
+
+[[lyrics]]
+track = "duet"
+body = "Duet lyrics"
+
+# Björk performs Jóga, matched whatever the case of its accented letters.
+
+[[artists]]
+key = "bjork"
+name = "Björk"
+
+[[tracks]]
+key = "joga"
+title = "Jóga"
+release = "album"
+artists = ["bjork"]
+
+[[lyrics]]
+track = "joga"
+body = "Jóga lyrics"
+
+# Repeats holds 60 songs titled "SAME" or "same"; only the last in name order, "same", has lyrics.
+
+[[releases]]
+key = "repeats"
+title = "Repeats"
+library = "music"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_1"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_2"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_3"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_4"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_5"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_6"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_7"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_8"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_9"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_10"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_11"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_12"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_13"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_14"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_15"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_16"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_17"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_18"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_19"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_20"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_21"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_22"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_23"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_24"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_25"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_26"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_27"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_28"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_29"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_30"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_31"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_32"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_33"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_34"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_35"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_36"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_37"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_38"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_39"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_40"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_41"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_42"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_43"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_44"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_45"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_46"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_47"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_48"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_49"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_50"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_51"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_52"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_53"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_54"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_55"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_56"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_57"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_58"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_59"
+title = "SAME"
+release = "repeats"
+artists = ["amy"]
+
+[[tracks]]
+key = "same_last"
+title = "same"
+release = "repeats"
+artists = ["amy"]
+
+[[lyrics]]
+track = "same_last"
+body = "Last of the same"
