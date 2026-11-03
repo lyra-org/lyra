@@ -1855,14 +1855,14 @@ fn entities_links_include_resolves_templates_and_functions() -> Result<()> {
                 "https://example.test/release/{{id}}")
             provider:id({{ id_type = "thing_id", entity = ET.Track, scheme = "example:thing" }},
                 "https://example.test/track/{{id}}")
-            provider:id({{ id_type = "localized_id", entity = ET.Release }}, function(id, ctx)
+            provider:id({{ id_type = "localized_id", entity = ET.Release, scheme = "test:localized-id" }}, function(id, ctx)
                 seen_entity = ctx.entity
                 return `https://example.test/{{ctx.library.language}}-{{ctx.library.country}}/{{ctx.id_type}}/{{id}}?thing={{ctx.external_ids.thing_id}}`
             end)
-            provider:id({{ id_type = "nil_id", entity = ET.Release }}, function()
+            provider:id({{ id_type = "nil_id", entity = ET.Release, scheme = "test:nil-id" }}, function()
                 return nil
             end)
-            provider:id({{ id_type = "broken_id", entity = ET.Release }}, function()
+            provider:id({{ id_type = "broken_id", entity = ET.Release, scheme = "test:broken-id" }}, function()
                 error("boom")
             end)
 
@@ -1998,12 +1998,12 @@ fn entities_links_isolate_failing_slow_and_unsafe_generators() -> Result<()> {
             local provider = metadata.Provider.new("isolated-links")
             busy_runs = 0
             slow_runs = 0
-            provider:id({ id_type = "busy_id", entity = ET.Release }, function()
+            provider:id({ id_type = "busy_id", entity = ET.Release, scheme = "test:busy-id" }, function()
                 busy_runs += 1
                 while true do
                 end
             end)
-            provider:id({ id_type = "z_slow_id", entity = ET.Release }, function(id)
+            provider:id({ id_type = "z_slow_id", entity = ET.Release, scheme = "test:z-slow-id" }, function(id)
                 slow_runs += 1
                 task.spawn(function()
                     local ok, err = pcall(entities.query, { id = "any", include = "links" })
@@ -2012,13 +2012,13 @@ fn entities_links_isolate_failing_slow_and_unsafe_generators() -> Result<()> {
                 task.wait(60)
                 return `https://example.test/slow/{id}`
             end)
-            provider:id({ id_type = "unsafe_id", entity = ET.Release }, function(id)
+            provider:id({ id_type = "unsafe_id", entity = ET.Release, scheme = "test:unsafe-id" }, function(id)
                 return `javascript:alert("{id}")`
             end)
-            provider:id({ id_type = "ok_id", entity = ET.Release }, function(id)
+            provider:id({ id_type = "ok_id", entity = ET.Release, scheme = "test:ok-id" }, function(id)
                 return `https://example.test/ok/{id}`
             end)
-            provider:id({ id_type = "template_id", entity = ET.Release }, "https://example.test/t/{id}")
+            provider:id({ id_type = "template_id", entity = ET.Release, scheme = "test:template-id" }, "https://example.test/t/{id}")
         "#[..],
     )?;
 
@@ -2062,7 +2062,7 @@ fn entities_links_skip_generators_registered_on_another_vm() -> Result<()> {
                 r#"
                     local metadata = require("@lyra/metadata")
                     local provider = metadata.Provider.new("vm-links")
-                    provider:id({{ id_type = "thing_id", entity = metadata.EntityType.Release }}, function(id)
+                    provider:id({{ id_type = "thing_id", entity = metadata.EntityType.Release, scheme = "test:thing-id" }}, function(id)
                         return `https://{site}.example.test/{{id}}`
                     end)
                 "#
@@ -2115,12 +2115,12 @@ fn entities_links_time_out_and_suspend_a_busy_generator_within_the_batch_deadlin
             local ET = metadata.EntityType
             local provider = metadata.Provider.new("busy-links")
             busy_runs = 0
-            provider:id({ id_type = "busy_id", entity = ET.Release }, function()
+            provider:id({ id_type = "busy_id", entity = ET.Release, scheme = "test:busy-id" }, function()
                 busy_runs += 1
                 while true do
                 end
             end)
-            provider:id({ id_type = "ok_id", entity = ET.Release }, function(id)
+            provider:id({ id_type = "ok_id", entity = ET.Release, scheme = "test:ok-id" }, function(id)
                 return `https://example.test/ok/{id}`
             end)
         "#[..],

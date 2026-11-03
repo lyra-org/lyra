@@ -129,11 +129,9 @@ pub(super) fn parse_id_spec(
     let id_type = required_string(spec, "id_type")?;
     let entity = required_entity_type(vm, spec, "entity")?;
     let unique = optional_bool(spec, "unique", "provider:id spec")?.unwrap_or(false);
-    let scheme = optional_table_string(spec, "scheme", "provider:id")?;
-    if let Some(scheme) = &scheme {
-        validate_id_scheme(scheme)
-            .map_err(|err| crate::plugins::runtime_error(format!("provider:id: {err}")))?;
-    }
+    let scheme = required_string(spec, "scheme")?;
+    validate_id_scheme(&scheme)
+        .map_err(|err| crate::plugins::runtime_error(format!("provider:id: {err}")))?;
     let label = optional_table_string(spec, "label", "provider:id")?;
     Ok(ProviderIdSpec {
         id_type,

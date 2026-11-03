@@ -691,7 +691,7 @@ fn plugin_executor_declares_metadata_provider_ids_and_options() -> Result<()> {
     assert_eq!(id_spec.id_type, "release_id");
     assert_eq!(id_spec.entity, crate::services::EntityType::Release);
     assert!(id_spec.unique);
-    assert_eq!(id_spec.scheme.as_deref(), Some("example:release"));
+    assert_eq!(id_spec.scheme, "example:release");
     assert!(has_generator);
     assert_eq!(
         crate::services::providers::registry_tests::id_url_template(
@@ -1373,7 +1373,7 @@ fn plugin_executor_rejects_handles_from_another_runtime() -> Result<()> {
                     provider:refresh(metadata.EntityType.Release, function()
                         return "{name}"
                     end)
-                    provider:id({{ id_type = "thing_id", entity = metadata.EntityType.Release }}, function()
+                    provider:id({{ id_type = "thing_id", entity = metadata.EntityType.Release, scheme = "test:{name}" }}, function()
                         return "https://example.com/{name}"
                     end)
                     api.get("/{name}", function()

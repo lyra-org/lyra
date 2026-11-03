@@ -744,8 +744,6 @@ local function process_release(
 	if rg_id and not date_str then
 		local resolved_rg_id = rg_id
 		table.insert(enrichments, function()
-			-- Include url-rels to extract WikiData QID in the same request. No
-			-- dedicated fetch otherwise: the WikiData plugin covers the rest.
 			local rg_url_data = enrichment_get(`/release-group/{resolved_rg_id}?inc=url-rels`)
 			if rg_url_data == nil then
 				return
@@ -757,14 +755,6 @@ local function process_release(
 			local rg_primary_type = json_string_field(rg_url_data, "primary-type")
 			if not primary_type and rg_primary_type then
 				release_layer:set_field("release_type", string.lower(rg_primary_type))
-			end
-			for _, relation in normalize_relations(json_array_field(rg_url_data, "relations")) do
-				local resource = relation.url and relation.url.resource
-				local qid = if relation.type == "wikidata" and resource then string.match(resource, "(Q%d+)$") else nil
-				if qid then
-					release_layer:set_id("wikidata_qid", qid)
-					break
-				end
 			end
 			release_layer:save()
 		end)

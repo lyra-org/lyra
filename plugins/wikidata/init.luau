@@ -659,9 +659,8 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 
 	return nil
 end, function(ctx: metadata.ReleaseRefreshContext): boolean
-	-- Skip releases that already have a WikiData QID, whether ours or
-	-- another provider's: both are stored under the `wikidata:item` scheme.
-	-- Once a QID is stored, this release is permanently skipped.
+	-- Skip releases that already have a WikiData QID. Once a QID is stored,
+	-- this release is permanently skipped.
 	-- A wrong QID requires manual correction (no automatic recovery path).
 	return not (ctx.identifiers and ctx.identifiers["wikidata:item"])
 end)

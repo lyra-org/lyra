@@ -177,7 +177,7 @@ pub(crate) struct ProviderIdSpec {
     pub(crate) id_type: String,
     pub(crate) entity: EntityType,
     pub(crate) unique: bool,
-    pub(crate) scheme: Option<String>,
+    pub(crate) scheme: String,
     /// Site the links point to, when it isn't the provider itself.
     pub(crate) label: Option<String>,
 }
@@ -285,15 +285,28 @@ impl ProviderRegistry {
     }
 
     /// Schemes resolve by `(provider_id, id_type)`, so every entity
-    /// registering an id type must declare the same scheme. `generator` runs
-    /// only once the registration is accepted; the generator it replaces is
-    /// returned.
+    /// registering an id type must declare the same scheme, and a scheme
+    /// belongs to the one provider that registers it, so no other provider's
+    /// value can stand in for its own. `generator` runs only once the
+    /// registration is accepted; the generator it replaces is returned.
     pub(crate) fn set_id_registration(
         &mut self,
         provider_id: &str,
         id_spec: ProviderIdSpec,
         generator: impl FnOnce() -> Option<ProviderIdUrlGenerator>,
     ) -> std::result::Result<Option<ProviderIdUrlGenerator>, String> {
+        if let Some((owner, _)) = self.iter_states().find(|(other, state)| {
+            other.as_str() != provider_id
+                && state
+                    .id_specs
+                    .values()
+                    .any(|existing| existing.scheme == id_spec.scheme)
+        }) {
+            return Err(format!(
+                "scheme '{}' is registered by provider '{owner}'",
+                id_spec.scheme
+            ));
+        }
         let Some(provider) = self.state_mut(provider_id) else {
             return Ok(None);
         };
@@ -304,10 +317,7 @@ impl ProviderRegistry {
         }) {
             return Err(format!(
                 "id_type '{}' on provider '{provider_id}' is registered for {} with scheme '{}'; {} must use the same scheme",
-                id_spec.id_type,
-                conflict.entity,
-                conflict.scheme.as_deref().unwrap_or("none"),
-                id_spec.entity
+                id_spec.id_type, conflict.entity, conflict.scheme, id_spec.entity
             ));
         }
         let key = (id_spec.entity, id_spec.id_type.clone());
@@ -500,9 +510,7 @@ impl ProviderRegistry {
         let mut generators = IdLinkGenerators::default();
         for (provider_id, state) in self.iter_states() {
             for spec in state.id_specs.values() {
-                if let Some(scheme) = &spec.scheme {
-                    schemes.insert(provider_id, &spec.id_type, scheme);
-                }
+                schemes.insert(provider_id, &spec.id_type, &spec.scheme);
             }
             for ((entity, id_type), generator) in &state.id_generators {
                 let spec = state.id_specs.get(&(*entity, id_type.clone()));
@@ -511,7 +519,7 @@ impl ProviderRegistry {
                     *entity,
                     id_type,
                     IdLinkGenerator {
-                        scheme: spec.and_then(|spec| spec.scheme.clone()),
+                        scheme: spec.map(|spec| spec.scheme.clone()),
                         label: spec
                             .and_then(|spec| spec.label.clone())
                             .unwrap_or_else(|| self.display_name(provider_id)),
@@ -657,12 +665,12 @@ pub(crate) mod tests {
         }
     }
 
-    fn id_spec(id_type: &str, entity: EntityType, scheme: Option<&str>) -> ProviderIdSpec {
+    fn id_spec(id_type: &str, entity: EntityType, scheme: &str) -> ProviderIdSpec {
         ProviderIdSpec {
             id_type: id_type.to_string(),
             entity,
             unique: entity == EntityType::Release,
-            scheme: scheme.map(str::to_string),
+            scheme: scheme.to_string(),
             label: None,
         }
     }
@@ -687,7 +695,7 @@ pub(crate) mod tests {
             registry
                 .set_id_registration(
                     "demo",
-                    id_spec("item", entity, Some("example:item")),
+                    id_spec("item", entity, "example:item"),
                     template(url),
                 )
                 .expect("same scheme is accepted");
@@ -733,12 +741,18 @@ pub(crate) mod tests {
             .expect("register plain provider");
         let labelled = ProviderIdSpec {
             label: Some("Other Site".to_string()),
-            ..id_spec("other_id", EntityType::Release, None)
+            ..id_spec("other_id", EntityType::Release, "other:thing")
         };
         for (provider_id, spec) in [
             ("named", labelled),
-            ("named", id_spec("own_id", EntityType::Release, None)),
-            ("plain", id_spec("own_id", EntityType::Release, None)),
+            (
+                "named",
+                id_spec("own_id", EntityType::Release, "named:thing"),
+            ),
+            (
+                "plain",
+                id_spec("own_id", EntityType::Release, "plain:thing"),
+            ),
         ] {
             registry
                 .set_id_registration(provider_id, spec, template("https://example.test/{id}"))
@@ -769,7 +783,7 @@ pub(crate) mod tests {
         registry
             .set_id_registration(
                 "demo",
-                id_spec("item", EntityType::Release, Some("example:item")),
+                id_spec("item", EntityType::Release, "example:item"),
                 template("https://example.test/{id}"),
             )
             .expect("registration");
@@ -822,7 +836,7 @@ pub(crate) mod tests {
         registry
             .set_id_registration(
                 "demo",
-                id_spec("item", EntityType::Release, Some("example:item")),
+                id_spec("item", EntityType::Release, "example:item"),
                 || None,
             )
             .expect("first registration");
@@ -830,13 +844,55 @@ pub(crate) mod tests {
         let err = registry
             .set_id_registration(
                 "demo",
-                id_spec("item", EntityType::Artist, Some("example:other")),
+                id_spec("item", EntityType::Artist, "example:other"),
                 || None,
             )
             .expect_err("conflicting scheme must be rejected");
 
         assert!(err.contains("same scheme"), "{err}");
         assert!(!registry.id_spec_matches_entity("demo", "item", EntityType::Artist));
+    }
+
+    #[test]
+    fn a_scheme_belongs_to_the_provider_that_registered_it() {
+        let mut registry = ProviderRegistry::default();
+        for provider_id in ["first", "second"] {
+            registry
+                .register(
+                    PluginId::new(provider_id).expect("valid plugin id"),
+                    provider_id.to_string(),
+                    None,
+                )
+                .expect("register provider");
+        }
+        registry
+            .set_id_registration(
+                "first",
+                id_spec("item", EntityType::Release, "example:item"),
+                || None,
+            )
+            .expect("first registration");
+        registry
+            .set_id_registration(
+                "first",
+                id_spec("item", EntityType::Artist, "example:item"),
+                || None,
+            )
+            .expect("the owner registers it again");
+
+        let err = registry
+            .set_id_registration(
+                "second",
+                id_spec("item", EntityType::Release, "example:item"),
+                || None,
+            )
+            .expect_err("another provider's scheme must be rejected");
+
+        assert_eq!(
+            err,
+            "scheme 'example:item' is registered by provider 'first'"
+        );
+        assert!(!registry.id_spec_matches_entity("second", "item", EntityType::Release));
     }
 
     #[tokio::test]

@@ -55,6 +55,7 @@ impl TempSimilarPluginDir {
                 provider:id({
                     id_type = "release_group_id",
                     entity = metadata.EntityType.Release,
+                    scheme = "similartest:release-group",
                 })
                 provider:similar_releases({
                     require = { all_of = { "ids.release_group_id" } },

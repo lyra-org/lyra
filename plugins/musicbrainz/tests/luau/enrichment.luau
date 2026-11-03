@@ -55,7 +55,7 @@ assert_saved_before(refresh.OFFICIAL, "/ws/2/release-group/")
 local release_fields = refresh.saved_fields.release
 assert(release_fields.release_date == "2024-11-23", "the release group's date is added")
 assert(release_fields.release_title == "モニタリング", "the match's fields stay")
-assert(refresh.saved_ids.release.wikidata_qid == "Q42", "the Wikidata item is added")
+assert(refresh.saved_ids.release.wikidata_qid == nil, "the Wikidata item is left to the Wikidata plugin")
 local artist_saves = refresh.events_matching("save deco")
 assert(#artist_saves == 2, "the artist is saved with its match and again with its relations")
 assert(

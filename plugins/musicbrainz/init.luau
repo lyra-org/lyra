@@ -482,13 +482,6 @@ provider:search(ET.Track, function(query: string): { SearchResultItem }
 end)
 
 provider:id({
-	id_type = "wikidata_qid",
-	entity = ET.Release,
-	scheme = "wikidata:item",
-	label = "Wikidata",
-}, "https://www.wikidata.org/wiki/{id}")
-
-provider:id({
 	id_type = "acoustid_track_id",
 	entity = ET.Track,
 	scheme = "acoustid:track",

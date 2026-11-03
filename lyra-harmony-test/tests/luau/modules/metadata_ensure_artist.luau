@@ -4,7 +4,7 @@ local metadata = require("@lyra/metadata")
 
 local ArtistType = metadata.ArtistType
 local provider = metadata.Provider.new("ensure-artist-test")
-provider:id({ id_type = "artist_id", entity = metadata.EntityType.Artist })
+provider:id({ id_type = "artist_id", entity = metadata.EntityType.Artist, scheme = "test:artist-id" })
 
 local function artist_type(id: string): string?
 	return artists.get({ id })[id].artist_type

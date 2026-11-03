@@ -305,8 +305,8 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
                 field("unique", opt(boolean())),
                 described_field(
                     "scheme",
-                    opt(string()),
-                    "What the identifier is, independent of who stores it: lowercase `namespace:kind` (issuing site and its own term, e.g. `example:release`) or a bare standard name (e.g. `isrc`). An `id_type` registered for several entities must use the same scheme on each.",
+                    string(),
+                    "What the identifier is, independent of who stores it: lowercase `namespace:kind` (issuing site and its own term, e.g. `example:release`) or a bare standard name (e.g. `isrc`). An `id_type` registered for several entities must use the same scheme on each. A scheme belongs to the provider that registers it first; another provider registering it raises.",
                 ),
                 described_field(
                     "label",

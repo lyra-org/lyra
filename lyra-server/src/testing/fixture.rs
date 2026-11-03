@@ -471,7 +471,7 @@ async fn register_id_schemes(
                     id_type: scheme.clone(),
                     entity,
                     unique: false,
-                    scheme: Some(scheme),
+                    scheme,
                     label: None,
                 },
                 || None,
