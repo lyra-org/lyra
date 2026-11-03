@@ -1336,12 +1336,13 @@ async fn a_new_play_id_starts_a_new_session_for_the_same_track() -> anyhow::Resu
     let first_listen = listen_for_play(&db, user, "first-play-000001")?;
     assert_eq!(first_listen.started_at_ms, T0);
     assert_eq!(
-        first_listen.played_ms, 50_000,
+        first_listen.played_ms,
+        Some(50_000),
         "the second play's start credits the first the 10 s since its last report"
     );
     let second_listen = listen_for_play(&db, user, "second-play-00001")?;
     assert_eq!(second_listen.started_at_ms, T0 + 50_000);
-    assert_eq!(second_listen.played_ms, 35_000);
+    assert_eq!(second_listen.played_ms, Some(35_000));
     Ok(())
 }
 
@@ -1364,7 +1365,7 @@ async fn a_live_play_judges_against_the_catalog_duration() -> anyhow::Result<()>
 
     assert_eq!(
         listen_for_play(&db, user, "short-play-000001")?.played_ms,
-        12_000
+        Some(12_000)
     );
     Ok(())
 }
@@ -1538,7 +1539,7 @@ async fn a_live_listen_keeps_the_plays_full_playing_time() -> anyhow::Result<()>
     )?;
     assert_eq!(
         listen_for_play(&db, user, "long-play-0000001")?.played_ms,
-        30_000
+        Some(30_000)
     );
     report_play(
         &mut db,
@@ -1551,7 +1552,7 @@ async fn a_live_listen_keeps_the_plays_full_playing_time() -> anyhow::Result<()>
 
     assert_eq!(
         listen_for_play(&db, user, "long-play-0000001")?.played_ms,
-        150_000
+        Some(150_000)
     );
     let counts = lyra_db::listens::get_counts(&db, &[track], user)?;
     assert_eq!(counts.get(&track).copied(), Some(1));
@@ -1597,7 +1598,7 @@ async fn a_named_play_resumes_its_own_stopped_session() -> anyhow::Result<()> {
 
     assert_eq!(
         listen_for_play(&db, user, "resumed-play-00001")?.played_ms,
-        40_000
+        Some(40_000)
     );
     Ok(())
 }
@@ -1630,7 +1631,7 @@ async fn a_live_listen_is_announced_once_when_it_counts() -> anyhow::Result<()> 
     )?;
 
     let listen = listen_for_play(&db, user, "announced-play-001")?;
-    assert_eq!(listen.played_ms, 60_000);
+    assert_eq!(listen.played_ms, Some(60_000));
     assert_eq!(
         dispatch.listen_updates(),
         vec![crate::services::listens::ListenUpdatePayload {
@@ -1640,7 +1641,7 @@ async fn a_live_listen_is_announced_once_when_it_counts() -> anyhow::Result<()> 
                 listen_id: listen.id,
                 track_id: track_public_id,
                 started_at_ms: T0,
-                played_ms: 30_000,
+                played_ms: Some(30_000),
             }],
         }]
     );
@@ -2029,7 +2030,7 @@ async fn a_replaced_play_is_credited_since_its_last_report_and_counts() -> anyho
         "paused at its replacement"
     );
     let listen = listen_for_play(&db, user, &a.playback.play_id)?;
-    assert_eq!(listen.played_ms, 20_000);
+    assert_eq!(listen.played_ms, Some(20_000));
     assert_eq!(
         dispatch.listen_updates().len(),
         1,
@@ -2155,7 +2156,7 @@ async fn a_replaced_play_moves_at_its_rate_and_is_credited_real_time() -> anyhow
     assert_eq!(a_now.latency_allowance_used_ms, 0);
     assert_eq!(
         listen_for_play(&db, user, &a.playback.play_id)?.played_ms,
-        40_000
+        Some(40_000)
     );
     Ok(())
 }
@@ -2254,7 +2255,7 @@ async fn a_late_stop_of_a_credited_replaced_play_adds_no_time_twice() -> anyhow:
     assert_eq!(stopped.playback.played_ms, 100_000);
     assert_eq!(
         listen_for_play(&db, user, &a.playback.play_id)?.played_ms,
-        100_000
+        Some(100_000)
     );
     Ok(())
 }
@@ -2656,7 +2657,7 @@ async fn a_report_after_an_early_stop_resumes_the_play_and_counts_once() -> anyh
     assert_eq!(resumed.played_ms, 135_000 + 19_700);
     assert_eq!(
         listen_for_play(&db, user, &a.playback.play_id)?.played_ms,
-        135_000 + 19_700,
+        Some(135_000 + 19_700),
         "the listen keeps the play's longest playing time"
     );
     Ok(())
@@ -2881,7 +2882,8 @@ async fn a_submitted_play_counts_after_its_live_play_was_declared_not_to() -> an
             play_id: UNCOUNTED_PLAY_ID.to_string(),
             track: lyra_db::ResolveId::Nanoid(track_public_id),
             started_at_ms: T0,
-            played_ms: 100_000,
+            played_ms: Some(100_000),
+            listened: false,
         }],
         T0 + 200_000,
     )?;

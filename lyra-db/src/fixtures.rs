@@ -109,7 +109,7 @@ pub fn insert_listen(
         play_id: nanoid!(),
         track_public_id,
         started_at_ms,
-        played_ms: 180_000,
+        played_ms: Some(180_000),
         created_at_ms: started_at_ms,
     };
     db.transaction_mut(|t| super::listens::insert(t, &listen, track_db_id, user_db_id))

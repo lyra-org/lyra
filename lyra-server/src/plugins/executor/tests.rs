@@ -1319,7 +1319,7 @@ fn plugin_executor_exposes_lyra_listens_on_update() -> Result<()> {
         listen_id: listen_id.to_string(),
         track_id: "track-public".to_string(),
         started_at_ms: 1_000,
-        played_ms: 42_000,
+        played_ms: Some(42_000),
     };
     runtime.dispatch_listen_update(crate::services::listens::ListenUpdatePayload {
         event: "recorded".to_string(),

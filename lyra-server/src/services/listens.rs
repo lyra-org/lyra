@@ -79,7 +79,7 @@ pub(crate) struct ListenPayload {
     pub listen_id: String,
     pub track_id: String,
     pub started_at_ms: u64,
-    pub played_ms: u64,
+    pub played_ms: Option<u64>,
 }
 
 impl From<Listen> for ListenPayload {
@@ -109,6 +109,13 @@ const PLAY_ID_LENGTHS: std::ops::RangeInclusive<usize> = 16..=64;
 
 /// The play id contract, for API and plugin documentation.
 pub(crate) const PLAY_ID_DESCRIPTION: &str = "Client-generated id for one play of a track: 16-64 characters of `[A-Za-z0-9_-]`, unique per user. Every play, including a repeat, gets a new id; a play continued elsewhere, such as on a handoff target, keeps its id. A play counts as at most one listen, however and wherever it is reported.";
+
+/// The `listened` contract of a submitted play, for API and plugin documentation.
+#[cfg(feature = "docgen")]
+pub(crate) const LISTENED_DESCRIPTION: &str = "Whether the player already judged the play a listen, as a scrobble does; default false. A declared listen counts however long it played, and may leave out its playing time: it then ends a track's duration after its start, or at its start when the duration is unknown.";
+/// The playing time contract of a submitted play, for API and plugin documentation.
+#[cfg(feature = "docgen")]
+pub(crate) const SUBMITTED_PLAYED_MS_DESCRIPTION: &str = "Time the track actually played, excluding pauses and skipped spans. Required unless the play is a declared listen.";
 
 /// Whether `candidate` has the shape of a client-generated play id.
 pub(crate) fn is_play_id(candidate: &str) -> bool {
@@ -146,37 +153,54 @@ pub(crate) fn record(
 ) -> anyhow::Result<RecordOutcome> {
     let track = lyra_db::tracks::get_by_id(db, play.track_db_id)?
         .ok_or_else(|| anyhow::anyhow!("track {:?} not found", play.track_db_id))?;
-    record_for_track(db, user_db_id, play, &track, now_ms)
+    record_for_track(db, user_db_id, play, None, &track, now_ms)
 }
 
-/// [`record`] for a play of `track`, already loaded from `play.track_db_id`.
+/// A listen the player declared, which [`record_for_track`] judges in place of a [`Play`]'s
+/// playing time.
+#[derive(Clone, Copy, Debug)]
+struct Declared {
+    /// The playing time the player gave, if any.
+    played_ms: Option<u64>,
+    /// How long after its start the play ends.
+    span_ms: u64,
+}
+
+/// [`record`] for a play of `track`, already loaded from `play.track_db_id`. A `declared` listen
+/// skips the playing time a listen needs and keeps its own, ignoring `play.played_ms`.
 fn record_for_track(
     db: &mut impl lyra_db::DbAccess,
     user_db_id: DbId,
     play: Play<'_>,
+    declared: Option<Declared>,
     track: &lyra_db::Track,
     now_ms: u64,
 ) -> anyhow::Result<RecordOutcome> {
+    let played_ms = match declared {
+        Some(declared) => declared.played_ms,
+        None => Some(play.played_ms),
+    };
     let latest_end_ms = now_ms.saturating_add(FUTURE_END_ALLOWANCE_MS);
     if let Some(listen) = lyra_db::listens::get_by_play_id(db, user_db_id, play.play_id)? {
         // Never beyond what fits between the counted start and now.
-        let played_ms = play
-            .played_ms
-            .min(latest_end_ms.saturating_sub(listen.started_at_ms));
-        if listen.track_public_id == track.id
-            && played_ms > listen.played_ms
+        let played_ms =
+            played_ms.map(|ms| ms.min(latest_end_ms.saturating_sub(listen.started_at_ms)));
+        if let Some(played_ms) = played_ms
+            && listen.track_public_id == track.id
+            && listen.played_ms.is_none_or(|stored| played_ms > stored)
             && let Some(listen_db_id) = listen.db_id
         {
             lyra_db::listens::set_played_ms(db, listen_db_id, played_ms)?;
         }
         return Ok(RecordOutcome::Duplicate);
     }
+    let span_ms = declared.map_or(play.played_ms, |declared| declared.span_ms);
     if play.started_at_ms < EARLIEST_STARTED_AT_MS
-        || play.started_at_ms.saturating_add(play.played_ms) > latest_end_ms
+        || play.started_at_ms.saturating_add(span_ms) > latest_end_ms
     {
         return Ok(RecordOutcome::InvalidTime);
     }
-    if !is_listen(play.played_ms, track.duration_ms) {
+    if declared.is_none() && !is_listen(play.played_ms, track.duration_ms) {
         return Ok(RecordOutcome::NotListened);
     }
 
@@ -186,7 +210,7 @@ fn record_for_track(
         play_id: play.play_id.to_string(),
         track_public_id: track.id.clone(),
         started_at_ms: play.started_at_ms,
-        played_ms: play.played_ms,
+        played_ms,
         created_at_ms: now_ms,
     };
     let db_id = lyra_db::listens::insert(db, &listen, play.track_db_id, user_db_id)?;
@@ -229,7 +253,21 @@ pub(crate) struct SubmittedPlay {
     pub(crate) play_id: String,
     pub(crate) track: ResolveId,
     pub(crate) started_at_ms: u64,
-    pub(crate) played_ms: u64,
+    /// Present unless the play is a declared listen; a listen recorded without one stores none.
+    pub(crate) played_ms: Option<u64>,
+    /// The player already judged the play a listen.
+    pub(crate) listened: bool,
+}
+
+/// Fails a submitted play that gives the server nothing to judge it by.
+pub(crate) fn check_submitted_played_ms(
+    played_ms: Option<u64>,
+    listened: bool,
+) -> Result<(), &'static str> {
+    if played_ms.is_none() && !listened {
+        return Err("played_ms is required unless listened is true");
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -277,8 +315,14 @@ pub(crate) fn record_submitted(
                         play_id: &submitted.play_id,
                         track_db_id,
                         started_at_ms: submitted.started_at_ms,
-                        played_ms: submitted.played_ms,
+                        played_ms: submitted.played_ms.unwrap_or(0),
                     },
+                    submitted.listened.then(|| Declared {
+                        played_ms: submitted.played_ms,
+                        span_ms: submitted
+                            .played_ms
+                            .unwrap_or(track.duration_ms.unwrap_or(0)),
+                    }),
                     track,
                     now_ms,
                 )?),
@@ -514,6 +558,186 @@ mod tests {
         assert_eq!(min_played_ms(Some(1_001)), 201);
     }
 
+    fn submit_declared(
+        db: &mut DbAny,
+        user: DbId,
+        track: DbId,
+        play_id: &str,
+        started_at_ms: u64,
+        played_ms: Option<u64>,
+    ) -> anyhow::Result<SubmissionOutcome> {
+        let principal = Principal::for_user(
+            db,
+            user,
+            vec![lyra_db::Permission::Admin],
+            std::collections::HashSet::new(),
+        );
+        let track_public_id =
+            lyra_db::lookup::find_id_by_db_id(db, track)?.expect("track public id");
+        let mut outcomes = record_submitted(
+            db,
+            &principal,
+            user,
+            vec![SubmittedPlay {
+                play_id: play_id.to_string(),
+                track: ResolveId::Nanoid(track_public_id),
+                started_at_ms,
+                played_ms,
+                listened: true,
+            }],
+            NOW_MS,
+        )?;
+        Ok(outcomes.remove(play_id).expect("outcome"))
+    }
+
+    fn recorded(outcome: &SubmissionOutcome) -> bool {
+        matches!(
+            outcome,
+            SubmissionOutcome::Judged(RecordOutcome::Recorded(_))
+        )
+    }
+
+    #[test]
+    fn submitted_plays_need_a_playing_time_unless_declared_listens() {
+        assert!(check_submitted_played_ms(None, false).is_err());
+        assert!(check_submitted_played_ms(None, true).is_ok());
+        assert!(check_submitted_played_ms(Some(0), false).is_ok());
+    }
+
+    #[test]
+    fn a_declared_listen_counts_without_playing_time() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user = lyra_db::test_db::insert_user(&mut db, "listener")?;
+        let unknown = insert_track(&mut db, None)?;
+        let timed = insert_track(&mut db, Some(200_000))?;
+        let start = NOW_MS - 600_000;
+
+        let outcome = submit_declared(&mut db, user, unknown, "declared-unknown-1", start, None)?;
+        assert!(recorded(&outcome), "{outcome:?}");
+        let listen = stored_listen(&db, user, "declared-unknown-1")?;
+        assert_eq!(listen.played_ms, None);
+
+        let outcome = submit_declared(
+            &mut db,
+            user,
+            timed,
+            "declared-short-001",
+            start,
+            Some(1_000),
+        )?;
+        assert!(recorded(&outcome), "{outcome:?}");
+        assert_eq!(
+            stored_listen(&db, user, "declared-short-001")?.played_ms,
+            Some(1_000)
+        );
+
+        let outcome = submit_declared(&mut db, user, unknown, "declared-unknown-1", start, None)?;
+        assert!(
+            matches!(outcome, SubmissionOutcome::Judged(RecordOutcome::Duplicate)),
+            "{outcome:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_declared_listen_without_playing_time_ends_a_duration_after_its_start() -> anyhow::Result<()>
+    {
+        let mut db = new_test_db()?;
+        let user = lyra_db::test_db::insert_user(&mut db, "listener")?;
+        let timed = insert_track(&mut db, Some(200_000))?;
+        let unknown = insert_track(&mut db, None)?;
+        let latest_end = NOW_MS + FUTURE_END_ALLOWANCE_MS;
+
+        let cases = [
+            ("timed-at-limit-01", timed, latest_end - 200_000, true),
+            ("timed-too-late-01", timed, latest_end - 199_999, false),
+            ("unknown-at-limit1", unknown, latest_end, true),
+            ("unknown-too-late1", unknown, latest_end + 1, false),
+            (
+                "before-2010-00001",
+                timed,
+                EARLIEST_STARTED_AT_MS - 1,
+                false,
+            ),
+        ];
+        for (play_id, track, started_at_ms, valid) in cases {
+            let outcome = submit_declared(&mut db, user, track, play_id, started_at_ms, None)?;
+            let invalid = matches!(
+                outcome,
+                SubmissionOutcome::Judged(RecordOutcome::InvalidTime)
+            );
+            assert_eq!(!invalid, valid, "{play_id}: {outcome:?}");
+            assert_eq!(recorded(&outcome), valid, "{play_id}: {outcome:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_declared_listen_with_a_playing_time_ends_by_it() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user = lyra_db::test_db::insert_user(&mut db, "listener")?;
+        let timed = insert_track(&mut db, Some(200_000))?;
+        let latest_end = NOW_MS + FUTURE_END_ALLOWANCE_MS;
+
+        let cases = [
+            ("zero-at-limit-001", latest_end, Some(0), true),
+            ("zero-too-late-001", latest_end + 1, Some(0), false),
+            ("timed-at-limit-02", latest_end - 1_000, Some(1_000), true),
+            ("timed-too-late-02", latest_end - 999, Some(1_000), false),
+            ("inferred-at-now01", NOW_MS, None, false),
+        ];
+        for (play_id, started_at_ms, played_ms, valid) in cases {
+            let outcome = submit_declared(&mut db, user, timed, play_id, started_at_ms, played_ms)?;
+            assert_eq!(recorded(&outcome), valid, "{play_id}: {outcome:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_declared_listen_keeps_the_longest_playing_time_given() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user = lyra_db::test_db::insert_user(&mut db, "listener")?;
+        let track = insert_track(&mut db, Some(200_000))?;
+        let start = NOW_MS - 600_000;
+        let stored = |db: &DbAny| -> anyhow::Result<Option<u64>> {
+            Ok(stored_listen(db, user, "declared-merge-001")?.played_ms)
+        };
+
+        submit_declared(&mut db, user, track, "declared-merge-001", start, None)?;
+        assert_eq!(
+            stored(&db)?,
+            None,
+            "a declared listen without a playing time"
+        );
+
+        for (played_ms, expected) in [
+            (Some(50_000), Some(50_000)),
+            (Some(20_000), Some(50_000)),
+            (None, Some(50_000)),
+            (Some(80_000), Some(80_000)),
+        ] {
+            let outcome =
+                submit_declared(&mut db, user, track, "declared-merge-001", start, played_ms)?;
+            assert!(
+                matches!(outcome, SubmissionOutcome::Judged(RecordOutcome::Duplicate)),
+                "{outcome:?}"
+            );
+            assert_eq!(stored(&db)?, expected, "after {played_ms:?}");
+        }
+
+        let live = record_in_transaction(
+            &mut db,
+            user,
+            Play {
+                started_at_ms: start,
+                ..play("declared-merge-001", track, 120_000)
+            },
+        )?;
+        assert_eq!(live, RecordOutcome::Duplicate);
+        assert_eq!(stored(&db)?, Some(120_000), "a live report raises it too");
+        Ok(())
+    }
+
     #[test]
     fn record_judges_against_the_catalog_duration() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
@@ -568,7 +792,7 @@ mod tests {
         assert_eq!(listen.play_id, "play-stored-0001");
         assert_eq!(listen.track_public_id, track_public_id);
         assert_eq!(listen.started_at_ms, NOW_MS - 600_000);
-        assert_eq!(listen.played_ms, 45_000);
+        assert_eq!(listen.played_ms, Some(45_000));
         assert_eq!(listen.created_at_ms, NOW_MS);
 
         let stats = lyra_db::listens::get_stats(&db, &[track], user)?;
@@ -597,7 +821,8 @@ mod tests {
             .remove(&listen_db_id)
             .ok_or_else(|| anyhow::anyhow!("listen missing"))?;
         assert_eq!(
-            listen.played_ms, 90_000,
+            listen.played_ms,
+            Some(90_000),
             "a duplicate keeps the longest playing time"
         );
         let other =
@@ -704,7 +929,7 @@ mod tests {
         assert_eq!(other, RecordOutcome::Duplicate);
         assert_eq!(
             stored_listen(&db, user, "play-bounded-0001")?.played_ms,
-            30_000
+            Some(30_000)
         );
 
         let fabricated = record_in_transaction(
@@ -722,7 +947,7 @@ mod tests {
         );
         assert_eq!(
             stored_listen(&db, user, "play-bounded-0001")?.played_ms,
-            NOW_MS + FUTURE_END_ALLOWANCE_MS - started_at_ms
+            Some(NOW_MS + FUTURE_END_ALLOWANCE_MS - started_at_ms)
         );
         Ok(())
     }

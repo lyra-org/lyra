@@ -81,7 +81,8 @@ struct SubmittedPlayRequest {
     play_id: String,
     track_id: String,
     started_at_ms: u64,
-    played_ms: u64,
+    played_ms: Option<u64>,
+    listened: Option<bool>,
 }
 
 fn submitted_play(value: &luau::Value) -> luau::runtime::Result<SubmittedPlay> {
@@ -92,11 +93,15 @@ fn submitted_play(value: &luau::Value) -> luau::runtime::Result<SubmittedPlay> {
             request.play_id
         )));
     }
+    let listened = request.listened.unwrap_or(false);
+    listen_service::check_submitted_played_ms(request.played_ms, listened)
+        .map_err(crate::plugins::runtime_error)?;
     Ok(SubmittedPlay {
         play_id: request.play_id,
         track: ResolveId::Nanoid(request.track_id),
         started_at_ms: request.started_at_ms,
         played_ms: request.played_ms,
+        listened,
     })
 }
 
@@ -342,8 +347,8 @@ impl DescribeInterface for LuauListenPayload {
                 described_field("started_at_ms", u64::luau_type(), "When the play started."),
                 described_field(
                     "played_ms",
-                    u64::luau_type(),
-                    "Time the track actually played when the listen was recorded.",
+                    Option::<u64>::luau_type(),
+                    "Time the track actually played when the listen was recorded. Absent for a listen the player declared without one.",
                 ),
             ],
         }
@@ -387,8 +392,13 @@ impl DescribeInterface for SubmittedPlayRequest {
                 described_field("started_at_ms", u64::luau_type(), "When the play started."),
                 described_field(
                     "played_ms",
-                    u64::luau_type(),
-                    "Time the track actually played, excluding pauses and skipped spans.",
+                    Option::<u64>::luau_type(),
+                    listen_service::SUBMITTED_PLAYED_MS_DESCRIPTION,
+                ),
+                described_field(
+                    "listened",
+                    Option::<bool>::luau_type(),
+                    listen_service::LISTENED_DESCRIPTION,
                 ),
             ],
         }

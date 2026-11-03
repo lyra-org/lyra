@@ -22,7 +22,8 @@ pub struct Listen {
     pub play_id: String,
     pub track_public_id: String,
     pub started_at_ms: u64,
-    pub played_ms: u64,
+    /// Absent when the player declared the listen without a playing time.
+    pub played_ms: Option<u64>,
     pub created_at_ms: u64,
 }
 
@@ -463,7 +464,7 @@ mod tests {
             play_id: play_id.to_string(),
             track_public_id: track_public_id.to_string(),
             started_at_ms,
-            played_ms: 180_000,
+            played_ms: Some(180_000),
             created_at_ms: started_at_ms,
         };
         db.transaction_mut(|t| insert(t, &listen, track_db_id, user_db_id))
@@ -534,8 +535,41 @@ mod tests {
         let stored = get_by_play_id(&db, user, "play-stored-00001")?.expect("listen exists");
         assert_eq!(stored.db_id, Some(listen));
         assert_eq!(stored.started_at_ms, 7);
-        assert_eq!(stored.played_ms, 200_000);
+        assert_eq!(stored.played_ms, Some(200_000));
         assert!(get_by_play_id(&db, user, "play-unknown-0001")?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn a_listen_without_playing_time_stores_no_key_and_reads_as_none() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user = create_user(&mut db)?;
+        let track = create_track(&mut db, "tr-one")?;
+        let listen = Listen {
+            db_id: None,
+            id: nanoid!(),
+            play_id: "play-untimed-0001".to_string(),
+            track_public_id: "tr-one".to_string(),
+            started_at_ms: 7,
+            played_ms: None,
+            created_at_ms: 7,
+        };
+        let listen_db_id = db.transaction_mut(|t| insert(t, &listen, track, user))?;
+
+        let keys = db.exec(QueryBuilder::select().keys().ids(listen_db_id).query())?;
+        assert!(
+            !keys.elements[0]
+                .values
+                .iter()
+                .any(|value| value.key == "played_ms".into()),
+            "no played_ms key"
+        );
+        let stored = get_by_play_id(&db, user, "play-untimed-0001")?.expect("listen exists");
+        assert_eq!(stored.played_ms, None);
+
+        set_played_ms(&mut db, listen_db_id, 40_000)?;
+        let stored = get_by_play_id(&db, user, "play-untimed-0001")?.expect("listen exists");
+        assert_eq!(stored.played_ms, Some(40_000));
         Ok(())
     }
 

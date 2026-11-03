@@ -650,11 +650,14 @@ struct SubmittedPlayRequest {
     started_at: String,
     #[cfg_attr(
         feature = "docgen",
-        schemars(
-            description = "Time the track actually played, excluding pauses and skipped spans."
-        )
+        schemars(description = listen_service::SUBMITTED_PLAYED_MS_DESCRIPTION)
     )]
-    played_ms: u64,
+    played_ms: Option<u64>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = listen_service::LISTENED_DESCRIPTION)
+    )]
+    listened: Option<bool>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -676,7 +679,7 @@ enum PlayOutcome {
     Recorded,
     /// The play already counted, live or in an earlier submission.
     Duplicate,
-    /// The play was too short to count.
+    /// The play was too short to count, and wasn't declared a listen.
     NotListened,
     /// The track doesn't exist or isn't visible to the caller.
     TrackNotFound,
@@ -710,11 +713,15 @@ fn submitted_play(request: SubmittedPlayRequest) -> Result<SubmittedPlay, AppErr
                 request.started_at
             ))
         })?;
+    let listened = request.listened.unwrap_or(false);
+    listen_service::check_submitted_played_ms(request.played_ms, listened)
+        .map_err(AppError::bad_request)?;
     Ok(SubmittedPlay {
         play_id: request.play_id,
         track: ResolveId::Nanoid(request.track_id),
         started_at_ms,
         played_ms: request.played_ms,
+        listened,
     })
 }
 
@@ -1029,7 +1036,8 @@ mod tests {
                 play_id: play_id.to_string(),
                 track_id: track_id.to_string(),
                 started_at: started_at.to_string(),
-                played_ms,
+                played_ms: Some(played_ms),
+                listened: None,
             }
         }
 
@@ -1114,7 +1122,8 @@ mod tests {
                 crate::services::timestamps::rfc3339_to_unix_ms_u64(STARTED_AT)
             );
             assert_eq!(
-                listen.played_ms, 60_000,
+                listen.played_ms,
+                Some(60_000),
                 "a repeat in the batch changes nothing"
             );
             Ok(())
@@ -1185,7 +1194,7 @@ mod tests {
                 .collect::<Vec<_>>();
             assert_eq!(
                 played,
-                vec![60_000, 90_000],
+                vec![Some(60_000), Some(90_000)],
                 "listens keep submission order"
             );
             assert!(
@@ -1223,6 +1232,28 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn a_declared_listen_counts_without_playing_time() -> anyhow::Result<()> {
+            let _guard = crate::services::testing::runtime_test_lock().await;
+            let fixture = setup(true).await?;
+            let declared = SubmittedPlayRequest {
+                played_ms: None,
+                listened: Some(true),
+                ..play("declared-play-0001", &fixture.long_track_id, STARTED_AT, 0)
+            };
+
+            let result = submit(&fixture.headers, vec![declared])
+                .await
+                .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+
+            assert_eq!(
+                result,
+                outcomes(&[("declared-play-0001", PlayOutcome::Recorded)])
+            );
+            assert_eq!(listen_count(&fixture).await?, 1);
+            Ok(())
+        }
+
+        #[tokio::test]
         async fn malformed_submissions_judge_nothing() -> anyhow::Result<()> {
             let _guard = crate::services::testing::runtime_test_lock().await;
             let fixture = setup(true).await?;
@@ -1238,6 +1269,13 @@ mod tests {
                 vec![
                     valid(),
                     play("bad-timestamp-0001", long, "yesterday", 60_000),
+                ],
+                vec![
+                    valid(),
+                    SubmittedPlayRequest {
+                        played_ms: None,
+                        ..play("untimed-play-00001", long, STARTED_AT, 0)
+                    },
                 ],
             ] {
                 let error = submit(&fixture.headers, plays)

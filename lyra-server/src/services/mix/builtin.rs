@@ -937,7 +937,7 @@ mod tests {
             play_id: nanoid::nanoid!(),
             track_public_id,
             started_at_ms: 1_000_000,
-            played_ms: 180_000,
+            played_ms: Some(180_000),
             created_at_ms: 1_000_000,
         };
         db.transaction_mut(|t| listens::insert(t, &listen, track_db_id, user_db_id))?;
