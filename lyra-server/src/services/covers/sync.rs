@@ -320,6 +320,17 @@ fn provider_sync_basis(
     }))
 }
 
+/// Whether an automatic provider sync would fetch a cover for the artist now: it is unlocked,
+/// and the options replace its cover or it has none.
+pub(crate) fn artist_cover_wanted(
+    db: &agdb::DbAny,
+    artist_id: DbId,
+    artist_public_id: &str,
+    options: CoverSyncOptions,
+) -> Result<bool> {
+    Ok(provider_sync_basis(db, artist_id, artist_public_id, None, options)?.is_some())
+}
+
 /// Whether the basis still holds: the same entity, still unlocked, with no cover arrived
 /// meanwhile unless replacing, and the provider cover as the sync found it.
 fn provider_sync_still_allowed(db: &agdb::DbAny, basis: &ProviderSyncBasis) -> Result<bool> {
@@ -777,28 +788,6 @@ pub(crate) async fn sync_release_covers_for_library(
             Err(err) => {
                 tracing::warn!(error = %err, "cover download task panicked");
             }
-        }
-    }
-
-    Ok(synced)
-}
-
-pub(crate) async fn sync_artist_covers_for_library(
-    db: &lyra_db::DbAsync,
-    paths: CoverPaths<'_>,
-    library_id: DbId,
-    options: CoverSyncOptions,
-    provider_filter: Option<&str>,
-) -> Result<usize> {
-    let artists = {
-        let db_read = db.read().await;
-        lyra_db::artists::get_by_library(&db_read, library_id)?
-    };
-
-    let mut synced = 0usize;
-    for artist in &artists {
-        if sync_artist_cover(db, artist, paths, options, provider_filter).await? {
-            synced += 1;
         }
     }
 

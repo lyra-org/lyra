@@ -64,9 +64,11 @@ use crate::services::{
     },
     providers::{
         LibraryRefreshOptions,
+        ListedArtist,
         refresh_library_metadata_after_others,
         refresh_release_metadata_for_scan_with_progress,
         release_refresh_provider_ids,
+        sync_artist_covers,
     },
 };
 use lyra_db::{
@@ -401,14 +403,19 @@ pub(crate) async fn sync_library_pipeline(
         progress
             .add_stage_total(SyncStageKey::Cleanup, 2, SyncTotalState::Final)
             .await;
-        // A sync of every release finalises the totals once its refresh added its own.
-        if stages.provider_refresh {
+        // A sync of every release finalises the totals once its refresh added its own, and the
+        // artist cover pass once it adds its own.
+        if stages.provider_refresh && stages.covers.skips() {
             progress.set_determinate().await;
         }
     }
     if options.releases == SyncReleases::All {
         refresh_every_release(library_db_id, options.covers, progress.clone()).await?;
     }
+    let changed_releases = plans
+        .iter()
+        .map(|plan| (plan.release_id, plan.release_public_id.clone()))
+        .collect::<Vec<_>>();
     futures::stream::iter(plans)
         .for_each_concurrent(MAX_CONCURRENT_ALBUM_PIPELINE, |plan| {
             let db = db.clone();
@@ -436,6 +443,10 @@ pub(crate) async fn sync_library_pipeline(
         progress.check_cancelled().await?;
     }
     refresh_gone_covers(db, library, library_db_id).await;
+    if !stages.covers.skips() {
+        sync_changed_artist_covers(db, library, &changed_releases, stages.covers, &progress)
+            .await?;
+    }
     cleanup_metadata_orphans(db, library_db_id, progress).await?;
     Ok(())
 }
@@ -511,6 +522,49 @@ impl ReleaseArtifactStages {
             },
         }
     }
+}
+
+/// Fetches the covers of the artists credited on the changed releases or on their tracks, after
+/// the releases' provider refreshes stored what they found. A release gone meanwhile has no
+/// artists to pass; artists that can't be listed are none to pass, so the totals still settle.
+async fn sync_changed_artist_covers(
+    db: &DbAsync,
+    library: &Library,
+    releases: &[(DbId, Option<String>)],
+    options: CoverSyncOptions,
+    progress: &Option<SyncRunProgress>,
+) -> Result<(), SyncRunControlError> {
+    let artists = {
+        let db_read = db.read().await;
+        let current = releases
+            .iter()
+            .filter(|(release_id, public_id)| {
+                public_id.is_some()
+                    && lyra_db::lookup::find_id_by_db_id(&db_read, *release_id)
+                        .is_ok_and(|found| found == *public_id)
+            })
+            .map(|(release_id, _)| *release_id)
+            .collect::<Vec<_>>();
+        lyra_db::artists::get_by_releases(&db_read, &current)
+    };
+    let artists = match artists {
+        Ok(artists) => ListedArtist::list(artists),
+        Err(err) => {
+            tracing::warn!(
+                library_db_id = ?library.db_id,
+                error = %format_args!("{err:#}"),
+                "scan could not list the changed releases' artists"
+            );
+            Vec::new()
+        }
+    };
+    let covers_root = configured_covers_root();
+    let paths = CoverPaths {
+        library_root: Some(&library.path),
+        covers_root: &covers_root,
+    };
+    sync_artist_covers(&artists, paths, options, None, progress.as_ref()).await?;
+    Ok(())
 }
 
 /// Searches again for the covers whose file is gone, which the release passes above skip for
@@ -1847,6 +1901,63 @@ FILE "album.flac" WAVE
                 .iter()
                 .any(|id| calls.iter().filter(|call| *call == id).count() > 1),
             "the unchanged releases are not refreshed again"
+        );
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_changed_sync_fetches_the_covers_of_its_artists() -> anyhow::Result<()> {
+        use crate::services::testing::{
+            FakePluginDispatch,
+            FakeResponse,
+        };
+        use lofty::{
+            config::WriteOptions,
+            prelude::*,
+            tag::ItemKey,
+        };
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let dispatch = FakePluginDispatch::install();
+        let handler = dispatch
+            .register_artist_cover_handler(
+                "artist_covers",
+                FakeResponse::Value(serde_json::Value::Null),
+            )
+            .await?;
+        let (root, library) = empty_library("artist-covers").await?;
+        let audio = album_track(&root.join("Album"), "Album")?;
+        let mut tagged = lofty::read_from_path(&audio)?;
+        let tag = tagged
+            .primary_tag_mut()
+            .ok_or_else(|| anyhow::anyhow!("fixture has no primary tag"))?;
+        tag.insert_text(ItemKey::AlbumArtist, "Host".to_string());
+        tag.set_artist("Guest".to_string());
+        tag.save_to_path(&audio, WriteOptions::default())?;
+
+        let progress = super::super::orchestrator::begin_test_run(&library).await;
+        sync_library_pipeline(
+            &STATE.db.get(),
+            &library,
+            LibrarySyncOptions::default(),
+            Some(progress.clone()),
+        )
+        .await?;
+        let run = super::super::orchestrator::get_sync_run(progress.run_id())
+            .await?
+            .expect("run");
+        super::super::orchestrator::end_test_run(&progress).await;
+
+        let mut names = dispatch.artist_names(handler);
+        names.sort();
+        assert_eq!(names, ["Guest", "Host"], "the track's artist too");
+        let settled =
+            run.progress.completed_units + run.progress.failed_units + run.progress.skipped_units;
+        assert_eq!(
+            settled, run.progress.total_units,
+            "every unit counted is settled"
         );
         let _ = std::fs::remove_dir_all(root);
         Ok(())

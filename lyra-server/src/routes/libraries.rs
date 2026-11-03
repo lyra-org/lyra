@@ -176,7 +176,7 @@ struct LibraryRefreshQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "The covers to fetch for the refreshed releases and artists: `skip`, `missing` (the default, only where none is set) or `replace`."
+            description = "The covers to fetch for the refreshed releases and the artists credited on them or their tracks: `skip`, `missing` (the default, only where none is set) or `replace`."
         )
     )]
     covers: CoverUpdate,
@@ -205,7 +205,7 @@ struct LibrarySyncQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "The covers to fetch for the releases the providers are asked about, and with `releases=all` for their artists too: `skip`, `missing` (the default, only where none is set) or `replace`."
+            description = "The covers to fetch for the releases the providers are asked about and for the artists credited on them or their tracks: `skip`, `missing` (the default, only where none is set) or `replace`."
         )
     )]
     covers: CoverUpdate,
@@ -479,7 +479,7 @@ fn list_libraries_docs(op: TransformOperation) -> TransformOperation {
 fn refresh_library_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Refresh library metadata")
         .description(
-            "Starts a background metadata refresh of every release in a library from all enabled providers, then fetches the covers of the releases and artists it refreshed.\n\
+            "Starts a background metadata refresh of every release in a library from all enabled providers, then fetches the covers of the releases it refreshed and of the artists credited on them or their tracks.\n\
             `covers` picks the covers: `skip`, `missing` (the default, only where none is set) or `replace`; `bypass_cover_cache=true` looks them up again instead of using cached lookups, and is rejected with 400 alongside `covers=skip`.\n\
             While a sync or refresh of the library is running, starts nothing and returns 200 with `started` false and the running one, ignoring the parameters. Requires ManageLibraries and library access.",
         )
@@ -526,7 +526,7 @@ fn get_library_sync_status_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn start_library_sync_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Start library sync")
-        .description("Starts a background library sync: a scan of its files, then a metadata refresh from all enabled providers of the releases `releases` picks, `changed` (the default, those the scan found new or changed) or `all`, and their covers.\n\
+        .description("Starts a background library sync: a scan of its files, then a metadata refresh from all enabled providers of the releases `releases` picks, `changed` (the default, those the scan found new or changed) or `all`, and the covers of those releases and of the artists credited on them or their tracks.\n\
             `covers` and `bypass_cover_cache` pick the covers as they do for a library refresh.\n\
             While a sync or refresh of the library is running, starts nothing and returns 200 with `started` false and the running one, ignoring the parameters. Requires ManageLibraries and library access.")
 }

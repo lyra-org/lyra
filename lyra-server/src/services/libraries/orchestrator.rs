@@ -333,6 +333,21 @@ impl SyncWorkDetails {
         }
     }
 
+    pub(crate) fn artist(
+        work_type: impl Into<String>,
+        artist_id: Option<String>,
+        artist_name: Option<String>,
+    ) -> Self {
+        Self {
+            work_type: work_type.into(),
+            entity_type: Some("artist".to_string()),
+            entity_id: artist_id,
+            entity_title: artist_name,
+            provider_id: None,
+            source_dir: None,
+        }
+    }
+
     pub(crate) fn provider(mut self, provider_id: impl Into<String>) -> Self {
         self.provider_id = Some(provider_id.into());
         self

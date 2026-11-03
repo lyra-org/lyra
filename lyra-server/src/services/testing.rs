@@ -485,6 +485,49 @@ mod fake_dispatch {
                 .unwrap_or_default()
         }
 
+        /// Registers `provider_id` with an artist cover handler answering with `response`,
+        /// returning the handler.
+        pub(crate) async fn register_artist_cover_handler(
+            &self,
+            provider_id: &str,
+            response: FakeResponse,
+        ) -> Result<PluginCallbackHandle> {
+            let handler = self.add(response);
+            lyra_db::providers::register(&mut *STATE.db.write().await, provider_id)?;
+            let registry = crate::services::providers::provider_registry();
+            let mut registry = registry.write().await;
+            registry.register(
+                crate::services::plugin_scope::PluginId::new(
+                    format!("{provider_id}_plugin").as_str(),
+                )?,
+                provider_id.to_string(),
+                None,
+            )?;
+            registry.set_cover_handler(
+                provider_id,
+                crate::services::EntityType::Artist,
+                crate::services::providers::ProviderCoverSpec {
+                    timeout: std::time::Duration::from_secs(5),
+                    require: Default::default(),
+                    handler,
+                },
+            );
+            Ok(handler)
+        }
+
+        /// The `artist_name` of each artist context dispatched to `handler`, in call order.
+        pub(crate) fn artist_names(&self, handler: PluginCallbackHandle) -> Vec<String> {
+            self.calls(handler)
+                .iter()
+                .map(|context| {
+                    context["artist_name"]
+                        .as_str()
+                        .expect("artist name")
+                        .to_string()
+                })
+                .collect()
+        }
+
         fn response(&self, handler_id: u64) -> Option<FakeResponse> {
             let index = usize::try_from(handler_id).ok()?.checked_sub(1)?;
             self.handlers

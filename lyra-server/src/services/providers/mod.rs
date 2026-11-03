@@ -120,11 +120,13 @@ pub(crate) use links::{
 };
 pub(crate) use refresh::{
     LibraryRefreshOptions,
+    ListedArtist,
     refresh_entity_metadata,
     refresh_library_metadata_after_others,
     refresh_library_metadata_with_progress,
     refresh_release_metadata_for_scan_with_progress,
     release_refresh_provider_ids,
+    sync_artist_covers,
 };
 #[cfg(test)]
 pub(crate) use registry::tests as registry_tests;

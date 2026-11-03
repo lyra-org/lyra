@@ -181,7 +181,7 @@ impl LibrariesModule {
     }
 
     #[harmony(
-        description = "Starts a sync of the library in the background: a scan of its files, then the metadata of the releases `options.releases` picks from every enabled provider and their covers as `options.covers` asks. While a sync or refresh of the library is running, starts nothing and returns that run with `started` false, ignoring `options`. Returns nil when the library is missing or hidden from the caller.",
+        description = "Starts a sync of the library in the background: a scan of its files, then the metadata of the releases `options.releases` picks from every enabled provider, and the covers of those releases and of the artists credited on them or their tracks as `options.covers` asks. While a sync or refresh of the library is running, starts nothing and returns that run with `started` false, ignoring `options`. Returns nil when the library is missing or hidden from the caller.",
         returns(Option<SyncStartRecord>)
     )]
     async fn sync(
@@ -194,7 +194,7 @@ impl LibrariesModule {
     }
 
     #[harmony(
-        description = "Starts a refresh of the metadata of every release in the library from every enabled provider and of the covers of the releases and artists it refreshed, as `options.covers` asks, in the background, as `sync` starts a sync.",
+        description = "Starts a refresh of the metadata of every release in the library from every enabled provider and of the covers of those releases and of the artists credited on them or their tracks, as `options.covers` asks, in the background, as `sync` starts a sync.",
         returns(Option<SyncStartRecord>)
     )]
     async fn refresh(
@@ -570,12 +570,12 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         ),
     ));
     sync.fields.extend(cover_fields(
-        "The covers to fetch for the releases the providers are asked about, and with `releases` `all` for their artists too. Default `missing`: only where none is set.",
+        "The covers to fetch for the releases the providers are asked about and for the artists credited on them or their tracks. Default `missing`: only where none is set.",
     ));
 
     let mut refresh = InterfaceDescriptor::new("RefreshOptions", None);
     refresh.fields.extend(cover_fields(
-        "The covers to fetch for the releases and artists the providers refreshed. Default `missing`: only where none is set.",
+        "The covers to fetch for the releases the providers refreshed and the artists credited on them or their tracks. Default `missing`: only where none is set.",
     ));
 
     let mut status = InterfaceDescriptor::new("SyncStatusOptions", None);

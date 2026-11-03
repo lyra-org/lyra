@@ -3,6 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+#[cfg(test)]
+mod cover_pass_tests;
 #[cfg(feature = "docgen")]
 mod descriptors;
 mod layer;

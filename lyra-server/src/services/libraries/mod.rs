@@ -20,6 +20,7 @@ pub(crate) use orchestrator::{
     LibrarySyncRegistries,
     LibrarySyncStatus,
     RunFilter,
+    SyncRunControlError,
     SyncRunKind,
     SyncRunProgress,
     SyncRunStartResponse,

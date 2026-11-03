@@ -139,6 +139,7 @@ pub(crate) use providers::{
 pub(crate) use resolve::configured_covers_root;
 pub(crate) use sync::{
     MAX_COVER_BYTES,
+    artist_cover_wanted,
     discard_cover_file,
     discard_unreferenced_cover_files,
     forget_gone_covers,
@@ -146,6 +147,5 @@ pub(crate) use sync::{
     refresh_gone_covers_for_library,
     sync_and_persist_release_covers_for_library,
     sync_artist_cover,
-    sync_artist_covers_for_library,
     sync_release_cover_for_tracks,
 };
