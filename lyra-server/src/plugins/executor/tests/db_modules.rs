@@ -2175,3 +2175,73 @@ fn entities_links_time_out_and_suspend_a_busy_generator_within_the_batch_deadlin
     );
     Ok(())
 }
+
+#[test]
+fn shared_catalog_writes_recheck_manage_libraries_under_the_write() -> Result<()> {
+    let mut db = lyra_db::test_db::new_test_db()?;
+    let release_db_id = lyra_db::fixtures::insert_release(&mut db, "Genre Release")?;
+    lyra_db::genres::sync_release_genres(
+        &mut db,
+        release_db_id,
+        &["Rock".to_string(), "Punk".to_string()],
+    )?;
+    let genre = |db: &agdb::DbAny, name: &str| -> Result<String> {
+        let db_id = lyra_db::genres::find_by_name(db, name)?.context("genre exists")?;
+        public_id(db, db_id)
+    };
+    let (rock, punk) = (genre(&db, "Rock")?, genre(&db, "Punk")?);
+    let user = lyra_db::fixtures::test_user("demoted-librarian")?;
+    let user_public_id = user.id.clone();
+    let user_db_id = lyra_db::users::create(&mut db, &user)?;
+    let db = lyra_db::DbAsync::new(db);
+
+    let runtime = PluginExecutor::with_database(
+        Arc::from(vec![manifest(
+            "demo",
+            &[
+                "lyra.genres",
+                "lyra.genres.manage",
+                "lyra.labels",
+                "lyra.labels.manage",
+            ],
+        )]),
+        default_server_info(),
+        db.clone(),
+    )?;
+    let mut context = CallContext {
+        origin: plugin_origin("demo", "demoted.luau"),
+        ..CallContext::default()
+    };
+    // The dispatch started while the user held manage_libraries, which the database no longer
+    // gives them.
+    seed_caller_principal(
+        &mut context,
+        crate::services::auth::Principal::from_parts(
+            user_db_id,
+            user_public_id,
+            "demoted-librarian".to_string(),
+            vec![lyra_db::Permission::ManageLibraries],
+            None,
+            Default::default(),
+        ),
+    );
+    let values = runtime.eval_plugin_source_with_call_context(
+        format!(
+            r#"
+                local genres = require("@lyra/genres")
+                local labels = require("@lyra/labels")
+                local ok, err = pcall(genres.add_parent, "{punk}", "{rock}")
+                return genres.resolve({{ name = "Shoegaze" }}) == nil,
+                    labels.resolve({{ name = "Creation" }}) == nil,
+                    not ok and string.find(tostring(err), "ManageLibraries", 1, true) ~= nil
+            "#,
+        )
+        .into_bytes(),
+        context,
+    )?;
+    assert_eq!(values, vec![luau::Value::Boolean(true); 3]);
+
+    let db = futures::executor::block_on(db.read());
+    assert!(lyra_db::genres::find_by_name(&db, "Shoegaze")?.is_none());
+    Ok(())
+}

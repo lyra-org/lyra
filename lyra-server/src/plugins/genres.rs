@@ -31,6 +31,7 @@ use crate::plugins::db::{
     ViewerDb,
 };
 use crate::plugins::{
+    auth::DispatchPrincipal,
     catalog,
     ids,
 };
@@ -121,27 +122,48 @@ impl GenresModule {
     }
 
     #[harmony(
-        description = "The id of the genre matching the request, created when there is none. Needs the `lyra.genres.manage` scope too."
+        description = "The id of the genre matching the request, created when there is none. Returns nil when the caller cannot manage libraries. Needs the `lyra.genres.manage` scope too."
     )]
     async fn resolve(
         request: GenreResolveRequest,
-        #[context] db: Db,
-    ) -> luau::runtime::Result<String> {
+        #[context] caller: DispatchPrincipal,
+        #[context] vm: luau::Vm,
+    ) -> luau::runtime::Result<Option<String>> {
+        if !caller.can_manage_libraries() {
+            return Ok(None);
+        }
+        let db = crate::plugins::db::get(&vm)?;
         let mut db = db.write().await;
+        if !caller.manages_libraries_now(&db)? {
+            return Ok(None);
+        }
         let genre_id =
             resolve_genre_from_request(&mut db, &request).map_err(crate::plugins::runtime_error)?;
-        ids::public_id(&*db, genre_id)
+        ids::public_id(&*db, genre_id).map(Some)
     }
 
     #[harmony(
-        description = "Links the genre `child_id` under `parent_id`; linking them again is harmless. Raises when either is not a genre. Needs the `lyra.genres.manage` scope too."
+        description = "Links the genre `child_id` under `parent_id`; linking them again is harmless. Raises when either is not a genre, and when the caller cannot manage libraries. Needs the `lyra.genres.manage` scope too."
     )]
     async fn add_parent(
         child_id: String,
         parent_id: String,
-        #[context] db: Db,
+        #[context] caller: DispatchPrincipal,
+        #[context] vm: luau::Vm,
     ) -> luau::runtime::Result<()> {
+        let refused = || {
+            crate::plugins::runtime_error(crate::services::auth::Recheck::Missing(
+                lyra_db::Permission::ManageLibraries,
+            ))
+        };
+        if !caller.can_manage_libraries() {
+            return Err(refused());
+        }
+        let db = crate::plugins::db::get(&vm)?;
         let mut db = db.write().await;
+        if !caller.manages_libraries_now(&db)? {
+            return Err(refused());
+        }
         let genre = |id: &str, name: &str| {
             ids::db_id_of(&db, id, "Genre")?
                 .ok_or_else(|| crate::plugins::runtime_error(format!("{name} {id} is not a genre")))

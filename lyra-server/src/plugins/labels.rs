@@ -21,21 +21,17 @@ use harmony_luau::{
 use std::collections::HashMap;
 
 use crate::plugins::args::UniqueIds;
-use crate::{
-    plugins::{
-        auth::DispatchPrincipal,
-        db::{
-            Db,
-            ViewerDb,
-        },
-        ids::{
-            self,
-            Resolved,
-        },
+use crate::plugins::{
+    auth::DispatchPrincipal,
+    db::{
+        Db,
+        ViewerDb,
     },
-    services::auth::Principal,
+    ids::{
+        self,
+        Resolved,
+    },
 };
-use lyra_db::Permission;
 use lyra_db::labels::{
     ResolveExternalId,
     ResolveLabel,
@@ -73,11 +69,14 @@ impl LabelsModule {
         #[context] caller: DispatchPrincipal,
         #[context] vm: luau::Vm,
     ) -> luau::runtime::Result<Option<String>> {
-        if !can_mutate_global(caller.0.as_ref()) {
+        if !caller.can_manage_libraries() {
             return Ok(None);
         }
         let db = crate::plugins::db::get(&vm)?;
         let mut db = db.write().await;
+        if !caller.manages_libraries_now(&db)? {
+            return Ok(None);
+        }
         let label_id = lyra_db::labels::resolve(
             &mut db,
             &ResolveLabel {
@@ -235,12 +234,6 @@ fn required_string(table: &luau::Table, key: &str) -> luau::runtime::Result<Stri
         .optional_string_field(key)?
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| crate::plugins::runtime_error(format!("{key} must be a non-empty string")))
-}
-
-fn can_mutate_global(principal: Option<&Principal>) -> bool {
-    principal.is_none_or(|principal| {
-        lyra_db::roles::has_permission(&principal.permissions, Permission::ManageLibraries)
-    })
 }
 
 fn label_info_table(label: lyra_db::labels::Label) -> luau::OwnedTable {

@@ -19,10 +19,7 @@ use harmony_luau::{
     LuauTypeInfo,
     StringEnum,
 };
-use lyra_db::{
-    Library,
-    Permission,
-};
+use lyra_db::Library;
 use serde::Serialize;
 
 use crate::{
@@ -101,9 +98,7 @@ impl Reader {
     }
 
     fn record(&self, library: Library) -> luau::runtime::Result<luau::Value> {
-        let shows_path = self.0.as_ref().is_none_or(|principal| {
-            lyra_db::roles::has_permission(&principal.permissions, Permission::ManageLibraries)
-        });
+        let shows_path = crate::plugins::auth::manages_libraries(self.0.as_ref());
         harmony_luau::serializable_to_luau_owned(LibraryRecord {
             path: shows_path.then(|| library.path.to_string_lossy().into_owned()),
             id: library.id,

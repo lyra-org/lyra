@@ -1,0 +1,17 @@
+run_as = "listener"
+
+[[users]]
+key = "listener"
+
+[[genres]]
+key = "rock"
+name = "Rock"
+
+[[genres]]
+key = "punk"
+name = "Punk"
+
+[[releases]]
+key = "album"
+title = "Album"
+genres = ["punk", "rock"]

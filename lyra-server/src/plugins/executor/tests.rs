@@ -390,7 +390,12 @@ fn plugin_executor_refuses_registrations_from_an_ended_run() -> Result<()> {
 
 #[test]
 fn module_functions_answer_what_they_can_before_reading_the_database() -> Result<()> {
-    let runtime = runtime_with_scopes(&["lyra.labels", "lyra.labels.manage"])?;
+    let runtime = runtime_with_scopes(&[
+        "lyra.genres",
+        "lyra.genres.manage",
+        "lyra.labels",
+        "lyra.labels.manage",
+    ])?;
     let mut viewer = CallContext {
         origin: plugin_origin("demo", "init.luau"),
         ..CallContext::default()
@@ -408,12 +413,16 @@ fn module_functions_answer_what_they_can_before_reading_the_database() -> Result
     );
     let values = runtime.eval_plugin_source_with_call_context(
         br#"
+            local genres = require("@lyra/genres")
             local labels = require("@lyra/labels")
-            return labels.resolve({ name = "Label" }) == nil
+            return labels.resolve({ name = "Label" }) == nil, genres.resolve({ name = "Genre" }) == nil
         "# as &[u8],
         viewer,
     )?;
-    assert_eq!(values, vec![luau::Value::Boolean(true)]);
+    assert_eq!(
+        values,
+        vec![luau::Value::Boolean(true), luau::Value::Boolean(true)]
+    );
     Ok(())
 }
 

@@ -507,6 +507,37 @@ impl luau::FromCallFrame for DispatchPrincipal {
     }
 }
 
+/// Whether `principal` holds the manage_libraries permission; the system, `None`, does.
+pub(crate) fn manages_libraries(principal: Option<&ServicePrincipal>) -> bool {
+    principal.is_none_or(|principal| {
+        lyra_db::roles::has_permission(&principal.permissions, lyra_db::Permission::ManageLibraries)
+    })
+}
+
+impl DispatchPrincipal {
+    /// Whether the dispatch may change the shared library, by the permissions it started with:
+    /// a server-side one may, a user's needs manage_libraries. A refusal stands, as permissions
+    /// only shrink when rechecked; a grant needs [`Self::manages_libraries_now`] under the write.
+    pub(crate) fn can_manage_libraries(&self) -> bool {
+        manages_libraries(self.0.as_ref())
+    }
+
+    /// [`Self::can_manage_libraries`] as the database has the caller now, under the caller's
+    /// guard. A caller no longer authorized can't.
+    pub(crate) fn manages_libraries_now(&self, db: &agdb::DbAny) -> luau::runtime::Result<bool> {
+        let Some(principal) = &self.0 else {
+            return Ok(true);
+        };
+        match principal.current_with(db, lyra_db::Permission::ManageLibraries) {
+            Ok(_) => Ok(true),
+            Err(crate::services::auth::Recheck::Internal(error)) => {
+                Err(crate::plugins::runtime_error(error))
+            }
+            Err(_) => Ok(false),
+        }
+    }
+}
+
 fn no_dispatch_principal() -> luau::runtime::Error {
     crate::plugins::runtime_error(
         "no authenticated caller bound to this dispatch; resolve a credential via lyra/auth \
