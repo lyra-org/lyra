@@ -6,12 +6,14 @@
 
 local api = require("@lyra/api")
 local artists = require("@lyra/artists")
+local entities = require("@lyra/entities")
 local genres = require("@lyra/genres")
 local releases = require("@lyra/releases")
 local tracks = require("@lyra/tracks")
 
 local albums = require("../catalog/albums")
 local artist_items = require("../catalog/artists")
+local credits = require("../catalog/credits")
 local folders = require("../catalog/folders")
 local request = require("../protocol/request")
 local response = require("../protocol/response")
@@ -23,6 +25,25 @@ type Request = request.Request
 
 -- Lyra orders artists by their sort names, which tags give, rather than by dropping articles.
 local IGNORED_ARTICLES = ""
+
+local MUSICBRAINZ_ARTIST = "musicbrainz:artist"
+
+-- The artist an artist, album or song id names: the artist itself, or the first artist credited
+-- on the album or song. Fails with 70 for anything else, or an album or song without an artist.
+local function artist_projection(id: string): any
+	local projection = entities.query_many({ ids = { id }, include = { "identifiers" } })[id] :: any
+	if projection and projection.entity_type ~= "artist" then
+		local refs = credits.artists(credits.projections({ id }, { "credits" })[id])
+		local artist_id = if refs then refs[1].id else nil
+		projection = if artist_id
+			then entities.query_many({ ids = { artist_id }, include = { "identifiers" } })[artist_id]
+			else nil
+	end
+	if not projection then
+		return request.not_found("Artist")
+	end
+	return projection
+end
 
 local module = {}
 
@@ -63,6 +84,22 @@ module.methods = {
 			artist.album = albums.list(artist_albums)
 		end
 		return response.ok(req.params, { artist = artist })
+	end,
+
+	-- What Lyra keeps of an artist: its description and MusicBrainz id. Lyra keeps no similar
+	-- artists, so `count` and `includeNotPresent` change nothing.
+	getArtistInfo2 = function(req: Request): ApiResponse
+		local id = request.required(req.params, "id")
+		request.int(req.params, "count")
+		request.bool(req.params, "includeNotPresent")
+		local projection = artist_projection(id)
+		local description: string? = projection.entity.description
+		local identifiers = projection.includes.identifiers or {}
+		local info: JsonObject = {
+			biography = if description and description ~= "" then description else nil,
+			musicBrainzId = identifiers[MUSICBRAINZ_ARTIST],
+		}
+		return response.ok(req.params, { artistInfo2 = if next(info) ~= nil then info else response.EMPTY_OBJECT })
 	end,
 
 	getGenres = function(req: Request): ApiResponse

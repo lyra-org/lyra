@@ -58,13 +58,21 @@ local XML_TEXT_FIELDS: { [string]: string } = {
 	line = "value",
 }
 
+-- Elements whose fields of these names are child elements holding text rather than attributes.
+local XML_CHILD_FIELDS: { [string]: { [string]: boolean } } = {
+	artistInfo2 = { biography = true, musicBrainzId = true },
+}
+
 -- Subsonic XML carries scalars as attributes and lists as repeated elements.
 local function to_xml_element(value: { [string]: any }, name: string?): { [string]: any }
 	local text_field = if name then XML_TEXT_FIELDS[name] else nil
+	local child_fields = if name then XML_CHILD_FIELDS[name] else nil
 	local element = {}
 	for key, child in value do
 		if key == text_field then
 			element["$text"] = child
+		elseif child_fields and child_fields[key] then
+			element[key] = { ["$text"] = child }
 		elseif child == module.EMPTY_OBJECT then
 			element[key] = module.EMPTY_OBJECT
 		elseif type(child) ~= "table" then

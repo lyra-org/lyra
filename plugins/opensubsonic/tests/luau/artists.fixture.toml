@@ -3,7 +3,9 @@ run_as = "listener"
 # The listener sees the libraries "Music" and "Extra", but not "Hidden". Amy (with a cover) has
 # "Solo" (with a cover) in Music and "Duo" in Extra; "Secret", in Hidden, credits Amy and Hal.
 # Bob has "Bobs" in Extra, whose track also credits Zed; Émile and 2Pac each have an album in
-# Music, as do the Zebras, sorted as "Zebras, The". The listener starred Amy.
+# Music, as do the Zebras, sorted as "Zebras, The". The listener starred Amy. Bob has a biography
+# and a MusicBrainz id, Émile only a biography, 2Pac only a MusicBrainz id, and Zed only an id of
+# a scheme the plugin doesn't read.
 
 [[users]]
 key = "listener"
@@ -34,14 +36,18 @@ cover = "cover.png"
 [[artists]]
 key = "bob"
 name = "bob"
+description = "Bob's story."
+identifiers = { "musicbrainz:artist" = "0b0b0b0b-0000-4000-8000-000000000001" }
 
 [[artists]]
 key = "emile"
 name = "Émile"
+description = "Émile's story."
 
 [[artists]]
 key = "pac"
 name = "2Pac"
+identifiers = { "musicbrainz:artist" = "2bac2bac-0000-4000-8000-000000000002" }
 
 [[artists]]
 key = "zebras"
@@ -51,6 +57,7 @@ sort_name = "Zebras, The"
 [[artists]]
 key = "zed"
 name = "Zed"
+identifiers = { "example:artist" = "zed-1" }
 
 [[artists]]
 key = "hal"

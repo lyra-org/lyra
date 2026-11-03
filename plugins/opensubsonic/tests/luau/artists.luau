@@ -94,3 +94,37 @@ assert(call.error_code("getArtist", key, {}) == 10, "getArtist needs an id")
 assert(call.error_code("getArtist", key, { id = ids.hal }) == 70, "a hidden artist isn't found")
 assert(call.error_code("getArtist", key, { id = ids.solo }) == 70, "an album isn't an artist")
 assert(call.error_code("getArtist", key, { id = "not-an-id" }) == 70, "an unknown id isn't found")
+
+-- `getArtistInfo2` takes an artist, album or song id, and answers the artist's description as its
+-- biography and its MusicBrainz id. Amy has neither, and Zed only an id of another scheme, so their
+-- info is empty.
+local function info_of(id: string): any
+	return call.ok("getArtistInfo2", key, { id = id }).artistInfo2
+end
+local bob_id = "0b0b0b0b-0000-4000-8000-000000000001"
+for _, id in { ids.bob, ids.bobs, ids.b1 } do
+	local info = info_of(id)
+	assert(info.biography == "Bob's story." and info.musicBrainzId == bob_id, `info of {id}`)
+end
+local emile = info_of(ids.e1)
+assert(emile.biography == "Émile's story." and emile.musicBrainzId == nil, "Émile has only a biography")
+local pac = info_of(ids.pacs)
+assert(pac.biography == nil and pac.musicBrainzId == "2bac2bac-0000-4000-8000-000000000002", "2Pac has only an id")
+local bob_xml = call.raw("getArtistInfo2", { apiKey = key, id = ids.bob }).body
+assert(string.find(bob_xml, "<biography>Bob", 1, true) and not string.find(bob_xml, "biography=", 1, true), bob_xml)
+assert(string.find(bob_xml, `<musicBrainzId>{bob_id}</musicBrainzId>`, 1, true), bob_xml)
+
+for _, id in { ids.amy, ids.solo, ids.s1, ids.zed } do
+	local info = call.ok("getArtistInfo2", key, { id = id, count = "5", includeNotPresent = "true" }).artistInfo2
+	assert(type(info) == "table" and next(info) == nil, `info of {id}`)
+end
+local info_xml = call.raw("getArtistInfo2", { apiKey = key, id = ids.amy }).body
+assert(string.find(info_xml, "<artistInfo2/>", 1, true), info_xml)
+
+assert(call.error_code("getArtistInfo2", key, {}) == 10, "getArtistInfo2 needs an id")
+assert(call.error_code("getArtistInfo2", key, { id = ids.hal }) == 70, "a hidden artist has no info")
+assert(call.error_code("getArtistInfo2", key, { id = ids.secret }) == 70, "nor does a hidden album")
+assert(call.error_code("getArtistInfo2", key, { id = ids.h1 }) == 70, "nor a hidden song")
+assert(call.error_code("getArtistInfo2", key, { id = "not-an-id" }) == 70, "an unknown id")
+assert(call.error_code("getArtistInfo2", key, { id = ids.amy, count = "many" }) == 0, "a bad count")
+assert(call.error_code("getArtistInfo2", key, { id = ids.amy, includeNotPresent = "maybe" }) == 0, "a bad flag")
