@@ -10,6 +10,18 @@ modules predate some of them.
   them after deletions.
 - An id is named for what it identifies, such as `track_id` and `user_id`.
 
+## Ids in Provider Contexts
+
+- Every handler context carries an entity's ids as `external_ids`, keyed by scheme
+  (`musicbrainz:release`, `isrc`): every provider's non-empty values, a user-set value in place of
+  a provider's. A provider reads its own ids under the schemes it registered, and a scheme belongs
+  to the one provider that registers it, so no other value stands in for its own.
+- Refresh contexts also carry `unmatched`, the schemes whose provider searched and found no match,
+  and `user_set`, the schemes whose value the user set. Both are sorted arrays of schemes. Nested
+  entities carry the same fields as the entity refreshed.
+- A `require` path names an id as `external_ids.<scheme>`, such as
+  `external_ids.musicbrainz:release`.
+
 ## Reading Many Items
 
 - A read takes a list of ids and returns a map keyed by id, as `tracks.get`,

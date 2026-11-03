@@ -39,9 +39,9 @@ export type ReleaseContext = {
 	library_id: string?,
 	media_formats: { string }?,
 	barcode: string?,
-	ids: ReleaseIds?,
-	external_ids: metadata.ExternalIdsByProvider?,
-	manual_ids: metadata.ExternalIdsByProvider?,
+	external_ids: metadata.ExternalIdsByScheme?,
+	unmatched: { string }?,
+	user_set: { string }?,
 	[string]: JsonValue,
 }
 
@@ -79,6 +79,17 @@ local artist_name_from_tracks = track_helpers.artist_name_from_tracks
 local is_compilation = track_helpers.is_compilation
 
 local module = {}
+
+module.RELEASE_SCHEME = "musicbrainz:release"
+module.RELEASE_GROUP_SCHEME = "musicbrainz:release-group"
+
+-- The release's MusicBrainz ids among `external_ids`.
+function module.release_ids(external_ids: metadata.ExternalIdsByScheme?): ReleaseIds
+	return {
+		release_id = if external_ids then external_ids[module.RELEASE_SCHEME] else nil,
+		release_group_id = if external_ids then external_ids[module.RELEASE_GROUP_SCHEME] else nil,
+	}
+end
 
 local function normalize_preferred_language(language_code: string?): string?
 	local normalized = string.lower(trim_text(language_code or ""))

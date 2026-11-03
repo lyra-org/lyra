@@ -28,7 +28,7 @@ local function refresh_stored(release_id: string, titles: { string }, editions: 
 	refresh.refresh(refresh.monitoring({
 		titles = titles,
 		lookup_hints = HINTS,
-		external_ids = { musicbrainz = { release_id = release_id, release_group_id = refresh.GROUP } },
+		external_ids = { ["musicbrainz:release"] = release_id, ["musicbrainz:release-group"] = refresh.GROUP },
 	}))
 	assert(#refresh.events_matching("GET ") == 1, "the group's browse lists the stored release")
 	local ids = refresh.saved_ids.release
@@ -61,7 +61,7 @@ refresh.routes = {
 refresh.refresh(refresh.monitoring({
 	titles = refresh.JAPANESE_TITLES,
 	lookup_hints = HINTS,
-	external_ids = { musicbrainz = { release_id = refresh.OFFICIAL, release_group_id = refresh.GROUP } },
+	external_ids = { ["musicbrainz:release"] = refresh.OFFICIAL, ["musicbrainz:release-group"] = refresh.GROUP },
 }))
 assert(refresh.first_event(`/ws/2/release/{refresh.OFFICIAL}?`), "the stored edition is fetched")
 assert(refresh.saved_ids.release.release_id == refresh.OFFICIAL, "the stored edition left out of the browse stays")
@@ -75,7 +75,7 @@ refresh.routes = {
 refresh.refresh(refresh.monitoring({
 	titles = refresh.JAPANESE_TITLES,
 	lookup_hints = HINTS,
-	external_ids = { musicbrainz = { release_id = refresh.OFFICIAL } },
+	external_ids = { ["musicbrainz:release"] = refresh.OFFICIAL },
 }))
 assert(#refresh.events_matching(GROUP_BROWSE) == 1, "the group is browsed once")
 assert(refresh.saved_ids.release.release_id == refresh.OFFICIAL, "the edition stored without its group stays")
@@ -88,14 +88,14 @@ refresh.routes = {
 refresh.refresh(refresh.monitoring({
 	titles = refresh.JAPANESE_TITLES,
 	lookup_hints = HINTS,
-	external_ids = { musicbrainz = { release_id = refresh.OFFICIAL, release_group_id = refresh.GROUP } },
+	external_ids = { ["musicbrainz:release"] = refresh.OFFICIAL, ["musicbrainz:release-group"] = refresh.GROUP },
 }))
 assert(#refresh.events_matching(`release-group={refresh.GROUP}&inc=`) == 1, "the empty group is browsed once")
 assert(refresh.saved_ids.release.release_id == refresh.OFFICIAL, "the stored edition stays")
 
 -- A release marked unmatched is skipped by background sync and searched for
 -- again on an explicit refresh.
-local unmatched = refresh.monitoring({ external_ids = { musicbrainz = { release_id = "" } } })
+local unmatched = refresh.monitoring({ unmatched = { "musicbrainz:release" } })
 assert(not refresh.syncs(unmatched), "background sync skips the unmatched release")
 refresh.routes = {
 	{

@@ -31,12 +31,12 @@ local MUSICBRAINZ_ARTIST = "musicbrainz:artist"
 -- The artist an artist, album or song id names: the artist itself, or the first artist credited
 -- on the album or song. Fails with 70 for anything else, or an album or song without an artist.
 local function artist_projection(id: string): any
-	local projection = entities.query_many({ ids = { id }, include = { "identifiers" } })[id] :: any
+	local projection = entities.query_many({ ids = { id }, include = { "external_ids" } })[id] :: any
 	if projection and projection.entity_type ~= "artist" then
 		local refs = credits.artists(credits.projections({ id }, { "credits" })[id])
 		local artist_id = if refs then refs[1].id else nil
 		projection = if artist_id
-			then entities.query_many({ ids = { artist_id }, include = { "identifiers" } })[artist_id]
+			then entities.query_many({ ids = { artist_id }, include = { "external_ids" } })[artist_id]
 			else nil
 	end
 	if not projection then
@@ -94,10 +94,10 @@ module.methods = {
 		request.bool(req.params, "includeNotPresent")
 		local projection = artist_projection(id)
 		local description: string? = projection.entity.description
-		local identifiers = projection.includes.identifiers or {}
+		local external_ids = projection.includes.external_ids or {}
 		local info: JsonObject = {
 			biography = if description and description ~= "" then description else nil,
-			musicBrainzId = identifiers[MUSICBRAINZ_ARTIST],
+			musicBrainzId = external_ids[MUSICBRAINZ_ARTIST],
 		}
 		return response.ok(req.params, { artistInfo2 = if next(info) ~= nil then info else response.EMPTY_OBJECT })
 	end,

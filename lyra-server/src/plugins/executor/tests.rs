@@ -726,7 +726,7 @@ fn plugin_executor_registers_similar_releases_handler() -> Result<()> {
             provider:similar_releases({
                 timeout_ms = 4200,
                 require = {
-                    all_of = { "external_ids.musicbrainz.release_group_id" },
+                    all_of = { "external_ids.musicbrainz:release-group" },
                     any_of = { "genres", "artist_names" },
                 },
             }, function(_ctx)
@@ -748,7 +748,7 @@ fn plugin_executor_registers_similar_releases_handler() -> Result<()> {
     assert_eq!(spec.timeout, std::time::Duration::from_millis(4200));
     assert_eq!(
         spec.require.all_of,
-        ["external_ids.musicbrainz.release_group_id"]
+        ["external_ids.musicbrainz:release-group"]
     );
     assert_eq!(spec.require.any_of, ["genres", "artist_names"]);
     assert!(spec.handler.handler_id > 0);

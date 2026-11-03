@@ -27,8 +27,11 @@ use crate::{
     services::STATE,
     services::plugin_dispatch::MetadataRefreshRequest,
     services::providers::{
+        ExternalIdsByScheme,
+        IdSchemes,
         ProviderCallStage,
         active_providers,
+        id_schemes,
         provider_registry,
         requirements_match,
         with_provider_call,
@@ -337,17 +340,22 @@ pub(crate) async fn search_provider(
     .await?;
 
     let values = flatten_search_values(result.values);
+    let schemes = if include_cover_urls {
+        Some(id_schemes().await)
+    } else {
+        None
+    };
     let mut normalized = Vec::with_capacity(values.len());
     for value in values {
-        let resolved_cover_url = if include_cover_urls {
-            let ids = as_ids(&value).unwrap_or_default();
-            if ids.is_empty() {
+        let resolved_cover_url = if let Some(schemes) = &schemes {
+            let external_ids = search_hit_external_ids(schemes, &provider_id, &value);
+            if external_ids.is_empty() {
                 None
             } else {
                 match resolve_provider_cover_url(
                     &provider_id,
                     entity_type,
-                    &serde_json::json!({ "ids": ids }),
+                    &serde_json::json!({ "external_ids": external_ids }),
                     bypass_cache,
                 )
                 .await
@@ -374,6 +382,28 @@ pub(crate) async fn search_provider(
         ));
     }
     Ok(normalized)
+}
+
+/// A search hit's ids as its provider's stored ids would resolve: keyed by the schemes it
+/// registered for their id types, by the same rules as an entity's.
+fn search_hit_external_ids(
+    schemes: &IdSchemes,
+    provider_id: &str,
+    hit: &Value,
+) -> ExternalIdsByScheme {
+    let rows = as_ids(hit)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(id_type, id_value)| lyra_db::external_ids::ExternalId {
+            db_id: None,
+            provider_id: provider_id.to_string(),
+            id_type,
+            id_value,
+            source: lyra_db::IdSource::Resolved,
+            resolved_value: None,
+        })
+        .collect::<Vec<_>>();
+    schemes.resolve(&rows)
 }
 
 fn flatten_search_values(values: Vec<Value>) -> Vec<Value> {
@@ -419,24 +449,13 @@ fn cover_handler_context(context: &Value, bypass_cache: bool) -> Value {
     context
 }
 
-pub(crate) fn provider_external_ids_for_entity(
+/// Every provider's ids on the entity, keyed by scheme, as cover handlers see them.
+pub(crate) fn cover_external_ids(
     db: &DbAny,
     entity_id: DbId,
-    provider_id: &str,
-) -> Result<HashMap<String, String>> {
-    let mut ids = HashMap::new();
-    for external_id in lyra_db::external_ids::get_for_entity(db, entity_id)? {
-        if external_id.provider_id != provider_id {
-            continue;
-        }
-        let value = external_id.id_value.trim();
-        if value.is_empty() {
-            continue;
-        }
-        ids.insert(external_id.id_type, value.to_string());
-    }
-
-    Ok(ids)
+    schemes: &IdSchemes,
+) -> Result<ExternalIdsByScheme> {
+    Ok(schemes.resolve(&lyra_db::external_ids::get_for_entity(db, entity_id)?))
 }
 
 pub(crate) fn library_for_release(db: &DbAny, release_id: DbId) -> Result<Option<Library>> {
@@ -607,7 +626,7 @@ pub(crate) fn release_context_value(
     release: &Release,
     tracks: &[Track],
     artists: &[Artist],
-    external_ids: &HashMap<String, String>,
+    external_ids: &ExternalIdsByScheme,
     library: Option<&Library>,
 ) -> Result<Value> {
     let mut context = serde_json::to_value(release)?;
@@ -629,19 +648,25 @@ pub(crate) fn release_context_value(
                 .collect::<Vec<_>>(),
         )?,
     );
-    object.insert("ids".to_string(), serde_json::to_value(external_ids)?);
+    object.insert(
+        "external_ids".to_string(),
+        serde_json::to_value(external_ids)?,
+    );
     Ok(context)
 }
 
 pub(crate) fn artist_context_value(
     artist: &Artist,
-    external_ids: &HashMap<String, String>,
+    external_ids: &ExternalIdsByScheme,
 ) -> Result<Value> {
     let mut context = serde_json::to_value(artist)?;
     let Value::Object(object) = &mut context else {
         return Err(anyhow!("artist context must be an object"));
     };
-    object.insert("ids".to_string(), serde_json::to_value(external_ids)?);
+    object.insert(
+        "external_ids".to_string(),
+        serde_json::to_value(external_ids)?,
+    );
     Ok(context)
 }
 
@@ -822,6 +847,7 @@ pub(crate) async fn search_release_cover_candidates(
     provider_filter: Option<&str>,
     bypass_cache: bool,
 ) -> Result<Vec<super::ProviderCoverSearchResult>> {
+    let schemes = id_schemes().await;
     let (release_id, provider_contexts) = {
         let db = db.read().await;
         let not_found = || anyhow!("release not found: {release_public_id}");
@@ -831,21 +857,15 @@ pub(crate) async fn search_release_cover_candidates(
         let tracks = lyra_db::tracks::get_direct(&db, release_id)?;
         let artists = lyra_db::artists::get(&db, release_id)?;
         let library = library_for_release(&db, release_id)?;
+        let external_ids = cover_external_ids(&db, release_id, &schemes)?;
+        let context =
+            release_context_value(&release, &tracks, &artists, &external_ids, library.as_ref())?;
 
-        let providers = active_providers(&db)?.only(provider_filter);
-        let mut provider_contexts = Vec::new();
-        for provider in providers {
-            let provider_id = provider.provider_id;
-            let provider_ids = provider_external_ids_for_entity(&db, release_id, &provider_id)?;
-            let context = release_context_value(
-                &release,
-                &tracks,
-                &artists,
-                &provider_ids,
-                library.as_ref(),
-            )?;
-            provider_contexts.push((provider_id, context));
-        }
+        let provider_contexts = active_providers(&db)?
+            .only(provider_filter)
+            .into_iter()
+            .map(|provider| (provider.provider_id, context.clone()))
+            .collect();
 
         (release_id, provider_contexts)
     };
@@ -865,21 +885,21 @@ pub(crate) async fn search_artist_cover_candidates(
     provider_filter: Option<&str>,
     bypass_cache: bool,
 ) -> Result<Vec<super::ProviderCoverSearchResult>> {
+    let schemes = id_schemes().await;
     let (artist_id, provider_contexts) = {
         let db = db.read().await;
         let not_found = || anyhow!("artist not found: {artist_public_id}");
         let artist_id =
             lyra_db::lookup::find_node_id_by_id(&*db, artist_public_id)?.ok_or_else(not_found)?;
         let artist = lyra_db::artists::get_by_id(&db, artist_id)?.ok_or_else(not_found)?;
+        let external_ids = cover_external_ids(&db, artist_id, &schemes)?;
+        let context = artist_context_value(&artist, &external_ids)?;
 
-        let providers = active_providers(&db)?.only(provider_filter);
-        let mut provider_contexts = Vec::new();
-        for provider in providers {
-            let provider_id = provider.provider_id;
-            let provider_ids = provider_external_ids_for_entity(&db, artist_id, &provider_id)?;
-            let context = artist_context_value(&artist, &provider_ids)?;
-            provider_contexts.push((provider_id, context));
-        }
+        let provider_contexts = active_providers(&db)?
+            .only(provider_filter)
+            .into_iter()
+            .map(|provider| (provider.provider_id, context.clone()))
+            .collect();
 
         (artist_id, provider_contexts)
     };
@@ -896,60 +916,52 @@ pub(crate) async fn search_artist_cover_candidates(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lyra_db::IdSource;
+    use lyra_db::fixtures::{
+        insert_artist,
+        insert_release,
+    };
+    use lyra_db::test_db::new_test_db;
     use nanoid::nanoid;
     use serde_json::json;
     use std::path::PathBuf;
 
+    fn upsert_id(
+        db: &mut DbAny,
+        entity_id: DbId,
+        provider_id: &str,
+        id_type: &str,
+        value: &str,
+        source: IdSource,
+    ) -> anyhow::Result<()> {
+        lyra_db::external_ids::upsert(db, entity_id, provider_id, id_type, value, source)?;
+        Ok(())
+    }
+
     #[test]
-    fn release_context_value_includes_library_and_provider_ids() -> anyhow::Result<()> {
-        let release = Release {
-            db_id: Some(DbId(10).into()),
-            id: nanoid!(),
-            release_title: "Release".to_string(),
-            sort_title: None,
-            release_type: None,
-            release_date: Some("2024-02-29".to_string()),
-            media_formats: None,
-            barcode: None,
-            description: None,
-            locked: None,
-            created_at_ms: None,
-            file_created_at_ms: None,
-        };
-        let track = Track {
-            db_id: Some(DbId(20).into()),
-            id: nanoid!(),
-            track_title: "Track".to_string(),
-            sort_title: None,
-            year: None,
-            disc: Some(1),
-            disc_total: Some(1),
-            track: Some(1),
-            track_total: Some(1),
-            duration_ms: Some(123_000),
-            track_gain_db: None,
-            album_gain_db: None,
-            locked: None,
-            created_at_ms: None,
-            file_created_at_ms: None,
-        };
-        let artist = Artist {
-            db_id: Some(DbId(30).into()),
-            id: nanoid!(),
-            artist_name: "Artist".to_string(),
-            scan_name: "artist".to_string(),
-            scan_aliases: Vec::new(),
-            sort_name: None,
-            artist_type: None,
-            description: None,
-            credited: false,
-            locked: None,
-            created_at_ms: None,
-        };
-        let external_ids = HashMap::from([
-            ("release_id".to_string(), "release-123".to_string()),
-            ("release_group_id".to_string(), "group-123".to_string()),
-        ]);
+    fn release_context_value_includes_library_and_ids() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release_id = insert_release(&mut db, "Release")?;
+        upsert_id(
+            &mut db,
+            release_id,
+            "musicbrainz",
+            "release_id",
+            "release-123",
+            IdSource::Resolved,
+        )?;
+        upsert_id(
+            &mut db,
+            release_id,
+            "theaudiodb",
+            "album_id",
+            "album-123",
+            IdSource::Manual,
+        )?;
+        let mut schemes = IdSchemes::default();
+        schemes.insert("musicbrainz", "release_id", "musicbrainz:release");
+        schemes.insert("theaudiodb", "album_id", "theaudiodb:album");
+        let release = lyra_db::releases::get_by_id(&db, release_id)?.expect("release");
         let library = Library {
             db_id: Some(DbId(99)),
             id: nanoid!(),
@@ -960,50 +972,86 @@ mod tests {
             language: Some("jpn".to_string()),
             country: Some("JP".to_string()),
         };
+        let external_ids = cover_external_ids(&db, release_id, &schemes)?;
 
-        let context =
-            release_context_value(&release, &[track], &[artist], &external_ids, Some(&library))?;
+        let context = release_context_value(&release, &[], &[], &external_ids, Some(&library))?;
 
         assert_eq!(context["library"]["id"], json!(library.id));
         assert_eq!(context["library"]["language"], json!("jpn"));
-        assert_eq!(context["ids"]["release_id"], json!("release-123"));
-        assert_eq!(context["ids"]["release_group_id"], json!("group-123"));
+        assert_eq!(
+            context["external_ids"],
+            json!({ "musicbrainz:release": "release-123", "theaudiodb:album": "album-123" })
+        );
+        for removed in ["ids", "identifiers", "manual_ids", "user_set"] {
+            assert!(context.get(removed).is_none(), "{removed}");
+        }
 
         Ok(())
     }
 
     #[test]
-    fn artist_context_value_includes_provider_ids() -> anyhow::Result<()> {
-        let artist = Artist {
-            db_id: Some(DbId(30).into()),
-            id: nanoid!(),
-            artist_name: "Artist".to_string(),
-            scan_name: "artist".to_string(),
-            scan_aliases: Vec::new(),
-            sort_name: Some("Artist, The".to_string()),
-            artist_type: None,
-            description: Some("desc".to_string()),
-            credited: false,
-            locked: None,
-            created_at_ms: None,
-        };
-        let external_ids = HashMap::from([("artist_id".to_string(), "artist-123".to_string())]);
+    fn artist_context_value_keys_every_providers_ids_by_scheme() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let artist_id = insert_artist(&mut db, "Artist")?;
+        upsert_id(
+            &mut db,
+            artist_id,
+            "musicbrainz",
+            "artist_id",
+            "mbid-1",
+            IdSource::Resolved,
+        )?;
+        upsert_id(
+            &mut db,
+            artist_id,
+            "theaudiodb",
+            "artist_id",
+            "123",
+            IdSource::Manual,
+        )?;
+        let mut schemes = IdSchemes::default();
+        schemes.insert("musicbrainz", "artist_id", "musicbrainz:artist");
+        schemes.insert("theaudiodb", "artist_id", "theaudiodb:artist");
+        let artist = lyra_db::artists::get_by_id(&db, artist_id)?.expect("artist");
+        let external_ids = cover_external_ids(&db, artist_id, &schemes)?;
 
         let context = artist_context_value(&artist, &external_ids)?;
 
         assert_eq!(context["artist_name"], json!("Artist"));
-        assert_eq!(context["sort_name"], json!("Artist, The"));
-        assert_eq!(context["ids"]["artist_id"], json!("artist-123"));
+        assert_eq!(
+            context["external_ids"],
+            json!({ "musicbrainz:artist": "mbid-1", "theaudiodb:artist": "123" })
+        );
 
         Ok(())
+    }
+
+    #[test]
+    fn a_search_hits_ids_resolve_as_stored_ids_do() {
+        let mut schemes = IdSchemes::default();
+        schemes.insert("theaudiodb", "artist_id", "theaudiodb:artist");
+        schemes.insert("theaudiodb", "z_artist_id", "theaudiodb:artist");
+        schemes.insert("theaudiodb", "album_id", "theaudiodb:album");
+        let hit = json!({ "ids": {
+            "z_artist_id": "999",
+            "artist_id": "123",
+            "album_id": " ",
+            "unregistered_id": "x",
+        } });
+
+        assert_eq!(
+            search_hit_external_ids(&schemes, "theaudiodb", &hit),
+            ExternalIdsByScheme::from([("theaudiodb:artist".to_string(), "123".to_string())])
+        );
+        assert!(search_hit_external_ids(&schemes, "musicbrainz", &hit).is_empty());
     }
 
     #[test]
     fn provider_cover_context_hash_is_stable_across_object_key_order() {
         let a = json!({
-            "ids": {
-                "release_id": "release-123",
-                "release_group_id": "group-123"
+            "external_ids": {
+                "musicbrainz:release": "release-123",
+                "musicbrainz:release-group": "group-123"
             },
             "library": {
                 "country": "JP",
@@ -1021,9 +1069,9 @@ mod tests {
                 "language": "jpn",
                 "country": "JP"
             },
-            "ids": {
-                "release_group_id": "group-123",
-                "release_id": "release-123"
+            "external_ids": {
+                "musicbrainz:release-group": "group-123",
+                "musicbrainz:release": "release-123"
             }
         });
 
@@ -1036,8 +1084,8 @@ mod tests {
     #[test]
     fn provider_cover_cache_key_separates_providers() {
         let context = json!({
-            "ids": {
-                "release_id": "release-123"
+            "external_ids": {
+                "musicbrainz:release": "release-123"
             }
         });
 
@@ -1051,7 +1099,7 @@ mod tests {
     #[test]
     fn provider_cover_cache_key_separates_entity_types() {
         let context = json!({
-            "ids": {
+            "external_ids": {
                 "shared_id": "123"
             }
         });
@@ -1066,8 +1114,8 @@ mod tests {
     #[test]
     fn cover_handler_context_adds_bypass_cache_option_only_when_requested() {
         let context = json!({
-            "ids": {
-                "release_id": "release-123"
+            "external_ids": {
+                "musicbrainz:release": "release-123"
             }
         });
 
@@ -1075,7 +1123,10 @@ mod tests {
         assert_eq!(unchanged, context);
 
         let refreshed = cover_handler_context(&context, true);
-        assert_eq!(refreshed["ids"]["release_id"], json!("release-123"));
+        assert_eq!(
+            refreshed["external_ids"]["musicbrainz:release"],
+            json!("release-123")
+        );
         assert_eq!(refreshed["cover_options"]["bypass_cache"], json!(true));
     }
 

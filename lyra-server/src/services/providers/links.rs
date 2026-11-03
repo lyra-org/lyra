@@ -29,6 +29,10 @@ use percent_encoding::{
 use serde::Serialize;
 
 use super::registry::ProviderIdUrlGenerator;
+use super::schemes::{
+    ExternalIdsByScheme,
+    IdSchemes,
+};
 use crate::services::EntityType;
 use crate::services::plugin_dispatch::PluginCallbackHandle;
 use lyra_db::{
@@ -97,9 +101,13 @@ pub(crate) struct IdLinkGenerator {
     pub(crate) generator: ProviderIdUrlGenerator,
 }
 
-/// Link generators keyed by provider id, then entity and id type.
+/// Link generators keyed by provider id, then entity and id type, with the schemes registered
+/// beside them, which key a generator's `external_ids`.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct IdLinkGenerators(HashMap<String, HashMap<(EntityType, String), IdLinkGenerator>>);
+pub(crate) struct IdLinkGenerators {
+    by_provider: HashMap<String, HashMap<(EntityType, String), IdLinkGenerator>>,
+    schemes: Arc<IdSchemes>,
+}
 
 impl IdLinkGenerators {
     pub(crate) fn insert(
@@ -109,7 +117,7 @@ impl IdLinkGenerators {
         id_type: &str,
         generator: IdLinkGenerator,
     ) {
-        self.0
+        self.by_provider
             .entry(provider_id.to_string())
             .or_default()
             .insert((entity, id_type.to_string()), generator);
@@ -121,7 +129,13 @@ impl IdLinkGenerators {
         entity: EntityType,
         id_type: &str,
     ) -> Option<&IdLinkGenerator> {
-        self.0.get(provider_id)?.get(&(entity, id_type.to_string()))
+        self.by_provider
+            .get(provider_id)?
+            .get(&(entity, id_type.to_string()))
+    }
+
+    pub(crate) fn set_schemes(&mut self, schemes: Arc<IdSchemes>) {
+        self.schemes = schemes;
     }
 
     /// Whether any row needs a plugin function, and so an `IdLinkContext`.
@@ -170,7 +184,7 @@ pub(crate) struct IdLinkCall {
     pub(crate) id_type: String,
     pub(crate) id: String,
     pub(crate) library: IdLinkLocale,
-    pub(crate) external_ids: Arc<BTreeMap<String, String>>,
+    pub(crate) external_ids: Arc<ExternalIdsByScheme>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -218,7 +232,7 @@ struct IdLinkCacheKey {
     generator: GeneratorId,
     id: String,
     library: IdLinkLocale,
-    external_ids: Arc<BTreeMap<String, String>>,
+    external_ids: Arc<ExternalIdsByScheme>,
 }
 
 impl IdLinkCacheKey {
@@ -341,7 +355,7 @@ where
                 .filter(|row| !row.id_value.trim().is_empty())
                 .collect::<Vec<_>>();
             rows.sort_by(|a, b| (&a.provider_id, &a.id_type).cmp(&(&b.provider_id, &b.id_type)));
-            let mut provider_ids: HashMap<&str, Arc<BTreeMap<String, String>>> = HashMap::new();
+            let mut external_ids: Option<Arc<ExternalIdsByScheme>> = None;
             for row in rows {
                 let Some(generator) = generators.get(&row.provider_id, target.entity, &row.id_type)
                 else {
@@ -372,9 +386,8 @@ where
                     id_type: row.id_type.clone(),
                     id,
                     library: target.library.clone(),
-                    external_ids: provider_ids
-                        .entry(&row.provider_id)
-                        .or_insert_with(|| provider_external_ids(&target.rows, &row.provider_id))
+                    external_ids: external_ids
+                        .get_or_insert_with(|| Arc::new(generators.schemes.resolve(&target.rows)))
                         .clone(),
                 };
                 let key = IdLinkCacheKey::of(&call);
@@ -479,15 +492,6 @@ where
     links
 }
 
-fn provider_external_ids(rows: &[ExternalId], provider_id: &str) -> Arc<BTreeMap<String, String>> {
-    Arc::new(
-        rows.iter()
-            .filter(|row| row.provider_id == provider_id && !row.id_value.trim().is_empty())
-            .map(|row| (row.id_type.clone(), row.id_value.trim().to_string()))
-            .collect(),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{
@@ -541,7 +545,7 @@ mod tests {
     }
 
     /// Dispatch stub answering `https://example.test/<id_type>/<id>`, plus
-    /// `?sibling=<sibling_id>` or `?lang=<language>` when present, and
+    /// `?sibling=<alpha:sibling>` or `?lang=<language>` when present, and
     /// counting calls.
     fn counting_dispatch(
         calls: Arc<AtomicUsize>,
@@ -554,7 +558,7 @@ mod tests {
                 .map(|call| {
                     let suffix = call
                         .external_ids
-                        .get("sibling_id")
+                        .get("alpha:sibling")
                         .map(|sibling| format!("?sibling={sibling}"))
                         .or_else(|| {
                             call.library
@@ -687,6 +691,11 @@ mod tests {
         generators.insert("alpha", EntityType::Release, "thing_id", function(1));
         generators.insert("alpha", EntityType::Track, "thing_id", function(2));
         generators.insert("beta", EntityType::Release, "thing_id", function(3));
+        let mut schemes = IdSchemes::default();
+        schemes.insert("alpha", "thing_id", "alpha:thing");
+        schemes.insert("alpha", "sibling_id", "alpha:sibling");
+        schemes.insert("beta", "thing_id", "beta:thing");
+        generators.set_schemes(Arc::new(schemes));
         let targets = || {
             vec![
                 target(
@@ -744,14 +753,14 @@ mod tests {
         .await;
         assert_eq!(
             calls.load(Ordering::SeqCst),
-            3,
-            "a changed sibling id misses the cache"
+            4,
+            "a changed id misses the cache of every generator on the entity"
         );
         assert_eq!(
             urls(&refreshed, 1),
             vec![
                 "https://example.test/thing_id/r1?sibling=s1",
-                "https://example.test/thing_id/b1"
+                "https://example.test/thing_id/b1?sibling=s1"
             ]
         );
         assert_eq!(urls(&refreshed, 3), urls(&links, 3));
@@ -767,7 +776,7 @@ mod tests {
         .await;
         assert_eq!(
             calls.load(Ordering::SeqCst),
-            4,
+            5,
             "a re-registered generator never reads the old one's results"
         );
     }

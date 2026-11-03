@@ -9,7 +9,6 @@ mod projection;
 pub(crate) mod relations;
 
 use std::collections::{
-    BTreeMap,
     HashMap,
     HashSet,
 };
@@ -22,8 +21,8 @@ use lyra_metadata::LookupHints;
 use serde::Serialize;
 
 use crate::services::providers::{
+    ExternalIdsByScheme,
     IdLink,
-    IdentifiersByScheme,
 };
 use lyra_db::{
     Artist,
@@ -50,12 +49,9 @@ pub(crate) use projection::{
     project_visible_entities,
 };
 
-pub(crate) type ExternalIdsByProvider = BTreeMap<String, BTreeMap<String, String>>;
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub(crate) enum EntityInclude {
     ExternalIds,
-    Identifiers,
     Links,
     Releases,
     Artists,
@@ -68,7 +64,6 @@ impl EntityInclude {
     pub(crate) fn parse(raw: &str) -> Option<Self> {
         match raw.trim().to_ascii_lowercase().as_str() {
             "external_ids" => Some(Self::ExternalIds),
-            "identifiers" => Some(Self::Identifiers),
             "links" => Some(Self::Links),
             "releases" => Some(Self::Releases),
             "artists" => Some(Self::Artists),
@@ -82,7 +77,6 @@ impl EntityInclude {
     pub(crate) const fn as_key(self) -> &'static str {
         match self {
             Self::ExternalIds => "external_ids",
-            Self::Identifiers => "identifiers",
             Self::Links => "links",
             Self::Releases => "releases",
             Self::Artists => "artists",
@@ -94,7 +88,6 @@ impl EntityInclude {
 
     pub(crate) const ALL: &[Self] = &[
         Self::ExternalIds,
-        Self::Identifiers,
         Self::Links,
         Self::Releases,
         Self::Artists,
@@ -223,8 +216,7 @@ pub(crate) struct ReleaseProjectionTrack {
     pub(crate) locked: Option<bool>,
     pub(crate) created_at_ms: Option<u64>,
     pub(crate) file_created_at_ms: Option<u64>,
-    pub(crate) external_ids: ExternalIdsByProvider,
-    pub(crate) identifiers: IdentifiersByScheme,
+    pub(crate) external_ids: Option<ExternalIdsByScheme>,
     pub(crate) links: Option<Vec<IdLink>>,
     pub(crate) artists: Vec<Artist>,
     pub(crate) lookup_hints: EntityLookupHints,
@@ -233,8 +225,7 @@ pub(crate) struct ReleaseProjectionTrack {
 impl ReleaseProjectionTrack {
     pub(super) fn from_track(
         track: Track,
-        external_ids: ExternalIdsByProvider,
-        identifiers: IdentifiersByScheme,
+        external_ids: Option<ExternalIdsByScheme>,
         artists: Vec<Artist>,
         lookup_hints: EntityLookupHints,
     ) -> Self {
@@ -256,7 +247,6 @@ impl ReleaseProjectionTrack {
             created_at_ms: track.created_at_ms,
             file_created_at_ms: track.file_created_at_ms,
             external_ids,
-            identifiers,
             links: None,
             artists,
             lookup_hints,
@@ -266,8 +256,7 @@ impl ReleaseProjectionTrack {
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub(crate) struct ReleaseProjectionIncludes {
-    pub(crate) external_ids: Option<ExternalIdsByProvider>,
-    pub(crate) identifiers: Option<IdentifiersByScheme>,
+    pub(crate) external_ids: Option<ExternalIdsByScheme>,
     pub(crate) links: Option<Vec<IdLink>>,
     pub(crate) artists: Option<Vec<Artist>>,
     pub(crate) tracks: Option<Vec<ReleaseProjectionTrack>>,
@@ -276,8 +265,7 @@ pub(crate) struct ReleaseProjectionIncludes {
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub(crate) struct TrackProjectionIncludes {
-    pub(crate) external_ids: Option<ExternalIdsByProvider>,
-    pub(crate) identifiers: Option<IdentifiersByScheme>,
+    pub(crate) external_ids: Option<ExternalIdsByScheme>,
     pub(crate) links: Option<Vec<IdLink>>,
     pub(crate) releases: Option<Vec<Release>>,
     pub(crate) artists: Option<Vec<Artist>>,
@@ -287,8 +275,7 @@ pub(crate) struct TrackProjectionIncludes {
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub(crate) struct ArtistProjectionIncludes {
-    pub(crate) external_ids: Option<ExternalIdsByProvider>,
-    pub(crate) identifiers: Option<IdentifiersByScheme>,
+    pub(crate) external_ids: Option<ExternalIdsByScheme>,
     pub(crate) links: Option<Vec<IdLink>>,
     pub(crate) releases: Option<Vec<Release>>,
     pub(crate) tracks: Option<Vec<Track>>,
@@ -896,7 +883,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_contexts_include_identifiers() -> anyhow::Result<()> {
+    fn provider_contexts_key_external_ids_by_scheme() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let release_id = insert_release(&mut db, "Identified Release")?;
         let track_id = insert_track(&mut db, "Identified Track")?;
@@ -909,65 +896,64 @@ mod tests {
 
         let release = build_release_context(&db, release_id, None, &schemes)?;
         assert_eq!(
-            release["identifiers"],
+            release["external_ids"],
             serde_json::json!({ "example:thing": "release-thing" })
         );
         assert_eq!(
-            release["tracks"][0]["identifiers"],
+            release["tracks"][0]["external_ids"],
             serde_json::json!({ "example:thing": "track-thing" })
         );
-        assert_eq!(
-            release["external_ids"]["alpha"]["unlabeled_id"],
-            serde_json::json!("hidden")
+        assert!(
+            release.get("identifiers").is_none(),
+            "an id without a scheme is left out"
         );
 
         let (_, track) = build_entity_provider_context(&db, track_id, None, &schemes)?;
         assert_eq!(
-            track["identifiers"],
+            track["external_ids"],
             serde_json::json!({ "example:thing": "track-thing" })
         );
         let (_, artist) = build_entity_provider_context(&db, artist_id, None, &schemes)?;
         assert_eq!(
-            artist["identifiers"],
+            artist["external_ids"],
             serde_json::json!({ "example:thing": "artist-thing" })
         );
         Ok(())
     }
 
     #[test]
-    fn projections_include_identifiers_on_request() -> anyhow::Result<()> {
+    fn projections_include_external_ids_by_scheme_on_request() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let track_id = insert_track(&mut db, "Projected Track")?;
         add_ids(&mut db, track_id, "track-thing")?;
         let schemes = example_schemes();
         let expected =
-            IdentifiersByScheme::from([("example:thing".to_string(), "track-thing".to_string())]);
+            ExternalIdsByScheme::from([("example:thing".to_string(), "track-thing".to_string())]);
 
         let single = project_entity(
             &db,
             QueryId::Id(track_id),
-            &[EntityInclude::Identifiers],
+            &[EntityInclude::ExternalIds],
             None,
             &mut IdIncludes::new(&schemes, &[]),
         )?;
         let EntityProjectionInfo::Track(single) = single else {
             panic!("expected track projection");
         };
-        assert_eq!(single.includes.identifiers.as_ref(), Some(&expected));
-        assert!(single.includes.external_ids.is_none());
+        assert_eq!(single.includes.external_ids.as_ref(), Some(&expected));
 
         let many = project_entities(
             &db,
             &crate::services::catalog::Viewer::System,
             vec![QueryId::Id(track_id)],
-            &[EntityInclude::Identifiers],
+            &[EntityInclude::ExternalIds],
             None,
             &mut IdIncludes::new(&schemes, &[]),
         )?;
         let EntityProjectionInfo::Track(many) = &many[0] else {
             panic!("expected track projection");
         };
-        assert_eq!(many.includes.identifiers.as_ref(), Some(&expected));
+        assert_eq!(many.includes.external_ids.as_ref(), Some(&expected));
 
         let without = project_entity(
             &db,
@@ -979,7 +965,7 @@ mod tests {
         let EntityProjectionInfo::Track(without) = without else {
             panic!("expected track projection");
         };
-        assert!(without.includes.identifiers.is_none());
+        assert!(without.includes.external_ids.is_none());
         Ok(())
     }
 

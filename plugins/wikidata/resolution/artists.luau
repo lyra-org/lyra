@@ -108,7 +108,7 @@ local function is_valid_mbid(value: string?): boolean
 end
 
 local function musicbrainz_artist_id(ctx: metadata.ArtistRefreshContext): string?
-	local artist_id = ctx.identifiers and ctx.identifiers["musicbrainz:artist"]
+	local artist_id = ctx.external_ids and ctx.external_ids["musicbrainz:artist"]
 	if is_valid_mbid(artist_id) then
 		return string.lower(artist_id :: string)
 	end
@@ -385,8 +385,7 @@ function module.register(provider: metadata.Provider)
 		if ctx.locked then
 			return false
 		end
-		local wikidata_ids = ctx.external_ids and ctx.external_ids.wikidata
-		if wikidata_ids and wikidata_ids.qid and wikidata_ids.qid ~= "" then
+		if ctx.external_ids and ctx.external_ids["wikidata:item"] then
 			return false
 		end
 		if ctx.artist_name and trim(ctx.artist_name) ~= "" then

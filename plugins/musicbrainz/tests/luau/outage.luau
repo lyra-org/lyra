@@ -62,14 +62,14 @@ assert(next(refresh.unmatched) == nil, "nothing is unmatched")
 
 -- A failed fetch of the stored release keeps it, without searching past it.
 refresh.routes = { { pattern = "/ws/2/release/stored?", body = refresh.UNAVAILABLE } }
-refresh.refresh(refresh.monitoring({ external_ids = { musicbrainz = { release_id = "stored" } } }))
+refresh.refresh(refresh.monitoring({ external_ids = { ["musicbrainz:release"] = "stored" } }))
 assert(#refresh.events == 1, `nothing follows the failed fetch, sent {#refresh.events}`)
 assert(next(refresh.unmatched) == nil, "the stored match is kept")
 
 -- So does a failed browse of the stored release's group.
 refresh.routes = { { pattern = `/ws/2/release?release-group={refresh.GROUP}&`, body = refresh.UNAVAILABLE } }
 refresh.refresh(refresh.monitoring({
-	external_ids = { musicbrainz = { release_id = refresh.PSEUDO, release_group_id = refresh.GROUP } },
+	external_ids = { ["musicbrainz:release"] = refresh.PSEUDO, ["musicbrainz:release-group"] = refresh.GROUP },
 }))
 assert(#refresh.events == 1, `nothing follows the failed browse, sent {#refresh.events}`)
 assert(next(refresh.saved_ids) == nil, "nothing is applied")

@@ -1857,7 +1857,7 @@ fn entities_links_include_resolves_templates_and_functions() -> Result<()> {
                 "https://example.test/track/{{id}}")
             provider:id({{ id_type = "localized_id", entity = ET.Release, scheme = "test:localized-id" }}, function(id, ctx)
                 seen_entity = ctx.entity
-                return `https://example.test/{{ctx.library.language}}-{{ctx.library.country}}/{{ctx.id_type}}/{{id}}?thing={{ctx.external_ids.thing_id}}`
+                return `https://example.test/{{ctx.library.language}}-{{ctx.library.country}}/{{ctx.id_type}}/{{id}}?thing={{ctx.external_ids["example:thing"]}}`
             end)
             provider:id({{ id_type = "nil_id", entity = ET.Release, scheme = "test:nil-id" }}, function()
                 return nil

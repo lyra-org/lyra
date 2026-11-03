@@ -151,7 +151,8 @@ end
 export type MonitoringOptions = {
 	titles: { string }?,
 	external_ids: any?,
-	manual_ids: any?,
+	unmatched: any?,
+	user_set: any?,
 	lookup_hints: any?,
 	options: any?,
 	-- Only the first track, as a one-track single.
@@ -180,7 +181,8 @@ function module.monitoring(options: MonitoringOptions?): any
 			},
 		library = { language = "jpn", country = "JP" },
 		external_ids = resolved.external_ids,
-		manual_ids = resolved.manual_ids,
+		unmatched = resolved.unmatched,
+		user_set = resolved.user_set,
 		options = resolved.options,
 	}
 end

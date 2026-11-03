@@ -642,7 +642,7 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 	end
 
 	-- Save layer and cache only when all genres succeeded. If some failed,
-	-- don't write the QID — the sync filter checks external_ids.wikidata.qid, so
+	-- don't write the QID — the sync filter checks `wikidata:item`, so
 	-- writing it would permanently skip the release and prevent retry.
 	if all_genres_ok and #genre_names > 0 then
 		local release_layer = provider:layer(release_id)
@@ -660,9 +660,9 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 	return nil
 end, function(ctx: metadata.ReleaseRefreshContext): boolean
 	-- Skip releases that already have a WikiData QID. Once a QID is stored,
-	-- this release is permanently skipped.
-	-- A wrong QID requires manual correction (no automatic recovery path).
-	return not (ctx.identifiers and ctx.identifiers["wikidata:item"])
+	-- this release is permanently skipped. A wrong QID requires manual
+	-- correction (no automatic recovery path).
+	return not (ctx.external_ids and ctx.external_ids["wikidata:item"])
 end)
 
 artists.register(provider)

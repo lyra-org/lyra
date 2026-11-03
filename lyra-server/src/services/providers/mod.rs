@@ -154,11 +154,9 @@ pub(crate) use requirements::{
     requirements_match,
     requirements_match_with,
 };
-#[cfg(feature = "docgen")]
-pub(crate) use schemes::IDENTIFIERS_DOC;
 pub(crate) use schemes::{
+    ExternalIdsByScheme,
     IdSchemes,
-    IdentifiersByScheme,
     validate_id_scheme,
 };
 pub(crate) use sync::{

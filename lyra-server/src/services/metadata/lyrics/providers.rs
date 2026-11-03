@@ -7,7 +7,6 @@
 //! / known-instrumental without awaiting HTTP — they run sequentially.
 
 use std::{
-    collections::HashMap,
     sync::Arc,
     time::Duration,
 };
@@ -38,7 +37,7 @@ use crate::{
     },
     services::plugin_dispatch::MetadataRefreshRequest,
     services::providers::{
-        IdentifiersByScheme,
+        ExternalIdsByScheme,
         LyricsInFlight,
         LyricsInFlightKey,
         ProviderCallStage,
@@ -67,8 +66,7 @@ struct LyricsTrackContext {
     artist_name: String,
     album_name: Option<String>,
     duration_ms: Option<u64>,
-    external_ids: HashMap<String, HashMap<String, String>>,
-    identifiers: IdentifiersByScheme,
+    external_ids: ExternalIdsByScheme,
     /// Skip Miss/Instrumental fast path; cooldown still applies.
     force_refresh: bool,
 }
@@ -81,7 +79,6 @@ fn track_context_to_json(context: &LyricsTrackContext) -> serde_json::Value {
         "album_name": context.album_name,
         "duration_ms": context.duration_ms,
         "external_ids": context.external_ids,
-        "identifiers": context.identifiers,
         "force_refresh": context.force_refresh,
     })
 }
@@ -483,21 +480,9 @@ fn context_path_present(context: &LyricsTrackContext, path: &str) -> bool {
                 && parts.next().is_none()
         }
         "duration_ms" => context.duration_ms.is_some() && parts.next().is_none(),
-        "external_ids" => match (parts.next(), parts.next()) {
-            (None, _) => !context.external_ids.is_empty(),
-            (Some(provider), None) => context
-                .external_ids
-                .get(provider)
-                .is_some_and(|m| !m.is_empty()),
-            (Some(provider), Some(id_type)) => context
-                .external_ids
-                .get(provider)
-                .and_then(|m| m.get(id_type))
-                .is_some_and(|v| !v.trim().is_empty()),
-        },
-        "identifiers" => match parts.next() {
-            None => !context.identifiers.is_empty(),
-            Some(scheme) => parts.next().is_none() && context.identifiers.contains_key(scheme),
+        "external_ids" => match parts.next() {
+            None => !context.external_ids.is_empty(),
+            Some(scheme) => parts.next().is_none() && context.external_ids.contains_key(scheme),
         },
         _ => false,
     }
@@ -535,14 +520,7 @@ async fn build_track_context(
         .to_string();
     let album_name = release.map(|r| r.release_title);
 
-    let identifiers = schemes.resolve(&external_ids_raw);
-    let mut external_ids: HashMap<String, HashMap<String, String>> = HashMap::new();
-    for ext in external_ids_raw {
-        external_ids
-            .entry(ext.provider_id)
-            .or_default()
-            .insert(ext.id_type, ext.id_value);
-    }
+    let external_ids = schemes.resolve(&external_ids_raw);
 
     // Library language stands in for a per-track language preference.
     let preferred_languages: Vec<String> = libraries
@@ -558,7 +536,6 @@ async fn build_track_context(
         album_name,
         duration_ms: track.duration_ms,
         external_ids,
-        identifiers,
         force_refresh: false,
     };
     let local = LocalTrackContext {
@@ -643,24 +620,27 @@ mod tests {
     use tokio::sync::Semaphore;
 
     #[test]
-    fn require_paths_check_identifiers() {
+    fn require_paths_check_external_ids_by_scheme() {
         let context = LyricsTrackContext {
             track_id: "track-1".to_string(),
             track_name: "Track".to_string(),
             artist_name: "Artist".to_string(),
             album_name: None,
             duration_ms: None,
-            external_ids: HashMap::new(),
-            identifiers: IdentifiersByScheme::from([(
+            external_ids: ExternalIdsByScheme::from([(
                 "example:thing".to_string(),
                 "thing-1".to_string(),
             )]),
             force_refresh: false,
         };
 
-        assert!(context_path_present(&context, "identifiers"));
-        assert!(context_path_present(&context, "identifiers.example:thing"));
-        assert!(!context_path_present(&context, "identifiers.example:other"));
+        assert!(context_path_present(&context, "external_ids"));
+        assert!(context_path_present(&context, "external_ids.example:thing"));
+        assert!(!context_path_present(
+            &context,
+            "external_ids.example:other"
+        ));
+        assert!(!context_path_present(&context, "identifiers.example:thing"));
     }
 
     fn lyrics_payload(text: &str) -> PluginLyricsInput {

@@ -31,6 +31,7 @@ use tokio::{
 
 use crate::services::providers::{
     active_providers,
+    id_schemes,
     provider_registry,
 };
 use lyra_db::{
@@ -55,8 +56,8 @@ use super::{
     providers::{
         EntityType,
         artist_context_value,
+        cover_external_ids,
         library_for_release,
-        provider_external_ids_for_entity,
         release_context_value,
         resolve_provider_artist_cover_url,
         resolve_provider_release_cover_url,
@@ -374,10 +375,12 @@ pub(crate) async fn sync_release_cover_for_tracks(
         return Ok(false);
     };
 
+    let schemes = id_schemes().await;
     let (basis, provider_contexts) = {
         let db_read = db.read().await;
         let sorted_providers = active_providers(&db_read)?;
         let library = library_for_release(&db_read, release_id)?;
+        let external_ids = cover_external_ids(&db_read, release_id, &schemes)?;
         let local_cover = resolve_local_cover_for_release(&db_read, tracks, paths.library_root)?;
         let basis = provider_sync_basis(
             &db_read,
@@ -387,14 +390,12 @@ pub(crate) async fn sync_release_cover_for_tracks(
             options,
         )?;
 
-        let mut provider_contexts = Vec::new();
-        for provider in sorted_providers {
-            let provider_ids =
-                provider_external_ids_for_entity(&db_read, release_id, &provider.provider_id)?;
-            let release_context =
-                release_context_value(release, tracks, artists, &provider_ids, library.as_ref())?;
-            provider_contexts.push((provider.provider_id, release_context));
-        }
+        let release_context =
+            release_context_value(release, tracks, artists, &external_ids, library.as_ref())?;
+        let provider_contexts = sorted_providers
+            .into_iter()
+            .map(|provider| (provider.provider_id, release_context.clone()))
+            .collect::<Vec<_>>();
 
         (basis, provider_contexts)
     };
@@ -475,18 +476,17 @@ pub(crate) async fn sync_artist_cover(
         return Ok(false);
     };
 
+    let schemes = id_schemes().await;
     let (basis, provider_contexts) = {
         let db_read = db.read().await;
         let sorted_providers = active_providers(&db_read)?.only(provider_filter);
         let basis = provider_sync_basis(&db_read, artist_id, &artist.id, None, options)?;
-
-        let mut provider_contexts = Vec::new();
-        for provider in sorted_providers {
-            let provider_ids =
-                provider_external_ids_for_entity(&db_read, artist_id, &provider.provider_id)?;
-            let artist_context = artist_context_value(artist, &provider_ids)?;
-            provider_contexts.push((provider.provider_id, artist_context));
-        }
+        let artist_context =
+            artist_context_value(artist, &cover_external_ids(&db_read, artist_id, &schemes)?)?;
+        let provider_contexts = sorted_providers
+            .into_iter()
+            .map(|provider| (provider.provider_id, artist_context.clone()))
+            .collect::<Vec<_>>();
 
         (basis, provider_contexts)
     };
@@ -654,6 +654,7 @@ pub(crate) async fn sync_release_covers_for_library(
     options: CoverSyncOptions,
     provider_filter: Option<&str>,
 ) -> Result<usize> {
+    let schemes = id_schemes().await;
     let resolve_contexts = {
         let db_read = db.read().await;
         let releases = lyra_db::releases::get(&db_read, library_id)?;
@@ -690,15 +691,13 @@ pub(crate) async fn sync_release_covers_for_library(
             let artists = lyra_db::artists::get(&db_read, release_id)?;
             let library = library_for_release(&db_read, release_id)?;
             let target_dir = configured_cover_dir_for_release(paths.covers_root, release_id);
-
-            let mut provider_contexts = Vec::new();
-            for provider in &sorted_providers {
-                let ext_ids =
-                    provider_external_ids_for_entity(&db_read, release_id, &provider.provider_id)?;
-                let ctx =
-                    release_context_value(release, &tracks, &artists, &ext_ids, library.as_ref())?;
-                provider_contexts.push((provider.provider_id.clone(), ctx));
-            }
+            let external_ids = cover_external_ids(&db_read, release_id, &schemes)?;
+            let ctx =
+                release_context_value(release, &tracks, &artists, &external_ids, library.as_ref())?;
+            let provider_contexts = sorted_providers
+                .iter()
+                .map(|provider| (provider.provider_id.clone(), ctx.clone()))
+                .collect();
 
             contexts.push(CoverResolveContext {
                 basis,

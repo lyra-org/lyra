@@ -5,7 +5,6 @@
 
 use std::{
     collections::{
-        BTreeMap,
         HashMap,
         HashSet,
     },
@@ -337,49 +336,27 @@ fn build_seed_context(
     if !libraries_are_accessible(&library_ids, accessible_library_ids) {
         return Ok(None);
     }
-    let id_rows = lyra_db::external_ids::get_for_entity(db, seed_db_id)?;
-    let identifiers = schemes.resolve(&id_rows);
-    let mut external_ids: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
-    for external_id in id_rows {
-        let provider_id = external_id.provider_id.trim();
-        let id_type = external_id.id_type.trim();
-        let id_value = external_id.id_value.trim();
-        if provider_id.is_empty() || id_type.is_empty() || id_value.is_empty() {
-            continue;
-        }
-        external_ids
-            .entry(provider_id.to_string())
-            .or_default()
-            .insert(id_type.to_string(), id_value.to_string());
-    }
+    let external_ids = schemes.resolve(&lyra_db::external_ids::get_for_entity(db, seed_db_id)?);
     let artist_names = lyra_db::artists::get(db, seed_db_id)?
         .into_iter()
         .map(|artist| artist.artist_name.trim().to_string())
         .filter(|name| !name.is_empty())
         .collect::<Vec<_>>();
     let genres = lyra_db::genres::get_names_for_release(db, seed_db_id)?.unwrap_or_default();
-    let mut provider_contexts = HashMap::with_capacity(handlers.len());
-    for handler in handlers {
-        let ids = external_ids
-            .get(&handler.provider_id)
-            .cloned()
-            .unwrap_or_default();
-        provider_contexts.insert(
-            handler.provider_id.clone(),
-            serde_json::json!({
-                "id": release.id,
-                "release_title": release.release_title,
-                "sort_title": release.sort_title,
-                "release_date": release.release_date,
-                "ids": ids,
-                "external_ids": external_ids,
-                "identifiers": identifiers,
-                "artist_names": artist_names,
-                "genres": genres,
-                "limit": limit,
-            }),
-        );
-    }
+    let context = serde_json::json!({
+        "id": release.id,
+        "release_title": release.release_title,
+        "sort_title": release.sort_title,
+        "release_date": release.release_date,
+        "external_ids": external_ids,
+        "artist_names": artist_names,
+        "genres": genres,
+        "limit": limit,
+    });
+    let provider_contexts = handlers
+        .iter()
+        .map(|handler| (handler.provider_id.clone(), context.clone()))
+        .collect();
 
     Ok(Some(SeedContext {
         public_id: release.id,

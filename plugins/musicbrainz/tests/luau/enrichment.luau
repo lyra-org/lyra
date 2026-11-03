@@ -6,7 +6,7 @@ local by_group = refresh.release(refresh.OFFICIAL, refresh.JAPANESE_TITLES, { co
 local single_track =
 	refresh.release("single-track", refresh.JAPANESE_TITLES, { country = "JP", artist_type = "Group", track_count = 1 })
 local STORED_OFFICIAL = {
-	external_ids = { musicbrainz = { release_id = refresh.OFFICIAL, release_group_id = refresh.GROUP } },
+	external_ids = { ["musicbrainz:release"] = refresh.OFFICIAL, ["musicbrainz:release-group"] = refresh.GROUP },
 }
 
 local function group_of(edition: any): refresh.Route
@@ -78,7 +78,11 @@ refresh.routes = {
 	},
 	{ pattern = "/ws/2/recording/recording-1?", body = { relations = { work_relation } } },
 }
-refresh.refresh(refresh.monitoring({ single = true, manual_ids = { musicbrainz = { release_id = "single-track" } } }))
+refresh.refresh(refresh.monitoring({
+	single = true,
+	external_ids = { ["musicbrainz:release"] = "single-track" },
+	user_set = { "musicbrainz:release" },
+}))
 local track_saved_at = refresh.first_event("save t1")
 local work_asked_at = refresh.first_event("/ws/2/recording/recording-1?")
 assert(track_saved_at and work_asked_at and track_saved_at < work_asked_at, "the track is saved first")
@@ -93,7 +97,10 @@ refresh.routes = {
 	{ pattern = "/ws/2/release-group/", body = refresh.UNAVAILABLE },
 	{ pattern = "/ws/2/artist/", body = refresh.UNAVAILABLE },
 }
-refresh.refresh(refresh.monitoring({ manual_ids = { musicbrainz = { release_id = "single-track" } } }))
+refresh.refresh(refresh.monitoring({
+	external_ids = { ["musicbrainz:release"] = "single-track" },
+	user_set = { "musicbrainz:release" },
+}))
 assert_saved_before("single-track", "/ws/2/release-group/")
 assert(refresh.unmatched.t2 and not refresh.unmatched.t1, "the track without a place is unmatched")
 local unmatched_at = refresh.first_event("unmatch t2")

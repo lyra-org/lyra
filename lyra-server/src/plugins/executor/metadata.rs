@@ -325,8 +325,8 @@ fn id_link_context(
         library.set_field("country", string(country));
     }
     let mut external_ids = OwnedTable::with_capacity(0, call.external_ids.len());
-    for (id_type, value) in call.external_ids.iter() {
-        external_ids.set_field(id_type.clone(), string(value));
+    for (scheme, value) in call.external_ids.iter() {
+        external_ids.set_field(scheme.clone(), string(value));
     }
     let mut ctx = OwnedTable::with_capacity(0, 4);
     ctx.set_field(

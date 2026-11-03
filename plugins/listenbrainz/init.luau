@@ -35,7 +35,7 @@ type ReleaseProjectionInfo = entities.ReleaseProjectionInfo
 type ArtistProjectionInfo = entities.ArtistProjectionInfo
 type TrackProjectionIncludes = entities.TrackProjectionIncludes
 type EntityQueryRequest = entities.EntityQueryRequest
-type IdentifiersByScheme = { [string]: string }
+type ExternalIdsByScheme = { [string]: string }
 
 type AdditionalInfo = documents.AdditionalInfo
 type TrackMetadata = documents.TrackMetadata
@@ -80,7 +80,7 @@ end
 local function query_track_projection(track_id: string): (TrackProjection?, TrackProjectionIncludes?)
 	local request: EntityQueryRequest = {
 		id = track_id,
-		include = { "artists", "releases", "identifiers" },
+		include = { "artists", "releases", "external_ids" },
 	}
 	local ok, projection = pcall(entities.query_track, request)
 	if not ok or type(projection) ~= "table" then
@@ -109,10 +109,10 @@ local function resolve_release_metadata(releases_list: { ReleaseProjection }?): 
 	end
 
 	for _, release in releases_list do
-		local release_projection = query_release_projection(release.id, "identifiers")
-		local identifiers = if release_projection then release_projection.includes.identifiers else nil
-		local release_mbid = if identifiers then identifiers["musicbrainz:release"] else nil
-		local release_group_mbid = if identifiers then identifiers["musicbrainz:release-group"] else nil
+		local release_projection = query_release_projection(release.id, "external_ids")
+		local external_ids = if release_projection then release_projection.includes.external_ids else nil
+		local release_mbid = if external_ids then external_ids["musicbrainz:release"] else nil
+		local release_group_mbid = if external_ids then external_ids["musicbrainz:release-group"] else nil
 
 		return release.release_title, release_mbid, release_group_mbid
 	end
@@ -128,9 +128,9 @@ local function collect_artist_mbids(artists_list: { ArtistProjection }?): { stri
 	end
 
 	for _, artist in artists_list do
-		local artist_projection = query_artist_projection(artist.id, "identifiers")
-		local identifiers = if artist_projection then artist_projection.includes.identifiers else nil
-		local artist_mbid = if identifiers then identifiers["musicbrainz:artist"] else nil
+		local artist_projection = query_artist_projection(artist.id, "external_ids")
+		local external_ids = if artist_projection then artist_projection.includes.external_ids else nil
+		local artist_mbid = if external_ids then external_ids["musicbrainz:artist"] else nil
 		if artist_mbid ~= nil and not seen[artist_mbid] then
 			seen[artist_mbid] = true
 			table.insert(mbids, artist_mbid)
@@ -142,7 +142,7 @@ end
 
 local function build_additional_info(
 	track: TrackProjection?,
-	identifiers: IdentifiersByScheme?,
+	external_ids: ExternalIdsByScheme?,
 	artists_list: { ArtistProjection }?,
 	release_mbid: string?,
 	release_group_mbid: string?
@@ -164,7 +164,7 @@ local function build_additional_info(
 		additional_info.discnumber = tostring(track.disc)
 	end
 
-	additional_info.recording_mbid = if identifiers then identifiers["musicbrainz:recording"] else nil
+	additional_info.recording_mbid = if external_ids then external_ids["musicbrainz:recording"] else nil
 	additional_info.release_mbid = release_mbid
 	additional_info.release_group_mbid = release_group_mbid
 
@@ -180,7 +180,7 @@ local function build_track_metadata(track_id: string): TrackMetadata?
 	local track, includes = query_track_projection(track_id)
 	local artists_list = if includes then includes.artists else nil
 	local releases_list = if includes then includes.releases else nil
-	local identifiers = if includes then includes.identifiers else nil
+	local external_ids = if includes then includes.external_ids else nil
 	local artist_name = require_non_empty_string(resolve_artist_name(artists_list))
 	local track_name = require_non_empty_string(if track then track.track_title else nil)
 	local release_name, release_mbid, release_group_mbid = resolve_release_metadata(releases_list)
@@ -192,7 +192,7 @@ local function build_track_metadata(track_id: string): TrackMetadata?
 	local metadata: TrackMetadata = {
 		artist_name = artist_name,
 		track_name = track_name,
-		additional_info = build_additional_info(track, identifiers, artists_list, release_mbid, release_group_mbid),
+		additional_info = build_additional_info(track, external_ids, artists_list, release_mbid, release_group_mbid),
 	}
 
 	if is_non_empty_string(release_name) then

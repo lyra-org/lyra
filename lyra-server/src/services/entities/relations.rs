@@ -4,7 +4,6 @@
 // www.meshiplaw.com/lyra.
 
 use std::collections::{
-    BTreeMap,
     HashMap,
     HashSet,
 };
@@ -24,7 +23,6 @@ use lyra_db::{
 };
 
 use super::{
-    ExternalIdsByProvider,
     ResolvedCreditedArtist,
     TrackArtistContext,
     TrackCreditedArtistContext,
@@ -228,16 +226,6 @@ pub(crate) fn lookup_hints_for_entries(
             lyra_metadata::extract_lookup_hints_from_file_path_with_library_root(path, library_root)
         })
         .unwrap_or_default()
-}
-
-pub(crate) fn external_ids_by_provider(ids: &[ExternalId]) -> ExternalIdsByProvider {
-    let mut map = BTreeMap::new();
-    for id in ids {
-        map.entry(id.provider_id.clone())
-            .or_insert_with(BTreeMap::new)
-            .insert(id.id_type.clone(), id.id_value.clone());
-    }
-    map
 }
 
 pub(crate) fn external_id_rows_by_entity(

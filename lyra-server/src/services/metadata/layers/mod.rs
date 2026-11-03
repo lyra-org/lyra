@@ -925,6 +925,34 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn a_provider_id_leaves_the_user_set_id_effective() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        insert_provider(&mut db)?;
+        let artist_id = insert_artist(&mut db, "Artist")?;
+        lyra_db::external_ids::upsert(
+            &mut db,
+            artist_id,
+            "provider",
+            "artist_id",
+            "user-id",
+            lyra_db::IdSource::Manual,
+        )?;
+
+        save_typed_provider_layer(&mut db, artist_id, "person", "provider-id")?;
+
+        let id = lyra_db::external_ids::get(&db, artist_id, "provider", "artist_id")?
+            .expect("the id is kept");
+        assert_eq!(id.id_value, "user-id", "the user's id stays effective");
+        assert_eq!(id.source, lyra_db::IdSource::Manual);
+        assert_eq!(
+            id.resolved_value(),
+            Some("provider-id"),
+            "the provider's id is kept beneath"
+        );
+        Ok(())
+    }
+
     fn musicbrainz_id(db: &DbAny, node_id: DbId, id_type: &str) -> anyhow::Result<Option<String>> {
         Ok(lyra_db::external_ids::get(db, node_id, "musicbrainz", id_type)?.map(|id| id.id_value))
     }

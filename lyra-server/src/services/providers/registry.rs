@@ -529,6 +529,7 @@ impl ProviderRegistry {
             }
         }
         self.id_schemes = Arc::new(schemes);
+        generators.set_schemes(self.id_schemes.clone());
         self.id_link_generators = Arc::new(generators);
     }
 

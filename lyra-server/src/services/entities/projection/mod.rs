@@ -127,9 +127,10 @@ fn resolve_entity_id(db: &DbAny, query_id: QueryId) -> anyhow::Result<DbId> {
     }
 }
 
-fn build_release_tracks_with_external_ids(
+fn build_release_tracks(
     db: &DbAny,
     release_id: DbId,
+    includes: &[EntityInclude],
     library_root: Option<&str>,
     prefetched: &PreFetchedIncludes,
     ids: &mut IdIncludes<'_>,
@@ -154,7 +155,7 @@ fn build_release_tracks_with_external_ids(
                 relations::track_entries(db, track_id)
             })?;
             (
-                external_id_rows(db, track_id, prefetched)?,
+                included_external_id_rows(db, track_id, includes, prefetched)?,
                 artists_by_track.get(&track_id).cloned().unwrap_or_default(),
                 relations::lookup_hints_for_entries(&entries, library_root),
             )
@@ -162,15 +163,15 @@ fn build_release_tracks_with_external_ids(
             (Vec::new(), Vec::new(), LookupHints::default())
         };
         track_lookup_hints.push(lookup_hints.clone());
-        let external_ids = relations::external_ids_by_provider(&id_rows);
-        let identifiers = ids.schemes.resolve(&id_rows);
+        let external_ids = includes
+            .contains(&EntityInclude::ExternalIds)
+            .then(|| ids.schemes.resolve(&id_rows));
         if let Some(track_id) = track_db_id {
             ids.record_link_rows(track_id, EntityType::Track, id_rows);
         }
         projected.push(ReleaseProjectionTrack::from_track(
             track,
             external_ids,
-            identifiers,
             artists,
             lookup_hints.into(),
         ));
@@ -205,15 +206,12 @@ fn external_id_rows(
 }
 
 fn includes_id_rows(includes: &[EntityInclude]) -> bool {
-    includes.iter().any(|include| {
-        matches!(
-            include,
-            EntityInclude::ExternalIds | EntityInclude::Identifiers | EntityInclude::Links
-        )
-    })
+    includes
+        .iter()
+        .any(|include| matches!(include, EntityInclude::ExternalIds | EntityInclude::Links))
 }
 
-/// Rows backing the `external_ids`, `identifiers` and `links` includes, fetched once.
+/// Rows backing the `external_ids` and `links` includes, fetched once.
 fn included_external_id_rows(
     db: &DbAny,
     entity_id: DbId,
@@ -300,11 +298,7 @@ pub(super) fn project_release(
     for include in includes {
         match include {
             EntityInclude::ExternalIds => {
-                projection.includes.external_ids =
-                    Some(relations::external_ids_by_provider(&id_rows));
-            }
-            EntityInclude::Identifiers => {
-                projection.includes.identifiers = Some(ids.schemes.resolve(&id_rows));
+                projection.includes.external_ids = Some(ids.schemes.resolve(&id_rows));
             }
             EntityInclude::Links => {}
             EntityInclude::Artists => {
@@ -318,13 +312,8 @@ pub(super) fn project_release(
                 )?);
             }
             EntityInclude::Tracks => {
-                let (tracks, lookup_hints) = build_release_tracks_with_external_ids(
-                    db,
-                    release_id,
-                    library_root,
-                    prefetched,
-                    ids,
-                )?;
+                let (tracks, lookup_hints) =
+                    build_release_tracks(db, release_id, includes, library_root, prefetched, ids)?;
                 release_lookup_hints = lookup_hints;
                 projection.includes.tracks = Some(tracks);
             }
@@ -363,11 +352,7 @@ fn project_track(
     for include in includes {
         match include {
             EntityInclude::ExternalIds => {
-                projection.includes.external_ids =
-                    Some(relations::external_ids_by_provider(&id_rows));
-            }
-            EntityInclude::Identifiers => {
-                projection.includes.identifiers = Some(ids.schemes.resolve(&id_rows));
+                projection.includes.external_ids = Some(ids.schemes.resolve(&id_rows));
             }
             EntityInclude::Links => {}
             EntityInclude::Releases => {
@@ -432,11 +417,7 @@ fn project_artist(
     for include in includes {
         match include {
             EntityInclude::ExternalIds => {
-                projection.includes.external_ids =
-                    Some(relations::external_ids_by_provider(&id_rows));
-            }
-            EntityInclude::Identifiers => {
-                projection.includes.identifiers = Some(ids.schemes.resolve(&id_rows));
+                projection.includes.external_ids = Some(ids.schemes.resolve(&id_rows));
             }
             EntityInclude::Links => {}
             EntityInclude::Releases => {

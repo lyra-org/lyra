@@ -38,7 +38,7 @@ type JsonObject = { [string]: JsonValue }
 type DataStore = datastore.DataStore
 type DataStoreJsonValue = datastore.JsonValue
 type ProviderCoverCandidate = metadata.ProviderCoverCandidate
-type ProviderCoverContext = metadata.ProviderCoverContext
+type ReleaseCoverContext = metadata.ReleaseCoverContext
 type ProviderCoverResult = metadata.ProviderCoverResult
 type SimilarReleaseContext = metadata.SimilarReleaseContext
 type SimilarReleasesResult = metadata.SimilarReleasesResult
@@ -46,7 +46,6 @@ type LookupHintLibrary = text_helpers.LookupHintLibrary
 type LocalArtist = track_helpers.LocalArtist
 type LocalTrack = track_helpers.LocalTrack
 type ReleaseArtistCredit = track_helpers.ReleaseArtistCredit
-type ReleaseIds = local_release.ReleaseIds
 type ReleaseContext = local_release.ReleaseContext
 type CoverCacheContext = lookup.CoverCacheContext
 
@@ -180,14 +179,7 @@ local function normalize_lookup_library(library: metadata.ProviderCoverLibrary?)
 	}
 end
 
-local function normalize_lookup_ids(ids: { [string]: string }?): ReleaseIds
-	return {
-		release_id = if ids then ids.release_id else nil,
-		release_group_id = if ids then ids.release_group_id else nil,
-	}
-end
-
-local function normalize_release_context(ctx: ProviderCoverContext?): ReleaseContext
+local function normalize_release_context(ctx: ReleaseCoverContext?): ReleaseContext
 	return {
 		id = if ctx then ctx.id else nil,
 		release_title = if ctx then ctx.release_title else nil,
@@ -196,8 +188,7 @@ local function normalize_release_context(ctx: ProviderCoverContext?): ReleaseCon
 		tracks = normalize_local_tracks(if ctx then ctx.tracks else nil),
 		library = normalize_lookup_library(if ctx then ctx.library else nil),
 		library_id = if ctx and ctx.library then ctx.library.id else nil,
-		ids = normalize_lookup_ids(if ctx then ctx.ids else nil),
-		external_ids = nil,
+		external_ids = if ctx then ctx.external_ids else nil,
 	}
 end
 
@@ -214,7 +205,7 @@ local function get_cover_store(): DataStore?
 	return store
 end
 
-local function cover_cache_key(ctx: ProviderCoverContext?): string?
+local function cover_cache_key(ctx: ReleaseCoverContext?): string?
 	local release_entity_id = if ctx then ctx.id else nil
 	if release_entity_id ~= nil then
 		return `{COVER_CACHE_KEY_PREFIX}{release_entity_id}`
@@ -233,7 +224,7 @@ local function cover_cache_context_matches(stored: CoverCacheContext?, current: 
 		and stored.search_title == current.search_title
 end
 
-local function read_cached_cover_release_id(ctx: ProviderCoverContext?): (boolean, string | false | nil)
+local function read_cached_cover_release_id(ctx: ReleaseCoverContext?): (boolean, string | false | nil)
 	local cover_options = if ctx and type(ctx.cover_options) == "table" then ctx.cover_options else nil
 	if cover_options and cover_options.bypass_cache == true then
 		return false, nil
@@ -277,7 +268,7 @@ local function read_cached_cover_release_id(ctx: ProviderCoverContext?): (boolea
 	return false, nil
 end
 
-local function write_cover_release_cache(ctx: ProviderCoverContext?, release_id: string?)
+local function write_cover_release_cache(ctx: ReleaseCoverContext?, release_id: string?)
 	local key = cover_cache_key(ctx)
 	if not key then
 		return
@@ -336,7 +327,7 @@ end
 
 provider:similar_releases({
 	require = {
-		all_of = { "ids.release_group_id" },
+		all_of = { "external_ids.musicbrainz:release-group" },
 	},
 }, function(ctx: SimilarReleaseContext): SimilarReleasesResult
 	return {
@@ -345,14 +336,14 @@ provider:similar_releases({
 				external_id = {
 					provider_id = "musicbrainz",
 					id_type = "release_group_id",
-					id_value = ctx.ids.release_group_id,
+					id_value = ctx.external_ids["musicbrainz:release-group"],
 				},
 			},
 		},
 	}
 end)
 
-local function release_cover_handler(ctx: ProviderCoverContext): ProviderCoverResult?
+local function release_cover_handler(ctx: ReleaseCoverContext): ProviderCoverResult?
 	local cache_hit, cached_release_id = read_cached_cover_release_id(ctx)
 	if cache_hit then
 		if type(cached_release_id) == "string" and cached_release_id ~= "" then
@@ -372,7 +363,7 @@ end
 
 provider:cover(ET.Release, {
 	require = {
-		any_of = { "ids.release_id", "ids.release_group_id" },
+		any_of = { "external_ids.musicbrainz:release", "external_ids.musicbrainz:release-group" },
 	},
 }, release_cover_handler)
 

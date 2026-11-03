@@ -35,7 +35,6 @@ use crate::services::{
         CreditProjectionInfo,
         CreditedArtistProjectionInfo,
         EntityLookupHints,
-        ExternalIdsByProvider,
         ProjectionEntryInfo,
         ReleaseProjectionIncludes,
         ReleaseProjectionInfo,
@@ -45,7 +44,7 @@ use crate::services::{
         TrackProjectionInfo,
         TrackProjectionKind,
     },
-    providers::IdentifiersByScheme,
+    providers::ExternalIdsByScheme,
 };
 
 /// Describes `$source` to Luau as the interface `$name`. The field list is
@@ -164,16 +163,14 @@ describe_interface!(LuauReleaseProjectionTrack for ReleaseProjectionTrack, "Rele
     locked: Option<bool> as "locked",
     created_at_ms: Option<u64> as "created_at_ms",
     file_created_at_ms: Option<u64> as "file_created_at_ms",
-    external_ids: ExternalIdsByProvider as "external_ids",
-    identifiers: IdentifiersByScheme as "identifiers",
+    external_ids: Option<ExternalIdsByScheme> as "external_ids",
     links: Option<Vec<LuauIdLink>> as "links",
     artists: Vec<LuauArtist> as "artists",
     lookup_hints: LuauEntityLookupHints as "lookup_hints",
 });
 
 describe_interface!(LuauReleaseProjectionIncludes for ReleaseProjectionIncludes, "ReleaseProjectionIncludes", {
-    external_ids: Option<ExternalIdsByProvider> as "external_ids",
-    identifiers: Option<IdentifiersByScheme> as "identifiers",
+    external_ids: Option<ExternalIdsByScheme> as "external_ids",
     links: Option<Vec<LuauIdLink>> as "links",
     artists: Option<Vec<LuauArtist>> as "artists",
     tracks: Option<Vec<LuauReleaseProjectionTrack>> as "tracks",
@@ -181,8 +178,7 @@ describe_interface!(LuauReleaseProjectionIncludes for ReleaseProjectionIncludes,
 });
 
 describe_interface!(LuauTrackProjectionIncludes for TrackProjectionIncludes, "TrackProjectionIncludes", {
-    external_ids: Option<ExternalIdsByProvider> as "external_ids",
-    identifiers: Option<IdentifiersByScheme> as "identifiers",
+    external_ids: Option<ExternalIdsByScheme> as "external_ids",
     links: Option<Vec<LuauIdLink>> as "links",
     releases: Option<Vec<LuauRelease>> as "releases",
     artists: Option<Vec<LuauArtist>> as "artists",
@@ -191,8 +187,7 @@ describe_interface!(LuauTrackProjectionIncludes for TrackProjectionIncludes, "Tr
 });
 
 describe_interface!(LuauArtistProjectionIncludes for ArtistProjectionIncludes, "ArtistProjectionIncludes", {
-    external_ids: Option<ExternalIdsByProvider> as "external_ids",
-    identifiers: Option<IdentifiersByScheme> as "identifiers",
+    external_ids: Option<ExternalIdsByScheme> as "external_ids",
     links: Option<Vec<LuauIdLink>> as "links",
     releases: Option<Vec<LuauRelease>> as "releases",
     tracks: Option<Vec<LuauTrack>> as "tracks",

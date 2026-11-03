@@ -1193,31 +1193,24 @@ mod tests {
             IdSource::Resolved,
         )?;
 
-        let context = build_release_context(&db, release_db_id, None, &IdSchemes::default())?;
-        let tracks = context
-            .get("tracks")
-            .and_then(Value::as_array)
-            .ok_or_else(|| anyhow!("tracks missing from release context"))?;
-        assert_eq!(tracks.len(), 1);
-
-        let external_ids = tracks[0]
-            .get("external_ids")
-            .and_then(Value::as_object)
-            .ok_or_else(|| anyhow!("track external_ids missing"))?;
-        let musicbrainz_ids = external_ids
-            .get("musicbrainz")
-            .and_then(Value::as_object)
-            .ok_or_else(|| anyhow!("musicbrainz track external_ids missing"))?;
+        let context = build_release_context(&db, release_db_id, None, &musicbrainz_schemes())?;
         assert_eq!(
-            musicbrainz_ids.get("recording_id").and_then(Value::as_str),
-            Some("recording-123")
+            context.pointer("/tracks/0/external_ids"),
+            Some(&serde_json::json!({ "musicbrainz:recording": "recording-123" }))
         );
 
         Ok(())
     }
 
+    fn musicbrainz_schemes() -> IdSchemes {
+        let mut schemes = IdSchemes::default();
+        schemes.insert("musicbrainz", "release_id", "musicbrainz:release");
+        schemes.insert("musicbrainz", "recording_id", "musicbrainz:recording");
+        schemes
+    }
+
     #[test]
-    fn build_release_context_lists_manual_ids_apart_from_resolved_ids() -> anyhow::Result<()> {
+    fn build_release_context_lists_user_set_schemes() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let release_db_id = insert_release(&mut db, "Manual Release")?;
         let track_db_id = insert_track(&mut db, "Plugin Track", Some(1), Some(1))?;
@@ -1248,16 +1241,19 @@ mod tests {
             IdSource::Resolved,
         )?;
 
-        let context = build_release_context(&db, release_db_id, None, &IdSchemes::default())?;
+        let context = build_release_context(&db, release_db_id, None, &musicbrainz_schemes())?;
         assert_eq!(
-            context.pointer("/external_ids/musicbrainz/release_id"),
+            context.pointer("/external_ids/musicbrainz:release"),
             Some(&Value::from("user-release"))
         );
         assert_eq!(
-            context.get("manual_ids"),
-            Some(&serde_json::json!({ "musicbrainz": { "release_id": "user-release" } }))
+            context.get("user_set"),
+            Some(&serde_json::json!(["musicbrainz:release"]))
         );
-        assert_eq!(context.pointer("/tracks/0/manual_ids"), None);
+        assert_eq!(
+            context.pointer("/tracks/0/user_set"),
+            Some(&serde_json::json!([]))
+        );
 
         Ok(())
     }

@@ -22,7 +22,7 @@ type LocalRelease = local_release.LocalRelease
 type ReleaseContext = local_release.ReleaseContext
 type ReleaseArtistCredit = track_helpers.ReleaseArtistCredit
 type Release = track_helpers.Release
-type ExternalIdsByProvider = metadata.ExternalIdsByProvider
+type ExternalIdsByScheme = metadata.ExternalIdsByScheme
 type Provider = metadata.Provider
 type ArtistRefreshContext = metadata.ArtistRefreshContext
 
@@ -44,20 +44,17 @@ export type CoverCacheContext = {
 
 local module = {}
 
-local function musicbrainz_external_ids(external_ids: ExternalIdsByProvider?): ReleaseIds?
-	return if external_ids then external_ids.musicbrainz :: ReleaseIds? else nil
+local release_ids = local_release.release_ids
+
+local function musicbrainz_artist_id(external_ids: ExternalIdsByScheme?): string?
+	return if external_ids then external_ids["musicbrainz:artist"] else nil
 end
 
-local function musicbrainz_artist_id(external_ids: ExternalIdsByProvider?): string?
-	local ids = external_ids and external_ids.musicbrainz
-	if ids == nil then
-		return nil
-	end
-	local artist_id = ids.artist_id
-	return if type(artist_id) == "string" and artist_id ~= "" then artist_id else nil
+local function has_scheme(schemes: { string }?, scheme: string): boolean
+	return schemes ~= nil and table.find(schemes, scheme) ~= nil
 end
 
--- An ID among `ids`, without the empty ID that marks an entity unmatched.
+-- A non-empty ID among `ids`.
 local function stored_id(ids: ReleaseIds?, id_type: string): string?
 	local value = ids and ids[id_type]
 	return if type(value) == "string" and value ~= "" then value else nil
@@ -74,7 +71,7 @@ end
 
 local function cover_cache_context_for(local_release_info: LocalRelease): CoverCacheContext
 	local release_context = local_release_info.context
-	local ids = release_context.ids or musicbrainz_external_ids(release_context.external_ids)
+	local ids = release_ids(release_context.external_ids)
 
 	return {
 		release_id = stored_id(ids, "release_id"),
@@ -113,10 +110,7 @@ local function release_has_front_cover(release: Release?): boolean
 end
 
 function module.resolve_cover_release_id(release_context: ReleaseContext): string?
-	local ids = if release_context
-		then release_context.ids or musicbrainz_external_ids(release_context.external_ids)
-		else nil
-	if not ids then
+	if not release_context or not release_context.external_ids then
 		return nil
 	end
 
@@ -278,16 +272,15 @@ end
 -- nothing. After a failed request each way gives up, keeping what is stored.
 local function refresh_release(release: ReleaseContext, options: { [string]: boolean | number | string }?)
 	local local_release_info = local_release.from_context(release)
-	local manual_release_id = stored_id(musicbrainz_external_ids(release.manual_ids), "release_id")
-	if manual_release_id ~= nil then
+	local ids = release_ids(release.external_ids)
+	local release_id = stored_id(ids, "release_id")
+	if release_id ~= nil and has_scheme(release.user_set, local_release.RELEASE_SCHEME) then
 		-- A failed fetch keeps what is stored rather than searching past the user's choice.
-		resolve.apply_release_id(manual_release_id, local_release_info)
+		resolve.apply_release_id(release_id, local_release_info)
 		return
 	end
 
-	local ids = musicbrainz_external_ids(release.external_ids)
-	local release_id = stored_id(ids, "release_id")
-	if ids ~= nil and release_id ~= nil and try_stored_release(ids, release_id, local_release_info) then
+	if release_id ~= nil and try_stored_release(ids, release_id, local_release_info) then
 		return
 	end
 	local searchable = local_release_info.artist_name ~= nil or local_release_info.compilation_release
@@ -326,9 +319,11 @@ function module.register_refresh(provider_instance: Provider): ()
 		return nil
 	end, function(ctx: metadata.ReleaseRefreshContext): boolean
 		local release: ReleaseContext = ctx :: ReleaseContext
-		local musicbrainz_ids = musicbrainz_external_ids(release.external_ids)
-		-- An empty ID marks the release unmatched: only an explicit refresh retries it.
-		if musicbrainz_ids and musicbrainz_ids.release_id then
+		-- An unmatched release is retried only by an explicit refresh.
+		if
+			release_ids(release.external_ids).release_id ~= nil
+			or has_scheme(release.unmatched, local_release.RELEASE_SCHEME)
+		then
 			return false
 		end
 		if not release.tracks or #release.tracks == 0 then

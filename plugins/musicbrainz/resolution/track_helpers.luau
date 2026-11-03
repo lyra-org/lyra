@@ -34,7 +34,7 @@ export type LocalTrack = {
 	track: number?,
 	track_total: number?,
 	duration_ms: number?,
-	external_ids: metadata.ExternalIdsByProvider?,
+	external_ids: metadata.ExternalIdsByScheme?,
 	created_at_ms: number?,
 }
 
@@ -161,11 +161,8 @@ export type TrackAssignments = {
 }
 
 local function local_recording_id(local_track: LocalTrack): string?
-	local musicbrainz_ids = local_track.external_ids and local_track.external_ids.musicbrainz
-	if musicbrainz_ids == nil then
-		return nil
-	end
-	return musicbrainz_ids.recording_id
+	local external_ids = local_track.external_ids
+	return if external_ids then external_ids["musicbrainz:recording"] else nil
 end
 
 function module.max_declared_track_total(tracks: { LocalTrack }?): number

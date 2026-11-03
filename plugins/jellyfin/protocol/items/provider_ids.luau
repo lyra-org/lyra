@@ -15,7 +15,7 @@ type EntityProjectionInfo = entities.EntityProjectionInfo
 type EntityQueryManyRequest = entities.EntityQueryManyRequest
 type ExternalUrlInfo = item_types.ExternalUrlInfo
 type IdLink = entities.IdLink
-type IdentifiersByScheme = { [string]: string }
+type ExternalIdsByScheme = { [string]: string }
 type ItemInfo = item_types.SerializableItemInfo
 
 type ProviderIdSource = "self" | "album" | "album_artist" | "artist"
@@ -53,7 +53,7 @@ local PROVIDER_ID_KEYS: { [string]: { ProviderIdKey } } = {
 
 -- Per Jellyfin item id; a map is present only when its field was requested.
 export type ItemProviderIds = {
-	identifiers: { [string]: IdentifiersByScheme }?,
+	external_ids: { [string]: ExternalIdsByScheme }?,
 	links: { [string]: { IdLink } }?,
 }
 
@@ -109,8 +109,8 @@ function module.fetch(
 	local include: { string } = {}
 	local index: ItemProviderIds = {}
 	if include_provider_ids then
-		table.insert(include, "identifiers")
-		index.identifiers = {}
+		table.insert(include, "external_ids")
+		index.external_ids = {}
 	end
 	if include_external_urls then
 		table.insert(include, "links")
@@ -128,9 +128,9 @@ function module.fetch(
 		if item_id == nil then
 			continue
 		end
-		local identifiers = projection.includes.identifiers
-		if index.identifiers and identifiers then
-			index.identifiers[item_id] = identifiers
+		local external_ids = projection.includes.external_ids
+		if index.external_ids and external_ids then
+			index.external_ids[item_id] = external_ids
 		end
 		local links = projection.includes.links
 		if index.links and links then
@@ -155,7 +155,7 @@ end
 -- Nil for item types without Jellyfin provider id keys.
 local function provider_ids(
 	item: ItemInfo,
-	identifiers_by_item_id: { [string]: IdentifiersByScheme }
+	external_ids_by_item_id: { [string]: ExternalIdsByScheme }
 ): { [string]: string }?
 	local keys = PROVIDER_ID_KEYS[item.Type or ""]
 	if keys == nil then
@@ -165,8 +165,8 @@ local function provider_ids(
 	local provider_ids: { [string]: string } = {}
 	for _, spec: ProviderIdKey in keys do
 		local item_id = source_item_id(item, spec.source)
-		local identifiers = if item_id then identifiers_by_item_id[item_id] else nil
-		local value = if identifiers then identifiers[spec.scheme] else nil
+		local external_ids = if item_id then external_ids_by_item_id[item_id] else nil
+		local value = if external_ids then external_ids[spec.scheme] else nil
 		if value then
 			provider_ids[spec.key] = value
 		end
@@ -193,8 +193,8 @@ local function external_urls(item: ItemInfo, links_by_item_id: { [string]: { IdL
 end
 
 function module.apply(item: ItemInfo, index: ItemProviderIds)
-	if index.identifiers then
-		item.ProviderIds = provider_ids(item, index.identifiers)
+	if index.external_ids then
+		item.ProviderIds = provider_ids(item, index.external_ids)
 	end
 	if index.links then
 		local urls = external_urls(item, index.links)

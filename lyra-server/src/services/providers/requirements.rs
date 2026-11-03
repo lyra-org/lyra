@@ -49,20 +49,20 @@ mod tests {
     #[test]
     fn matches_all_of_and_any_of_paths() {
         let context = serde_json::json!({
-            "ids": { "release_id": "release-1" },
+            "external_ids": { "musicbrainz:release": "release-1" },
             "artist_names": ["Artist"]
         });
         assert!(requirements_match(
             &context,
             &ProviderRequireSpec {
-                all_of: vec!["ids.release_id".to_string()],
+                all_of: vec!["external_ids.musicbrainz:release".to_string()],
                 any_of: vec!["missing".to_string(), "artist_names".to_string()],
             }
         ));
         assert!(!requirements_match(
             &context,
             &ProviderRequireSpec {
-                all_of: vec!["ids.missing".to_string()],
+                all_of: vec!["external_ids.musicbrainz:release-group".to_string()],
                 any_of: Vec::new(),
             }
         ));

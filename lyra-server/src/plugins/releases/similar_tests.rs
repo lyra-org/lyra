@@ -58,9 +58,9 @@ impl TempSimilarPluginDir {
                     scheme = "similartest:release-group",
                 })
                 provider:similar_releases({
-                    require = { all_of = { "ids.release_group_id" } },
+                    require = { all_of = { "external_ids.similartest:release-group" } },
                 }, function(ctx)
-                    if ctx.limit ~= 5 or ctx.ids.release_group_id ~= "group-1" then
+                    if ctx.limit ~= 5 or ctx.external_ids["similartest:release-group"] ~= "group-1" then
                         error("unexpected similar release context")
                     end
                     return {
@@ -69,7 +69,7 @@ impl TempSimilarPluginDir {
                                 external_id = {
                                     provider_id = "similartest",
                                     id_type = "release_group_id",
-                                    id_value = ctx.ids.release_group_id,
+                                    id_value = ctx.external_ids["similartest:release-group"],
                                 },
                             },
                         },

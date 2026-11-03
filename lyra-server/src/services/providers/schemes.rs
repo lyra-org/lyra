@@ -5,6 +5,7 @@
 
 use std::collections::{
     BTreeMap,
+    BTreeSet,
     HashMap,
     btree_map::Entry,
 };
@@ -37,11 +38,19 @@ fn is_valid_part(part: &str) -> bool {
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
 }
 
-#[cfg(feature = "docgen")]
-pub(crate) const IDENTIFIERS_DOC: &str = "Non-empty identifier values keyed by scheme (e.g. `isrc`), whichever provider stored them. Read other plugins' IDs here; read your own from `external_ids`.";
+/// Every provider's resolved, non-empty ids on an entity, keyed by scheme.
+pub(crate) type ExternalIdsByScheme = BTreeMap<String, String>;
 
-/// Resolved, non-empty identifier values keyed by scheme.
-pub(crate) type IdentifiersByScheme = BTreeMap<String, String>;
+/// The id fields of an entity in a refresh context.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct RefreshIds {
+    /// Every provider's ids, keyed by scheme, as [`IdSchemes::resolve`] gives them.
+    pub(crate) external_ids: ExternalIdsByScheme,
+    /// The schemes whose provider searched and found no match, in order.
+    pub(crate) unmatched: Vec<String>,
+    /// The schemes whose value the user set, in order.
+    pub(crate) user_set: Vec<String>,
+}
 
 /// Snapshot of registered schemes keyed by provider id, then id type.
 #[derive(Clone, Debug, Default)]
@@ -55,14 +64,39 @@ impl IdSchemes {
             .insert(id_type.to_string(), scheme.to_string());
     }
 
-    fn scheme(&self, provider_id: &str, id_type: &str) -> Option<&str> {
+    pub(crate) fn scheme(&self, provider_id: &str, id_type: &str) -> Option<&str> {
         self.0.get(provider_id)?.get(id_type).map(String::as_str)
+    }
+
+    /// The refresh id fields of an entity with `ids`. An empty value is a provider's mark that
+    /// it found no match; it counts as unmatched only while no value stands for its scheme.
+    pub(crate) fn refresh_ids(&self, ids: &[ExternalId]) -> RefreshIds {
+        let external_ids = self.resolve(ids);
+        let mut unmatched = BTreeSet::new();
+        let mut user_set = BTreeSet::new();
+        for id in ids {
+            let Some(scheme) = self.scheme(&id.provider_id, &id.id_type) else {
+                continue;
+            };
+            if id.id_value.trim().is_empty() {
+                if !external_ids.contains_key(scheme) {
+                    unmatched.insert(scheme.to_string());
+                }
+            } else if id.source == IdSource::Manual {
+                user_set.insert(scheme.to_string());
+            }
+        }
+        RefreshIds {
+            external_ids,
+            unmatched: unmatched.into_iter().collect(),
+            user_set: user_set.into_iter().collect(),
+        }
     }
 
     /// Rows without a registered scheme are omitted. When several rows share
     /// a scheme, user-set IDs beat plugin-set ones, then the lowest
     /// `(provider_id, id_type)` wins.
-    pub(crate) fn resolve(&self, ids: &[ExternalId]) -> IdentifiersByScheme {
+    pub(crate) fn resolve(&self, ids: &[ExternalId]) -> ExternalIdsByScheme {
         let mut best: BTreeMap<&str, ((u8, &str, &str), &str)> = BTreeMap::new();
         for id in ids {
             let Some(scheme) = self.scheme(&id.provider_id, &id.id_type) else {
@@ -96,6 +130,42 @@ impl IdSchemes {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn row(provider_id: &str, id_type: &str, value: &str, source: IdSource) -> ExternalId {
+        ExternalId {
+            db_id: None,
+            provider_id: provider_id.to_string(),
+            id_type: id_type.to_string(),
+            id_value: value.to_string(),
+            source,
+            resolved_value: None,
+        }
+    }
+
+    #[test]
+    fn refresh_ids_list_unmatched_and_user_set_schemes() {
+        let mut schemes = IdSchemes::default();
+        schemes.insert("alpha", "release_id", "alpha:release");
+        schemes.insert("beta", "album_id", "beta:album");
+        schemes.insert("gamma", "item_id", "gamma:item");
+
+        let ids = schemes.refresh_ids(&[
+            row("alpha", "release_id", "user-value", IdSource::Manual),
+            row("beta", "album_id", "", IdSource::Resolved),
+            row("gamma", "item_id", "found", IdSource::Resolved),
+            row("unregistered", "thing", "", IdSource::Resolved),
+        ]);
+
+        assert_eq!(
+            ids.external_ids,
+            BTreeMap::from([
+                ("alpha:release".to_string(), "user-value".to_string()),
+                ("gamma:item".to_string(), "found".to_string()),
+            ])
+        );
+        assert_eq!(ids.unmatched, ["beta:album"]);
+        assert_eq!(ids.user_set, ["alpha:release"]);
+    }
 
     #[test]
     fn accepts_namespaced_and_bare_schemes() {
