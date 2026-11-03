@@ -134,7 +134,14 @@ struct Artist {
     /// An image file, relative to the fixture, stored and pinned as the artist's manual cover,
     /// whose hash is the artist key.
     cover: Option<PathBuf>,
+    description: Option<String>,
+    /// Identifier values by scheme, stored as [`ID_PROVIDER`]'s, which declares each scheme.
+    #[serde(default)]
+    identifiers: BTreeMap<String, String>,
 }
+
+/// The provider fixture identifiers are stored under, registered by a plugin of the same id.
+const ID_PROVIDER: &str = "fixture";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -347,6 +354,9 @@ pub(crate) struct Seeded {
     entries: BTreeMap<String, Vec<String>>,
     #[serde(skip)]
     pending_connections: Vec<PendingConnection>,
+    /// The schemes of the identifiers seeded, which [`ID_PROVIDER`] declares.
+    #[serde(skip)]
+    id_schemes: BTreeSet<String>,
 }
 
 #[derive(Debug)]
@@ -370,9 +380,12 @@ impl OpenConnections {
 }
 
 impl Seeded {
-    /// Registers the fixture's connections, which needs the database unlocked, and records their
-    /// ids for the test. When one can't register, the ones before it are closed again.
-    pub(crate) async fn open_connections(&mut self) -> anyhow::Result<OpenConnections> {
+    /// Registers what the fixture seeded outside the database, which needs it unlocked: the
+    /// identifier schemes, so seeded identifiers read as a provider's do, and the connections,
+    /// whose ids it records for the test. When a connection can't register, the ones before it
+    /// are closed again.
+    pub(crate) async fn register(&mut self) -> anyhow::Result<OpenConnections> {
+        register_id_schemes(std::mem::take(&mut self.id_schemes)).await?;
         let mut open = OpenConnections(Vec::new());
         for pending in std::mem::take(&mut self.pending_connections) {
             let registered = match services::remote::registry::register(
@@ -400,6 +413,37 @@ impl Seeded {
         }
         Ok(open)
     }
+}
+
+/// Registers [`ID_PROVIDER`] with `schemes`, declared as a provider plugin declares its own: by
+/// scheme alone, not unique, and without links.
+async fn register_id_schemes(schemes: BTreeSet<String>) -> anyhow::Result<()> {
+    if schemes.is_empty() {
+        return Ok(());
+    }
+    let registry = services::providers::provider_registry();
+    let mut registry = registry.write().await;
+    registry.register(
+        services::plugin_scope::PluginId::new(ID_PROVIDER)?,
+        ID_PROVIDER.to_string(),
+        None,
+    )?;
+    for scheme in schemes {
+        registry
+            .set_id_registration(
+                ID_PROVIDER,
+                services::providers::ProviderIdSpec {
+                    id_type: scheme.clone(),
+                    entity: services::EntityType::Artist,
+                    unique: false,
+                    scheme: Some(scheme),
+                    label: None,
+                },
+                || None,
+            )
+            .map_err(anyhow::Error::msg)?;
+    }
+    Ok(())
 }
 
 struct Keys {
@@ -732,6 +776,13 @@ impl Fixture {
             keys.libraries.insert(library.key.clone(), library_db_id);
         }
 
+        if self
+            .artists
+            .iter()
+            .any(|artist| !artist.identifiers.is_empty())
+        {
+            lyra_db::providers::register(db, ID_PROVIDER)?;
+        }
         for artist in &self.artists {
             keys.claim(&artist.key)?;
             let artist_db_id = fixtures::insert_artist(db, &artist.name)?;
@@ -744,7 +795,20 @@ impl Fixture {
             layer.supply(MetadataField::ArtistName, Some(artist.name.as_str()));
             layer.supply(MetadataField::SortName, artist.sort_name.as_deref());
             layer.supply(MetadataField::ArtistType, artist.artist_type);
+            layer.supply(MetadataField::Description, artist.description.as_deref());
             save_local(db, artist_db_id, layer)?;
+            for (scheme, value) in &artist.identifiers {
+                services::providers::validate_id_scheme(scheme).map_err(anyhow::Error::msg)?;
+                seeded.id_schemes.insert(scheme.clone());
+                lyra_db::external_ids::upsert(
+                    db,
+                    artist_db_id,
+                    ID_PROVIDER,
+                    scheme,
+                    value,
+                    lyra_db::IdSource::Resolved,
+                )?;
+            }
             if let Some(manual_type) = artist.manual_type {
                 let layer = lyra_db::MetadataLayer::new(
                     services::metadata::layers::MANUAL_SOURCE_ID,
@@ -1229,7 +1293,7 @@ mod tests {
         let (mut seeded, _) = fixture.seed(&mut *services::STATE.db.write().await)?;
 
         let error = seeded
-            .open_connections()
+            .register()
             .await
             .err()
             .expect("the connection past the cap is refused");
@@ -1242,6 +1306,60 @@ mod tests {
                 .await
                 .is_empty()
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn artists_keep_their_description_and_identifiers_by_scheme() -> anyhow::Result<()> {
+        let _guard = services::testing::runtime_test_lock().await;
+        services::testing::init_default_test_state()?;
+        let fixture: Fixture = serde_json::from_value(serde_json::json!({
+            "artists": [
+                {
+                    "key": "described",
+                    "name": "Described",
+                    "description": "A long story.",
+                    "identifiers": { "example:artist": " a-1 ", "isrc": "XX0000000001" },
+                },
+                { "key": "bare", "name": "Bare" },
+            ],
+        }))?;
+        let mut db = services::STATE.db.write().await;
+        let (mut seeded, _) = fixture.seed(&mut db)?;
+        seeded.register().await?.close().await;
+
+        let schemes = services::providers::id_schemes().await;
+        let read = |key: &str| -> anyhow::Result<_> {
+            let artist_db_id = node(&db, &seeded, key);
+            let artist = lyra_db::artists::get_by_id(&*db, artist_db_id)?.context("artist")?;
+            let identifiers =
+                schemes.resolve(&lyra_db::external_ids::get_for_entity(&db, artist_db_id)?);
+            Ok((artist.description, identifiers))
+        };
+        assert_eq!(
+            read("described")?,
+            (
+                Some("A long story.".to_string()),
+                BTreeMap::from([
+                    ("example:artist".to_string(), "a-1".to_string()),
+                    ("isrc".to_string(), "XX0000000001".to_string()),
+                ])
+            )
+        );
+        assert_eq!(read("bare")?, (None, BTreeMap::new()));
+        Ok(())
+    }
+
+    #[test]
+    fn identifier_schemes_must_be_valid() -> anyhow::Result<()> {
+        let mut db = lyra_db::test_db::new_test_db()?;
+        let fixture: Fixture = serde_json::from_value(serde_json::json!({
+            "artists": [{ "key": "a", "name": "A", "identifiers": { "Not A Scheme": "1" } }],
+        }))?;
+        let error = fixture
+            .seed(&mut db)
+            .expect_err("an invalid scheme is refused");
+        assert!(error.to_string().contains("Not A Scheme"), "{error}");
         Ok(())
     }
 

@@ -479,7 +479,7 @@ pub async fn run_luau_plugin_test_file(
     crate::plugins::STATE.publish_runtime(runtime.clone());
     let mut seeded = seeded;
     let connections = match seeded.as_mut() {
-        Some(seeded) => match seeded.open_connections().await {
+        Some(seeded) => match seeded.register().await {
             Ok(connections) => Some(connections),
             Err(error) => {
                 return Err(match runtime.shutdown().await {

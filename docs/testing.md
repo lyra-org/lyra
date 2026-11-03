@@ -93,6 +93,8 @@ sort_name = "Amy, The" # optional sort name, as tags give it
 type = "person"      # optional artist type
 manual_type = "group" # optional manually edited artist type
 cover = "amy.png"    # optional image file, relative to the fixture, stored as a pinned upload whose hash is the artist key
+description = "Amy's story" # optional
+identifiers = { "example:artist" = "a-1" } # optional values by scheme, under a synthetic `fixture` provider
 
 [[genres]]
 key = "rock"
@@ -173,6 +175,10 @@ language = "eng"     # optional; `und` by default
 content_type = "application/lrc" # optional; as an upload names it, `text/plain` by default
 body = "[00:01.00]One\n[01:40.00]Two"
 ```
+
+Artist identifiers are scheme-level only: the `fixture` provider declares each scheme as an id type
+of its own, not unique and with no URL generator, so they read as a provider's identifiers do
+without naming any real provider.
 
 ```luau
 local fixture = ...
