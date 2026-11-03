@@ -357,6 +357,16 @@ pub(crate) fn holds_session(playback_session_id: DbId, active_cutoff_ms: u64) ->
     })
 }
 
+/// The public ids of the playbacks a connection drives now.
+pub(crate) fn driven_playback_ids() -> std::collections::HashSet<String> {
+    let handle = bindings();
+    let bindings = handle.read().expect("connection bindings RwLock poisoned");
+    bindings
+        .values()
+        .filter_map(|binding| binding.current_playback_id.clone())
+        .collect()
+}
+
 pub(crate) fn cleanup_stale(now_ms: u64, stale_ttl_ms: u64) -> usize {
     let cutoff_ms = now_ms.saturating_sub(stale_ttl_ms);
     let handle = bindings();

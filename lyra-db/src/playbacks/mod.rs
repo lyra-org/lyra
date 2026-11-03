@@ -525,6 +525,32 @@ pub fn count_for_user_up_to_limit(db: &impl DbAccess, user_db_id: DbId) -> anyho
     Ok(result.elements.len())
 }
 
+/// How many queue-backed playbacks the user has, counting at most `limit`.
+pub fn count_queue_for_user_up_to(
+    db: &impl DbAccess,
+    user_db_id: DbId,
+    limit: usize,
+) -> anyhow::Result<usize> {
+    Ok(db
+        .exec(
+            QueryBuilder::search()
+                .to(user_db_id)
+                .limit(limit as u64)
+                .where_()
+                .distance(CountComparison::Equal(2))
+                .and()
+                .node()
+                .and()
+                .key("db_element_id")
+                .value("Playback")
+                .and()
+                .keys("queue_revision")
+                .query(),
+        )?
+        .elements
+        .len())
+}
+
 fn projection_from_element(
     element: &agdb::DbElement,
 ) -> anyhow::Result<Option<PlaybackListProjection>> {

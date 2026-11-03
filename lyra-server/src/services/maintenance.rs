@@ -3,8 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-//! Periodic upkeep: sweeps expired datastore entries and evicts stale playback
-//! sessions.
+//! Periodic upkeep: sweeps expired datastore entries, deletes the oldest inactive
+//! playbacks past the retention target, and evicts stale playback sessions.
 
 use std::{
     sync::Arc,
@@ -47,6 +47,7 @@ async fn run(db: DbAsync, shutdown: &Notify) {
         let Some(now_ms) = now_ms() else { continue };
 
         sweep_expired_datastore_entries(&db, now_ms).await;
+        sweep_retained_playbacks(&db, now_ms).await;
         sweep_stale_playback_sessions(&db, now_ms).await;
     }
 }
@@ -63,6 +64,30 @@ async fn sweep_expired_datastore_entries(db: &DbAsync, now_ms: u64) {
             tracing::warn!(error = %err, "plugin datastore sweep failed");
         }
     }
+}
+
+async fn sweep_retained_playbacks(db: &DbAsync, now_ms: u64) {
+    // Removes playbacks and playback sessions only.
+    let mut db_write = db.write_outside_catalog().await;
+    let deleted = match crate::services::playbacks::sweep_retained(&mut db_write, now_ms) {
+        Ok(deleted) => deleted,
+        Err(err) => {
+            tracing::warn!(error = %err, "playback retention sweep failed");
+            return;
+        }
+    };
+    if deleted.is_empty() {
+        return;
+    }
+    tracing::info!(
+        deleted = deleted.len(),
+        "deleted playbacks past the retention target"
+    );
+    // Under the write guard, as every playback deletion settles its handoffs.
+    for playback in deleted {
+        playback.finish().await;
+    }
+    drop(db_write);
 }
 
 async fn sweep_stale_playback_sessions(db: &DbAsync, now_ms: u64) {
@@ -121,6 +146,7 @@ mod tests {
         let db = STATE.db.get();
         let now = now_ms().expect("a clock");
         sweep_expired_datastore_entries(&db, now).await;
+        sweep_retained_playbacks(&db, now).await;
         sweep_stale_playback_sessions(&db, now).await;
         assert!(Arc::ptr_eq(&before, &snapshot(&*STATE.db.read().await)?));
 

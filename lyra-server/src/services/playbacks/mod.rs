@@ -34,7 +34,10 @@ mod reporting;
 pub(crate) mod socket_claims;
 
 pub(crate) use active::list_active;
-pub(crate) use removal::delete;
+pub(crate) use removal::{
+    delete,
+    sweep_retained,
+};
 pub(crate) use reported::{
     ReportOutcome,
     ReportedPlaybackRequest,
@@ -1250,7 +1253,7 @@ mod tests {
     }
 
     /// Stores a queue-backed playback of `track_ids` whose current session plays `session_track`.
-    fn store_queue_playback(
+    pub(super) fn store_queue_playback(
         db: &mut DbAny,
         user_db_id: DbId,
         track_ids: &[&str],
