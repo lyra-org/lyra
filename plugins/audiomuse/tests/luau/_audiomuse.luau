@@ -95,11 +95,11 @@ function module.param(url: string, name: string): string?
 	)
 end
 
-function module.titles(tracks: { mix.Track }?): string
+function module.titles(tracks: { mix.MixedTrack }?): string
 	assert(tracks, "expected a mix")
 	local names = {}
-	for _, track in tracks do
-		table.insert(names, track.track_title)
+	for _, entry in tracks do
+		table.insert(names, entry.track.track_title)
 	end
 	return table.concat(names, ",")
 end

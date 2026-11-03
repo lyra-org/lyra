@@ -1956,7 +1956,8 @@ fn plugin_executor_dispatches_registered_mix_handler() -> Result<()> {
                 assert(ctx.q == "rain" and ctx.limit == 10, "query and limit")
                 return {
                     tracks = {
-                        { track_id = ctx.options.boost and "track-42" or "track-41" },
+                        { track_id = ctx.options.boost and "track-42" or "track-41", score = 0.75 },
+                        { track_id = "track-43" },
                     },
                 }
             end)
@@ -1988,7 +1989,71 @@ fn plugin_executor_dispatches_registered_mix_handler() -> Result<()> {
         options: serde_json::Map::from_iter([("boost".to_string(), serde_json::Value::Bool(true))]),
     })?;
 
-    assert_eq!(result.track_ids, vec!["track-42"]);
+    assert_eq!(
+        result.tracks,
+        vec![
+            crate::services::plugin_dispatch::MixHandlerTrack {
+                track_id: "track-42".to_string(),
+                score: Some(0.75),
+            },
+            crate::services::plugin_dispatch::MixHandlerTrack {
+                track_id: "track-43".to_string(),
+                score: None,
+            },
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn mix_results_take_scores_from_0_to_1_and_refuse_others() -> Result<()> {
+    let runtime = runtime_with_scopes(&[])?;
+    let parse = |tracks: &str| {
+        let values = runtime.eval_plugin_source(
+            "demo",
+            "result.luau",
+            format!("return {{ tracks = {tracks} }}").into_bytes(),
+        )?;
+        super::mix::parse_mix_result("demo-mixer", values)
+    };
+
+    let result = parse(
+        r#"{ { track_id = "a", score = 0 }, { track_id = "b" }, { track_id = "c", score = 1 }, { track_id = "d", score = 0.25 } }"#,
+    )?;
+    assert_eq!(
+        result
+            .tracks
+            .iter()
+            .map(|track| (track.track_id.as_str(), track.score))
+            .collect::<Vec<_>>(),
+        vec![
+            ("a", Some(0.0)),
+            ("b", None),
+            ("c", Some(1.0)),
+            ("d", Some(0.25))
+        ]
+    );
+
+    for (score, message) in [
+        ("1.5", "returned score 1.5 for track 'a', expected 0 to 1"),
+        ("-0.1", "returned score -0.1 for track 'a', expected 0 to 1"),
+        ("0/0", "expected 0 to 1"),
+        (
+            "\"0.5\"",
+            "returned score string for track 'a', expected number",
+        ),
+        (
+            "true",
+            "returned score boolean for track 'a', expected number",
+        ),
+    ] {
+        let error = parse(&format!(r#"{{ {{ track_id = "a", score = {score} }} }}"#))
+            .expect_err(&format!("score {score} must be refused"));
+        assert!(
+            error.to_string().contains(message),
+            "score {score}: {error:#}"
+        );
+    }
     Ok(())
 }
 

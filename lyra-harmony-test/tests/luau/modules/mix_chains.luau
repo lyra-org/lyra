@@ -5,11 +5,11 @@ local releases = require("@lyra/releases")
 local ids = fixture.ids
 releases.replace_chains(ids.book, { { ids.part1, ids.part2 } })
 
-local function titles(tracks: { mix.Track }?): string
+local function titles(tracks: { mix.MixedTrack }?): string
 	assert(tracks, "expected a mix")
 	local names = {}
-	for _, track in tracks do
-		table.insert(names, track.track_title)
+	for _, entry in tracks do
+		table.insert(names, entry.track.track_title)
 	end
 	return table.concat(names, ",")
 end

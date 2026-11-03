@@ -3,11 +3,11 @@ local mix = require("@lyra/mix")
 
 local ids = fixture.ids
 
-local function titles(tracks: { mix.Track }?): string
+local function titles(tracks: { mix.MixedTrack }?): string
 	assert(tracks, "expected a mix")
 	local names = {}
-	for _, track in tracks do
-		table.insert(names, track.track_title)
+	for _, entry in tracks do
+		table.insert(names, entry.track.track_title)
 	end
 	table.sort(names)
 	return table.concat(names, ",")
@@ -36,7 +36,7 @@ assert(titles(mix.blend({ from_history = true })) == "S1,S2,S3", "history blend"
 
 -- A pinned track seed leads.
 local pinned = mix.blend({ seeds = { ids.s2 }, pin_seed = true, limit = 2 })
-assert(pinned and #pinned == 2 and pinned[1].id == ids.s2, "pinned seed leads")
+assert(pinned and #pinned == 2 and pinned[1].track.id == ids.s2, "pinned seed leads")
 fails({ seeds = { ids.solo }, pin_seed = true }, "pin_seed needs exactly one seed, a track")
 
 -- A seed the listener can't see, or one without an id, is not found, even one to push away from.

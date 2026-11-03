@@ -527,11 +527,9 @@ mod tests {
         let PluginExecutorCommand::MixHandler { reply, .. } = queued.into_command() else {
             panic!("expected queued mix handler request");
         };
-        let _ = reply.send(Ok(MixHandlerResult {
-            track_ids: Vec::new(),
-        }));
+        let _ = reply.send(Ok(MixHandlerResult { tracks: Vec::new() }));
 
-        assert!(request.await??.track_ids.is_empty());
+        assert!(request.await??.tracks.is_empty());
         Ok(())
     }
 

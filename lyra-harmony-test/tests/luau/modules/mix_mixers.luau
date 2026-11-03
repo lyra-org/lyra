@@ -12,11 +12,11 @@ local function result(...: string): mix.MixResult
 	return { tracks = tracks }
 end
 
-local function titles(tracks: { mix.Track }?): string
+local function titles(tracks: { mix.MixedTrack }?): string
 	assert(tracks, "expected a mix")
 	local names = {}
-	for _, track in tracks do
-		table.insert(names, track.track_title)
+	for _, entry in tracks do
+		table.insert(names, entry.track.track_title)
 	end
 	return table.concat(names, ",")
 end
@@ -192,3 +192,26 @@ end, "must be non-empty and contain no '.'")
 rejects_spec(function()
 	spare:declare_option({ name = "a.b", label = "A", type = "boolean" })
 end, "must be non-empty and contain no '.'")
+
+-- `mix.mixers` lists what the built-in mixer and each mixer take, in priority order.
+local listing = mix.mixers()
+assert(table.concat(listing.builtin.blend.seeds, ",") ~= "", "the built-in mixer takes seeds")
+assert(listing.builtin.blend.query == false, "the built-in mixer takes no query")
+local listed: { [string]: mix.MixerListing } = {}
+local order = {}
+for _, mixer in listing.mixers do
+	listed[mixer.mixer_id] = mixer
+	table.insert(order, mixer.mixer_id)
+end
+assert(table.concat(order, ",") == "wide,narrow,route,spare", `priority order: {table.concat(order, ",")}`)
+local listed_wide = listed.wide
+assert(listed_wide.display_name == "Wide" and listed_wide.enabled, "wide's name and state")
+assert(listed_wide.path == nil, "wide has no path handler")
+local wide_blend = assert(listed_wide.blend, "wide blends")
+assert(table.concat(wide_blend.seeds, ",") == "track", "wide takes track seeds")
+assert(wide_blend.max_seeds == 3 and wide_blend.exclude and wide_blend.query, "wide's blend spec")
+local narrow_blend = assert(listed.narrow.blend, "narrow blends")
+assert(table.concat(narrow_blend.seeds, ",") == "track,playlist", "narrow's seed types")
+assert(narrow_blend.max_seeds == 1 and not narrow_blend.exclude and not narrow_blend.query, "narrow's spec")
+local route_path = assert(listed.route.path, "route walks paths")
+assert(listed.route.blend == nil and table.concat(route_path.seeds, ",") == "track", "route's path spec")

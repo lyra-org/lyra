@@ -42,8 +42,12 @@ use crate::{
         MixHandlerSpec,
         MixRequest,
         MixRequestFields,
+        MixSeedType,
         MixShape,
         MixViewer,
+        MixedTrack,
+        MixerAdminError,
+        MixersListing,
     },
     services::plugin_dispatch::PluginCallbackHandle,
     services::plugin_scope::PluginId,
@@ -292,9 +296,11 @@ documented_type!(MixRequestType, LuauType::literal("MixRequest"));
 #[cfg(feature = "docgen")]
 documented_type!(MixPathRequest, LuauType::literal("MixPathRequest"));
 #[cfg(feature = "docgen")]
+documented_type!(MixersListingType, LuauType::literal("MixersListing"));
+#[cfg(feature = "docgen")]
 documented_type!(
-    OptionalTrackList,
-    LuauType::Optional(Box::new(LuauType::literal("{ Track }")))
+    OptionalMixedTrackList,
+    LuauType::Optional(Box::new(LuauType::literal("{ MixedTrack }")))
 );
 
 crate::plugins::limits::module_limits!(&[
@@ -364,9 +370,23 @@ impl MixModule {
     }
 
     #[harmony(
-        description = "Mixes tracks like the request's seeds, the caller's recent listens with `from_history`, or what `q` describes, as `POST /api/mix` does. Nil if a seed is missing or hidden from the caller; errors when the request is invalid or no mixer can serve it.",
+        description = "What the built-in mixer takes, and every mixer in priority order with whether it is enabled and what its handlers take, as `GET /api/mixers` lists them; a mixer whose plugin isn't loaded has no handlers. A request goes to a handler only when it covers the request's seed types, seed count, excluded seeds and query. It reads no user's data, so it needs no caller.",
+        returns(MixersListingType)
+    )]
+    async fn mixers() -> luau::runtime::Result<luau::Value> {
+        let listing = mix_service::list_mixers()
+            .await
+            .map_err(|error| match error {
+                MixerAdminError::Internal(error) => error.into(),
+                other => crate::plugins::runtime_error(format!("mix.mixers: {other}")),
+            })?;
+        harmony_luau::serializable_to_luau_owned(LuauMixersListing::from(listing))
+    }
+
+    #[harmony(
+        description = "Mixes tracks like the request's seeds, the caller's recent listens with `from_history`, or what `q` describes, as `POST /api/mix` does, each track with the serving mixer's score. Nil if a seed is missing or hidden from the caller; errors when the request is invalid or no mixer can serve it.",
         args(request: MixRequestType),
-        returns(OptionalTrackList)
+        returns(OptionalMixedTrackList)
     )]
     async fn blend(
         request: JsonArg,
@@ -376,9 +396,9 @@ impl MixModule {
     }
 
     #[harmony(
-        description = "Tracks leading from the request's first seed to its second, in the mixer's order, up to `MAX_TRACKS` tracks; tracks the caller can't see are left out and `limit` is only a step hint. Nil if a seed is missing or hidden from the caller; errors when the request is invalid or no mixer can serve it.",
+        description = "Tracks leading from the request's first seed to its second, in the mixer's order, each with the mixer's score, up to `MAX_TRACKS` tracks; tracks the caller can't see are left out and `limit` is only a step hint. Nil if a seed is missing or hidden from the caller; errors when the request is invalid or no mixer can serve it.",
         args(request: MixPathRequest),
-        returns(OptionalTrackList)
+        returns(OptionalMixedTrackList)
     )]
     async fn path(
         request: JsonArg,
@@ -524,6 +544,67 @@ async fn consume(
     }
 }
 
+/// `mix.mixers`' result, as `GET /api/mixers` lists the mixers without their options.
+#[derive(serde::Serialize)]
+struct LuauMixersListing {
+    builtin: LuauBuiltinMixer,
+    mixers: Vec<LuauMixerListing>,
+}
+
+#[derive(serde::Serialize)]
+struct LuauBuiltinMixer {
+    blend: LuauMixHandlerListing,
+}
+
+#[derive(serde::Serialize)]
+struct LuauMixerListing {
+    mixer_id: String,
+    display_name: String,
+    enabled: bool,
+    blend: Option<LuauMixHandlerListing>,
+    path: Option<LuauMixHandlerListing>,
+}
+
+#[derive(serde::Serialize)]
+struct LuauMixHandlerListing {
+    seeds: Vec<MixSeedType>,
+    max_seeds: usize,
+    exclude: bool,
+    query: bool,
+}
+
+impl From<MixHandlerSpec> for LuauMixHandlerListing {
+    fn from(spec: MixHandlerSpec) -> Self {
+        Self {
+            seeds: spec.seed_types,
+            max_seeds: spec.max_seeds,
+            exclude: spec.exclude,
+            query: spec.query,
+        }
+    }
+}
+
+impl From<MixersListing> for LuauMixersListing {
+    fn from(listing: MixersListing) -> Self {
+        Self {
+            builtin: LuauBuiltinMixer {
+                blend: listing.builtin.into(),
+            },
+            mixers: listing
+                .mixers
+                .into_iter()
+                .map(|mixer| LuauMixerListing {
+                    mixer_id: mixer.config.mixer_id,
+                    display_name: mixer.config.display_name,
+                    enabled: mixer.config.enabled,
+                    blend: mixer.blend.map(Into::into),
+                    path: mixer.path.map(Into::into),
+                })
+                .collect(),
+        }
+    }
+}
+
 /// The request table's fields; the shape comes from the function called.
 fn request_fields(
     mut json: serde_json::Value,
@@ -549,11 +630,26 @@ fn request_fields(
     Ok(fields)
 }
 
-fn tracks_to_luau(tracks: Option<Vec<Track>>) -> luau::runtime::Result<luau::Value> {
+fn tracks_to_luau(tracks: Option<Vec<MixedTrack>>) -> luau::runtime::Result<luau::Value> {
+    #[derive(serde::Serialize)]
+    struct Entry {
+        track: Track,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        score: Option<f64>,
+    }
+
     let Some(tracks) = tracks else {
         return Ok(luau::Value::Nil);
     };
-    harmony_luau::serializable_to_luau_owned(tracks)
+    harmony_luau::serializable_to_luau_owned(
+        tracks
+            .into_iter()
+            .map(|mixed| Entry {
+                track: mixed.track,
+                score: mixed.score,
+            })
+            .collect::<Vec<_>>(),
+    )
 }
 
 #[cfg(feature = "docgen")]
@@ -706,6 +802,7 @@ fn options_field() -> FieldDescriptor {
 }
 
 #[cfg(feature = "docgen")]
+#[cfg(feature = "docgen")]
 fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
     let options_map = || opt(LuauType::literal("{ [string]: boolean | string | number }"));
     let seed_types = || opt(LuauType::literal("{ SeedType }"));
@@ -816,9 +913,104 @@ fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
             context_fields("The start, then the end."),
         ),
         interface(
+            "MixHandlerListing",
+            "What one of a mixer's handlers takes.",
+            vec![
+                field(
+                    "seeds",
+                    LuauType::literal(
+                        "{ \"track\" | \"release\" | \"artist\" | \"genre\" | \"playlist\" }",
+                    ),
+                    Some("The seed types it takes."),
+                ),
+                field(
+                    "max_seeds",
+                    f64::luau_type(),
+                    Some(
+                        "The most explicit seeds it takes; recent listens fill the rest when it takes track seeds.",
+                    ),
+                ),
+                field(
+                    "exclude",
+                    bool::luau_type(),
+                    Some("Whether it takes excluded seeds."),
+                ),
+                field(
+                    "query",
+                    bool::luau_type(),
+                    Some("Whether it takes a free-text query."),
+                ),
+            ],
+        ),
+        interface(
+            "MixerListing",
+            "A mixer, as `mix.mixers` lists it.",
+            vec![
+                field("mixer_id", String::luau_type(), None),
+                field("display_name", String::luau_type(), None),
+                field(
+                    "enabled",
+                    bool::luau_type(),
+                    Some("Whether requests may go to it; an admin turns mixers on and off."),
+                ),
+                field(
+                    "blend",
+                    opt(LuauType::literal("MixHandlerListing")),
+                    Some("What its blend handler takes; nil without one."),
+                ),
+                field(
+                    "path",
+                    opt(LuauType::literal("MixHandlerListing")),
+                    Some("What its path handler takes; nil without one."),
+                ),
+            ],
+        ),
+        interface(
+            "BuiltinMixerListing",
+            "What the built-in mixer takes. It makes blends only, and is never tried for a request that pins a mixer.",
+            vec![field("blend", LuauType::literal("MixHandlerListing"), None)],
+        ),
+        interface(
+            "MixersListing",
+            "The mixers, as `mix.mixers` lists them.",
+            vec![
+                field("builtin", LuauType::literal("BuiltinMixerListing"), None),
+                field(
+                    "mixers",
+                    LuauType::literal("{ MixerListing }"),
+                    Some(
+                        "Every stored mixer, in priority order: the first that serves a request wins.",
+                    ),
+                ),
+            ],
+        ),
+        interface(
             "MixResultTrack",
             "A track entry in a mix result.",
-            vec![field("track_id", String::luau_type(), None)],
+            vec![
+                field("track_id", String::luau_type(), None),
+                field(
+                    "score",
+                    opt(f64::luau_type()),
+                    Some(
+                        "How relevant the track is to the request, from 0 to 1, higher being more relevant; what it is measured against is the mixer's own, such as the seed of a single-track blend or the start of a path. Scores compare only within one result, not across mixers or requests, and the server never orders or cuts a mix by them. A track named twice keeps the score of its first entry. Nil when unknown; any other non-number, or a number outside 0 to 1, fails the handler.",
+                    ),
+                ),
+            ],
+        ),
+        interface(
+            "MixedTrack",
+            "A track in a mix, with the score the serving mixer gave it.",
+            vec![
+                field("track", LuauType::literal("Track"), None),
+                field(
+                    "score",
+                    opt(f64::luau_type()),
+                    Some(
+                        "How relevant the mixer judged the track to the request, from 0 to 1, higher being more relevant; scores compare only within one result, not across mixers or requests, and the server never orders or cuts a mix by them. Nil when the mixer gave none, for a pinned seed it didn't return, and for the built-in mixer's tracks.",
+                    ),
+                ),
+            ],
         ),
         interface(
             "MixResult",

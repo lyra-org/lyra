@@ -1597,6 +1597,7 @@ mod tests {
             "lyra/mix",
             &[
                 "Mixer.new(id, options)",
+                "mixers()",
                 "blend(request)",
                 "path(request)",
                 "Mixer:blend(spec, handler)",

@@ -86,7 +86,15 @@ pub(crate) struct MixHandlerRequest {
 
 #[derive(Clone, Debug)]
 pub(crate) struct MixHandlerResult {
-    pub(crate) track_ids: Vec<String>,
+    pub(crate) tracks: Vec<MixHandlerTrack>,
+}
+
+/// A track a mixer returned, with its relevance to the request in `0..=1` when the mixer gave
+/// one.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct MixHandlerTrack {
+    pub(crate) track_id: String,
+    pub(crate) score: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default)]

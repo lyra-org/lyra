@@ -1,0 +1,68 @@
+run_as = "listener"
+
+# "Book" holds Part I and Part II, which the test chains, and Song; "Other" holds Start and End.
+# "Vault", in a library the listener can't see, holds H1.
+
+[[users]]
+key = "listener"
+permissions = ["manage_metadata"]  # to chain Book's parts
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener"]
+
+[[libraries]]
+key = "secret"
+name = "Secret"
+
+[[releases]]
+key = "book"
+title = "Book"
+library = "music"
+
+[[releases]]
+key = "other"
+title = "Other"
+library = "music"
+
+[[releases]]
+key = "vault"
+title = "Vault"
+library = "secret"
+
+[[tracks]]
+key = "part1"
+title = "Part I"
+release = "book"
+disc = 1
+track = 1
+
+[[tracks]]
+key = "part2"
+title = "Part II"
+release = "book"
+disc = 1
+track = 2
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "book"
+disc = 1
+track = 3
+
+[[tracks]]
+key = "start"
+title = "Start"
+release = "other"
+
+[[tracks]]
+key = "finish"
+title = "End"
+release = "other"
+
+[[tracks]]
+key = "h1"
+title = "H1"
+release = "vault"

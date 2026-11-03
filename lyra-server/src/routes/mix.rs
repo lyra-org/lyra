@@ -3,6 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use std::collections::HashMap;
+
 #[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
@@ -14,7 +16,10 @@ use axum::{
     },
     http::HeaderMap,
 };
-use serde::Deserialize;
+use serde::{
+    Deserialize,
+    Serialize,
+};
 
 use crate::routes::request::bearer_credential;
 use crate::{
@@ -55,15 +60,40 @@ pub(crate) struct MixQueryParams {
     inc: Option<Vec<String>>,
 }
 
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+pub(crate) struct MixTrackResponse {
+    #[serde(flatten)]
+    track: TrackResponse,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "How relevant the track is to the request, from 0 to 1, higher being more relevant, as the serving mixer measures it. Scores compare only within one response. Absent when the mixer gave none, for a pinned seed it didn't return, and for the built-in mixer's tracks."
+        )
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    score: Option<f64>,
+}
+
 async fn post_mix(
     headers: HeaderMap,
     Query(query): Query<MixQueryParams>,
     body: Result<Json<MixRequestFields>, JsonRejection>,
-) -> Result<Json<Vec<TrackResponse>>, AppError> {
+) -> Result<Json<Vec<MixTrackResponse>>, AppError> {
     let principal = require_principal(bearer_credential(&headers)).await?;
     let Json(body) = body.map_err(|rejection| AppError::bad_request(rejection.body_text()))?;
     let includes = route_tracks::parse_inc(query.inc)?;
-    let tracks = mix::mix(&body.into_request(), &MixViewer::for_principal(&principal)).await?;
+    let mixed = mix::mix(&body.into_request(), &MixViewer::for_principal(&principal)).await?;
+    let mut scores = HashMap::new();
+    let tracks = mixed
+        .into_iter()
+        .map(|mixed| {
+            if let Some(score) = mixed.score {
+                scores.insert(mixed.track.id.clone(), score);
+            }
+            mixed.track
+        })
+        .collect();
 
     // Hydrated under a guard of its own, so tracks deleted or hidden since the mix drop here.
     let db = &*STATE.db.read().await;
@@ -71,7 +101,15 @@ async fn post_mix(
     let details = track_service::list_details_for_tracks(db, includes.service, tracks)?;
     let chains = TrackChains::of(db, details.iter().map(|detail| &detail.track))?;
     let responses = route_tracks::track_responses(db, &principal, details, includes, &chains)?;
-    Ok(Json(responses))
+    Ok(Json(
+        responses
+            .into_iter()
+            .map(|track| MixTrackResponse {
+                score: scores.get(&track.id).copied(),
+                track,
+            })
+            .collect(),
+    ))
 }
 
 /// Keeps the mixer's tracks that still exist under their public id and that the principal can
@@ -98,7 +136,7 @@ fn filter_accessible_tracks(
 #[cfg(feature = "docgen")]
 fn post_mix_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Generate mix").description(
-        "Returns tracks mixed from `seeds`, the caller's recent listens (`from_history`), or a free-text `q`. Seeds are public IDs of tracks, releases, artists, genres or playlists; `{ \"id\": ..., \"exclude\": true }` excludes a seed, mixing away from it, and a request needs at least one seed that isn't excluded, `from_history` or `q`. Every seed, excluded or not, must exist and be visible to the caller, or the request fails with 404.\n\nThe `blend` shape (default) returns tracks like the seeds. Tracks of one chain stay together and in chain order, and `pin_seed` leads with a single track seed. The `path` shape takes exactly two seeds, neither excluded, and returns the tracks leading from the first to the second in the mixer's order, up to 2000 tracks; tracks the caller can't see are left out, chains are not regrouped, and `limit` is only a step hint.\n\nEnabled mixers are tried in priority order, and only those whose declared handler takes the request's shape, seed types, explicit seed count, excluded seeds and query; the first non-empty result wins. `from_history` asks for track seeds, and the caller's recent listens fill each mixer's seeds beyond the explicit ones, most recent first. `GET /api/mixers` lists what each mixer and the built-in mixer take. Mixer `options` are keyed `<mixer_id>.<name>` and must have the option's declared type. `mixer` pins one mixer with no fallback. A request no mixer can serve fails with 400 naming what is unsupported.\n\nUse `inc` to hydrate nested data: `releases`, `artists`, `release_covers` (covers require `releases`), and `artist_covers` (covers require `artists`).",
+        "Returns tracks mixed from `seeds`, the caller's recent listens (`from_history`), or a free-text `q`. Seeds are public IDs of tracks, releases, artists, genres or playlists; `{ \"id\": ..., \"exclude\": true }` excludes a seed, mixing away from it, and a request needs at least one seed that isn't excluded, `from_history` or `q`. Every seed, excluded or not, must exist and be visible to the caller, or the request fails with 404.\n\nThe `blend` shape (default) returns tracks like the seeds. Tracks of one chain stay together and in chain order, and `pin_seed` leads with a single track seed. The `path` shape takes exactly two seeds, neither excluded, and returns the tracks leading from the first to the second in the mixer's order, up to 2000 tracks; tracks the caller can't see are left out, chains are not regrouped, and `limit` is only a step hint.\n\nEnabled mixers are tried in priority order, and only those whose declared handler takes the request's shape, seed types, explicit seed count, excluded seeds and query; the first non-empty result wins. `from_history` asks for track seeds, and the caller's recent listens fill each mixer's seeds beyond the explicit ones, most recent first. `GET /api/mixers` lists what each mixer and the built-in mixer take. Mixer `options` are keyed `<mixer_id>.<name>` and must have the option's declared type. `mixer` pins one mixer with no fallback. A request no mixer can serve fails with 400 naming what is unsupported.\n\nEach track carries the serving mixer's `score` when it gave one: its relevance to the request from 0 to 1, comparable only within one response.\n\nUse `inc` to hydrate nested data: `releases`, `artists`, `release_covers` (covers require `releases`), and `artist_covers` (covers require `artists`).",
     )
 }
 
@@ -262,6 +300,10 @@ mod tests {
                     assert!(
                         title.starts_with("Visible Track"),
                         "unexpected title: {title}"
+                    );
+                    assert!(
+                        track.get("score").is_none(),
+                        "the built-in mixer gives no scores"
                     );
                     track["id"]
                         .as_str()

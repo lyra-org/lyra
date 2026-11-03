@@ -100,6 +100,16 @@ impl MixViewer {
     }
 }
 
+/// A mixed track, with the score the mixer gave it.
+#[derive(Clone, Debug)]
+pub(crate) struct MixedTrack {
+    pub(crate) track: Track,
+    /// Relevance to the request in `0..=1`, higher being more relevant, comparable only within one
+    /// mix. `None` when the mixer gave none, for a pinned seed the mixer didn't return, and for
+    /// tracks the built-in mixer chose.
+    pub(crate) score: Option<f64>,
+}
+
 /// Mixes `request` for `viewer`. Seeds are resolved by public id under each guard taken, so a
 /// dispatch that outlives a seed's `DbId` fails with [`MixError::SeedNotFound`] as a missing or
 /// hidden seed does.
@@ -107,7 +117,10 @@ impl MixViewer {
 /// Blends keep each chain together, truncate to the limit and, with `pin_seed`, lead with the
 /// seed. Paths keep the mixer's order and length up to [`MAX_LIMIT`] tracks, dropping only the
 /// tracks the viewer can't see.
-pub(crate) async fn mix(request: &MixRequest, viewer: &MixViewer) -> Result<Vec<Track>, MixError> {
+pub(crate) async fn mix(
+    request: &MixRequest,
+    viewer: &MixViewer,
+) -> Result<Vec<MixedTrack>, MixError> {
     request.validate()?;
     let resolved = {
         let db = STATE.db.read().await;
@@ -129,28 +142,44 @@ pub(crate) async fn mix(request: &MixRequest, viewer: &MixViewer) -> Result<Vec<
     let db = STATE.db.read().await;
     resolved.verify(&db, request, viewer)?;
     let limit = request.limit.unwrap_or(DEFAULT_LIMIT);
-    let tracks = match dispatched {
-        Some(tracks) => filter_tracks_by_library_visibility(
-            &db,
-            filter_existing_tracks(&db, tracks)?,
-            viewer.accessible_library_ids.as_ref(),
-        )?,
-        None if builtin.is_some() => builtin::mix(&db, &resolved, viewer, limit)?,
-        None => Vec::new(),
+    let (tracks, scores) = match dispatched {
+        Some(dispatched) => (
+            filter_tracks_by_library_visibility(
+                &db,
+                filter_existing_tracks(&db, dispatched.tracks)?,
+                viewer.accessible_library_ids.as_ref(),
+            )?,
+            dispatched.scores,
+        ),
+        None if builtin.is_some() => (builtin::mix(&db, &resolved, viewer, limit)?, HashMap::new()),
+        None => (Vec::new(), HashMap::new()),
     };
-    if request.shape == MixShape::Path {
-        return Ok(tracks);
-    }
+    let tracks = if request.shape == MixShape::Path {
+        tracks
+    } else {
+        let pinned = request.pin_seed.then(|| resolved.explicit[0].db_id);
+        let links = chain_links(&db, &tracks, pinned)?;
+        let tracks = keep_chains_together(tracks, &links);
+        match pinned {
+            Some(pinned) => {
+                let seed = lyra_db::tracks::get_by_id(&db, pinned)?
+                    .ok_or_else(|| MixError::SeedNotFound(request.seeds[0].id.clone()))?;
+                pin_seed_and_truncate(seed, tracks, &links, limit)
+            }
+            None => tracks,
+        }
+    };
+    Ok(with_scores(tracks, &scores))
+}
 
-    let pinned = request.pin_seed.then(|| resolved.explicit[0].db_id);
-    let links = chain_links(&db, &tracks, pinned)?;
-    let tracks = keep_chains_together(tracks, &links);
-    let Some(pinned) = pinned else {
-        return Ok(tracks);
-    };
-    let seed = lyra_db::tracks::get_by_id(&db, pinned)?
-        .ok_or_else(|| MixError::SeedNotFound(request.seeds[0].id.clone()))?;
-    Ok(pin_seed_and_truncate(seed, tracks, &links, limit))
+fn with_scores(tracks: Vec<Track>, scores: &HashMap<String, f64>) -> Vec<MixedTrack> {
+    tracks
+        .into_iter()
+        .map(|track| MixedTrack {
+            score: scores.get(&track.id).copied(),
+            track,
+        })
+        .collect()
 }
 
 /// Drops missing or wrong-type tracks, keeping the rest in provider order for the chain
@@ -667,7 +696,9 @@ mod tests {
 
         for _ in 0..16 {
             let mix = mix(&blend_of(genre.clone()), &viewer).await?;
-            let ids = ids_of(&mix);
+            assert!(mix.iter().all(|mixed| mixed.score.is_none()));
+            let tracks = mix.into_iter().map(|mixed| mixed.track).collect::<Vec<_>>();
+            let ids = ids_of(&tracks);
             assert_eq!(ids.len(), 11);
             let start = ids
                 .iter()

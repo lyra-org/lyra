@@ -36,7 +36,7 @@ local MIX_SEED_KINDS: { [string]: boolean } = {
 -- Slices to `[start_index, start_index + limit)`. `total_count` is pre-slice;
 -- `Limit = 0` → empty page (Jellyfin convention).
 local function realize_mix_tracks_paged(
-	mix_tracks: { tracks.Track },
+	mix_tracks: { mix.MixedTrack },
 	options: ItemsQueryOptions,
 	requested_limit: number?
 ): ({ ItemInfo }, number)
@@ -54,7 +54,10 @@ local function realize_mix_tracks_paged(
 		end_index = math.min(total_count, start_index + requested_limit)
 	end
 
-	local page = table.move(mix_tracks, start_index + 1, end_index, 1, {})
+	local page: { tracks.Track } = {}
+	for index = start_index + 1, end_index do
+		table.insert(page, mix_tracks[index].track)
+	end
 	local items = catalog.realize(catalog.track_stubs(page), options)
 	return items, total_count
 end

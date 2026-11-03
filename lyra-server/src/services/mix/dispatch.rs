@@ -3,6 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use std::collections::HashMap;
+
 use lyra_db::Track;
 
 use super::{
@@ -25,7 +27,10 @@ use super::{
 use crate::services::{
     STATE,
     options::typed_options,
-    plugin_dispatch::MixHandlerRequest,
+    plugin_dispatch::{
+        MixHandlerRequest,
+        MixHandlerTrack,
+    },
 };
 
 /// A mixer able to serve a request, with the request's options for it.
@@ -178,6 +183,13 @@ impl Feature {
     }
 }
 
+/// The visible tracks a mixer returned, in its order, and the scores it gave them by public
+/// track id.
+pub(super) struct Dispatched {
+    pub(super) tracks: Vec<Track>,
+    pub(super) scores: HashMap<String, f64>,
+}
+
 /// Tries `candidates` in order; the first with visible tracks wins. Each handler gets its spec's
 /// timeout, cut to what remains of the request's budget, and the explicit seeds followed by as
 /// many history seeds as its spec takes. `Ok(None)` when none produced tracks.
@@ -186,7 +198,7 @@ pub(super) async fn dispatch(
     request: &MixRequest,
     seeds: &ResolvedSeeds,
     viewer: &MixViewer,
-) -> anyhow::Result<Option<Vec<Track>>> {
+) -> anyhow::Result<Option<Dispatched>> {
     if candidates.is_empty() {
         return Ok(None);
     }
@@ -213,13 +225,13 @@ pub(super) async fn dispatch(
             limit: request.limit,
             options: candidate.options.clone(),
         };
-        let track_ids = match tokio::time::timeout(
+        let entries = match tokio::time::timeout(
             timeout,
             runtime.dispatch_mix_handler(handler_request),
         )
         .await
         {
-            Ok(Ok(result)) => result.track_ids,
+            Ok(Ok(result)) => result.tracks,
             Ok(Err(err)) => {
                 tracing::warn!(mixer = %mixer_id, error = %err, "mixer handler crashed, trying next");
                 continue;
@@ -233,21 +245,21 @@ pub(super) async fn dispatch(
                 continue;
             }
         };
-        let tracks = tracks_from_mixer_result_ids(track_ids).await?;
-        let tracks = {
+        let mut dispatched = tracks_from_mixer_result(entries).await?;
+        dispatched.tracks = {
             let db = STATE.db.read().await;
             finalize_mixer_tracks(
                 &db,
-                tracks,
+                dispatched.tracks,
                 request.shape,
                 viewer,
                 request.limit.unwrap_or(DEFAULT_LIMIT),
             )?
         };
-        if tracks.is_empty() {
+        if dispatched.tracks.is_empty() {
             tracing::debug!(mixer = %mixer_id, "mixer returned no accessible tracks, trying next");
         } else {
-            return Ok(Some(tracks));
+            return Ok(Some(dispatched));
         }
     }
 
@@ -258,13 +270,29 @@ pub(super) async fn dispatch(
 /// path a mixer can return.
 const MAX_MIXER_RESULT_IDS: usize = MAX_LIMIT;
 
-async fn tracks_from_mixer_result_ids(track_ids: Vec<String>) -> anyhow::Result<Vec<Track>> {
-    let track_ids = track_ids
+/// The tracks a handler's result names that resolve, in its order, and the scores it gave by
+/// public track id; a track named twice keeps the score of its first entry, or none.
+async fn tracks_from_mixer_result(entries: Vec<MixHandlerTrack>) -> anyhow::Result<Dispatched> {
+    let mut first_scores = HashMap::new();
+    let track_ids = entries
         .into_iter()
         .take(MAX_MIXER_RESULT_IDS)
+        .map(|entry| {
+            first_scores
+                .entry(entry.track_id.clone())
+                .or_insert(entry.score);
+            entry.track_id
+        })
         .collect::<Vec<_>>();
+    let scores = first_scores
+        .into_iter()
+        .filter_map(|(track_id, score)| Some((track_id, score?)))
+        .collect();
     if track_ids.is_empty() {
-        return Ok(Vec::new());
+        return Ok(Dispatched {
+            tracks: Vec::new(),
+            scores,
+        });
     }
 
     let db = STATE.db.read().await;
@@ -287,7 +315,7 @@ async fn tracks_from_mixer_result_ids(track_ids: Vec<String>) -> anyhow::Result<
             "mixer returned track IDs that could not be resolved"
         );
     }
-    Ok(tracks)
+    Ok(Dispatched { tracks, scores })
 }
 
 #[cfg(test)]

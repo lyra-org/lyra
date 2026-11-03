@@ -14,6 +14,7 @@ use super::PluginExecutor;
 use crate::services::plugin_dispatch::{
     MixHandlerRequest,
     MixHandlerResult,
+    MixHandlerTrack,
 };
 
 impl PluginExecutor {
@@ -111,9 +112,7 @@ pub(super) fn parse_mix_result(
     values: Vec<luau::Value>,
 ) -> Result<MixHandlerResult> {
     let Some(value) = values.into_iter().next() else {
-        return Ok(MixHandlerResult {
-            track_ids: Vec::new(),
-        });
+        return Ok(MixHandlerResult { tracks: Vec::new() });
     };
     let luau::Value::Table(result) = value else {
         anyhow::bail!(
@@ -123,11 +122,7 @@ pub(super) fn parse_mix_result(
     };
     let tracks = match result.get("tracks")? {
         luau::Value::Table(table) => table,
-        luau::Value::Nil => {
-            return Ok(MixHandlerResult {
-                track_ids: Vec::new(),
-            });
-        }
+        luau::Value::Nil => return Ok(MixHandlerResult { tracks: Vec::new() }),
         other => {
             anyhow::bail!(
                 "raw mixer '{mixer_id}' returned tracks as {}, expected table",
@@ -152,13 +147,29 @@ pub(super) fn parse_mix_result(
         let Ok(track_id) = String::from_utf8(track_id) else {
             continue;
         };
-        entries.push((index, track_id));
+        let score = match entry.get("score")? {
+            luau::Value::Nil => None,
+            luau::Value::Integer(score) => Some(score as f64),
+            luau::Value::Number(score) => Some(score),
+            other => anyhow::bail!(
+                "raw mixer '{mixer_id}' returned score {} for track '{track_id}', expected number",
+                other.type_name()
+            ),
+        };
+        if let Some(score) = score
+            && !(0.0..=1.0).contains(&score)
+        {
+            anyhow::bail!(
+                "raw mixer '{mixer_id}' returned score {score} for track '{track_id}', expected 0 to 1"
+            );
+        }
+        entries.push((index, MixHandlerTrack { track_id, score }));
         if entries.len() >= crate::services::mix::MAX_LIMIT {
             break;
         }
     }
     entries.sort_by_key(|(index, _)| *index);
     Ok(MixHandlerResult {
-        track_ids: entries.into_iter().map(|(_, track_id)| track_id).collect(),
+        tracks: entries.into_iter().map(|(_, track)| track).collect(),
     })
 }
