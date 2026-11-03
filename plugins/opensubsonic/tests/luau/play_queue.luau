@@ -10,11 +10,18 @@ local function queue_of(api_key: string): any
 	return call.ok("getPlayQueue", api_key).playQueue
 end
 
--- A caller without a queue has none, in JSON and XML alike.
-assert(queue_of(friend) == nil, "no queue")
+-- A caller without a queue has an empty one: the queue and its user, change and client are required.
+local function empty(queue: any, why: string)
+	assert(queue ~= nil, `{why}: a queue`)
+	assert(type(queue.username) == "string" and queue.username ~= "", `{why}: the username`)
+	assert(queue.changed == "1970-01-01T00:00:00Z" and queue.changedBy == "", `{why}: never changed`)
+	assert(queue.entry == nil and queue.current == nil and queue.currentIndex == nil, `{why}: no songs`)
+	assert(queue.position == nil, `{why}: no position`)
+end
+empty(queue_of(friend), "no queue")
 local unsaved_xml = call.raw("getPlayQueue", { apiKey = friend }).body
 assert(
-	string.find(unsaved_xml, 'status="ok"', 1, true) and not string.find(unsaved_xml, "playQueue", 1, true),
+	string.find(unsaved_xml, '<playQueue changed="1970-01-01T00:00:00Z" changedBy="" username="', 1, true),
 	unsaved_xml
 )
 
@@ -37,7 +44,7 @@ assert(string.match(saved.changed, "^%d%d%d%d%-%d%d%-%d%dT%d%d:%d%d:%d%dZ$"), `c
 assert(saved.entry[1].title == "Two" and saved.entry[1].isDir == false and saved.entry[1].artist == "Amy", "songs")
 
 -- Each user has queues of their own.
-assert(queue_of(friend) == nil, "another user's queue")
+empty(queue_of(friend), "another user's queue")
 
 -- The newest queue of any client comes back; `position` defaults to 0, and a form post saves too.
 call.ok("savePlayQueue", key, { id = { ids.one, ids.three }, current = ids.three, c = "Desktop" })
@@ -88,7 +95,7 @@ assert(queue_of(key).changedBy == "Lyra Web", "the web client's queue stays")
 call.ok("savePlayQueue", friend, { id = ids.one, current = ids.one, c = "Phone" })
 assert(queue_of(friend).current == ids.one, "the friend's queue")
 call.ok("savePlayQueue", friend, { c = "Phone" })
-assert(queue_of(friend) == nil, "no queue left")
+empty(queue_of(friend), "no queue left")
 
 -- By index, the queue names its current song by its place among the songs still visible.
 local traveler = fixture.api_keys.traveler_key
@@ -97,9 +104,17 @@ local function indexed(api_key: string): any
 	return call.ok("getPlayQueueByIndex", api_key).playQueueByIndex
 end
 
-assert(indexed(friend) == nil, "no indexed queue")
+empty(indexed(friend), "no indexed queue")
 local unsaved_indexed_xml = call.raw("getPlayQueueByIndex", { apiKey = friend }).body
-assert(not string.find(unsaved_indexed_xml, "playQueueByIndex", 1, true), unsaved_indexed_xml)
+assert(
+	string.find(unsaved_indexed_xml, '<playQueueByIndex changed="1970-01-01T00:00:00Z"', 1, true),
+	unsaved_indexed_xml
+)
+
+-- A queue of songs all gone from view is no queue.
+local stranded = fixture.api_keys.stranded_key
+empty(queue_of(stranded), "every song hidden")
+empty(indexed(stranded), "every song hidden, by index")
 
 -- Hidden songs before the current one move it up, and it keeps its position.
 local travel = indexed(traveler)
@@ -142,7 +157,13 @@ index_fails(10, { id = ids.one }, "a queue needs currentIndex")
 index_fails(10, { id = ids.one, currentIndex = "" }, "an empty currentIndex")
 index_fails(10, { id = { ids.one, ids.two }, currentIndex = "2" }, "past the end")
 index_fails(10, { id = ids.one, currentIndex = "-1" }, "before the start")
-index_fails(0, { id = ids.one, currentIndex = "first" }, "an integer")
+index_fails(10, { id = ids.one, currentIndex = "first" }, "an integer")
+index_fails(10, { id = ids.one, currentIndex = "-0.5" }, "a negative fraction")
+index_fails(10, { id = { ids.one, ids.two }, currentIndex = "0.5" }, "a fraction")
+index_fails(10, { id = { ids.one, ids.two }, currentIndex = "1e0" }, "an exponent")
+index_fails(10, { id = ids.one, currentIndex = "99999999999999999999" }, "far past the end")
+-- Deleting takes no currentIndex.
+index_fails(10, { currentIndex = "0" }, "an index without songs")
 index_fails(70, { id = { ids.one, ids.hidden }, currentIndex = "0" }, "a hidden song")
 index_fails(70, { id = { ids.one, "" }, currentIndex = "0" }, "an empty id")
 index_fails(0, { id = ids.one, currentIndex = "0", position = "soon" }, "position")
@@ -170,8 +191,9 @@ assert(posted_indexed.currentIndex == 1 and posted_indexed.position == 9 and pos
 
 -- Saving without songs deletes the client's queue, without a currentIndex.
 call.ok("savePlayQueueByIndex", friend, { c = "Web" })
+assert(indexed(friend).changedBy == "Phone", "the Phone queue stays")
 call.ok("savePlayQueueByIndex", friend, { c = "Phone" })
-assert(indexed(friend) == nil, "no indexed queue left")
+empty(indexed(friend), "no indexed queue left")
 
 local indexed_xml = call.raw("getPlayQueueByIndex", { apiKey = traveler }).body
 assert(string.find(indexed_xml, '<playQueueByIndex changed="', 1, true), indexed_xml)

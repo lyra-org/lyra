@@ -2,7 +2,7 @@ run_as = "listener"
 
 # The listener, the friend, the traveler and the wanderer see "Album" and its songs One, Two and
 # Three; Hidden is in a library nobody is granted. The listener's, the traveler's and the
-# wanderer's queues hold Hidden.
+# wanderer's queues hold Hidden, and the stranded user's holds nothing else.
 
 [[users]]
 key = "listener"
@@ -15,6 +15,13 @@ key = "traveler"
 
 [[users]]
 key = "wanderer"
+
+[[users]]
+key = "stranded"
+
+[[api_keys]]
+key = "stranded_key"
+user = "stranded"
 
 [[api_keys]]
 key = "traveler_key"
@@ -35,7 +42,7 @@ user = "friend"
 [[libraries]]
 key = "music"
 name = "Music"
-users = ["listener", "friend", "traveler", "wanderer"]
+users = ["listener", "friend", "traveler", "wanderer", "stranded"]
 
 [[libraries]]
 key = "locked"
@@ -109,5 +116,13 @@ user = "wanderer"
 tracks = ["one", "two", "hidden"]
 current = 2
 position_ms = 6000
+client_name = "Car"
+updated = 1700000000000
+
+# A queue of hidden songs alone.
+[[playbacks]]
+key = "strand"
+user = "stranded"
+tracks = ["hidden", "hidden"]
 client_name = "Car"
 updated = 1700000000000
