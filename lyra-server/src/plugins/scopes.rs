@@ -1465,7 +1465,7 @@ mod tests {
             &[
                 "get_or_create(name)",
                 "DataStore:get(key)",
-                "DataStore:set(key, value)",
+                "DataStore:set(key, value, options)",
                 "DataStore:remove(key)",
                 "DataStore:get_many(keys)",
                 "DataStore:set_many(entries)",

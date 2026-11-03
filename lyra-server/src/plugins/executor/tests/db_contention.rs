@@ -85,7 +85,7 @@ fn database_waits_yield_to_other_plugin_tasks() -> Result<()> {
             "writer.luau",
             &br#"
             task.spawn(function()
-                store:set_many({first = 1, second = {value = 2}})
+                store:set_many({first = {value = 1}, second = {value = {value = 2}}})
                 writer_done = true
             end)
         "#[..],
@@ -136,7 +136,7 @@ fn database_waits_yield_to_other_plugin_tasks() -> Result<()> {
 fn cancelling_database_waits_releases_reserved_permits() -> Result<()> {
     bounded(|| {
         for source in [
-            "return task.spawn(function() store:set_many({cancelled = true}); resumed = true end)",
+            "return task.spawn(function() store:set_many({cancelled = {value = true}}); resumed = true end)",
             "return task.spawn(function() store:get('cancelled'); resumed = true end)",
         ] {
             let (runtime, db) = fixture()?;

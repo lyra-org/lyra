@@ -126,6 +126,10 @@ modules predate some of them.
   `started_at_ms`.
 - Sort keys name an ordering, not a value, so they take no unit and match the REST
   `sort_by` keys, such as `favorited_at` and `last_played_at`.
+- Stored data that expires takes its lifetime as a `ttl_ms` option on the write, as
+  `DataStore:set` does, rather than an expiry field the plugin checks. The host computes the
+  expiry, reads treat expired entries as absent, and a write without `ttl_ms` stores a
+  persistent value.
 
 ## Documentation
 

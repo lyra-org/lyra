@@ -278,7 +278,7 @@ function module.display_prefs_set(ctx: ApiContext, user_id: string, prefs_id_raw
 	end
 
 	local key = display_prefs_key(user_id, client, prefs_id)
-	local set_ok = pcall(store.set, store, key, request_json :: StoredValue)
+	local set_ok = pcall(store.set, store, key, request_json :: StoredValue, nil)
 	if not set_ok then
 		return api.response.empty(500)
 	end
@@ -333,7 +333,7 @@ function module.device_options_set(ctx: ApiContext): ApiResponse
 	if not store then
 		return api.response.empty(500)
 	end
-	local set_ok = pcall(store.set, store, device_id, { CustomName = custom_name } :: StoredValue)
+	local set_ok = pcall(store.set, store, device_id, { CustomName = custom_name } :: StoredValue, nil)
 	if not set_ok then
 		return api.response.empty(500)
 	end
@@ -391,7 +391,7 @@ function module.user_configuration_set(ctx: ApiContext, user_id: string): ApiRes
 		return api.response.empty(500)
 	end
 
-	local set_ok = pcall(store.set, store, user_id, configuration :: StoredValue)
+	local set_ok = pcall(store.set, store, user_id, configuration :: StoredValue, nil)
 	if not set_ok then
 		return api.response.empty(500)
 	end

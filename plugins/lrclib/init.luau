@@ -17,6 +17,7 @@ type JsonArray = { JsonValue }
 type HttpRequestOptions = http.HttpRequestOptions
 type HttpResponse = http.HttpResponse
 type DataStore = datastore.DataStore
+type DataStoreRecord = datastore.DataStoreRecord
 type ProviderLyricsInput = metadata.ProviderLyricsInput
 type ProviderLyricsCandidate = metadata.ProviderLyricsCandidate
 type ProviderLyricsContext = metadata.ProviderLyricsContext
@@ -354,7 +355,7 @@ local function handle(ctx: ProviderLyricsContext): HandlerResult
 	local prev_attempt: AttemptRecord? = decode_attempt(raws[1])
 	local cached_id: string? = decode_cache(raws[2])
 
-	local pending: { [string]: JsonValue } = {}
+	local pending: { [string]: DataStoreRecord } = {}
 	local function flush()
 		if store == nil then
 			return
@@ -366,15 +367,17 @@ local function handle(ctx: ProviderLyricsContext): HandlerResult
 	end
 
 	local function set_attempt(status: AttemptStatus, next_attempt_at_ms: number)
-		pending[attempt_k] = encode_attempt({
-			status = status,
-			last_attempt_at_ms = now_ms(),
-			next_attempt_at_ms = next_attempt_at_ms,
-		}) :: JsonValue
+		pending[attempt_k] = {
+			value = encode_attempt({
+				status = status,
+				last_attempt_at_ms = now_ms(),
+				next_attempt_at_ms = next_attempt_at_ms,
+			}) :: JsonValue,
+		}
 	end
 
 	local function set_cache(lrclib_id: string)
-		pending[cache_k] = encode_cache(lrclib_id) :: JsonValue
+		pending[cache_k] = { value = encode_cache(lrclib_id) :: JsonValue }
 	end
 
 	-- Negative-cache gate — skipped on force_refresh.

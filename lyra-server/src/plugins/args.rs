@@ -300,7 +300,7 @@ pub(crate) fn string_enum_value<T: harmony_luau::StringEnum>(
 }
 
 /// A value for an error message: numbers as themselves, anything else by type.
-fn describe(value: &luau::Value) -> String {
+pub(crate) fn describe(value: &luau::Value) -> String {
     match value {
         luau::Value::Integer(value) => value.to_string(),
         luau::Value::Number(value) => value.to_string(),

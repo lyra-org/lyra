@@ -4,12 +4,15 @@
 // www.meshiplaw.com/lyra.
 
 use agdb::{
+    Comparison,
     DbAny,
+    DbAnyTransactionMut,
     DbElement,
     DbId,
     QueryBuilder,
 };
 
+use crate::DbAccess;
 use crate::roots::MEMBERS;
 use anyhow::anyhow;
 use nanoid::nanoid;
@@ -32,10 +35,26 @@ pub struct DataStoreEntry {
     pub(crate) id: String,
     pub(crate) key: String,
     pub value: String,
+    pub expires_at_ms: Option<u64>,
 }
 
-pub fn get_entry(
-    db: &DbAny,
+impl DataStoreEntry {
+    fn is_live(&self, now_ms: u64) -> bool {
+        self.expires_at_ms
+            .is_none_or(|expires_at_ms| expires_at_ms > now_ms)
+    }
+}
+
+/// A value to store under `key`; without `expires_at_ms` the entry is
+/// persistent.
+pub struct EntryWrite {
+    pub key: String,
+    pub value: String,
+    pub expires_at_ms: Option<u64>,
+}
+
+fn find_entry(
+    db: &impl DbAccess,
     datastore_id: DbId,
     key: &str,
 ) -> anyhow::Result<Option<DataStoreEntry>> {
@@ -55,42 +74,67 @@ pub fn get_entry(
     Ok(entries.pop())
 }
 
-pub fn upsert_entry(
+/// Returns the entry under `key` unless it is missing or expired at `now_ms`.
+pub fn get_entry(
+    db: &impl DbAccess,
+    datastore_id: DbId,
+    key: &str,
+    now_ms: u64,
+) -> anyhow::Result<Option<DataStoreEntry>> {
+    Ok(find_entry(db, datastore_id, key)?.filter(|entry| entry.is_live(now_ms)))
+}
+
+pub fn upsert_entry(db: &mut DbAny, datastore_id: DbId, write: EntryWrite) -> anyhow::Result<()> {
+    db.transaction_mut(|t| upsert(t, datastore_id, write))
+}
+
+/// Writes every entry in one transaction.
+pub fn upsert_many(
     db: &mut DbAny,
     datastore_id: DbId,
-    key: String,
-    value: String,
-) -> anyhow::Result<DbId> {
-    db.transaction_mut(|t| -> anyhow::Result<DbId> {
-        let entries: Vec<DataStoreEntry> = t
-            .exec(
-                QueryBuilder::select()
-                    .elements::<DataStoreEntry>()
-                    .search()
-                    .from(datastore_id)
-                    .where_()
-                    .key("key")
-                    .value(&key)
-                    .end_where()
-                    .query(),
-            )?
-            .try_into()?;
+    writes: Vec<EntryWrite>,
+) -> anyhow::Result<()> {
+    db.transaction_mut(|t| -> anyhow::Result<()> {
+        for write in writes {
+            upsert(t, datastore_id, write)?;
+        }
+        Ok(())
+    })
+}
 
-        let existing_db_id = entries.first().and_then(|existing| existing.db_id.clone());
-        let entry = DataStoreEntry {
-            db_id: existing_db_id.clone(),
-            id: nanoid!(),
-            key,
-            value,
-        };
-        let result = t.exec_mut(QueryBuilder::insert().element(&entry).query())?;
-        let entry_db_id = existing_db_id
-            .clone()
-            .map(Into::<DbId>::into)
-            .or_else(|| result.ids().first().copied())
-            .ok_or_else(|| anyhow!("datastore upsert returned no id"))?;
+fn upsert(
+    t: &mut DbAnyTransactionMut<'_>,
+    datastore_id: DbId,
+    write: EntryWrite,
+) -> anyhow::Result<()> {
+    let existing_db_id = find_entry(t, datastore_id, &write.key)?.and_then(|entry| entry.db_id);
+    let entry = DataStoreEntry {
+        db_id: existing_db_id.clone(),
+        id: nanoid!(),
+        key: write.key,
+        value: write.value,
+        expires_at_ms: write.expires_at_ms,
+    };
+    let result = t.exec_mut(QueryBuilder::insert().element(&entry).query())?;
 
-        if existing_db_id.is_none() {
+    match existing_db_id.map(DbId::from) {
+        Some(entry_db_id) => {
+            // An insert keeps fields the new element omits.
+            if entry.expires_at_ms.is_none() {
+                t.exec_mut(
+                    QueryBuilder::remove()
+                        .values(["expires_at_ms"])
+                        .ids(entry_db_id)
+                        .query(),
+                )?;
+            }
+        }
+        None => {
+            let entry_db_id = result
+                .ids()
+                .first()
+                .copied()
+                .ok_or_else(|| anyhow!("datastore upsert returned no id"))?;
             t.exec_mut(
                 QueryBuilder::insert()
                     .edges()
@@ -99,39 +143,31 @@ pub fn upsert_entry(
                     .query(),
             )?;
         }
-
-        Ok(entry_db_id)
-    })
+    }
+    Ok(())
 }
 
-/// Returns `true` if an entry was removed, `false` if the key wasn't present.
-pub fn remove_entry(db: &mut DbAny, datastore_id: DbId, key: &str) -> anyhow::Result<bool> {
+/// Removes the entry under `key`. Returns whether a live entry was removed.
+pub fn remove_entry(
+    db: &mut DbAny,
+    datastore_id: DbId,
+    key: &str,
+    now_ms: u64,
+) -> anyhow::Result<bool> {
     db.transaction_mut(|t| -> anyhow::Result<bool> {
-        let entries: Vec<DataStoreEntry> = t
-            .exec(
-                QueryBuilder::select()
-                    .elements::<DataStoreEntry>()
-                    .search()
-                    .from(datastore_id)
-                    .where_()
-                    .key("key")
-                    .value(key)
-                    .end_where()
-                    .query(),
-            )?
-            .try_into()?;
-
-        let Some(existing_node_id) = entries.first().and_then(|e| e.db_id.clone()) else {
+        let Some(entry) = find_entry(t, datastore_id, key)? else {
             return Ok(false);
         };
-        let target: DbId = existing_node_id.into();
-        t.exec_mut(QueryBuilder::remove().ids(target).query())?;
-        Ok(true)
+        let Some(entry_db_id) = entry.db_id.clone().map(DbId::from) else {
+            return Ok(false);
+        };
+        t.exec_mut(QueryBuilder::remove().ids(entry_db_id).query())?;
+        Ok(entry.is_live(now_ms))
     })
 }
 
-/// Returns the number of entries removed.
-pub fn clear_entries(db: &mut DbAny, datastore_id: DbId) -> anyhow::Result<usize> {
+/// Removes every entry. Returns the number of live entries removed.
+pub fn clear_entries(db: &mut DbAny, datastore_id: DbId, now_ms: u64) -> anyhow::Result<usize> {
     db.transaction_mut(|t| -> anyhow::Result<usize> {
         let entries: Vec<DataStoreEntry> = t
             .exec(
@@ -151,72 +187,55 @@ pub fn clear_entries(db: &mut DbAny, datastore_id: DbId) -> anyhow::Result<usize
             return Ok(0);
         }
 
-        let count = ids.len();
         t.exec_mut(QueryBuilder::remove().ids(&ids).query())?;
-        Ok(count)
+        Ok(entries.iter().filter(|e| e.is_live(now_ms)).count())
     })
 }
 
-/// Removes entries across all datastores whose JSON value carries a passed
-/// `expires_at_ms`. Entries without the field are persistent and kept. Returns
-/// the number removed.
-pub fn sweep_expired_entries(db: &mut DbAny, now_ms: u64) -> anyhow::Result<usize> {
+pub fn list_ids(db: &impl DbAccess) -> anyhow::Result<Vec<DbId>> {
+    let datastores: Vec<DataStore> = db
+        .exec(
+            QueryBuilder::select()
+                .elements::<DataStore>()
+                .search()
+                .from("datastore")
+                .where_()
+                .distance(MEMBERS)
+                .query(),
+        )?
+        .try_into()?;
+    Ok(datastores
+        .into_iter()
+        .filter_map(|datastore| datastore.db_id.map(DbId::from))
+        .collect())
+}
+
+/// Removes up to `limit` entries of one datastore that expired by `now_ms`,
+/// without reading their values. Returns the number removed.
+pub fn remove_expired_entries(
+    db: &mut DbAny,
+    datastore_id: DbId,
+    now_ms: u64,
+    limit: u64,
+) -> anyhow::Result<usize> {
     db.transaction_mut(|t| -> anyhow::Result<usize> {
-        let datastores: Vec<DataStore> = t
+        let ids = t
             .exec(
-                QueryBuilder::select()
-                    .elements::<DataStore>()
-                    .search()
-                    .from("datastore")
+                QueryBuilder::search()
+                    .from(datastore_id)
+                    .limit(limit)
                     .where_()
-                    .distance(MEMBERS)
+                    .key("expires_at_ms")
+                    .value(Comparison::LessThanOrEqual(now_ms.into()))
                     .query(),
             )?
-            .try_into()?;
-
-        let mut to_remove: Vec<DbId> = Vec::new();
-        for datastore in datastores {
-            let Some(datastore_id) = datastore.db_id.map(DbId::from) else {
-                continue;
-            };
-            let entries: Vec<DataStoreEntry> = t
-                .exec(
-                    QueryBuilder::select()
-                        .elements::<DataStoreEntry>()
-                        .search()
-                        .from(datastore_id)
-                        .query(),
-                )?
-                .try_into()?;
-
-            for entry in entries {
-                let Some(entry_db_id) = entry.db_id.clone().map(DbId::from) else {
-                    continue;
-                };
-                if entry_is_expired(&entry.value, now_ms) {
-                    to_remove.push(entry_db_id);
-                }
-            }
-        }
-
-        if to_remove.is_empty() {
+            .ids();
+        if ids.is_empty() {
             return Ok(0);
         }
-
-        let count = to_remove.len();
-        t.exec_mut(QueryBuilder::remove().ids(&to_remove).query())?;
-        Ok(count)
+        t.exec_mut(QueryBuilder::remove().ids(&ids).query())?;
+        Ok(ids.len())
     })
-}
-
-fn entry_is_expired(value_json: &str, now_ms: u64) -> bool {
-    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(value_json) else {
-        return false;
-    };
-    let Some(expires_at_ms) = parsed.get("expires_at_ms").and_then(|v| v.as_u64()) else {
-        return false;
-    };
-    expires_at_ms <= now_ms
 }
 
 pub fn find_by_name(db: &DbAny, name: &str) -> anyhow::Result<Option<DataStore>> {
@@ -309,84 +328,182 @@ mod tests {
             .expect("store should be persisted")
     }
 
-    #[test]
-    fn remove_entry_returns_true_when_present_and_false_when_absent() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        let store = get_or_create(&mut db, "cache".to_string())?;
-        let id = store_id(&store);
-        upsert_entry(&mut db, id, "k".to_string(), "\"v\"".to_string())?;
+    fn write(key: &str, value: &str, expires_at_ms: Option<u64>) -> EntryWrite {
+        EntryWrite {
+            key: key.to_string(),
+            value: value.to_string(),
+            expires_at_ms,
+        }
+    }
 
-        assert!(remove_entry(&mut db, id, "k")?);
-        assert!(get_entry(&db, id, "k")?.is_none());
-        assert!(!remove_entry(&mut db, id, "k")?);
+    fn new_store(db: &mut DbAny, name: &str) -> anyhow::Result<DbId> {
+        Ok(store_id(&get_or_create(db, name.to_string())?))
+    }
+
+    #[test]
+    fn remove_entry_reports_only_live_entries() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let id = new_store(&mut db, "cache")?;
+        upsert_entry(&mut db, id, write("k", "\"v\"", None))?;
+        upsert_entry(&mut db, id, write("old", "1", Some(100)))?;
+
+        assert!(remove_entry(&mut db, id, "k", 1000)?);
+        assert!(get_entry(&db, id, "k", 1000)?.is_none());
+        assert!(!remove_entry(&mut db, id, "k", 1000)?);
+        assert!(!remove_entry(&mut db, id, "old", 1000)?);
+        assert!(find_entry(&db, id, "old")?.is_none());
         Ok(())
     }
 
     #[test]
-    fn clear_entries_removes_only_the_targeted_store() -> anyhow::Result<()> {
+    fn clear_entries_removes_only_the_targeted_store_and_counts_live_entries() -> anyhow::Result<()>
+    {
         let mut db = new_test_db()?;
-        let store_a = get_or_create(&mut db, "a".to_string())?;
-        let store_b = get_or_create(&mut db, "b".to_string())?;
-        let id_a = store_id(&store_a);
-        let id_b = store_id(&store_b);
+        let id_a = new_store(&mut db, "a")?;
+        let id_b = new_store(&mut db, "b")?;
 
-        upsert_entry(&mut db, id_a, "x".to_string(), "1".to_string())?;
-        upsert_entry(&mut db, id_a, "y".to_string(), "2".to_string())?;
-        upsert_entry(&mut db, id_b, "z".to_string(), "3".to_string())?;
+        upsert_entry(&mut db, id_a, write("x", "1", None))?;
+        upsert_entry(&mut db, id_a, write("y", "2", Some(5000)))?;
+        upsert_entry(&mut db, id_a, write("expired", "3", Some(100)))?;
+        upsert_entry(&mut db, id_b, write("z", "3", None))?;
 
-        let removed = clear_entries(&mut db, id_a)?;
-        assert_eq!(removed, 2);
-        assert!(get_entry(&db, id_a, "x")?.is_none());
-        assert!(get_entry(&db, id_a, "y")?.is_none());
-        assert!(get_entry(&db, id_b, "z")?.is_some());
+        assert_eq!(clear_entries(&mut db, id_a, 1000)?, 2);
+        assert!(find_entry(&db, id_a, "x")?.is_none());
+        assert!(find_entry(&db, id_a, "expired")?.is_none());
+        assert!(get_entry(&db, id_b, "z", 1000)?.is_some());
         Ok(())
     }
 
     #[test]
-    fn entry_is_expired_only_when_field_present_and_past() {
-        assert!(!entry_is_expired("\"plain\"", 1000));
-        assert!(!entry_is_expired("{}", 1000));
-        assert!(!entry_is_expired("{\"value\":\"x\"}", 1000));
+    fn get_entry_hides_entries_once_they_expire() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let id = new_store(&mut db, "cache")?;
+        upsert_entry(&mut db, id, write("k", "1", Some(1000)))?;
+        upsert_entry(&mut db, id, write("p", "2", None))?;
 
-        assert!(entry_is_expired("{\"expires_at_ms\":500}", 1000));
-        assert!(entry_is_expired("{\"expires_at_ms\":1000}", 1000));
-
-        assert!(!entry_is_expired("{\"expires_at_ms\":2000}", 1000));
-
-        assert!(!entry_is_expired("not json", 1000));
-        assert!(!entry_is_expired("{\"expires_at_ms\":\"soon\"}", 1000));
+        let live = get_entry(&db, id, "k", 999)?.expect("live before expiry");
+        assert_eq!(live.expires_at_ms, Some(1000));
+        assert!(get_entry(&db, id, "k", 1000)?.is_none());
+        assert!(find_entry(&db, id, "k")?.is_some());
+        let persistent = get_entry(&db, id, "p", u64::MAX)?.expect("persistent entry");
+        assert_eq!(persistent.expires_at_ms, None);
+        Ok(())
     }
 
     #[test]
-    fn sweep_expired_entries_drops_only_past_expires_at_entries() -> anyhow::Result<()> {
+    fn overwriting_without_expiry_makes_an_entry_persistent() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        let store = get_or_create(&mut db, "cache".to_string())?;
-        let id = store_id(&store);
+        let id = new_store(&mut db, "cache")?;
+        upsert_entry(&mut db, id, write("k", "1", Some(1000)))?;
+        upsert_entry(&mut db, id, write("k", "2", None))?;
 
-        upsert_entry(
-            &mut db,
-            id,
-            "stale".to_string(),
-            "{\"expires_at_ms\":100}".to_string(),
+        let entry = get_entry(&db, id, "k", 5000)?.expect("persistent after overwrite");
+        assert_eq!(entry.value, "2");
+        assert_eq!(entry.expires_at_ms, None);
+
+        upsert_entry(&mut db, id, write("k", "3", Some(7000)))?;
+        assert_eq!(
+            get_entry(&db, id, "k", 5000)?.and_then(|e| e.expires_at_ms),
+            Some(7000)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_entry_stored_without_expiry_field_loads_as_persistent() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let id = new_store(&mut db, "cache")?;
+        let result = db.exec_mut(
+            QueryBuilder::insert()
+                .nodes()
+                .values([[
+                    ("db_element_id", "DataStoreEntry").into(),
+                    ("id", "old").into(),
+                    ("key", "k").into(),
+                    ("value", "\"v\"").into(),
+                ]])
+                .query(),
         )?;
-        upsert_entry(
-            &mut db,
-            id,
-            "fresh".to_string(),
-            "{\"expires_at_ms\":9999}".to_string(),
-        )?;
-        upsert_entry(
-            &mut db,
-            id,
-            "persistent".to_string(),
-            "{\"value\":\"keep me\"}".to_string(),
+        db.exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from(id)
+                .to(result.ids()[0])
+                .query(),
         )?;
 
-        let removed = sweep_expired_entries(&mut db, 1000)?;
-        assert_eq!(removed, 1);
-        assert!(get_entry(&db, id, "stale")?.is_none());
-        assert!(get_entry(&db, id, "fresh")?.is_some());
-        assert!(get_entry(&db, id, "persistent")?.is_some());
+        let entry = get_entry(&db, id, "k", u64::MAX)?.expect("old entry loads");
+        assert_eq!(entry.value, "\"v\"");
+        assert_eq!(entry.expires_at_ms, None);
+        assert_eq!(remove_expired_entries(&mut db, id, u64::MAX, 100)?, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn upsert_many_writes_nothing_when_one_write_fails() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let id = new_store(&mut db, "cache")?;
+        upsert_many(
+            &mut db,
+            id,
+            vec![write("a", "1", None), write("b", "2", Some(5000))],
+        )?;
+        assert_eq!(
+            get_entry(&db, id, "a", 0)?.map(|e| e.value),
+            Some("1".into())
+        );
+        assert_eq!(
+            get_entry(&db, id, "b", 0)?.and_then(|e| e.expires_at_ms),
+            Some(5000)
+        );
+
+        let node_count = |db: &DbAny| -> anyhow::Result<u64> {
+            Ok(db.exec(QueryBuilder::select().node_count().query())?.result)
+        };
+        let before = node_count(&db)?;
+        let missing_store = DbId(i64::MAX);
+        assert!(
+            upsert_many(
+                &mut db,
+                missing_store,
+                vec![write("c", "3", None), write("d", "4", None)]
+            )
+            .is_err()
+        );
+        assert_eq!(node_count(&db)?, before);
+        upsert_entry(&mut db, id, write("c", "3", None))?;
+        assert_eq!(node_count(&db)?, before + 1);
+        Ok(())
+    }
+
+    #[test]
+    fn remove_expired_entries_drops_only_expired_entries_up_to_the_limit() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let id = new_store(&mut db, "cache")?;
+        let other = new_store(&mut db, "other")?;
+        upsert_many(
+            &mut db,
+            id,
+            vec![
+                write("stale-1", "not json", Some(100)),
+                write("stale-2", "{\"expires_at_ms\":9999}", Some(500)),
+                write("stale-3", "3", Some(1000)),
+                write("fresh", "{\"expires_at_ms\":1}", Some(9999)),
+                write("persistent", "5", None),
+            ],
+        )?;
+        upsert_entry(&mut db, other, write("stale", "6", Some(100)))?;
+
+        assert_eq!(remove_expired_entries(&mut db, id, 1000, 2)?, 2);
+        assert_eq!(remove_expired_entries(&mut db, id, 1000, 2)?, 1);
+        assert_eq!(remove_expired_entries(&mut db, id, 1000, 2)?, 0);
+        for key in ["stale-1", "stale-2", "stale-3"] {
+            assert!(find_entry(&db, id, key)?.is_none());
+        }
+        assert!(find_entry(&db, id, "fresh")?.is_some());
+        assert!(find_entry(&db, id, "persistent")?.is_some());
+        assert!(find_entry(&db, other, "stale")?.is_some());
+        assert_eq!(list_ids(&db)?.len(), 2);
         Ok(())
     }
 }

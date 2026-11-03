@@ -1363,7 +1363,17 @@ fn plugin_executor_exposes_db_backed_lyra_tags_module() -> Result<()> {
 
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_datastore_module() -> Result<()> {
-    let db = lyra_db::test_db::new_test_db()?;
+    let mut db = lyra_db::test_db::new_test_db()?;
+    let store = lyra_db::datastore::get_or_create(&mut db, "raw-store".to_string())?;
+    lyra_db::datastore::upsert_entry(
+        &mut db,
+        store.db_id.map(agdb::DbId::from).expect("persisted"),
+        lyra_db::datastore::EntryWrite {
+            key: "expired".to_string(),
+            value: "\"stale\"".to_string(),
+            expires_at_ms: Some(1),
+        },
+    )?;
     let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
@@ -1380,8 +1390,9 @@ fn plugin_executor_exposes_db_backed_lyra_datastore_module() -> Result<()> {
 
             store:set("answer", { value = 42, tags = { "a", "b" } })
             executor_answer = store:get("answer")
-            store:set_many({ alpha = true, beta = "two" })
-            executor_many = store:get_many({ "alpha", "missing", "beta" })
+            executor_expired = store:get("expired")
+            store:set_many({ alpha = { value = true }, beta = { value = "two", ttl_ms = 60000 } })
+            executor_many = store:get_many({ "alpha", "expired", "beta" })
             executor_removed = store:remove("beta")
             executor_cleared = store:clear()
         "#[..],
@@ -1393,6 +1404,7 @@ fn plugin_executor_exposes_db_backed_lyra_datastore_module() -> Result<()> {
         &br#"
             return executor_answer.value,
                 executor_answer.tags[2],
+                executor_expired == nil,
                 executor_many[1],
                 executor_many[2] == nil,
                 executor_many[3],
@@ -1405,6 +1417,7 @@ fn plugin_executor_exposes_db_backed_lyra_datastore_module() -> Result<()> {
         vec![
             luau::Value::Number(42.0),
             luau::Value::String(b"b".to_vec()),
+            luau::Value::Boolean(true),
             luau::Value::Boolean(true),
             luau::Value::Boolean(true),
             luau::Value::String(b"two".to_vec()),

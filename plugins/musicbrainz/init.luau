@@ -291,7 +291,8 @@ local function write_cover_release_cache(ctx: ReleaseCoverContext?, release_id: 
 			context = cache_context :: JsonValue,
 			resolved_release_id = resolved_release_id :: JsonValue,
 			expires_at_ms = (os.time() + ttl) * 1000,
-		} :: JsonValue
+		} :: JsonValue,
+		nil
 	)
 end
 

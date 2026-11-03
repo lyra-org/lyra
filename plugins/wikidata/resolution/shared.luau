@@ -127,7 +127,8 @@ function module.cache_set(key: string, data: JsonValue, ttl: number)
 		{
 			data = data,
 			expires_at_ms = (os.time() + ttl) * 1000,
-		} :: JsonValue
+		} :: JsonValue,
+		nil
 	)
 end
 
