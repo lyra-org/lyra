@@ -1,13 +1,28 @@
 run_as = "listener"
 
-# The listener and the friend see "Album" and its songs One, Two and Three; Hidden is in a library
-# nobody is granted.
+# The listener, the friend, the traveler and the wanderer see "Album" and its songs One, Two and
+# Three; Hidden is in a library nobody is granted. The listener's, the traveler's and the
+# wanderer's queues hold Hidden.
 
 [[users]]
 key = "listener"
 
 [[users]]
 key = "friend"
+
+[[users]]
+key = "traveler"
+
+[[users]]
+key = "wanderer"
+
+[[api_keys]]
+key = "traveler_key"
+user = "traveler"
+
+[[api_keys]]
+key = "wanderer_key"
+user = "wanderer"
 
 [[api_keys]]
 key = "listener_key"
@@ -20,7 +35,7 @@ user = "friend"
 [[libraries]]
 key = "music"
 name = "Music"
-users = ["listener", "friend"]
+users = ["listener", "friend", "traveler", "wanderer"]
 
 [[libraries]]
 key = "locked"
@@ -75,4 +90,24 @@ tracks = ["one", "hidden", "two"]
 current = 1
 position_ms = 4000
 client_name = "Lyra Web"
+updated = 1700000000000
+
+# A queue playing Two, the fourth song, after hidden ones.
+[[playbacks]]
+key = "travel"
+user = "traveler"
+tracks = ["hidden", "one", "hidden", "two", "one"]
+current = 3
+position_ms = 5000
+client_name = "Car"
+updated = 1700000000000
+
+# A queue left on a hidden last song.
+[[playbacks]]
+key = "wander"
+user = "wanderer"
+tracks = ["one", "two", "hidden"]
+current = 2
+position_ms = 6000
+client_name = "Car"
 updated = 1700000000000

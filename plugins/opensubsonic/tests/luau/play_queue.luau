@@ -89,3 +89,99 @@ call.ok("savePlayQueue", friend, { id = ids.one, current = ids.one, c = "Phone" 
 assert(queue_of(friend).current == ids.one, "the friend's queue")
 call.ok("savePlayQueue", friend, { c = "Phone" })
 assert(queue_of(friend) == nil, "no queue left")
+
+-- By index, the queue names its current song by its place among the songs still visible.
+local traveler = fixture.api_keys.traveler_key
+local wanderer = fixture.api_keys.wanderer_key
+local function indexed(api_key: string): any
+	return call.ok("getPlayQueueByIndex", api_key).playQueueByIndex
+end
+
+assert(indexed(friend) == nil, "no indexed queue")
+local unsaved_indexed_xml = call.raw("getPlayQueueByIndex", { apiKey = friend }).body
+assert(not string.find(unsaved_indexed_xml, "playQueueByIndex", 1, true), unsaved_indexed_xml)
+
+-- Hidden songs before the current one move it up, and it keeps its position.
+local travel = indexed(traveler)
+call.same(call.ids(travel.entry), { ids.one, ids.two, ids.one }, "visible travel entries")
+assert(travel.currentIndex == 1 and travel.position == 5000, `travel at {travel.currentIndex}, {travel.position}`)
+assert(travel.current == nil and travel.changedBy == "Car" and travel.username ~= nil, "travel fields")
+local by_id = queue_of(traveler)
+assert(by_id.current == ids.two and by_id.position == 5000 and by_id.currentIndex == nil, "the same queue by id")
+
+-- A hidden current song hands over to the next one, or to the last when none follows, from its start.
+local wander = indexed(wanderer)
+call.same(call.ids(wander.entry), { ids.one, ids.two }, "visible wander entries")
+assert(wander.currentIndex == 1 and wander.position == 0, `wander at {wander.currentIndex}, {wander.position}`)
+assert(queue_of(wanderer).current == ids.two, "the last song by id")
+local listener_indexed = indexed(key)
+assert(listener_indexed.currentIndex == 1 and listener_indexed.position == 0, "the web queue, handed over")
+
+-- An index tells repeats apart, which `current` can't.
+call.ok("savePlayQueueByIndex", friend, {
+	id = { ids.one, ids.two, ids.one },
+	currentIndex = "2",
+	position = "2500",
+	c = "Phone",
+})
+local repeated = indexed(friend)
+call.same(call.ids(repeated.entry), { ids.one, ids.two, ids.one }, "indexed entries")
+assert(repeated.currentIndex == 2 and repeated.position == 2500, `at {repeated.currentIndex}`)
+assert(repeated.changedBy == "Phone", "the saving client")
+assert(queue_of(friend).current == ids.one, "by id, the repeated song")
+-- A queue saved by id reads back by index, at the first of the songs `current` repeats.
+call.ok("savePlayQueue", friend, { id = { ids.two, ids.one, ids.two }, current = ids.two, c = "Phone" })
+assert(indexed(friend).currentIndex == 0 and indexed(friend).position == 0, "an id's first place")
+
+-- The index is required with songs, within the queue, and an integer; nothing is saved otherwise.
+local function index_fails(code: number, params: { [string]: any }, why: string)
+	params.c = "Phone"
+	assert(call.error_code("savePlayQueueByIndex", friend, params) == code, why)
+end
+index_fails(10, { id = ids.one }, "a queue needs currentIndex")
+index_fails(10, { id = ids.one, currentIndex = "" }, "an empty currentIndex")
+index_fails(10, { id = { ids.one, ids.two }, currentIndex = "2" }, "past the end")
+index_fails(10, { id = ids.one, currentIndex = "-1" }, "before the start")
+index_fails(0, { id = ids.one, currentIndex = "first" }, "an integer")
+index_fails(70, { id = { ids.one, ids.hidden }, currentIndex = "0" }, "a hidden song")
+index_fails(70, { id = { ids.one, "" }, currentIndex = "0" }, "an empty id")
+index_fails(0, { id = ids.one, currentIndex = "0", position = "soon" }, "position")
+call.same(call.ids(indexed(friend).entry), { ids.two, ids.one, ids.two }, "failed indexed saves keep the queue")
+
+-- A long queue is cut around the current song, its index moving with the cut.
+local long_indexed = table.create(1200, ids.one)
+call.ok("savePlayQueueByIndex", friend, { id = long_indexed, currentIndex = "1100", c = "Phone" })
+local cut_indexed = indexed(friend)
+assert(#cut_indexed.entry == 1000, `kept {#cut_indexed.entry} songs`)
+assert(cut_indexed.currentIndex == 900, `cut to {cut_indexed.currentIndex}`)
+call.ok("savePlayQueueByIndex", friend, { id = long_indexed, currentIndex = "5", c = "Phone" })
+assert(indexed(friend).currentIndex == 5, "a current song near the start stays")
+
+-- A form post saves too.
+local indexed_post = call.raw("savePlayQueueByIndex", {}, {
+	http_method = "POST",
+	headers = { ["Content-Type"] = "application/x-www-form-urlencoded" },
+	body = `apiKey={friend}&f=json&v=1.16.1&c=Web&id={ids.three}&id={ids.three}&currentIndex=1&position=9`,
+	bare = true,
+})
+assert((serde.json.decode(indexed_post.body) :: any)["subsonic-response"].status == "ok", indexed_post.body)
+local posted_indexed = indexed(friend)
+assert(posted_indexed.currentIndex == 1 and posted_indexed.position == 9 and posted_indexed.changedBy == "Web", "form")
+
+-- Saving without songs deletes the client's queue, without a currentIndex.
+call.ok("savePlayQueueByIndex", friend, { c = "Web" })
+call.ok("savePlayQueueByIndex", friend, { c = "Phone" })
+assert(indexed(friend) == nil, "no indexed queue left")
+
+local indexed_xml = call.raw("getPlayQueueByIndex", { apiKey = traveler }).body
+assert(string.find(indexed_xml, '<playQueueByIndex changed="', 1, true), indexed_xml)
+assert(string.find(indexed_xml, 'currentIndex="1"', 1, true), indexed_xml)
+
+local extensions = call.raw("getOpenSubsonicExtensions", { f = "json" }, { bare = true }).body
+local advertised = false
+for _, extension in (serde.json.decode(extensions) :: any)["subsonic-response"].openSubsonicExtensions do
+	if extension.name == "indexBasedQueue" then
+		advertised = #extension.versions == 1 and extension.versions[1] == 1
+	end
+end
+assert(advertised, "indexBasedQueue version 1")

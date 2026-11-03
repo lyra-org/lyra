@@ -21,7 +21,8 @@ that uses it.
 Each client saves its own play queue, named by the client name it sends, and Lyra keeps it as a
 playback of your account. `getPlayQueue` returns your most recently changed queue from any client,
 Lyra's own included, so you can pick up on one device where you left off on another. A queue is cut
-to 1,000 songs around its current song.
+to 1,000 songs around its current song. Clients supporting `indexBasedQueue` save and read the
+current song by its place in the queue instead, which tells repeats of a song apart.
 
 Saving an empty queue deletes only that client's queue, after which `getPlayQueue` returns the most
 recent queue of another client, if there is one. Other servers keep one queue per user, which an
