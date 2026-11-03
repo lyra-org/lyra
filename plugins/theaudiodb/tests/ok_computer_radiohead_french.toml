@@ -1,0 +1,35 @@
+[library]
+language = "fra"
+country = "FR"
+
+directory = "."
+
+[[raw_tags]]
+file_path = "OK Computer/01 Airbag.flac"
+album = "OK Computer"
+artists = ["Radiohead"]
+title = "Airbag"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 12
+duration_ms = 284000
+
+[[raw_tags]]
+file_path = "OK Computer/02 Paranoid Android.flac"
+album = "OK Computer"
+artists = ["Radiohead"]
+title = "Paranoid Android"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 12
+duration_ms = 383000
+
+[expect.release]
+ids = { album_id = "2112023" }
+fields = { release_title = "OK Computer", description = "OK Computer est le troisième album du groupe de rock alternatif britannique Radiohead. Sorti le 16 juin 1997 au Royaume-Uni et le 1er juillet aux États-Unis, il a été enregistré dans un manoir à Bath, ainsi que dans l'Oxfordshire.\n\nD'une texture très progressive et nouvelle à la fois pour le groupe et pour l'époque, cet album rencontrera un succès critique et commercial intense, propulsé en têtes des charts anglais et américains dès sa sortie, et multicertifié « platine » dans le monde. Bien qu'il ne soit pas reconnu par le groupe comme un album concept, il traite essentiellement des aspects négatifs de la société moderne, tels que le malaise social, le consumérisme ou encore la stagnation politique.\n\nDu fait de sa grande popularité, Ok Computer est aujourd'hui encore cité comme un de ces albums qui auront marqué les années 1990, à une époque de « renouveau musical », où de nombreux mouvements voyaient le jour (le Britpop avec Blur et Oasis, le Trip hop avec Massive Attack, ...).\n\nLe succès du second opus de Radiohead, The Bends (1995), conforta le groupe dans l'idée d'auto-produire l'album qui suivrait, bien qu'une poignée de producteurs (dont Scott Litt (R.E.M., Incubus)) ait été mis en attente. Les sessions d'enregistrement inclurent également la participation du producteur Nigel Godrich, déjà présent durant la période The Bends, et qui deviendra plus tard le producteur attitré du groupe. Nigel conseillera ainsi la bande dans leurs choix de matériel d'enregistrement, qu'ils achèteront eux-mêmes : « Le seul concept que nous avions pour cet album était de l'enregistrer loin de la ville et avec nos propres ressources », expliquera ainsi le bassiste Colin Greenwood au magazine Circus après la tournée de l'album.\n\nC'est également la fin de l'éreintante tournée de \"The Bends\", en janvier 1996, qui poussa le groupe à changer leur approche musicale. Selon les mots du batteur Phil Selway, « [le dernier album] était très introspectif ... un \"débat intérieur\" trop méthodique. Recommencer cela encore une fois aurait été atrocement barbant ». De son côté, le chanteur et auteur de la formation, Thom Yorke, avouera également fin 1995 que « il serait trop facile de retomber dans une ambiance misérable, morbide et négative durant les enregistrements, et je veux éviter cela; à tout prix »." }
+
+[expect.artists."111418"]
+ids = { artist_id = "111418" }
+fields = { artist_name = "Radiohead" }

@@ -1,0 +1,24 @@
+run_as = "owner"
+
+[[users]]
+key = "owner"
+admin = true
+
+[[libraries]]
+key = "french"
+name = "French"
+language = "fra"
+
+[[libraries]]
+key = "plain"
+name = "Plain"
+
+[[releases]]
+key = "in_french"
+title = "In French"
+library = "french"
+
+[[releases]]
+key = "in_plain"
+title = "In Plain"
+library = "plain"

@@ -1,0 +1,42 @@
+run_as = "owner"
+
+[[users]]
+key = "owner"
+admin = true
+
+# Created in this order: the first library has no language, so the next one decides.
+[[libraries]]
+key = "plain"
+name = "Plain"
+
+[[libraries]]
+key = "french"
+name = "French"
+language = "fra"
+
+[[libraries]]
+key = "japanese"
+name = "Japanese"
+language = "jpn"
+
+[[artists]]
+key = "everywhere"
+name = "Everywhere"
+
+[[releases]]
+key = "in_japanese"
+title = "In Japanese"
+library = "japanese"
+artists = ["everywhere"]
+
+[[releases]]
+key = "in_plain"
+title = "In Plain"
+library = "plain"
+artists = ["everywhere"]
+
+[[releases]]
+key = "in_french"
+title = "In French"
+library = "french"
+artists = ["everywhere"]

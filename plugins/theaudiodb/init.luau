@@ -565,8 +565,8 @@ local function release_search_results(query: string): { SearchResultItem }
 			item.genres = genres
 		end
 		local description = albums.description(album)
-		if description ~= nil then
-			item.description = description
+		if description then
+			item.description = description.text
 		end
 		local cover_url = preferred_album_cover_url(album)
 		if cover_url ~= nil then
@@ -927,7 +927,7 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 		return nil
 	end
 
-	albums.save_release_layer(provider, release_id, album_id, album)
+	albums.save_release_layer(provider, release_id, album_id, album, albums.library_language(release_id))
 
 	local artist_id = matching_artist_id(ctx.artists, json_string_field(album, "strArtist"))
 	local audiodb_artist_id = json_string_field(album, "idArtist")

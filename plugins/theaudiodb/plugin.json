@@ -9,6 +9,8 @@
   "scopes": [
     "harmony.http",
     "harmony.serde",
+    "lyra.libraries",
+    "lyra.locale",
     "lyra.metadata",
     "lyra.plugins"
   ]
