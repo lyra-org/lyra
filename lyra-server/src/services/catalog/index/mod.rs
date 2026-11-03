@@ -1530,6 +1530,7 @@ mod tests {
                     release_date: None,
                     media_formats: None,
                     barcode: None,
+                    description: None,
                     locked: None,
                     created_at_ms: None,
                     file_created_at_ms: None,

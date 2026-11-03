@@ -211,6 +211,8 @@ pub struct ReleaseResponse {
     )]
     pub release_date: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub genres: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cover: Option<Option<CoverResponse>>,
@@ -223,6 +225,7 @@ impl From<lyra_db::Release> for ReleaseResponse {
             title: release.release_title,
             sort_title: release.sort_title,
             release_date: release.release_date,
+            description: release.description,
             genres: None,
             artists: None,
             tracks: None,
@@ -239,6 +242,7 @@ impl ReleaseResponse {
             title: "unavailable".to_string(),
             sort_title: None,
             release_date: None,
+            description: None,
             genres: None,
             artists: None,
             tracks: None,

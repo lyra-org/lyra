@@ -62,6 +62,7 @@ pub fn insert_release(db: &mut DbAny, title: &str) -> anyhow::Result<DbId> {
         release_date: None,
         media_formats: None,
         barcode: None,
+        description: None,
         locked: None,
         created_at_ms: None,
         file_created_at_ms: None,

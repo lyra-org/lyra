@@ -1,0 +1,14 @@
+run_as = "owner"
+
+[[users]]
+key = "owner"
+admin = true
+
+[[releases]]
+key = "described"
+title = "Described"
+description = "The album's story"
+
+[[releases]]
+key = "bare"
+title = "Bare"

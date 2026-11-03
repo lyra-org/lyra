@@ -846,6 +846,22 @@ mod tests {
     }
 
     #[test]
+    fn a_release_layer_stores_its_description() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release_id = insert_release(&mut db, "Release")?;
+        let saved = layer(
+            "provider",
+            json!({"release_title": "Release", "description": "About the release"}),
+            1,
+        );
+        upsert(&mut db, release_id, &saved)?;
+
+        assert!(only_layer_keys(&db, release_id)?.contains("description"));
+        assert_eq!(only_layer(&db, release_id)?, saved);
+        Ok(())
+    }
+
+    #[test]
     fn replacing_a_layer_removes_properties_it_no_longer_supplies() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let release_id = insert_release(&mut db, "Release")?;

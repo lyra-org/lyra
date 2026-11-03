@@ -154,6 +154,7 @@ impl MetadataEntityType {
                 MetadataField::SortTitle,
                 MetadataField::ReleaseType,
                 MetadataField::ReleaseDate,
+                MetadataField::Description,
                 MetadataField::Genres,
                 MetadataField::Labels,
                 MetadataField::Credits,

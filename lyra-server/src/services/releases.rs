@@ -197,6 +197,7 @@ mod tests {
             release_date: year.map(|year| format!("{year:04}")),
             media_formats: None,
             barcode: None,
+            description: None,
             locked: None,
             created_at_ms: None,
             file_created_at_ms: None,

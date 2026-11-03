@@ -183,6 +183,7 @@ struct Release {
     cover_gone: bool,
     /// The cover's blurhash.
     blurhash: Option<String>,
+    description: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -865,6 +866,7 @@ impl Fixture {
                 .collect::<anyhow::Result<Vec<_>>>()?;
             let mut layer = LocalLayer::default();
             layer.supply(MetadataField::ReleaseTitle, Some(release.title.as_str()));
+            layer.supply(MetadataField::Description, release.description.as_deref());
             layer.supply_input(
                 MetadataField::Genres,
                 (!genre_names.is_empty()).then_some(Some(FieldInput::Genres(genre_names))),

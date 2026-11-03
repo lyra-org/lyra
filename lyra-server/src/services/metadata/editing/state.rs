@@ -133,6 +133,10 @@ fn release_fields(
             MetadataField::ReleaseDate,
             optional_value(release.release_date)?,
         ),
+        (
+            MetadataField::Description,
+            optional_value(release.description)?,
+        ),
         (MetadataField::Genres, serde_json::to_value(genres)?),
         (MetadataField::Labels, serde_json::to_value(labels)?),
         (

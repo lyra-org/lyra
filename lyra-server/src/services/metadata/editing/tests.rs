@@ -361,6 +361,53 @@ fn a_manual_clear_outranks_later_provider_values() -> anyhow::Result<()> {
 }
 
 #[test]
+fn a_release_description_edit_outranks_provider_values() -> anyhow::Result<()> {
+    let mut db = new_test_db()?;
+    let release_id = insert_release(&mut db, "Release")?;
+
+    let edit = preview_edit(
+        &db,
+        release_id,
+        vec![set(MetadataField::Description, json!("  Manual notes  "))],
+    )?;
+    assert_eq!(edit.expected[0].before.value, Value::Null);
+    apply(&mut db, release_id, &edit)?;
+
+    lyra_db::providers::upsert(
+        &mut db,
+        &lyra_db::ProviderConfig {
+            db_id: None,
+            provider_id: "test-provider".to_string(),
+            position: 0,
+            enabled: true,
+        },
+    )?;
+    lyra_db::metadata::layers::upsert(
+        &mut db,
+        release_id,
+        &lyra_db::MetadataLayer {
+            source_id: "test-provider".to_string(),
+            relations: Default::default(),
+            credits: Default::default(),
+            fields: crate::services::metadata::layers::json::fields_from_json(
+                json!({"description": "Provider notes"}),
+            ),
+            updated_at_ms: 10,
+        },
+    )?;
+    crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, release_id)?;
+
+    let stored = lyra_db::releases::get_by_id(&db, release_id)?.expect("release exists");
+    assert_eq!(stored.description.as_deref(), Some("Manual notes"));
+
+    let inherited = preview_edit(&db, release_id, vec![inherit(MetadataField::Description)])?;
+    apply(&mut db, release_id, &inherited)?;
+    let stored = lyra_db::releases::get_by_id(&db, release_id)?.expect("release exists");
+    assert_eq!(stored.description.as_deref(), Some("Provider notes"));
+    Ok(())
+}
+
+#[test]
 fn set_accepts_null_and_empty_lists_only_for_clearable_fields() -> anyhow::Result<()> {
     let mut db = new_test_db()?;
     let release_id = insert_release(&mut db, "Release")?;

@@ -328,6 +328,7 @@ pub(crate) fn detail_to_release_response(
         title: detail.release.release_title,
         sort_title: detail.release.sort_title,
         release_date: detail.release.release_date,
+        description: detail.release.description,
         genres,
         cover,
         artists: detail
@@ -944,6 +945,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_release_includes_its_description() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let release_id = {
+            let mut db = STATE.db.write().await;
+            let release_db_id = insert_test_release(&mut db, "Described")?;
+            let mut release = lyra_db::releases::get_by_id(&*db, release_db_id)?
+                .ok_or_else(|| anyhow::anyhow!("release missing"))?;
+            release.description = Some("About the release".to_string());
+            lyra_db::releases::update(&mut db, &release)?;
+            release.id
+        };
+        let headers = create_admin_headers("release-description-admin").await?;
+
+        let Json(response) =
+            get_release(headers, Path(release_id), Query(ReleaseQuery { inc: None }))
+                .await
+                .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert_eq!(
+            serde_json::to_value(response)?["description"],
+            "About the release"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn get_releases_orders_partial_release_dates() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         setup_route_test().await?;
@@ -1388,6 +1416,7 @@ mod tests {
             tracks: None,
             entries: None,
             release_date: None,
+            description: None,
             genres: None,
             cover: None,
         };
@@ -1407,6 +1436,7 @@ mod tests {
             tracks: None,
             entries: None,
             release_date: None,
+            description: None,
             genres: None,
             cover: Some(None),
         };

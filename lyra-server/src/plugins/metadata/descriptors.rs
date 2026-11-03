@@ -400,6 +400,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
                 field("release_title", opt(string())),
                 field("sort_title", opt(string())),
                 field("release_date", opt(string())),
+                field("description", opt(string())),
                 field("locked", opt(boolean())),
                 field("created_at_ms", opt(number())),
                 field("file_created_at_ms", opt(number())),

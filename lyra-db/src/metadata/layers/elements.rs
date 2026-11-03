@@ -97,6 +97,7 @@ pub(super) struct ReleaseLayer {
     sort_title: Option<String>,
     release_type: Option<ReleaseType>,
     release_date: Option<String>,
+    description: Option<String>,
 }
 
 impl LayerElement for ReleaseLayer {
@@ -114,6 +115,7 @@ impl LayerElement for ReleaseLayer {
             sort_title: field_value(fields, MetadataField::SortTitle)?,
             release_type: field_value(fields, MetadataField::ReleaseType)?,
             release_date: field_value(fields, MetadataField::ReleaseDate)?,
+            description: field_value(fields, MetadataField::Description)?,
         })
     }
 
@@ -126,6 +128,7 @@ impl LayerElement for ReleaseLayer {
                 (MetadataField::SortTitle, stored(&self.sort_title)),
                 (MetadataField::ReleaseType, stored(&self.release_type)),
                 (MetadataField::ReleaseDate, stored(&self.release_date)),
+                (MetadataField::Description, stored(&self.description)),
             ],
         );
         if self.supplied.contains(&MetadataField::Genres) {
@@ -148,6 +151,7 @@ impl LayerElement for ReleaseLayer {
             ("sort_title", self.sort_title.is_none()),
             ("release_type", self.release_type.is_none()),
             ("release_date", self.release_date.is_none()),
+            ("description", self.description.is_none()),
         ]
     }
 

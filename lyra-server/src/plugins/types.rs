@@ -301,6 +301,7 @@ describe_record!(
         release_date: Option<String> as "release_date",
         media_formats: Option<Vec<String>> as "media_formats",
         barcode: Option<String> as "barcode",
+        description: Option<String> as "description",
         locked: Option<bool> as "locked",
         created_at_ms: Option<u64> as "created_at_ms",
         file_created_at_ms: Option<u64> as "file_created_at_ms",

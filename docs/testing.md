@@ -110,6 +110,7 @@ genres = ["rock"]
 cover = "cover.png"  # an image file, relative to the fixture, whose hash is the release key
 blurhash = "L00000fQfQfQ" # optional, the cover's blurhash
 cover_gone = true    # optional; `cover` names a missing file, as one deleted after a sync
+description = "Solo's story" # optional
 
 [[tracks]]
 key = "s1"

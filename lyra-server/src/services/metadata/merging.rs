@@ -400,6 +400,12 @@ fn apply_to_release(
         scope,
         MetadataField::ReleaseDate,
     )?;
+    changed |= assign(
+        &mut release.description,
+        merged,
+        scope,
+        MetadataField::Description,
+    )?;
 
     Ok(changed)
 }
@@ -554,6 +560,7 @@ mod tests {
             release_date: Some("1999".to_string()),
             media_formats: None,
             barcode: None,
+            description: None,
             locked: None,
             created_at_ms: None,
             file_created_at_ms: None,
@@ -583,6 +590,7 @@ mod tests {
             release_date: None,
             media_formats: None,
             barcode: None,
+            description: None,
             locked: None,
             created_at_ms: None,
             file_created_at_ms: None,
@@ -1372,6 +1380,51 @@ mod tests {
                     .is_none()
             );
             assert!(!stored_keys(&db, artist_id)?.contains("description"));
+            Ok(())
+        }
+
+        #[test]
+        fn a_release_description_resolves_by_provider_priority() -> anyhow::Result<()> {
+            let mut db = new_test_db()?;
+            let release_id = insert_release(&mut db, "Release")?;
+            let description = |db: &DbAny| -> anyhow::Result<Option<String>> {
+                Ok(lyra_db::releases::get_by_id(db, release_id)?
+                    .expect("release exists")
+                    .description)
+            };
+
+            enable_provider(&mut db, "low", 1)?;
+            enable_provider(&mut db, "high", 0)?;
+            save_layer(
+                &mut db,
+                release_id,
+                "low",
+                serde_json::json!({"description": "Low description"}),
+                1,
+            )?;
+            apply_merged_metadata_to_entity(&mut db, release_id)?;
+            assert_eq!(description(&db)?.as_deref(), Some("Low description"));
+
+            save_layer(
+                &mut db,
+                release_id,
+                "high",
+                serde_json::json!({"description": "High description"}),
+                2,
+            )?;
+            apply_merged_metadata_to_entity(&mut db, release_id)?;
+            assert_eq!(description(&db)?.as_deref(), Some("High description"));
+
+            save_layer(
+                &mut db,
+                release_id,
+                "high",
+                serde_json::json!({"description": null}),
+                3,
+            )?;
+            apply_merged_metadata_to_entity(&mut db, release_id)?;
+            assert_eq!(description(&db)?, None);
+            assert!(!stored_keys(&db, release_id)?.contains("description"));
             Ok(())
         }
 
