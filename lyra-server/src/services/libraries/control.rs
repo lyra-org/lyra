@@ -115,51 +115,101 @@ pub(crate) async fn start(
     .await
 }
 
-/// The run `filter` picks of each library, or an idle summary for a library without one, keyed
-/// by library id. Libraries that are missing or hidden from the principal, as the database has it
-/// now, are absent; without a principal, as for the system, none is hidden. A principal without
-/// `ManageLibraries` gets no run error or current subject, since they can name paths.
-pub(crate) async fn sync_status(
-    principal: Option<&Principal>,
-    library_ids: &[String],
-    filter: RunFilter,
-) -> Result<HashMap<String, SyncRunSummary>, LibraryControlError> {
-    let (visible, shows_details) = {
+/// What a caller may read of library sync runs: the libraries it can see, as the database has it
+/// when the reader is taken, and whether it sees run errors and current subjects, which can name
+/// paths and show only to `ManageLibraries`. Without a principal, as for the system, every
+/// library shows in full.
+#[derive(Clone, Debug)]
+pub(crate) struct SyncReader {
+    libraries: Vec<Library>,
+    shows_details: bool,
+}
+
+impl SyncReader {
+    pub(crate) async fn of(principal: Option<&Principal>) -> Result<Self, LibraryControlError> {
         let db = STATE.db.read().await;
         match principal {
             Some(principal) => {
                 let current = principal.recheck(&db)?;
-                let mut visible = Vec::with_capacity(library_ids.len());
-                for library_id in library_ids {
-                    if let Some(library) = library_of(&db, &current, library_id)? {
-                        visible.push(library);
-                    }
-                }
-                let manages = lyra_db::roles::has_permission(
-                    &current.permissions,
-                    Permission::ManageLibraries,
-                );
-                (visible, manages)
+                Ok(Self {
+                    libraries: access::libraries(&*db, &current)?,
+                    shows_details: lyra_db::roles::has_permission(
+                        &current.permissions,
+                        Permission::ManageLibraries,
+                    ),
+                })
             }
-            None => {
-                let visible = access::system_libraries(&*db, &super::system_context())?
-                    .into_iter()
-                    .filter(|library| library_ids.contains(&library.id))
-                    .collect();
-                (visible, true)
-            }
+            None => Ok(Self {
+                libraries: access::system_libraries(&*db, &super::system_context())?,
+                shows_details: true,
+            }),
         }
-    };
-    let mut statuses = orchestrator::library_sync_statuses(&visible, filter).await?;
-    if !shows_details {
-        for summary in statuses.values_mut() {
+    }
+
+    fn sees(&self, library_id: &str) -> bool {
+        self.libraries
+            .iter()
+            .any(|library| library.id == library_id)
+    }
+
+    /// `summary` as this reader may read it, or `None` when its library is hidden.
+    pub(crate) fn read(&self, mut summary: SyncRunSummary) -> Option<SyncRunSummary> {
+        if !self.sees(&summary.run.library_id) {
+            return None;
+        }
+        if !self.shows_details {
             summary.run.error = None;
             if let Some(current) = &mut summary.current {
                 current.subject = None;
             }
         }
+        Some(summary)
     }
-    Ok(statuses)
+
+    /// The run `filter` picks of each visible library `include` keeps, or an idle summary for a
+    /// library without one, keyed by library id.
+    pub(crate) async fn statuses(
+        &self,
+        include: impl Fn(&str) -> bool,
+        filter: RunFilter,
+    ) -> Result<HashMap<String, SyncRunSummary>, LibraryControlError> {
+        let libraries: Vec<Library> = self
+            .libraries
+            .iter()
+            .filter(|library| include(&library.id))
+            .cloned()
+            .collect();
+        Ok(orchestrator::library_sync_statuses(&libraries, filter)
+            .await?
+            .into_iter()
+            .filter_map(|(id, summary)| Some((id, self.read(summary)?)))
+            .collect())
+    }
+}
+
+/// The run `filter` picks of each of `library_ids` the principal can read, as [`SyncReader`]
+/// reads them; missing and hidden libraries are absent.
+pub(crate) async fn sync_status(
+    principal: Option<&Principal>,
+    library_ids: &[String],
+    filter: RunFilter,
+) -> Result<HashMap<String, SyncRunSummary>, LibraryControlError> {
+    SyncReader::of(principal)
+        .await?
+        .statuses(|id| library_ids.iter().any(|wanted| wanted == id), filter)
+        .await
+}
+
+/// The run `run_id` names, as [`SyncReader`] reads it for the principal; `None` when it is
+/// missing or its library is hidden.
+pub(crate) async fn sync_run(
+    principal: &Principal,
+    run_id: &str,
+) -> Result<Option<SyncRunSummary>, LibraryControlError> {
+    let Some(summary) = orchestrator::get_sync_run(run_id).await? else {
+        return Ok(None);
+    };
+    Ok(SyncReader::of(Some(principal)).await?.read(summary))
 }
 
 /// Cancels the library's active run and returns its summary; without one, returns what

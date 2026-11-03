@@ -44,9 +44,12 @@ use crate::{
     services::{
         SyncRunEvent,
         SyncRunSummary,
+        auth::require_authenticated,
         cancel_sync_run,
-        get_sync_run,
-        libraries::control::require_manage_libraries_on,
+        libraries::control::{
+            self,
+            require_manage_libraries_on,
+        },
         subscribe_sync_run_events,
         sync_run_events_after,
     },
@@ -62,15 +65,18 @@ struct SyncRunEventsQuery {
     after: Option<u64>,
 }
 
+/// The run `run_id` names, when the caller may manage its library. A run the caller cannot read
+/// is not found, as with [`get_run`].
 async fn load_authorized_run(
     headers: &HeaderMap,
     run_id: &str,
 ) -> Result<SyncRunSummary, AppError> {
-    let summary = get_sync_run(run_id)
+    let bearer = bearer_credential(headers);
+    let principal = require_authenticated(bearer).await?;
+    let summary = control::sync_run(&principal, run_id)
         .await?
-        .ok_or_else(|| AppError::not_found(format!("sync run not found: {run_id}")))?;
-    let _principal =
-        require_manage_libraries_on(bearer_credential(headers), &summary.run.library_id).await?;
+        .ok_or_else(|| run_not_found(run_id))?;
+    let _principal = require_manage_libraries_on(bearer, &summary.run.library_id).await?;
     Ok(summary)
 }
 
@@ -78,7 +84,15 @@ async fn get_run(
     headers: HeaderMap,
     Path(run_id): Path<String>,
 ) -> Result<Json<SyncRunSummary>, AppError> {
-    Ok(Json(load_authorized_run(&headers, &run_id).await?))
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
+    control::sync_run(&principal, &run_id)
+        .await?
+        .map(Json)
+        .ok_or_else(|| run_not_found(&run_id))
+}
+
+fn run_not_found(run_id: &str) -> AppError {
+    AppError::not_found(format!("sync run not found: {run_id}"))
 }
 
 async fn cancel_run(
@@ -88,7 +102,7 @@ async fn cancel_run(
     let _summary = load_authorized_run(&headers, &run_id).await?;
     let summary = cancel_sync_run(&run_id)
         .await?
-        .ok_or_else(|| AppError::not_found(format!("sync run not found: {run_id}")))?;
+        .ok_or_else(|| run_not_found(&run_id))?;
     Ok(Json(summary))
 }
 
@@ -183,8 +197,11 @@ fn should_send_latest_sync_event(
 
 #[cfg(feature = "docgen")]
 fn get_run_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Get sync run")
-        .description("Returns a compact library sync or refresh run summary.")
+    op.summary("Get sync run").description(
+        "Returns a compact library sync or refresh run summary. Requires access to the run's \
+             library. `run.error` and `current.subject` are null unless the caller has \
+             ManageLibraries.",
+    )
 }
 
 #[cfg(feature = "docgen")]
@@ -272,7 +289,189 @@ pub(crate) fn sync_openapi_routes() -> aide::axum::ApiRouter {
 
 #[cfg(test)]
 mod tests {
-    use super::should_send_latest_sync_event;
+    use agdb::{
+        DbAny,
+        DbId,
+    };
+    use axum::{
+        http::{
+            StatusCode,
+            header::AUTHORIZATION,
+        },
+        response::IntoResponse,
+    };
+    use lyra_db::Permission;
+
+    use super::*;
+    use crate::services::{
+        STATE,
+        libraries::{
+            SyncRunProgress,
+            SyncStageKey,
+            SyncWorkDetails,
+            begin_test_run,
+            end_test_run,
+        },
+        testing::{
+            create_session,
+            init_default_test_state,
+            runtime_test_lock,
+        },
+    };
+
+    const SECRET: &str = "/sync/shown/secret";
+
+    struct Fixture {
+        manager: DbId,
+        listener: DbId,
+        shown: DbId,
+        hidden: DbId,
+    }
+
+    fn user_with(db: &mut DbAny, name: &str, permissions: Vec<Permission>) -> anyhow::Result<DbId> {
+        let user = lyra_db::users::create(db, &lyra_db::fixtures::test_user(name)?)?;
+        let role = lyra_db::roles::create(
+            db,
+            &lyra_db::roles::Role {
+                db_id: None,
+                id: nanoid::nanoid!(),
+                name: format!("{name}-role"),
+                permissions,
+            },
+        )?;
+        lyra_db::roles::assign_role_to_user(db, user, role)?;
+        Ok(user)
+    }
+
+    /// A manager and a listener who both see `shown` and not `hidden`.
+    async fn setup() -> anyhow::Result<Fixture> {
+        init_default_test_state()?;
+        let mut db = STATE.db.write().await;
+        let manager = user_with(&mut db, "manager", vec![Permission::ManageLibraries])?;
+        let listener = user_with(&mut db, "listener", Vec::new())?;
+        let shown = lyra_db::test_db::insert_library(&mut db, "Shown", "/sync/shown")?;
+        let hidden = lyra_db::test_db::insert_library(&mut db, "Hidden", "/sync/hidden")?;
+        for user in [manager, listener] {
+            lyra_db::libraries::grant_access(
+                &mut db,
+                user,
+                shown,
+                lyra_db::libraries::AccessKind::ReadWrite,
+            )?;
+        }
+        Ok(Fixture {
+            manager,
+            listener,
+            shown,
+            hidden,
+        })
+    }
+
+    async fn library_id(library: DbId) -> anyhow::Result<String> {
+        Ok(
+            lyra_db::libraries::get_by_id(&*STATE.db.read().await, library)?
+                .expect("library exists")
+                .id,
+        )
+    }
+
+    /// A run on `library` that failed a unit under [`SECRET`] and is working on it.
+    async fn run_on(library: DbId) -> anyhow::Result<SyncRunProgress> {
+        let library = lyra_db::libraries::get_by_id(&*STATE.db.read().await, library)?
+            .expect("library exists");
+        let progress = begin_test_run(&library).await;
+        progress
+            .set_test_error(&format!("cannot read {SECRET}"))
+            .await;
+        progress
+            .start_work(
+                SyncStageKey::EntrySync,
+                SyncWorkDetails::new("entry_group_sync").source_dir(Some(SECRET.to_string())),
+            )
+            .await;
+        Ok(progress)
+    }
+
+    async fn token(user: DbId) -> anyhow::Result<String> {
+        Ok(create_session(user, Default::default()).await?.token)
+    }
+
+    fn headers(token: &str) -> anyhow::Result<HeaderMap> {
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, format!("Bearer {token}").parse()?);
+        Ok(headers)
+    }
+
+    fn status_of<T>(result: Result<T, AppError>) -> StatusCode {
+        match result {
+            Ok(_) => StatusCode::OK,
+            Err(error) => error.into_response().status(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_run_reads_for_library_viewers_with_details_for_managers() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let fixture = setup().await?;
+        let shown = run_on(fixture.shown).await?;
+        let hidden = run_on(fixture.hidden).await?;
+        let manager = headers(&token(fixture.manager).await?)?;
+        let listener = headers(&token(fixture.listener).await?)?;
+        let get = |headers: &HeaderMap, progress: &SyncRunProgress| {
+            get_run(headers.clone(), Path(progress.run_id().to_string()))
+        };
+
+        let Json(managed) = get(&manager, &shown)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        assert_eq!(managed.run.library_id, library_id(fixture.shown).await?);
+        assert!(
+            managed
+                .run
+                .error
+                .is_some_and(|error| error.contains(SECRET))
+        );
+        assert_eq!(
+            managed.current.expect("current work").subject.as_deref(),
+            Some(SECRET)
+        );
+
+        let Json(listened) = get(&listener, &shown)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        assert_eq!(listened.run.id, managed.run.id);
+        assert_eq!(listened.run.error, None);
+        assert_eq!(listened.current.expect("current work").subject, None);
+
+        for caller in [&manager, &listener] {
+            assert_eq!(status_of(get(caller, &hidden).await), StatusCode::NOT_FOUND);
+        }
+        assert_eq!(
+            status_of(get_run(listener.clone(), Path("missing".to_string())).await),
+            StatusCode::NOT_FOUND
+        );
+
+        assert_eq!(
+            status_of(cancel_run(listener.clone(), Path(shown.run_id().to_string())).await),
+            StatusCode::FORBIDDEN
+        );
+        for caller in [&manager, &listener] {
+            for run_id in [hidden.run_id(), "missing"] {
+                assert_eq!(
+                    status_of(cancel_run(caller.clone(), Path(run_id.to_string())).await),
+                    StatusCode::NOT_FOUND,
+                    "a run the caller cannot read is not found"
+                );
+            }
+        }
+        assert_eq!(
+            status_of(cancel_run(manager.clone(), Path(shown.run_id().to_string())).await),
+            StatusCode::OK
+        );
+        end_test_run(&shown).await;
+        end_test_run(&hidden).await;
+        Ok(())
+    }
 
     #[test]
     fn sse_reconnect_sends_latest_when_replay_is_unavailable() {

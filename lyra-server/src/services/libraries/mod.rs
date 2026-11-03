@@ -30,7 +30,6 @@ pub(crate) use orchestrator::{
     SyncTotalState,
     SyncWorkDetails,
     cancel_sync_run,
-    get_sync_run,
     library_has_active_run,
     library_mutation_guard,
     running_library_sync_count,
@@ -43,6 +42,7 @@ pub(crate) use orchestrator::{
 pub(crate) use orchestrator::{
     begin_test_run,
     end_test_run,
+    get_sync_run,
 };
 pub(crate) use roots::confine_to_media_roots;
 pub(crate) use sync::system_context;
