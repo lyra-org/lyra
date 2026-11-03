@@ -45,15 +45,23 @@ return function(harness: any)
 		)
 	end
 
+	-- The body of a response `raw` returned, streamed or not.
+	function module.body(response: any): string
+		if response.kind == "stream" then
+			return harness.plugin:read_body(response)
+		end
+		assert(response.kind == "text", `answered {response.kind}`)
+		return response.body
+	end
+
 	-- The decoded `subsonic-response` of a JSON call authenticated with `key`.
 	function module.call(method: string, key: string, params: Params?): any
 		local query: Params = { apiKey = key, f = "json" }
 		for name, value in params or {} do
 			query[name] = value
 		end
-		local response = module.raw(method, query)
-		assert(response.kind == "text", `{method} answered {response.kind}`)
-		return (serde.json.decode(response.body) :: any)["subsonic-response"]
+		local body = module.body(module.raw(method, query))
+		return (serde.json.decode(body) :: any)["subsonic-response"]
 	end
 
 	function module.ok(method: string, key: string, params: Params?): any

@@ -24,7 +24,7 @@ assert(songs_only.album == nil and songs_only.artist == nil and #songs_only.song
 local past_end = search({ query = "", songOffset = "10", albumCount = "0", artistCount = "0" })
 assert(type(past_end) == "table" and past_end.song == nil, "an empty result is an empty object")
 local past_end_xml =
-	call.raw("search3", { apiKey = key, query = "", songOffset = "10", albumCount = "0", artistCount = "0" }).body
+	call.body(call.raw("search3", { apiKey = key, query = "", songOffset = "10", albumCount = "0", artistCount = "0" }))
 assert(string.find(past_end_xml, "<searchResult3/>", 1, true), past_end_xml)
 
 -- A query matches names by word prefix, through related items too.

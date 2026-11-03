@@ -43,53 +43,61 @@ local function page(params: ApiQueryParams, kind: string): (number, number)
 	return request.count(params, `{kind}Count`, DEFAULT_COUNT), request.count(params, `{kind}Offset`, 0)
 end
 
+-- Items fetched and encoded at a time, so a page of any size streams in bounded memory.
+local BATCH_SIZE = 500
+
+-- The list `name` of up to `count` items from `offset` on, which `fetch` finds and `build` turns
+-- into list items, a batch at a time.
+local function paged<T>(
+	name: string,
+	count: number,
+	offset: number,
+	fetch: (offset: number, limit: number) -> { T },
+	build: ({ T }) -> { JsonObject }
+): response.StreamedList
+	return {
+		name = name,
+		each_batch = function(emit)
+			local done = 0
+			while done < count do
+				local limit = math.min(BATCH_SIZE, count - done)
+				local found = fetch(offset + done, limit)
+				if #found > 0 then
+					emit(build(found))
+				end
+				if #found < limit then
+					break
+				end
+				done += #found
+			end
+		end,
+	}
+end
+
 module.methods = {
 	search3 = function(req: Request): ApiResponse
 		local params = req.params
 		local search = search_text(params)
 		local library_id = folders.library_id(params)
-		local result: JsonObject = {}
-
+		local function query(offset: number, limit: number): any
+			return { search = search, library_id = library_id, offset = offset, limit = limit }
+		end
 		local artist_count, artist_offset = page(params, "artist")
-		if artist_count > 0 then
-			local found = artists.query({
-				search = search,
-				library_id = library_id,
-				offset = artist_offset,
-				limit = artist_count,
-			}).items
-			if #found > 0 then
-				result.artist = artist_items.list(found)
-			end
-		end
-
 		local album_count, album_offset = page(params, "album")
-		if album_count > 0 then
-			local found = releases.query({
-				search = search,
-				library_id = library_id,
-				offset = album_offset,
-				limit = album_count,
-			}).items
-			if #found > 0 then
-				result.album = albums.list(found)
-			end
-		end
-
 		local song_count, song_offset = page(params, "song")
-		if song_count > 0 then
-			local found = tracks.query({
-				search = search,
-				library_id = library_id,
-				offset = song_offset,
-				limit = song_count,
-			}).items
-			if #found > 0 then
-				result.song = songs.list(found)
-			end
-		end
 
-		return response.ok(params, { searchResult3 = if next(result) ~= nil then result else response.EMPTY_OBJECT })
+		-- In name order, as the lists of a whole document encode.
+		return response.ok_stream(params, "searchResult3", {
+			paged("album", album_count, album_offset, function(offset, limit)
+				return releases.query(query(offset, limit)).items
+			end, albums.list),
+			paged("artist", artist_count, artist_offset, function(offset, limit)
+				return artists.query(query(offset, limit)).items
+			end, artist_items.list),
+			paged("song", song_count, song_offset, function(offset, limit)
+				return tracks.query(query(offset, limit)).items
+			end, songs.list),
+		})
 	end,
 }
 
