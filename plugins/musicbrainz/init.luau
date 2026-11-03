@@ -28,10 +28,10 @@ http.set_rate_limit({
 local ET = metadata.EntityType
 local provider = metadata.Provider.new("musicbrainz", { display_name = "MusicBrainz" })
 local BASE_URL = musicbrainz_api.BASE_URL
-local COVER_CACHE_STORE_NAME = "musicbrainz"
+local COVER_CACHE_STORE_NAME = "musicbrainz-cover-releases"
 local COVER_CACHE_KEY_PREFIX = "cover:release:"
-local COVER_CACHE_HIT_TTL = 30 * 24 * 60 * 60
-local COVER_CACHE_MISS_TTL = 7 * 24 * 60 * 60
+local COVER_CACHE_HIT_TTL_MS = 30 * 24 * 60 * 60 * 1000
+local COVER_CACHE_MISS_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
 type JsonValue = serde.JsonValue
 type JsonObject = { [string]: JsonValue }
@@ -52,7 +52,6 @@ type CoverCacheContext = lookup.CoverCacheContext
 type CoverCacheEntry = {
 	context: CoverCacheContext,
 	resolved_release_id: string | false,
-	expires_at_ms: number,
 }
 
 type ProviderIdSpec = {
@@ -108,8 +107,7 @@ local function normalize_cover_cache_entry(value: DataStoreJsonValue): CoverCach
 	end
 
 	local context = normalize_cover_cache_context(object.context)
-	local expires_at_ms = json_number_field(object, "expires_at_ms")
-	if context == nil or expires_at_ms == nil then
+	if context == nil then
 		return nil
 	end
 
@@ -126,7 +124,6 @@ local function normalize_cover_cache_entry(value: DataStoreJsonValue): CoverCach
 	return {
 		context = context,
 		resolved_release_id = resolved_release_id,
-		expires_at_ms = math.floor(expires_at_ms),
 	}
 end
 
@@ -248,9 +245,6 @@ local function read_cached_cover_release_id(ctx: ReleaseCoverContext?): (boolean
 	if entry == nil then
 		return false, nil
 	end
-	if type(entry.expires_at_ms) ~= "number" or entry.expires_at_ms <= os.time() * 1000 then
-		return false, nil
-	end
 
 	local release_context = normalize_release_context(ctx)
 	local current_context: CoverCacheContext = lookup.cover_cache_context(release_context)
@@ -282,7 +276,7 @@ local function write_cover_release_cache(ctx: ReleaseCoverContext?, release_id: 
 	local release_context = normalize_release_context(ctx)
 	local cache_context: CoverCacheContext = lookup.cover_cache_context(release_context)
 	local resolved_release_id = if type(release_id) == "string" and release_id ~= "" then release_id else false
-	local ttl = if resolved_release_id ~= false then COVER_CACHE_HIT_TTL else COVER_CACHE_MISS_TTL
+	local ttl_ms = if resolved_release_id ~= false then COVER_CACHE_HIT_TTL_MS else COVER_CACHE_MISS_TTL_MS
 	pcall(
 		store.set,
 		store,
@@ -290,9 +284,8 @@ local function write_cover_release_cache(ctx: ReleaseCoverContext?, release_id: 
 		{
 			context = cache_context :: JsonValue,
 			resolved_release_id = resolved_release_id :: JsonValue,
-			expires_at_ms = (os.time() + ttl) * 1000,
 		} :: JsonValue,
-		nil
+		{ ttl_ms = ttl_ms }
 	)
 end
 
