@@ -28,6 +28,7 @@ type Request = request.Request
 local IGNORED_ARTICLES = ""
 
 local MUSICBRAINZ_ARTIST = "musicbrainz:artist"
+local MUSICBRAINZ_RELEASE = "musicbrainz:release"
 
 local DEFAULT_SIMILAR_COUNT = 50
 local DEFAULT_TOP_COUNT = 50
@@ -98,6 +99,36 @@ local function top_artist_ids(params: api.ApiQueryParams): { string }
 		table.insert(ids, artist.id)
 	end
 	return ids
+end
+
+-- The album an album or song id names, the song's own; fails with 70 for anything else, or a song
+-- without an album.
+local function album_projection(id: string): any
+	local projection = entities.query_many({ ids = { id }, include = { "external_ids" } })[id] :: any
+	if projection and projection.entity_type == "track" then
+		local song = entities.query_many({ ids = { id }, include = { "releases" } })[id] :: any
+		local album = if song then (song.includes.releases or {})[1] else nil
+		projection = if album
+			then entities.query_many({ ids = { album.id }, include = { "external_ids" } })[album.id]
+			else nil
+	end
+	if not projection or projection.entity_type ~= "release" then
+		return request.not_found("Album")
+	end
+	return projection
+end
+
+-- What Lyra keeps of an album: its description and MusicBrainz id. Image URLs would need the
+-- caller's credentials to load, so they stay out.
+local function album_info(req: Request): ApiResponse
+	local projection = album_projection(request.required(req.params, "id"))
+	local description: string? = projection.entity.description
+	local external_ids = projection.includes.external_ids or {}
+	local info: JsonObject = {
+		notes = if description and description ~= "" then description else nil,
+		musicBrainzId = external_ids[MUSICBRAINZ_RELEASE],
+	}
+	return response.ok(req.params, { albumInfo = if next(info) ~= nil then info else response.EMPTY_OBJECT })
 end
 
 local module = {}
@@ -185,6 +216,10 @@ module.methods = {
 		end
 		return response.ok(params, { topSongs = if #items > 0 then { song = items } else response.EMPTY_OBJECT })
 	end,
+
+	getAlbumInfo2 = album_info,
+	-- Albums are directories of the same ids, so their info is the same.
+	getAlbumInfo = album_info,
 
 	getGenres = function(req: Request): ApiResponse
 		local items: { JsonObject } = {}

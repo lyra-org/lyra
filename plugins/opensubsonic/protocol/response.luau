@@ -61,6 +61,7 @@ local XML_TEXT_FIELDS: { [string]: string } = {
 
 -- Elements whose fields of these names are child elements holding text rather than attributes.
 local XML_CHILD_FIELDS: { [string]: { [string]: boolean } } = {
+	albumInfo = { notes = true, musicBrainzId = true },
 	artistInfo2 = { biography = true, musicBrainzId = true },
 }
 

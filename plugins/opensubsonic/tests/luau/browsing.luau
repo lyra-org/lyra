@@ -79,3 +79,24 @@ assert(string.find(xml.body, `<album `, 1, true), xml.body)
 local _, song_elements = string.gsub(xml.body, "<song ", "")
 assert(song_elements == 2, `two song elements, got {song_elements}`)
 assert(string.find(xml.body, `<albumArtists id="{ids.amy}"`, 1, true), "nested lists are elements too")
+
+-- An album's info is its description, by the album's id or one of its songs'.
+for _, method in { "getAlbumInfo2", "getAlbumInfo" } do
+	local info = call.ok(method, key, { id = ids.solo }).albumInfo
+	assert(info.notes == "Solo's story", `{method} notes`)
+	assert(info.smallImageUrl == nil and info.lastFmUrl == nil, `{method} has no image URLs`)
+	assert(call.ok(method, key, { id = ids.s1 }).albumInfo.notes == "Solo's story", `{method} by a song`)
+	-- An album Lyra knows nothing more of has an empty info.
+	local unknown = call.ok(method, key, { id = ids.other }).albumInfo
+	assert(type(unknown) == "table" and next(unknown) == nil, `{method} empty info`)
+	local empty_xml = call.raw(method, { apiKey = key, id = ids.o1 }).body
+	assert(string.find(empty_xml, "<albumInfo/>", 1, true), empty_xml)
+
+	assert(call.error_code(method, key, {}) == 10, `{method} needs an id`)
+	assert(call.error_code(method, key, { id = ids.secret }) == 70, `{method} of a hidden album`)
+	assert(call.error_code(method, key, { id = ids.h1 }) == 70, `{method} of a hidden song`)
+	assert(call.error_code(method, key, { id = ids.amy }) == 70, `{method} of an artist`)
+	assert(call.error_code(method, key, { id = "missing" }) == 70, `{method} of an unknown id`)
+end
+local notes_xml = call.raw("getAlbumInfo2", { apiKey = key, id = ids.solo }).body
+assert(string.find(notes_xml, "<albumInfo><notes>Solo's story</notes></albumInfo>", 1, true), notes_xml)
