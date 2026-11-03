@@ -599,6 +599,10 @@ local function search_candidates(query: string, searcher: SearchCandidatesFn, id
 	return results
 end
 
+local function album_description(album: JsonObject): string?
+	return first_non_empty_field(album, { "strDescription", "strDescriptionEN" })
+end
+
 local function release_search_candidates(query: string): { JsonObject }
 	return search_candidates(query, search_albums, ALBUM_ID_KEYS)
 end
@@ -629,7 +633,7 @@ local function release_search_results(query: string): { SearchResultItem }
 		if genres ~= nil then
 			item.genres = genres
 		end
-		local description = first_non_empty_field(album, { "strDescription", "strDescriptionEN", "strReview" })
+		local description = album_description(album)
 		if description ~= nil then
 			item.description = description
 		end
@@ -998,6 +1002,10 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 	local genres = genre_values(json_string_field(album, "strGenre"))
 	if genres ~= nil then
 		release_layer:set_field("genres", genres)
+	end
+	local description = album_description(album)
+	if description ~= nil then
+		release_layer:set_field("description", description)
 	end
 
 	release_layer:save()

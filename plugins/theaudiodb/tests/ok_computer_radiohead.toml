@@ -1,0 +1,35 @@
+[library]
+language = "eng"
+country = "GB"
+
+directory = "."
+
+[[raw_tags]]
+file_path = "OK Computer/01 Airbag.flac"
+album = "OK Computer"
+artists = ["Radiohead"]
+title = "Airbag"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 12
+duration_ms = 284000
+
+[[raw_tags]]
+file_path = "OK Computer/02 Paranoid Android.flac"
+album = "OK Computer"
+artists = ["Radiohead"]
+title = "Paranoid Android"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 12
+duration_ms = 383000
+
+[expect.release]
+ids = { album_id = "2112023" }
+fields = { release_title = "OK Computer", description = "OK Computer is the third studio album by the English alternative rock band Radiohead, released on 16 June 1997 on Parlophone in the United Kingdom and 1 July 1997 by Capitol Records in the United States. OK Computer was the first self-produced Radiohead album, with assistance from Nigel Godrich. Radiohead recorded the album in Oxfordshire and Bath between 1996 and early 1997, with most of the recording completed in the historic mansion St. Catherine's Court. The band made a deliberate attempt to distance themselves from the guitar-oriented, lyrically introspective style of their previous album, The Bends. OK Computer's abstract lyrics, densely layered sound and wide range of influences laid the groundwork for Radiohead's later, more experimental work.\n\nOn delivery to Capitol, label representatives lowered their sales estimates because the album was deemed uncommercial. Nevertheless, OK Computer reached number one on the UK Albums Chart and became Radiohead's highest album entry on the American charts at the time, debuting at number 21 on the Billboard 200. Three songs from the album-\"Paranoid Android\", \"Karma Police\" and \"No Surprises\"-were released as promotional singles. The album built on the band's worldwide popularity and has to date sold over 4.5 million copies.\n\nOK Computer received considerable acclaim upon release. Prominent British and American rock critics predicted the album was epochal and would have far-reaching cultural impact. In subsequent years, the album has been frequently cited by critics as one of the greatest albums ever recorded. OK Computer initiated a shift away from the height of Britpop's popularity to the more melancholic and atmospheric style of alternative rock prevalent in the next decade. Critics and fans often remark on the underlying themes found in the lyrics and artwork, emphasising Radiohead's views on rampant consumerism, social alienation and political malaise; in this capacity, OK Computer is often interpreted as having prescient insight into the mood of the 21st century. An LP reissue in 2008 contributed to a popular revival of vinyl records, and an expanded CD reissue in 2009, apparently released without the band's foreknowledge or permission, brought renewed attention to the album and its legacy." }
+
+[expect.artists."111418"]
+ids = { artist_id = "111418" }
+fields = { artist_name = "Radiohead" }
