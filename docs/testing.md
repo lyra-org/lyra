@@ -91,6 +91,7 @@ key = "amy"
 name = "Amy"
 type = "person"      # optional artist type
 manual_type = "group" # optional manually edited artist type
+cover = "amy.png"    # optional image file, relative to the fixture, stored as a pinned upload whose hash is the artist key
 
 [[genres]]
 key = "rock"
@@ -128,6 +129,7 @@ owner = "owner"
 name = "Mix"
 public = false
 tracks = ["s1", "s1"]
+cover = "mix.png"    # optional image file, relative to the fixture, stored as the playlist's upload whose hash is the playlist key
 
 [[listens]]
 user = "owner"

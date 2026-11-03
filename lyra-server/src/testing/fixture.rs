@@ -128,6 +128,9 @@ struct Artist {
     artist_type: Option<lyra_db::ArtistType>,
     /// A manually edited type, ranked above the scanned one.
     manual_type: Option<lyra_db::ArtistType>,
+    /// An image file, relative to the fixture, stored and pinned as the artist's manual cover,
+    /// whose hash is the artist key.
+    cover: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -220,6 +223,34 @@ struct Playlist {
     public: bool,
     #[serde(default)]
     tracks: Vec<String>,
+    /// An image file, relative to the fixture, stored as the playlist's own uploaded cover, whose
+    /// hash is the playlist key.
+    cover: Option<PathBuf>,
+}
+
+/// How a fixture cover is stored.
+struct SeededCover {
+    source: lyra_db::covers::CoverSource,
+    /// Whether the owner pins the source, as an upload pins an artist's or release's.
+    pinned: bool,
+    blurhash: Option<String>,
+    /// Whether the file is meant to be missing.
+    gone: bool,
+}
+
+impl SeededCover {
+    /// A playlist's upload, shown without a pin.
+    const UPLOAD: Self = Self {
+        source: lyra_db::covers::CoverSource::Manual,
+        pinned: false,
+        blurhash: None,
+        gone: false,
+    };
+    /// An artist's upload, pinned.
+    const PINNED_UPLOAD: Self = Self {
+        pinned: true,
+        ..Self::UPLOAD
+    };
 }
 
 #[derive(Debug, Deserialize)]
@@ -477,6 +508,49 @@ impl Fixture {
         self
     }
 
+    /// Stores `cover`, relative to the fixture, as the owner's cover from `seeded.source`, its
+    /// hash the owner's fixture key.
+    fn seed_cover(
+        &self,
+        db: &mut DbAny,
+        owner_db_id: DbId,
+        key: &str,
+        cover: &Path,
+        seeded: SeededCover,
+    ) -> anyhow::Result<()> {
+        let path = self.directory.join(cover);
+        anyhow::ensure!(
+            path.is_file() != seeded.gone,
+            "fixture cover {} {}",
+            path.display(),
+            if seeded.gone {
+                "exists but is meant to be gone"
+            } else {
+                "is not a file"
+            }
+        );
+        db.transaction_mut(|t| {
+            lyra_db::covers::upsert(
+                t,
+                owner_db_id,
+                seeded.source,
+                lyra_db::Cover {
+                    db_id: None,
+                    id: nanoid::nanoid!(),
+                    mime_type: services::covers::cover_mime_from_path(&path).into(),
+                    path: path.to_string_lossy().into_owned(),
+                    hash: key.to_string(),
+                    blurhash: seeded.blurhash,
+                    provider_id: None,
+                },
+            )?;
+            if seeded.pinned {
+                lyra_db::covers::select(t, owner_db_id, Some(seeded.source))?;
+            }
+            anyhow::Ok(())
+        })
+    }
+
     pub(crate) fn without_scopes(&self) -> &[String] {
         &self.without_scopes
     }
@@ -660,6 +734,15 @@ impl Fixture {
                     )
                 })?;
             }
+            if let Some(cover) = &artist.cover {
+                self.seed_cover(
+                    db,
+                    artist_db_id,
+                    &artist.key,
+                    cover,
+                    SeededCover::PINNED_UPLOAD,
+                )?;
+            }
             keys.entities.insert(
                 artist.key.clone(),
                 (artist_db_id, lyra_db::favorites::FavoriteKind::Artist),
@@ -702,33 +785,18 @@ impl Fixture {
                 release.key
             );
             if let Some(cover) = &release.cover {
-                let path = self.directory.join(cover);
-                anyhow::ensure!(
-                    path.is_file() != release.cover_gone,
-                    "fixture cover {} {}",
-                    path.display(),
-                    if release.cover_gone {
-                        "exists but is meant to be gone"
-                    } else {
-                        "is not a file"
-                    }
-                );
-                db.transaction_mut(|t| {
-                    lyra_db::covers::upsert(
-                        t,
-                        release_db_id,
-                        lyra_db::covers::CoverSource::Local,
-                        lyra_db::Cover {
-                            db_id: None,
-                            id: nanoid::nanoid!(),
-                            mime_type: services::covers::cover_mime_from_path(&path).into(),
-                            path: path.to_string_lossy().into_owned(),
-                            hash: release.key.clone(),
-                            blurhash: release.blurhash.clone(),
-                            provider_id: None,
-                        },
-                    )
-                })?;
+                self.seed_cover(
+                    db,
+                    release_db_id,
+                    &release.key,
+                    cover,
+                    SeededCover {
+                        source: lyra_db::covers::CoverSource::Local,
+                        pinned: false,
+                        blurhash: release.blurhash.clone(),
+                        gone: release.cover_gone,
+                    },
+                )?;
             }
             keys.entities.insert(
                 release.key.clone(),
@@ -849,6 +917,15 @@ impl Fixture {
                 .map(|link| link.entry_id)
                 .collect();
             seeded.entries.insert(playlist.key.clone(), entries);
+            if let Some(cover) = &playlist.cover {
+                self.seed_cover(
+                    db,
+                    playlist_db_id,
+                    &playlist.key,
+                    cover,
+                    SeededCover::UPLOAD,
+                )?;
+            }
             keys.entities.insert(
                 playlist.key.clone(),
                 (playlist_db_id, lyra_db::favorites::FavoriteKind::Playlist),
@@ -1033,6 +1110,96 @@ mod tests {
                 .await
                 .is_empty()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn covers_are_stored_under_their_keys() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        for file in ["red.png", "blue.png"] {
+            std::fs::write(directory.path().join(file), file)?;
+        }
+        let mut db = lyra_db::test_db::new_test_db()?;
+        let fixture: Fixture = serde_json::from_value::<Fixture>(serde_json::json!({
+            "users": [{ "key": "owner" }],
+            "artists": [
+                { "key": "singer", "name": "Singer", "cover": "red.png" },
+                { "key": "bare", "name": "Bare" },
+            ],
+            "releases": [
+                { "key": "red", "title": "Red", "cover": "red.png" },
+                { "key": "blue", "title": "Blue", "cover": "blue.png" },
+            ],
+            "playlists": [{ "key": "mix", "owner": "owner", "name": "Mix", "cover": "blue.png" }],
+        }))?
+        .in_directory(directory.path());
+        let (seeded, _) = fixture.seed(&mut db)?;
+
+        let id = |key: &str| node(&db, &seeded, key);
+        let shown = |key: &str| {
+            lyra_db::covers::sources(&db, id(key)).map(|sources| {
+                sources
+                    .into_iter()
+                    .map(|sourced| (sourced.source, sourced.selected, sourced.cover.hash))
+                    .collect::<Vec<_>>()
+            })
+        };
+        use lyra_db::covers::CoverSource::{
+            Local,
+            Manual,
+        };
+        // An artist's cover is a pinned upload, a playlist's an unpinned one, a release's its
+        // own local cover; each hash is the owner's key.
+        assert_eq!(shown("singer")?, [(Manual, true, "singer".to_string())]);
+        assert_eq!(shown("mix")?, [(Manual, false, "mix".to_string())]);
+        assert_eq!(shown("red")?, [(Local, false, "red".to_string())]);
+        assert_eq!(shown("blue")?, [(Local, false, "blue".to_string())]);
+        assert!(shown("bare")?.is_empty());
+        let singer = lyra_db::covers::get(&db, id("singer"))?.context("the artist's cover")?;
+        assert_eq!(
+            (singer.path, singer.mime_type.as_str()),
+            (
+                directory
+                    .path()
+                    .join("red.png")
+                    .to_string_lossy()
+                    .into_owned(),
+                "image/png"
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn covers_must_name_files_and_known_fields() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        for (field, entity) in [
+            (
+                "artists",
+                serde_json::json!({ "key": "a", "name": "A", "image": "a.png" }),
+            ),
+            (
+                "playlists",
+                serde_json::json!({ "key": "p", "owner": "o", "name": "P", "image": "p.png" }),
+            ),
+        ] {
+            let error = serde_json::from_value::<Fixture>(serde_json::json!({ field: [entity] }))
+                .expect_err("an unknown field is refused");
+            assert!(
+                error.to_string().contains("unknown field `image`"),
+                "{error}"
+            );
+        }
+
+        let mut db = lyra_db::test_db::new_test_db()?;
+        let fixture = serde_json::from_value::<Fixture>(serde_json::json!({
+            "artists": [{ "key": "a", "name": "A", "cover": "missing.png" }],
+        }))?
+        .in_directory(directory.path());
+        let error = fixture
+            .seed(&mut db)
+            .expect_err("a missing cover is refused");
+        assert!(error.to_string().contains("is not a file"), "{error}");
         Ok(())
     }
 

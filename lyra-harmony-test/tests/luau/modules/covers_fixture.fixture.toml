@@ -1,0 +1,31 @@
+run_as = "owner"
+
+# The artist and the playlist carry covers stored as uploads, the release its own; each hash is
+# its owner's key.
+
+[[users]]
+key = "owner"
+admin = true
+
+[[artists]]
+key = "singer"
+name = "Singer"
+cover = "cover.png"
+
+[[releases]]
+key = "a"
+title = "A"
+artists = ["singer"]
+cover = "cover.png"
+
+[[tracks]]
+key = "ta"
+title = "TA"
+release = "a"
+
+[[playlists]]
+key = "mix"
+owner = "owner"
+name = "Mix"
+tracks = ["ta"]
+cover = "cover.png"
