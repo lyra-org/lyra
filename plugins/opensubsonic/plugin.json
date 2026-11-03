@@ -21,6 +21,7 @@
     "lyra.libraries.manage",
     "lyra.listens",
     "lyra.lyrics",
+    "lyra.playback_sessions",
     "lyra.playback_sources",
     "lyra.playlists",
     "lyra.ratings",

@@ -15,3 +15,14 @@ from your Lyra account's API keys, then either:
 Lyra can't check Subsonic tokens (`t`/`s`), so a client using token authentication fails with
 error 41 until it is switched to one of the options above. Revoking a key signs out the client
 that uses it.
+
+## Play queues
+
+Each client saves its own play queue, named by the client name it sends, and Lyra keeps it as a
+playback of your account. `getPlayQueue` returns your most recently changed queue from any client,
+Lyra's own included, so you can pick up on one device where you left off on another. A queue is cut
+to 1,000 songs around its current song.
+
+Saving an empty queue deletes only that client's queue, after which `getPlayQueue` returns the most
+recent queue of another client, if there is one. Other servers keep one queue per user, which an
+empty save clears.

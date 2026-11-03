@@ -1,0 +1,78 @@
+run_as = "listener"
+
+# The listener and the friend see "Album" and its songs One, Two and Three; Hidden is in a library
+# nobody is granted.
+
+[[users]]
+key = "listener"
+
+[[users]]
+key = "friend"
+
+[[api_keys]]
+key = "listener_key"
+user = "listener"
+
+[[api_keys]]
+key = "friend_key"
+user = "friend"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener", "friend"]
+
+[[libraries]]
+key = "locked"
+name = "Locked"
+
+[[artists]]
+key = "amy"
+name = "Amy"
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+artists = ["amy"]
+
+[[releases]]
+key = "secret"
+title = "Secret"
+library = "locked"
+
+[[tracks]]
+key = "one"
+title = "One"
+release = "album"
+track = 1
+artists = ["amy"]
+
+[[tracks]]
+key = "two"
+title = "Two"
+release = "album"
+track = 2
+artists = ["amy"]
+
+[[tracks]]
+key = "three"
+title = "Three"
+release = "album"
+track = 3
+artists = ["amy"]
+
+[[tracks]]
+key = "hidden"
+title = "Hidden"
+release = "secret"
+
+# A queue Lyra's web client left paused on a song since hidden.
+[[playbacks]]
+key = "web"
+user = "listener"
+tracks = ["one", "hidden", "two"]
+current = 1
+position_ms = 4000
+client_name = "Lyra Web"
+updated = 1700000000000
