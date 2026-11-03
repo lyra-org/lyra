@@ -3,7 +3,8 @@ local audiomuse = require("./_audiomuse")
 local mix = require("@lyra/mix")
 
 local ids = fixture.ids
-local titles, take, param, item = audiomuse.titles, audiomuse.take, audiomuse.param, audiomuse.item
+local titles, scores, take, param, item =
+	audiomuse.titles, audiomuse.scores, audiomuse.take, audiomuse.param, audiomuse.item
 
 audiomuse.register(false)
 
@@ -17,6 +18,24 @@ assert(param(request.url, "n") == "3", "one more than the limit, for the seed")
 for _, name in { "eliminate_duplicates", "mood_similarity", "radius_similarity", "server" } do
 	assert(param(request.url, name) == nil, `{name} is left to AudioMuse unless set`)
 end
+
+-- Each similar track scores one less its distance from the seed, kept within 0 to 1.
+audiomuse.routes = {
+	{
+		pattern = "/api/similar_tracks",
+		body = {
+			{ item_id = item(ids.t1), distance = 0 },
+			{ item_id = item(ids.t3), distance = 0.25 },
+			{ item_id = item(ids.t2), distance = 1.5 },
+			{ item_id = item(ids.t4), distance = -0.5 },
+			{ item_id = item(ids.t5) },
+		},
+	},
+}
+local similar = mix.blend({ seeds = { ids.t1 }, mixer = "audiomuse" })
+assert(titles(similar) == "T3,T2,T4,T5", `scored similar tracks: {titles(similar)}`)
+assert(scores(similar) == "0.75,0,1,-", `similar track scores: {scores(similar)}`)
+take()
 
 -- Options the request sets are passed on.
 mix.blend({
@@ -50,6 +69,7 @@ local blended = mix.blend({
 	options = { ["audiomuse.temperature"] = 0 },
 })
 assert(titles(blended) == "T4,T5", `alchemy: {titles(blended)}`)
+assert(scores(blended) == "-,-", "rows without a distance are unscored")
 request = take()[1]
 assert(request.method == "POST" and string.find(request.url, "/api/alchemy", 1, true), "alchemy is a POST")
 local body = request.body
@@ -59,6 +79,19 @@ assert(body.subtract_distance == nil and body.server == nil, "nothing else unles
 assert(#body.items == 2, "one item per seed")
 assert(body.items[1].id == item(ids.t2) and body.items[1].op == "ADD" and body.items[1].type == "song")
 assert(body.items[2].id == item(ids.t3) and body.items[2].op == "SUBTRACT")
+
+-- Alchemy's distances score as similar tracks' do.
+audiomuse.routes = {
+	{
+		pattern = "/api/alchemy",
+		body = {
+			results = { { item_id = item(ids.t4), distance = 0.125 }, { item_id = item(ids.t5), distance = 0.5 } },
+		},
+	},
+}
+blended = mix.blend({ seeds = { ids.t2, ids.t3 }, mixer = "audiomuse" })
+assert(scores(blended) == "0.875,0.5", `alchemy scores: {scores(blended)}`)
+take()
 
 mix.blend({ seeds = { ids.solo }, mixer = "audiomuse" })
 body = take()[1].body

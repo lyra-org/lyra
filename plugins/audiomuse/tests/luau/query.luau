@@ -3,7 +3,7 @@ local audiomuse = require("./_audiomuse")
 local mix = require("@lyra/mix")
 
 local ids = fixture.ids
-local titles, take, item = audiomuse.titles, audiomuse.take, audiomuse.item
+local titles, scores, take, item = audiomuse.titles, audiomuse.scores, audiomuse.take, audiomuse.item
 
 audiomuse.register(true)
 
@@ -19,6 +19,20 @@ assert(titles(mix.blend({ q = "calm piano", mixer = "audiomuse", limit = 7 })) =
 local request = take()[1]
 assert(request.method == "POST", "a search is a POST")
 assert(request.body.query == "calm piano" and request.body.limit == 7, "the query and the limit")
+
+-- Text search matches score their similarity to the query, kept within 0 to 1.
+audiomuse.routes[1].body = {
+	results = {
+		{ item_id = item(ids.t3), similarity = 1.25 },
+		{ item_id = item(ids.t1), similarity = 0.625 },
+		{ item_id = item(ids.t2), similarity = -0.125 },
+		{ item_id = item(ids.t4) },
+	},
+}
+local matched = mix.blend({ q = "calm piano", mixer = "audiomuse" })
+assert(scores(matched) == "1,0.625,0,-", `text search scores: {scores(matched)}`)
+take()
+audiomuse.routes[1].body = { query = "calm piano", results = audiomuse.rows(ids.t3, ids.t1), count = 2 }
 
 -- A query with seeds adds its best matches to the alchemy blend, as many as the seeds add.
 local blended =

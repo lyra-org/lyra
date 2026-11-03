@@ -104,6 +104,16 @@ function module.titles(tracks: { mix.MixedTrack }?): string
 	return table.concat(names, ",")
 end
 
+-- The tracks' scores, in order, with `-` for an unscored track.
+function module.scores(tracks: { mix.MixedTrack }?): string
+	assert(tracks, "expected a mix")
+	local scores = {}
+	for _, entry in tracks do
+		table.insert(scores, if entry.score then tostring(entry.score) else "-")
+	end
+	return table.concat(scores, ",")
+end
+
 function module.fails(call: any, request: any, message: string)
 	local ok, err = pcall(call, request)
 	assert(not ok, `expected an error naming "{message}"`)

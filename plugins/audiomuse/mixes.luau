@@ -48,15 +48,32 @@ local MAX_ALCHEMY_ITEMS = 100
 local MAX_BLEND_SEEDS = 50
 local DEFAULT_LIMIT = 50
 
--- Maps AudioMuse result rows to tracks, warning about ids that don't decode.
-local function result_tracks(ids: TrackIds, label: string, items: { JsonValue }): { MixResultTrack }
+-- A row's score for the track it names, or nil when AudioMuse gave nothing to derive one from.
+type RowScore = (row: JsonObject) -> number?
+
+-- One less the row's distance: AudioMuse's angular distances run from 0 for the same sound.
+local function score_from_distance(row: JsonObject): number?
+	local distance = row.distance
+	return if type(distance) == "number" then math.clamp(1 - distance, 0, 1) else nil
+end
+
+-- The row's cosine similarity, from 1 for the closest match.
+local function score_from_similarity(row: JsonObject): number?
+	local similarity = row.similarity
+	return if type(similarity) == "number" then math.clamp(similarity, 0, 1) else nil
+end
+
+-- Maps AudioMuse result rows to tracks, scored by `score` when given, warning about ids that
+-- don't decode.
+local function result_tracks(ids: TrackIds, label: string, items: { JsonValue }, score: RowScore?): { MixResultTrack }
 	local results: { MixResultTrack } = {}
 	local decode_failed = 0
 	for _, item in items do
-		local item_id = if type(item) == "table" then (item :: JsonObject).item_id else nil
+		local row = if type(item) == "table" then item :: JsonObject else nil
+		local item_id = if row then row.item_id else nil
 		local track_id = if type(item_id) == "string" then ids.decode(item_id) else nil
 		if track_id then
-			table.insert(results, { track_id = track_id })
+			table.insert(results, { track_id = track_id, score = if score and row then score(row) else nil })
 		else
 			decode_failed += 1
 		end
@@ -128,7 +145,7 @@ local function similar_tracks(config: MixerConfig, item_id: string, n: number, o
 		end
 	end
 	local rows = body_rows(label, response_body(label, client.get("/api/similar_tracks", params)))
-	return if rows then result_tracks(config.ids, label, rows) else nil
+	return if rows then result_tracks(config.ids, label, rows, score_from_distance) else nil
 end
 
 -- An item of an alchemy blend: a song by AudioMuse item id, added to or subtracted from the blend.
@@ -141,7 +158,7 @@ local function alchemy(config: MixerConfig, items: { AlchemyItem }, n: number, o
 		body.temperature = options.temperature
 	end
 	local rows = body_rows(label, response_body(label, client.post("/api/alchemy", body)), "results")
-	return if rows then result_tracks(config.ids, label, rows) else nil
+	return if rows then result_tracks(config.ids, label, rows, score_from_distance) else nil
 end
 
 -- The rows of the tracks best matching `query`, best first.
@@ -196,7 +213,9 @@ local function track_mix(config: MixerConfig, seed_id: string, limit: number, op
 end
 
 local function query_mix(config: MixerConfig, query: string, limit: number): MixResult
-	return { tracks = result_tracks(config.ids, "clap_search", clap_search(query, limit) or {}) }
+	return {
+		tracks = result_tracks(config.ids, "clap_search", clap_search(query, limit) or {}, score_from_similarity),
+	}
 end
 
 -- Blends the seeds through AudioMuse's alchemy: excluded seeds subtract, the rest add. With a

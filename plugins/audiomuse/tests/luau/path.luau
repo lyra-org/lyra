@@ -3,7 +3,8 @@ local audiomuse = require("./_audiomuse")
 local mix = require("@lyra/mix")
 
 local ids = fixture.ids
-local titles, take, param, item = audiomuse.titles, audiomuse.take, audiomuse.param, audiomuse.item
+local titles, scores, take, param, item =
+	audiomuse.titles, audiomuse.scores, audiomuse.take, audiomuse.param, audiomuse.item
 
 audiomuse.register(false)
 
@@ -16,6 +17,7 @@ audiomuse.routes = {
 }
 local path = mix.path({ seeds = { ids.t1, ids.t5 }, mixer = "audiomuse", limit = 4 })
 assert(titles(path) == "T1,T4,T3,T5", `path: {titles(path)}`)
+assert(scores(path) == "-,-,-,-", "paths are unscored")
 local request = take()[1]
 assert(request.method == "GET", "a path is a GET")
 assert(param(request.url, "start_song_id") == item(ids.t1), "the start")
