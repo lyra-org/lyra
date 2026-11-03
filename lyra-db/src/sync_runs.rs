@@ -108,7 +108,8 @@ pub fn get_by_id(db: &impl super::DbAccess, id: &str) -> anyhow::Result<Option<S
     Ok(runs.into_iter().next())
 }
 
-/// The library's runs, latest first.
+/// The library's runs, latest first: by sequence, which grows across a library's runs, then by
+/// start, for runs recorded before it did.
 pub fn list_for_library(
     db: &impl super::DbAccess,
     library_id: &str,
@@ -127,8 +128,9 @@ pub fn list_for_library(
         )?
         .try_into()?;
     runs.sort_by(|a, b| {
-        b.started_at_ms
-            .cmp(&a.started_at_ms)
+        b.sequence
+            .cmp(&a.sequence)
+            .then(b.started_at_ms.cmp(&a.started_at_ms))
             .then(b.updated_at_ms.cmp(&a.updated_at_ms))
             .then(a.id.cmp(&b.id))
     });
@@ -203,6 +205,61 @@ mod tests {
             Some("run-a".to_string())
         );
         assert!(active_for_library(&db, "lib-a")?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn a_librarys_latest_run_is_its_highest_sequence() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let run = |id: &str, status: &str, started_at_ms: u64, sequence: u64| SyncRunRecord {
+            db_id: None,
+            id: id.to_string(),
+            library_id: "lib".to_string(),
+            kind: "library_sync".to_string(),
+            status: status.to_string(),
+            started_at_ms,
+            updated_at_ms: started_at_ms,
+            finished_at_ms: None,
+            error: None,
+            cancellation_requested: false,
+            sequence,
+            progress_mode: "indeterminate".to_string(),
+            total_state: "discovering".to_string(),
+            completed_units: 0,
+            failed_units: 0,
+            skipped_units: 0,
+            total_units: 0,
+            current_stage: None,
+            current_subject: None,
+            active_units: 0,
+            failure_count: 0,
+        };
+        for record in [
+            run("tied-earlier", "succeeded", 50, 3),
+            run("tied-later", "succeeded", 60, 3),
+            run("before-step", "succeeded", 200, 7),
+            run("after-step", "running", 100, 8),
+        ] {
+            create(&mut db, &record)?;
+        }
+
+        let order: Vec<String> = list_for_library(&db, "lib")?
+            .into_iter()
+            .map(|run| run.id)
+            .collect();
+        assert_eq!(
+            order,
+            ["after-step", "before-step", "tied-later", "tied-earlier"],
+            "a clock step back doesn't reorder runs; equal sequences fall back to the start"
+        );
+        assert_eq!(
+            latest_for_library(&db, "lib")?.map(|run| run.id).as_deref(),
+            Some("after-step")
+        );
+        assert_eq!(
+            active_for_library(&db, "lib")?.map(|run| run.id).as_deref(),
+            Some("after-step")
+        );
         Ok(())
     }
 

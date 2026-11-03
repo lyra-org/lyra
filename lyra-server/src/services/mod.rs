@@ -78,13 +78,11 @@ pub(crate) use system::SystemContext;
 
 pub(crate) use libraries::{
     LibrarySyncStatus,
-    SyncRunEvent,
     SyncRunStartResponse,
     SyncRunSummary,
     cancel_sync_run,
     start_library_sync,
     subscribe_sync_run_events,
-    sync_run_events_after,
     wait_for_running_library_syncs,
 };
 pub(crate) use metadata::cleanup::deduplicate_artists_by_external_id;

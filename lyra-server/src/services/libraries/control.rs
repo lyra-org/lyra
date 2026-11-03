@@ -146,10 +146,18 @@ impl SyncReader {
         }
     }
 
-    fn sees(&self, library_id: &str) -> bool {
+    pub(crate) fn sees(&self, library_id: &str) -> bool {
         self.libraries
             .iter()
             .any(|library| library.id == library_id)
+    }
+
+    pub(crate) fn library_ids(&self) -> impl Iterator<Item = &str> {
+        self.libraries.iter().map(|library| library.id.as_str())
+    }
+
+    pub(crate) fn shows_details(&self) -> bool {
+        self.shows_details
     }
 
     /// `summary` as this reader may read it, or `None` when its library is hidden.

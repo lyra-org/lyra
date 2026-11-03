@@ -20,7 +20,6 @@ pub(crate) use orchestrator::{
     LibrarySyncRegistries,
     LibrarySyncStatus,
     RunFilter,
-    SyncRunEvent,
     SyncRunKind,
     SyncRunProgress,
     SyncRunStartResponse,
@@ -35,7 +34,6 @@ pub(crate) use orchestrator::{
     running_library_sync_count,
     start_library_sync,
     subscribe_sync_run_events,
-    sync_run_events_after,
     wait_for_running_library_syncs,
 };
 #[cfg(test)]

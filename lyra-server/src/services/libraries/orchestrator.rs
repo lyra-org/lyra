@@ -7,7 +7,6 @@ use std::{
     collections::{
         BTreeMap,
         HashMap,
-        VecDeque,
     },
     sync::{
         Arc,
@@ -52,8 +51,6 @@ use super::sync::{
     MAX_CONCURRENT_ALBUM_PIPELINE,
     sync_library_pipeline,
 };
-
-const MAX_SYNC_EVENT_LOG_ITEMS: usize = 256;
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -108,7 +105,7 @@ impl SyncRunStatus {
         }
     }
 
-    fn is_active(self) -> bool {
+    pub(crate) fn is_active(self) -> bool {
         matches!(
             self,
             Self::Queued | Self::Planning | Self::Running | Self::Cancelling
@@ -251,6 +248,7 @@ pub(crate) struct SyncRunSummary {
     pub(crate) current: Option<SyncRunCurrent>,
     pub(crate) active_units: u64,
     pub(crate) failure_count: u64,
+    /// Orders the library's summaries, across its runs: a higher sequence is newer.
     pub(crate) sequence: u64,
 }
 
@@ -354,22 +352,6 @@ struct SyncActiveWork {
     started_at_ms: u64,
 }
 
-#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct SyncRunEvent {
-    pub(crate) run_id: String,
-    pub(crate) sequence: u64,
-    pub(crate) event: SyncRunEventKind,
-    pub(crate) summary: SyncRunSummary,
-}
-
-#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum SyncRunEventKind {
-    Snapshot,
-}
-
 #[derive(Clone, Debug)]
 struct SyncStageState {
     status: SyncStageStatus,
@@ -428,7 +410,8 @@ struct SyncRunState {
 }
 
 impl SyncRunState {
-    fn new(kind: SyncRunKind, library_id: String, now_ms: u64) -> Self {
+    /// A queued run, numbering its summaries from `sequence`.
+    fn new(kind: SyncRunKind, library_id: String, now_ms: u64, sequence: u64) -> Self {
         Self {
             run_id: nanoid!(),
             kind,
@@ -444,7 +427,7 @@ impl SyncRunState {
             finished_at_ms: None,
             error: None,
             cancellation_requested: false,
-            sequence: 0,
+            sequence,
             next_work_id: 1,
         }
     }
@@ -832,7 +815,7 @@ impl SyncRunProgress {
             return;
         };
         persist_record(&self.db, record).await;
-        publish_event(summary).await;
+        publish_event(summary);
     }
 }
 
@@ -848,19 +831,17 @@ const SYNC_EVENT_BROADCAST_CAPACITY: usize = 512;
 // process-wide rather than generation-owned.
 static SYNC_START_LOCK: LazyLock<Arc<Mutex<()>>> = LazyLock::new(|| Arc::new(Mutex::new(())));
 
-/// Generation-owned library sync tracking: in-flight run states, recent
-/// per-run event logs, and the run event broadcast channel.
+/// Generation-owned library sync tracking: in-flight run states and the broadcast of their
+/// summaries.
 pub(crate) struct LibrarySyncRegistries {
     run_states: Arc<RwLock<HashMap<String, SyncRunState>>>,
-    event_logs: Arc<RwLock<HashMap<String, VecDeque<SyncRunEvent>>>>,
-    event_tx: broadcast::Sender<SyncRunEvent>,
+    event_tx: broadcast::Sender<SyncRunSummary>,
 }
 
 impl Default for LibrarySyncRegistries {
     fn default() -> Self {
         Self {
             run_states: Arc::default(),
-            event_logs: Arc::default(),
             event_tx: broadcast::channel(SYNC_EVENT_BROADCAST_CAPACITY).0,
         }
     }
@@ -874,50 +855,16 @@ fn sync_run_states() -> Arc<RwLock<HashMap<String, SyncRunState>>> {
         .clone()
 }
 
-fn sync_event_logs() -> Arc<RwLock<HashMap<String, VecDeque<SyncRunEvent>>>> {
-    crate::services::STATE
-        .generation()
-        .library_sync
-        .event_logs
-        .clone()
-}
-
-async fn publish_event(summary: SyncRunSummary) {
-    let Some(run_id) = summary.run.id.clone() else {
-        return;
-    };
-    let event = SyncRunEvent {
-        run_id: run_id.clone(),
-        sequence: summary.sequence,
-        event: SyncRunEventKind::Snapshot,
-        summary,
-    };
-    {
-        let mut logs = sync_event_logs().write_owned().await;
-        let log = logs.entry(run_id).or_default();
-        log.push_back(event.clone());
-        while log.len() > MAX_SYNC_EVENT_LOG_ITEMS {
-            log.pop_front();
-        }
-    }
+fn publish_event(summary: SyncRunSummary) {
     let _ = crate::services::STATE
         .generation()
         .library_sync
         .event_tx
-        .send(event);
+        .send(summary);
 }
 
-pub(crate) async fn sync_run_events_after(run_id: &str, after: u64) -> Vec<SyncRunEvent> {
-    let logs = sync_event_logs().read_owned().await;
-    logs.get(run_id)
-        .into_iter()
-        .flat_map(|events| events.iter())
-        .filter(|event| event.sequence > after)
-        .cloned()
-        .collect()
-}
-
-pub(crate) fn subscribe_sync_run_events() -> broadcast::Receiver<SyncRunEvent> {
+/// Every run summary published from now on, of every library.
+pub(crate) fn subscribe_sync_run_events() -> broadcast::Receiver<SyncRunSummary> {
     crate::services::STATE
         .generation()
         .library_sync
@@ -949,7 +896,15 @@ pub(crate) async fn end_test_run(progress: &SyncRunProgress) {
 
 #[cfg(test)]
 pub(crate) async fn begin_test_run(library: &Library) -> SyncRunProgress {
-    let state = SyncRunState::new(SyncRunKind::LibrarySync, library.id.clone(), now_unix_ms());
+    let sequence = next_run_sequence(&STATE.db.get(), &library.id)
+        .await
+        .expect("sync run sequence");
+    let state = SyncRunState::new(
+        SyncRunKind::LibrarySync,
+        library.id.clone(),
+        now_unix_ms(),
+        sequence,
+    );
     let run_id = state.run_id.clone();
     sync_run_states()
         .write_owned()
@@ -975,7 +930,7 @@ pub(crate) async fn cancel_sync_run(run_id: &str) -> anyhow::Result<Option<SyncR
         (state.summary(), state.record(None)?)
     };
     persist_record(&STATE.db.get(), record).await;
-    publish_event(summary.clone()).await;
+    publish_event(summary.clone());
     Ok(Some(summary))
 }
 
@@ -1054,7 +1009,8 @@ async fn start_locked(
         LibraryRun::Refresh(_) => SyncRunKind::LibraryRefresh,
     };
     let now_ms = now_unix_ms();
-    let state = SyncRunState::new(kind, library_id, now_ms);
+    let sequence = next_run_sequence(&db, &library_id).await?;
+    let state = SyncRunState::new(kind, library_id, now_ms, sequence);
     let run_id = state.run_id.clone();
     let summary = state.summary();
     let record = state.record(None)?;
@@ -1063,7 +1019,7 @@ async fn start_locked(
         states.insert(run_id.clone(), state);
     }
     persist_record(&db, record).await;
-    publish_event(summary.clone()).await;
+    publish_event(summary.clone());
 
     let progress = SyncRunProgress::new(db.clone(), run_id.clone());
     match run {
@@ -1266,7 +1222,7 @@ async fn mark_terminal(
         (state.summary(), record)
     };
     persist_record(db, record).await;
-    publish_event(summary.clone()).await;
+    publish_event(summary.clone());
     sync_run_states().write_owned().await.remove(run_id);
     Some(summary)
 }
@@ -1347,6 +1303,24 @@ pub(crate) async fn cancel_library_run(library: &Library) -> anyhow::Result<Sync
     Ok(active_or_latest_run_for_library(&db, &library.id)
         .await?
         .unwrap_or_else(|| SyncRunState::idle(library.id.clone()).summary()))
+}
+
+/// The first sequence of the library's next run: past every sequence its runs reached, live or
+/// stored, and past the idle summary's 0, so that a library's summaries order by sequence across
+/// its runs.
+async fn next_run_sequence(db: &DbAsync, library_id: &str) -> anyhow::Result<u64> {
+    let live = sync_run_states()
+        .read_owned()
+        .await
+        .values()
+        .filter(|state| state.library_id == library_id)
+        .map(|state| state.sequence)
+        .max();
+    let stored = lyra_db::sync_runs::list_for_library(&*db.read().await, library_id)?
+        .into_iter()
+        .map(|record| record.sequence)
+        .max();
+    Ok(live.max(stored).unwrap_or(0).saturating_add(1))
 }
 
 async fn active_or_latest_run_for_library(
@@ -1529,7 +1503,7 @@ mod tests {
         let before = snapshot(&*STATE.db.read().await)?;
 
         let db = STATE.db.get();
-        let mut state = SyncRunState::new(SyncRunKind::LibrarySync, library_id, 10_000);
+        let mut state = SyncRunState::new(SyncRunKind::LibrarySync, library_id, 10_000, 0);
         persist_record(&db, state.record(None)?).await;
         state.status = SyncRunStatus::Running;
         persist_record(&db, state.record(None)?).await;
@@ -1550,7 +1524,7 @@ mod tests {
 
     #[test]
     fn summary_exposes_compact_raw_counts() {
-        let mut state = SyncRunState::new(SyncRunKind::LibrarySync, "lib".to_string(), 10_000);
+        let mut state = SyncRunState::new(SyncRunKind::LibrarySync, "lib".to_string(), 10_000, 0);
         state.status = SyncRunStatus::Running;
         state.progress_mode = SyncProgressMode::Determinate;
         state.total_state = SyncTotalState::Final;
