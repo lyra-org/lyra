@@ -26,6 +26,8 @@ type PlaybackSourceInfo = playback_sources.PlaybackSourceInfo
 type Release = entities.Release
 type Track = tracks.Track
 
+local MUSICBRAINZ_RECORDING = "musicbrainz:recording"
+
 local CONTENT_TYPES: { [string]: string } = {
 	aac = "audio/aac",
 	aiff = "audio/aiff",
@@ -75,7 +77,7 @@ function module.list(track_list: { Track }): { JsonObject }
 	end
 	local ids = unique_ids(track_list :: any)
 
-	local projections = credits.projections(ids, { "credits", "releases" })
+	local projections = credits.projections(ids, { "credits", "releases", "identifiers" })
 	local album_by_track: { [string]: Release } = {}
 	local release_ids: { string } = {}
 	local release_seen: { [string]: boolean } = {}
@@ -113,6 +115,8 @@ function module.list(track_list: { Track }): { JsonObject }
 	for _, track in track_list do
 		local id = track.id
 		local album = album_by_track[id]
+		local projection = projections[id] :: any
+		local identifiers = if projection then projection.includes.identifiers or {} else {}
 		local artists, display_artist = credits.artists(projections[id])
 		local album_artists, display_album_artist =
 			credits.artists(if album then release_projections[album.id] else nil)
@@ -164,6 +168,7 @@ function module.list(track_list: { Track }): { JsonObject }
 			type = "music",
 			mediaType = "song",
 			sortName = track.sort_title or "",
+			musicBrainzId = identifiers[MUSICBRAINZ_RECORDING],
 			genres = genre_items or {},
 			artists = artists or {},
 			displayArtist = display_artist or "",

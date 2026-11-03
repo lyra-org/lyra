@@ -60,6 +60,8 @@ assert(call.error_code("getAlbum", key, { id = "not-an-id" }) == 70, "an unknown
 -- A song reads the same.
 local song = call.ok("getSong", key, { id = ids.s1 }).song
 assert(song.id == ids.s1 and song.played == s1.played and song.path == s1.path)
+assert(song.musicBrainzId == "5a5a5a5a-0000-4000-8000-000000000001", "a song's id is its MusicBrainz recording")
+assert(call.ok("getSong", key, { id = ids.s2 }).song.musicBrainzId == nil, "a song without a recording id has none")
 assert(call.error_code("getSong", key, {}) == 10, "getSong needs an id")
 assert(call.error_code("getSong", key, { id = ids.h1 }) == 70, "a hidden song isn't found")
 assert(call.error_code("getSong", key, { id = ids.solo }) == 70, "an album isn't a song")
