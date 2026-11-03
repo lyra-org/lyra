@@ -69,6 +69,9 @@ modules predate some of them.
   documented, rather than in trailing positional parameters.
 - Queries take `offset`, `limit` and `sort` (`{ key, order }`) and return a page of
   `{ items, total, offset }`.
+- A summary's counts and totals follow the query's scope filters, the library and the related
+  items it narrows to, as `artists.query` with `library_id` counts only that library's releases.
+  Filters that only choose which items appear, such as a credit role, leave them alone.
 - A result that comes in several forms is a union tagged by `kind`, as API responses and
   provider results are.
 - Quantities name their unit: `duration_ms`, `timeout_ms`, `bitrate_bps`,

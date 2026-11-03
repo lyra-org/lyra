@@ -70,7 +70,7 @@ impl Old for Artists {
     fn old_rows(
         db: &DbAny,
         viewer: &Viewer,
-        _filter: &ArtistFilter,
+        filter: &ArtistFilter,
         ids: Vec<DbId>,
         keys: &[ArtistKey],
     ) -> Result<Vec<Row>, CatalogError> {
@@ -83,7 +83,7 @@ impl Old for Artists {
             ArtistKey::ListenCount,
             ArtistKey::LastPlayedAt,
         ]) {
-            visible_releases(viewer, db)?
+            counted_releases(db, viewer, filter)?
         } else {
             None
         };
@@ -175,6 +175,27 @@ impl Old for Artists {
             })
             .collect())
     }
+}
+
+/// The releases counts and totals cover: the visible ones within the filter's library, releases
+/// and genres, or `None` for every release.
+fn counted_releases(
+    db: &DbAny,
+    viewer: &Viewer,
+    filter: &ArtistFilter,
+) -> anyhow::Result<Option<HashSet<DbId>>> {
+    if filter.library.is_none() && filter.releases.is_none() && filter.genres.is_empty() {
+        return visible_releases(viewer, db);
+    }
+    Ok(scoped_releases(
+        db,
+        viewer,
+        filter.library,
+        filter.releases.as_deref(),
+        &filter.genres,
+    )?
+    .ids()
+    .cloned())
 }
 
 /// The artists holding a credit the filter allows on an owner the viewer can see.

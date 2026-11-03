@@ -367,12 +367,12 @@ fn artist_type_aliases() -> Vec<TypeAliasDescriptor> {
                     described_field(
                         "release_count",
                         u64::luau_type(),
-                        "The visible releases credited to the artist.",
+                        "The visible releases credited to the artist; with `library_id`, `release_ids` or `genre_ids`, only those within them.",
                     ),
                     described_field(
                         "track_count",
                         u64::luau_type(),
-                        "The visible tracks credited to the artist or on its releases.",
+                        "The visible tracks credited to the artist or on its releases, kept to tracks on releases within the same scope.",
                     ),
                     described_field(
                         "total_duration",

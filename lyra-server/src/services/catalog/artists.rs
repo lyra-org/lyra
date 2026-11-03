@@ -17,6 +17,7 @@ use super::{
     SortSpec,
     favorited_at_column,
     index::{
+        Scoped,
         Snapshot,
         Table,
         bits::Bits,
@@ -44,9 +45,10 @@ pub(crate) enum ArtistKey {
     Name,
     SortName,
     DateCreated,
-    /// The visible releases credited to the artist.
+    /// The visible releases credited to the artist, within the filter's release scope.
     ReleaseCount,
-    /// The visible tracks credited to the artist or on its releases.
+    /// The visible tracks credited to the artist or on its releases, within the filter's release
+    /// scope.
     TrackCount,
     TotalDuration,
     ListenCount,
@@ -233,14 +235,15 @@ impl Catalog for Artists {
 
     fn column<'a>(
         cx: &'a Context<'_>,
-        _filter: &ArtistFilter,
+        filter: &ArtistFilter,
         key: ArtistKey,
         slots: &[u32],
     ) -> Result<Column<'a>, CatalogError> {
         let index = &*cx.index;
         let artists = &index.artists;
         let stored = |compute: &dyn Fn() -> Vec<u64>| Column::stored(&artists.cache, key, compute);
-        let tracks_of = |artist| visible_tracks(cx, artist);
+        let scope = counted_releases(cx, filter);
+        let tracks_of = |artist| scoped_tracks(cx, scope.as_ref(), artist);
         Ok(match key {
             ArtistKey::Name => stored(&|| {
                 artists
@@ -258,7 +261,7 @@ impl Catalog for Artists {
             }),
             ArtistKey::DateCreated => Column::Fields(&index.artist.created),
             ArtistKey::ReleaseCount => Column::computed(artists.len(), slots, |artist| {
-                Some(cx.links().releases_of_artist(artist).count() as u64)
+                Some(scoped_releases_of(&cx.links(), scope.as_ref(), artist).len() as u64)
             }),
             ArtistKey::TrackCount => {
                 totals_column(cx, artists, slots, false, tracks_of, |totals| {
@@ -297,14 +300,45 @@ impl Catalog for Artists {
     }
 }
 
-/// The visible tracks crediting `artist` or on the visible releases crediting it.
-fn visible_tracks(cx: &Context<'_>, artist: u32) -> Vec<u32> {
+/// The releases the filter's scope filters keep counts and totals within, or `None` without any,
+/// when they cover every release the viewer sees. Only `library`, `releases` and `genres` scope:
+/// the credit filters and `tracks` choose which artists appear, as credits held there, and leave
+/// what each artist's counts cover alone.
+fn counted_releases(cx: &Context<'_>, filter: &ArtistFilter) -> Option<Bits> {
+    if filter.library.is_none() && filter.releases.is_none() && filter.genres.is_empty() {
+        return None;
+    }
+    scoped_releases(
+        cx,
+        filter.library,
+        filter.releases.as_deref(),
+        &filter.genres,
+    )
+}
+
+/// The visible releases credited to `artist`, within `scope` when given.
+fn scoped_releases_of(links: &Scoped<'_>, scope: Option<&Bits>, artist: u32) -> Vec<u32> {
+    links
+        .releases_of_artist(artist)
+        .filter(|release| scope.is_none_or(|scope| scope.contains(*release)))
+        .collect()
+}
+
+/// The visible tracks crediting `artist` or on the visible releases crediting it, keeping only
+/// tracks on a release within `scope` when given.
+fn scoped_tracks(cx: &Context<'_>, scope: Option<&Bits>, artist: u32) -> Vec<u32> {
     let links = cx.links();
-    let mut tracks = links
-        .tracks_of_artist(artist)
-        .chain(
+    let credited = links.tracks_of_artist(artist).filter(|track| {
+        scope.is_none_or(|scope| {
             links
-                .releases_of_artist(artist)
+                .releases_of_track(*track)
+                .any(|release| scope.contains(release))
+        })
+    });
+    let mut tracks = credited
+        .chain(
+            scoped_releases_of(&links, scope, artist)
+                .into_iter()
                 .flat_map(|release| links.tracks_of_release(release).iter().copied()),
         )
         .collect::<Vec<_>>();
@@ -411,6 +445,7 @@ mod tests {
         catalog::{
             Query,
             Viewer,
+            counts,
             order,
             page,
         },
@@ -662,6 +697,165 @@ mod tests {
                 assert_eq!(order(db, &viewer, &query)?, credits.by_name(expected));
             }
         }
+        Ok(())
+    }
+
+    /// Two artists with releases in two libraries, one of them in Rock.
+    struct Scoped {
+        db: DbAny,
+        admin: Viewer,
+        first: DbId,
+        second: DbId,
+        library_a: DbId,
+        library_b: DbId,
+        rock: DbId,
+    }
+
+    /// The first artist has "A1" (Rock, two tracks) and "A2" (one track) in library A, "B1"
+    /// (three tracks) in library B, and a track credit on "B2". The second has "A3" (one track) in
+    /// A, and "B2" (one track besides the first artist's) and "B3" (one track) in B.
+    fn scoped() -> anyhow::Result<Scoped> {
+        let mut db = new_test_db()?;
+        let library_a = insert_library(&mut db, "A", "/scoped/a")?;
+        let library_b = insert_library(&mut db, "B", "/scoped/b")?;
+        let first = insert_artist(&mut db, "First")?;
+        let second = insert_artist(&mut db, "Second")?;
+        let release = |db: &mut DbAny,
+                       title: &str,
+                       library: DbId,
+                       artist: DbId,
+                       tracks: usize|
+         -> anyhow::Result<Vec<DbId>> {
+            let release = insert_release(db, title)?;
+            connect(db, library, release)?;
+            connect_artist(db, release, artist)?;
+            let mut inserted = Vec::new();
+            for index in 0..tracks {
+                let track = insert_track(db, &format!("{title} {index}"))?;
+                connect(db, release, track)?;
+                inserted.push(track);
+            }
+            Ok(inserted)
+        };
+        release(&mut db, "A1", library_a, first, 2)?;
+        release(&mut db, "A2", library_a, first, 1)?;
+        release(&mut db, "B1", library_b, first, 3)?;
+        release(&mut db, "A3", library_a, second, 1)?;
+        let featured = release(&mut db, "B2", library_b, second, 2)?;
+        connect_artist(&mut db, featured[0], first)?;
+        release(&mut db, "B3", library_b, second, 1)?;
+        let a1 = lyra_db::releases::get_by_artist(&db, first)?
+            .into_iter()
+            .find(|release| release.release_title == "A1")
+            .and_then(|release| release.db_id)
+            .map(DbId::from)
+            .expect("A1 exists");
+        lyra_db::genres::sync_release_genres(&mut db, a1, &["Rock".to_string()])?;
+        let rock = lyra_db::genres::find_by_name(&db, "Rock")?.expect("genre exists");
+        let user = insert_user(&mut db, "admin")?;
+        let principal =
+            Principal::for_user(&db, user, vec![lyra_db::Permission::Admin], HashSet::new());
+        let admin = Viewer::user(&db, principal)?;
+        Ok(Scoped {
+            db,
+            admin,
+            first,
+            second,
+            library_a,
+            library_b,
+            rock,
+        })
+    }
+
+    impl Scoped {
+        /// Each artist's release and track counts under `filter`.
+        fn counts(&self, filter: &ArtistFilter) -> anyhow::Result<HashMap<DbId, Vec<u64>>> {
+            Ok(counts::<Artists>(
+                &self.db,
+                &self.admin,
+                filter,
+                vec![self.first, self.second],
+                &[ArtistKey::ReleaseCount, ArtistKey::TrackCount],
+            )?)
+        }
+    }
+
+    #[test]
+    fn counts_without_a_scope_cover_every_visible_release() -> anyhow::Result<()> {
+        let scoped = scoped()?;
+        let counts = scoped.counts(&ArtistFilter::default())?;
+        assert_eq!(counts[&scoped.first], vec![3, 7]);
+        assert_eq!(counts[&scoped.second], vec![3, 4]);
+        // Choosing which artists appear leaves their counts alone.
+        let counts = scoped.counts(&ArtistFilter {
+            credit_role: Some(CreditRole::Release),
+            ..ArtistFilter::default()
+        })?;
+        assert_eq!(counts[&scoped.first], vec![3, 7]);
+        Ok(())
+    }
+
+    #[test]
+    fn counts_follow_the_library_scope() -> anyhow::Result<()> {
+        let scoped = scoped()?;
+        let in_a = ArtistFilter {
+            library: Some(scoped.library_a),
+            ..ArtistFilter::default()
+        };
+        let counts = scoped.counts(&in_a)?;
+        assert_eq!(counts[&scoped.first], vec![2, 3]);
+        assert_eq!(counts[&scoped.second], vec![1, 1]);
+        // A track credit counts where its release lies.
+        let counts = scoped.counts(&ArtistFilter {
+            library: Some(scoped.library_b),
+            ..ArtistFilter::default()
+        })?;
+        assert_eq!(counts[&scoped.first], vec![1, 4]);
+        assert_eq!(counts[&scoped.second], vec![2, 3]);
+        // A credit filter still only chooses which artists appear.
+        let counts = scoped.counts(&ArtistFilter {
+            credit_role: Some(CreditRole::Release),
+            ..in_a
+        })?;
+        assert_eq!(counts[&scoped.first], vec![2, 3]);
+        Ok(())
+    }
+
+    #[test]
+    fn counts_follow_the_genre_scope() -> anyhow::Result<()> {
+        let scoped = scoped()?;
+        let counts = scoped.counts(&ArtistFilter {
+            genres: vec![scoped.rock],
+            ..ArtistFilter::default()
+        })?;
+        assert_eq!(counts[&scoped.first], vec![1, 2]);
+        assert_eq!(counts[&scoped.second], vec![0, 0]);
+        Ok(())
+    }
+
+    #[test]
+    fn sorting_by_release_count_uses_the_scoped_counts() -> anyhow::Result<()> {
+        let scoped = scoped()?;
+        let by_count = |library: Option<DbId>| -> anyhow::Result<Vec<DbId>> {
+            let mut query = Query::<Artists>::new(ArtistFilter {
+                library,
+                ..ArtistFilter::default()
+            });
+            query.sort = vec![
+                (ArtistKey::ReleaseCount, Direction::Descending),
+                (ArtistKey::TrackCount, Direction::Descending),
+            ];
+            Ok(order(&scoped.db, &scoped.admin, &query)?)
+        };
+        assert_eq!(by_count(None)?, vec![scoped.first, scoped.second]);
+        assert_eq!(
+            by_count(Some(scoped.library_a))?,
+            vec![scoped.first, scoped.second]
+        );
+        assert_eq!(
+            by_count(Some(scoped.library_b))?,
+            vec![scoped.second, scoped.first]
+        );
         Ok(())
     }
 }
