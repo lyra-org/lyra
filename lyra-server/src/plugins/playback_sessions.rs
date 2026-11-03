@@ -81,6 +81,27 @@ struct PlaybackSessionReportRequest {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct QueueSaveRequest {
+    client_name: String,
+    track_ids: Vec<String>,
+    current_index: u64,
+    position_ms: Option<u64>,
+}
+
+/// A queue-backed playback's queue as the caller can play it.
+#[derive(Serialize)]
+struct LatestQueueInfo {
+    playback_id: String,
+    track_ids: Vec<String>,
+    current_index: u64,
+    position_ms: u64,
+    client_name: Option<String>,
+    plugin_id: Option<String>,
+    updated_at_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
 struct SendCommandRequest {
     connection_id: String,
     action: RemoteAction,
@@ -170,7 +191,18 @@ impl DescribeTypeAlias for PlaybackUpdateHandler {
 
 pub(crate) struct PlaybackSessionsModule;
 
-#[harmony_macros::module(id = "lyra/playback_sessions", docs_feature = "docgen")]
+crate::plugins::limits::module_limits!(&[crate::plugins::limits::Limit {
+    name: "MAX_QUEUE_TRACK_IDS",
+    value: crate::services::playbacks::QUEUE_ITEM_HARD_CAP,
+    description: "The most track ids `save_queue` takes.",
+}]);
+
+#[harmony_macros::module(
+    id = "lyra/playback_sessions",
+    docs_feature = "docgen",
+    extend = install_limits,
+    describe = describe_limits
+)]
 impl PlaybackSessionsModule {
     #[harmony(
         description = "Registers a callback for every user's per-track playback accounting updates. Needs the `lyra.playback_sessions.all` scope too.",
@@ -419,6 +451,118 @@ impl PlaybackSessionsModule {
         harmony_luau::serializable_to_luau_owned(&result)
     }
 
+    #[harmony(
+        description = "Saves the queue the caller's client `client_name` of this plugin plays, as a playback of the caller's that any client can list and resume, and returns its public /api/me/playbacks id. Each client of the plugin saves to a playback of its own, until another client resumes it; the next save then starts a new one. The saved track stays stopped at `position_ms`, within the track, and counts no listen; resuming it starts a new play. Saving the queue the playback has, at the same `current_index`, only moves the position, so a queue holding a track since hidden from the caller can still be saved again. Any other queue replaces the playback's, keeping its repeat and shuffle, and raises, saving nothing, when a track is missing or hidden from the caller, or past `MAX_QUEUE_TRACK_IDS` track ids.",
+        returns(String)
+    )]
+    async fn save_queue(
+        request: args::Json<QueueSaveRequest>,
+        #[context] db: Db,
+        #[context] principal: Principal,
+        #[context] vm: luau::Vm,
+        #[context] context: luau::CallContext,
+    ) -> luau::runtime::Result<String> {
+        let request = request.0;
+        let plugin_id =
+            crate::plugins::current_plugin(&vm, &context, "playback_sessions.save_queue")?;
+        let max = crate::services::playbacks::QUEUE_ITEM_HARD_CAP;
+        if request.track_ids.len() > max {
+            return Err(crate::plugins::runtime_error(format!(
+                "save_queue takes at most {max} track ids, got {}",
+                request.track_ids.len()
+            )));
+        }
+        let now_ms = playbacks::now_ms().map_err(crate::plugins::runtime_error)?;
+        let mut db = db.write_outside_catalog().await;
+        let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
+        let saved = crate::services::playbacks::save_queue(
+            &mut db,
+            crate::services::playbacks::SaveQueueRequest {
+                principal: &principal,
+                user_db_id,
+                plugin_id: plugin_id.as_str(),
+                client_name: crate::services::auth::sessions::tidy_client_name(Some(
+                    request.client_name,
+                )),
+                track_ids: request.track_ids,
+                current_index: request.current_index,
+                position_ms: request.position_ms.unwrap_or(0),
+                now_ms,
+            },
+        )
+        .map_err(crate::plugins::runtime_error)?;
+        // Still under the write guard, so no later queue change can start a handoff this one
+        // would fail.
+        if let Some(revision) = saved.changed_revision {
+            crate::services::remote::handoffs::fail_for_playback_revision(
+                &saved.playback_id,
+                revision,
+            )
+            .await;
+        }
+        drop(db);
+        Ok(saved.playback_id)
+    }
+
+    #[harmony(
+        description = "Deletes the playback the caller's client `client_name` of this plugin saved its queue to with `save_queue`, and returns whether there was one. A playback another client has since resumed is left alone, and the client's next save starts a new one.",
+        returns(bool)
+    )]
+    async fn remove_queue(
+        client_name: String,
+        #[context] db: Db,
+        #[context] principal: Principal,
+        #[context] vm: luau::Vm,
+        #[context] context: luau::CallContext,
+    ) -> luau::runtime::Result<bool> {
+        let plugin_id =
+            crate::plugins::current_plugin(&vm, &context, "playback_sessions.remove_queue")?;
+        let client_name = crate::services::auth::sessions::tidy_client_name(Some(client_name));
+        let mut db = db.write_outside_catalog().await;
+        let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
+        let deleted = crate::services::playbacks::remove_saved_queue(
+            &mut db,
+            user_db_id,
+            plugin_id.as_str(),
+            client_name.as_deref(),
+        )
+        .map_err(crate::plugins::runtime_error)?;
+        let Some(deleted) = deleted else {
+            return Ok(false);
+        };
+        deleted.finish().await;
+        drop(db);
+        Ok(true)
+    }
+
+    #[harmony(
+        description = "The caller's most recently updated playback with a server-managed queue, from any client or plugin, as the caller can play it: its tracks the caller can see, with the current track moved to the next track kept, else the last one before it, from its start, when it is hidden or gone. Playbacks left with no track are skipped; nil when none is left.",
+        returns(Option<LatestQueueInfo>)
+    )]
+    async fn latest_queue(
+        #[context] db: Db,
+        #[context] principal: Principal,
+    ) -> luau::runtime::Result<luau::Value> {
+        let now_ms = playbacks::now_ms().map_err(crate::plugins::runtime_error)?;
+        let db = db.read().await;
+        let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
+        let latest = crate::services::playbacks::latest_playable(&db, user_db_id, now_ms)
+            .map_err(crate::plugins::runtime_error)?;
+        drop(db);
+        let Some(latest) = latest else {
+            return Ok(luau::Value::Nil);
+        };
+        harmony_luau::serializable_to_luau_owned(&LatestQueueInfo {
+            playback_id: latest.playback_id,
+            track_ids: latest.queue.snapshot.track_ids,
+            current_index: latest.queue.snapshot.current_index,
+            position_ms: latest.queue.position_ms,
+            client_name: latest.client_name,
+            plugin_id: latest.plugin_id,
+            updated_at_ms: latest.updated_at_ms,
+        })
+    }
+
     #[harmony(description = "Sends a remote control command to a connection.")]
     async fn send_command(
         request: args::Json<SendCommandRequest>,
@@ -506,6 +650,8 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &[
             LuauPlaybackUpdatePayload::interface_descriptor(),
             PlaybackSessionReportRequest::interface_descriptor(),
+            QueueSaveRequest::interface_descriptor(),
+            LatestQueueInfo::interface_descriptor(),
             SendCommandRequest::interface_descriptor(),
             ConnectionInfo::interface_descriptor(),
             PlaybackInfo::interface_descriptor(),
@@ -558,6 +704,94 @@ impl DescribeInterface for PlaybackSessionReportRequest {
                 description: None,
             },
         ]));
+        descriptor
+    }
+}
+
+impl LuauTypeInfo for QueueSaveRequest {
+    fn luau_type() -> LuauType {
+        LuauType::literal("QueueSaveRequest")
+    }
+}
+
+impl DescribeInterface for QueueSaveRequest {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("QueueSaveRequest", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "client_name",
+                ty: String::luau_type(),
+                description: Some("The client of the plugin saving, such as a Subsonic client's `c`. Control and invisible characters are stripped and it is cut to 128 characters; nothing left names the plugin's client without a name."),
+            },
+            FieldDescriptor {
+                name: "track_ids",
+                ty: Vec::<String>::luau_type(),
+                description: Some("The queue, in order and with repeats."),
+            },
+            FieldDescriptor {
+                name: "current_index",
+                ty: u64::luau_type(),
+                description: Some("0-based index of the current track in `track_ids`."),
+            },
+            FieldDescriptor {
+                name: "position_ms",
+                ty: Option::<u64>::luau_type(),
+                description: Some("Position in the current track; defaults to 0."),
+            },
+        ]);
+        descriptor
+    }
+}
+
+impl LuauTypeInfo for LatestQueueInfo {
+    fn luau_type() -> LuauType {
+        LuauType::literal("LatestQueueInfo")
+    }
+}
+
+impl DescribeInterface for LatestQueueInfo {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new(
+            "LatestQueueInfo",
+            Some("A playback's queue as the caller can play it."),
+        );
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "playback_id",
+                ty: String::luau_type(),
+                description: Some("Public playback id."),
+            },
+            FieldDescriptor {
+                name: "track_ids",
+                ty: Vec::<String>::luau_type(),
+                description: Some("The queue's tracks the caller can see, in order and with repeats."),
+            },
+            FieldDescriptor {
+                name: "current_index",
+                ty: u64::luau_type(),
+                description: Some("0-based index of the current track in `track_ids`."),
+            },
+            FieldDescriptor {
+                name: "position_ms",
+                ty: u64::luau_type(),
+                description: Some("Where to resume the current track: its play's position now, or 0 when the current track moved or completed."),
+            },
+            FieldDescriptor {
+                name: "client_name",
+                ty: Option::<String>::luau_type(),
+                description: Some("The client of the current track's play, if it gave one."),
+            },
+            FieldDescriptor {
+                name: "plugin_id",
+                ty: Option::<String>::luau_type(),
+                description: Some("The plugin that saved or reported the current track's play; nil for Lyra's own clients."),
+            },
+            FieldDescriptor {
+                name: "updated_at_ms",
+                ty: u64::luau_type(),
+                description: Some("When the playback last changed."),
+            },
+        ]);
         descriptor
     }
 }

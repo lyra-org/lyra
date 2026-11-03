@@ -201,6 +201,6 @@ pub(super) async fn report_progress(
 #[cfg(feature = "docgen")]
 pub(super) fn progress_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Report playback progress").description(
-        "Reports track-scoped state against an exact queue revision. A `play_id` other than the current track session's starts a new session and pauses the replaced one at its last reported position; a `play_id` whose session was replaced gets a `play_conflict` 409 for as long as the server keeps that session (a few minutes after it goes idle); a stale `queue_revision` gets a `queue_revision_conflict` 409. A target handling handoff_queue continues the command's `play_id` and completes the handoff by including its opaque handoff_token and connection_session_key here after applying the queue.",
+        "Reports track-scoped state against an exact queue revision. A `play_id` other than the current track session's starts a new session and pauses the replaced one at its last reported position; a `play_id` whose session was replaced gets a `play_conflict` 409 for as long as the server keeps that session (a few minutes after it goes idle), and so does the `play_id` of a queue a plugin saved, since resuming one starts a new play; a stale `queue_revision` gets a `queue_revision_conflict` 409. A target handling handoff_queue continues the command's `play_id` and completes the handoff by including its opaque handoff_token and connection_session_key here after applying the queue.",
     ).response::<409, Json<ProgressConflictResponse>>()
 }

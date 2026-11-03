@@ -31,6 +31,7 @@ pub(crate) mod bindings;
 mod removal;
 mod reported;
 mod reporting;
+mod saved;
 pub(crate) mod socket_claims;
 
 pub(crate) use active::list_active;
@@ -48,6 +49,12 @@ pub(crate) use reported::{
 pub(crate) use reporting::{
     cleanup_evicted_playbacks,
     pause_disconnected_connection,
+};
+pub(crate) use saved::{
+    SaveQueueRequest,
+    latest_playable,
+    remove_saved_queue,
+    save_queue,
 };
 
 pub(crate) const QUEUE_ITEM_HARD_CAP: usize = 1_000;
@@ -363,6 +370,32 @@ pub(crate) fn report_progress(
             None => None,
         };
         let (session, displaced_session) = match current {
+            Some((_, current))
+                if current.play_id == play_id && saved::is_saved_session(&current) =>
+            {
+                return Err(PlaybackError::Session(
+                    playback_sessions::PlaybackServiceError::PlayConflict(play_id),
+                ));
+            }
+            Some((session_id, current)) if saved::is_saved_session(&current) => {
+                lyra_db::playback_sessions::delete(t, session_id)?;
+                let session = start_progress_session(
+                    t,
+                    &play_id,
+                    current_track_db_id,
+                    user_db_id,
+                    client_name,
+                    mutation,
+                    now_ms,
+                )?;
+                lyra_db::playbacks::link_current_session(
+                    t,
+                    playback_db_id,
+                    session.playback.playback_session_id,
+                    now_ms,
+                )?;
+                (session, None)
+            }
             Some((_, current)) if current.play_id == play_id => {
                 let session = playback_sessions::report_playback_in_transaction(
                     t,
@@ -384,16 +417,6 @@ pub(crate) fn report_progress(
                 (session, None)
             }
             current => {
-                if mutation
-                    .state
-                    .is_some_and(lyra_db::PlaybackState::is_terminal)
-                {
-                    return Err(PlaybackError::Session(
-                        playback_sessions::PlaybackServiceError::BadRequest(
-                            "cannot create a current track session with terminal state".to_string(),
-                        ),
-                    ));
-                }
                 let displaced_session = match current {
                     Some((session_id, current)) => Some(DetachedSession {
                         playback_session_id: session_id,
@@ -404,21 +427,14 @@ pub(crate) fn report_progress(
                     }),
                     None => None,
                 };
-                let session = playback_sessions::start_playback_in_transaction(
+                let session = start_progress_session(
                     t,
-                    playback_sessions::StartPlaybackRequest {
-                        play_id,
-                        track_db_id: current_track_db_id,
-                        user_db_id,
-                        client_name,
-                        plugin_id: None,
-                        mutation: playback_sessions::PlaybackMutation {
-                            state: mutation.state.or(Some(lyra_db::PlaybackState::Playing)),
-                            ..mutation
-                        },
-                        now_ms,
-                        active_event: playback_sessions::ActiveEvent::Started,
-                    },
+                    &play_id,
+                    current_track_db_id,
+                    user_db_id,
+                    client_name,
+                    mutation,
+                    now_ms,
                 )?;
                 lyra_db::playbacks::link_current_session(
                     t,
@@ -443,6 +459,44 @@ pub(crate) fn report_progress(
         reporting_connection.as_ref(),
         now_ms,
     ))
+}
+
+/// Starts the session of a play a progress report begins, playing unless it says otherwise.
+fn start_progress_session(
+    t: &mut impl lyra_db::DbAccess,
+    play_id: &str,
+    track_db_id: DbId,
+    user_db_id: DbId,
+    client_name: Option<String>,
+    mutation: playback_sessions::PlaybackMutation,
+    now_ms: u64,
+) -> Result<playback_sessions::TransactionPlaybackUpdate, PlaybackError> {
+    if mutation
+        .state
+        .is_some_and(lyra_db::PlaybackState::is_terminal)
+    {
+        return Err(PlaybackError::Session(
+            playback_sessions::PlaybackServiceError::BadRequest(
+                "cannot create a current track session with terminal state".to_string(),
+            ),
+        ));
+    }
+    Ok(playback_sessions::start_playback_in_transaction(
+        t,
+        playback_sessions::StartPlaybackRequest {
+            play_id: play_id.to_string(),
+            track_db_id,
+            user_db_id,
+            client_name,
+            plugin_id: None,
+            mutation: playback_sessions::PlaybackMutation {
+                state: mutation.state.or(Some(lyra_db::PlaybackState::Playing)),
+                ..mutation
+            },
+            now_ms,
+            active_event: playback_sessions::ActiveEvent::Started,
+        },
+    )?)
 }
 
 pub(crate) fn compensate_failed_handoff_progress(
@@ -1043,6 +1097,27 @@ pub(crate) struct ReplaceQueueUpdate {
     pub(crate) detached_session: Option<DetachedSession>,
 }
 
+fn replace_error(error: lyra_db::playbacks::ReplaceQueueError) -> PlaybackError {
+    match error {
+        lyra_db::playbacks::ReplaceQueueError::NotFound => PlaybackError::NotFound,
+        lyra_db::playbacks::ReplaceQueueError::QueueUnavailable => PlaybackError::QueueUnavailable,
+        lyra_db::playbacks::ReplaceQueueError::RevisionConflict {
+            expected_revision,
+            current_revision,
+        } => PlaybackError::RevisionConflict {
+            expected_revision,
+            current_revision,
+        },
+        lyra_db::playbacks::ReplaceQueueError::RevisionExhausted => {
+            PlaybackError::RevisionExhausted
+        }
+        lyra_db::playbacks::ReplaceQueueError::Database(error) => {
+            PlaybackError::Internal(error.into())
+        }
+        lyra_db::playbacks::ReplaceQueueError::Internal(error) => PlaybackError::Internal(error),
+    }
+}
+
 pub(crate) fn replace_queue(
     db: &mut DbAny,
     playback_db_id: DbId,
@@ -1071,6 +1146,10 @@ pub(crate) fn replace_queue(
         let detached_session = if clear_current_session {
             match raw_session_id {
                 Some(session_id) => match lyra_db::playback_sessions::get_by_id(t, session_id)? {
+                    Some(session) if saved::is_saved_session(&session) => {
+                        lyra_db::playback_sessions::delete(t, session_id)?;
+                        None
+                    }
                     Some(session) => {
                         let update = if lyra_db::playback_sessions::get_track_id(t, session_id)?
                             .is_some()
@@ -1112,28 +1191,7 @@ pub(crate) fn replace_queue(
                 clear_current_session,
             },
         )
-        .map_err(|error| match error {
-            lyra_db::playbacks::ReplaceQueueError::NotFound => PlaybackError::NotFound,
-            lyra_db::playbacks::ReplaceQueueError::QueueUnavailable => {
-                PlaybackError::QueueUnavailable
-            }
-            lyra_db::playbacks::ReplaceQueueError::RevisionConflict {
-                expected_revision,
-                current_revision,
-            } => PlaybackError::RevisionConflict {
-                expected_revision,
-                current_revision,
-            },
-            lyra_db::playbacks::ReplaceQueueError::RevisionExhausted => {
-                PlaybackError::RevisionExhausted
-            }
-            lyra_db::playbacks::ReplaceQueueError::Database(error) => {
-                PlaybackError::Internal(error.into())
-            }
-            lyra_db::playbacks::ReplaceQueueError::Internal(error) => {
-                PlaybackError::Internal(error)
-            }
-        })?;
+        .map_err(replace_error)?;
         Ok::<_, PlaybackError>((playback, detached_session))
     })?;
     if let Some(detached) = &detached_session {

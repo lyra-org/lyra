@@ -14,6 +14,7 @@ use agdb::{
 use super::{
     PlaybackError,
     bindings,
+    saved,
 };
 use crate::services::{
     playback_sessions::ACTIVE_SESSION_TTL_MS,
@@ -43,8 +44,8 @@ impl DeletedPlayback {
     }
 }
 
-/// Deletes the playback. Its sessions stay until they go stale, and listens recorded from its
-/// plays stay.
+/// Deletes the playback, and its current session when that is a saved one, which nothing else
+/// holds. Its other sessions stay until they go stale, and listens recorded from its plays stay.
 pub(crate) fn delete_in_transaction(
     db: &mut impl lyra_db::DbAccess,
     playback_db_id: DbId,
@@ -57,6 +58,12 @@ pub(crate) fn delete_in_transaction(
             .map(|session| (session_id, session)),
         None => None,
     };
+    if let Some((session_id, session)) = &current_session
+        && playback.queue().is_some()
+        && saved::is_saved_session(session)
+    {
+        lyra_db::playback_sessions::delete(db, *session_id)?;
+    }
     lyra_db::playbacks::delete_in_transaction(db, playback_db_id)?;
     Ok(Some(DeletedPlayback {
         playback_id: playback.id,
