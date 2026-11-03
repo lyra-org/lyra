@@ -1,4 +1,5 @@
 --!strict
+local api = require("../../api")
 local handlers = require("./_handlers")
 
 local LISA_MBID = "85d76093-9865-4605-97fa-8c910929d366"
@@ -112,3 +113,21 @@ local other = release({ credited("lisa", "LiSA", LISA_MBID) })
 other.release_title = "LEO-NiNE (Deluxe)"
 handlers.refresh_release(other)
 assert(next(handlers.saved_ids) == nil, "nothing saved")
+
+-- Lookups reuse recent responses, except for a cover lookup asked to bypass them.
+handlers.serve({
+	{ pattern = "artist.php?i=122120", body = { artists = { LISA } } },
+})
+local cover = {
+	id = "lisa",
+	artist_name = "LiSA",
+	external_ids = { ["theaudiodb:artist"] = "122120" },
+}
+handlers.artist_cover(cover)
+assert(handlers.cache_ttls()[1] == api.CACHE_TTL_MS, "a recent response answers")
+handlers.serve({
+	{ pattern = "artist.php?i=122120", body = { artists = { LISA } } },
+})
+cover.cover_options = { bypass_cache = true }
+handlers.artist_cover(cover)
+assert(handlers.cache_ttls()[1] == 0, "a bypassing lookup asks again")

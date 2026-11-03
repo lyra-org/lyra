@@ -17,6 +17,8 @@ export type ArtistQuery = {
 	musicbrainz_id: string?,
 	-- Names to search by, in order.
 	names: { string },
+	-- Asks TheAudioDB again instead of reusing recent responses.
+	fresh: boolean?,
 }
 
 -- A credited artist of a local release.
@@ -90,7 +92,7 @@ end
 local function resolve_artist(query: ArtistQuery, check_stored: boolean): JsonObject?
 	local artist_id = trim(query.artist_id)
 	if artist_id ~= "" then
-		local artist = api.lookup_artist_by_id(artist_id)
+		local artist = api.lookup_artist_by_id(artist_id, query.fresh)
 		if artist ~= nil and not (check_stored and artist_conflicts(artist, query.musicbrainz_id)) then
 			return artist
 		end
@@ -98,14 +100,14 @@ local function resolve_artist(query: ArtistQuery, check_stored: boolean): JsonOb
 
 	local musicbrainz_id = trim(query.musicbrainz_id)
 	if musicbrainz_id ~= "" then
-		local artist = api.lookup_artist_by_musicbrainz_id(musicbrainz_id)
+		local artist = api.lookup_artist_by_musicbrainz_id(musicbrainz_id, query.fresh)
 		if artist ~= nil then
 			return artist
 		end
 	end
 
 	for _, name in query.names do
-		for _, artist in api.search_artists(name) do
+		for _, artist in api.search_artists(name, query.fresh) do
 			if artist_name_matches(artist, name) and not artist_conflicts(artist, query.musicbrainz_id) then
 				return artist
 			end

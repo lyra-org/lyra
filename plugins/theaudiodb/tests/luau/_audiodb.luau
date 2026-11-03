@@ -12,9 +12,12 @@ export type Route = { pattern: string, body: any }
 
 module.routes = {} :: { Route }
 module.requests = {} :: { string }
+-- Each request's `cache_ttl_ms`, in order.
+module.cache_ttls = {} :: { number? }
 
 api.send = function(options: http.HttpRequestOptions): http.HttpResponse
 	table.insert(module.requests, options.url)
+	table.insert(module.cache_ttls, options.cache_ttl_ms)
 	for _, route in module.routes do
 		if string.find(options.url, route.pattern, 1, true) then
 			return {
@@ -36,6 +39,7 @@ end
 function module.serve(routes: { Route })
 	module.routes = routes
 	module.requests = {}
+	module.cache_ttls = {}
 end
 
 return module

@@ -25,6 +25,9 @@ local api = {}
 
 api.BASE_URL = BASE_URL
 api.DEFAULT_API_KEY = "123"
+-- How long a response answers the same request again. TheAudioDB's records change rarely, and a
+-- sync asks for the same artist once per release.
+api.CACHE_TTL_MS = 60 * 1000
 
 -- Sends a request; tests replace it to answer with scripted responses.
 api.send = http.request :: (HttpRequestOptions) -> HttpResponse
@@ -62,7 +65,9 @@ function api.object_list(root: JsonObject?, key: string): { JsonObject }
 	return results
 end
 
-function api.get(endpoint: string, params: { [string]: string }?): JsonObject?
+-- The decoded answer to `endpoint`, `fresh` asking TheAudioDB again instead of reusing a recent
+-- response.
+function api.get(endpoint: string, params: { [string]: string }?, fresh: boolean?): JsonObject?
 	local url = `{API_BASE}/{api_key}/{endpoint}`
 	if params ~= nil then
 		local query_parts: { string } = {}
@@ -84,6 +89,7 @@ function api.get(endpoint: string, params: { [string]: string }?): JsonObject?
 		headers = {
 			Accept = "application/json",
 		},
+		cache_ttl_ms = if fresh then 0 else api.CACHE_TTL_MS,
 	}
 
 	local ok, response = pcall(api.send, request)
@@ -104,36 +110,36 @@ function api.get(endpoint: string, params: { [string]: string }?): JsonObject?
 	return api.as_json_object(data)
 end
 
-function api.lookup_artist_by_id(artist_id: string): JsonObject?
-	return api.object_list(api.get("artist.php", { i = artist_id }), "artists")[1]
+function api.lookup_artist_by_id(artist_id: string, fresh: boolean?): JsonObject?
+	return api.object_list(api.get("artist.php", { i = artist_id }, fresh), "artists")[1]
 end
 
-function api.lookup_artist_by_musicbrainz_id(artist_musicbrainz_id: string): JsonObject?
-	return api.object_list(api.get("artist-mb.php", { i = artist_musicbrainz_id }), "artists")[1]
+function api.lookup_artist_by_musicbrainz_id(artist_musicbrainz_id: string, fresh: boolean?): JsonObject?
+	return api.object_list(api.get("artist-mb.php", { i = artist_musicbrainz_id }, fresh), "artists")[1]
 end
 
-function api.lookup_album_by_id(album_id: string): JsonObject?
-	return api.object_list(api.get("album.php", { i = album_id }), "album")[1]
+function api.lookup_album_by_id(album_id: string, fresh: boolean?): JsonObject?
+	return api.object_list(api.get("album.php", { i = album_id }, fresh), "album")[1]
 end
 
-function api.lookup_album_by_release_group_id(release_group_id: string): JsonObject?
-	return api.object_list(api.get("album-mb.php", { i = release_group_id }), "album")[1]
+function api.lookup_album_by_release_group_id(release_group_id: string, fresh: boolean?): JsonObject?
+	return api.object_list(api.get("album-mb.php", { i = release_group_id }, fresh), "album")[1]
 end
 
-function api.lookup_track_by_musicbrainz_id(recording_id: string): JsonObject?
-	return api.object_list(api.get("track-mb.php", { i = recording_id }), "track")[1]
+function api.lookup_track_by_musicbrainz_id(recording_id: string, fresh: boolean?): JsonObject?
+	return api.object_list(api.get("track-mb.php", { i = recording_id }, fresh), "track")[1]
 end
 
-function api.search_artists(name: string): { JsonObject }
-	return api.object_list(api.get("search.php", { s = name }), "artists")
+function api.search_artists(name: string, fresh: boolean?): { JsonObject }
+	return api.object_list(api.get("search.php", { s = name }, fresh), "artists")
 end
 
-function api.search_albums(artist_query: string, album_query: string?): { JsonObject }
+function api.search_albums(artist_query: string, album_query: string?, fresh: boolean?): { JsonObject }
 	local params: { [string]: string } = { s = artist_query }
 	if album_query ~= nil and trim(album_query) ~= "" then
 		params.a = album_query
 	end
-	return api.object_list(api.get("searchalbum.php", params), "album")
+	return api.object_list(api.get("searchalbum.php", params, fresh), "album")
 end
 
 function api.search_tracks(artist_query: string, track_query: string?): { JsonObject }

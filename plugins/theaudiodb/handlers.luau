@@ -173,12 +173,18 @@ local function album_cover_payload(album: JsonObject): ProviderCoverResult?
 	return cover_payload(album, ALBUM_COVER_KEYS)
 end
 
+-- Whether the cover lookup asks TheAudioDB again instead of reusing recent responses.
+local function bypasses_cache(options: metadata.ProviderCoverOptions?): boolean
+	return options ~= nil and options.bypass_cache == true
+end
+
 local function cover_artist_query(ctx: metadata.ArtistCoverContext): ArtistQuery
 	local artist_id = identifier(ctx.external_ids, ARTIST_SCHEME)
 	return {
 		artist_id = artist_id,
 		musicbrainz_id = identifier(ctx.external_ids, "musicbrainz:artist"),
 		names = matching.lookup_names({ ctx.artist_name, ctx.sort_name }),
+		fresh = bypasses_cache(ctx.cover_options),
 	}
 end
 
@@ -203,9 +209,10 @@ local function first_artist_name(ctx: metadata.ReleaseCoverContext): string?
 end
 
 local function resolve_release_cover_match(ctx: metadata.ReleaseCoverContext): JsonObject?
+	local fresh = bypasses_cache(ctx.cover_options)
 	local album_id = identifier(ctx.external_ids, ALBUM_SCHEME)
 	if album_id ~= nil and album_id ~= "" then
-		local album = api.lookup_album_by_id(album_id)
+		local album = api.lookup_album_by_id(album_id, fresh)
 		if album ~= nil then
 			return album
 		end
@@ -217,7 +224,7 @@ local function resolve_release_cover_match(ctx: metadata.ReleaseCoverContext): J
 		return nil
 	end
 
-	local albums = search_albums(artist_name, release_title)
+	local albums = search_albums(artist_name, release_title, fresh)
 	return matching.best_album(albums, artist_name, release_title, ctx.release_date)
 end
 
@@ -280,7 +287,9 @@ local function search_candidates(query: string, searcher: SearchCandidatesFn, id
 end
 
 local function release_search_candidates(query: string): { JsonObject }
-	return search_candidates(query, search_albums, ALBUM_ID_KEYS)
+	return search_candidates(query, function(artist_query: string, album_query: string?): { JsonObject }
+		return search_albums(artist_query, album_query)
+	end, ALBUM_ID_KEYS)
 end
 
 local function release_search_results(query: string): { SearchResultItem }

@@ -10,6 +10,11 @@ local module = {}
 
 module.serve = audiodb.serve
 
+-- Each request's `cache_ttl_ms` since the last `serve`, in order.
+function module.cache_ttls(): { number? }
+	return audiodb.cache_ttls
+end
+
 -- Each saved node's ids, as of its last save.
 module.saved_ids = {} :: { [string]: { [string]: string } }
 
