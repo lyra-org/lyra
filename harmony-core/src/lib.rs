@@ -47,6 +47,7 @@ pub use modules::{
 pub use scheduler::{
     LocalLuauTaskCompletion,
     LocalScheduler,
+    ResumeLimit,
     Scheduler,
     TaskFuture,
     TaskHandle,

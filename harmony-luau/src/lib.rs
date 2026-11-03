@@ -40,6 +40,7 @@ pub use runtime::{
     Function,
     INTERRUPTED_ERROR,
     InterruptBudgetGuard,
+    InterruptSignal,
     IntoLuauReturn,
     ModuleId,
     NativeAsyncFn,

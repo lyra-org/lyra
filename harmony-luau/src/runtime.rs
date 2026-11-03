@@ -33,6 +33,8 @@ use std::{
         Once,
         RwLock,
         atomic::{
+            AtomicBool,
+            AtomicPtr,
             AtomicU64,
             AtomicUsize,
             Ordering,
@@ -328,13 +330,56 @@ impl Vm {
     }
 
     pub fn interrupt_after(&self, budget: Duration) -> InterruptBudgetGuard {
-        let deadline = current_unix_millis()
+        self.interrupt_after_or_on(budget, None)
+    }
+
+    /// Interrupts the running thread once `budget` runs out or, sooner, once `signal` is raised,
+    /// even from another OS thread.
+    pub fn interrupt_after_or_on(
+        &self,
+        budget: Duration,
+        signal: Option<&InterruptSignal>,
+    ) -> InterruptBudgetGuard {
+        let deadline_millis = current_unix_millis()
             .saturating_add(budget.as_millis().min(u128::from(u64::MAX)) as u64);
-        let previous_deadline = self.set_interrupt_deadline_millis(deadline);
+        let token = {
+            let mut budgets = self.interrupt_budgets();
+            budgets.next_token += 1;
+            let token = budgets.next_token;
+            budgets.active.push(InterruptBudget {
+                token,
+                deadline_millis,
+                signal: signal.cloned(),
+            });
+            self.apply_innermost_budget(&budgets);
+            token
+        };
         InterruptBudgetGuard {
             vm: self.clone(),
-            previous_deadline,
+            token,
         }
+    }
+
+    fn interrupt_budgets(&self) -> std::sync::MutexGuard<'_, InterruptBudgets> {
+        self.inner
+            .control()
+            .interrupt_budgets
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+    }
+
+    /// Makes the innermost live budget the one the interrupt checks. Its signal stays owned by
+    /// `budgets` for as long as the interrupt can read it.
+    fn apply_innermost_budget(&self, budgets: &InterruptBudgets) {
+        let control = self.inner.control();
+        let innermost = budgets.active.last();
+        let signal = innermost
+            .and_then(|budget| budget.signal.as_ref())
+            .map_or(std::ptr::null_mut(), |signal| {
+                Arc::as_ptr(&signal.0).cast_mut()
+            });
+        control.interrupt_signal.store(signal, Ordering::Release);
+        self.set_interrupt_deadline_millis(innermost.map_or(0, |budget| budget.deadline_millis));
     }
 
     pub fn open_standard_libraries(&self, libraries: StandardLibraries) -> Result<()> {
@@ -649,19 +694,17 @@ impl Vm {
         StackGuard::new(self.inner.state)
     }
 
-    fn set_interrupt_deadline_millis(&self, deadline: u64) -> u64 {
-        let previous = self
-            .inner
+    fn set_interrupt_deadline_millis(&self, deadline: u64) {
+        self.inner
             .control()
             .interrupt_deadline_millis
-            .swap(deadline, Ordering::Release);
+            .store(deadline, Ordering::Release);
         unsafe {
             sys::lua_set_interrupt_callback(
                 self.inner.state.as_ptr(),
                 if deadline == 0 { None } else { Some(interrupt) },
             );
         }
-        previous
     }
 
     fn register_userdata_tag<T>(&self, tag: UserDataTag) -> Result<()>
@@ -985,7 +1028,11 @@ impl VmInner {
 struct VmControl {
     allocated: AtomicUsize,
     memory_limit: AtomicUsize,
+    /// The innermost live budget's deadline and signal, as the interrupt reads them.
     interrupt_deadline_millis: AtomicU64,
+    interrupt_signal: AtomicPtr<AtomicBool>,
+    /// Every live [`InterruptBudgetGuard`]'s budget, which owns the signal the interrupt reads.
+    interrupt_budgets: std::sync::Mutex<InterruptBudgets>,
     /// Keyed by `lua_State` address; [`userthread`] keeps it in step with
     /// the threads Luau creates and frees.
     thread_contexts: RwLock<HashMap<usize, CallContext>>,
@@ -997,20 +1044,65 @@ impl VmControl {
             allocated: AtomicUsize::new(0),
             memory_limit: AtomicUsize::new(options.memory_limit.unwrap_or(0)),
             interrupt_deadline_millis: AtomicU64::new(0),
+            interrupt_signal: AtomicPtr::new(std::ptr::null_mut()),
+            interrupt_budgets: std::sync::Mutex::default(),
             thread_contexts: RwLock::new(HashMap::new()),
         }
     }
 }
 
+#[derive(Default)]
+struct InterruptBudgets {
+    next_token: u64,
+    /// In the order they were set; the last is the innermost.
+    active: Vec<InterruptBudget>,
+}
+
+struct InterruptBudget {
+    token: u64,
+    deadline_millis: u64,
+    signal: Option<InterruptSignal>,
+}
+
+/// Holds an interrupt budget until dropped. Guards may drop in any order; the innermost live one
+/// applies.
 pub struct InterruptBudgetGuard {
     vm: Vm,
-    previous_deadline: u64,
+    token: u64,
 }
 
 impl Drop for InterruptBudgetGuard {
     fn drop(&mut self) {
-        self.vm
-            .set_interrupt_deadline_millis(self.previous_deadline);
+        let mut budgets = self.vm.interrupt_budgets();
+        let Some(index) = budgets
+            .active
+            .iter()
+            .position(|budget| budget.token == self.token)
+        else {
+            return;
+        };
+        let removed = budgets.active.remove(index);
+        self.vm.apply_innermost_budget(&budgets);
+        drop(budgets);
+        drop(removed);
+    }
+}
+
+/// A flag that interrupts the thread a [`Vm::interrupt_after_or_on`] budget runs, once raised.
+#[derive(Clone, Debug, Default)]
+pub struct InterruptSignal(Arc<AtomicBool>);
+
+impl InterruptSignal {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn raise(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+
+    pub fn is_raised(&self) -> bool {
+        self.0.load(Ordering::Acquire)
     }
 }
 
@@ -3175,6 +3267,12 @@ unsafe extern "C-unwind" fn interrupt(state: *mut sys::lua_State, gc: c_int) {
                 .as_ref()
         };
         control.is_some_and(|control| {
+            let signal = control.interrupt_signal.load(Ordering::Acquire);
+            // SAFETY: the signal belongs to a live budget in `interrupt_budgets`, which stops
+            // pointing the interrupt at it before dropping it, on this same thread.
+            if !signal.is_null() && unsafe { (*signal).load(Ordering::Acquire) } {
+                return true;
+            }
             let deadline = control.interrupt_deadline_millis.load(Ordering::Acquire);
             deadline != 0 && current_unix_millis() >= deadline
         })
@@ -3876,6 +3974,80 @@ mod tests {
             assert!(thread.resume(&vm, &[]).is_err());
         }
         assert_eq!(stack_top(&vm), 0);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn guards_dropped_out_of_order_leave_the_innermost_live_budget() -> Result<()> {
+        let vm = Vm::new()?;
+        let function = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(&b"while true do end"[..]),
+            ChunkOrigin::default(),
+        ))?;
+        let outer_signal = InterruptSignal::new();
+        let inner_signal = InterruptSignal::new();
+        let outer = vm.interrupt_after_or_on(Duration::from_secs(600), Some(&outer_signal));
+        let inner = vm.interrupt_after_or_on(Duration::from_secs(600), Some(&inner_signal));
+        drop(outer_signal);
+        // The outer guard goes first; the inner one's budget and signal still apply.
+        drop(outer);
+        let control = vm.inner.control();
+        assert_eq!(
+            control.interrupt_signal.load(Ordering::Acquire),
+            Arc::as_ptr(&inner_signal.0).cast_mut()
+        );
+        inner_signal.raise();
+        let error = vm
+            .create_thread(&function)?
+            .resume(&vm, &[])
+            .expect_err("the inner signal should stop the loop");
+        assert!(matches!(error, Error::Runtime(message) if message.contains("interrupted")));
+        drop(inner);
+        assert!(control.interrupt_signal.load(Ordering::Acquire).is_null());
+        assert_eq!(control.interrupt_deadline_millis.load(Ordering::Acquire), 0);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn raised_signal_interrupts_before_the_budget_runs_out() -> Result<()> {
+        let vm = Vm::new()?;
+        let function = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(&b"while true do end"[..]),
+            ChunkOrigin::default(),
+        ))?;
+        let thread = vm.create_thread(&function)?;
+        let signal = InterruptSignal::new();
+        let raiser = {
+            let signal = signal.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(20));
+                signal.raise();
+            })
+        };
+
+        let started = Instant::now();
+        let guard = vm.interrupt_after_or_on(Duration::from_secs(60), Some(&signal));
+        let error = thread
+            .resume(&vm, &[])
+            .expect_err("the raised signal should stop the loop");
+        drop(guard);
+        raiser.join().expect("raiser thread");
+
+        assert!(matches!(
+            error,
+            Error::Runtime(message) if message.contains("interrupted")
+        ));
+        assert!(started.elapsed() < Duration::from_secs(30));
+        assert!(
+            vm.inner
+                .control()
+                .interrupt_signal
+                .load(Ordering::Acquire)
+                .is_null(),
+            "the guard restores the signal before it"
+        );
         Ok(())
     }
 

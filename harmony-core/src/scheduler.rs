@@ -89,16 +89,40 @@ impl LocalLuauTaskCompletion {
     }
 }
 
+/// How long each resume of a Luau task may run before it is interrupted.
+#[derive(Clone, Debug)]
+pub enum ResumeLimit {
+    /// Each resume may run this long.
+    Budget(Duration),
+    /// Each resume may run until `deadline`, or until `signal` is raised.
+    Until {
+        deadline: Instant,
+        signal: luau::InterruptSignal,
+    },
+}
+
+impl ResumeLimit {
+    fn guard(&self, vm: &luau::Vm) -> luau::InterruptBudgetGuard {
+        match self {
+            Self::Budget(budget) => vm.interrupt_after(*budget),
+            Self::Until { deadline, signal } => vm.interrupt_after_or_on(
+                deadline.saturating_duration_since(Instant::now()),
+                Some(signal),
+            ),
+        }
+    }
+}
+
 struct LuauTaskOptions {
-    resume_budget: Option<Duration>,
+    resume_limit: Option<ResumeLimit>,
     completion: Option<Rc<LocalLuauTaskCompletion>>,
 }
 
 enum LuauThreadStart {
     Immediate,
     Delayed(Duration),
-    Budgeted {
-        resume_budget: Duration,
+    Limited {
+        limit: ResumeLimit,
         completion: Option<Rc<LocalLuauTaskCompletion>>,
     },
 }
@@ -216,10 +240,7 @@ impl Scheduler {
             vm,
             thread,
             args,
-            LuauTaskOptions {
-                resume_budget: self.luau_resume_budget,
-                completion: None,
-            },
+            self.default_luau_task_options(),
         )
     }
 
@@ -366,7 +387,7 @@ impl Scheduler {
                 error: None,
                 output: None,
                 wake_at,
-                luau_resume_budget: options.resume_budget,
+                resume_limit: options.resume_limit,
                 completion: options.completion,
             },
         );
@@ -383,7 +404,7 @@ impl Scheduler {
 
     fn default_luau_task_options(&self) -> LuauTaskOptions {
         LuauTaskOptions {
-            resume_budget: self.luau_resume_budget,
+            resume_limit: self.luau_resume_budget.map(ResumeLimit::Budget),
             completion: None,
         }
     }
@@ -479,7 +500,7 @@ impl Scheduler {
                 queue: self.wake_queue.clone(),
             }));
             let mut cx = Context::from_waker(&waker);
-            match poll_work(&task.context, work, &mut cx, task.luau_resume_budget) {
+            match poll_work(&task.context, work, &mut cx, task.resume_limit.as_ref()) {
                 WorkPoll::Completed { output } => {
                     if let Some(completion) = task.completion.as_ref() {
                         completion.complete(Ok(output.unwrap_or_default()));
@@ -848,8 +869,8 @@ impl LocalScheduler {
             vm,
             thread,
             args,
-            LuauThreadStart::Budgeted {
-                resume_budget,
+            LuauThreadStart::Limited {
+                limit: ResumeLimit::Budget(resume_budget),
                 completion: None,
             },
         );
@@ -864,13 +885,32 @@ impl LocalScheduler {
         resume_budget: Duration,
         completion: Rc<LocalLuauTaskCompletion>,
     ) {
+        self.schedule_luau_thread_with_limit_and_completion(
+            context,
+            vm,
+            thread,
+            args,
+            ResumeLimit::Budget(resume_budget),
+            completion,
+        );
+    }
+
+    pub fn schedule_luau_thread_with_limit_and_completion(
+        &self,
+        context: CallContext,
+        vm: luau::Vm,
+        thread: luau::Thread,
+        args: Vec<luau::Value>,
+        limit: ResumeLimit,
+        completion: Rc<LocalLuauTaskCompletion>,
+    ) {
         self.schedule_luau_thread_start(
             context,
             vm,
             thread,
             args,
-            LuauThreadStart::Budgeted {
-                resume_budget,
+            LuauThreadStart::Limited {
+                limit,
                 completion: Some(completion),
             },
         );
@@ -915,7 +955,7 @@ impl LocalScheduler {
                     .checked_add(*delay)
                     .unwrap_or_else(Instant::now),
             ),
-            LuauThreadStart::Immediate | LuauThreadStart::Budgeted { .. } => None,
+            LuauThreadStart::Immediate | LuauThreadStart::Limited { .. } => None,
         };
         let args = self.prepare_luau_thread_start_args(key, &thread, args, wake_at);
         let handle =
@@ -930,19 +970,18 @@ impl LocalScheduler {
                     .scheduler
                     .borrow_mut()
                     .spawn_luau_thread_after(context, delay, vm.clone(), thread.clone(), args),
-                LuauThreadStart::Budgeted {
-                    resume_budget,
-                    completion,
-                } => self.scheduler.borrow_mut().spawn_luau_thread_with_options(
-                    context,
-                    vm.clone(),
-                    thread.clone(),
-                    args,
-                    LuauTaskOptions {
-                        resume_budget: Some(resume_budget),
-                        completion,
-                    },
-                ),
+                LuauThreadStart::Limited { limit, completion } => {
+                    self.scheduler.borrow_mut().spawn_luau_thread_with_options(
+                        context,
+                        vm.clone(),
+                        thread.clone(),
+                        args,
+                        LuauTaskOptions {
+                            resume_limit: Some(limit),
+                            completion,
+                        },
+                    )
+                }
             };
         self.thread_tasks.borrow_mut().insert(key, handle);
         self.task_threads
@@ -1361,7 +1400,7 @@ struct Task {
     error: Option<Arc<str>>,
     output: Option<Vec<luau::Value>>,
     wake_at: Option<Instant>,
-    luau_resume_budget: Option<Duration>,
+    resume_limit: Option<ResumeLimit>,
     completion: Option<Rc<LocalLuauTaskCompletion>>,
 }
 
@@ -1396,7 +1435,7 @@ fn poll_work(
     context: &CallContext,
     work: &mut TaskWork,
     cx: &mut Context<'_>,
-    luau_resume_budget: Option<Duration>,
+    resume_limit: Option<&ResumeLimit>,
 ) -> WorkPoll {
     match work {
         TaskWork::Future(future) => match future.as_mut().poll(cx) {
@@ -1420,7 +1459,7 @@ fn poll_work(
                 Ok(previous) => previous,
                 Err(error) => return WorkPoll::Failed(error.to_string()),
             };
-            let result = resume_luau_thread(vm, thread, args, luau_resume_budget);
+            let result = resume_luau_thread(vm, thread, args, resume_limit);
             args.clear();
             poll_luau_resume(vm, thread, result, previous)
         }
@@ -1444,7 +1483,7 @@ fn poll_work(
                 Ok(previous) => previous,
                 Err(error) => return WorkPoll::Failed(error.to_string()),
             };
-            let _guard = luau_resume_budget.map(|budget| vm.interrupt_after(budget));
+            let _guard = resume_limit.map(|limit| limit.guard(&vm));
             let result = match output {
                 Ok(values) => thread.resume(&vm, values.as_slice()),
                 Err(message) => thread.resume_error(&vm, &message),
@@ -1458,9 +1497,9 @@ fn resume_luau_thread(
     vm: &luau::Vm,
     thread: &luau::Thread,
     args: &[luau::Value],
-    budget: Option<Duration>,
+    limit: Option<&ResumeLimit>,
 ) -> luau::runtime::Result<luau::ThreadStatus> {
-    let _guard = budget.map(|budget| vm.interrupt_after(budget));
+    let _guard = limit.map(|limit| limit.guard(vm));
     thread.resume(vm, args)
 }
 
@@ -1941,7 +1980,7 @@ mod tests {
             timed_thread,
             Vec::new(),
             LuauTaskOptions {
-                resume_budget: Some(Duration::ZERO),
+                resume_limit: Some(ResumeLimit::Budget(Duration::ZERO)),
                 completion: None,
             },
         );
@@ -1960,6 +1999,55 @@ mod tests {
                 .state,
             TaskState::Completed
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_resume_limited_until_a_deadline_stops_at_it_or_at_its_signal() -> luau::runtime::Result<()>
+    {
+        let vm = luau::Vm::new()?;
+        let function = vm.load_chunk(&luau::Chunk::new(
+            Arc::<[u8]>::from(&b"while true do end"[..]),
+            luau::ChunkOrigin::default(),
+        ))?;
+        let raised = luau::InterruptSignal::new();
+        raised.raise();
+        let mut scheduler = Scheduler::new();
+        let limits = [
+            ResumeLimit::Until {
+                deadline: Instant::now() + Duration::from_secs(600),
+                signal: raised,
+            },
+            ResumeLimit::Until {
+                deadline: Instant::now(),
+                signal: luau::InterruptSignal::new(),
+            },
+        ];
+        let tasks: Vec<_> = limits
+            .into_iter()
+            .map(|limit| -> luau::runtime::Result<TaskHandle> {
+                Ok(scheduler.spawn_luau_thread_with_options(
+                    CallContext::default(),
+                    vm.clone(),
+                    vm.create_thread(&function)?,
+                    Vec::new(),
+                    LuauTaskOptions {
+                        resume_limit: Some(limit),
+                        completion: None,
+                    },
+                ))
+            })
+            .collect::<luau::runtime::Result<_>>()?;
+
+        let started = Instant::now();
+        assert_eq!(scheduler.poll_ready(), 2);
+        assert!(started.elapsed() < Duration::from_secs(60));
+        for task in tasks {
+            assert_eq!(
+                scheduler.snapshot(task.id()).expect("task").state,
+                TaskState::Failed
+            );
+        }
         Ok(())
     }
 
@@ -1991,7 +2079,10 @@ mod tests {
             .expect("scheduled thread handle");
         let inner = scheduler.scheduler.borrow();
         let task = inner.tasks.get(&handle.id()).expect("scheduled task");
-        assert_eq!(task.luau_resume_budget, Some(Duration::from_secs(1)));
+        assert!(matches!(
+            task.resume_limit,
+            Some(ResumeLimit::Budget(budget)) if budget == Duration::from_secs(1)
+        ));
         assert!(Rc::ptr_eq(
             task.completion.as_ref().expect("task completion"),
             &completion
