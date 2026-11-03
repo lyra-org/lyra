@@ -1,0 +1,106 @@
+run_as = "listener"
+
+# The listener and the neighbour see the libraries "Music" and "Extra": "Solo" (Amy) in Music holds
+# S1, S2 and S3, whose duration is unknown, and "Far" (Bob) in Extra holds F1. "Secret", in a library nobody is granted, holds
+# H1. The listener starred F1 long ago.
+
+[[users]]
+key = "listener"
+
+[[users]]
+key = "neighbour"
+
+[[api_keys]]
+key = "listener_key"
+user = "listener"
+
+[[api_keys]]
+key = "neighbour_key"
+user = "neighbour"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener", "neighbour"]
+
+[[libraries]]
+key = "extra"
+name = "Extra"
+users = ["listener", "neighbour"]
+
+[[libraries]]
+key = "hidden"
+name = "Hidden"
+
+[[artists]]
+key = "amy"
+name = "Amy"
+
+[[artists]]
+key = "bob"
+name = "Bob"
+
+[[releases]]
+key = "solo"
+title = "Solo"
+library = "music"
+artists = ["amy"]
+
+[[releases]]
+key = "far"
+title = "Far"
+library = "extra"
+artists = ["bob"]
+
+[[releases]]
+key = "secret"
+title = "Secret"
+library = "hidden"
+artists = ["amy"]
+
+[[tracks]]
+key = "s1"
+title = "S1"
+release = "solo"
+disc = 1
+track = 1
+duration_ms = 180000
+artists = ["amy"]
+
+[[tracks]]
+key = "s2"
+title = "S2"
+release = "solo"
+disc = 1
+track = 2
+duration_ms = 200000
+artists = ["amy"]
+
+[[tracks]]
+key = "s3"
+title = "S3"
+release = "solo"
+disc = 1
+track = 3
+artists = ["amy"]
+
+[[tracks]]
+key = "f1"
+title = "F1"
+release = "far"
+disc = 1
+track = 1
+duration_ms = 240000
+artists = ["bob"]
+
+[[tracks]]
+key = "h1"
+title = "H1"
+release = "secret"
+duration_ms = 180000
+artists = ["amy"]
+
+[[favorites]]
+user = "listener"
+target = "f1"
+at = 1700000000000

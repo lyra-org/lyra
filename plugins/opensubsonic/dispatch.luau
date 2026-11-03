@@ -6,6 +6,7 @@
 
 local api = require("@lyra/api")
 
+local annotation = require("./endpoints/annotation")
 local auth_protocol = require("./protocol/auth")
 local browsing = require("./endpoints/browsing")
 local lists = require("./endpoints/lists")
@@ -34,6 +35,7 @@ for _, family: { [string]: Method } in
 		media.methods,
 		playlists.methods,
 		scanning.methods,
+		annotation.methods,
 	} :: { { [string]: Method } }
 do
 	for name, method in family do

@@ -5,10 +5,12 @@
 -- www.meshiplaw.com/lyra.
 
 local api = require("@lyra/api")
+local artists = require("@lyra/artists")
 local releases = require("@lyra/releases")
 local tracks = require("@lyra/tracks")
 
 local albums = require("../catalog/albums")
+local artist_items = require("../catalog/artists")
 local folders = require("../catalog/folders")
 local genres = require("../catalog/genres")
 local request = require("../protocol/request")
@@ -181,6 +183,39 @@ module.methods = {
 			}).items)
 		end
 		return response.ok(params, { songsByGenre = songs_result(items) })
+	end,
+
+	-- Every starred artist, album and song, most recently starred first.
+	getStarred2 = function(req: Request): ApiResponse
+		local params = req.params
+		local library_id = folders.library_id(params)
+		local starred_artists = artist_items.list(artists.query({
+			favorite = true,
+			library_id = library_id,
+			sort = { { key = "favorited_at", order = "descending" } },
+		}).items)
+		local starred_albums = albums.list(releases.query({
+			favorite = true,
+			library_id = library_id,
+			sort = { { key = "favorited_at", order = "descending" } },
+		}).items)
+		local starred_songs = songs.list(tracks.query({
+			favorite = true,
+			library_id = library_id,
+			sort = { { key = "favorited_at", order = "descending" } },
+		}).items)
+
+		local result: JsonObject = {}
+		if #starred_artists > 0 then
+			result.artist = starred_artists
+		end
+		if #starred_albums > 0 then
+			result.album = starred_albums
+		end
+		if #starred_songs > 0 then
+			result.song = starred_songs
+		end
+		return response.ok(params, { starred2 = if next(result) then result else response.EMPTY_OBJECT })
 	end,
 }
 

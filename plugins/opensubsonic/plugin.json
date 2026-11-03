@@ -7,6 +7,7 @@
   "description": "Plugin for creating OpenSubsonic-compatible routes",
   "entrypoint": "init.luau",
   "scopes": [
+    "harmony.crypt",
     "harmony.serde",
     "lyra.api",
     "lyra.artists",
