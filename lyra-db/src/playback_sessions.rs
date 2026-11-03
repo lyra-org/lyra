@@ -437,6 +437,12 @@ pub fn evict_stale(
     Ok(evicted)
 }
 
+/// Removes the session, and with it every edge it has, such as a playback's link to it.
+pub fn delete(db: &mut impl super::DbAccess, playback_session_id: DbId) -> anyhow::Result<()> {
+    db.exec_mut(QueryBuilder::remove().ids(playback_session_id).query())?;
+    Ok(())
+}
+
 pub fn update(
     db: &mut impl super::DbAccess,
     playback_session: &PlaybackSession,
@@ -659,6 +665,42 @@ mod tests {
             Some(session_id)
         );
         assert_eq!(find_by_play_id(&db, other_user_id, &session.play_id)?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn deleting_a_session_unlinks_the_playback_holding_it() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_id = create_test_user(&mut db)?;
+        let track_id = create_test_track(&mut db, "Track")?;
+        let session_id = create(&mut db, &make_session(1000), track_id, user_id)?;
+        let playback_id = crate::playbacks::create(
+            &mut db,
+            &crate::playbacks::Playback {
+                db_id: None,
+                id: nanoid!(),
+                source: crate::playbacks::PlaybackSource::Queue(crate::playbacks::Queue {
+                    revision: 1,
+                    track_ids: vec!["track".to_string()],
+                    current_index: 0,
+                    repeat_mode: crate::playbacks::RepeatMode::None,
+                    shuffle_enabled: false,
+                }),
+                created_at_ms: 1,
+                updated_at_ms: 1,
+            },
+            user_id,
+            session_id,
+        )?;
+
+        db.transaction_mut(|t| delete(t, session_id))?;
+
+        assert!(get_by_id(&db, session_id)?.is_none());
+        assert_eq!(
+            crate::playbacks::get_current_session_id(&db, playback_id)?,
+            None
+        );
+        assert!(crate::playbacks::get_by_id(&db, playback_id)?.is_some());
         Ok(())
     }
 

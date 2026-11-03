@@ -22,6 +22,7 @@ use serde::{
 use super::DbAccess;
 
 mod reported;
+mod saved;
 pub use reported::{
     ExpiredReported,
     REPORTED_PLAYBACK_TTL_MS,
@@ -31,6 +32,11 @@ pub use reported::{
     expire_reported_for_user,
     get_reported,
     insert_reported,
+};
+pub use saved::{
+    claim as claim_saved,
+    get_saved,
+    unclaim as unclaim_saved,
 };
 
 const OWNER_EDGE_KEY: &str = "owner";
