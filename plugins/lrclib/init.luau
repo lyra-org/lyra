@@ -402,7 +402,7 @@ local function handle(ctx: ProviderLyricsContext): HandlerResult
 			flush()
 			return { kind = "miss" }
 		end
-		set_attempt("hit", math.huge)
+		set_attempt("hit", now_ms())
 		flush()
 		return { kind = "hit", candidates = { candidate } }
 	end
@@ -463,7 +463,7 @@ local function handle(ctx: ProviderLyricsContext): HandlerResult
 		return { kind = "miss" }
 	end
 	set_cache(candidates[1].lyrics.id)
-	set_attempt("hit", math.huge)
+	set_attempt("hit", now_ms())
 	flush()
 	return { kind = "hit", candidates = candidates }
 end
