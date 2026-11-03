@@ -18,6 +18,7 @@ use crate::services::auth::{
     Principal,
     access,
 };
+use crate::services::catalog::Viewer;
 use lyra_db::favorites::FavoriteKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,18 +81,48 @@ pub(crate) fn favorited_at_for_principal(
     target_db_ids: &[DbId],
 ) -> anyhow::Result<HashMap<DbId, i64>> {
     let user_db_id = principal.require(db)?;
-    let mut targetable = Vec::with_capacity(target_db_ids.len());
-    for &target_db_id in target_db_ids {
-        if targetable_kind(db, principal, user_db_id, target_db_id)?.is_some() {
-            targetable.push(target_db_id);
+    favorited_at(db, user_db_id, target_db_ids, |target_db_id, kind| {
+        target_visible_to_principal(db, principal, user_db_id, target_db_id, kind)
+    })
+}
+
+/// [`favorited_at_for_principal`] for the targets `viewer` sees.
+pub(crate) fn favorited_at_seen_by(
+    db: &DbAny,
+    viewer: &Viewer,
+    target_db_ids: &[DbId],
+) -> anyhow::Result<HashMap<DbId, i64>> {
+    let user_db_id = viewer.user_db_id("favorites")?;
+    favorited_at(
+        db,
+        user_db_id,
+        target_db_ids,
+        |target_db_id, kind| match kind {
+            FavoriteKind::Playlist => viewer.sees_playlist(db, target_db_id),
+            FavoriteKind::Artist => viewer.sees_artist(db, target_db_id),
+            FavoriteKind::Track | FavoriteKind::Release => viewer.sees_entity(db, target_db_id),
+        },
+    )
+}
+
+/// Reads the user's favorites of the targets first, so only favorited targets pay for a
+/// visibility check.
+fn favorited_at(
+    db: &DbAny,
+    user_db_id: DbId,
+    target_db_ids: &[DbId],
+    mut visible: impl FnMut(DbId, FavoriteKind) -> anyhow::Result<bool>,
+) -> anyhow::Result<HashMap<DbId, i64>> {
+    let mut favorited = HashMap::new();
+    for (target_db_id, edge) in lyra_db::favorites::for_targets(db, user_db_id, target_db_ids)? {
+        let Some(kind) = lyra_db::favorites::target_kind(db, target_db_id)? else {
+            continue;
+        };
+        if visible(target_db_id, kind)? {
+            favorited.insert(target_db_id, edge.first_favorited_at_ms);
         }
     }
-    Ok(
-        lyra_db::favorites::for_targets(db, user_db_id, &targetable)?
-            .into_iter()
-            .map(|(target_db_id, edge)| (target_db_id, edge.first_favorited_at_ms))
-            .collect(),
-    )
+    Ok(favorited)
 }
 
 /// Flat target DbIds for user+kind, with playlist visibility applied. Errs above the DB cap.
@@ -422,6 +453,61 @@ mod tests {
         let result = favorited_at_for_principal(&db, &principal, &many)?;
         assert_eq!(result.keys().copied().collect::<Vec<_>>(), vec![favorited]);
 
+        Ok(())
+    }
+
+    #[test]
+    fn favorited_at_seen_by_keeps_only_favorites_the_viewer_sees() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user = create_user(&mut db, "alice")?;
+        let other = create_user(&mut db, "bob")?;
+        let departed = create_user(&mut db, "carol")?;
+        let visible_library = insert_library(&mut db, "Visible", "/tmp/lyra-favorites-seen")?;
+        let hidden_library = insert_library(&mut db, "Hidden", "/tmp/lyra-favorites-seen-hidden")?;
+        let visible_library_id = lyra_db::lookup::find_id_by_db_id(&db, visible_library)?.unwrap();
+        let principal = principal_for(&db, user, HashSet::from([visible_library_id]));
+        let track = create_track(&mut db, &nanoid!())?;
+        let hidden_track = create_track(&mut db, &nanoid!())?;
+        connect(&mut db, visible_library, track)?;
+        connect(&mut db, hidden_library, hidden_track)?;
+        let own_playlist = create_playlist(&mut db, user, &nanoid!(), false)?;
+        let public_playlist = create_playlist(&mut db, other, &nanoid!(), true)?;
+        let private_playlist = create_playlist(&mut db, other, &nanoid!(), false)?;
+        let ownerless_playlist = create_playlist(&mut db, departed, &nanoid!(), true)?;
+        let now = now_ms()?;
+        for (target, kind) in [
+            (track, FavoriteKind::Track),
+            (hidden_track, FavoriteKind::Track),
+            (own_playlist, FavoriteKind::Playlist),
+            (public_playlist, FavoriteKind::Playlist),
+            (private_playlist, FavoriteKind::Playlist),
+            (ownerless_playlist, FavoriteKind::Playlist),
+        ] {
+            lyra_db::favorites::add(&mut db, user, target, kind, now)?;
+        }
+        users::delete_user(&mut db, departed)?;
+        let targets = [
+            track,
+            hidden_track,
+            own_playlist,
+            public_playlist,
+            private_playlist,
+            ownerless_playlist,
+            other,
+            DbId(999_999_999),
+        ];
+        let keys = |favorited: HashMap<DbId, i64>| favorited.into_keys().collect::<HashSet<_>>();
+
+        let viewer = Viewer::listener(&db, principal.clone())?;
+        assert_eq!(
+            keys(favorited_at_seen_by(&db, &viewer, &targets)?),
+            HashSet::from([track, own_playlist, public_playlist])
+        );
+        assert_eq!(
+            keys(favorited_at_for_principal(&db, &principal, &targets)?),
+            HashSet::from([track, own_playlist, public_playlist, ownerless_playlist]),
+            "the principal's playlist rule still shows public playlists without an owner"
+        );
         Ok(())
     }
 

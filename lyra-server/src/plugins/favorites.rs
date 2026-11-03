@@ -71,10 +71,9 @@ impl FavoritesModule {
     ) -> luau::runtime::Result<luau::OwnedTable> {
         let db = db.read().await;
         let targets = Resolved::of(&*db, target_ids.0)?;
-        let favorited =
-            favorite_service::favorited_at_for_principal(&db, &principal, targets.db_ids())?;
         let viewer = ids::viewer_of(&*db, &principal)?;
-        Ok(targets.keyed(ids::seen_by(&db, &viewer, favorited)?))
+        let favorited = favorite_service::favorited_at_seen_by(&db, &viewer, targets.db_ids())?;
+        Ok(targets.keyed(favorited))
     }
 
     #[harmony(returns(Vec<String>))]
