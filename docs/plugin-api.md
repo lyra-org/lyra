@@ -74,6 +74,9 @@ modules predate some of them.
   Filters that only choose which items appear, such as a credit role, leave them alone.
 - A range filter takes `min_<field>` and `max_<field>`, both inclusive and either optional, and
   raises when the minimum exceeds the maximum, as `min_rating` and `min_year` do.
+- A lookup by exact name goes through the catalog queries' `name` filter, which compares names as
+  search does, ignoring case, accents, apostrophes and punctuation, rather than byte for byte. A
+  plugin doesn't search and compare names itself.
 - A result that comes in several forms is a union tagged by `kind`, as API responses and
   provider results are.
 - Quantities name their unit: `duration_ms`, `timeout_ms`, `bitrate_bps`,

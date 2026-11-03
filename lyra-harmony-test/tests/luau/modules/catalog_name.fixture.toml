@@ -1,0 +1,59 @@
+run_as = "owner"
+
+[[users]]
+key = "owner"
+admin = true
+
+[[artists]]
+key = "bjork"
+name = "Björk"
+
+[[artists]]
+key = "shouted"
+name = "BJÖRK"
+
+[[artists]]
+key = "trio"
+name = "Björk Trio"
+
+[[genres]]
+key = "electronique"
+name = "Électronique"
+
+[[genres]]
+key = "electronic"
+name = "Electronic"
+
+[[genres]]
+key = "trip_hop"
+name = "Trip-Hop"
+
+[[releases]]
+key = "homogenic"
+title = "Homogenic"
+artists = ["bjork"]
+genres = ["electronique", "electronic"]
+
+[[releases]]
+key = "live"
+title = "HOMOGENIC"
+artists = ["trio"]
+genres = ["trip_hop"]
+
+[[tracks]]
+key = "joga"
+title = "Jóga"
+release = "homogenic"
+artists = ["bjork"]
+
+[[tracks]]
+key = "loud"
+title = "JÓGA"
+release = "live"
+artists = ["shouted"]
+
+[[tracks]]
+key = "longer"
+title = "Jóga (Live)"
+release = "live"
+artists = ["trio"]

@@ -664,10 +664,21 @@ pub(crate) fn order<C: Old>(
             rows
         }
     };
+    // A name that folds away matches nothing, as a search that does.
+    let name = query
+        .name
+        .as_deref()
+        .map(|name| search::key(&search::fold(name)));
     let related = &mut reads.related;
     let mut entries = Vec::new();
     for row in rows {
         if !query.names.contains(row.sort_name()) {
+            continue;
+        }
+        if name
+            .as_ref()
+            .is_some_and(|name| name.is_empty() || search::key(&search::fold(&row.name)) != *name)
+        {
             continue;
         }
         let (tier, own_words, by_name) = match &needle {

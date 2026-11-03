@@ -400,6 +400,8 @@ impl NameRange {
 pub(crate) struct Query<C: Catalog> {
     pub(crate) filter: C::Filter,
     pub(crate) names: NameRange,
+    /// Keeps the items whose name is this one, as an exact search match compares names.
+    pub(crate) name: Option<String>,
     pub(crate) search: Option<String>,
     /// Empty means relevance when searching, and the catalog's default otherwise.
     pub(crate) sort: SortSpec<C::Key>,
@@ -411,6 +413,7 @@ impl<C: Catalog> Query<C> {
         Self {
             filter,
             names: NameRange::default(),
+            name: None,
             search: None,
             sort: Vec::new(),
             seed: 0,
@@ -584,18 +587,39 @@ fn sorted<C: Catalog>(
 
     let table = C::table(&cx.index);
     let mut candidates = C::candidates(cx, &query.filter)?;
-    if !query.names.is_unbounded() {
-        candidates = Bits::of(
-            table.len(),
-            candidates
-                .iter()
-                .filter(|slot| query.names.contains(table.sort_name(*slot))),
-        );
+    let in_names = |slot: &u32| query.names.contains(table.sort_name(*slot));
+    // A name matches few slots, so each is checked on its own and only they are sorted.
+    let named = query.name.as_deref().map(|name| {
+        table
+            .named(name)
+            .iter()
+            .copied()
+            .filter(|slot| candidates.contains(*slot) && in_names(slot))
+            .collect::<Vec<_>>()
+    });
+    if named.is_none() && !query.names.is_unbounded() {
+        candidates = Bits::of(table.len(), candidates.iter().filter(in_names));
     }
+    let unranked = |slot| Entry {
+        hit: Hit {
+            slot,
+            tier: Tier::Related,
+            own_words: 0,
+            by_name: false,
+        },
+        unit: ShuffleUnit {
+            id: table.id(slot),
+            place: 0,
+        },
+    };
 
-    let entries = match &needle {
-        Some(needle) => table
-            .search(needle, &candidates, |word| C::related(cx, word))
+    let entries = match (&needle, named) {
+        (Some(needle), named) => table
+            .search(
+                needle,
+                &named.map_or(candidates, |slots| Bits::of(table.len(), slots)),
+                |word| C::related(cx, word),
+            )
             .into_iter()
             .map(|hit| Entry {
                 unit: ShuffleUnit {
@@ -605,7 +629,8 @@ fn sorted<C: Catalog>(
                 hit,
             })
             .collect::<Vec<_>>(),
-        None => {
+        (None, Some(slots)) => slots.into_iter().map(unranked).collect(),
+        (None, None) => {
             let total = candidates.count();
             if keep == Some(0) {
                 // Reading no values still raises any error the sort keys would.
@@ -629,21 +654,7 @@ fn sorted<C: Catalog>(
                 }
                 return Ok((slots, total));
             }
-            candidates
-                .iter()
-                .map(|slot| Entry {
-                    hit: Hit {
-                        slot,
-                        tier: Tier::Related,
-                        own_words: 0,
-                        by_name: false,
-                    },
-                    unit: ShuffleUnit {
-                        id: table.id(slot),
-                        place: 0,
-                    },
-                })
-                .collect()
+            candidates.iter().map(unranked).collect()
         }
     };
     let mut entries = entries;
@@ -1028,6 +1039,57 @@ mod tests {
         // Exact, name prefix, every word in the name, then some words in the name, each tier in
         // name order, then matches only through the release and its artist.
         assert_eq!(ids, [exact, prefix, words, both, karma, ok, airbag]);
+        Ok(())
+    }
+
+    fn named<C: Catalog>(db: &DbAny, name: &str) -> Vec<DbId>
+    where
+        C::Filter: Default,
+    {
+        let mut query = Query::<C>::new(C::Filter::default());
+        query.name = Some(name.to_string());
+        order(db, &Viewer::System, &query).expect("the query runs")
+    }
+
+    #[test]
+    fn the_name_filter_keeps_names_equal_once_folded() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let accented = insert_track(&mut db, "Jóga")?;
+        let upper = insert_track(&mut db, "JÓGA")?;
+        let plain = insert_track(&mut db, "joga")?;
+        let punctuated = insert_track(&mut db, "Jo-ga!")?;
+        for title in ["Jóga (Live)", "Jog", "Yoga", "Hunter"] {
+            insert_track(&mut db, title)?;
+        }
+        let sorted_as = insert_track(&mut db, "Other")?;
+        set_track_sort(&mut db, sorted_as, "Jóga")?;
+        let greek = insert_track(&mut db, "Σοφία")?;
+
+        let mut found = named::<Tracks>(&db, "JÓGA");
+        found.sort_unstable_by_key(|id| id.0);
+        assert_eq!(found, [accented, upper, plain, punctuated]);
+        assert_eq!(named::<Tracks>(&db, "ΣΟΦΙΑ"), [greek]);
+        assert!(named::<Tracks>(&db, "Jógas").is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn the_name_filter_keeps_only_credited_artists_and_combines_with_search() -> anyhow::Result<()>
+    {
+        let mut db = new_test_db()?;
+        let credited = insert_credited_artist(&mut db, "Björk")?;
+        let shouted = insert_credited_artist(&mut db, "BJÖRK")?;
+        insert_credited_artist(&mut db, "Björk Trio")?;
+        lyra_db::fixtures::insert_artist(&mut db, "Björk")?;
+
+        let mut found = named::<Artists>(&db, "bjork");
+        found.sort_unstable_by_key(|id| id.0);
+        assert_eq!(found, [credited, shouted]);
+
+        let mut query = Query::<Artists>::new(Default::default());
+        query.name = Some("Björk".to_string());
+        query.search = Some("trio".to_string());
+        assert!(order(&db, &Viewer::System, &query)?.is_empty());
         Ok(())
     }
 

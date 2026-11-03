@@ -324,6 +324,9 @@ const SEARCHES: &[&str] = &[
     "ayu",
 ];
 
+/// Names each query is also checked with, without a search and with one.
+const NAMES: &[&str] = &["BLUE", "blue moon", "ac dc", "beyonce", "!!!", "'"];
+
 fn check<C: Old>(
     fixture: &Fixture,
     kind: &str,
@@ -346,13 +349,27 @@ where
                 Vec::new(),
                 vec![(C::Key::NAME_ORDER, Direction::Descending)],
             ];
-            let queries = sorts.iter().map(|sort| (None, sort, 7)).chain(
-                SEARCHES
-                    .iter()
-                    .flat_map(|search| unsorted.iter().map(move |sort| (Some(*search), sort, 0))),
-            );
-            for (search, sort, seed) in queries {
+            let queries = sorts
+                .iter()
+                .map(|sort| (None, None, sort, 7))
+                .chain(SEARCHES.iter().flat_map(|search| {
+                    unsorted
+                        .iter()
+                        .map(move |sort| (None, Some(*search), sort, 0))
+                }))
+                .chain(NAMES.iter().flat_map(|name| {
+                    sorts
+                        .iter()
+                        .map(move |sort| (Some(*name), None, sort, 7))
+                        .chain(
+                            unsorted
+                                .iter()
+                                .map(move |sort| (Some(*name), Some("blue"), sort, 0)),
+                        )
+                }));
+            for (name, search, sort, seed) in queries {
                 let mut query = Query::<C>::new(filter.clone());
+                query.name = name.map(str::to_string);
                 query.search = search.map(str::to_string);
                 query.sort = sort.clone();
                 query.seed = seed;
@@ -365,13 +382,13 @@ where
                     (Ok(expected), Ok(found)) => {
                         assert_eq!(
                             found, expected,
-                            "{kind} for {who}, {filter:?}, search {search:?}, sort {sort:?}"
+                            "{kind} for {who}, {filter:?}, name {name:?}, search {search:?}, sort {sort:?}"
                         );
                         matched += usize::from(!found.is_empty());
                     }
                     (Err(_), Err(_)) => {}
                     _ => panic!(
-                        "{kind} for {who}, {filter:?}, search {search:?}, sort {sort:?}: {:?} \
+                        "{kind} for {who}, {filter:?}, name {name:?}, search {search:?}, sort {sort:?}: {:?} \
                          against {:?}",
                         found.as_ref().err(),
                         expected.as_ref().err()

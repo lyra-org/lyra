@@ -254,6 +254,7 @@ where
         table.optional_string_field("sort_name_at_least")?,
         table.optional_string_field("sort_name_below")?,
     );
+    query.name = table.optional_string_field("name")?;
     query.search = table.optional_string_field("search")?;
     query.sort = read_sort(table)?;
     query.seed = args::optional_u64(table, "seed")?.unwrap_or(0);
@@ -537,6 +538,13 @@ pub(crate) fn query_fields(sort_key: &'static str) -> Vec<FieldDescriptor> {
         field("sort_name_prefix", Option::<String>::luau_type()),
         field("sort_name_at_least", Option::<String>::luau_type()),
         field("sort_name_below", Option::<String>::luau_type()),
+        FieldDescriptor {
+            name: "name",
+            ty: Option::<String>::luau_type(),
+            description: Some(
+                "Keeps only items whose name is this one, compared as `search` compares an exact name: ignoring case, accents, apostrophes, punctuation and spaces, so `BJÖRK` finds `Björk` and `ac dc` finds `AC/DC`. Sort names and aliases don't count.",
+            ),
+        },
         FieldDescriptor {
             name: "search",
             ty: Option::<String>::luau_type(),

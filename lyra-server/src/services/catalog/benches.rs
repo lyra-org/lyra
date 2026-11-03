@@ -244,6 +244,26 @@ impl Bench {
         page.total + page.items.len() as u64
     }
 
+    /// The first page of tracks, artists and releases each named as one item near `index` is, as
+    /// a plugin looking an item up by name reads them. The names sort last, so a walk in name
+    /// order finds them only at its end.
+    fn named(&self, index: usize) -> u64 {
+        let last = |index: usize| index - index % FIRST.len() + 8;
+        fn first<C: Catalog>(bench: &Bench, name: String) -> u64
+        where
+            C::Filter: Default,
+        {
+            let cx = Context::with(Arc::clone(&bench.index), &bench.db, &bench.viewer);
+            let mut query = Query::<C>::new(C::Filter::default());
+            query.name = Some(name);
+            let page = page_in(&cx, &query, 0, Some(20)).unwrap();
+            page.total + page.items.len() as u64
+        }
+        first::<Tracks>(self, name(last(index), "Track"))
+            + first::<Artists>(self, name(last(index / 50), "Artist"))
+            + first::<Releases>(self, name(last(index / 10), "Release"))
+    }
+
     /// A page of tracks sorted by their releases' titles, which a viewer limited to some
     /// libraries reads through its own scope.
     fn by_release_title(&self, offset: u64) -> u64 {
@@ -320,6 +340,12 @@ macro_rules! access_cases {
             }
 
             #[bench]
+            fn named_user(b: &mut Bencher) {
+                let bench = checked($size, false);
+                b.iter(|| black_box(bench.named(black_box($size / 2))));
+            }
+
+            #[bench]
             fn deep_page_user(b: &mut Bencher) {
                 let bench = checked($size, false);
                 b.iter(|| black_box(bench.page::<Tracks>(None, $size / 2, 500)));
@@ -373,6 +399,11 @@ fn report() {
         println!(
             "  search \"s\" (tracks, artists, releases): {}",
             ms(median(9, || bench.search("s")))
+        );
+        assert_eq!(bench.named(track_count / 2), 6);
+        println!(
+            "  name lookup (tracks, artists, releases), first page of 20: {}",
+            ms(median(51, || bench.named(track_count / 2)))
         );
         println!(
             "  track page of 500 by release title at offset {}: {}",

@@ -18,6 +18,7 @@ use std::{
     sync::{
         Arc,
         Mutex,
+        OnceLock,
     },
 };
 
@@ -63,6 +64,8 @@ pub(crate) struct Table {
     /// The search keys of each name and of each sort name differing from it.
     keys: Strings,
     sort_keys: Strings,
+    /// Every slot in order of its name's search key, built on first use.
+    by_key: OnceLock<Box<[u32]>>,
     /// Each slot's place in name order: sort name, lowercase name, name, id.
     pub(crate) rank: Vec<u32>,
     by_rank: Arc<[u32]>,
@@ -225,6 +228,7 @@ impl Table {
             sort_names,
             keys,
             sort_keys,
+            by_key: OnceLock::new(),
             rank,
             by_rank: by_rank.iter().map(|slot| *slot as u32).collect(),
             name_rank,
@@ -258,6 +262,24 @@ impl Table {
 
     pub(crate) fn sort_name(&self, slot: u32) -> &str {
         self.sort_names.get(slot)
+    }
+
+    /// The slots whose name is `name`, compared by search [`key`](search::key) as an exact search
+    /// match compares them: ignoring case, accents, apostrophes, punctuation and spaces. A name
+    /// that folds away matches nothing, as a search that does.
+    pub(crate) fn named(&self, name: &str) -> &[u32] {
+        let key = search::key(&search::fold(name));
+        if key.is_empty() {
+            return &[];
+        }
+        let by_key = self.by_key.get_or_init(|| {
+            let mut by_key = (0..self.len() as u32).collect::<Vec<_>>();
+            by_key.sort_unstable_by(|a, b| self.keys.get(*a).cmp(self.keys.get(*b)));
+            by_key.into_boxed_slice()
+        });
+        let start = by_key.partition_point(|slot| self.keys.get(*slot) < key.as_str());
+        let len = by_key[start..].partition_point(|slot| self.keys.get(*slot) == key);
+        &by_key[start..start + len]
     }
 
     /// How each slot that every word of `needle` matches does. `related` gives the slots whose
@@ -340,6 +362,7 @@ impl Table {
             + self.sort_keys.memory()
             + (self.rank.capacity()
                 + self.by_rank.len()
+                + self.by_key.get().map_or(0, |by_key| by_key.len())
                 + self.name_rank.capacity()
                 + self.sort_name_rank.capacity())
                 * 4
@@ -1404,6 +1427,23 @@ mod tests {
             insert_user,
         },
     };
+
+    #[test]
+    fn a_name_that_folds_away_matches_nothing_and_builds_no_key_order() -> anyhow::Result<()> {
+        let mut db = lyra_db::test_db::new_test_db()?;
+        for title in ["'", " ", "Hunter"] {
+            insert_release(&mut db, title)?;
+        }
+        let index = Snapshot::build(&db)?;
+        let releases = &index.releases;
+        for name in ["", "'", "  "] {
+            assert!(releases.named(name).is_empty(), "{name:?}");
+        }
+        assert!(releases.by_key.get().is_none());
+        assert_eq!(releases.named("HUNTER").len(), 1);
+        assert!(releases.by_key.get().is_some());
+        Ok(())
+    }
 
     fn titles(db: &DbAny, viewer: &Viewer) -> Vec<String> {
         let query = catalog::Query::<Releases>::new(Default::default());
