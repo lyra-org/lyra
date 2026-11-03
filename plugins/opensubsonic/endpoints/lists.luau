@@ -21,6 +21,7 @@ type ApiQueryParams = api.ApiQueryParams
 type ApiResponse = api.ApiResponse
 type JsonObject = { [string]: any }
 type ReleaseQuery = releases.ReleaseQuery
+type ReleaseSummary = releases.ReleaseSummary
 type Request = request.Request
 type TrackQuery = tracks.TrackQuery
 
@@ -106,26 +107,36 @@ local function songs_result(items: { JsonObject }): any
 	return if #items > 0 then { song = items } else response.EMPTY_OBJECT
 end
 
+-- The albums of the list a request asks for, each built by `build`, as `container`.
+local function album_list(req: Request, container: string, build: ({ ReleaseSummary }) -> { JsonObject }): ApiResponse
+	local params = req.params
+	local list_type = request.required(params, "type")
+	local size = request.count(params, "size", DEFAULT_SIZE, MAX_SIZE)
+	local offset = request.count(params, "offset", 0)
+	local library_id = folders.library_id(params)
+	local query, needs_listen = list_query(params, list_type)
+
+	local items: { JsonObject } = {}
+	if query and size > 0 then
+		query.library_id = library_id
+		query.offset = offset
+		query.limit = size
+		items = build(releases.query(query).items)
+		if needs_listen then
+			items = keep_listened(items)
+		end
+	end
+	return response.ok(params, { [container] = if #items > 0 then { album = items } else response.EMPTY_OBJECT })
+end
+
 module.methods = {
 	getAlbumList2 = function(req: Request): ApiResponse
-		local params = req.params
-		local list_type = request.required(params, "type")
-		local size = request.count(params, "size", DEFAULT_SIZE, MAX_SIZE)
-		local offset = request.count(params, "offset", 0)
-		local library_id = folders.library_id(params)
-		local query, needs_listen = list_query(params, list_type)
+		return album_list(req, "albumList2", albums.list)
+	end,
 
-		local items: { JsonObject } = {}
-		if query and size > 0 then
-			query.library_id = library_id
-			query.offset = offset
-			query.limit = size
-			items = albums.list(releases.query(query).items)
-			if needs_listen then
-				items = keep_listened(items)
-			end
-		end
-		return response.ok(params, { albumList2 = if #items > 0 then { album = items } else response.EMPTY_OBJECT })
+	-- The same lists as `getAlbumList2`, with albums as directory `Child`ren.
+	getAlbumList = function(req: Request): ApiResponse
+		return album_list(req, "albumList", albums.children)
 	end,
 
 	getRandomSongs = function(req: Request): ApiResponse

@@ -69,3 +69,36 @@ call.same(list_as_curator("frequent"), {}, "the curator's most played")
 call.same(list_as_curator("recent"), {}, "the curator's recently played")
 call.same(list_as_curator("starred"), {}, "the curator's starred")
 call.same(list_as_curator("highest"), {}, "the curator's rated")
+
+-- `getAlbumList` takes the same lists, its albums directories under their first artist.
+local function folder_list(params: { [string]: string }): { any }
+	local album_list = call.ok("getAlbumList", key, params).albumList
+	assert(type(album_list) == "table", "an albumList")
+	return album_list.album or {}
+end
+call.same(call.ids(folder_list({ type = "newest" })), { ids.solo, ids.other }, "folder newest")
+call.same(call.ids(folder_list({ type = "newest", size = "1", offset = "1" })), { ids.other }, "folder newest, paged")
+call.same(call.ids(folder_list({ type = "alphabeticalByName" })), { ids.other, ids.solo }, "folder by name")
+call.same(call.ids(folder_list({ type = "starred" })), { ids.solo }, "folder starred")
+call.same(call.ids(folder_list({ type = "byGenre", genre = "Rock" })), { ids.solo }, "folder in a genre")
+call.same(
+	call.ids(folder_list({ type = "newest", musicFolderId = folder })),
+	{ ids.solo, ids.other },
+	"folder in a folder"
+)
+local played = folder_list({ type = "frequent" })
+call.same(call.ids(played), { ids.solo, ids.other }, "folder most played")
+local solo = played[1]
+assert(solo.isDir == true and solo.title == "Solo" and solo.album == "Solo", "a directory Child")
+assert(solo.parent == ids.amy and solo.artist == "Amy" and solo.artistId == ids.amy, "under its artist")
+assert(solo.playCount == 2 and solo.userRating == 5 and solo.genre == "Rock", "the caller's view")
+assert(solo.songCount == nil and solo.name == nil, "no AlbumID3 fields")
+call.same(call.ids(call.ok("getAlbumList", curator, { type = "frequent" }).albumList.album), {}, "the curator's")
+assert(call.error_code("getAlbumList", key, {}) == 10, "a folder list needs a type")
+assert(call.error_code("getAlbumList", key, { type = "loudest" }) == 0, "an unknown folder list type")
+assert(call.error_code("getAlbumList", key, { type = "newest", musicFolderId = "1" }) == 70, "an unknown folder")
+local empty_folder_xml = call.raw("getAlbumList", { apiKey = key, type = "byGenre", genre = "Jazz" }).body
+assert(string.find(empty_folder_xml, "<albumList/>", 1, true), empty_folder_xml)
+local folder_xml = call.raw("getAlbumList", { apiKey = key, type = "starred" }).body
+assert(string.find(folder_xml, "<albumList><album ", 1, true), folder_xml)
+assert(string.find(folder_xml, `id="{ids.solo}" isDir="true"`, 1, true), folder_xml)
