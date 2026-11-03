@@ -152,6 +152,18 @@ user = "owner"
 target = "solo"      # any artist, release, track or playlist key, seen by the user or not
 name = "Vinyl"
 
+[[playbacks]]
+key = "phone_queue"   # optional; the playback's public id goes in `ids`
+user = "owner"
+tracks = ["s1", "s1"] # the queue's track keys, in order
+current = 1           # optional 0-based index of the current track, 0 by default
+position_ms = 30000   # optional position of the current track's play, 0 by default
+state = "playing"     # optional state of that play, `paused` by default
+client_name = "Phone" # optional client of that play
+plugin = "subsonic"   # optional; the plugin whose client `client_name` saved the queue, which
+                      # leaves the play stopped and counting no listen, and takes no `state`
+updated = 1700000000000 # optional last change of the playback and its play, in unix milliseconds
+
 [[lyrics]]
 key = "fetched"      # optional; the entry's public id goes in `ids`
 track = "s1"
@@ -169,7 +181,7 @@ fixture.libraries.music -- the library's public id
 fixture.api_keys.phone  -- an API key's secret
 fixture.sessions.laptop -- a session's token
 fixture.connections.speaker -- a connection's public id
-fixture.ids.s1          -- an entity's, library's or lyrics entry's public id, by fixture key
+fixture.ids.s1          -- an entity's, library's, lyrics entry's or playback's public id, by fixture key
 fixture.entries.mix[1]  -- a playlist's entry ids, in order
 ```
 

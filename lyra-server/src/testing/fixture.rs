@@ -73,6 +73,8 @@ pub struct Fixture {
     tags: Vec<Tag>,
     #[serde(default)]
     lyrics: Vec<LyricsEntry>,
+    #[serde(default)]
+    playbacks: Vec<Playback>,
     /// The directory fixture paths resolve against.
     #[serde(skip)]
     directory: PathBuf,
@@ -306,6 +308,30 @@ struct LyricsEntry {
     /// As an upload's `Content-Type` names it; `text/plain` by default.
     content_type: Option<String>,
     body: String,
+}
+
+/// A queue-backed playback, as a client playing its queue leaves it, or as a plugin's client saved
+/// it.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Playback {
+    /// The fixture key of the playback's public id.
+    key: Option<String>,
+    user: String,
+    /// The queue's track keys, in order and with repeats.
+    tracks: Vec<String>,
+    /// The current track's 0-based index in `tracks`.
+    #[serde(default)]
+    current: u64,
+    position_ms: Option<u64>,
+    /// The current track's play; paused by default.
+    state: Option<lyra_db::PlaybackState>,
+    client_name: Option<String>,
+    /// The plugin whose client `client_name` saved the queue, which leaves its play stopped and
+    /// counting no listen.
+    plugin: Option<String>,
+    /// When the playback and its play last changed, in Unix milliseconds; now by default.
+    updated: Option<u64>,
 }
 
 /// What the test receives as its chunk's first `...`: user and library ids, API key secrets, session
@@ -1021,6 +1047,10 @@ impl Fixture {
             }
         }
 
+        for playback in &self.playbacks {
+            self.seed_playback(db, &keys, &mut seeded, playback)?;
+        }
+
         let public_id = |db_id: DbId| {
             lyra_db::lookup::find_id_by_db_id(db, db_id)?.context("fixture node has a public id")
         };
@@ -1042,6 +1072,106 @@ impl Fixture {
             .map(|key| keys.user(key))
             .transpose()?;
         Ok((seeded, run_as))
+    }
+}
+
+impl Fixture {
+    fn seed_playback(
+        &self,
+        db: &mut DbAny,
+        keys: &Keys,
+        seeded: &mut Seeded,
+        playback: &Playback,
+    ) -> anyhow::Result<()> {
+        if let Some(key) = &playback.key {
+            keys.claim(key)?;
+            anyhow::ensure!(
+                !seeded.ids.contains_key(key),
+                "fixture key `{key}` is used twice"
+            );
+        }
+        let user_db_id = keys.user(&playback.user)?;
+        let mut track_ids = Vec::with_capacity(playback.tracks.len());
+        let mut track_db_ids = Vec::with_capacity(playback.tracks.len());
+        for key in &playback.tracks {
+            let (track_db_id, kind) = keys.entity(key)?;
+            anyhow::ensure!(
+                kind == lyra_db::favorites::FavoriteKind::Track,
+                "playback track `{key}` is not a track"
+            );
+            track_db_ids.push(track_db_id);
+            track_ids.push(
+                lyra_db::lookup::find_id_by_db_id(db, track_db_id)?
+                    .context("fixture track has a public id")?,
+            );
+        }
+        let current_track_db_id = *track_db_ids
+            .get(playback.current as usize)
+            .with_context(|| format!("playback current {} is past its tracks", playback.current))?;
+        anyhow::ensure!(
+            playback.plugin.is_none() || playback.state.is_none(),
+            "a saved playback is stopped and takes no state"
+        );
+        let updated_at_ms = playback
+            .updated
+            .unwrap_or_else(|| lyra_db::users::now_ms() as u64);
+        let duration_ms = lyra_db::tracks::get_by_id(db, current_track_db_id)?
+            .and_then(|track| track.duration_ms);
+        let position_ms = playback.position_ms.unwrap_or(0);
+        let session = lyra_db::PlaybackSession {
+            db_id: None,
+            id: nanoid::nanoid!(),
+            play_id: nanoid::nanoid!(),
+            client_name: playback.client_name.clone(),
+            plugin_id: playback.plugin.clone(),
+            position_ms,
+            duration_ms,
+            played_ms: 0,
+            last_position_ms: position_ms,
+            last_position_at_ms: updated_at_ms,
+            latency_allowance_used_ms: 0,
+            rate_permille: 1_000,
+            counts_as_listen: playback.plugin.is_none(),
+            state: if playback.plugin.is_some() {
+                lyra_db::PlaybackState::Stopped
+            } else {
+                playback.state.unwrap_or(lyra_db::PlaybackState::Paused)
+            },
+            updated_at_ms,
+            created_at_ms: updated_at_ms,
+        };
+        let stored = lyra_db::playbacks::Playback {
+            db_id: None,
+            id: nanoid::nanoid!(),
+            source: lyra_db::playbacks::PlaybackSource::Queue(lyra_db::playbacks::Queue {
+                revision: 1,
+                track_ids,
+                current_index: playback.current,
+                repeat_mode: lyra_db::playbacks::RepeatMode::None,
+                shuffle_enabled: false,
+            }),
+            created_at_ms: updated_at_ms,
+            updated_at_ms,
+        };
+        db.transaction_mut(|t| {
+            let session_db_id =
+                lyra_db::playback_sessions::insert(t, &session, current_track_db_id, user_db_id)?;
+            let playback_db_id = lyra_db::playbacks::insert(t, &stored, user_db_id, session_db_id)?;
+            if let Some(plugin) = &playback.plugin {
+                lyra_db::playbacks::claim_saved(
+                    t,
+                    user_db_id,
+                    plugin,
+                    playback.client_name.as_deref().unwrap_or(""),
+                    playback_db_id,
+                )?;
+            }
+            anyhow::Ok(())
+        })?;
+        if let Some(key) = &playback.key {
+            seeded.ids.insert(key.clone(), stored.id);
+        }
+        Ok(())
     }
 }
 
