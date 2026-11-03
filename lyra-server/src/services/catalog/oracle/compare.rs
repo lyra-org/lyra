@@ -477,6 +477,20 @@ fn tracks_match_the_scanning_pipeline() -> anyhow::Result<()> {
                 ..Default::default()
             },
             TrackFilter {
+                library: Some(fixture.libraries[0].0),
+                year_range: YearRange::new(Some(1991), None)?,
+                ..Default::default()
+            },
+            TrackFilter {
+                year_range: YearRange::new(None, Some(1991))?,
+                ..Default::default()
+            },
+            TrackFilter {
+                years: vec![1990, 1992],
+                year_range: YearRange::new(Some(1991), Some(1992))?,
+                ..Default::default()
+            },
+            TrackFilter {
                 artists: Some(credit(CreditRole::Release, Some(CreditRole::Track))),
                 exclude_artists: fixture.artists[5..7].to_vec(),
                 ..Default::default()

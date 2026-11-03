@@ -82,6 +82,15 @@ impl Old for Tracks {
             }
             tracks.restrict(matching);
         }
+        if !filter.year_range.is_unbounded() {
+            let years = lyra_db::graph::select_fields(db, &all_tracks(db)?, &["year"])?;
+            tracks.restrict(years.into_iter().filter_map(|(track, fields)| {
+                filter
+                    .year_range
+                    .contains(fields.number("year"))
+                    .then_some(track)
+            }));
+        }
         if let Some(favorite) = filter.personal.favorite {
             let user = viewer.user_db_id("the favorite filter")?;
             let favorites = lyra_db::favorites::target_ids(db, user, FavoriteKind::Track)?;

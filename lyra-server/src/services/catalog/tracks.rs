@@ -138,7 +138,42 @@ pub(crate) struct TrackFilter {
     /// Tracks on a release in any of these genres.
     pub(crate) genres: Vec<DbId>,
     pub(crate) years: Vec<u32>,
+    pub(crate) year_range: YearRange,
     pub(crate) personal: PersonalFilter,
+}
+
+/// Inclusive bounds on a track's own year, either of them open. Any bound leaves out tracks
+/// without a year.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct YearRange {
+    min: Option<u32>,
+    max: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("the minimum year exceeds the maximum")]
+pub(crate) struct InvertedYearRange;
+
+impl YearRange {
+    pub(crate) fn new(min: Option<u32>, max: Option<u32>) -> Result<Self, InvertedYearRange> {
+        if let (Some(min), Some(max)) = (min, max)
+            && min > max
+        {
+            return Err(InvertedYearRange);
+        }
+        Ok(Self { min, max })
+    }
+
+    pub(crate) fn is_unbounded(self) -> bool {
+        self.min.is_none() && self.max.is_none()
+    }
+
+    pub(crate) fn contains(self, year: Option<u64>) -> bool {
+        year.is_some_and(|year| {
+            self.min.is_none_or(|min| year >= u64::from(min))
+                && self.max.is_none_or(|max| year <= u64::from(max))
+        })
+    }
 }
 
 impl TrackFilter {
@@ -225,6 +260,17 @@ impl Catalog for Tracks {
                 tracks
                     .iter()
                     .filter(|track| years.contains(&index.track.year[*track as usize])),
+            );
+        }
+        if !filter.year_range.is_unbounded() {
+            tracks = Bits::of(
+                len,
+                tracks.iter().filter(|track| {
+                    let year = index.track.year[*track as usize];
+                    filter
+                        .year_range
+                        .contains((year != super::index::MISSING).then_some(year))
+                }),
             );
         }
         let mut personal = Some(tracks);
@@ -366,5 +412,33 @@ impl Catalog for Tracks {
                 )
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_year_range_keeps_dated_tracks_within_its_inclusive_bounds() -> anyhow::Result<()> {
+        let range = YearRange::new(Some(1990), Some(1992))?;
+        assert!(range.contains(Some(1990)) && range.contains(Some(1992)));
+        assert!(!range.contains(Some(1989)) && !range.contains(Some(1993)));
+        assert!(!range.contains(None));
+        let from = YearRange::new(Some(1990), None)?;
+        assert!(from.contains(Some(3000)) && !from.contains(None));
+        let to = YearRange::new(None, Some(1990))?;
+        assert!(to.contains(Some(0)) && !to.contains(Some(1991)));
+        assert!(YearRange::new(None, None)?.is_unbounded());
+        assert!(YearRange::new(Some(1991), Some(1991))?.contains(Some(1991)));
+        Ok(())
+    }
+
+    #[test]
+    fn an_inverted_year_range_is_refused() {
+        assert_eq!(
+            YearRange::new(Some(1993), Some(1992)),
+            Err(InvertedYearRange)
+        );
     }
 }

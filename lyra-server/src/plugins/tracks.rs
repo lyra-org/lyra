@@ -33,6 +33,7 @@ use crate::services::{
         tracks::{
             TrackFilter,
             Tracks,
+            YearRange,
         },
     },
 };
@@ -47,11 +48,31 @@ impl<'vm> luau::FromLuau<'vm> for TrackQuery {
         let opts: luau::Table = reader.read()?;
         let filter = TrackFilter {
             years: catalog::read_years(&opts)?,
+            year_range: read_year_range(&opts)?,
             personal: catalog::read_personal(&opts)?,
             ..TrackFilter::default()
         };
         catalog::read_query::<Tracks>(&opts, filter).map(Self)
     }
+}
+
+/// The bounds `min_year` and `max_year` give.
+fn read_year_range(table: &luau::Table) -> luau::runtime::Result<YearRange> {
+    let bound = |key| {
+        table
+            .optional_i64_field(key)?
+            .map(|value| {
+                u32::try_from(value).map_err(|_| {
+                    crate::plugins::runtime_error(format!(
+                        "{key} must be a year from 0 to {}, got {value}",
+                        u32::MAX
+                    ))
+                })
+            })
+            .transpose()
+    };
+    YearRange::new(bound("min_year")?, bound("max_year")?)
+        .map_err(|_| crate::plugins::runtime_error("min_year must not exceed max_year"))
 }
 
 impl luau::LuauTypeInfo for TrackQuery {
@@ -233,6 +254,18 @@ fn track_query() -> InterfaceDescriptor {
         field("release_ids", Option::<Vec<String>>::luau_type()),
         field("genre_ids", Option::<Vec<String>>::luau_type()),
         field("years", Option::<Vec<u32>>::luau_type()),
+        FieldDescriptor {
+            name: "min_year",
+            ty: Option::<u32>::luau_type(),
+            description: Some(
+                "Inclusive lower bound on the track's own year, as `years` and the `year` sort key read it. Either bound leaves out tracks without a year, and `min_year` above `max_year` raises.",
+            ),
+        },
+        FieldDescriptor {
+            name: "max_year",
+            ty: Option::<u32>::luau_type(),
+            description: Some("Inclusive upper bound on the track's own year."),
+        },
         field("favorite", Option::<bool>::luau_type()),
         field("listened", Option::<bool>::luau_type()),
     ]);

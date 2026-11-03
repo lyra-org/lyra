@@ -61,6 +61,7 @@ pub(super) use super::{
         TrackFilter,
         TrackKey,
         Tracks,
+        YearRange,
     },
 };
 pub(super) use crate::services::search::{

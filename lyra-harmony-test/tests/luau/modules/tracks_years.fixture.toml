@@ -1,0 +1,32 @@
+run_as = "owner"
+
+[[users]]
+key = "owner"
+admin = true
+
+[[releases]]
+key = "album"
+title = "Album"
+
+[[tracks]]
+key = "early"
+title = "Early"
+release = "album"
+year = 1990
+
+[[tracks]]
+key = "middle"
+title = "Middle"
+release = "album"
+year = 2000
+
+[[tracks]]
+key = "late"
+title = "Late"
+release = "album"
+year = 2010
+
+[[tracks]]
+key = "undated"
+title = "Undated"
+release = "album"
