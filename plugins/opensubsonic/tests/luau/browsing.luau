@@ -44,6 +44,12 @@ for _, contributor in s1.contributors do
 end
 assert(roles.composer and roles.composer.artist.id == ids.bob, "composer contributor")
 assert(roles.performer and roles.performer.subRole == "piano", "performer contributor")
+-- Nested artist refs carry only the required fields.
+for _, ref in { s1.artists[1], s1.albumArtists[1], roles.composer.artist } do
+	for field in ref do
+		assert(field == "id" or field == "name", `a nested artist ref carries {field}`)
+	end
+end
 assert(album.song[2].playCount == 0 and album.song[2].played == nil, "an unplayed song")
 
 assert(call.error_code("getAlbum", key, {}) == 10, "getAlbum needs an id")

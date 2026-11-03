@@ -11,7 +11,7 @@ type JsonObject = { [string]: any }
 type CreditedArtistProjectionInfo = entities.CreditedArtistProjectionInfo
 type EntityProjectionInfo = entities.EntityProjectionInfo
 
-export type ArtistRef = { id: string, name: string, sortName: string }
+export type ArtistRef = { id: string, name: string }
 
 -- Credit types Subsonic files under the `performer` role, with the credit's detail as its sub-role.
 local PERFORMER_TYPES: { [string]: boolean } = {
@@ -22,7 +22,7 @@ local PERFORMER_TYPES: { [string]: boolean } = {
 local module = {}
 
 local function ref(artist: entities.Artist): ArtistRef
-	return { id = artist.id, name = artist.artist_name, sortName = artist.sort_name or "" }
+	return { id = artist.id, name = artist.artist_name }
 end
 
 -- The projections of these entities the caller can see, keyed by id.

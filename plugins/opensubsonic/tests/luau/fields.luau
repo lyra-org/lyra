@@ -31,10 +31,14 @@ assert(song.userRating == nil and song.played == nil, "left out when absent")
 
 local lone = call.ok("getAlbum", key, { id = ids.empty }).album
 assert(lone.created == "1970-01-01T00:00:00Z", `a fixed time without any, got {lone.created}`)
-assert(lone.artists[1].id == ids.zed and lone.artists[1].sortName == "", "artist refs carry sortName")
+local ref = lone.artists[1]
+assert(ref.id == ids.zed and ref.name == "Zed", "an artist ref")
+for field in ref do
+	assert(field == "id" or field == "name", `artist refs carry only id and name, got {field}`)
+end
 
 local artists = call.ok("search3", key, { query = "Zed", albumCount = "0", songCount = "0" }).searchResult3.artist
-assert(artists[1].id == ids.zed and artists[1].sortName == "", "artist sortName")
+assert(artists[1].id == ids.zed and artists[1].sortName == "", "full artists keep sortName")
 
 -- XML keeps empty objects as elements and leaves empty lists out.
 local xml = call.raw("getSong", { apiKey = key, id = ids.b1 }).body
