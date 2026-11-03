@@ -17,6 +17,7 @@ use lyra_db::{
 };
 
 use super::{
+    ACTIVE_SESSION_TTL_MS,
     ActiveEvent,
     EvictedPlaybackRecord,
     NORMAL_RATE_PERMILLE,
@@ -157,9 +158,12 @@ fn time_to_advance(advanced_ms: u64, rate_permille: u32) -> u64 {
 }
 
 /// The play's position at `now_ms`: its last reported position, advanced while it plays at its
-/// rate for the time since that report, within its duration.
+/// rate for the time since that report, within its duration. A play unreported for longer than the
+/// active window, as one whose player went away without pausing it, stays at that position.
 pub(crate) fn current_position_ms(playback: &PlaybackSession, now_ms: u64) -> u64 {
-    let position_ms = if playback.state == PlaybackState::Playing {
+    let position_ms = if playback.state == PlaybackState::Playing
+        && playback.updated_at_ms >= now_ms.saturating_sub(ACTIVE_SESSION_TTL_MS)
+    {
         playback.position_ms.saturating_add(advanced_in(
             now_ms.saturating_sub(playback.last_position_at_ms),
             playback.rate_permille,

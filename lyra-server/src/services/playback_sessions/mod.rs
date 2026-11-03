@@ -460,7 +460,13 @@ mod tests {
         // A report without a position leaves the position's time alone.
         playback.updated_at_ms = 5_000;
         assert_eq!(current_position_ms(&playback, 11_000), 20_000);
-        assert_eq!(current_position_ms(&playback, 1_000_000), 300_000);
+        let last_active_ms = 5_000 + ACTIVE_SESSION_TTL_MS;
+        assert_eq!(current_position_ms(&playback, last_active_ms), 300_000);
+        assert_eq!(
+            current_position_ms(&playback, last_active_ms + 1),
+            10_000,
+            "a play unreported past the active window stays where it was reported"
+        );
 
         playback.state = PlaybackState::Paused;
         assert_eq!(current_position_ms(&playback, 11_000), 10_000);
