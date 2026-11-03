@@ -533,6 +533,9 @@ pub(crate) enum HandoffValidationError {
     },
     #[error("playback queue is no longer accessible")]
     Inaccessible,
+    /// A stopped or completed play isn't handed off; resuming it starts a new play.
+    #[error("playback is not playing")]
+    NotPlaying,
     #[error(transparent)]
     Database(#[from] agdb::DbError),
     #[error(transparent)]
@@ -884,13 +887,17 @@ pub(crate) fn validate_handoff_queue(
     {
         return Err(HandoffValidationError::Inaccessible);
     }
-    let current_play_id = match lyra_db::playbacks::get_current_session_id(db, playback_db_id)? {
-        Some(session_id) => {
-            lyra_db::playback_sessions::get_by_id(db, session_id)?.map(|session| session.play_id)
-        }
+    let current = match lyra_db::playbacks::get_current_session_id(db, playback_db_id)? {
+        Some(session_id) => lyra_db::playback_sessions::get_by_id(db, session_id)?,
         None => None,
     };
-    Ok(current_play_id)
+    if current
+        .as_ref()
+        .is_some_and(|session| session.state.is_terminal())
+    {
+        return Err(HandoffValidationError::NotPlaying);
+    }
+    Ok(current.map(|session| session.play_id))
 }
 
 #[derive(Clone, Debug)]
@@ -1080,6 +1087,11 @@ mod tests {
         ))
     }
 
+    fn make_admin(db: &mut DbAny, user_db_id: DbId) -> anyhow::Result<()> {
+        lyra_db::roles::ensure_builtin_roles(db)?;
+        lyra_db::roles::ensure_user_has_role(db, user_db_id, lyra_db::roles::BUILTIN_ADMIN_ROLE)
+    }
+
     #[test]
     fn queue_snapshot_rejects_unknown_fields() {
         let result = serde_json::from_str::<QueueSnapshot>(
@@ -1223,6 +1235,61 @@ mod tests {
             Err(PlaybackError::Session(
                 playback_sessions::PlaybackServiceError::CountsAsListenConflict { .. }
             ))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn a_stopped_play_is_not_handed_off() -> anyhow::Result<()> {
+        let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+        crate::services::testing::init_default_test_state()?;
+        let (mut db, user_db_id, track_db_id, _, track_id, _) = setup()?;
+        make_admin(&mut db, user_db_id)?;
+        let play_id = nanoid::nanoid!();
+        let created = create_playback(
+            &mut db,
+            CreatePlaybackRequest {
+                id: nanoid::nanoid!(),
+                play_id: play_id.clone(),
+                user_db_id,
+                client_name: None,
+                queue: ValidatedQueue {
+                    snapshot: QueueSnapshot::single(track_id),
+                    current_track_db_id: track_db_id,
+                },
+                mutation: playback_sessions::PlaybackMutation::default(),
+                now_ms: 1,
+                reporting_connection: None,
+            },
+        )?;
+        let playback_id = created.playback.id.clone();
+        assert_eq!(
+            validate_handoff_queue(&db, user_db_id, &playback_id, 1)?,
+            Some(play_id.clone()),
+            "a live play is continued"
+        );
+
+        report_progress(
+            &mut db,
+            ReportProgressRequest {
+                playback_db_id: created.playback.db_id.expect("persisted playback"),
+                play_id,
+                user_db_id,
+                client_name: None,
+                queue_revision: 1,
+                current_track_db_id: track_db_id,
+                mutation: playback_sessions::PlaybackMutation {
+                    state: Some(lyra_db::PlaybackState::Stopped),
+                    ..playback_sessions::PlaybackMutation::default()
+                },
+                now_ms: 2,
+                require_full_queue_access: false,
+                reporting_connection: None,
+            },
+        )?;
+        assert!(matches!(
+            validate_handoff_queue(&db, user_db_id, &playback_id, 1),
+            Err(HandoffValidationError::NotPlaying)
         ));
         Ok(())
     }
