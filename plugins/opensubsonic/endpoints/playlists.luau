@@ -9,6 +9,7 @@ local playlists = require("@lyra/playlists")
 local tracks = require("@lyra/tracks")
 local users = require("@lyra/users")
 
+local cover_art = require("../catalog/cover_art")
 local dates = require("../protocol/dates")
 local request = require("../protocol/request")
 local response = require("../protocol/response")
@@ -57,6 +58,11 @@ local function describe(
 	for _, user in users.list() do
 		usernames[user.user_id] = user.username
 	end
+	local playlist_ids: { string } = {}
+	for _, playlist in listed do
+		table.insert(playlist_ids, playlist.id)
+	end
+	local cover_art_ids = cover_art.ids(playlist_ids)
 
 	local items: { JsonObject } = {}
 	local entries_by_playlist: { [string]: { Track } } = {}
@@ -76,6 +82,7 @@ local function describe(
 			id = playlist.id,
 			name = playlist.name,
 			comment = playlist.description,
+			coverArt = cover_art_ids[playlist.id],
 			owner = usernames[playlist.owner_id],
 			public = playlist.is_public == true,
 			songCount = #entry_tracks,

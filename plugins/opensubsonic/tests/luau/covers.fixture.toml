@@ -1,0 +1,117 @@
+run_as = "listener"
+
+# The listener sees the library "Music": "Album" (Amy, who has a cover) has a cover and holds A1,
+# "Bare" (Bob, who has none) has none and holds B1, and "Gone" has a stored cover whose file was
+# deleted after the last sync. "Secret", in a library nobody is granted, has a cover and holds H1.
+# The other user's private playlist holds A1.
+
+[[users]]
+key = "listener"
+
+[[users]]
+key = "other"
+
+[[api_keys]]
+key = "listener_key"
+user = "listener"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener"]
+
+[[libraries]]
+key = "locked"
+name = "Locked"
+
+[[artists]]
+key = "amy"
+name = "Amy"
+cover = "cover.png"
+
+[[artists]]
+key = "bob"
+name = "Bob"
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+artists = ["amy"]
+cover = "cover.png"
+
+[[releases]]
+key = "bare"
+title = "Bare"
+library = "music"
+artists = ["bob"]
+
+[[releases]]
+key = "gone"
+title = "Gone"
+library = "music"
+cover = "deleted_cover.png"
+cover_gone = true
+
+[[releases]]
+key = "secret"
+title = "Secret"
+library = "locked"
+cover = "cover.png"
+
+[[tracks]]
+key = "a1"
+title = "A1"
+release = "album"
+artists = ["amy"]
+file = "song.opus"
+
+[[tracks]]
+key = "b1"
+title = "B1"
+release = "bare"
+artists = ["bob"]
+
+[[tracks]]
+key = "h1"
+title = "H1"
+release = "secret"
+
+[[playlists]]
+key = "private"
+owner = "other"
+name = "Private"
+public = false
+tracks = ["a1"]
+
+# The listener owns "Mine", holding A1, "Own", holding A1 with a cover of its own, and "Plain",
+# holding only B1; the other user's public "Shared" holds A1.
+
+[[playlists]]
+key = "mine"
+owner = "listener"
+name = "Mine"
+public = false
+tracks = ["a1"]
+
+[[playlists]]
+key = "own"
+owner = "listener"
+name = "Own"
+public = false
+tracks = ["a1"]
+cover = "cover.png"
+
+[[playlists]]
+key = "plain"
+owner = "listener"
+name = "Plain"
+public = false
+tracks = ["b1"]
+
+[[playlists]]
+key = "shared"
+owner = "other"
+name = "Shared"
+public = true
+tracks = ["a1"]

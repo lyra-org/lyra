@@ -12,6 +12,7 @@ local ratings = require("@lyra/ratings")
 local releases = require("@lyra/releases")
 local tracks = require("@lyra/tracks")
 
+local cover_art = require("./cover_art")
 local credits = require("./credits")
 local dates = require("../protocol/dates")
 local response = require("../protocol/response")
@@ -112,6 +113,7 @@ function module.list(summaries: { ReleaseSummary }): { JsonObject }
 	local user_ratings = ratings.get(ids)
 	local starred = favorites.get(ids)
 	local created = created_times(summaries)
+	local cover_art_ids = cover_art.ids(ids)
 
 	local albums: { JsonObject } = {}
 	for _, summary in summaries do
@@ -125,6 +127,7 @@ function module.list(summaries: { ReleaseSummary }): { JsonObject }
 			name = summary.release_title,
 			artist = display_artist,
 			artistId = if artists then artists[1].id else nil,
+			coverArt = cover_art_ids[id],
 			songCount = summary.track_count,
 			duration = dates.seconds(summary.total_duration),
 			playCount = if stats then stats.count else 0,

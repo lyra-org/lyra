@@ -14,6 +14,7 @@ local ratings = require("@lyra/ratings")
 local tracks = require("@lyra/tracks")
 
 local albums = require("./albums")
+local cover_art = require("./cover_art")
 local credits = require("./credits")
 local dates = require("../protocol/dates")
 local paths = require("./paths")
@@ -106,6 +107,7 @@ function module.list(track_list: { Track }): { JsonObject }
 	local user_ratings = ratings.get(ids)
 	local average_ratings = ratings.average(ids)
 	local starred = favorites.get(ids)
+	local cover_art_ids = cover_art.ids(ids)
 
 	local songs: { JsonObject } = {}
 	for _, track in track_list do
@@ -134,6 +136,7 @@ function module.list(track_list: { Track }): { JsonObject }
 			isDir = false,
 			title = track.track_title,
 			album = if album then album.release_title else nil,
+			coverArt = cover_art_ids[id],
 			artist = display_artist,
 			track = track.track,
 			year = track.year or (if album then dates.year(album.release_date) else nil),

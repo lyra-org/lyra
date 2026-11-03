@@ -9,12 +9,14 @@ local lyrics = require("@lyra/lyrics")
 local playback_sources = require("@lyra/playback_sources")
 local tracks = require("@lyra/tracks")
 
+local cover_art = require("../catalog/cover_art")
 local credits = require("../catalog/credits")
 local request = require("../protocol/request")
 local response = require("../protocol/response")
 
 type ApiQueryParams = api.ApiQueryParams
 type ApiResponse = api.ApiResponse
+type ImageTransformOptions = api.ImageTransformOptions
 type LyricsInfo = lyrics.LyricsInfo
 type Request = request.Request
 type Track = tracks.Track
@@ -100,8 +102,22 @@ local function structured_lyrics(info: LyricsInfo, track: Track, artist: string?
 	}
 end
 
+-- The largest bound the host takes; no image is that large, and none is scaled up.
+local MAX_IMAGE_SIZE = 4294967295
+
+-- Resized images keep their format; anything but PNG and WebP becomes a JPEG.
+local function image_format(mime_type: string): string
+	if mime_type == "image/png" then
+		return "png"
+	elseif mime_type == "image/webp" then
+		return "webp"
+	end
+	return "jpg"
+end
+
 -- Methods that answer every error in XML, whatever format the request asks for.
 module.xml_errors = {
+	getCoverArt = true,
 	stream = true,
 } :: { [string]: boolean }
 
@@ -118,6 +134,24 @@ module.methods = {
 			return request.fail(0, if options then REFUSED_OPTIONS else "The song can't be streamed")
 		end
 		return api.response.stream_track(track.id, options)
+	end,
+
+	-- The image as stored, or scaled down to fit `size` on both sides. A size of 0 or less asks
+	-- for the stored image.
+	getCoverArt = function(req: Request): ApiResponse
+		local id = request.required(req.params, "id")
+		local size = request.int(req.params, "size")
+		local cover = cover_art.find(id)
+		if not cover then
+			return request.not_found("Cover art")
+		end
+		if size and size > 0 then
+			local bound = math.min(size, MAX_IMAGE_SIZE)
+			local transform: ImageTransformOptions =
+				{ format = image_format(cover.mime_type), max_width = bound, max_height = bound }
+			return api.response.file(200, cover.path, nil, transform)
+		end
+		return api.response.file(200, cover.path, { ["content-type"] = cover.mime_type })
 	end,
 
 	-- Every lyrics entry the caller sees, in rank order.

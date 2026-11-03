@@ -8,6 +8,7 @@ local api = require("@lyra/api")
 local artists = require("@lyra/artists")
 local favorites = require("@lyra/favorites")
 
+local cover_art = require("./cover_art")
 local dates = require("../protocol/dates")
 
 type JsonObject = { [string]: any }
@@ -25,12 +26,14 @@ function module.list(summaries: { ArtistSummary }): { JsonObject }
 		table.insert(ids, summary.id)
 	end
 	local starred = favorites.get(ids)
+	local cover_art_ids = cover_art.ids(ids)
 
 	local items: { JsonObject } = {}
 	for _, summary in summaries do
 		local item: JsonObject = {
 			id = summary.id,
 			name = summary.artist_name,
+			coverArt = cover_art_ids[summary.id],
 			albumCount = summary.release_count,
 			starred = dates.iso8601(starred[summary.id]),
 			sortName = summary.sort_name or "",
