@@ -5,23 +5,63 @@
 -- www.meshiplaw.com/lyra.
 
 local api = require("@lyra/api")
+local artists = require("@lyra/artists")
 local releases = require("@lyra/releases")
 local tracks = require("@lyra/tracks")
 
 local albums = require("../catalog/albums")
+local artist_items = require("../catalog/artists")
 local folders = require("../catalog/folders")
 local request = require("../protocol/request")
 local response = require("../protocol/response")
 local songs = require("../catalog/songs")
 
 type ApiResponse = api.ApiResponse
+type JsonObject = { [string]: any }
 type Request = request.Request
+
+-- Lyra orders artists by their sort names, which tags give, rather than by dropping articles.
+local IGNORED_ARTICLES = ""
 
 local module = {}
 
 module.methods = {
 	getMusicFolders = function(req: Request): ApiResponse
 		return response.ok(req.params, { musicFolders = { musicFolder = folders.list() } })
+	end,
+
+	-- Every artist credited on an album the caller can see, as Navidrome and gonic list album
+	-- artists only: artists credited only on songs have no albums to show.
+	getArtists = function(req: Request): ApiResponse
+		local found = artists.query({
+			library_id = folders.library_id(req.params),
+			credit_role = "release",
+			sort = { { key = "sort_name" } },
+		}).items
+		local result: JsonObject = { ignoredArticles = IGNORED_ARTICLES }
+		if #found > 0 then
+			result.index = artist_items.indexes(artist_items.list(found))
+		end
+		return response.ok(req.params, { artists = result })
+	end,
+
+	getArtist = function(req: Request): ApiResponse
+		local id = request.required(req.params, "id")
+		local summary = artists.query({ ids = { id }, limit = 1 }).items[1]
+		if not summary then
+			return request.not_found("Artist")
+		end
+		local artist = artist_items.list({ summary })[1]
+		-- The albums `albumCount` counts: those crediting the artist themselves, oldest first.
+		local artist_albums = releases.query({
+			artist_ids = { id },
+			credit_role = "release",
+			sort = { { key = "year" }, { key = "sort_name" } },
+		}).items
+		if #artist_albums > 0 then
+			artist.album = albums.list(artist_albums)
+		end
+		return response.ok(req.params, { artist = artist })
 	end,
 
 	getAlbum = function(req: Request): ApiResponse
