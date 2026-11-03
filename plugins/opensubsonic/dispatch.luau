@@ -17,6 +17,7 @@ local response = require("./protocol/response")
 local scanning = require("./endpoints/scanning")
 local search = require("./endpoints/search")
 local system = require("./endpoints/system")
+local users = require("./endpoints/users")
 
 type ApiContext = api.ApiContext
 type ApiResponse = api.ApiResponse
@@ -36,6 +37,7 @@ for _, family: { [string]: Method } in
 		playlists.methods,
 		scanning.methods,
 		annotation.methods,
+		users.methods,
 	} :: { { [string]: Method } }
 do
 	for name, method in family do

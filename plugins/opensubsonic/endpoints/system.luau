@@ -35,6 +35,10 @@ module.methods = {
 	ping = function(req: Request): ApiResponse
 		return response.ok(req.params)
 	end,
+	-- Lyra needs no license, so it is always valid and never expires.
+	getLicense = function(req: Request): ApiResponse
+		return response.ok(req.params, { license = { valid = true } })
+	end,
 	tokenInfo = function(req: Request): ApiResponse
 		return response.ok(req.params, { tokenInfo = { username = req.auth.principal.username } })
 	end,
