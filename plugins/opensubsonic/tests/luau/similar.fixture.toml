@@ -1,0 +1,91 @@
+run_as = "listener"
+
+# The listener sees "Solo" (Amy, Rock) holding S1 and S2, "Other" (Bob, Rock) holding O1 and the
+# playlist "Mix". "Secret" (Amy, Rock), in a library the listener can't see, holds H1.
+
+[[users]]
+key = "listener"
+
+[[api_keys]]
+key = "listener_key"
+user = "listener"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener"]
+
+[[libraries]]
+key = "hidden"
+name = "Hidden"
+
+[[artists]]
+key = "amy"
+name = "Amy"
+
+[[artists]]
+key = "bob"
+name = "Bob"
+
+[[artists]]
+key = "hal"
+name = "Hal"
+
+[[genres]]
+key = "rock"
+name = "Rock"
+
+[[releases]]
+key = "solo"
+title = "Solo"
+library = "music"
+artists = ["amy"]
+genres = ["rock"]
+
+[[releases]]
+key = "other"
+title = "Other"
+library = "music"
+artists = ["bob"]
+genres = ["rock"]
+
+[[releases]]
+key = "secret"
+title = "Secret"
+library = "hidden"
+artists = ["hal"]
+genres = ["rock"]
+
+[[tracks]]
+key = "s1"
+title = "S1"
+release = "solo"
+track = 1
+artists = ["amy"]
+
+[[tracks]]
+key = "s2"
+title = "S2"
+release = "solo"
+track = 2
+artists = ["amy"]
+
+[[tracks]]
+key = "o1"
+title = "O1"
+release = "other"
+track = 1
+artists = ["bob"]
+
+[[tracks]]
+key = "h1"
+title = "H1"
+release = "secret"
+artists = ["hal"]
+
+[[playlists]]
+key = "mix"
+owner = "listener"
+name = "Mix"
+public = false
+tracks = ["s1"]
