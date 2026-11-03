@@ -120,6 +120,9 @@ impl GenresModule {
         catalog::page_table(page)
     }
 
+    #[harmony(
+        description = "The id of the genre matching the request, created when there is none. Needs the `lyra.genres.manage` scope too."
+    )]
     async fn resolve(
         request: GenreResolveRequest,
         #[context] db: Db,
@@ -130,6 +133,9 @@ impl GenresModule {
         ids::public_id(&*db, genre_id)
     }
 
+    #[harmony(
+        description = "Links the genre `child_id` under `parent_id`; linking them again is harmless. Raises when either is not a genre. Needs the `lyra.genres.manage` scope too."
+    )]
     async fn add_parent(
         child_id: String,
         parent_id: String,

@@ -56,9 +56,14 @@ user's data rather than that of the users the plugin acts for, and need a
 narrow scope on top of their module's: `lyra.listens.all` for
 `listens.on_update`, `lyra.playback_sessions.all` for
 `playback_sessions.on_update`, and `lyra.lyrics.all` for
-`lyrics.remove_all`. A plugin declaring only the module's scope gets
-each such function as a stub raising an error that names the scope it
-lacks. Declaring a narrow scope without its module's fails to load.
+`lyrics.remove_all`. The catalog modules' scopes only read the library;
+changing it needs the module's `.manage` scope, such as
+`lyra.genres.manage` for `genres.resolve` and `lyra.releases.manage` for
+`releases.replace_chains`. A privileged action has a narrow scope of its
+own, such as `lyra.libraries.manage` for `libraries.sync`. A plugin
+declaring only the module's scope gets each such function as a stub
+raising an error that names the scope it lacks. Declaring a narrow scope
+without its module's fails to load.
 
 ## Releases
 

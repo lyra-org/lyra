@@ -17,6 +17,10 @@
 //!   a function gets a narrow scope of its own, `within` its module's, named
 //!   `<module scope>.all`, so plugins that don't call it don't carry its
 //!   effects;
+//! - whether it changes the shared library in a module whose scope otherwise
+//!   only reads it. Such a function goes under the module's
+//!   `<module scope>.manage` scope, so plugins that only read carry no
+//!   effects;
 //! - whether it is a privileged action with effects beyond its module's, such
 //!   as starting a library sync. Such a function gets a narrow scope of its
 //!   own as well, named for the action, as `lyra.libraries.manage` and
@@ -293,6 +297,12 @@ scopes! {
     Covers => {
         id: "lyra.covers",
         module: covers::CoversModule::module_spec,
+        effects: &[],
+    },
+    CoversManage => {
+        id: "lyra.covers.manage",
+        within: Covers,
+        functions: &["set_manual", "remove_manual"],
         effects: &[
             Effect::WritesLibrary(LibraryKind::Covers),
             Effect::WritesPersonal(PersonalKind::Playlists, Users::Acting),
@@ -329,11 +339,23 @@ scopes! {
     Genres => {
         id: "lyra.genres",
         module: genres::GenresModule::module_spec,
+        effects: &[],
+    },
+    GenresManage => {
+        id: "lyra.genres.manage",
+        within: Genres,
+        functions: &["resolve", "add_parent"],
         effects: &[Effect::WritesLibrary(LibraryKind::Genres)],
     },
     Labels => {
         id: "lyra.labels",
         module: labels::LabelsModule::module_spec,
+        effects: &[],
+    },
+    LabelsManage => {
+        id: "lyra.labels.manage",
+        within: Labels,
+        functions: &["resolve"],
         effects: &[Effect::WritesLibrary(LibraryKind::RecordLabels)],
     },
     Libraries => {
@@ -452,6 +474,12 @@ scopes! {
     Releases => {
         id: "lyra.releases",
         module: releases::ReleasesModule::module_spec,
+        effects: &[],
+    },
+    ReleasesManage => {
+        id: "lyra.releases.manage",
+        within: Releases,
+        functions: &["replace_chains"],
         effects: &[Effect::WritesLibrary(LibraryKind::TrackChains)],
     },
     Server => {
@@ -948,7 +976,7 @@ mod tests {
                 &["Signs users in to Lyra, checks their credentials and manages their sessions"],
             ),
             (
-                "lyra.covers",
+                "lyra.covers.manage",
                 &[
                     "Changes the library's covers",
                     "Changes the playlists of the users it acts for",
@@ -961,8 +989,11 @@ mod tests {
                     "Changes the favorites of the users it acts for",
                 ],
             ),
-            ("lyra.genres", &["Changes the library's genres"]),
-            ("lyra.labels", &["Changes the library's record labels"]),
+            ("lyra.genres.manage", &["Changes the library's genres"]),
+            (
+                "lyra.labels.manage",
+                &["Changes the library's record labels"],
+            ),
             (
                 "lyra.libraries.manage",
                 &[
@@ -1036,7 +1067,10 @@ mod tests {
                     "Changes the ratings of the users it acts for",
                 ],
             ),
-            ("lyra.releases", &["Changes the library's track chains"]),
+            (
+                "lyra.releases.manage",
+                &["Changes the library's track chains"],
+            ),
             (
                 "lyra.tags",
                 &[
@@ -1138,11 +1172,15 @@ mod tests {
         };
         assert!(load(r#"["lyra.listens","lyra.listens.all"]"#).is_ok());
         for (narrow, parent) in [
+            ("lyra.covers.manage", "lyra.covers"),
+            ("lyra.genres.manage", "lyra.genres"),
+            ("lyra.labels.manage", "lyra.labels"),
             ("lyra.libraries.manage", "lyra.libraries"),
             ("lyra.listens.all", "lyra.listens"),
             ("lyra.lyrics.all", "lyra.lyrics"),
             ("lyra.metadata.refresh", "lyra.metadata"),
             ("lyra.playback_sessions.all", "lyra.playback_sessions"),
+            ("lyra.releases.manage", "lyra.releases"),
         ] {
             let error = load(&format!(r#"["{narrow}"]"#)).unwrap_err();
             assert!(
@@ -1401,8 +1439,8 @@ mod tests {
             &[
                 "get(ids, options)",
                 "artwork(ids, options)",
-                "set_manual(id, image)",
-                "remove_manual(id)",
+                "set_manual(id, image) [lyra.covers.manage]",
+                "remove_manual(id) [lyra.covers.manage]",
             ],
         ),
         (
@@ -1454,8 +1492,8 @@ mod tests {
             "lyra/genres",
             &[
                 "query(query)",
-                "resolve(request)",
-                "add_parent(child_id, parent_id)",
+                "resolve(request) [lyra.genres.manage]",
+                "add_parent(child_id, parent_id) [lyra.genres.manage]",
                 "get(ids)",
                 "by_release(release_ids)",
                 "find_by_name(name)",
@@ -1464,7 +1502,7 @@ mod tests {
         (
             "lyra/labels",
             &[
-                "resolve(request)",
+                "resolve(request) [lyra.labels.manage]",
                 "get_by_id(label_id)",
                 "get_for_release(release_id)",
                 "get_for_releases_many(release_ids)",
@@ -1618,7 +1656,7 @@ mod tests {
                 "by_track(track_ids)",
                 "by_genre(genre_ids)",
                 "chains(release_ids)",
-                "replace_chains(release_id, chains)",
+                "replace_chains(release_id, chains) [lyra.releases.manage]",
                 "similar(release_id, opts)",
             ],
         ),

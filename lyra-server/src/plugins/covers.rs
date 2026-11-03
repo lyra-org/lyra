@@ -166,7 +166,7 @@ impl CoversModule {
     }
 
     #[harmony(
-        description = "Stores `image`, the raw bytes of a JPEG, PNG or WebP image, as the manual cover of a release, artist or playlist, replacing any earlier one. A release or artist pins it as the cover it shows; a playlist shows it in place of the cover picked from its releases. Returns false when the item is missing, hidden from the caller, or not a release, artist or playlist. Raises when the image is over `MAX_IMAGE_BYTES` or does not decode, when the caller lacks the manage_metadata permission for a release or artist, and when the caller does not own the playlist."
+        description = "Stores `image`, the raw bytes of a JPEG, PNG or WebP image, as the manual cover of a release, artist or playlist, replacing any earlier one. A release or artist pins it as the cover it shows; a playlist shows it in place of the cover picked from its releases. Returns false when the item is missing, hidden from the caller, or not a release, artist or playlist. Raises when the image is over `MAX_IMAGE_BYTES` or does not decode, when the caller lacks the manage_metadata permission for a release or artist, and when the caller does not own the playlist. Needs the `lyra.covers.manage` scope too."
     )]
     async fn set_manual(
         id: String,
@@ -181,7 +181,7 @@ impl CoversModule {
     }
 
     #[harmony(
-        description = "Removes the manual cover of a release, artist or playlist, which then shows its next cover, and unpins a release or artist pinned to it. Returns false when the item is missing, hidden from the caller, not a release, artist or playlist, or has no manual cover. Raises when the caller lacks the manage_metadata permission for a release or artist, and when the caller does not own the playlist."
+        description = "Removes the manual cover of a release, artist or playlist, which then shows its next cover, and unpins a release or artist pinned to it. Returns false when the item is missing, hidden from the caller, not a release, artist or playlist, or has no manual cover. Raises when the caller lacks the manage_metadata permission for a release or artist, and when the caller does not own the playlist. Needs the `lyra.covers.manage` scope too."
     )]
     async fn remove_manual(
         id: String,

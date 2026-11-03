@@ -239,7 +239,7 @@ impl ReleasesModule {
     }
 
     #[harmony(
-        description = "Replaces every chain on a release the caller can see with `chains`, each the release's track ids in play order, and returns the stored chains. An empty list clears them. Errors when a chain has fewer than two tracks, a track is listed more than once, a track is not on the release, or a track is already in a chain on another release. Chain ids may change on every call. Requires ManageMetadata.",
+        description = "Replaces every chain on a release the caller can see with `chains`, each the release's track ids in play order, and returns the stored chains. An empty list clears them. Errors when a chain has fewer than two tracks, a track is listed more than once, a track is not on the release, or a track is already in a chain on another release. Chain ids may change on every call. Requires ManageMetadata. Needs the `lyra.releases.manage` scope too.",
         returns(Vec<ReleaseChain>)
     )]
     async fn replace_chains(

@@ -11,6 +11,7 @@
     "lyra.api",
     "lyra.artists",
     "lyra.auth",
+    "lyra.covers",
     "lyra.entities",
     "lyra.entries",
     "lyra.favorites",

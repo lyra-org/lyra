@@ -15,6 +15,7 @@
     "lyra.editions",
     "lyra.entries",
     "lyra.genres",
+    "lyra.genres.manage",
     "lyra.libraries",
     "lyra.metadata"
   ]

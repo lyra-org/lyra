@@ -1,7 +1,11 @@
 without_scopes = [
+  "lyra.covers.manage",
+  "lyra.genres.manage",
+  "lyra.labels.manage",
   "lyra.libraries.manage",
   "lyra.listens.all",
   "lyra.lyrics.all",
   "lyra.metadata.refresh",
   "lyra.playback_sessions.all",
+  "lyra.releases.manage",
 ]

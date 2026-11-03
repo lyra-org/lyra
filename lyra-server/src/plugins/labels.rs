@@ -66,7 +66,7 @@ impl<'vm> luau::FromLuau<'vm> for LabelResolveRequestData {
 impl LabelsModule {
     #[harmony(
         args(request: LabelResolveRequest),
-        description = "The id of the label matching the request, created when there is none. Returns nil when the caller cannot manage libraries."
+        description = "The id of the label matching the request, created when there is none. Returns nil when the caller cannot manage libraries. Needs the `lyra.labels.manage` scope too."
     )]
     async fn resolve(
         request: LabelResolveRequestData,

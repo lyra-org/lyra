@@ -11,6 +11,7 @@
     "harmony.serde",
     "lyra.datastore",
     "lyra.genres",
+    "lyra.genres.manage",
     "lyra.libraries",
     "lyra.locale",
     "lyra.metadata",

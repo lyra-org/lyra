@@ -15,6 +15,7 @@
     "lyra.artists",
     "lyra.auth",
     "lyra.covers",
+    "lyra.covers.manage",
     "lyra.datastore",
     "lyra.entities",
     "lyra.favorites",

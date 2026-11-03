@@ -45,6 +45,18 @@ modules predate some of them.
   serves, documented as being for that alone, as `tracks.streamable` and `covers.artwork`
   are for public routes.
 
+## Library Changes
+
+- A catalog module's scope only reads the library and carries no effects. Its functions
+  that change the library need the module's `.manage` scope as well, such as
+  `lyra.genres.manage` for `genres.resolve` and `lyra.releases.manage` for
+  `releases.replace_chains`. `lyra.metadata` is the exception: it registers metadata
+  providers, which change the library through the provider's methods, so the scope itself
+  carries that effect.
+- Removing a record whose file is confirmed gone counts as reading, not changing the
+  library: `covers.get` and `covers.artwork` with `require_file` do so under `lyra.covers`,
+  as the public cover route does for anyone.
+
 ## Privileged Actions
 
 - A privileged action with effects beyond its module's needs a scope of its own within the

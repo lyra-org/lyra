@@ -390,7 +390,7 @@ fn plugin_executor_refuses_registrations_from_an_ended_run() -> Result<()> {
 
 #[test]
 fn module_functions_answer_what_they_can_before_reading_the_database() -> Result<()> {
-    let runtime = runtime_with_scopes(&["lyra.labels"])?;
+    let runtime = runtime_with_scopes(&["lyra.labels", "lyra.labels.manage"])?;
     let mut viewer = CallContext {
         origin: plugin_origin("demo", "init.luau"),
         ..CallContext::default()

@@ -1191,7 +1191,10 @@ fn plugin_executor_exposes_db_backed_lyra_genres_module() -> Result<()> {
     let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
-        Arc::from(vec![manifest("demo", &["lyra.genres"])]),
+        Arc::from(vec![manifest(
+            "demo",
+            &["lyra.genres", "lyra.genres.manage"],
+        )]),
         default_server_info(),
         db,
     )?;
