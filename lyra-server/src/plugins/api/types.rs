@@ -38,6 +38,8 @@ pub(super) struct ApiWebSocketOptions;
 #[cfg(feature = "docgen")]
 pub(super) struct ApiWebSocketHandler;
 #[cfg(feature = "docgen")]
+pub(super) struct ApiStreamProducer;
+#[cfg(feature = "docgen")]
 pub(super) struct ApiWebSocketReader;
 #[cfg(feature = "docgen")]
 pub(crate) struct ApiWebSocketSender;
@@ -109,6 +111,13 @@ impl LuauTypeInfo for ApiWebSocketOptions {
 impl LuauTypeInfo for ApiWebSocketHandler {
     fn luau_type() -> LuauType {
         LuauType::literal("ApiWebSocketHandler")
+    }
+}
+
+#[cfg(feature = "docgen")]
+impl LuauTypeInfo for ApiStreamProducer {
+    fn luau_type() -> LuauType {
+        LuauType::literal("ApiStreamProducer")
     }
 }
 

@@ -42,17 +42,23 @@ impl PluginExecutor {
                 .insert(crate::plugins::auth::DispatchClient(request.client));
             Ok::<_, anyhow::Error>((thread, context, ctx))
         };
-        let prepared = prepare();
+        let (thread, context, argument) = match prepare() {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                let _ = reply.send(Err(error));
+                return;
+            }
+        };
         self.start_callback(
             std::time::Instant::now() + std::time::Duration::from_secs(300),
             super::callbacks::CallbackReply::Api {
                 reply,
                 request: Box::new(request),
                 auth: dispatch_auth,
+                context: context.clone(),
             },
             permit,
             |timeout, completion| {
-                let (thread, context, argument) = prepared?;
                 let scheduler = self.vm.data().get::<LocalScheduler>()?;
                 scheduler.schedule_luau_thread_with_budget_and_completion(
                     context,
@@ -153,10 +159,16 @@ fn is_json_content_type(headers: &[(String, String)]) -> bool {
     })
 }
 
+/// A handler's response, with the producer of a streamed one, which writes its body.
+pub(super) struct ParsedApiResponse {
+    pub(super) response: ApiHandlerResponse,
+    pub(super) produce: Option<luau::Function>,
+}
+
 pub(super) fn parse_api_response(
     request: &ApiHandlerRequest,
     values: Vec<luau::Value>,
-) -> Result<ApiHandlerResponse> {
+) -> Result<ParsedApiResponse> {
     let value = values.into_iter().next().unwrap_or(luau::Value::Nil);
     let luau::Value::Table(table) = value else {
         anyhow::bail!(
@@ -202,6 +214,14 @@ pub(super) fn parse_api_response(
         _ => None,
     };
     let track_id = table.optional_string_field("track_id")?;
+    let produce = match (kind, table.get("produce")?) {
+        (ApiResponseKind::Stream, luau::Value::Function(produce)) => Some(produce),
+        (ApiResponseKind::Stream, other) => anyhow::bail!(
+            "stream responses require a produce function, got {}",
+            other.type_name()
+        ),
+        _ => None,
+    };
 
     let body = match kind {
         ApiResponseKind::Json => Some(ApiResponseBody::Json(
@@ -235,10 +255,11 @@ pub(super) fn parse_api_response(
         | ApiResponseKind::File
         | ApiResponseKind::StreamTrack
         | ApiResponseKind::DownloadTrack
-        | ApiResponseKind::HlsPlaylist => None,
+        | ApiResponseKind::HlsPlaylist
+        | ApiResponseKind::Stream => None,
     };
 
-    Ok(ApiHandlerResponse {
+    let response = ApiHandlerResponse {
         kind,
         status,
         headers,
@@ -249,5 +270,6 @@ pub(super) fn parse_api_response(
         options,
         principal: None,
         client: Default::default(),
-    })
+    };
+    Ok(ParsedApiResponse { response, produce })
 }

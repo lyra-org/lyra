@@ -6,6 +6,8 @@
 mod content_type;
 mod image;
 mod responses;
+#[cfg(test)]
+mod stream_tests;
 mod websocket;
 
 use std::{

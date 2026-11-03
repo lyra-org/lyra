@@ -126,7 +126,10 @@ fn test_executor() -> Result<TestExecutor> {
     });
     let (slow, fast, api) = ready_rx.recv()??;
     Ok(TestExecutor {
-        handle: PluginExecutorHandle { tx },
+        handle: PluginExecutorHandle {
+            tx,
+            streams: Default::default(),
+        },
         slow,
         fast,
         api,

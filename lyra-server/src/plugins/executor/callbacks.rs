@@ -40,6 +40,8 @@ pub(super) enum CallbackReply {
         reply: tokio::sync::oneshot::Sender<Result<super::ApiHandlerResponse>>,
         request: Box<super::ApiHandlerRequest>,
         auth: crate::plugins::auth::DispatchAuth,
+        /// What the handler ran with, for the producer of a streamed response to run with too.
+        context: harmony_luau::CallContext,
     },
     Mix {
         reply: tokio::sync::oneshot::Sender<Result<super::MixHandlerResult>>,
@@ -68,17 +70,44 @@ impl CallbackReply {
         }
     }
 
-    fn send(self, result: Result<Vec<harmony_luau::Value>>) {
+    /// Replies with `result`; a streamed response's producer starts writing before `deadline`.
+    fn send(
+        self,
+        executor: &PluginExecutor,
+        deadline: Instant,
+        result: Result<Vec<harmony_luau::Value>>,
+    ) {
         match self {
             Self::Api {
                 reply,
                 request,
                 auth,
+                context,
             } => {
                 let result = result.and_then(|values| {
-                    let mut response = super::api::parse_api_response(&request, values)?;
+                    let parsed = super::api::parse_api_response(&request, values)?;
+                    let mut response = parsed.response;
                     response.principal = auth.principal();
                     response.client = request.client;
+                    if let Some(produce) = parsed.produce {
+                        let body = if super::stream::has_body(&request.method, response.status) {
+                            let request = *request;
+                            super::queue_stream(
+                                &executor.vm,
+                                produce,
+                                context,
+                                deadline,
+                                super::StreamOrigin {
+                                    plugin_id: request.plugin_id,
+                                    method: request.method,
+                                    path: request.path,
+                                },
+                            )?
+                        } else {
+                            super::ApiResponseStream::finished()
+                        };
+                        response.body = Some(super::ApiResponseBody::Stream(body));
+                    }
                     Ok(response)
                 });
                 let _ = reply.send(result);
@@ -174,7 +203,7 @@ impl PluginExecutor {
                 reply,
                 _permit: permit,
             }),
-            Err(error) => reply.send(Err(error)),
+            Err(error) => reply.send(self, deadline, Err(error)),
         }
     }
 
@@ -199,7 +228,7 @@ impl PluginExecutor {
             if let Some(result) = result {
                 let task = tasks.swap_remove(index);
                 task.scheduler.cancel_luau_thread(&task.thread);
-                task.reply.send(result);
+                task.reply.send(self, task.deadline, result);
             } else {
                 index += 1;
             }

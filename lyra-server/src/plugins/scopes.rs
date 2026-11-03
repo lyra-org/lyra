@@ -1408,6 +1408,7 @@ mod tests {
                 "response.text(status, body, headers)",
                 "response.bytes(status, body, headers)",
                 "response.filler(status, size_bytes, headers)",
+                "response.stream(status, produce, headers)",
                 "response.redirect(status, location, headers)",
                 "response.file(status, path, headers, transform)",
                 "response.stream_track(track_id, options)",
@@ -1422,6 +1423,7 @@ mod tests {
                 "ApiWebSocketSender:send(text)",
                 "ApiWebSocketSender:is_closed()",
                 "ApiWebSocketSender:close()",
+                "ApiStreamWriter:write(chunk)",
             ],
         ),
         (

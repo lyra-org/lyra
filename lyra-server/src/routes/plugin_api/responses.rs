@@ -27,8 +27,8 @@ use crate::services::delivery::{
     stream_track_access,
 };
 
-/// The headers that frame the bodies Lyra serves for `file`, `stream_track`, `download_track` and
-/// `hls_playlist` responses, which those responses may not set.
+/// The headers that frame the bodies Lyra serves for `file`, `stream_track`, `download_track`,
+/// `hls_playlist`, `filler` and `stream` responses, which those responses may not set.
 const FRAMING_HEADERS: [HeaderName; 4] = [
     CONTENT_LENGTH,
     CONTENT_RANGE,
@@ -67,7 +67,8 @@ pub(super) async fn plugin_api_response_to_axum(
         | ApiResponseKind::Bytes
         | ApiResponseKind::Redirect
         | ApiResponseKind::File
-        | ApiResponseKind::Filler => {}
+        | ApiResponseKind::Filler
+        | ApiResponseKind::Stream => {}
     }
 
     let principal = response.principal.as_ref();
@@ -122,6 +123,10 @@ pub(super) async fn plugin_api_response_to_axum(
                 content_length = Some(HeaderValue::from(size));
                 filler_body(size)
             }
+            Some(crate::plugins::executor::ApiResponseBody::Stream(stream)) => {
+                content_type = Some(HeaderValue::from_static("application/octet-stream"));
+                Body::from_stream(stream)
+            }
             None => Body::empty(),
         }
     };
@@ -169,6 +174,7 @@ fn response_headers(response: &ApiHandlerResponse) -> Result<HeaderMap> {
             | ApiResponseKind::DownloadTrack
             | ApiResponseKind::HlsPlaylist
             | ApiResponseKind::Filler
+            | ApiResponseKind::Stream
     );
     let mut headers = HeaderMap::with_capacity(response.headers.len());
     for (name, value) in &response.headers {

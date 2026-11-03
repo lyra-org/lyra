@@ -200,7 +200,12 @@ impl PluginExecutor {
     }
 
     pub(crate) fn restart_plugin(&self, plugin_id: &str) -> Result<()> {
-        self.runtime.restart_plugin(plugin_id)
+        let restarted = self.runtime.restart_plugin(plugin_id);
+        // The ended run's streams were stopped as it was asked to end; the new run's are not.
+        if let Ok(stops) = super::stream::stream_stops(&self.vm) {
+            stops.run_started(plugin_id);
+        }
+        restarted
     }
 
     /// The ids of the plugins whose entrypoint failed.
@@ -218,6 +223,7 @@ impl PluginExecutor {
             .iter()
             .try_for_each(|plugin| self.runtime.stop_plugin(&plugin.manifest.id));
         self.poll_background_tasks();
+        super::stream::fail_streams(&self.vm);
         let released = self.vm.data().clear().map_err(anyhow::Error::new);
         stopped.and(released)
     }
@@ -302,6 +308,7 @@ fn install_callback_stores(vm: &luau::Vm) -> Result<()> {
         .insert(UpdateCallbackStore::<ListenUpdatePayload>::new(vm.id()))?;
     vm.data()
         .insert(crate::plugins::api::ApiRouteStore::new(vm.id()))?;
+    vm.data().insert(super::stream::StreamTasks::default())?;
     Ok(())
 }
 

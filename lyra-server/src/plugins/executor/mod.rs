@@ -11,6 +11,7 @@ mod metadata;
 mod mix;
 mod modules;
 mod stores;
+mod stream;
 mod updates;
 mod vm;
 mod websocket;
@@ -30,6 +31,13 @@ pub(crate) use self::messages::{
 pub(crate) use self::metadata::{
     dispatch_id_links_in_vm,
     dispatch_similar_releases_in_vm,
+};
+pub(crate) use self::stream::{
+    ApiResponseStream,
+    ApiStreamWriter,
+    MAX_STREAM_CHUNK_BYTES,
+    StreamOrigin,
+    queue_stream,
 };
 pub(crate) use self::websocket::{
     ApiWebSocketReader,
@@ -77,6 +85,7 @@ impl std::ops::Deref for PluginExecutor {
 impl PluginExecutor {
     fn poll_background_tasks(&self) {
         self.poll_callback_tasks();
+        stream::poll_streams(&self.vm);
         let Ok(scheduler) = self.vm.data().get::<LocalScheduler>() else {
             return;
         };
@@ -96,6 +105,7 @@ impl PluginExecutor {
             }
         }
         self.poll_callback_tasks();
+        stream::poll_streams(&self.vm);
         scheduler.remove_finished();
         if !completed_websockets.is_empty() {
             let mut tasks = self.websocket_tasks.borrow_mut();

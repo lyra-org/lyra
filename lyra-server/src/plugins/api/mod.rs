@@ -50,6 +50,7 @@ use self::types::{
     ApiRequest,
     ApiResponse,
     ApiRouteOptions,
+    ApiStreamProducer,
     ApiWebSocketHandler,
     ApiWebSocketOptions,
     ApiWebSocketReader,
@@ -172,6 +173,11 @@ crate::plugins::limits::module_limits!(&[
         value: MAX_FILLER_BYTES,
         description: "The largest `size_bytes` of a `response.filler`.",
     },
+    crate::plugins::limits::Limit {
+        name: "MAX_STREAM_CHUNK_BYTES",
+        value: crate::plugins::executor::MAX_STREAM_CHUNK_BYTES,
+        description: "The largest chunk an `ApiStreamWriter` writes at once.",
+    },
 ]);
 
 #[harmony_macros::module(
@@ -181,7 +187,8 @@ crate::plugins::limits::module_limits!(&[
     describe = describe_limits,
     userdata(
         crate::plugins::executor::ApiWebSocketReader,
-        crate::plugins::executor::ApiWebSocketSender
+        crate::plugins::executor::ApiWebSocketSender,
+        crate::plugins::executor::ApiStreamWriter
     )
 )]
 impl ApiModule {
@@ -488,6 +495,28 @@ impl ApiModule {
         let mut response = kind_table("filler");
         response.set_field("status", i64::from(status.0));
         response.set_field("size_bytes", luau::Value::Number(size_bytes as f64));
+        response.set_field(
+            "headers",
+            merge_headers(&[("content-type", "application/octet-stream")], headers)?,
+        );
+        Ok(response)
+    }
+
+    #[harmony(
+        name = "response.stream",
+        description = "Builds a response whose body `produce` writes as it is sent. After the handler returns, `produce` runs in a thread of its own, acting as the handler did, with the writer of the body; the body ends whole only when `produce` returns without a write having raised, and its failure aborts the body, so the client sees a broken transfer rather than a cut-off document. `produce` must be done within the handler's deadline, which counts from the start of the request and includes any wait for one of the few streams Lyra produces at once. A HEAD request or a status without a body never runs it. Its content type defaults to application/octet-stream, and its headers may not include the framing headers content-length, content-range, accept-ranges and transfer-encoding.",
+        args(status: u16, produce: ApiStreamProducer, headers: Option<ApiHeaders>),
+        returns(ApiResponse)
+    )]
+    fn response_stream(
+        status: Status,
+        produce: luau::Function,
+        headers: Option<luau::Value>,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let headers = optional_value(headers);
+        let mut response = kind_table("stream");
+        response.set_field("status", i64::from(status.0));
+        response.set_field("produce", luau::Value::Function(produce));
         response.set_field(
             "headers",
             merge_headers(&[("content-type", "application/octet-stream")], headers)?,
@@ -884,6 +913,18 @@ fn support_aliases() -> Vec<TypeAliasDescriptor> {
             Some("API route handler."),
         ),
         TypeAliasDescriptor::new(
+            "ApiStreamProducer",
+            LuauType::function(
+                vec![FunctionParameter {
+                    name: Some("writer"),
+                    ty: LuauType::literal("ApiStreamWriter"),
+                    variadic: false,
+                }],
+                Vec::new(),
+            ),
+            Some("Writes a streamed response's body."),
+        ),
+        TypeAliasDescriptor::new(
             "ApiWebSocketHandler",
             LuauType::function(
                 vec![
@@ -980,6 +1021,11 @@ fn api_response_aliases() -> Vec<TypeAliasDescriptor> {
             "filler",
             [field("size_bytes", u64::luau_type())],
         ),
+        response_alias(
+            "ApiStreamResponse",
+            "stream",
+            [field("produce", LuauType::literal("ApiStreamProducer"))],
+        ),
         TypeAliasDescriptor::new(
             "ApiResponse",
             LuauType::union(vec![
@@ -993,6 +1039,7 @@ fn api_response_aliases() -> Vec<TypeAliasDescriptor> {
                 LuauType::literal("ApiDownloadTrackResponse"),
                 LuauType::literal("ApiHlsPlaylistResponse"),
                 LuauType::literal("ApiFillerResponse"),
+                LuauType::literal("ApiStreamResponse"),
             ]),
             Some("API response returned by route handlers."),
         ),
@@ -1188,7 +1235,7 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &ApiModule::module_descriptor(),
         &support_aliases(),
         &support_interfaces(),
-        &[],
+        &[<crate::plugins::executor::ApiStreamWriter as harmony_luau::DescribeUserData>::class_descriptor()],
     )
 }
 

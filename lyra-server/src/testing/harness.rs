@@ -6,12 +6,22 @@
 //! What a Luau test gets as its chunk's second `...`: a table of helpers that stand in for what a
 //! test can't reach from Luau, such as a client.
 
-use std::rc::Rc;
+use std::{
+    rc::Rc,
+    sync::{
+        Arc,
+        Mutex,
+    },
+};
 
 use harmony_core::UserDataBinding;
 use harmony_luau as luau;
 
-use crate::plugins::executor::ApiWebSocketSender;
+use crate::plugins::executor::{
+    ApiResponseStream,
+    ApiWebSocketSender,
+    StreamOrigin,
+};
 
 /// How long a [`TestPlugin::call`] may run, as long as an API handler may.
 const CALL_BUDGET: std::time::Duration = std::time::Duration::from_secs(300);
@@ -64,6 +74,18 @@ impl TestTask {
 #[derive(Clone)]
 struct TestPlugin;
 
+/// The body of a `stream` response a [`TestPlugin::call`] returned, which the host produces as it
+/// would for a client.
+#[harmony_macros::userdata(
+    name = "TestBody",
+    description = "A streamed response's body, as a client would read it."
+)]
+#[derive(Clone)]
+struct TestBody(Arc<Mutex<Option<ApiResponseStream>>>);
+
+#[harmony_macros::userdata_methods]
+impl TestBody {}
+
 #[harmony_macros::userdata_methods]
 impl TestPlugin {
     /// Calls `function` with `args` as a request's handler runs: in a thread of its own, acting
@@ -88,19 +110,82 @@ impl TestPlugin {
             .insert(crate::plugins::auth::DispatchAuth::default());
         let completion = Rc::new(harmony_core::LocalLuauTaskCompletion::default());
         scheduler.schedule_luau_thread_with_budget_and_completion(
-            own,
+            own.clone(),
             vm.clone(),
             thread,
             args.0,
             CALL_BUDGET,
             completion.clone(),
         );
+        let deadline = std::time::Instant::now() + CALL_BUDGET;
+        let vm = vm.clone();
         Ok(luau::ScheduledFuture::new(async move {
             let values = std::future::poll_fn(|cx| completion.poll(cx))
                 .await
                 .map_err(luau::Error::Runtime)?;
+            if let Some((response, produce)) = values.first().and_then(stream_response) {
+                let body = crate::plugins::executor::queue_stream(
+                    &vm,
+                    produce,
+                    own.clone(),
+                    deadline,
+                    StreamOrigin {
+                        plugin_id: own.origin.plugin.as_deref().unwrap_or_default().to_string(),
+                        method: "CALL".to_string(),
+                        path: own.origin.path.as_deref().unwrap_or_default().to_string(),
+                    },
+                )?;
+                let body = TestBody(Arc::new(Mutex::new(Some(body))));
+                response.set(
+                    "body",
+                    TestBody::class().create_value(&vm, &own.origin, body)?,
+                )?;
+            }
             Ok(luau::ReturnValues::Many(values))
         }))
+    }
+
+    /// Reads the body of a `stream` response `call` returned as a client keeping up would, while
+    /// the host produces it as it would for one: acting as the handler did, once a place is free.
+    /// Returns the body, and raises what fails it, including a return after a write raised.
+    fn read_body(
+        &self,
+        vm: &luau::Vm,
+        response: luau::Table,
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
+        let luau::Value::UserData(body) = response.get("body")? else {
+            return Err(luau::Error::Runtime(
+                "read_body takes a stream response that plugin:call returned".to_string(),
+            ));
+        };
+        let body = TestBody::class().read_userdata(vm, &body)?;
+        let mut stream = body
+            .0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take()
+            .ok_or_else(|| luau::Error::Runtime("the body was already read".to_string()))?;
+        Ok(luau::ScheduledFuture::new(async move {
+            let mut collected = Vec::new();
+            while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
+                let chunk = chunk.map_err(|error| luau::Error::Runtime(error.to_string()))?;
+                collected.extend_from_slice(&chunk);
+            }
+            Ok(luau::ByteString(collected))
+        }))
+    }
+}
+
+/// A `stream` response and its producer.
+fn stream_response(response: &luau::Value) -> Option<(luau::Table, luau::Function)> {
+    let luau::Value::Table(response) = response else {
+        return None;
+    };
+    match (response.get("kind").ok()?, response.get("produce").ok()?) {
+        (luau::Value::String(kind), luau::Value::Function(produce)) if kind == b"stream" => {
+            Some((response.clone(), produce))
+        }
+        _ => None,
     }
 }
 

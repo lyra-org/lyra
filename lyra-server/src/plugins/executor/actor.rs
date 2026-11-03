@@ -122,6 +122,8 @@ impl QueuedPluginExecutorCommand {
 #[derive(Clone)]
 pub(crate) struct PluginExecutorHandle {
     tx: PluginExecutorSender,
+    /// Interrupts the streams of a run that is asked to end, before the executor reads the ask.
+    streams: Arc<super::stream::StreamStops>,
 }
 
 impl PluginExecutorHandle {
@@ -156,23 +158,28 @@ impl PluginExecutorHandle {
 
         thread::Builder::new()
             .name("lyra-plugin-executor".to_string())
-            .spawn(move || match build() {
-                Ok((runtime, errors)) => {
-                    if ready_tx.send(Ok(errors)).is_err() {
-                        return;
+            .spawn(move || {
+                match build().and_then(|(runtime, errors)| {
+                    let streams = super::stream::stream_stops(&runtime.vm)?;
+                    Ok((runtime, errors, streams))
+                }) {
+                    Ok((runtime, errors, streams)) => {
+                        if ready_tx.send(Ok((errors, streams))).is_err() {
+                            return;
+                        }
+                        run_plugin_executor_thread(runtime, rx);
                     }
-                    run_plugin_executor_thread(runtime, rx);
-                }
-                Err(error) => {
-                    let _ = ready_tx.send(Err(error));
+                    Err(error) => {
+                        let _ = ready_tx.send(Err(error));
+                    }
                 }
             })
             .context("spawn plugin executor thread")?;
 
-        let errors = ready_rx
+        let (errors, streams) = ready_rx
             .recv()
             .context("plugin executor thread exited during startup")??;
-        Ok((Self { tx }, errors))
+        Ok((Self { tx, streams }, errors))
     }
 
     pub(crate) async fn plugin_manifests(&self) -> Result<Vec<PluginManifest>> {
@@ -206,6 +213,7 @@ impl PluginExecutorHandle {
     }
 
     pub(crate) async fn stop_plugin(&self, plugin_id: &str) -> Result<()> {
+        self.streams.stop(Some(plugin_id));
         self.request_control(|reply| PluginExecutorCommand::StopPlugin {
             plugin_id: plugin_id.to_string(),
             reply,
@@ -214,6 +222,7 @@ impl PluginExecutorHandle {
     }
 
     pub(crate) async fn restart_plugin(&self, plugin_id: &str) -> Result<()> {
+        self.streams.stop(Some(plugin_id));
         self.request_control(|reply| PluginExecutorCommand::RestartPlugin {
             plugin_id: plugin_id.to_string(),
             reply,
@@ -229,6 +238,7 @@ impl PluginExecutorHandle {
     /// Cancels every plugin's tasks and stops the executor thread. Replies once
     /// the runtime is dropped; later requests through any clone fail.
     pub(crate) async fn shutdown(&self) -> Result<()> {
+        self.streams.stop(None);
         self.request_control(PluginExecutorCommand::Shutdown).await
     }
 
@@ -458,7 +468,13 @@ mod tests {
         mpsc::Receiver<QueuedPluginExecutorCommand>,
     ) {
         let (tx, rx) = plugin_executor_channel(capacity);
-        (PluginExecutorHandle { tx }, rx)
+        (
+            PluginExecutorHandle {
+                tx,
+                streams: Default::default(),
+            },
+            rx,
+        )
     }
 
     fn playback_update() -> crate::services::playback_sessions::PlaybackUpdatePayload {

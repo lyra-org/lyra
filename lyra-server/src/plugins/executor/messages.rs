@@ -163,12 +163,14 @@ pub(crate) struct ApiHandlerRequest {
     pub(crate) client: crate::services::auth::caller::ClientAddress,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) enum ApiResponseBody {
     Json(serde_json::Value),
     Bytes(Vec<u8>),
     /// This many bytes of filler, generated as they are sent.
     Filler(u64),
+    /// Written by the plugin's producer as it is sent.
+    Stream(super::ApiResponseStream),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -183,6 +185,7 @@ pub(crate) enum ApiResponseKind {
     DownloadTrack,
     HlsPlaylist,
     Filler,
+    Stream,
 }
 
 impl ApiResponseKind {
@@ -198,6 +201,7 @@ impl ApiResponseKind {
             "download_track" => Self::DownloadTrack,
             "hls_playlist" => Self::HlsPlaylist,
             "filler" => Self::Filler,
+            "stream" => Self::Stream,
             _ => return None,
         })
     }
@@ -214,6 +218,7 @@ impl ApiResponseKind {
             Self::DownloadTrack => "download_track",
             Self::HlsPlaylist => "hls_playlist",
             Self::Filler => "filler",
+            Self::Stream => "stream",
         }
     }
 }
@@ -224,7 +229,7 @@ impl fmt::Display for ApiResponseKind {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct ApiHandlerResponse {
     pub(crate) kind: ApiResponseKind,
     pub(crate) status: u16,
