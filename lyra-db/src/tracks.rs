@@ -316,6 +316,8 @@ pub fn get_by_releases(db: &DbAny, release_db_ids: &[DbId]) -> anyhow::Result<Ve
     Ok(deduped)
 }
 
+/// The tracks sourced from the entry. The search stops at the library: above it are only the
+/// users with access and everything they have done.
 pub fn get_by_entry(db: &DbAny, entry_db_id: DbId) -> anyhow::Result<Vec<Track>> {
     let tracks: Vec<Track> = db
         .exec(
@@ -324,11 +326,13 @@ pub fn get_by_entry(db: &DbAny, entry_db_id: DbId) -> anyhow::Result<Vec<Track>>
                 .search()
                 .to(entry_db_id)
                 .where_()
-                .beyond()
+                .not_beyond()
                 .where_()
-                .not()
                 .key("db_element_id")
                 .value("Track")
+                .or()
+                .key("db_element_id")
+                .value("Library")
                 .end_where()
                 .query(),
         )?
