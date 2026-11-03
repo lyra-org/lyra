@@ -11,6 +11,8 @@ use agdb::{
     QueryBuilder,
 };
 
+use crate::roots::MEMBERS;
+
 #[derive(DbElement, Clone, Debug)]
 pub struct SyncRunRecord {
     pub db_id: Option<DbId>,
@@ -85,6 +87,8 @@ pub fn list(db: &impl super::DbAccess) -> anyhow::Result<Vec<SyncRunRecord>> {
                 .elements::<SyncRunRecord>()
                 .search()
                 .from("sync_runs")
+                .where_()
+                .distance(MEMBERS)
                 .query(),
         )?
         .try_into()?;
@@ -99,6 +103,8 @@ pub fn get_by_id(db: &impl super::DbAccess, id: &str) -> anyhow::Result<Option<S
                 .search()
                 .from("sync_runs")
                 .where_()
+                .distance(MEMBERS)
+                .and()
                 .key("id")
                 .value(id)
                 .end_where()
@@ -121,6 +127,8 @@ pub fn list_for_library(
                 .search()
                 .from("sync_runs")
                 .where_()
+                .distance(MEMBERS)
+                .and()
                 .key("library_id")
                 .value(library_id)
                 .end_where()

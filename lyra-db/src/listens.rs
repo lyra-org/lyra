@@ -15,6 +15,8 @@ use agdb::{
     QueryBuilder,
 };
 
+use crate::roots::MEMBERS;
+
 #[derive(DbElement, Clone, Debug, PartialEq, Eq)]
 pub struct Listen {
     pub db_id: Option<DbId>,
@@ -304,6 +306,8 @@ pub fn list_summaries(
                 .elements::<Listen>()
                 .search()
                 .from("listens")
+                .where_()
+                .distance(MEMBERS)
                 .query(),
         )?
         .try_into()?
@@ -471,6 +475,41 @@ mod tests {
     }
 
     #[test]
+    fn listing_everyones_listens_stops_at_the_listens_root() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user = create_user(&mut db)?;
+        let track_db_id = create_track(&mut db, "tr-listened")?;
+        insert_listen_with_snapshot(&mut db, user, track_db_id, "tr-listened", &nanoid!(), 1)?;
+        let stray = db
+            .exec_mut(
+                QueryBuilder::insert()
+                    .element(&Listen {
+                        db_id: None,
+                        id: nanoid!(),
+                        play_id: nanoid!(),
+                        track_public_id: "tr-listened".to_string(),
+                        started_at_ms: 2,
+                        played_ms: Some(180_000),
+                        created_at_ms: 2,
+                    })
+                    .query(),
+            )?
+            .ids()[0];
+        crate::fixtures::connect(&mut db, stray, track_db_id)?;
+        crate::fixtures::connect(&mut db, stray, user)?;
+        crate::test_db::hang_in_users_library(&mut db, user, stray)?;
+
+        let summaries = list_summaries(&db, ListenOwners::All, None)?;
+
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(
+            summaries[0].count, 1,
+            "a listen past the root's members is not one"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn listen_persists_track_public_id_snapshot_on_recorded_listen() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user = create_user(&mut db)?;
@@ -484,6 +523,8 @@ mod tests {
                     .elements::<Listen>()
                     .search()
                     .from("listens")
+                    .where_()
+                    .distance(MEMBERS)
                     .query(),
             )?
             .try_into()?;

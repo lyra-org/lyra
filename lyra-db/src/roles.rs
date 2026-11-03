@@ -14,6 +14,8 @@ use agdb::{
     DbValue,
     QueryBuilder,
 };
+
+use crate::roots::MEMBERS;
 use nanoid::nanoid;
 use serde::{
     Deserialize,
@@ -137,6 +139,8 @@ pub fn get_by_name(db: &DbAny, name: &str) -> anyhow::Result<Option<Role>> {
                 .search()
                 .from("roles")
                 .where_()
+                .distance(MEMBERS)
+                .and()
                 .key("name")
                 .value(name)
                 .end_where()

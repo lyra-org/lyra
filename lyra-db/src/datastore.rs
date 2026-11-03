@@ -9,6 +9,8 @@ use agdb::{
     DbId,
     QueryBuilder,
 };
+
+use crate::roots::MEMBERS;
 use anyhow::anyhow;
 use nanoid::nanoid;
 use serde::Serialize;
@@ -166,6 +168,8 @@ pub fn sweep_expired_entries(db: &mut DbAny, now_ms: u64) -> anyhow::Result<usiz
                     .elements::<DataStore>()
                     .search()
                     .from("datastore")
+                    .where_()
+                    .distance(MEMBERS)
                     .query(),
             )?
             .try_into()?;
@@ -223,6 +227,8 @@ pub fn find_by_name(db: &DbAny, name: &str) -> anyhow::Result<Option<DataStore>>
                 .search()
                 .from("datastore")
                 .where_()
+                .distance(MEMBERS)
+                .and()
                 .key("name")
                 .value(name)
                 .end_where()
@@ -240,6 +246,8 @@ pub fn get_or_create(db: &mut DbAny, name: String) -> anyhow::Result<DataStore> 
                 .search()
                 .from("datastore")
                 .where_()
+                .distance(MEMBERS)
+                .and()
                 .key("name")
                 .value(&name)
                 .end_where()

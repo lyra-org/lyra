@@ -21,6 +21,8 @@ use agdb::{
     DbValue,
     QueryBuilder,
 };
+
+use crate::roots::MEMBERS;
 use serde::{
     Deserialize,
     Serialize,
@@ -382,6 +384,8 @@ pub fn get(db: &DbAny) -> anyhow::Result<Vec<PlaybackSession>> {
                 .elements::<PlaybackSession>()
                 .search()
                 .from("playback_sessions")
+                .where_()
+                .distance(MEMBERS)
                 .query(),
         )?
         .try_into()?;
@@ -536,6 +540,26 @@ mod tests {
                 None
             }
         })
+    }
+
+    #[test]
+    fn listing_sessions_stops_at_the_sessions_root() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user = create_test_user(&mut db)?;
+        let track = create_test_track(&mut db, "Song")?;
+        let member = create(&mut db, &make_session(1), track, user)?;
+        let stray = db
+            .exec_mut(QueryBuilder::insert().element(make_session(1)).query())?
+            .ids()[0];
+        crate::test_db::hang_in_users_library(&mut db, user, stray)?;
+
+        let ids = get(&db)?
+            .into_iter()
+            .map(|session| session.db_id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, vec![Some(member)]);
+        Ok(())
     }
 
     #[test]

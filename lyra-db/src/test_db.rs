@@ -202,6 +202,24 @@ pub fn stored_keys(db: &DbAny, db_id: DbId) -> anyhow::Result<HashSet<String>> {
         .collect::<Result<HashSet<String>, _>>()?)
 }
 
+/// Hangs `node` off a track in a library the user can read, so only a search that walks past the
+/// user into the catalog reaches it.
+pub fn hang_in_users_library(db: &mut DbAny, user_db_id: DbId, node: DbId) -> anyhow::Result<()> {
+    let library = insert_library(db, &nanoid!(), &format!("/tmp/lyra-{}", nanoid!()))?;
+    super::libraries::grant_access(
+        db,
+        user_db_id,
+        library,
+        super::libraries::AccessKind::ReadWrite,
+    )?;
+    let release = super::fixtures::insert_release(db, "Release")?;
+    let track = insert_track(db, "Track")?;
+    super::fixtures::connect(db, library, release)?;
+    super::fixtures::connect(db, release, track)?;
+    super::fixtures::connect(db, track, node)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

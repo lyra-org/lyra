@@ -9,6 +9,8 @@ use agdb::{
     DbId,
     QueryBuilder,
 };
+
+use crate::roots::MEMBERS;
 use serde::Serialize;
 
 use super::NodeId;
@@ -54,6 +56,8 @@ pub fn get_by_mixer_id(db: &DbAny, mixer_id: &str) -> anyhow::Result<Option<Mixe
                 .search()
                 .from("mixers")
                 .where_()
+                .distance(MEMBERS)
+                .and()
                 .key("mixer_id")
                 .value(mixer_id)
                 .query(),

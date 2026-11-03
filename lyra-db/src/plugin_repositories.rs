@@ -15,6 +15,8 @@ use agdb::{
     QueryBuilder,
 };
 
+use crate::roots::MEMBERS;
+
 /// A subscribed plugin repository. `origin` is the canonical repository
 /// URL and is unique across subscriptions.
 #[derive(DbElement, Clone, Debug)]
@@ -250,6 +252,8 @@ pub fn list(db: &impl super::DbAccess) -> anyhow::Result<Vec<PluginRepository>> 
                 .elements::<PluginRepository>()
                 .search()
                 .from("plugin_repositories")
+                .where_()
+                .distance(MEMBERS)
                 .query(),
         )?
         .try_into()?;
@@ -265,6 +269,8 @@ pub fn get_by_id(db: &impl super::DbAccess, id: &str) -> anyhow::Result<Option<P
                 .search()
                 .from("plugin_repositories")
                 .where_()
+                .distance(MEMBERS)
+                .and()
                 .key("id")
                 .value(id)
                 .end_where()
@@ -285,6 +291,8 @@ pub fn get_by_origin(
                 .search()
                 .from("plugin_repositories")
                 .where_()
+                .distance(MEMBERS)
+                .and()
                 .key("origin")
                 .value(origin)
                 .end_where()

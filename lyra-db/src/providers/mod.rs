@@ -11,6 +11,8 @@ use agdb::{
     DbId,
     QueryBuilder,
 };
+
+use crate::roots::MEMBERS;
 use serde::Serialize;
 
 use super::NodeId;
@@ -62,6 +64,8 @@ pub fn get_by_provider_id(db: &DbAny, provider_id: &str) -> anyhow::Result<Optio
                 .search()
                 .from("providers")
                 .where_()
+                .distance(MEMBERS)
+                .and()
                 .key("provider_id")
                 .value(provider_id)
                 .query(),

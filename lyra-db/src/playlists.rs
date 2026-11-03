@@ -14,6 +14,8 @@ use agdb::{
     DbValue,
     QueryBuilder,
 };
+
+use crate::roots::MEMBERS;
 use nanoid::nanoid;
 use serde::Serialize;
 
@@ -90,6 +92,8 @@ pub fn get(db: &DbAny) -> anyhow::Result<Vec<Playlist>> {
                 .elements::<Playlist>()
                 .search()
                 .from("playlists")
+                .where_()
+                .distance(MEMBERS)
                 .query(),
         )?
         .try_into()?;
@@ -576,6 +580,34 @@ mod tests {
             .ids()[0];
         roots::link(db, Root::Tracks, track_db_id)?;
         Ok(track_db_id)
+    }
+
+    #[test]
+    fn listing_playlists_stops_at_the_playlists_root() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = create_test_user(&mut db)?;
+        let playlist = |name: &str| Playlist {
+            db_id: None,
+            id: nanoid!(),
+            name: name.to_string(),
+            description: None,
+            is_public: None,
+            created_at_ms: None,
+            updated_at_ms: None,
+        };
+        let member = create(&mut db, &playlist("Member"), user_db_id)?;
+        let stray = db
+            .exec_mut(QueryBuilder::insert().element(playlist("Stray")).query())?
+            .ids()[0];
+        crate::test_db::hang_in_users_library(&mut db, user_db_id, stray)?;
+
+        let ids = get(&db)?
+            .into_iter()
+            .map(|playlist| playlist.db_id.map(DbId::from))
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, vec![Some(member)]);
+        Ok(())
     }
 
     #[test]
