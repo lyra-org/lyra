@@ -30,6 +30,8 @@ local IGNORED_ARTICLES = ""
 local MUSICBRAINZ_ARTIST = "musicbrainz:artist"
 
 local DEFAULT_SIMILAR_COUNT = 50
+local DEFAULT_TOP_COUNT = 50
+local MAX_TOP_COUNT = 500
 
 -- The artist an artist, album or song id names: the artist itself, or the first artist credited
 -- on the album or song. Fails with 70 for anything else, or an album or song without an artist.
@@ -79,6 +81,23 @@ local function similar_songs(req: Request, container: string, seed_types: { stri
 	end
 	local items = songs.list(found)
 	return response.ok(params, { [container] = if #items > 0 then { song = items } else response.EMPTY_OBJECT })
+end
+
+-- The artists `getTopSongs` asks for: the one `id` names, else every artist named `artist`, as
+-- a name can't tell namesakes apart.
+local function top_artist_ids(params: api.ApiQueryParams): { string }
+	local id = request.param(params, "id")
+	if id then
+		if not artists.query({ ids = { id }, limit = 1 }).items[1] then
+			return request.not_found("Artist")
+		end
+		return { id }
+	end
+	local ids: { string } = {}
+	for _, artist in artists.query({ name = request.required(params, "artist") }).items do
+		table.insert(ids, artist.id)
+	end
+	return ids
 end
 
 local module = {}
@@ -145,6 +164,26 @@ module.methods = {
 
 	getSimilarSongs2 = function(req: Request): ApiResponse
 		return similar_songs(req, "similarSongs2", { "Artist" }, "Artist")
+	end,
+
+	-- The caller's own most played songs of an artist; Lyra keeps no popularity beyond listens.
+	getTopSongs = function(req: Request): ApiResponse
+		local params = req.params
+		local artist_ids = top_artist_ids(params)
+		local count = request.count(params, "count", DEFAULT_TOP_COUNT, MAX_TOP_COUNT)
+		local items: { JsonObject } = {}
+		if #artist_ids > 0 and count > 0 then
+			items = songs.list(tracks.query({
+				artist_ids = artist_ids,
+				listened = true,
+				sort = {
+					{ key = "listen_count", order = "descending" },
+					{ key = "last_played_at", order = "descending" },
+				},
+				limit = count,
+			}).items)
+		end
+		return response.ok(params, { topSongs = if #items > 0 then { song = items } else response.EMPTY_OBJECT })
 	end,
 
 	getGenres = function(req: Request): ApiResponse

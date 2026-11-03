@@ -18,6 +18,7 @@ local EXTENSIONS = {
 	{ name = "apiKeyAuthentication", versions = { 1 } },
 	{ name = "formPost", versions = { 1 } },
 	{ name = "songLyrics", versions = { 1 } },
+	{ name = "topSongsByArtistId", versions = { 1 } },
 	{ name = "transcodeOffset", versions = { 1 } },
 }
 

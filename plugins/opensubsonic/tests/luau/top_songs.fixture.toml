@@ -1,0 +1,207 @@
+run_as = "listener"
+
+# The listener and the friend see "Amy Album" (Amy) holding A1 to A4, "Namesake" (another Amy)
+# holding N1, and "Bob Album" (Bob) holding B1. "Secret" (Amy, Hal), in a library nobody is
+# granted, holds H1. The listener played A1 three times, N1 twice, A2 and A3 once each (A2 last),
+# B1 once and H1 four times; the friend played A4 five times.
+
+[[users]]
+key = "listener"
+
+[[users]]
+key = "friend"
+
+[[api_keys]]
+key = "listener_key"
+user = "listener"
+
+[[api_keys]]
+key = "friend_key"
+user = "friend"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener", "friend"]
+
+[[libraries]]
+key = "hidden"
+name = "Hidden"
+
+[[artists]]
+key = "amy"
+name = "Amy"
+
+[[artists]]
+key = "namesake"
+name = "Amy"
+
+[[artists]]
+key = "bob"
+name = "Bob"
+
+[[artists]]
+key = "hal"
+name = "Hal"
+
+[[artists]]
+key = "cid"
+name = "Cid"
+
+[[releases]]
+key = "amy_album"
+title = "Amy Album"
+library = "music"
+artists = ["amy"]
+
+[[releases]]
+key = "namesake_album"
+title = "Namesake"
+library = "music"
+artists = ["namesake"]
+
+[[releases]]
+key = "bob_album"
+title = "Bob Album"
+library = "music"
+artists = ["bob", "cid"]
+
+[[releases]]
+key = "secret"
+title = "Secret"
+library = "hidden"
+artists = ["amy", "hal"]
+
+[[tracks]]
+key = "a1"
+title = "A1"
+release = "amy_album"
+track = 1
+artists = ["amy"]
+
+[[tracks]]
+key = "a2"
+title = "A2"
+release = "amy_album"
+track = 2
+artists = ["amy"]
+
+[[tracks]]
+key = "a3"
+title = "A3"
+release = "amy_album"
+track = 3
+artists = ["amy"]
+
+[[tracks]]
+key = "a4"
+title = "A4"
+release = "amy_album"
+track = 4
+artists = ["amy"]
+
+[[tracks]]
+key = "n1"
+title = "N1"
+release = "namesake_album"
+track = 1
+artists = ["namesake"]
+
+[[tracks]]
+key = "b1"
+title = "B1"
+release = "bob_album"
+track = 1
+artists = ["bob"]
+
+[[tracks]]
+key = "h1"
+title = "H1"
+release = "secret"
+track = 1
+artists = ["amy"]
+
+[[listens]]
+user = "listener"
+track = "a1"
+at = 1700000000000
+
+[[listens]]
+user = "listener"
+track = "a1"
+at = 1700000100000
+
+[[listens]]
+user = "listener"
+track = "a1"
+at = 1700000200000
+
+[[listens]]
+user = "listener"
+track = "n1"
+at = 1700000300000
+
+[[listens]]
+user = "listener"
+track = "n1"
+at = 1700000400000
+
+[[listens]]
+user = "listener"
+track = "a2"
+at = 1700000600000
+
+[[listens]]
+user = "listener"
+track = "a3"
+at = 1700000500000
+
+[[listens]]
+user = "listener"
+track = "b1"
+at = 1700000000000
+
+[[listens]]
+user = "listener"
+track = "h1"
+at = 1700000000000
+
+[[listens]]
+user = "listener"
+track = "h1"
+at = 1700000100000
+
+[[listens]]
+user = "listener"
+track = "h1"
+at = 1700000200000
+
+[[listens]]
+user = "listener"
+track = "h1"
+at = 1700000300000
+
+[[listens]]
+user = "friend"
+track = "a4"
+at = 1700000000000
+
+[[listens]]
+user = "friend"
+track = "a4"
+at = 1700000100000
+
+[[listens]]
+user = "friend"
+track = "a4"
+at = 1700000200000
+
+[[listens]]
+user = "friend"
+track = "a4"
+at = 1700000300000
+
+[[listens]]
+user = "friend"
+track = "a4"
+at = 1700000400000

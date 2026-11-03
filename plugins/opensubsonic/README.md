@@ -27,6 +27,12 @@ Saving an empty queue deletes only that client's queue, after which `getPlayQueu
 recent queue of another client, if there is one. Other servers keep one queue per user, which an
 empty save clears.
 
+## Top songs
+
+An artist's top songs (`getTopSongs`) are your own most played songs of that artist, from your
+listens alone, so an artist you never played has none. A name finds every artist of that name;
+clients supporting `topSongsByArtistId` can name one artist by its ID instead.
+
 ## Downloading
 
 Clients download songs as their original files, which takes the download permission on your Lyra
