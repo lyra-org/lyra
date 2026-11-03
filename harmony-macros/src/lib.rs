@@ -704,7 +704,7 @@ pub fn userdata_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
         let method_argument_names = std::iter::once(lit_str("self", fn_name.span()))
             .chain(named_arguments(&arguments).map(|param| param.name_lit.clone()))
             .collect::<Vec<_>>();
-        let spec_argument_names = named_arguments(&arguments).map(|param| &param.name_lit);
+        let spec_argument_names = spec_argument_names(&options, &arguments, fn_name.span());
         method_specs.push(quote! {
             ::harmony_core::FunctionSpec::new(#fn_name_lit)
                 #(.arg_name(#spec_argument_names))*
@@ -975,6 +975,26 @@ fn luau_arguments<'a>(parameters: &'a [Parameter<'a>]) -> Vec<&'a MethodParamete
         .collect()
 }
 
+/// The names a function's spec lists for its arguments: the documented ones when its `args`
+/// documents them, so a function reading its arguments itself through a `Variadic` still names
+/// them, else those Luau labels in errors.
+fn spec_argument_names(
+    options: &HarmonyMethodOptions,
+    arguments: &[&MethodParameter<'_>],
+    span: Span,
+) -> Vec<LitStr> {
+    match &options.args {
+        Some(documented) => documented
+            .iter()
+            .filter(|argument| !is_variadic_type(&argument.ty))
+            .map(|argument| lit_str(&argument.name, span))
+            .collect(),
+        None => named_arguments(arguments)
+            .map(|argument| argument.name_lit.clone())
+            .collect(),
+    }
+}
+
 /// The arguments Luau labels in errors by name; a trailing `Variadic` has none.
 fn named_arguments<'a>(
     arguments: &'a [&'a MethodParameter<'a>],
@@ -1168,7 +1188,7 @@ fn module_impl(mut ast: ItemImpl, options: ModuleOptions) -> syn::Result<TokenSt
         let call_arguments = call_argument_tokens(&parameters);
         let call = quote! { <#self_ty>::#fn_name(#(#call_arguments),*) };
         let body = call_body(kind, &call, &fn_item.sig.output);
-        let argument_names = named_arguments(&arguments).map(|argument| &argument.name_lit);
+        let argument_names = spec_argument_names(&method_options, &arguments, fn_name.span());
 
         let spec = match kind {
             CallKind::Sync => quote! {
