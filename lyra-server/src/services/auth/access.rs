@@ -461,6 +461,78 @@ mod tests {
     }
 
     #[test]
+    fn activity_on_entities_never_reveals_a_library_the_viewer_lacks() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let shown = lyra_db::test_db::insert_library(&mut db, "Shown", "/access/activity-shown")?;
+        let hidden =
+            lyra_db::test_db::insert_library(&mut db, "Hidden", "/access/activity-hidden")?;
+        let mut catalog = |library| -> anyhow::Result<(DbId, DbId, DbId)> {
+            let release = lyra_db::fixtures::insert_release(&mut db, "Release")?;
+            let track = insert_track(&mut db, "Song")?;
+            let artist = lyra_db::fixtures::insert_artist(&mut db, "Artist")?;
+            connect(&mut db, library, release)?;
+            connect(&mut db, release, track)?;
+            lyra_db::fixtures::connect_credit(
+                &mut db,
+                release,
+                artist,
+                lyra_db::CreditType::Artist,
+                None,
+                0,
+            )?;
+            Ok((release, track, artist))
+        };
+        let shown_entities = catalog(shown)?;
+        let hidden_entities = catalog(hidden)?;
+        let shown_id = lyra_db::libraries::get_by_id(&db, shown)?
+            .expect("library exists")
+            .id;
+        let listener = create_user(&mut db, "listener")?;
+        let insider = create_user(&mut db, "insider")?;
+        lyra_db::libraries::grant_access(
+            &mut db,
+            insider,
+            hidden,
+            lyra_db::libraries::AccessKind::ReadWrite,
+        )?;
+        for user in [listener, insider] {
+            for (release, track, _) in [shown_entities, hidden_entities] {
+                for target in [release, track] {
+                    lyra_db::favorites::add(
+                        &mut db,
+                        user,
+                        target,
+                        lyra_db::favorites::FavoriteKind::Track,
+                        1,
+                    )?;
+                    lyra_db::ratings::upsert(
+                        &mut db,
+                        user,
+                        target,
+                        lyra_db::ratings::RatingValue::new(5).expect("valid rating"),
+                        1,
+                    )?;
+                }
+                lyra_db::fixtures::insert_listen(&mut db, user, track, 1)?;
+                lyra_db::tags::create(&mut db, user, track, "mood", "blue", 1)?;
+            }
+        }
+        let principal = Principal::for_user(&db, listener, Vec::new(), HashSet::from([shown_id]));
+
+        let (release, track, artist) = shown_entities;
+        for entity in [release, track, artist] {
+            assert!(entity_accessible(&db, &principal, entity)?);
+        }
+        let (release, track, artist) = hidden_entities;
+        for entity in [release, track, artist] {
+            assert!(!entity_accessible(&db, &principal, entity)?);
+            assert!(libraries_for_entity(&db, &principal, entity)?.is_empty());
+        }
+        assert!(!entity_accessible(&db, &principal, listener)?);
+        Ok(())
+    }
+
+    #[test]
     fn library_resolution_enforces_access_for_users_and_admins() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let owner_db_id = create_user(&mut db, "owner")?;

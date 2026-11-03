@@ -213,21 +213,34 @@ pub fn find_node_id_accessible_to_user(
     Ok(found)
 }
 
+/// The search climbing from a node to the libraries holding it. It stops at users too: nothing in
+/// a library leads to a user, and a user's listens, sessions, tags and playlists all point at
+/// them, so climbing past a user who favorited or rated the node would walk their whole history.
+macro_rules! holders_search {
+    ($search:expr, $node_id:expr) => {
+        $search
+            .to($node_id)
+            .where_()
+            .not_beyond()
+            .where_()
+            .key("db_element_id")
+            .value("Library")
+            .or()
+            .key("db_element_id")
+            .value("User")
+            .end_where()
+            .query()
+    };
+}
+
 /// The libraries holding the node, by database id, so the first is the one the server picks for
 /// an entity in several.
 pub fn get_for_entity(db: &impl super::DbAccess, node_id: DbId) -> anyhow::Result<Vec<Library>> {
     let mut libraries: Vec<Library> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<Library>()
-                .search()
-                .to(node_id)
-                .where_()
-                .not_beyond()
-                .key("db_element_id")
-                .value("Library")
-                .query(),
-        )?
+        .exec(holders_search!(
+            QueryBuilder::select().elements::<Library>().search(),
+            node_id
+        ))?
         .try_into()?;
     libraries.sort_by_key(|library| library.db_id.map(|id| id.0));
     Ok(libraries)
@@ -859,6 +872,8 @@ fn read_inbound_access_edges(
             .to(library_db_id)
             .where_()
             .edge()
+            .and()
+            .distance(CountComparison::Equal(1))
             .end_where()
             .query(),
     )?;
@@ -899,6 +914,58 @@ mod tests {
         let mut expected = vec![Some(first), Some(second)];
         expected.sort_by_key(|id| id.map(|id| id.0));
         assert_eq!(libraries, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn finding_a_nodes_libraries_does_not_walk_the_history_of_users_who_favorited_it()
+    -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let library = crate::test_db::insert_library(&mut db, "Music", "/tmp/lyra-holders")?;
+        let release = crate::fixtures::insert_release(&mut db, "Release")?;
+        let track = crate::fixtures::insert_track(&mut db, "Song")?;
+        let other = crate::fixtures::insert_track(&mut db, "Other")?;
+        crate::fixtures::connect(&mut db, library, release)?;
+        crate::fixtures::connect(&mut db, release, track)?;
+        crate::fixtures::connect(&mut db, release, other)?;
+        let user = crate::users::create(&mut db, &crate::fixtures::test_user("listener")?)?;
+        crate::favorites::add(
+            &mut db,
+            user,
+            track,
+            crate::favorites::FavoriteKind::Track,
+            1,
+        )?;
+        crate::ratings::upsert(
+            &mut db,
+            user,
+            track,
+            crate::ratings::RatingValue::new(4).expect("valid rating"),
+            1,
+        )?;
+        crate::fixtures::insert_listen(&mut db, user, track, 1)?;
+        let visited = |db: &DbAny| -> anyhow::Result<usize> {
+            Ok(db
+                .exec(holders_search!(QueryBuilder::search(), track))?
+                .elements
+                .len())
+        };
+
+        let before = visited(&db)?;
+        for started_at_ms in 0..200 {
+            crate::fixtures::insert_listen(&mut db, user, other, started_at_ms)?;
+        }
+
+        assert_eq!(
+            visited(&db)?,
+            before,
+            "the user's other listens stay out of the search"
+        );
+        let libraries = get_for_entity(&db, track)?
+            .into_iter()
+            .map(|library| library.db_id)
+            .collect::<Vec<_>>();
+        assert_eq!(libraries, vec![Some(library)]);
         Ok(())
     }
 
