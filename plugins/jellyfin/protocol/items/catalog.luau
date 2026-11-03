@@ -17,6 +17,8 @@ local releases = require("@lyra/releases")
 local tags_module = require("@lyra/tags")
 local tracks = require("@lyra/tracks")
 
+local serde = require("@harmony/serde")
+
 local constants = require("../../constants")
 local libraries = require("@lyra/libraries")
 local playlist_access = require("../playlist_access")
@@ -203,6 +205,28 @@ end
 
 function module.build_item_query_result(items: { ItemInfo }, total_count: number, start_index: number): JsonValue
 	return results.build_query_result(module.items_to_json(items), total_count, start_index)
+end
+
+-- Writes the query result `build_item_query_result` builds, for the items `each_batch` hands over a
+-- batch at a time before returning the total and the start, so the result never exists whole.
+function module.write_item_query_result(
+	writer: api.ApiStreamWriter,
+	each_batch: (emit: ({ ItemInfo }) -> ()) -> (number, number)
+)
+	local encoder = serde.json.encoder()
+	encoder:begin_object()
+	encoder:begin_array("Items")
+	local total_count, start_index = each_batch(function(items)
+		encoder:items(module.items_to_json(items))
+		items = nil :: any
+		writer:write(encoder:flush())
+	end)
+	encoder:end_array()
+	-- In key order, as the whole result encodes.
+	encoder:field("StartIndex", start_index)
+	encoder:field("TotalRecordCount", total_count)
+	encoder:end_object()
+	writer:write(encoder:finish())
 end
 
 function helpers.resolve_cover_info(release_id: string?, context: ItemContext?): artwork.ResolvedCoverInfo?

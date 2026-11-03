@@ -793,8 +793,11 @@ local function respond_with_items_listing(ctx: ApiContext, principal: session.Pr
 		return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
 	end
 
-	local items, total_count, start_index = listing.list_items(options)
-	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
+	return api.response.stream(200, function(writer)
+		catalog.write_item_query_result(writer, function(emit)
+			return listing.each_item_batch(options, emit)
+		end)
+	end, { ["content-type"] = "application/json" })
 end
 
 api.get(P .. "/Users/{userId}/Items", function(ctx: ApiContext)

@@ -35,8 +35,13 @@ type Playlist = playlists.Playlist
 -- Upstream's default page for `/Items/Latest`.
 local LATEST_DEFAULT_LIMIT = 20
 
+-- Items fetched and realized at a time, so a listing of any size streams in bounded memory.
+local BATCH_SIZE = 250
+
 -- One item type of a listing: its stubs for a page, and how many it has in all.
 type Source = (offset: number, limit: number?) -> ({ ItemInfo }, number)
+-- Takes a listing's stubs, a batch at a time, in order.
+type Emit = ({ ItemInfo }) -> ()
 
 local module = {}
 
@@ -250,22 +255,41 @@ local function playlist_source(options: ItemsQueryOptions, scope: Scope): Source
 	end
 end
 
--- Pages across the sources as if they were one list, in source order.
-local function page_sources(sources: { Source }, start_index: number, limit: number?): ({ ItemInfo }, number)
-	local stubs: { ItemInfo } = {}
+-- Pages across the sources as if they were one list, in source order, handing `emit` the page a
+-- batch at a time; returns the total.
+local function page_sources(sources: { Source }, start_index: number, limit: number?, emit: Emit): number
 	local total = 0
 	local skip = start_index
 	local remaining = limit
 	for _, source in sources do
-		local items, count = source(skip, remaining)
-		table.move(items, 1, #items, #stubs + 1, stubs)
+		local offset = skip
+		local wanted = if remaining ~= nil then math.min(BATCH_SIZE, remaining) else BATCH_SIZE
+		local items, count = source(offset, wanted)
 		total += count
-		skip = math.max(0, skip - count)
-		if remaining ~= nil then
-			remaining = math.max(0, remaining - #items)
+		while true do
+			if #items > 0 then
+				emit(items)
+			end
+			if remaining ~= nil then
+				remaining = math.max(0, remaining - #items)
+			end
+			offset += #items
+			if #items < wanted or remaining == 0 or offset >= count then
+				break
+			end
+			wanted = if remaining ~= nil then math.min(BATCH_SIZE, remaining) else BATCH_SIZE
+			items = (source(offset, wanted))
 		end
+		skip = math.max(0, skip - count)
 	end
-	return stubs, total
+	return total
+end
+
+-- Hands `emit` the stubs a batch at a time.
+local function emit_in_batches(stubs: { ItemInfo }, emit: Emit)
+	for start = 1, #stubs, BATCH_SIZE do
+		emit(table.move(stubs, start, math.min(start + BATCH_SIZE - 1, #stubs), 1, {}))
+	end
 end
 
 -- `Ids` with no `SortBy` answers in request order, which only the listing knows.
@@ -424,10 +448,11 @@ local function playlist_children(options: ItemsQueryOptions, scope: Scope): Item
 	return children
 end
 
--- Lists the catalog items and playlists `options` asks for, paged as one list. `Ids` without
--- `SortBy` answer in request order; a playlist's children keep playlist order also when their
--- `SortBy` has no Lyra meaning.
-local function list(options: ItemsQueryOptions, playlist_order: boolean): ({ ItemInfo }, number, number)
+-- Lists the catalog items and playlists `options` asks for, paged as one list, handing `emit` the
+-- stubs a batch at a time; returns the total and the start. `Ids` without `SortBy` answer in
+-- request order; a playlist's children keep playlist order also when their `SortBy` has no Lyra
+-- meaning.
+local function list(options: ItemsQueryOptions, playlist_order: boolean, emit: Emit): (number, number)
 	local scope = lookups.scope(options.parent_id)
 	local sources: { Source } = {}
 	local function add(source: Source?)
@@ -449,9 +474,11 @@ local function list(options: ItemsQueryOptions, playlist_order: boolean): ({ Ite
 	end
 
 	local extras = named_extras(options, scope)
-	local stubs: { ItemInfo }, total: number
+	local total: number
 	if #options.ids > 0 and (if playlist_order then not sorted(options) else #options.sort_by == 0) then
+		local stubs
 		stubs, total = in_request_order(sources, options, extras)
+		emit_in_batches(stubs, emit)
 	else
 		-- Named genres and libraries follow the catalog items, in request order.
 		if #extras > 0 then
@@ -459,12 +486,14 @@ local function list(options: ItemsQueryOptions, playlist_order: boolean): ({ Ite
 				return results.paginate_items(extras, offset, limit), #extras
 			end)
 		end
-		stubs, total = page_sources(sources, options.start_index, options.limit)
+		total = page_sources(sources, options.start_index, options.limit, emit)
 	end
-	return catalog.realize(stubs, options), total, options.start_index
+	return total, options.start_index
 end
 
-function module.list_items(options: ItemsQueryOptions): ({ ItemInfo }, number, number)
+-- Lists the items `options` asks for as `list_items` does, handing `emit` the realized items a batch
+-- at a time, in order; returns the total and the start.
+function module.each_item_batch(options: ItemsQueryOptions, emit: ({ ItemInfo }) -> ()): (number, number)
 	-- As upstream, the playlists view lists every playlist the caller sees, whatever type is named.
 	if constants.is_playlists_folder_id(options.parent_id) then
 		options = table.clone(options)
@@ -482,19 +511,36 @@ function module.list_items(options: ItemsQueryOptions): ({ ItemInfo }, number, n
 			end
 		end
 		if #wanted == 0 then
-			return empty(options)
+			return 0, options.start_index
 		end
 		options = table.clone(options)
 		options.include_item_types = wanted
 	end
+	local playlist_order = false
 	if scope.entity_type == "Playlist" then
 		local children = playlist_children(options, scope)
 		if not children then
-			return empty(options)
+			return 0, options.start_index
 		end
-		return list(children, true)
+		options = children
+		playlist_order = true
 	end
-	return list(options, false)
+	local realize_with = options
+	return list(options, playlist_order, function(stubs)
+		local items = catalog.realize(stubs, realize_with)
+		stubs = nil :: any
+		if #items > 0 then
+			emit(items)
+		end
+	end)
+end
+
+function module.list_items(options: ItemsQueryOptions): ({ ItemInfo }, number, number)
+	local items: { ItemInfo } = {}
+	local total, start_index = module.each_item_batch(options, function(batch)
+		table.move(batch, 1, #batch, #items + 1, items)
+	end)
+	return items, total, start_index
 end
 
 -- The newest albums by the date they were added. As upstream for music, `IsPlayed` and with it
