@@ -13,7 +13,10 @@ use harmony_luau::{
 };
 use serde::Serialize;
 
-use crate::plugins::db::Db;
+use crate::{
+    plugins::db::Db,
+    services::auth::resolve_principal,
+};
 
 #[derive(Clone, Debug, Serialize)]
 struct PublicUser {
@@ -21,6 +24,7 @@ struct PublicUser {
     username: String,
     role: Option<String>,
     permissions: Vec<lyra_db::Permission>,
+    library_ids: Vec<String>,
 }
 
 pub(crate) struct UsersModule;
@@ -30,21 +34,22 @@ impl UsersModule {
     #[harmony(returns(Vec<PublicUser>))]
     async fn list(#[context] db: Db) -> luau::runtime::Result<luau::Value> {
         let db = db.read().await;
-        let users = lyra_db::users::get(&db)?
+        let libraries = lyra_db::libraries::get(&*db)?;
+        let users = lyra_db::users::get(&*db)?
             .into_iter()
             .filter_map(|user| {
                 let user_db_id = user.db_id?;
-                let role = lyra_db::roles::get_role_for_user(&db, user_db_id)
-                    .ok()
-                    .flatten();
+                let principal = resolve_principal(&db, user_db_id, user);
                 Some(PublicUser {
-                    user_id: user.id,
-                    username: user.username,
-                    permissions: role
-                        .as_ref()
-                        .map(|role| role.permissions.clone())
-                        .unwrap_or_default(),
-                    role: role.map(|role| role.name),
+                    library_ids: libraries
+                        .iter()
+                        .filter(|library| principal.accessible_library_ids.contains(&library.id))
+                        .map(|library| library.id.clone())
+                        .collect(),
+                    user_id: principal.user_public_id,
+                    username: principal.username,
+                    permissions: principal.permissions,
+                    role: principal.role_name,
                 })
             })
             .collect::<Vec<_>>();
@@ -81,6 +86,13 @@ impl DescribeInterface for PublicUser {
                 name: "permissions",
                 ty: Vec::<String>::luau_type(),
                 description: None,
+            },
+            FieldDescriptor {
+                name: "library_ids",
+                ty: Vec::<String>::luau_type(),
+                description: Some(
+                    "Public ids of the libraries the user can see, in creation order; every library for admins.",
+                ),
             },
         ]);
         descriptor
