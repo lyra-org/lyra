@@ -31,3 +31,13 @@ empty save clears.
 
 Clients download songs as their original files, which takes the download permission on your Lyra
 account. Without it, a download fails with error 50, while streaming still works.
+
+## Sonic similarity
+
+Clients that support the `sonicSimilarity` extension can find songs that sound like a song
+(`getSonicSimilarTracks`) and paths of songs from one song to another (`findSonicPath`). Lyra
+serves them through a mixer, such as AudioMuse AI's: set the plugin's **Mixer** setting to the
+mixer's ID, such as `audiomuse`. The extension is offered only while that mixer is enabled and finds
+both similar songs and paths. Leaving the setting empty turns it off.
+
+A song the mixer gave no similarity shows `-1`, as AudioMuse AI's paths do.

@@ -239,6 +239,11 @@ function module.failed(query: ApiQueryParams, err: SubsonicError, http_status: n
 	return render(query, envelope("failed", { error = err :: any }), http_status or 200)
 end
 
+-- The failure for a method the plugin doesn't serve.
+function module.unknown_method(query: ApiQueryParams, name: string): ApiResponse
+	return module.failed(query, module.error(0, `Unknown method: {name}`), 404)
+end
+
 -- A failure in XML, whatever format the request asks for.
 function module.failed_xml(err: SubsonicError): ApiResponse
 	return render({}, envelope("failed", { error = err :: any }), 200)

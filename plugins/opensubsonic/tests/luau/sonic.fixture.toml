@@ -1,0 +1,64 @@
+run_as = "listener"
+
+# "Solo" holds S1 to S5. "Secret", in a library the listener can't see, holds H1.
+
+[[users]]
+key = "listener"
+
+[[api_keys]]
+key = "listener_key"
+user = "listener"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener"]
+
+[[libraries]]
+key = "hidden"
+name = "Hidden"
+
+[[releases]]
+key = "solo"
+title = "Solo"
+library = "music"
+
+[[releases]]
+key = "secret"
+title = "Secret"
+library = "hidden"
+
+[[tracks]]
+key = "s1"
+title = "S1"
+release = "solo"
+track = 1
+
+[[tracks]]
+key = "s2"
+title = "S2"
+release = "solo"
+track = 2
+
+[[tracks]]
+key = "s3"
+title = "S3"
+release = "solo"
+track = 3
+
+[[tracks]]
+key = "s4"
+title = "S4"
+release = "solo"
+track = 4
+
+[[tracks]]
+key = "s5"
+title = "S5"
+release = "solo"
+track = 5
+
+[[tracks]]
+key = "h1"
+title = "H1"
+release = "secret"

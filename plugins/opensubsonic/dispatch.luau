@@ -17,6 +17,7 @@ local request = require("./protocol/request")
 local response = require("./protocol/response")
 local scanning = require("./endpoints/scanning")
 local search = require("./endpoints/search")
+local sonic = require("./endpoints/sonic")
 local system = require("./endpoints/system")
 local users = require("./endpoints/users")
 
@@ -40,6 +41,7 @@ for _, family: { [string]: Method } in
 		annotation.methods,
 		users.methods,
 		bookmarks.methods,
+		sonic.methods,
 	} :: { { [string]: Method } }
 do
 	for name, method in family do
@@ -61,7 +63,7 @@ function module.dispatch(ctx: ApiContext): ApiResponse
 
 	local method = methods[name]
 	if not method then
-		return response.failed(params, response.error(0, `Unknown method: {name}`), 404)
+		return response.unknown_method(params, name)
 	end
 
 	local function failed(err: response.SubsonicError): ApiResponse

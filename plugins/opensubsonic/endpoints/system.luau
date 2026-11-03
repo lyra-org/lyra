@@ -8,6 +8,7 @@ local api = require("@lyra/api")
 
 local request = require("../protocol/request")
 local response = require("../protocol/response")
+local sonic = require("./sonic")
 
 type ApiQueryParams = api.ApiQueryParams
 type ApiResponse = api.ApiResponse
@@ -20,10 +21,17 @@ local EXTENSIONS = {
 	{ name = "transcodeOffset", versions = { 1 } },
 }
 
+local SONIC_SIMILARITY = { name = "sonicSimilarity", versions = { 1 } }
+
 -- Methods served without authentication.
 local public_methods: { [string]: (params: ApiQueryParams) -> ApiResponse } = {
 	getOpenSubsonicExtensions = function(params: ApiQueryParams): ApiResponse
-		return response.ok(params, { openSubsonicExtensions = EXTENSIONS })
+		local extensions = EXTENSIONS
+		if sonic.available() then
+			extensions = table.clone(EXTENSIONS)
+			table.insert(extensions, SONIC_SIMILARITY)
+		end
+		return response.ok(params, { openSubsonicExtensions = extensions })
 	end,
 }
 
