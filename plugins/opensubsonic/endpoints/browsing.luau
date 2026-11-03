@@ -6,6 +6,7 @@
 
 local api = require("@lyra/api")
 local artists = require("@lyra/artists")
+local genres = require("@lyra/genres")
 local releases = require("@lyra/releases")
 local tracks = require("@lyra/tracks")
 
@@ -62,6 +63,16 @@ module.methods = {
 			artist.album = albums.list(artist_albums)
 		end
 		return response.ok(req.params, { artist = artist })
+	end,
+
+	getGenres = function(req: Request): ApiResponse
+		local items: { JsonObject } = {}
+		for _, genre in genres.query({ sort = { { key = "name" } } }).items do
+			local item: JsonObject =
+				{ value = genre.name, songCount = genre.track_count, albumCount = genre.release_count }
+			table.insert(items, item)
+		end
+		return response.ok(req.params, { genres = if #items > 0 then { genre = items } else response.EMPTY_OBJECT })
 	end,
 
 	getAlbum = function(req: Request): ApiResponse
