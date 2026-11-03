@@ -10,6 +10,9 @@ local json = serde.json
 local metadata = require("@lyra/metadata")
 local plugins = require("@lyra/plugins")
 
+local albums = require("@self/resolution/albums")
+local json_helpers = require("@self/resolution/json_helpers")
+
 local ET = metadata.EntityType
 local provider = metadata.Provider.new("theaudiodb", { display_name = "TheAudioDB" })
 
@@ -19,7 +22,6 @@ local DEFAULT_API_KEY = "123"
 
 type JsonValue = serde.JsonValue
 type JsonObject = { [string]: JsonValue }
-type JsonArray = { JsonValue }
 type HttpRequestOptions = http.HttpRequestOptions
 type SearchResultItem = { [string]: JsonValue }
 type ProviderCoverCandidate = metadata.ProviderCoverCandidate
@@ -43,14 +45,12 @@ type ArtistRefreshContext = {
 }
 type SearchCandidatesFn = (string, string?) -> { JsonObject }
 
-local function trim(value: string?): string
-	if value == nil then
-		return ""
-	end
-	local trimmed = string.gsub(value, "^%s+", "")
-	trimmed = string.gsub(trimmed, "%s+$", "")
-	return trimmed
-end
+local as_json_array = json_helpers.as_json_array
+local as_json_object = json_helpers.as_json_object
+local first_non_empty_field = json_helpers.first_non_empty_field
+local json_number_field = json_helpers.json_number_field
+local json_string_field = json_helpers.json_string_field
+local trim = json_helpers.trim
 
 local config = plugins.declare_settings(function(builder)
 	builder:group("api", "API")
@@ -71,63 +71,6 @@ http.set_rate_limit({
 	max_retries = 2,
 	backoff_ms = 2500,
 })
-
-local function as_json_object(value: JsonValue?): JsonObject?
-	if type(value) ~= "table" then
-		return nil
-	end
-	local encoded = json.encode(value)
-	if string.sub(encoded, 1, 1) ~= "{" then
-		return nil
-	end
-	return value :: JsonObject
-end
-
-local function as_json_array(value: JsonValue?): JsonArray?
-	if type(value) ~= "table" then
-		return nil
-	end
-	local encoded = json.encode(value)
-	if string.sub(encoded, 1, 1) ~= "[" then
-		return nil
-	end
-	return value :: JsonArray
-end
-
-local function json_string_field(value: JsonObject?, key: string): string?
-	local field = if value then value[key] else nil
-	if type(field) == "string" then
-		local trimmed = trim(field)
-		if trimmed ~= "" then
-			return trimmed
-		end
-	end
-	return nil
-end
-
-local function json_number_field(value: JsonObject?, key: string): number?
-	local field = if value then value[key] else nil
-	if type(field) == "number" then
-		return field
-	end
-	if type(field) == "string" then
-		local parsed = tonumber(trim(field))
-		if parsed ~= nil then
-			return parsed
-		end
-	end
-	return nil
-end
-
-local function first_non_empty_field(value: JsonObject?, keys: { string }): string?
-	for _, key in keys do
-		local field = json_string_field(value, key)
-		if field ~= nil then
-			return field
-		end
-	end
-	return nil
-end
 
 local function json_object_list(root: JsonObject?, key: string): { JsonObject }
 	local items = if root then as_json_array(root[key]) else nil
@@ -425,14 +368,6 @@ local function push_unique_object(
 	table.insert(results, value)
 end
 
-local function genre_values(genre_name: string?): JsonArray?
-	local genre = trim(genre_name)
-	if genre == "" then
-		return nil
-	end
-	return { genre :: JsonValue }
-end
-
 local function preferred_cover_url(item: JsonObject, keys: { string }): string?
 	return first_non_empty_field(item, keys)
 end
@@ -599,10 +534,6 @@ local function search_candidates(query: string, searcher: SearchCandidatesFn, id
 	return results
 end
 
-local function album_description(album: JsonObject): string?
-	return first_non_empty_field(album, { "strDescription", "strDescriptionEN" })
-end
-
 local function release_search_candidates(query: string): { JsonObject }
 	return search_candidates(query, search_albums, ALBUM_ID_KEYS)
 end
@@ -629,11 +560,11 @@ local function release_search_results(query: string): { SearchResultItem }
 		if release_date ~= nil then
 			item.release_date = release_date
 		end
-		local genres = genre_values(json_string_field(album, "strGenre"))
+		local genres = albums.genre_values(json_string_field(album, "strGenre"))
 		if genres ~= nil then
 			item.genres = genres
 		end
-		local description = album_description(album)
+		local description = albums.description(album)
 		if description ~= nil then
 			item.description = description
 		end
@@ -996,19 +927,7 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 		return nil
 	end
 
-	local release_layer = provider:layer(release_id)
-	release_layer:set_id("album_id", album_id)
-
-	local genres = genre_values(json_string_field(album, "strGenre"))
-	if genres ~= nil then
-		release_layer:set_field("genres", genres)
-	end
-	local description = album_description(album)
-	if description ~= nil then
-		release_layer:set_field("description", description)
-	end
-
-	release_layer:save()
+	albums.save_release_layer(provider, release_id, album_id, album)
 
 	local artist_id = matching_artist_id(ctx.artists, json_string_field(album, "strArtist"))
 	local audiodb_artist_id = json_string_field(album, "idArtist")
