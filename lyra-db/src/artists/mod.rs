@@ -164,26 +164,41 @@ pub fn get(db: &impl super::DbAccess, owner_db_id: DbId) -> anyhow::Result<Vec<A
     Ok(artists)
 }
 
-/// Returns all unique artists belonging to a library via its releases.
+/// The artists credited on the library's releases or on their tracks, once each.
 pub fn get_by_library(db: &DbAny, library_id: DbId) -> anyhow::Result<Vec<Artist>> {
     let release_ids: Vec<DbId> = super::releases::get_direct(db, library_id)?
         .into_iter()
-        .filter_map(|a| a.db_id.map(Into::into))
+        .filter_map(|release| release.db_id.map(Into::into))
         .collect();
-    if release_ids.is_empty() {
-        return Ok(Vec::new());
+    get_by_releases(db, &release_ids)
+}
+
+/// The artists credited on the releases or on their tracks, once each: each release's own
+/// artists in credit order, then its tracks' artists not credited before.
+pub fn get_by_releases(db: &DbAny, release_db_ids: &[DbId]) -> anyhow::Result<Vec<Artist>> {
+    let release_db_ids = super::dedup_positive_ids(release_db_ids);
+    let mut tracks_by_release = super::tracks::get_direct_many(db, &release_db_ids)?;
+    let mut owners = Vec::new();
+    for release_db_id in &release_db_ids {
+        owners.push(*release_db_id);
+        owners.extend(
+            tracks_by_release
+                .remove(release_db_id)
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|track| track.db_id.map(DbId::from)),
+        );
     }
-    let artist_map = get_many_by_owner(db, &release_ids)?;
-    let mut seen = std::collections::HashSet::new();
+    let mut artists_by_owner = get_many_by_owner(db, &owners)?;
+    let mut seen = HashSet::new();
     let mut artists = Vec::new();
-    for owner_artists in artist_map.into_values() {
-        for artist in owner_artists {
-            let artist_id = artist.db_id.as_ref().map(|id| DbId::from(id.clone()));
-            if let Some(id) = artist_id {
-                if seen.insert(id) {
-                    artists.push(artist);
-                }
-            } else {
+    for owner in owners {
+        for artist in artists_by_owner.remove(&owner).unwrap_or_default() {
+            if artist
+                .db_id
+                .clone()
+                .is_some_and(|id| seen.insert(DbId::from(id)))
+            {
                 artists.push(artist);
             }
         }
@@ -1159,6 +1174,30 @@ mod tests {
         assert_eq!(result.get(&release_b).map(|v| v.len()), Some(1));
         assert_eq!(result[&release_a][0].artist_name, "Artist 1");
         assert_eq!(result[&release_b][0].artist_name, "Artist 2");
+        Ok(())
+    }
+
+    #[test]
+    fn get_by_releases_includes_track_only_artists_once() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release = insert_release(&mut db, "Album")?;
+        let track = crate::fixtures::insert_track(&mut db, "Song")?;
+        crate::fixtures::connect(&mut db, release, track)?;
+        let main = insert_artist(&mut db, "Main")?;
+        let featured = insert_artist(&mut db, "Featured")?;
+        link(&mut db, release, main)?;
+        link(&mut db, track, main)?;
+        link(&mut db, track, featured)?;
+
+        let artists = get_by_releases(&db, &[release])?;
+
+        assert_eq!(
+            artists
+                .iter()
+                .map(|artist| artist.artist_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Main", "Featured"]
+        );
         Ok(())
     }
 
