@@ -124,6 +124,7 @@ struct Connection {
 struct Artist {
     key: String,
     name: String,
+    sort_name: Option<String>,
     #[serde(rename = "type")]
     artist_type: Option<lyra_db::ArtistType>,
     /// A manually edited type, ranked above the scanned one.
@@ -715,6 +716,7 @@ impl Fixture {
             lyra_db::artists::update(db, &stored)?;
             let mut layer = LocalLayer::default();
             layer.supply(MetadataField::ArtistName, Some(artist.name.as_str()));
+            layer.supply(MetadataField::SortName, artist.sort_name.as_deref());
             layer.supply(MetadataField::ArtistType, artist.artist_type);
             save_local(db, artist_db_id, layer)?;
             if let Some(manual_type) = artist.manual_type {

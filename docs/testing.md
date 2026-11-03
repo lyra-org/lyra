@@ -89,6 +89,7 @@ language = "jpn"     # optional ISO 639 language
 [[artists]]
 key = "amy"
 name = "Amy"
+sort_name = "Amy, The" # optional sort name, as tags give it
 type = "person"      # optional artist type
 manual_type = "group" # optional manually edited artist type
 cover = "amy.png"    # optional image file, relative to the fixture, stored as a pinned upload whose hash is the artist key
