@@ -126,6 +126,7 @@ credits = [{ artist = "amy", type = "instrumentalist", detail = "piano" }]  # an
 file = "song.opus"   # an audio file, relative to the fixture, as the primary source
 start_ms = 1000      # optional, with end_ms: the source's span of the file, as a cue sheet's
 folder = "Amy/Solo"  # optional; the directories holding the file's entry in the release's library
+identifiers = { "example:recording" = "r-1" } # optional values by scheme, under the `fixture` provider
 
 [[playlists]]
 key = "mix"
@@ -177,9 +178,9 @@ content_type = "application/lrc" # optional; as an upload names it, `text/plain`
 body = "[00:01.00]One\n[01:40.00]Two"
 ```
 
-Artist identifiers are scheme-level only: the `fixture` provider declares each scheme as an id type
-of its own, not unique and with no URL generator, so they read as a provider's identifiers do
-without naming any real provider.
+Artist and track identifiers are scheme-level only: the `fixture` provider declares each scheme as
+an id type of its own, for the one entity type it is used on, not unique and with no URL generator,
+so they read as a provider's identifiers do without naming any real provider.
 
 ```luau
 local fixture = ...

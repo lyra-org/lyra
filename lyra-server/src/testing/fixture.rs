@@ -212,6 +212,9 @@ struct Track {
     start_ms: Option<u64>,
     /// Where the track ends within `file`.
     end_ms: Option<u64>,
+    /// Identifier values by scheme, stored as [`ID_PROVIDER`]'s, which declares each scheme.
+    #[serde(default)]
+    identifiers: BTreeMap<String, String>,
 }
 
 /// A credit of any type, listed after the owner's `artists`.
@@ -355,9 +358,10 @@ pub(crate) struct Seeded {
     entries: BTreeMap<String, Vec<String>>,
     #[serde(skip)]
     pending_connections: Vec<PendingConnection>,
-    /// The schemes of the identifiers seeded, which [`ID_PROVIDER`] declares.
+    /// The schemes of the identifiers seeded, which [`ID_PROVIDER`] declares, with the entity type
+    /// each identifies.
     #[serde(skip)]
-    id_schemes: BTreeSet<String>,
+    id_schemes: BTreeMap<String, services::EntityType>,
 }
 
 #[derive(Debug)]
@@ -416,9 +420,39 @@ impl Seeded {
     }
 }
 
+/// Stores `identifiers` on the entity as [`ID_PROVIDER`]'s, recording each scheme with the entity
+/// type it identifies; a scheme identifies one type only.
+fn seed_identifiers(
+    db: &mut DbAny,
+    seeded: &mut Seeded,
+    db_id: DbId,
+    entity: services::EntityType,
+    identifiers: &BTreeMap<String, String>,
+) -> anyhow::Result<()> {
+    for (scheme, value) in identifiers {
+        services::providers::validate_id_scheme(scheme).map_err(anyhow::Error::msg)?;
+        let declared = *seeded.id_schemes.entry(scheme.clone()).or_insert(entity);
+        anyhow::ensure!(
+            declared == entity,
+            "identifier scheme {scheme} identifies both {declared:?} and {entity:?} entities"
+        );
+        lyra_db::external_ids::upsert(
+            db,
+            db_id,
+            ID_PROVIDER,
+            scheme,
+            value,
+            lyra_db::IdSource::Resolved,
+        )?;
+    }
+    Ok(())
+}
+
 /// Registers [`ID_PROVIDER`] with `schemes`, declared as a provider plugin declares its own: by
 /// scheme alone, not unique, and without links.
-async fn register_id_schemes(schemes: BTreeSet<String>) -> anyhow::Result<()> {
+async fn register_id_schemes(
+    schemes: BTreeMap<String, services::EntityType>,
+) -> anyhow::Result<()> {
     if schemes.is_empty() {
         return Ok(());
     }
@@ -429,13 +463,13 @@ async fn register_id_schemes(schemes: BTreeSet<String>) -> anyhow::Result<()> {
         ID_PROVIDER.to_string(),
         None,
     )?;
-    for scheme in schemes {
+    for (scheme, entity) in schemes {
         registry
             .set_id_registration(
                 ID_PROVIDER,
                 services::providers::ProviderIdSpec {
                     id_type: scheme.clone(),
-                    entity: services::EntityType::Artist,
+                    entity,
                     unique: false,
                     scheme: Some(scheme),
                     label: None,
@@ -781,6 +815,10 @@ impl Fixture {
             .artists
             .iter()
             .any(|artist| !artist.identifiers.is_empty())
+            || self
+                .tracks
+                .iter()
+                .any(|track| !track.identifiers.is_empty())
         {
             lyra_db::providers::register(db, ID_PROVIDER)?;
         }
@@ -798,18 +836,13 @@ impl Fixture {
             layer.supply(MetadataField::ArtistType, artist.artist_type);
             layer.supply(MetadataField::Description, artist.description.as_deref());
             save_local(db, artist_db_id, layer)?;
-            for (scheme, value) in &artist.identifiers {
-                services::providers::validate_id_scheme(scheme).map_err(anyhow::Error::msg)?;
-                seeded.id_schemes.insert(scheme.clone());
-                lyra_db::external_ids::upsert(
-                    db,
-                    artist_db_id,
-                    ID_PROVIDER,
-                    scheme,
-                    value,
-                    lyra_db::IdSource::Resolved,
-                )?;
-            }
+            seed_identifiers(
+                db,
+                &mut seeded,
+                artist_db_id,
+                services::EntityType::Artist,
+                &artist.identifiers,
+            )?;
             if let Some(manual_type) = artist.manual_type {
                 let layer = lyra_db::MetadataLayer::new(
                     services::metadata::layers::MANUAL_SOURCE_ID,
@@ -920,6 +953,13 @@ impl Fixture {
             layer.supply(MetadataField::Year, track.year);
             supply_credits(&mut layer, &keys, &track.artists, &track.credits)?;
             save_local(db, track_db_id, layer)?;
+            seed_identifiers(
+                db,
+                &mut seeded,
+                track_db_id,
+                services::EntityType::Track,
+                &track.identifiers,
+            )?;
             anyhow::ensure!(
                 track.file.is_some() || (track.start_ms.is_none() && track.end_ms.is_none()),
                 "fixture track {} trims no file",
@@ -1362,6 +1402,20 @@ mod tests {
             .seed(&mut db)
             .expect_err("an invalid scheme is refused");
         assert!(error.to_string().contains("Not A Scheme"), "{error}");
+        Ok(())
+    }
+
+    #[test]
+    fn a_scheme_identifies_one_entity_type() -> anyhow::Result<()> {
+        let mut db = lyra_db::test_db::new_test_db()?;
+        let fixture: Fixture = serde_json::from_value(serde_json::json!({
+            "artists": [{ "key": "a", "name": "A", "identifiers": { "example:id": "1" } }],
+            "tracks": [{ "key": "t", "title": "T", "identifiers": { "example:id": "2" } }],
+        }))?;
+        let error = fixture
+            .seed(&mut db)
+            .expect_err("a scheme on artists and tracks is refused");
+        assert!(error.to_string().contains("example:id"), "{error}");
         Ok(())
     }
 
