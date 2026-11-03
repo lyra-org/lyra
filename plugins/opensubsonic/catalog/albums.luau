@@ -152,4 +152,50 @@ function module.list(summaries: { ReleaseSummary }): { JsonObject }
 	return albums
 end
 
+-- The `Child` of each release, in order, as directory-based methods such as `search2` list albums:
+-- a directory whose parent is its first artist.
+function module.children(summaries: { ReleaseSummary }): { JsonObject }
+	if #summaries == 0 then
+		return {}
+	end
+	local items = module.list(summaries)
+	local ids: { string } = {}
+	for _, summary in summaries do
+		table.insert(ids, summary.id)
+	end
+	local average_ratings = ratings.average(ids)
+
+	local children: { JsonObject } = {}
+	for _, album in items do
+		local child: JsonObject = {
+			id = album.id,
+			parent = album.artistId,
+			isDir = true,
+			title = album.name,
+			album = album.name,
+			artist = album.artist,
+			year = album.year,
+			genre = album.genre,
+			coverArt = album.coverArt,
+			duration = album.duration,
+			playCount = album.playCount,
+			played = album.played,
+			created = album.created,
+			starred = album.starred,
+			userRating = album.userRating,
+			averageRating = average_ratings[album.id],
+			artistId = album.artistId,
+			mediaType = "album",
+			sortName = album.sortName,
+			genres = album.genres,
+			artists = album.artists,
+			displayArtist = album.displayArtist,
+			albumArtists = album.artists,
+			displayAlbumArtist = album.displayArtist,
+		}
+		table.insert(children, child)
+	end
+	return children
+end
+
 return module

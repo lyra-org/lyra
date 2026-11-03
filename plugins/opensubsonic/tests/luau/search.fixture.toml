@@ -2,8 +2,8 @@ run_as = "listener"
 
 # The listener and the curator see the library "Music": "Solo" (Amy, Rock, added last) holds S1
 # and S2, and "Other" (Bob) holds O1. "Secret", in a library nobody is granted, holds H1. The
-# listener played S1 twice and O1 once, favorited Solo, and rated S1 4 and Solo 5. The curator
-# manages libraries.
+# listener played S1 twice and O1 once, favorited Solo and Amy, and rated S1 4, Solo 5 and Amy 3.
+# The curator manages libraries, and rated Solo 3 and Amy 5.
 
 [[users]]
 key = "listener"
@@ -130,3 +130,23 @@ value = 4
 user = "listener"
 target = "solo"
 value = 5
+
+[[ratings]]
+user = "listener"
+target = "amy"
+value = 3
+
+[[ratings]]
+user = "curator"
+target = "solo"
+value = 3
+
+[[ratings]]
+user = "curator"
+target = "amy"
+value = 5
+
+[[favorites]]
+user = "listener"
+target = "amy"
+at = 1700000000000

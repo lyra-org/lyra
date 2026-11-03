@@ -47,6 +47,35 @@ function module.list(summaries: { ArtistSummary }): { JsonObject }
 	return items
 end
 
+-- The `Artist` of each artist, in order, as directory-based methods such as `search2` list them.
+function module.directories(summaries: { ArtistSummary }): { JsonObject }
+	if #summaries == 0 then
+		return {}
+	end
+	local items = module.list(summaries)
+	local ids: { string } = {}
+	for _, summary in summaries do
+		table.insert(ids, summary.id)
+	end
+	local user_ratings = ratings.get(ids)
+	local average_ratings = ratings.average(ids)
+
+	local directories: { JsonObject } = {}
+	for _, item in items do
+		local directory: JsonObject = {
+			id = item.id,
+			name = item.name,
+			coverArt = item.coverArt,
+			starred = item.starred,
+			-- Absent rather than 0 when unrated: ratings are 1-5, and 0 is how `setRating` clears one.
+			userRating = user_ratings[item.id],
+			averageRating = average_ratings[item.id],
+		}
+		table.insert(directories, directory)
+	end
+	return directories
+end
+
 -- The index letter of each Latin-1 letter from U+00C0 to U+00DF, its accent ignored. Those from
 -- U+00E0 are their lowercase forms, 0x20 on.
 local LATIN1_LETTERS = "AAAAAAACEEEEIIIIDNOOOOO#OUUUUY#S"

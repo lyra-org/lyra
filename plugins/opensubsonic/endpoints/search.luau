@@ -18,7 +18,9 @@ local songs = require("../catalog/songs")
 
 type ApiQueryParams = api.ApiQueryParams
 type ApiResponse = api.ApiResponse
+type ArtistSummary = artists.ArtistSummary
 type JsonObject = { [string]: any }
+type ReleaseSummary = releases.ReleaseSummary
 type Request = request.Request
 
 local DEFAULT_COUNT = 20
@@ -74,30 +76,46 @@ local function paged<T>(
 	}
 end
 
+-- What the query finds, as `container` with each kind paged by its count and offset and built into
+-- list items by `artist_list` and `album_list`; a count of 0 leaves the kind out.
+local function search(
+	req: Request,
+	container: string,
+	artist_list: ({ ArtistSummary }) -> { JsonObject },
+	album_list: ({ ReleaseSummary }) -> { JsonObject }
+): ApiResponse
+	local params = req.params
+	local text = search_text(params)
+	local library_id = folders.library_id(params)
+	local function query(offset: number, limit: number): any
+		return { search = text, library_id = library_id, offset = offset, limit = limit }
+	end
+	local artist_count, artist_offset = page(params, "artist")
+	local album_count, album_offset = page(params, "album")
+	local song_count, song_offset = page(params, "song")
+
+	-- In name order, as the lists of a whole document encode.
+	return response.ok_stream(params, container, {
+		paged("album", album_count, album_offset, function(offset, limit)
+			return releases.query(query(offset, limit)).items
+		end, album_list),
+		paged("artist", artist_count, artist_offset, function(offset, limit)
+			return artists.query(query(offset, limit)).items
+		end, artist_list),
+		paged("song", song_count, song_offset, function(offset, limit)
+			return tracks.query(query(offset, limit)).items
+		end, songs.list),
+	})
+end
+
 module.methods = {
 	search3 = function(req: Request): ApiResponse
-		local params = req.params
-		local search = search_text(params)
-		local library_id = folders.library_id(params)
-		local function query(offset: number, limit: number): any
-			return { search = search, library_id = library_id, offset = offset, limit = limit }
-		end
-		local artist_count, artist_offset = page(params, "artist")
-		local album_count, album_offset = page(params, "album")
-		local song_count, song_offset = page(params, "song")
+		return search(req, "searchResult3", artist_items.list, albums.list)
+	end,
 
-		-- In name order, as the lists of a whole document encode.
-		return response.ok_stream(params, "searchResult3", {
-			paged("album", album_count, album_offset, function(offset, limit)
-				return releases.query(query(offset, limit)).items
-			end, albums.list),
-			paged("artist", artist_count, artist_offset, function(offset, limit)
-				return artists.query(query(offset, limit)).items
-			end, artist_items.list),
-			paged("song", song_count, song_offset, function(offset, limit)
-				return tracks.query(query(offset, limit)).items
-			end, songs.list),
-		})
+	-- The same search as `search3`, with artists as `Artist` and albums as directory `Child`ren.
+	search2 = function(req: Request): ApiResponse
+		return search(req, "searchResult2", artist_items.directories, albums.children)
 	end,
 }
 
