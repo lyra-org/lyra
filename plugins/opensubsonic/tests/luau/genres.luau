@@ -18,18 +18,20 @@ end
 -- and their songs: Jazz is only on a hidden album, which Rock's counts leave out.
 local genres = call.ok("getGenres", key).genres.genre
 assert(#genres == 2, `two genres, got {#genres}`)
-assert(genres[1].value == "Pop" and genres[1].albumCount == 1 and genres[1].songCount == 1, "Pop")
-assert(genres[2].value == "Rock" and genres[2].albumCount == 2 and genres[2].songCount == 3, "Rock")
+assert(genres[1].value == "Rock" and genres[1].albumCount == 2 and genres[1].songCount == 3, "Rock")
+assert(genres[2].value == "Électro" and genres[2].albumCount == 1 and genres[2].songCount == 1, "Électro")
 local genres_xml = call.raw("getGenres", { apiKey = key }).body
 local rock_xml = string.match(genres_xml, "<genre [^>]*>Rock</genre>")
 assert(rock_xml, genres_xml)
 assert(string.find(rock_xml, 'songCount="3"', 1, true) and string.find(rock_xml, 'albumCount="2"', 1, true), rock_xml)
 
--- getSongsByGenre pages through a genre's songs by title, matching its name in any case.
+-- getSongsByGenre pages through a genre's songs by title, matching its name as search does.
 local function by_genre(params: { [string]: string }): { string }
 	return call.ids(call.ok("getSongsByGenre", key, params).songsByGenre.song)
 end
 call.same(by_genre({ genre = "ROCK" }), { ids.l1, ids.s1, ids.s2 }, "Rock songs")
+call.same(by_genre({ genre = "ÉLECTRO" }), { ids.o1 }, "a non-ASCII name in another case")
+call.same(by_genre({ genre = "electro" }), { ids.o1 }, "a name without its accent")
 call.same(by_genre({ genre = "Rock", count = "1", offset = "1" }), { ids.s1 }, "a page")
 call.same(by_genre({ genre = "Rock", offset = "3" }), {}, "past the end")
 call.same(by_genre({ genre = "Rock", count = "0" }), {}, "count 0")
@@ -84,7 +86,7 @@ call.same(random({ fromYear = "-5" }), sorted({ ids.s1, ids.s2, ids.o1, ids.l1 }
 call.same(random({ toYear = "-1" }), {}, "a negative toYear")
 call.same(random({ fromYear = "99999999999" }), {}, "a fromYear past any year")
 call.same(random({ toYear = "99999999999" }), sorted({ ids.s1, ids.s2, ids.o1, ids.l1 }), "a toYear past any year")
-call.same(random({ genre = "Pop", toYear = "2001" }), {}, "Pop before 2001")
+call.same(random({ genre = "Électro", toYear = "2001" }), {}, "Électro before 2001")
 call.same(random({ musicFolderId = music, fromYear = "2001" }), sorted({ ids.s2, ids.o1 }), "Music from 2001")
 
 -- Each request shuffles anew: over 40 requests for one of two songs, both come up.

@@ -6,18 +6,13 @@
 
 local genres = require("@lyra/genres")
 
-local MATCH_LIMIT = 100
-
 local module = {}
 
--- The ids of the genres named `name`, ignoring case.
+-- The ids of the genres named `name`, compared as search compares names.
 function module.ids_named(name: string): { string }
-	local wanted = string.lower(name)
 	local ids: { string } = {}
-	for _, genre in genres.query({ search = name, limit = MATCH_LIMIT }).items do
-		if string.lower(genre.name) == wanted then
-			table.insert(ids, genre.id)
-		end
+	for _, genre in genres.query({ name = name }).items do
+		table.insert(ids, genre.id)
 	end
 	return ids
 end

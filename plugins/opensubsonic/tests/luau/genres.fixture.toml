@@ -1,7 +1,7 @@
 run_as = "listener"
 
 # The listener sees the libraries "Music" and "Extra", but not "Hidden". In Music, "Solo" (Rock,
-# with a cover) holds S1 (1999) and S2 (2001), and "Other" (Pop) holds O1 (2005). In Extra, "Live"
+# with a cover) holds S1 (1999) and S2 (2001), and "Other" (Électro) holds O1 (2005). In Extra, "Live"
 # (Rock) holds L1 (2001) and "Bare", without a genre, holds B1, without a year. "Secret", in
 # Hidden, is Rock and Jazz and holds H1 (2001).
 
@@ -36,7 +36,7 @@ name = "Rock"
 
 [[genres]]
 key = "pop"
-name = "Pop"
+name = "Électro"
 
 [[genres]]
 key = "jazz"
