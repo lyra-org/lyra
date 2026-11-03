@@ -247,11 +247,62 @@ pub(crate) fn save_provider_layer(
     external_ids: &HashMap<String, String>,
     custom_fields: &CustomFieldChanges,
 ) -> anyhow::Result<()> {
+    write_provider_layer(
+        db,
+        node_id,
+        provider_id,
+        values,
+        external_ids,
+        custom_fields,
+        LayerWrite::Update,
+    )
+}
+
+/// Saves `values` as the provider's whole layer: unlike [`save_provider_layer`],
+/// what they leave out falls through to the other layers, and values that
+/// supply nothing remove the layer.
+pub(crate) fn replace_provider_layer(
+    db: &mut DbAny,
+    node_id: DbId,
+    provider_id: &str,
+    values: &ProviderValues,
+    external_ids: &HashMap<String, String>,
+    custom_fields: &CustomFieldChanges,
+) -> anyhow::Result<()> {
+    write_provider_layer(
+        db,
+        node_id,
+        provider_id,
+        values,
+        external_ids,
+        custom_fields,
+        LayerWrite::Replace,
+    )
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LayerWrite {
+    /// Supplied fields, relation types and credit roles replace the stored
+    /// ones; a save that supplies none leaves the layer as stored.
+    Update,
+    Replace,
+}
+
+fn write_provider_layer(
+    db: &mut DbAny,
+    node_id: DbId,
+    provider_id: &str,
+    values: &ProviderValues,
+    external_ids: &HashMap<String, String>,
+    custom_fields: &CustomFieldChanges,
+    write: LayerWrite,
+) -> anyhow::Result<()> {
     ensure_supported(db, node_id, &values.fields)?;
     let artist_type_conflict = lyra_db::artists::get_by_id(db, node_id)?.is_some()
         && artist_type_conflicts_with_layer(db, node_id, &values.fields, provider_id)?;
 
-    let has_content = !values.relations.is_empty()
+    let has_content = write == LayerWrite::Replace
+        || !values.relations.is_empty()
         || !values.credits.is_empty()
         || (!artist_type_conflict && !values.fields.is_empty());
     if has_content {
@@ -273,7 +324,16 @@ pub(crate) fn save_provider_layer(
             let layer = MetadataLayer::new(provider_id, fields, now_ms())
                 .with_relations(values.relations.clone())
                 .with_credits(values.credits.clone());
-            if lyra_db::metadata::layers::upsert_inside_tx(t, node_id, &layer)? {
+            let changed = match write {
+                LayerWrite::Update => {
+                    lyra_db::metadata::layers::upsert_inside_tx(t, node_id, &layer)?
+                }
+                LayerWrite::Replace => {
+                    lyra_db::metadata::layers::replace_inside_tx(t, node_id, &layer)?;
+                    true
+                }
+            };
+            if changed {
                 super::merging::apply_merged_metadata_to_entity_inside_tx(t, node_id)?;
             }
             Ok(())
@@ -514,6 +574,9 @@ pub(crate) fn clear_provider_layer(
 }
 
 #[cfg(test)]
+mod replace_tests;
+
+#[cfg(test)]
 mod tests {
     use std::collections::HashMap;
 
@@ -526,6 +589,106 @@ mod tests {
         insert_release,
     };
     use lyra_db::test_db::new_test_db;
+
+    #[test]
+    fn a_replacing_save_lets_what_it_leaves_out_fall_through() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release_id = insert_release(&mut db, "Release")?;
+        for (provider_id, position) in [("high", 0), ("low", 1)] {
+            lyra_db::providers::upsert(
+                &mut db,
+                &lyra_db::ProviderConfig {
+                    db_id: None,
+                    provider_id: provider_id.to_string(),
+                    position,
+                    enabled: true,
+                },
+            )?;
+        }
+        let values = |fields| ProviderValues {
+            fields: inputs_from_json(fields),
+            ..Default::default()
+        };
+        let none = HashMap::new();
+        let no_custom = CustomFieldChanges::default();
+        let description = |db: &DbAny| -> anyhow::Result<_> {
+            let release = lyra_db::releases::get_by_id(db, release_id)?.expect("release exists");
+            Ok((release.description, release.release_date))
+        };
+        let high_layers = |db: &DbAny| -> anyhow::Result<usize> {
+            Ok(lyra_db::metadata::layers::get_for_entity(db, release_id)?
+                .iter()
+                .filter(|layer| layer.source_id == "high")
+                .count())
+        };
+
+        save_provider_layer(
+            &mut db,
+            release_id,
+            "low",
+            &values(json!({"description": "Low", "release_date": "1999"})),
+            &none,
+            &no_custom,
+        )?;
+        replace_provider_layer(
+            &mut db,
+            release_id,
+            "high",
+            &values(json!({"description": "High", "release_date": "2001"})),
+            &none,
+            &no_custom,
+        )?;
+        assert_eq!(
+            description(&db)?,
+            (Some("High".to_string()), Some("2001".to_string()))
+        );
+
+        // An updating save that supplies nothing keeps the stored layer.
+        save_provider_layer(
+            &mut db,
+            release_id,
+            "high",
+            &values(json!({})),
+            &none,
+            &no_custom,
+        )?;
+        assert_eq!(
+            description(&db)?,
+            (Some("High".to_string()), Some("2001".to_string()))
+        );
+
+        replace_provider_layer(
+            &mut db,
+            release_id,
+            "high",
+            &values(json!({"release_date": "2001"})),
+            &none,
+            &no_custom,
+        )?;
+        assert_eq!(
+            description(&db)?,
+            (Some("Low".to_string()), Some("2001".to_string()))
+        );
+
+        replace_provider_layer(
+            &mut db,
+            release_id,
+            "high",
+            &values(json!({})),
+            &none,
+            &no_custom,
+        )?;
+        assert_eq!(
+            description(&db)?,
+            (Some("Low".to_string()), Some("1999".to_string()))
+        );
+        assert_eq!(
+            high_layers(&db)?,
+            0,
+            "an empty replacing save removes the layer"
+        );
+        Ok(())
+    }
 
     #[test]
     fn clearing_a_provider_layer_drops_its_fields_and_custom_fields() -> anyhow::Result<()> {

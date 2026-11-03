@@ -1582,7 +1582,7 @@ mod tests {
                 "Provider:declare_option(config)",
                 "Provider:ensure_artist(request)",
                 "Provider:mark_unmatched(node_id, id_types)",
-                "Provider:layer(node_id)",
+                "Provider:layer(node_id, options)",
                 "Layer:set_id(id_type, id_value)",
                 "Layer:set_field(name, value)",
                 "Layer:set_credits(role, credits)",

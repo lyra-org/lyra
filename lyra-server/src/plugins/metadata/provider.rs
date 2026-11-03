@@ -30,7 +30,10 @@ use crate::services::{
 };
 
 use super::MetadataCallbackRegistry;
-use super::layer::MetadataLayer;
+use super::layer::{
+    LayerOptions,
+    MetadataLayer,
+};
 use super::parsing::{
     ensure_provider_owner,
     entity_type_for_node,
@@ -199,8 +202,9 @@ impl MetadataProvider {
         context: &luau::CallContext,
         origin: &luau::ChunkOrigin,
         node_id: String,
+        options: Option<luau::Value>,
     ) -> luau::runtime::Result<luau::Value> {
-        layer_callback(self, vm, context, origin, node_id)
+        layer_callback(self, vm, context, origin, node_id, options)
     }
 }
 
@@ -614,10 +618,19 @@ fn layer_callback(
     context: &luau::CallContext,
     origin: &luau::ChunkOrigin,
     node_id: String,
+    options: Option<luau::Value>,
 ) -> luau::runtime::Result<luau::Value> {
     ensure_provider_owner(vm, context, &provider.plugin_id, &provider.provider_id)?;
+    let options = LayerOptions::from_luau(options)?;
     let db = db::get_optional(vm)?;
-    MetadataLayer::new_value(vm, origin, db, node_id, provider.provider_id.clone())
+    MetadataLayer::new_value(
+        vm,
+        origin,
+        db,
+        node_id,
+        provider.provider_id.clone(),
+        options,
+    )
 }
 
 #[cfg(test)]

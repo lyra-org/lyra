@@ -633,6 +633,14 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
             ],
         ),
         interface(
+            "LayerOptions",
+            vec![described_field(
+                "replace",
+                opt(boolean()),
+                "Whether `save` replaces this provider's whole layer, so the fields, credit roles and relation types it leaves unset fall through to lower-priority sources, and a layer that sets none is removed. Defaults to false: `save` replaces only what it sets and keeps the rest as stored, and a save that sets none leaves the layer alone.",
+            )],
+        ),
+        interface(
             "EnsureArtistRequest",
             vec![
                 field("id_type", string()),
@@ -807,7 +815,14 @@ fn provider_class() -> ClassDescriptor {
             ],
             vec![],
         ),
-        method("layer", vec![param("node_id", string())], vec![ty("Layer")]),
+        method(
+            "layer",
+            vec![
+                param("node_id", string()),
+                param("options", opt(ty("LayerOptions"))),
+            ],
+            vec![ty("Layer")],
+        ),
     ]);
     class
 }

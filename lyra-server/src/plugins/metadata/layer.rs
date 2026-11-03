@@ -41,6 +41,26 @@ use lyra_db::metadata::layers::LayerRelations;
 use lyra_db::metadata::layers::edges::LayerCreditInput;
 use lyra_db::metadata::layers::edges::LayerRelationInput;
 
+/// The `options` argument of `provider:layer`.
+#[derive(serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub(super) struct LayerOptions {
+    #[serde(default)]
+    replace: bool,
+}
+
+impl LayerOptions {
+    pub(super) fn from_luau(options: Option<luau::Value>) -> luau::runtime::Result<Self> {
+        match options {
+            None | Some(luau::Value::Nil) => Ok(Self::default()),
+            Some(options) => serde_json::from_value(harmony_serde::luau_to_json(&options, 0)?)
+                .map_err(|error| {
+                    crate::plugins::runtime_error(format!("invalid layer options: {error}"))
+                }),
+        }
+    }
+}
+
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CreditEntry {
@@ -72,6 +92,7 @@ struct LayerBuilderState {
     credits: BTreeMap<CreditType, Vec<(String, Option<String>)>>,
     external_ids: HashMap<String, String>,
     custom_fields: CustomFieldChanges,
+    replace: bool,
 }
 
 #[harmony_macros::userdata_methods]
@@ -217,7 +238,12 @@ impl MetadataLayer {
                     .collect::<luau::runtime::Result<Vec<_>>>()?;
                 credits.insert(role, inputs);
             }
-            crate::services::metadata::layers::save_provider_layer(
+            let write = if layer.replace {
+                crate::services::metadata::layers::replace_provider_layer
+            } else {
+                crate::services::metadata::layers::save_provider_layer
+            };
+            write(
                 &mut db,
                 node_id,
                 &layer.provider_id,
@@ -322,6 +348,7 @@ impl MetadataLayer {
         db: Option<DbAsync>,
         node_id: String,
         provider_id: String,
+        options: LayerOptions,
     ) -> luau::runtime::Result<luau::Value> {
         let layer = Self {
             db,
@@ -333,6 +360,7 @@ impl MetadataLayer {
                 credits: BTreeMap::new(),
                 external_ids: HashMap::new(),
                 custom_fields: CustomFieldChanges::default(),
+                replace: options.replace,
             })),
         };
         Self::class().create_value(vm, origin, layer)
