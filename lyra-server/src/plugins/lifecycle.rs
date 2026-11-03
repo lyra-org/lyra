@@ -89,6 +89,7 @@ impl PluginRegistries {
         // A plugin about to run again keeps its HTTP limits in force until
         // that run has set its own; `sweep_stale_http_limits` drops the rest.
         harmony_http::mark_plugin_limits_stale(plugin_id.as_str()).await;
+        harmony_http::clear_plugin_cache(plugin_id.as_str());
         if !reopen_registrations {
             sweep_stale_http_limits(plugin_id).await;
         }

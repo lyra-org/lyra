@@ -276,7 +276,11 @@ fn init_luau_http_module(
         methods.set(name, luau::Value::String(method.as_bytes().to_vec()))?;
     }
     methods.set_readonly(true)?;
-    table.set("HttpMethod", &methods)
+    table.set("HttpMethod", &methods)?;
+    table.set(
+        "MAX_CACHE_TTL_MS",
+        luau::Value::Number(harmony_http::MAX_CACHE_TTL_MS as f64),
+    )
 }
 
 fn xxh3_hex(input: &str) -> String {
@@ -392,6 +396,7 @@ struct RequestOptions {
     method: CachedHttpMethod,
     body: Option<Vec<u8>>,
     headers: HashMap<String, String>,
+    _cache_ttl_ms: Option<u64>,
 }
 
 fn request_callback(
@@ -603,6 +608,8 @@ fn request_options_from_luau(table: &luau::Table) -> luau::runtime::Result<Reque
         method: optional_method_field(table, "method")?.unwrap_or(CachedHttpMethod::Get),
         body: optional_binary_field(table, "body")?,
         headers: optional_string_map_field(table, "headers")?.unwrap_or_default(),
+        // Checked as the server checks it; stored traces answer every request.
+        _cache_ttl_ms: optional_u64_field(table, "cache_ttl_ms")?,
     })
 }
 

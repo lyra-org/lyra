@@ -3,6 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+mod cache;
+
+pub use cache::MAX_CACHE_TTL_MS;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::RwLock as StdRwLock;
@@ -507,6 +511,8 @@ struct HttpRequestOptions {
     /// Bounds the whole request, every redirect hop included, with the waits
     /// for pacing, concurrency caps, retries, backoff and `Retry-After`.
     timeout_ms: Option<u64>,
+    /// How long to keep the response for the same request; see [`cache`].
+    cache_ttl_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -542,6 +548,8 @@ struct HttpResponse {
     error_kind: Option<String>,
     retries: u32,
     rate_limited: bool,
+    /// The response's own headers forbid keeping it; see [`cache::store_vetoed`].
+    store_vetoed: bool,
 }
 
 impl HttpResponse {
@@ -563,6 +571,7 @@ impl HttpResponse {
             error_kind: None,
             retries: 0,
             rate_limited: false,
+            store_vetoed: false,
         }
     }
 
@@ -577,6 +586,7 @@ impl HttpResponse {
             error_kind: Some(kind.to_string()),
             retries: 0,
             rate_limited: false,
+            store_vetoed: false,
         }
     }
 
@@ -729,13 +739,16 @@ async fn execute_single_request(options: &HttpRequestOptions) -> HttpResponse {
         .to_string();
     let headers = extract_headers(resp.headers());
     let cookies = extract_cookies(resp.headers());
+    let store_vetoed = cache::store_vetoed(resp.headers());
 
     let body = match read_body(resp, options.max_body_bytes).await {
         Ok(body) => body,
         Err(response) => return response,
     };
 
-    HttpResponse::success(status_code, status_message, headers, cookies, body)
+    let mut response = HttpResponse::success(status_code, status_message, headers, cookies, body);
+    response.store_vetoed = store_vetoed;
+    response
 }
 
 async fn read_body(
@@ -926,8 +939,10 @@ fn jittered_backoff(cap: Duration) -> Duration {
 /// chain runs under the limits of the host it reaches.
 async fn execute_request(plugin: Option<&str>, options: HttpRequestOptions) -> HttpResponse {
     let span = tracing::debug_span!("http_request", plugin, url = %options.url);
-    let request = run_request(options, |opts| async move {
-        execute_single_request(&opts).await
+    let request = cache::cached(plugin, options, |options| {
+        run_request(options, |opts| async move {
+            execute_single_request(&opts).await
+        })
     });
     tracing::Instrument::instrument(request, span).await
 }
@@ -1110,6 +1125,7 @@ pub async fn request_as(plugin_id: &str, request: Request) -> Result<Response, E
         cookies: None,
         max_body_bytes: request.max_body_bytes,
         timeout_ms: None,
+        cache_ttl_ms: None,
     };
     let response = execute_request(Some(plugin_id), options).await;
     match (response.success, response.status_code) {
@@ -1185,6 +1201,23 @@ async fn configure_max_in_flight(
     Ok(())
 }
 
+fn install_fields(spec: harmony_core::ModuleSpec) -> harmony_core::ModuleSpec {
+    spec.initializer(|_vm, _origin, root| {
+        root.set(
+            "MAX_CACHE_TTL_MS",
+            luau::Value::Number(cache::MAX_CACHE_TTL_MS as f64),
+        )
+    })
+}
+
+fn describe_fields(descriptor: &mut harmony_luau::ModuleDescriptor) {
+    descriptor.fields.push(harmony_luau::ModuleFieldDescriptor {
+        path: vec!["MAX_CACHE_TTL_MS"],
+        description: Some("The longest a request's `cache_ttl_ms` keeps its response."),
+        ty: u64::luau_type(),
+    });
+}
+
 /// The capability hosts conventionally gate this module behind.
 pub const SCOPE: &str = "harmony.http";
 
@@ -1193,7 +1226,9 @@ pub const SCOPE: &str = "harmony.http";
     name = "Http",
     local = "http",
     description = "Outbound HTTP requests, rate limits, and URI encoding.",
-    userdata(HttpMethod)
+    userdata(HttpMethod),
+    extend = install_fields,
+    describe = describe_fields
 )]
 impl HttpModule {
     #[harmony(
@@ -1268,6 +1303,7 @@ fn request_options_from_luau(
         cookies: optional_header_map_field(table, "cookies")?,
         max_body_bytes: None,
         timeout_ms: optional_u64_field(table, "timeout_ms")?,
+        cache_ttl_ms: optional_u64_field(table, "cache_ttl_ms")?,
     })
 }
 
@@ -1507,6 +1543,12 @@ pub async fn mark_plugin_limits_stale(plugin_id: &str) {
     concurrency_limiter().mark_plugin_stale(plugin_id);
 }
 
+/// Drops every response `plugin_id` asked to keep, and keeps the requests it has in flight
+/// from keeping theirs.
+pub fn clear_plugin_cache(plugin_id: &str) {
+    cache::clear_plugin(plugin_id);
+}
+
 /// Drops the limits of `plugin_id` still stale. Each host falls back to the
 /// strictest limit its other owners hold.
 pub async fn remove_stale_plugin_limits(plugin_id: &str) {
@@ -1583,6 +1625,13 @@ impl DescribeInterface for HttpRequestOptions {
                 ty: Option::<u64>::luau_type(),
                 description: Some(
                     "Bounds the whole request, every redirect hop included, with the waits for pacing, concurrency caps, retries, backoff and `Retry-After`; past it the response fails with `error_kind` `timeout`.",
+                ),
+            },
+            FieldDescriptor {
+                name: "cache_ttl_ms",
+                ty: Option::<u64>::luau_type(),
+                description: Some(
+                    "Keeps the response this long, at most `MAX_CACHE_TTL_MS`, and answers the same request with it meanwhile without sending it, pacing it or retrying it. Only a GET without a body, cookies or `Authorization`/`Proxy-Authorization` header is kept, only once it ends in a 2xx response the server lets a shared cache store, and per plugin, URL and headers; a redirected request is kept under the URL asked for. `0` sends the request and drops what was kept for it. Default none: nothing is read or kept.",
                 ),
             },
         ]);
@@ -2155,6 +2204,7 @@ mod tests {
             cookies: None,
             max_body_bytes: None,
             timeout_ms: None,
+            cache_ttl_ms: None,
         };
 
         let attempt_counter = Arc::new(AtomicUsize::new(0));
@@ -2360,6 +2410,7 @@ mod tests {
             cookies: None,
             max_body_bytes: None,
             timeout_ms: None,
+            cache_ttl_ms: None,
         }
     }
 
@@ -2472,6 +2523,7 @@ mod tests {
             cookies: None,
             max_body_bytes: None,
             timeout_ms,
+            cache_ttl_ms: None,
         }
     }
 
