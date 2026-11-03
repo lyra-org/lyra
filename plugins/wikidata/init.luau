@@ -15,7 +15,7 @@ local shared = require("@self/resolution/shared")
 local ET = metadata.EntityType
 local provider = metadata.Provider.new("wikidata", { display_name = "Wikidata" })
 
-local GENRE_CACHE_TTL = 30 * 24 * 60 * 60 -- 30 days for genre details
+local GENRE_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000 -- 30 days for genre details
 local MAX_GENRES_PER_RELEASE = 20
 
 local config = plugins.declare_settings(function(builder)
@@ -441,7 +441,7 @@ local function fetch_genre_details(qids: { string }): { GenreClaim }
 						aliases = cache_aliases :: JsonValue,
 						parent_qids = cache_parents :: JsonValue,
 					} :: JsonValue,
-					GENRE_CACHE_TTL
+					GENRE_CACHE_TTL_MS
 				)
 			end
 		end
@@ -483,7 +483,7 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 	-- Step 1
 	local result = search_release(release_title, artist_name)
 	if not result then
-		cache_set(cache_key, { miss = true :: JsonValue } :: JsonValue, shared.MISS_CACHE_TTL)
+		cache_set(cache_key, { miss = true :: JsonValue } :: JsonValue, shared.MISS_CACHE_TTL_MS)
 		return nil
 	end
 
@@ -498,7 +498,7 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 		cache_set(
 			cache_key,
 			{ qid = release_qid :: JsonValue, genres = 0 :: JsonValue } :: JsonValue,
-			shared.HIT_CACHE_TTL
+			shared.HIT_CACHE_TTL_MS
 		)
 		return nil
 	end
@@ -512,7 +512,7 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 		cache_set(
 			cache_key,
 			{ qid = release_qid :: JsonValue, genres = 0 :: JsonValue } :: JsonValue,
-			shared.HIT_CACHE_TTL
+			shared.HIT_CACHE_TTL_MS
 		)
 		return nil
 	end
@@ -653,7 +653,7 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 		cache_set(
 			cache_key,
 			{ qid = release_qid :: JsonValue, genres = genre_count } :: JsonValue,
-			shared.HIT_CACHE_TTL
+			shared.HIT_CACHE_TTL_MS
 		)
 	end
 

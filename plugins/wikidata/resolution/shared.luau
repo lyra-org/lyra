@@ -14,13 +14,13 @@ export type JsonObject = { [string]: JsonValue }
 export type JsonArray = { JsonValue }
 
 local WIKIDATA_API = "https://www.wikidata.org/w/api.php"
-local CACHE_STORE_NAME = "wikidata"
+local CACHE_STORE_NAME = "wikidata-cache"
 
 local module = {}
 
-module.HIT_CACHE_TTL = 30 * 24 * 60 * 60
-module.MISS_CACHE_TTL = 7 * 24 * 60 * 60 -- allows recovery
-module.SHORT_MISS_CACHE_TTL = 6 * 60 * 60 -- ambiguous or partial results
+module.HIT_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000
+module.MISS_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000 -- allows recovery
+module.SHORT_MISS_CACHE_TTL_MS = 6 * 60 * 60 * 1000 -- ambiguous or partial results
 
 -- Wikimedia allows ~1000 req/hr for unauthenticated clients with a compliant
 -- User-Agent (set server-wide via outbound_user_agent). 0.2 req/s = 720 req/hr,
@@ -104,32 +104,15 @@ function module.cache_get(key: string): JsonObject?
 	if not ok then
 		return nil
 	end
-	local entry = module.as_json_object(raw)
-	if not entry then
-		return nil
-	end
-	local expires_at_ms = entry.expires_at_ms
-	if type(expires_at_ms) ~= "number" or expires_at_ms <= os.time() * 1000 then
-		return nil
-	end
-	return module.as_json_object(entry.data)
+	return module.as_json_object(raw)
 end
 
-function module.cache_set(key: string, data: JsonValue, ttl: number)
+function module.cache_set(key: string, data: JsonValue, ttl_ms: number)
 	local store = get_cache_store()
 	if not store then
 		return
 	end
-	pcall(
-		store.set,
-		store,
-		key,
-		{
-			data = data,
-			expires_at_ms = (os.time() + ttl) * 1000,
-		} :: JsonValue,
-		nil
-	)
+	pcall(store.set, store, key, data, { ttl_ms = ttl_ms })
 end
 
 -- Returns the decoded response object, or nil when the request failed at the

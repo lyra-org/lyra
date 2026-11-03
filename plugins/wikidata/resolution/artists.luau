@@ -361,7 +361,7 @@ function module.register(provider: metadata.Provider)
 			return nil
 		end
 		if not match then
-			shared.cache_set(cache_key, { miss = true :: JsonValue } :: JsonValue, shared.MISS_CACHE_TTL)
+			shared.cache_set(cache_key, { miss = true :: JsonValue } :: JsonValue, shared.MISS_CACHE_TTL_MS)
 			return nil
 		end
 
@@ -378,7 +378,7 @@ function module.register(provider: metadata.Provider)
 		shared.cache_set(
 			cache_key,
 			{ qid = match.qid :: JsonValue, described = (description ~= nil) :: JsonValue } :: JsonValue,
-			if description then shared.HIT_CACHE_TTL else shared.SHORT_MISS_CACHE_TTL
+			if description then shared.HIT_CACHE_TTL_MS else shared.SHORT_MISS_CACHE_TTL_MS
 		)
 		return nil
 	end, function(ctx: metadata.ArtistRefreshContext): boolean
