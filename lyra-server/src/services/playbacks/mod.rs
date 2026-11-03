@@ -104,6 +104,25 @@ pub(crate) struct PlaybackDetail {
     pub(crate) playback_db_id: DbId,
     pub(crate) playback: lyra_db::playbacks::Playback,
     pub(crate) current_session: Option<CurrentSession>,
+    /// The client of the current session, kept when its track is hidden from the reader or gone
+    /// and `current_session` with it.
+    pub(crate) current_client: Option<PlayClient>,
+}
+
+/// The client that started a play, and the plugin that reported it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct PlayClient {
+    pub(crate) client_name: Option<String>,
+    pub(crate) plugin_id: Option<String>,
+}
+
+impl From<&lyra_db::PlaybackSession> for PlayClient {
+    fn from(session: &lyra_db::PlaybackSession) -> Self {
+        Self {
+            client_name: session.client_name.clone(),
+            plugin_id: session.plugin_id.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -573,14 +592,21 @@ fn detail_from_playback(
     let playback_db_id = playback
         .db_id
         .ok_or_else(|| anyhow::anyhow!("persisted playback missing db_id"))?;
-    let current_session = match lyra_db::playbacks::get_current_session_id(db, playback_db_id)? {
-        Some(session_id) => get_current_session(db, session_id)?,
-        None => None,
-    };
+    let (current_session, current_client) =
+        match lyra_db::playbacks::get_current_session_id(db, playback_db_id)? {
+            Some(session_id) => (
+                get_current_session(db, session_id)?,
+                lyra_db::playback_sessions::get_by_id(db, session_id)?
+                    .as_ref()
+                    .map(PlayClient::from),
+            ),
+            None => (None, None),
+        };
     Ok(PlaybackDetail {
         playback_db_id,
         playback,
         current_session,
+        current_client,
     })
 }
 
@@ -612,7 +638,7 @@ pub(crate) fn get_visible_detail(
     now_ms: u64,
 ) -> Result<Option<PlaybackDetail>, PlaybackError> {
     let user_db_id = principal.require(db).map_err(anyhow::Error::from)?;
-    let Some(detail) = get_owned_detail(db, playback_db_id, user_db_id, now_ms)? else {
+    let Some(mut detail) = get_owned_detail(db, playback_db_id, user_db_id, now_ms)? else {
         return Ok(None);
     };
     let is_admin = lyra_db::roles::has_admin_role(db, user_db_id)?;
@@ -620,7 +646,11 @@ pub(crate) fn get_visible_detail(
     if let Some(current) = detail.current_session.as_ref()
         && !track_accessible_in_scope(db, current.track_db_id, is_admin, &accessible_library_ids)?
     {
-        return Ok(None);
+        // The queue of the caller's own playback still decides what is playable.
+        if detail.playback.is_reported() {
+            return Ok(None);
+        }
+        detail.current_session = None;
     }
     Ok(Some(detail))
 }
@@ -666,8 +696,9 @@ pub(crate) fn list_visible_projections_with_current(
     list_projections_with_current(db, user_db_id, user_db_id, active_only, now_ms)
 }
 
-/// The owner's playbacks, each with the database id of its current track session, leaving out
-/// those whose current track the viewer can't see.
+/// The owner's playbacks, each with the database id of its current track session. A current track
+/// the viewer can't see leaves out the playback, except the viewer's own queue-backed playback,
+/// which is kept without its current session.
 pub(crate) fn list_projections_with_current(
     db: &DbAny,
     owner_db_id: DbId,
@@ -718,9 +749,13 @@ pub(crate) fn list_projections_with_current(
             },
             None => true,
         };
-        if !accessible {
+        let current = if accessible {
+            current
+        } else if owner_db_id == viewer_db_id && !projection.reported {
+            None
+        } else {
             continue;
-        }
+        };
         if active_only
             && !current.is_some_and(|(session_id, current)| {
                 track_ids.contains_key(&session_id)
@@ -840,18 +875,102 @@ fn track_accessible_in_scope(
         .any(|library| accessible_library_ids.contains(&library.id)))
 }
 
-pub(crate) fn queue_visible_to_principal(
-    db: &DbAny,
-    principal: &Principal,
+/// A queue as its reader can play it: its tracks the reader can see, with the position to resume
+/// its current track from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PlayableQueue {
+    pub(crate) revision: u64,
+    pub(crate) snapshot: QueueSnapshot,
+    pub(crate) position_ms: u64,
+}
+
+/// The playback's queue without the tracks missing or hidden from the user. When its current track
+/// is dropped, the next track kept becomes current, else the last one before it, from its start.
+/// The position is the current session's when that session plays the current track, and 0 once it
+/// completed. `None` when no track is kept.
+pub(crate) fn playable_queue(
+    db: &impl lyra_db::DbAccess,
+    user_db_id: DbId,
     playback: &lyra_db::playbacks::Playback,
-) -> Result<Option<QueueSnapshot>, PlaybackError> {
+    now_ms: u64,
+) -> Result<Option<PlayableQueue>, PlaybackError> {
+    let playback_db_id = playback
+        .db_id
+        .ok_or_else(|| anyhow::anyhow!("persisted playback missing db_id"))?;
+    let revision = playback
+        .queue()
+        .ok_or(PlaybackError::QueueUnavailable)?
+        .revision;
     let queue = queue_from_playback(playback)?;
-    let user_db_id = principal.require(db).map_err(anyhow::Error::from)?;
-    if queue_tracks_accessible_to_user(db, user_db_id, &queue)? {
-        Ok(Some(queue))
-    } else {
-        Ok(None)
+    let is_admin = lyra_db::roles::has_admin_role(db, user_db_id)?;
+    let accessible_library_ids = lyra_db::libraries::accessible_library_ids(db, user_db_id)?;
+    let mut playable = HashMap::<&str, Option<DbId>>::new();
+    for public_id in &queue.track_ids {
+        if playable.contains_key(public_id.as_str()) {
+            continue;
+        }
+        let track_db_id = match lyra_db::lookup::find_node_id_by_id(db, public_id)? {
+            Some(track_db_id)
+                if lyra_db::tracks::get_by_id(db, track_db_id)?.is_some()
+                    && track_accessible_in_scope(
+                        db,
+                        track_db_id,
+                        is_admin,
+                        &accessible_library_ids,
+                    )? =>
+            {
+                Some(track_db_id)
+            }
+            _ => None,
+        };
+        playable.insert(public_id, track_db_id);
     }
+    let stored_index = queue.current_index as usize;
+    let kept = queue
+        .track_ids
+        .iter()
+        .enumerate()
+        .filter(|(_, id)| playable[id.as_str()].is_some())
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    let Some(&current) = kept
+        .iter()
+        .find(|index| **index >= stored_index)
+        .or_else(|| kept.last())
+    else {
+        return Ok(None);
+    };
+    let position_ms = if current == stored_index {
+        let current_track_db_id = playable[queue.track_ids[current].as_str()];
+        match lyra_db::playbacks::get_current_session_id(db, playback_db_id)? {
+            Some(session_id)
+                if lyra_db::playback_sessions::get_track_id(db, session_id)?
+                    == current_track_db_id =>
+            {
+                lyra_db::playback_sessions::get_by_id(db, session_id)?
+                    .filter(|session| session.state != lyra_db::PlaybackState::Completed)
+                    .map_or(0, |session| {
+                        playback_sessions::current_position_ms(&session, now_ms)
+                    })
+            }
+            _ => 0,
+        }
+    } else {
+        0
+    };
+    Ok(Some(PlayableQueue {
+        revision,
+        snapshot: QueueSnapshot {
+            current_index: kept.iter().position(|index| *index == current).unwrap_or(0) as u64,
+            track_ids: kept
+                .iter()
+                .map(|index| queue.track_ids[*index].clone())
+                .collect(),
+            repeat_mode: queue.repeat_mode,
+            shuffle_enabled: queue.shuffle_enabled,
+        },
+        position_ms,
+    }))
 }
 
 /// Checks that the playback can be handed off at `expected_revision` and returns the id of its
@@ -918,7 +1037,6 @@ impl DetachedSession {
 
 pub(crate) struct ReplaceQueueUpdate {
     pub(crate) playback: lyra_db::playbacks::Playback,
-    pub(crate) queue: QueueSnapshot,
     pub(crate) detached_session: Option<DetachedSession>,
 }
 
@@ -1020,7 +1138,6 @@ pub(crate) fn replace_queue(
     }
     Ok(ReplaceQueueUpdate {
         playback,
-        queue: snapshot,
         detached_session,
     })
 }
@@ -1090,6 +1207,95 @@ mod tests {
     fn make_admin(db: &mut DbAny, user_db_id: DbId) -> anyhow::Result<()> {
         lyra_db::roles::ensure_builtin_roles(db)?;
         lyra_db::roles::ensure_user_has_role(db, user_db_id, lyra_db::roles::BUILTIN_ADMIN_ROLE)
+    }
+
+    /// A listener granted one library, with two of its tracks and one track of a library they
+    /// aren't granted.
+    struct ScopedListener {
+        db: DbAny,
+        user_db_id: DbId,
+        visible_library_id: String,
+        tracks: [(DbId, String); 2],
+        hidden: (DbId, String),
+    }
+
+    fn scoped_listener() -> anyhow::Result<ScopedListener> {
+        let mut db = new_test_db()?;
+        let user_db_id = lyra_db::users::create(&mut db, &test_user("listener")?)?;
+        let visible = lyra_db::test_db::insert_library(&mut db, "Visible", "/tmp/lyra-visible")?;
+        let hidden = lyra_db::test_db::insert_library(&mut db, "Hidden", "/tmp/lyra-hidden")?;
+        lyra_db::libraries::grant_access(
+            &mut db,
+            user_db_id,
+            visible,
+            lyra_db::libraries::AccessKind::ReadWrite,
+        )?;
+        let mut track = |library: DbId, title: &str| -> anyhow::Result<(DbId, String)> {
+            let track_db_id = insert_track(&mut db, title)?;
+            lyra_db::fixtures::connect(&mut db, library, track_db_id)?;
+            let public_id = lyra_db::lookup::find_id_by_db_id(&db, track_db_id)?
+                .expect("track must have a public ID");
+            Ok((track_db_id, public_id))
+        };
+        let tracks = [track(visible, "One")?, track(visible, "Two")?];
+        let hidden = track(hidden, "Hidden")?;
+        let visible_library_id = lyra_db::lookup::find_id_by_db_id(&db, visible)?.unwrap();
+        Ok(ScopedListener {
+            db,
+            user_db_id,
+            visible_library_id,
+            tracks,
+            hidden,
+        })
+    }
+
+    /// Stores a queue-backed playback of `track_ids` whose current session plays `session_track`.
+    fn store_queue_playback(
+        db: &mut DbAny,
+        user_db_id: DbId,
+        track_ids: &[&str],
+        current_index: u64,
+        session_track: DbId,
+        state: lyra_db::PlaybackState,
+        position_ms: u64,
+    ) -> anyhow::Result<lyra_db::playbacks::Playback> {
+        let session = lyra_db::PlaybackSession {
+            db_id: None,
+            id: nanoid::nanoid!(),
+            play_id: nanoid::nanoid!(),
+            client_name: None,
+            plugin_id: None,
+            position_ms,
+            duration_ms: None,
+            played_ms: 0,
+            last_position_ms: position_ms,
+            last_position_at_ms: 1,
+            latency_allowance_used_ms: 0,
+            rate_permille: playback_sessions::NORMAL_RATE_PERMILLE,
+            counts_as_listen: true,
+            state,
+            updated_at_ms: 1,
+            created_at_ms: 1,
+        };
+        let playback = lyra_db::playbacks::Playback {
+            db_id: None,
+            id: nanoid::nanoid!(),
+            source: lyra_db::playbacks::PlaybackSource::Queue(lyra_db::playbacks::Queue {
+                revision: 3,
+                track_ids: track_ids.iter().map(ToString::to_string).collect(),
+                current_index,
+                repeat_mode: RepeatMode::All,
+                shuffle_enabled: true,
+            }),
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        };
+        let playback_db_id = db.transaction_mut(|t| {
+            let session_db_id =
+                lyra_db::playback_sessions::insert(t, &session, session_track, user_db_id)?;
+            lyra_db::playbacks::insert(t, &playback, user_db_id, session_db_id)
+        })?;
+        Ok(lyra_db::playbacks::get_by_id(db, playback_db_id)?.expect("stored playback"))
     }
 
     #[test]
@@ -1291,6 +1497,156 @@ mod tests {
             validate_handoff_queue(&db, user_db_id, &playback_id, 1),
             Err(HandoffValidationError::NotPlaying)
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn the_playable_queue_drops_tracks_the_reader_cant_play() -> anyhow::Result<()> {
+        let ScopedListener {
+            mut db,
+            user_db_id,
+            tracks: [(one_db_id, one), (two_db_id, two)],
+            hidden: (hidden_db_id, hidden),
+            ..
+        } = scoped_listener()?;
+        let paused = lyra_db::PlaybackState::Paused;
+        let view = |db: &DbAny, playback: &lyra_db::playbacks::Playback| {
+            playable_queue(db, user_db_id, playback, 10)
+                .map(|queue| queue.map(|queue| (queue.snapshot, queue.position_ms)))
+        };
+        let snapshot = |track_ids: &[&String], current_index: u64| QueueSnapshot {
+            track_ids: track_ids.iter().map(|id| id.to_string()).collect(),
+            current_index,
+            repeat_mode: RepeatMode::All,
+            shuffle_enabled: true,
+        };
+
+        let kept = store_queue_playback(
+            &mut db,
+            user_db_id,
+            &[&one, &hidden, &two],
+            2,
+            two_db_id,
+            paused,
+            4_000,
+        )?;
+        assert_eq!(
+            playable_queue(&db, user_db_id, &kept, 10)?.map(|queue| queue.revision),
+            Some(3),
+            "the revision is the stored queue's"
+        );
+        assert_eq!(
+            view(&db, &kept)?,
+            Some((snapshot(&[&one, &two], 1), 4_000)),
+            "a kept current track keeps its position"
+        );
+
+        let next = store_queue_playback(
+            &mut db,
+            user_db_id,
+            &[&one, &hidden, &two],
+            1,
+            hidden_db_id,
+            paused,
+            4_000,
+        )?;
+        assert_eq!(
+            view(&db, &next)?,
+            Some((snapshot(&[&one, &two], 1), 0)),
+            "a dropped current track hands over to the next one, from its start"
+        );
+
+        let back = store_queue_playback(
+            &mut db,
+            user_db_id,
+            &[&one, &hidden],
+            1,
+            hidden_db_id,
+            paused,
+            4_000,
+        )?;
+        assert_eq!(
+            view(&db, &back)?,
+            Some((snapshot(&[&one], 0), 0)),
+            "else to the last one before it"
+        );
+
+        let completed = store_queue_playback(
+            &mut db,
+            user_db_id,
+            &[&one],
+            0,
+            one_db_id,
+            lyra_db::PlaybackState::Completed,
+            4_000,
+        )?;
+        assert_eq!(view(&db, &completed)?, Some((snapshot(&[&one], 0), 0)));
+
+        let elsewhere = store_queue_playback(
+            &mut db,
+            user_db_id,
+            &[&one, &two],
+            0,
+            two_db_id,
+            paused,
+            4_000,
+        )?;
+        assert_eq!(
+            view(&db, &elsewhere)?,
+            Some((snapshot(&[&one, &two], 0), 0)),
+            "a session of another track gives no position"
+        );
+
+        let none = store_queue_playback(
+            &mut db,
+            user_db_id,
+            &[&hidden, "missing"],
+            0,
+            hidden_db_id,
+            paused,
+            4_000,
+        )?;
+        assert_eq!(view(&db, &none)?, None, "nothing left to play");
+        Ok(())
+    }
+
+    #[test]
+    fn own_queue_playbacks_stay_visible_without_a_hidden_current_track() -> anyhow::Result<()> {
+        let ScopedListener {
+            mut db,
+            user_db_id,
+            visible_library_id,
+            tracks: [(_, one), _],
+            hidden: (hidden_db_id, hidden),
+        } = scoped_listener()?;
+        let playback = store_queue_playback(
+            &mut db,
+            user_db_id,
+            &[&one, &hidden],
+            1,
+            hidden_db_id,
+            lyra_db::PlaybackState::Paused,
+            4_000,
+        )?;
+        let playback_db_id = playback.db_id.expect("persisted playback");
+        let principal = Principal::for_user(
+            &db,
+            user_db_id,
+            Vec::new(),
+            HashSet::from([visible_library_id]),
+        );
+
+        let detail = get_visible_detail(&db, playback_db_id, &principal, 10)?
+            .expect("the owner still sees the playback");
+        assert!(detail.current_session.is_none());
+        assert!(
+            detail.current_client.is_some(),
+            "the client stays known without its track"
+        );
+        let listed = list_visible_projections_with_current(&db, &principal, false, 10)?;
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].0.db_id, playback_db_id);
+        assert_eq!(listed[0].1, None);
         Ok(())
     }
 

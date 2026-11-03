@@ -129,9 +129,6 @@ struct PlaybackDetailQuery {
 struct CurrentPlaybackResponse {
     track_id: String,
     play_id: String,
-    client_name: Option<String>,
-    /// The plugin that reported the play; null for Lyra's own clients.
-    plugin_id: Option<String>,
     position_ms: u64,
     duration_ms: Option<u64>,
     state: PlaybackState,
@@ -153,6 +150,11 @@ struct PlaybackResponse {
     user_id: String,
     queue_revision: Option<u64>,
     current: Option<CurrentPlaybackResponse>,
+    /// The client of the current track's play, given even when `current` is left out because its
+    /// track is hidden from the caller or gone.
+    client_name: Option<String>,
+    /// The plugin that reported that play; null for Lyra's own clients.
+    plugin_id: Option<String>,
     created_at: String,
     updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -248,8 +250,6 @@ fn current_to_response(
     CurrentPlaybackResponse {
         track_id: current.track_public_id.clone(),
         play_id: playback.play_id.clone(),
-        client_name: playback.client_name.clone(),
-        plugin_id: playback.plugin_id.clone(),
         position_ms: playback.position_ms,
         duration_ms: playback.duration_ms,
         state: playback.state,
@@ -264,6 +264,7 @@ fn current_to_response(
 fn playback_to_response(
     playback: &lyra_db::playbacks::Playback,
     current_session: Option<&playbacks::CurrentSession>,
+    current_client: Option<&playbacks::PlayClient>,
     user_public_id: &str,
     current_ms: u64,
     inc: PlaybackInc,
@@ -272,11 +273,17 @@ fn playback_to_response(
     let controller = inc.controller.then(|| {
         remote_connections::controller(connections, &playback.id).map(UserConnection::resource)
     });
+    let client = current_session
+        .map(|current| playbacks::PlayClient::from(&current.playback))
+        .or_else(|| current_client.cloned())
+        .unwrap_or_default();
     PlaybackResponse {
         id: playback.id.clone(),
         user_id: user_public_id.to_string(),
         queue_revision: playback.queue().map(|queue| queue.revision),
         current: current_session.map(|current| current_to_response(current, current_ms)),
+        client_name: client.client_name,
+        plugin_id: client.plugin_id,
         created_at: crate::services::timestamps::unix_ms_to_rfc3339_u64(playback.created_at_ms),
         updated_at: crate::services::timestamps::unix_ms_to_rfc3339_u64(playback.updated_at_ms),
         controller,
@@ -450,6 +457,7 @@ async fn list_playbacks(
             playback_to_response(
                 &record.playback,
                 record.current_session.as_ref(),
+                record.current_client.as_ref(),
                 &principal.user_public_id,
                 current_ms,
                 inc,
@@ -501,6 +509,7 @@ async fn create_playback(
     let response = playback_to_response(
         &update.playback,
         Some(&playbacks::CurrentSession::from(&update.session)),
+        None,
         &auth.principal.user_public_id,
         current_ms,
         PlaybackInc::default(),
@@ -535,6 +544,7 @@ async fn get_playback(
     Ok(Json(playback_to_response(
         &record.playback,
         record.current_session.as_ref(),
+        record.current_client.as_ref(),
         &principal.user_public_id,
         current_ms,
         inc,
@@ -568,7 +578,7 @@ fn create_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn list_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List playbacks").description(
-        "Returns `{ items, next_cursor }` for the authenticated user's playback contexts, including plugin-reported playback, ordered by most recently updated. `active=true` filters the initial snapshot to recent non-terminal current sessions. Reported contexts expire after five minutes without a current playback observation; explicitly created playbacks are retained. A null `queue_revision` means there is no server-managed queue. `inc=controller` includes the WebSocket connection driving each playback as `controller`, or `null` when none is. Drive pagination from `next_cursor`.",
+        "Returns `{ items, next_cursor }` for the authenticated user's playback contexts, including plugin-reported playback, ordered by most recently updated. `active=true` filters the initial snapshot to recent non-terminal current sessions. Reported contexts expire after five minutes without a current playback observation; explicitly created playbacks are retained. `client_name` and `plugin_id` name the client and plugin of the current track's play. A queue-backed playback whose current track the caller can no longer see is listed without `current`, though still with those; `GET /queue` gives what of its queue is playable. A null `queue_revision` means there is no server-managed queue. `inc=controller` includes the WebSocket connection driving each playback as `controller`, or `null` when none is. Drive pagination from `next_cursor`.",
     )
 }
 

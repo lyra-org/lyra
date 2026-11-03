@@ -193,6 +193,7 @@ fn active_filter_requires_recent_non_terminal_current_session() {
         playback_db_id: DbId(1),
         playback,
         current_session: Some(current.clone()),
+        current_client: None,
     };
     assert!(playback_is_active(
         record.current_session.as_ref(),
@@ -274,13 +275,7 @@ async fn response_keeps_initiating_and_controlling_client_names_distinct() -> an
     )
     .await
     .map_err(|error| anyhow::anyhow!("{error:?}"))?;
-    assert_eq!(
-        created
-            .current
-            .as_ref()
-            .and_then(|current| current.client_name.as_deref()),
-        Some("Initiating Client")
-    );
+    assert_eq!(created.client_name.as_deref(), Some("Initiating Client"));
 
     let Json(detail) = get_playback(
         fixture.headers,
@@ -292,7 +287,8 @@ async fn response_keeps_initiating_and_controlling_client_names_distinct() -> an
     .await
     .map_err(|error| anyhow::anyhow!("{error:?}"))?;
     let json = serde_json::to_value(detail)?;
-    assert_eq!(json["current"]["client_name"], "Initiating Client");
+    assert_eq!(json["client_name"], "Initiating Client");
+    assert!(json["current"].get("client_name").is_none());
     assert_eq!(json["controller"]["client_name"], "Controlling Client");
     assert_eq!(json["controller"]["id"], registered.public_id.as_str());
     assert_eq!(json["controller"]["playback_id"], created.id.as_str());
@@ -396,6 +392,63 @@ async fn create_replace_queue_and_advance_current_track() -> anyhow::Result<()> 
         progressed.updated_at,
         progressed.current.as_ref().unwrap().updated_at
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_queue_gives_the_position_to_resume_its_current_track_from() -> anyhow::Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    let fixture = setup_admin_with_tracks().await?;
+    let headers = fixture.headers;
+    let (_, Json(created)) = create_playback(
+        headers.clone(),
+        Json(PlaybackCreateRequest {
+            play_id: TEST_PLAY_ID.to_string(),
+            queue: QueueSnapshot {
+                track_ids: vec![
+                    fixture.first_track_id.clone(),
+                    fixture.second_track_id.clone(),
+                ],
+                current_index: 1,
+                repeat_mode: playbacks::RepeatMode::None,
+                shuffle_enabled: false,
+            },
+            position_ms: Some(1_500),
+            duration_ms: Some(100_000),
+            state: Some(PlaybackState::Paused),
+            rate: None,
+            counts_as_listen: None,
+            connection_session_key: None,
+        }),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    let get = |revision| {
+        queue::get_queue(
+            headers.clone(),
+            Path(created.id.clone()),
+            Query(queue::QueueGetQuery { revision }),
+        )
+    };
+    let Json(queue) = get(None)
+        .await
+        .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    assert_eq!(queue.revision, 1);
+    assert_eq!(queue.snapshot.current_index, 1);
+    assert_eq!(queue.position_ms, 1_500);
+
+    {
+        let mut db = STATE.db.write().await;
+        let first = lyra_db::lookup::find_node_id_by_id(&*db, &fixture.first_track_id)?.unwrap();
+        db.exec_mut(agdb::QueryBuilder::remove().ids(first).query())?;
+    }
+    let Json(queue) = get(Some(1))
+        .await
+        .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    assert_eq!(queue.revision, 1, "a dropped track leaves the revision");
+    assert_eq!(queue.snapshot.track_ids, vec![fixture.second_track_id]);
+    assert_eq!(queue.snapshot.current_index, 0);
+    assert_eq!(queue.position_ms, 1_500);
     Ok(())
 }
 
@@ -1088,12 +1141,9 @@ async fn reported_playback_shares_collection_and_rejects_queue_operations() -> a
         fixture.second_track_id
     );
     assert_eq!(reported.current.as_ref().unwrap().position_ms, 1_200);
-    assert_eq!(
-        reported.current.as_ref().unwrap().plugin_id.as_deref(),
-        Some("external")
-    );
+    assert_eq!(reported.plugin_id.as_deref(), Some("external"));
     let native_item = page.items.iter().find(|item| item.id == native.id).unwrap();
-    assert_eq!(native_item.current.as_ref().unwrap().plugin_id, None);
+    assert_eq!(native_item.plugin_id, None);
     let id = reported.id.clone();
     let Json(detail) = get_playback(
         fixture.headers.clone(),

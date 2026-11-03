@@ -175,6 +175,7 @@ pub(super) async fn report_progress(
     let response = playback_to_response(
         &update.playback,
         Some(&playbacks::CurrentSession::from(&update.session)),
+        None,
         &principal.user_public_id,
         current_ms,
         PlaybackInc::default(),
