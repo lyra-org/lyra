@@ -896,7 +896,7 @@ pub fn delete(db: &mut DbAny, playback_db_id: DbId) -> anyhow::Result<()> {
     db.transaction_mut(|t| delete_in_transaction(t, playback_db_id))
 }
 
-fn delete_in_transaction(db: &mut impl DbAccess, playback_db_id: DbId) -> anyhow::Result<()> {
+pub fn delete_in_transaction(db: &mut impl DbAccess, playback_db_id: DbId) -> anyhow::Result<()> {
     db.exec_mut(QueryBuilder::remove().ids(playback_db_id).query())?;
     Ok(())
 }

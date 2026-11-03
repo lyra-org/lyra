@@ -550,15 +550,8 @@ async fn delete_playback(
     let current_ms = now_ms()?;
     let mut db = STATE.db.write().await;
     let record = resolve_owned_playback_projection(&db, &principal, &id, current_ms)?;
-    let current = match lyra_db::playbacks::get_current_session_id(&*db, record.db_id)? {
-        Some(session_id) => lyra_db::playback_sessions::get_by_id(&*db, session_id)?
-            .map(|session| (session_id, session.id)),
-        None => None,
-    };
-    lyra_db::playbacks::delete(&mut db, record.db_id)?;
-    remote_handoffs::fail_for_playback(&record.id).await;
-    if let Some((playback_session_id, playback_session_public_id)) = current {
-        playbacks::bindings::clear_session(playback_session_id, &playback_session_public_id);
+    if let Some(deleted) = playbacks::delete(&mut db, record.db_id).map_err(map_playback_error)? {
+        deleted.finish().await;
     }
     drop(db);
     Ok(StatusCode::NO_CONTENT)

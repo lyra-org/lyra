@@ -28,11 +28,13 @@ use crate::services::{
 
 mod active;
 pub(crate) mod bindings;
+mod removal;
 mod reported;
 mod reporting;
 pub(crate) mod socket_claims;
 
 pub(crate) use active::list_active;
+pub(crate) use removal::delete;
 pub(crate) use reported::{
     ReportOutcome,
     ReportedPlaybackRequest,
