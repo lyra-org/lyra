@@ -63,6 +63,19 @@ assert(call.error_code("setRating", key, { id = ids.s1 }) == 10, "a rating is re
 assert(call.error_code("setRating", key, { rating = "3" }) == 10, "an id is required")
 assert(call.error_code("setRating", key, { id = ids.h1, rating = "3" }) == 70, "rating a hidden song")
 
+-- Artists carry the caller's rating.
+local function artist_rating(): number?
+	return call.ok("getArtist", key, { id = ids.amy }).artist.userRating
+end
+assert(artist_rating() == nil, "an unrated artist")
+call.ok("setRating", key, { id = ids.amy, rating = "4" })
+assert(artist_rating() == 4, "an artist rating")
+call.ok("star", key, { artistId = ids.amy })
+assert(starred().artist[1].userRating == 4, "a starred artist's rating")
+call.ok("unstar", key, { artistId = ids.amy })
+call.ok("setRating", key, { id = ids.amy, rating = "0" })
+assert(artist_rating() == nil, "a cleared artist rating")
+
 -- A scrobble counts the song as played from the time given, once however often it is sent.
 assert(song(ids.s1).playCount == 0, "unplayed")
 call.ok("scrobble", key, { id = ids.s1, time = "1700000000000" })

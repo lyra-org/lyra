@@ -7,6 +7,7 @@
 local api = require("@lyra/api")
 local artists = require("@lyra/artists")
 local favorites = require("@lyra/favorites")
+local ratings = require("@lyra/ratings")
 
 local cover_art = require("./cover_art")
 local dates = require("../protocol/dates")
@@ -26,6 +27,7 @@ function module.list(summaries: { ArtistSummary }): { JsonObject }
 		table.insert(ids, summary.id)
 	end
 	local starred = favorites.get(ids)
+	local user_ratings = ratings.get(ids)
 	local cover_art_ids = cover_art.ids(ids)
 
 	local items: { JsonObject } = {}
@@ -36,6 +38,8 @@ function module.list(summaries: { ArtistSummary }): { JsonObject }
 			coverArt = cover_art_ids[summary.id],
 			albumCount = summary.release_count,
 			starred = dates.iso8601(starred[summary.id]),
+			-- Absent rather than 0 when unrated, as on albums.
+			userRating = user_ratings[summary.id],
 			sortName = summary.sort_name or "",
 		}
 		table.insert(items, item)
