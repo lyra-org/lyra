@@ -3,14 +3,23 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+mod encoder;
+
 use std::fmt;
 
 use harmony_luau as luau;
 use harmony_luau::{
     DescribeModule,
     DescribeTypeAlias,
+    DescribeUserData,
     JsonValue,
     render_definition_file_with_support,
+};
+
+pub use encoder::{
+    JsonEncoder,
+    MAX_BUFFERED_BYTES,
+    XmlEncoder,
 };
 
 const EMPTY_OBJECT_MARKER: &str = "__harmony_serde_empty_object";
@@ -24,7 +33,10 @@ pub const SCOPE: &str = "harmony.serde";
     id = "harmony/serde",
     name = "Serde",
     local = "serde",
-    description = "Serde-backed JSON, YAML, and XML encoding and decoding helpers."
+    description = "Serde-backed JSON, YAML, and XML encoding and decoding helpers.",
+    extend = install_limits,
+    describe = describe_limits,
+    userdata(JsonEncoder, XmlEncoder)
 )]
 impl SerdeModule {
     #[harmony(
@@ -35,6 +47,22 @@ impl SerdeModule {
     fn json_encode(input: luau::Value) -> luau::runtime::Result<String> {
         let json = luau_to_json(&input, 0)?;
         serde_json::to_string(&json).map_err(|error| runtime_error("JSON encode failed", error))
+    }
+
+    #[harmony(
+        name = "json.encoder",
+        description = "Creates an encoder that writes one JSON document a piece at a time, each piece encoded as `json.encode` would.",
+        returns(JsonEncoder)
+    )]
+    fn json_encoder(
+        vm: &luau::Vm,
+        origin: &luau::ChunkOrigin,
+    ) -> luau::runtime::Result<luau::Value> {
+        <JsonEncoder as harmony_core::UserDataBinding>::class().create_value(
+            vm,
+            origin,
+            JsonEncoder::default(),
+        )
     }
 
     #[harmony(
@@ -81,6 +109,22 @@ impl SerdeModule {
     }
 
     #[harmony(
+        name = "xml.encoder",
+        description = "Creates an encoder that writes one XML document a piece at a time, each element encoded as `xml.encode` would.",
+        returns(XmlEncoder)
+    )]
+    fn xml_encoder(
+        vm: &luau::Vm,
+        origin: &luau::ChunkOrigin,
+    ) -> luau::runtime::Result<luau::Value> {
+        <XmlEncoder as harmony_core::UserDataBinding>::class().create_value(
+            vm,
+            origin,
+            XmlEncoder::default(),
+        )
+    }
+
+    #[harmony(
         name = "xml.decode",
         description = "Decodes an XML string into a Lua JSON-compatible value using quick-xml conventions.",
         returns(JsonValue)
@@ -108,6 +152,28 @@ impl SerdeModule {
         table.set_readonly(true)?;
         Ok(table)
     }
+}
+
+const MAX_BUFFERED_BYTES_FIELD: &str = "MAX_BUFFERED_BYTES";
+
+/// Exports `MAX_BUFFERED_BYTES`, so callers flush against the value the encoders enforce.
+fn install_limits(spec: harmony_core::ModuleSpec) -> harmony_core::ModuleSpec {
+    spec.initializer(|_vm, _origin, root| {
+        root.set(
+            MAX_BUFFERED_BYTES_FIELD,
+            luau::Value::Number(MAX_BUFFERED_BYTES as f64),
+        )
+    })
+}
+
+fn describe_limits(descriptor: &mut harmony_luau::ModuleDescriptor) {
+    use harmony_luau::LuauTypeInfo;
+
+    descriptor.fields.push(harmony_luau::ModuleFieldDescriptor {
+        path: vec![MAX_BUFFERED_BYTES_FIELD],
+        description: Some("The most an encoder holds unflushed, in bytes."),
+        ty: u64::luau_type(),
+    });
 }
 
 pub fn luau_to_json(value: &luau::Value, depth: usize) -> luau::runtime::Result<serde_json::Value> {
@@ -408,7 +474,10 @@ pub fn render_luau_definition() -> std::result::Result<String, fmt::Error> {
         &SerdeModule::module_descriptor(),
         &[JsonValue::type_alias_descriptor()],
         &[],
-        &[],
+        &[
+            JsonEncoder::class_descriptor(),
+            XmlEncoder::class_descriptor(),
+        ],
     )
 }
 
