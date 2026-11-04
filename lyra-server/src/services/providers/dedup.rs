@@ -23,6 +23,7 @@ use crate::services::metadata::id_links::{
     provider_ranks,
 };
 use crate::services::metadata::layers::MANUAL_SOURCE_ID;
+use lyra_db::graph::RetargetLookup;
 
 pub(super) fn select_release_merge_winner(
     db: &DbAny,
@@ -125,9 +126,9 @@ fn merge_release_into_inside_tx(
     crate::services::metadata::merging::apply_merged_metadata_to_entity_inside_tx(db, winner)?;
 
     lyra_db::metadata::custom_fields::copy_between_entities(db, loser, winner)?;
-    lyra_db::favorites::retarget(db, loser, winner)?;
-    lyra_db::ratings::retarget(db, loser, winner)?;
-    lyra_db::tags::retarget(db, loser, winner)?;
+    lyra_db::favorites::retarget(db, loser, winner, RetargetLookup::Target)?;
+    lyra_db::ratings::retarget(db, loser, winner, RetargetLookup::Target)?;
+    lyra_db::tags::retarget(db, loser, winner, RetargetLookup::Target)?;
 
     // The winner keeps its own covers and takes the loser's for the sources it lacks.
     lyra_db::covers::adopt_missing(db, winner, loser)?;

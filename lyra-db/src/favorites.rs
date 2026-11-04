@@ -17,6 +17,7 @@ use agdb::{
 };
 
 use super::DbAccess;
+use super::graph::RetargetLookup;
 
 pub(crate) const LIST_IDS_CAP: usize = 10_000;
 
@@ -259,14 +260,36 @@ pub(crate) fn remove_inbound_for_target(
 
 /// Moves the favorites of `from` onto `to`. A user who favorites both keeps one favorite,
 /// first favorited at the earlier time and last refreshed at the later.
-pub fn retarget(db: &mut impl DbAccess, from: DbId, to: DbId) -> anyhow::Result<()> {
-    for element in read_inbound_favorite_edges(db, from)? {
+pub fn retarget(
+    db: &mut impl DbAccess,
+    from: DbId,
+    to: DbId,
+    lookup: RetargetLookup,
+) -> anyhow::Result<()> {
+    let moved_edges = read_inbound_favorite_edges(db, from)?;
+    if moved_edges.is_empty() {
+        return Ok(());
+    }
+    let on_target: Option<HashMap<DbId, DbId>> = match lookup {
+        RetargetLookup::Owners => None,
+        RetargetLookup::Target => Some(
+            read_inbound_favorite_edges(db, to)?
+                .into_iter()
+                .map(|element| (element.from, element.id))
+                .collect(),
+        ),
+    };
+    for element in moved_edges {
         let user_db_id = element.from;
         let edge_id = element.id;
         let Some(moved) = parse_favorite_edge(element) else {
             continue;
         };
-        let (edge, first, last) = match find_favorite_edge(db, user_db_id, to)? {
+        let existing = match &on_target {
+            Some(on_target) => on_target.get(&user_db_id).copied(),
+            None => find_favorite_edge(db, user_db_id, to)?,
+        };
+        let (edge, first, last) = match existing {
             Some(existing) => {
                 let kept = parse_favorite_edge(
                     db.exec(QueryBuilder::select().ids(existing).query())?

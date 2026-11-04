@@ -23,6 +23,7 @@ use super::id_links::{
     provider_ranks,
 };
 use super::layers::MANUAL_SOURCE_ID;
+use lyra_db::graph::RetargetLookup;
 use lyra_db::roots::{
     self,
     Root,
@@ -400,9 +401,9 @@ fn merge_artist_into(
         }
     }
     lyra_db::artists::absorb_scan_names(db, winner, loser)?;
-    lyra_db::favorites::retarget(db, loser, winner)?;
-    lyra_db::ratings::retarget(db, loser, winner)?;
-    lyra_db::tags::retarget(db, loser, winner)?;
+    lyra_db::favorites::retarget(db, loser, winner, RetargetLookup::Owners)?;
+    lyra_db::ratings::retarget(db, loser, winner, RetargetLookup::Owners)?;
+    lyra_db::tags::retarget(db, loser, winner, RetargetLookup::Owners)?;
     lyra_db::covers::adopt_missing(db, winner, loser)?;
     // `merge_artist_into` runs inside `deduplicate_artists_by_external_id`'s outer
     // `transaction_mut`; use the in-txn variant — agdb does not support reentrant transactions.

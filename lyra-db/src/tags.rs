@@ -25,6 +25,7 @@ use unicode_properties::{
 
 use super::DbAccess;
 use super::NodeId;
+use super::graph::RetargetLookup;
 
 pub(crate) const MAX_TAG_NAME_LEN: usize = 128;
 pub(crate) const GET_TAGGED_CAP: usize = 10_000;
@@ -432,24 +433,31 @@ pub fn get_for_targets_many(
 }
 
 /// Moves the tags on `from` onto `to`; a tag already on `to` stays there once.
-pub fn retarget(db: &mut impl DbAccess, from: DbId, to: DbId) -> anyhow::Result<()> {
-    let inbound = db.exec(
-        QueryBuilder::select()
-            .search()
-            .to(from)
-            .where_()
-            .edge()
-            .and()
-            .distance(CountComparison::Equal(1))
-            .end_where()
-            .query(),
-    )?;
-    for edge in inbound
-        .elements
-        .into_iter()
-        .filter(|edge| edge.to == from && edge_is_tag_target(edge))
-    {
-        if !has_target_edge(db, edge.from, to)? {
+pub fn retarget(
+    db: &mut impl DbAccess,
+    from: DbId,
+    to: DbId,
+    lookup: RetargetLookup,
+) -> anyhow::Result<()> {
+    let moved_edges = inbound_tag_edges(db, from)?;
+    if moved_edges.is_empty() {
+        return Ok(());
+    }
+    let tags_on_target: Option<HashSet<DbId>> = match lookup {
+        RetargetLookup::Owners => None,
+        RetargetLookup::Target => Some(
+            inbound_tag_edges(db, to)?
+                .into_iter()
+                .map(|edge| edge.from)
+                .collect(),
+        ),
+    };
+    for edge in moved_edges {
+        let already_tagged = match &tags_on_target {
+            Some(tags_on_target) => tags_on_target.contains(&edge.from),
+            None => has_target_edge(db, edge.from, to)?,
+        };
+        if !already_tagged {
             let moved = db
                 .exec_mut(
                     QueryBuilder::insert()

@@ -17,6 +17,7 @@ use agdb::{
 };
 
 use super::DbAccess;
+use super::graph::RetargetLookup;
 
 const VALUE_KEY: &str = "rating_value";
 const CREATED_AT_KEY: &str = "rating_created_at_ms";
@@ -293,14 +294,36 @@ pub(crate) fn remove_inbound_for_target(
 
 /// Moves the ratings of `from` onto `to`. A user who rated both keeps the rating they changed
 /// last, created at the earlier of the two times.
-pub fn retarget(db: &mut impl DbAccess, from: DbId, to: DbId) -> anyhow::Result<()> {
-    for element in read_inbound_rating_edges(db, from)? {
+pub fn retarget(
+    db: &mut impl DbAccess,
+    from: DbId,
+    to: DbId,
+    lookup: RetargetLookup,
+) -> anyhow::Result<()> {
+    let moved_edges = read_inbound_rating_edges(db, from)?;
+    if moved_edges.is_empty() {
+        return Ok(());
+    }
+    let on_target: Option<HashMap<DbId, DbId>> = match lookup {
+        RetargetLookup::Owners => None,
+        RetargetLookup::Target => Some(
+            read_inbound_rating_edges(db, to)?
+                .into_iter()
+                .map(|element| (element.from, element.id))
+                .collect(),
+        ),
+    };
+    for element in moved_edges {
         let user_db_id = element.from;
         let edge_id = element.id;
         let Some(moved) = parse_rating_edge(element) else {
             continue;
         };
-        let (edge, kept) = match find_rating_edge(db, user_db_id, to)? {
+        let existing = match &on_target {
+            Some(on_target) => on_target.get(&user_db_id).copied(),
+            None => find_rating_edge(db, user_db_id, to)?,
+        };
+        let (edge, kept) = match existing {
             Some(existing) => (
                 existing,
                 parse_rating_edge(

@@ -63,6 +63,16 @@ pub fn remove_edges_between(db: &mut impl DbAccess, from: DbId, to: DbId) -> any
     Ok(true)
 }
 
+/// Where a retarget finds the edges its new target already holds: on each owner's side
+/// (a user's or a tag's edges), or among the new target's inbound edges. The target is the
+/// cheaper side when it has few inbound edges, like a release, and the owners when it has
+/// many, like an artist with its credits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RetargetLookup {
+    Owners,
+    Target,
+}
+
 pub fn ensure_owned_edge(db: &mut impl DbAccess, from: DbId, to: DbId) -> anyhow::Result<bool> {
     if edge_exists(db, from, to)? {
         return Ok(false);
