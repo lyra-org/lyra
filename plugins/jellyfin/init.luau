@@ -371,7 +371,8 @@ local function public_system_info<T>(extra: T): T & PublicSystemInfo
 	local info: T & PublicSystemInfo = extra
 	info.ServerName = "Lyra"
 	info.Version = SERVER_VERSION
-	info.ProductName = "Lyra"
+	-- Official Jellyfin SDK server discovery rejects servers whose product name is not "Jellyfin Server".
+	info.ProductName = "Jellyfin Server"
 	info.Id = SERVER_ID
 	info.LocalAddress = `http://{server_info.hostname}:{server_info.port}{P}`
 	info.PublicAddress = public_address
