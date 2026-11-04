@@ -410,60 +410,30 @@ impl PlaybackSessionsModule {
 
     #[harmony(
         description = concat!(
-            "Lists active playbacks, from Lyra's own clients and every plugin, most recently reported first. ",
+            "Lists the dispatch principal's live playbacks, from Lyra's own clients and every plugin, most recently reported first. ",
             live_window_description!(),
-            " Without a query, lists the dispatch principal's own; another user's or all users' require the manage_users permission, and an admin's also the admin permission. All users' leaves out the admins' without it. Playbacks whose current track the principal can't see are left out. Needs the `lyra.playback_sessions.all` scope too."
+            " Playbacks whose current track the principal can't see are left out."
         ),
         returns(Vec<ActivePlaybackInfo>)
     )]
     async fn list_playbacks(
-        query: Option<OwnersQuery>,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::Value> {
-        let query = query.unwrap_or_default();
-        let owners = query.owners("list_playbacks")?;
-        let snapshots = registry::list_connections().await;
-        let now_ms = playbacks::now_ms().map_err(crate::plugins::runtime_error)?;
-        let db = db.read().await;
-        let (viewer_db_id, users) = owned_users(&db, &principal, owners)?;
-        let connections =
-            connections::join_owned(&db, viewer_db_id, &owner_ids(&users), snapshots, now_ms)
-                .map_err(crate::plugins::runtime_error)?;
-        let all_users = matches!(owners, owners::Owners::All);
-        let active =
-            crate::services::playbacks::list_active(&db, &principal, &users, all_users, now_ms)
-                .map_err(crate::plugins::runtime_error)?;
-        drop(db);
-        let result = active
-            .into_iter()
-            .map(|active| {
-                let connection = connections::controller(&connections, &active.playback_id);
-                let effective_position_ms = playbacks::current_position_ms(&active.session, now_ms);
-                ActivePlaybackInfo {
-                    session_key: active
-                        .reported_session_key
-                        .or_else(|| connection.map(|connection| connection.session_key.clone())),
-                    connection_id: connection.map(|connection| connection.id.clone()),
-                    id: active.playback_id,
-                    play_id: active.session.play_id,
-                    user_id: active.user_id,
-                    username: active.username,
-                    track_id: active.track_id,
-                    position_ms: active.session.position_ms,
-                    effective_position_ms,
-                    duration_ms: active.session.duration_ms,
-                    state: active.session.state,
-                    rate: playbacks::rate_multiple(active.session.rate_permille),
-                    counts_as_listen: active.session.counts_as_listen,
-                    started_at_ms: active.session.created_at_ms,
-                    updated_at_ms: active.session.updated_at_ms,
-                    client_name: active.session.client_name,
-                    plugin_id: active.session.plugin_id,
-                }
-            })
-            .collect::<Vec<_>>();
-        harmony_luau::serializable_to_luau_owned(&result)
+        list_active_playbacks(db, principal, owners::Owners::Principal).await
+    }
+
+    #[harmony(
+        description = "Lists another user's live playbacks, with `user_id`, or every user's, with `all_users`, as `list_playbacks` lists the dispatch principal's; the query must give one of them. Another user's or all users' require the manage_users permission, and an admin's also the admin permission. All users' leaves out the admins' without it. Playbacks whose current track the principal can't see are left out. Needs the `lyra.playback_sessions.all` scope too.",
+        returns(Vec<ActivePlaybackInfo>)
+    )]
+    async fn list_user_playbacks(
+        query: OwnersQuery,
+        #[context] db: Db,
+        #[context] principal: Principal,
+    ) -> luau::runtime::Result<luau::Value> {
+        let owners = query.named_owners("list_user_playbacks")?;
+        list_active_playbacks(db, principal, owners).await
     }
 
     #[harmony(
@@ -617,6 +587,55 @@ impl PlaybackSessionsModule {
         .await
         .map_err(crate::plugins::runtime_error)
     }
+}
+
+/// The live playbacks of the users `owners` covers, as the principal may read them.
+async fn list_active_playbacks(
+    db: Db,
+    principal: Principal,
+    owners: owners::Owners<'_>,
+) -> luau::runtime::Result<luau::Value> {
+    let snapshots = registry::list_connections().await;
+    let now_ms = playbacks::now_ms().map_err(crate::plugins::runtime_error)?;
+    let db = db.read().await;
+    let all_users = matches!(owners, owners::Owners::All);
+    let (viewer_db_id, users) = owned_users(&db, &principal, owners)?;
+    let connections =
+        connections::join_owned(&db, viewer_db_id, &owner_ids(&users), snapshots, now_ms)
+            .map_err(crate::plugins::runtime_error)?;
+    let active =
+        crate::services::playbacks::list_active(&db, &principal, &users, all_users, now_ms)
+            .map_err(crate::plugins::runtime_error)?;
+    drop(db);
+    let result = active
+        .into_iter()
+        .map(|active| {
+            let connection = connections::controller(&connections, &active.playback_id);
+            let effective_position_ms = playbacks::current_position_ms(&active.session, now_ms);
+            ActivePlaybackInfo {
+                session_key: active
+                    .reported_session_key
+                    .or_else(|| connection.map(|connection| connection.session_key.clone())),
+                connection_id: connection.map(|connection| connection.id.clone()),
+                id: active.playback_id,
+                play_id: active.session.play_id,
+                user_id: active.user_id,
+                username: active.username,
+                track_id: active.track_id,
+                position_ms: active.session.position_ms,
+                effective_position_ms,
+                duration_ms: active.session.duration_ms,
+                state: active.session.state,
+                rate: playbacks::rate_multiple(active.session.rate_permille),
+                counts_as_listen: active.session.counts_as_listen,
+                started_at_ms: active.session.created_at_ms,
+                updated_at_ms: active.session.updated_at_ms,
+                client_name: active.session.client_name,
+                plugin_id: active.session.plugin_id,
+            }
+        })
+        .collect::<Vec<_>>();
+    harmony_luau::serializable_to_luau_owned(&result)
 }
 
 fn required<T>(value: Option<T>, field: &str, action: &str) -> luau::runtime::Result<T> {

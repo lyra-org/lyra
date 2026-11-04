@@ -209,7 +209,9 @@ end
 local function list_sessions(principal: Principal, all_users: boolean, listing: Listing): { JsonObject }
 	local query: playback_sessions.OwnersQuery? = if all_users then { all_users = true } else nil
 	local connections = playback_sessions.list_connections(query)
-	local active = playback_sessions.list_playbacks(query)
+	local active = if all_users
+		then playback_sessions.list_user_playbacks({ all_users = true })
+		else playback_sessions.list_playbacks()
 
 	local connection_by_device: { [string]: Connection } = {}
 	for _, conn in connections do

@@ -452,7 +452,7 @@ scopes! {
     PlaybackSessionsAll => {
         id: "lyra.playback_sessions.all",
         within: PlaybackSessions,
-        functions: &["list_connections", "list_playbacks", "on_update"],
+        functions: &["list_connections", "list_user_playbacks", "on_update"],
         effects: &[Effect::ReadsPersonal(PersonalKind::PlaybackActivity, Users::All)],
     },
     PlaybackSources => {
@@ -1278,6 +1278,33 @@ mod tests {
         }
     }
 
+    #[test]
+    fn own_playbacks_need_only_the_playback_sessions_scope() {
+        let module = super::gated_modules()
+            .into_iter()
+            .find(|module| &*module.spec.id.0 == "lyra/playback_sessions")
+            .expect("playback sessions module");
+        let scope = |function: &str| {
+            assert!(
+                module
+                    .spec
+                    .functions
+                    .iter()
+                    .any(|spec| &*spec.name == function),
+                "{function} is exported"
+            );
+            module
+                .function_scopes
+                .get(function)
+                .map(|scope| scope.0.to_string())
+        };
+        assert_eq!(scope("list_playbacks"), None);
+        assert_eq!(
+            scope("list_user_playbacks").as_deref(),
+            Some("lyra.playback_sessions.all")
+        );
+    }
+
     /// Each gated module's functions and the methods of the classes it
     /// declares, with their arguments and the narrower scope gating any of
     /// them. A change here is a prompt to review the new or changed ones
@@ -1638,7 +1665,8 @@ mod tests {
                 "report_session(request)",
                 "hold_session(sender, session_key)",
                 "list_connections(query) [lyra.playback_sessions.all]",
-                "list_playbacks(query) [lyra.playback_sessions.all]",
+                "list_playbacks()",
+                "list_user_playbacks(query) [lyra.playback_sessions.all]",
                 "save_queue(request)",
                 "remove_queue(client_name)",
                 "latest_queue()",

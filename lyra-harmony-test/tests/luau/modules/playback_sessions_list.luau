@@ -32,7 +32,7 @@ act_as("manager_web")
 assert(#playback_sessions.list_playbacks() == 0, "the manager plays nothing")
 
 -- manage_users reaches every non-admin's playback, leaving out tracks the manager can't see.
-local everyone = playback_sessions.list_playbacks({ all_users = true })
+local everyone = playback_sessions.list_user_playbacks({ all_users = true })
 assert(#everyone == 1, `one playback the manager may see, got {#everyone}`)
 local phone = everyone[1]
 assert(phone.user_id == fixture.users.listener)
@@ -47,10 +47,14 @@ assert(phone.plugin_id == "test")
 assert(phone.session_key == "phone")
 assert(phone.connection_id == nil, "no connection of Lyra's own clients drives it")
 assert(phone.started_at_ms > 0 and phone.updated_at_ms >= phone.started_at_ms)
-assert(#playback_sessions.list_playbacks({ user_id = fixture.users.listener }) == 1)
+assert(#playback_sessions.list_user_playbacks({ user_id = fixture.users.listener }) == 1)
 
-local ok, err = pcall(playback_sessions.list_playbacks, { user_id = fixture.users.admin })
+local ok, err = pcall(playback_sessions.list_user_playbacks, { user_id = fixture.users.admin })
 assert(not ok and string.find(tostring(err), "Admin permission required", 1, true), tostring(err))
+
+-- Another user's or every user's must be named; the caller's own come from list_playbacks.
+ok, err = pcall(playback_sessions.list_user_playbacks, {})
+assert(not ok and string.find(tostring(err), "takes user_id or all_users", 1, true), tostring(err))
 
 -- Connections follow the same rules.
 local connections = playback_sessions.list_connections({ all_users = true })
@@ -63,11 +67,11 @@ assert(connections[1].client_name == "Speaker")
 act_as("listener_phone")
 report("phone", "song", "stopped")
 act_as("manager_web")
-assert(#playback_sessions.list_playbacks({ all_users = true }) == 0, "the stopped playback is gone")
+assert(#playback_sessions.list_user_playbacks({ all_users = true }) == 0, "the stopped playback is gone")
 
 -- An admin reaches everyone's.
 act_as("admin_web")
-local all = playback_sessions.list_playbacks({ all_users = true })
+local all = playback_sessions.list_user_playbacks({ all_users = true })
 local tracks: { [string]: string } = {}
 for _, playback in all do
 	tracks[playback.session_key :: string] = playback.track_id

@@ -118,6 +118,16 @@ impl OwnersQuery {
             (None, false) => Ok(Owners::Principal),
         }
     }
+
+    /// [`Self::owners`] for a listing of other users' data, which takes no query for the caller's.
+    pub(crate) fn named_owners(&self, function: &str) -> luau::runtime::Result<Owners<'_>> {
+        if self.user_id.is_none() && !self.all_users {
+            return Err(crate::plugins::runtime_error(format!(
+                "{function} takes user_id or all_users"
+            )));
+        }
+        self.owners(function)
+    }
 }
 
 impl<'vm> luau::FromLuau<'vm> for OwnersQuery {
@@ -740,7 +750,9 @@ impl DescribeInterface for OwnersQuery {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new(
             "OwnersQuery",
-            Some("Whose data a listing reads: the caller's without either field."),
+            Some(
+                "Whose data a listing reads: the caller's without either field, where the listing reads the caller's.",
+            ),
         );
         descriptor.fields.extend([
             FieldDescriptor {
