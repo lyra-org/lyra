@@ -63,7 +63,10 @@ use crate::{
 };
 
 pub(crate) fn error(error: CatalogError) -> luau::Error {
-    crate::plugins::runtime_error(error)
+    match error {
+        CatalogError::Auth(error) => crate::plugins::errors::auth_error(error),
+        error => crate::plugins::runtime_error(error),
+    }
 }
 
 /// The personal data whose scopes the calling plugin declares. Filtering or

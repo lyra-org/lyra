@@ -160,7 +160,7 @@ pub(crate) fn viewer_of(
     db: &impl DbAccess,
     principal: &crate::services::auth::Principal,
 ) -> luau::runtime::Result<Viewer> {
-    Viewer::listener(db, principal.clone()).map_err(crate::plugins::runtime_error)
+    Viewer::listener(db, principal.clone()).map_err(crate::plugins::errors::auth_error)
 }
 
 /// [`visible_db_id_of`] for the dispatch principal's viewer.

@@ -249,7 +249,7 @@ impl ReleasesModule {
         #[context] db: Db,
     ) -> luau::runtime::Result<luau::Value> {
         crate::services::auth::require_permission(&principal, lyra_db::Permission::ManageMetadata)
-            .map_err(crate::plugins::runtime_error)?;
+            .map_err(crate::plugins::errors::auth_error)?;
         let mut db = db.write().await;
         let release_db_id =
             ids::visible_to(&db, &principal, &release_id, "Release")?.ok_or_else(|| {

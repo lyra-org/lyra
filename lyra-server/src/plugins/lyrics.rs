@@ -431,7 +431,7 @@ impl LyricsModule {
         #[context] principal: Principal,
     ) -> luau::runtime::Result<bool> {
         crate::services::auth::require_permission(&principal, lyra_db::Permission::ManageMetadata)
-            .map_err(crate::plugins::runtime_error)?;
+            .map_err(crate::plugins::errors::auth_error)?;
         let mut db = db.write().await;
         let Some(track_db_id) = ids::visible_to(&db, &principal, &track_id, "Track")? else {
             return Ok(false);

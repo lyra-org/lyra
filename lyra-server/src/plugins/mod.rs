@@ -18,6 +18,7 @@ pub(crate) mod db;
 pub(crate) mod editions;
 pub(crate) mod entities;
 pub(crate) mod entries;
+pub(crate) mod errors;
 pub(crate) mod executor;
 pub(crate) mod favorites;
 pub(crate) mod genres;

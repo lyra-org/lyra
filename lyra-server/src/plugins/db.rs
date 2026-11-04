@@ -94,7 +94,7 @@ impl ViewerDb {
             Some(principal) => crate::services::catalog::Viewer::listener(db, principal.clone()),
             None => Ok(crate::services::catalog::Viewer::System),
         }
-        .map_err(crate::plugins::runtime_error)
+        .map_err(crate::plugins::errors::auth_error)
     }
 
     /// The same database, for writes that follow a scoped read.

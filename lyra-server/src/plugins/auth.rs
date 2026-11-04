@@ -311,7 +311,7 @@ impl AuthModule {
         let resolved = match resolve_auth_from_bearer(bearer.as_deref()).await {
             Ok(Some(resolved)) => resolved,
             Ok(None) | Err(AuthError::SessionExpired) => return Ok(luau::Value::Nil),
-            Err(err) => return Err(crate::plugins::runtime_error(err)),
+            Err(err) => return Err(crate::plugins::errors::auth_error(err)),
         };
         match resolved
             .principal
@@ -319,7 +319,7 @@ impl AuthModule {
         {
             Ok(_) => {}
             Err(AuthError::InvalidBearerCredential) => return Ok(luau::Value::Nil),
-            Err(err) => return Err(crate::plugins::runtime_error(err)),
+            Err(err) => return Err(crate::plugins::errors::auth_error(err)),
         }
         if let Some(dispatch_auth) = &dispatch_auth.0 {
             dispatch_auth.record(resolved.principal.clone());
@@ -331,7 +331,7 @@ impl AuthModule {
     async fn logout_session(token: Option<String>) -> luau::runtime::Result<bool> {
         let revoked = logout_with_token(token.as_deref())
             .await
-            .map_err(crate::plugins::runtime_error)?;
+            .map_err(crate::plugins::errors::auth_error)?;
         Ok(revoked)
     }
 
@@ -354,7 +354,7 @@ impl AuthModule {
         let owners = query.owners("list_sessions")?;
         let sessions = sessions::list_sessions(&principal, owners, &plugin_id)
             .await
-            .map_err(crate::plugins::runtime_error)?;
+            .map_err(crate::plugins::errors::auth_error)?;
         harmony_luau::serializable_to_luau_owned(
             sessions
                 .into_iter()
@@ -374,7 +374,7 @@ impl AuthModule {
     ) -> luau::runtime::Result<bool> {
         let revoked = sessions::revoke_session(&principal, &session_id)
             .await
-            .map_err(crate::plugins::runtime_error)?;
+            .map_err(crate::plugins::errors::auth_error)?;
         Ok(revoked)
     }
 
@@ -409,14 +409,14 @@ impl AuthModule {
                     retry_after,
                 ));
             }
-            Err(err) => return Err(crate::plugins::runtime_error(err)),
+            Err(err) => return Err(crate::plugins::errors::auth_error(err)),
         };
         let Some(login) = login else {
             return harmony_luau::serializable_to_luau_owned(LoginOutcome::invalid_credentials());
         };
         let resolved = resolve_auth_from_bearer(Some(&login.token))
             .await
-            .map_err(crate::plugins::runtime_error)?
+            .map_err(crate::plugins::errors::auth_error)?
             .ok_or_else(|| {
                 crate::plugins::runtime_error("freshly issued session token failed to resolve")
             })?;
@@ -560,7 +560,9 @@ pub(crate) fn require_user_db_id(
     principal: &ServicePrincipal,
     db: &impl lyra_db::DbAccess,
 ) -> luau::runtime::Result<agdb::DbId> {
-    principal.require(db).map_err(crate::plugins::runtime_error)
+    principal
+        .require(db)
+        .map_err(crate::plugins::errors::auth_error)
 }
 
 #[derive(Clone)]

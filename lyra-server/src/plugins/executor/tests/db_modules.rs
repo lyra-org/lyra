@@ -1588,7 +1588,7 @@ fn stale_principal_cannot_use_favorites_of_a_user_with_its_recycled_db_id() -> R
     let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
-        Arc::from(vec![manifest("demo", &["lyra.favorites"])]),
+        Arc::from(vec![manifest("demo", &["lyra.errors", "lyra.favorites"])]),
         default_server_info(),
         db.clone(),
     )?;
@@ -1600,11 +1600,11 @@ fn stale_principal_cannot_use_favorites_of_a_user_with_its_recycled_db_id() -> R
     let values = runtime.eval_plugin_source_with_call_context(
         format!(
             r#"
+                local errors = require("@lyra/errors")
                 local favorites = require("@lyra/favorites")
                 local function rejects(f, ...)
                     local ok, err = pcall(f, ...)
-                    return not ok
-                        and string.find(tostring(err), "invalid bearer credential", 1, true) ~= nil
+                    return not ok and errors.kind(err) == "unauthenticated"
                 end
                 return rejects(favorites.get, {{ "{track}" }}),
                     rejects(favorites.list_ids, "track"),
@@ -1778,7 +1778,10 @@ fn stale_principal_cannot_report_playback_for_a_user_with_its_recycled_db_id() -
     stale.permissions = vec![lyra_db::Permission::Admin];
     let db = lyra_db::DbAsync::new(db);
     let runtime = PluginExecutor::with_database(
-        Arc::from(vec![manifest("reporter", &["lyra.playback_sessions"])]),
+        Arc::from(vec![manifest(
+            "reporter",
+            &["lyra.errors", "lyra.playback_sessions"],
+        )]),
         default_server_info(),
         db.clone(),
     )?;
@@ -1790,11 +1793,12 @@ fn stale_principal_cannot_report_playback_for_a_user_with_its_recycled_db_id() -
     let values = runtime.eval_plugin_source_with_call_context(
         format!(
             r#"
+                local errors = require("@lyra/errors")
                 local sessions = require("@lyra/playback_sessions")
                 local ok, err = pcall(sessions.report_session, {{
                     track_id = "{track_id}", session_key = "player", state = "playing",
                 }})
-                return ok, string.find(tostring(err), "invalid bearer credential", 1, true) ~= nil
+                return ok, errors.kind(err) == "unauthenticated"
             "#,
         )
         .into_bytes(),

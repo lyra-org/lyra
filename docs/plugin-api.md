@@ -49,6 +49,18 @@ modules predate some of them.
   single-target call returns `false` or `nil` for them.
 - Invalid input raises an error, such as a rating outside 1-5.
 
+## Error Kinds
+
+- Plugins branch on what a host error means through `errors.kind(err)` from `@lyra/errors`,
+  never on its message, which is for people and may change.
+- A kinded error is a userdata whose `tostring` is its message. Other host errors stay strings,
+  and `errors.kind` returns nil for anything that isn't a kinded error.
+- The kinds are `not_found`, `forbidden` (the caller may not do it), `unauthenticated` (the
+  credential the call acts for no longer verifies) and `conflict` (the target's state refuses the
+  change).
+- A kind joins the list only when it means the same for any module, with nothing specific to one
+  function, and only once a plugin branches on it.
+
 ## Other Users' Data
 
 - A function that reads or affects every user's data needs its module's `.all` scope as

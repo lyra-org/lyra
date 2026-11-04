@@ -60,6 +60,7 @@ use crate::plugins::{
     editions,
     entities,
     entries,
+    errors,
     favorites,
     genres,
     labels,
@@ -336,6 +337,11 @@ scopes! {
     Entries => {
         id: "lyra.entries",
         module: entries::EntriesModule::module_spec,
+        effects: &[],
+    },
+    Errors => {
+        id: "lyra.errors",
+        module: errors::ErrorsModule::module_spec,
         effects: &[],
     },
     Favorites => {
@@ -1549,6 +1555,7 @@ mod tests {
             "lyra/entries",
             &["get(ids)", "by_parent(parent_ids)", "by_track(track_ids)"],
         ),
+        ("lyra/errors", &["kind(err)"]),
         (
             "lyra/favorites",
             &[

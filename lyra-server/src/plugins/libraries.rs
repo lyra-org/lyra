@@ -73,7 +73,7 @@ impl Reader {
             .0
             .map(|principal| principal.current(db))
             .transpose()
-            .map_err(crate::plugins::runtime_error)?;
+            .map_err(crate::plugins::errors::auth_error)?;
         Ok(Self(current))
     }
 

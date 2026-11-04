@@ -1,5 +1,6 @@
 local fixture = ...
 
+local errors = require("@lyra/errors")
 local playback_sessions = require("@lyra/playback_sessions")
 local task = require("@harmony/task")
 
@@ -37,7 +38,8 @@ assert(id and rejection == nil, `a report may leave it out, got {rejection}`)
 assert(listed().counts_as_listen == false, "leaving it out keeps it")
 
 local ok, err = pcall(report, "sleep-play-0000001", "progress", true)
-assert(not ok and string.find(tostring(err), "counts_as_listen is false", 1, true), tostring(err))
+assert(not ok and errors.kind(err) == "conflict", tostring(err))
+assert(string.find(tostring(err), "counts_as_listen is false", 1, true), tostring(err))
 assert(listed().counts_as_listen == false, "the refused report changes nothing")
 
 -- A new play counts unless it says otherwise.

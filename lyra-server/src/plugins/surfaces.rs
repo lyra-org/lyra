@@ -16,6 +16,7 @@ use crate::plugins::{
     editions,
     entities,
     entries,
+    errors,
     favorites,
     genres,
     labels,
@@ -136,6 +137,11 @@ fn surfaces() -> &'static [Surface] {
             "lyra/entries",
             entries::get_module,
             entries::render_luau_definition
+        ),
+        surface!(
+            "lyra/errors",
+            errors::get_module,
+            errors::render_luau_definition
         ),
         surface!(
             "lyra/libraries",

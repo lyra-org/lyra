@@ -43,6 +43,10 @@ use crate::{
     plugins::{
         auth::OwnersQuery,
         db::Db,
+        errors::{
+            ErrorKind,
+            kinded,
+        },
         types::{
             LuauPlaybackEvent,
             LuauPlaybackState,
@@ -60,6 +64,7 @@ use crate::{
             constants::RemoteAction,
             control::{
                 self,
+                ControlError,
                 Controller,
                 RemoteCommand,
             },
@@ -228,7 +233,7 @@ impl PlaybackSessionsModule {
 
     #[harmony(
         description = concat!(
-            "Reports an observation for a plugin's player context. Returns (public /api/me/playbacks ID, nil) when accepted, (nil, nil) when ignored, or (nil, rejection reason) when admission is refused. Raises an error when the report gives its play a `counts_as_listen` other than the one its start declared. Internal failures raise an error. Track changes retain the context ID. ",
+            "Reports an observation for a plugin's player context. Returns (public /api/me/playbacks ID, nil) when accepted, (nil, nil) when ignored, or (nil, rejection reason) when admission is refused. Raises a `conflict` error when the report gives its play a `counts_as_listen` other than the one its start declared. Internal failures raise an error. Track changes retain the context ID. ",
             reported_context_expiry_description!(),
             " ",
             live_window_description!(),
@@ -299,6 +304,9 @@ impl PlaybackSessionsModule {
             )) => {
                 return Ok((None, Some(message)));
             }
+            Err(crate::services::playbacks::PlaybackError::Session(
+                error @ playbacks::PlaybackServiceError::CountsAsListenConflict { .. },
+            )) => return Err(kinded(ErrorKind::Conflict, error)),
             Err(error) => return Err(crate::plugins::runtime_error(error)),
         };
         drop(db);
@@ -548,7 +556,9 @@ impl PlaybackSessionsModule {
         })
     }
 
-    #[harmony(description = "Sends a remote control command to a connection.")]
+    #[harmony(
+        description = "Sends a remote control command to a connection. Raises a `not_found` error when the source or target connection or its user is missing, and a `forbidden` error when the caller may not control the target."
+    )]
     async fn send_command(
         request: args::Json<SendCommandRequest>,
         #[context] db: Db,
@@ -585,7 +595,17 @@ impl PlaybackSessionsModule {
             command,
         )
         .await
-        .map_err(crate::plugins::runtime_error)
+        .map_err(control_error)
+    }
+}
+
+fn control_error(error: ControlError) -> luau::Error {
+    match error {
+        ControlError::SourceNotFound
+        | ControlError::TargetNotFound
+        | ControlError::UserNotFound => kinded(ErrorKind::NotFound, error),
+        ControlError::NotAuthorized => kinded(ErrorKind::Forbidden, error),
+        error => crate::plugins::runtime_error(error),
     }
 }
 
@@ -650,7 +670,7 @@ fn owned_users(
 ) -> luau::runtime::Result<(agdb::DbId, Vec<lyra_db::User>)> {
     let viewer_db_id = crate::plugins::auth::require_user_db_id(principal, db)?;
     let users = owners::resolve(db, principal, viewer_db_id, owners)
-        .map_err(crate::plugins::runtime_error)?;
+        .map_err(crate::plugins::errors::auth_error)?;
     Ok((viewer_db_id, users))
 }
 
