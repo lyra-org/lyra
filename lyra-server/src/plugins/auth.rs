@@ -482,6 +482,31 @@ impl DispatchAuth {
     }
 }
 
+/// Whom a response this dispatch returns is served for, as Lyra reads it when serving: the
+/// principal in the dispatch's slot, or none when the slot is empty or the dispatch is
+/// server-side, and the client's address, the default for a server-side dispatch.
+pub(crate) struct ResponseCaller {
+    pub(crate) principal: Option<ServicePrincipal>,
+    pub(crate) client: crate::services::auth::caller::ClientAddress,
+}
+
+impl luau::FromCallFrame for ResponseCaller {
+    fn from_call_frame(_vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
+        Ok(Self {
+            principal: context
+                .caller
+                .get::<DispatchAuth>()
+                .ok()
+                .and_then(|auth| auth.principal()),
+            client: context
+                .caller
+                .get::<DispatchClient>()
+                .map(|client| client.0)
+                .unwrap_or_default(),
+        })
+    }
+}
+
 /// The principal acting for this dispatch, or `None` for server-side dispatches,
 /// which carry no [`DispatchAuth`]. A client dispatch that has not resolved a
 /// credential is refused rather than treated as server-side.

@@ -19,7 +19,7 @@ use harmony_luau::{
 };
 
 use crate::plugins::args::UniqueIds;
-use crate::plugins::auth::DispatchPrincipal;
+use crate::plugins::auth::ResponseCaller;
 use crate::plugins::{
     ids::{
         self,
@@ -144,22 +144,22 @@ impl PlaybackSourcesModule {
     }
 
     #[harmony(
-        description = "What `api.response.stream_track(track_id, options)` would deliver, without serving anything: whether the source file is served as it is or transcoded, why, and the delivered format. Raises the error the stream would answer with when the request cannot be served.",
+        description = "What `api.response.stream_track(track_id, options)` would deliver, without serving anything: whether the source file is served as it is or transcoded, why, and the delivered format. It checks access as the stream would, for the caller the dispatch acts for as of this call. Raises the error the stream would answer with when the request cannot be served, as `<status>: <message>`; a stream can still fail once served, as when Lyra is out of transcoding capacity.",
         args(track_id: String, options: Option<TrackStreamOptions>),
         returns(DeliveryDescription)
     )]
     async fn decide(
         track_id: String,
         options: Option<luau::Value>,
-        #[context] principal: DispatchPrincipal,
+        #[context] caller: ResponseCaller,
     ) -> luau::runtime::Result<luau::Value> {
         let request = crate::plugins::api::options::stream_request(
             &options.unwrap_or(luau::Value::Nil),
             "decide options",
         )?;
         let (track_id, access) = delivery::stream_track_access(
-            principal.0.as_ref(),
-            Default::default(),
+            caller.principal.as_ref(),
+            caller.client,
             &track_id,
             request.public,
         )
