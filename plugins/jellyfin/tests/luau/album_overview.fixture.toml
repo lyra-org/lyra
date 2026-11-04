@@ -1,0 +1,22 @@
+run_as = "admin"
+
+# "Solo" has a description; "Plain" has none.
+
+[[users]]
+key = "admin"
+admin = true
+
+[[artists]]
+key = "amy"
+name = "Amy"
+
+[[releases]]
+key = "solo"
+title = "Solo"
+artists = ["amy"]
+description = "  Solo's story  "
+
+[[releases]]
+key = "plain"
+title = "Plain"
+artists = ["amy"]

@@ -80,6 +80,7 @@ type ReleaseRecord = {
 	release_title: index<Release, "release_title">,
 	sort_title: index<Release, "sort_title">,
 	release_date: index<Release, "release_date">,
+	description: index<Release, "description">,
 	created_at_ms: index<Release, "created_at_ms">,
 	file_created_at_ms: index<Release, "file_created_at_ms">,
 }
@@ -1260,6 +1261,9 @@ function helpers.to_release_item(
 		ChildCount = #release_tracks,
 		RunTimeTicks = runtime_ticks,
 		NormalizationGain = helpers.album_gain_db(release_tracks),
+		Overview = if context == nil or context.include_overview == true
+			then requests.trim(release.description)
+			else nil,
 		ImageTags = if cover_info then { Primary = cover_info.hash } else nil,
 		AlbumPrimaryImageTag = if cover_info then cover_info.hash else nil,
 		ImageBlurHashes = helpers.default_image_blur_hashes(cover_info),
