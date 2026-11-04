@@ -850,7 +850,7 @@ pub(crate) fn resolve_delivery(
     } else {
         (copy_output_format, copy_codec, policy)
     };
-    let codec = policy
+    let codec = knobs
         .bit_depth
         .map_or(codec, |bits| codec.capped_to_bit_depth(bits));
 
@@ -2129,6 +2129,16 @@ mod tests {
         let requested = stream(&source, Some("wav"), Some("pcm_s24le"), capped_to(16))
             .expect("the cap resolves");
         assert_eq!(requested.codec, AudioCodec::PcmS16Le);
+
+        let shallow = with_bit_depth(flac_source(None, None), 16);
+        let padded = stream(&shallow, Some("wav"), Some("pcm_s24le"), capped_to(16))
+            .expect("the cap resolves");
+        assert_eq!(
+            padded.codec,
+            AudioCodec::PcmS16Le,
+            "a source the cap doesn't constrain still gets no deeper output than it"
+        );
+        assert_eq!(padded.describe(&shallow).bit_depth, Some(16));
     }
 
     #[test]
