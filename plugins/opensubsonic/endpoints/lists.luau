@@ -19,6 +19,7 @@ local songs = require("../catalog/songs")
 
 type ApiQueryParams = api.ApiQueryParams
 type ApiResponse = api.ApiResponse
+type ArtistSummary = artists.ArtistSummary
 type JsonObject = { [string]: any }
 type ReleaseQuery = releases.ReleaseQuery
 type ReleaseSummary = releases.ReleaseSummary
@@ -129,6 +130,46 @@ local function album_list(req: Request, container: string, build: ({ ReleaseSumm
 	return response.ok(params, { [container] = if #items > 0 then { album = items } else response.EMPTY_OBJECT })
 end
 
+-- Every starred artist, album and song, most recently starred first, as `container` with artists
+-- and albums built by `artist_list` and `album_list`.
+local function starred(
+	req: Request,
+	container: string,
+	artist_list: ({ ArtistSummary }) -> { JsonObject },
+	album_list: ({ ReleaseSummary }) -> { JsonObject }
+): ApiResponse
+	local params = req.params
+	local library_id = folders.library_id(params)
+	local starred_artists = artist_list(artists.query({
+		favorite = true,
+		library_id = library_id,
+		sort = { { key = "favorited_at", order = "descending" } },
+	}).items)
+	local starred_albums = album_list(releases.query({
+		favorite = true,
+		library_id = library_id,
+		sort = { { key = "favorited_at", order = "descending" } },
+	}).items)
+	local starred_songs = songs.list(tracks.query({
+		favorite = true,
+		library_id = library_id,
+		sort = { { key = "favorited_at", order = "descending" } },
+	}).items)
+
+	local result: JsonObject = {}
+	if #starred_artists > 0 then
+		result.artist = starred_artists
+	end
+	if #starred_albums > 0 then
+		result.album = starred_albums
+	end
+	if #starred_songs > 0 then
+		result.song = starred_songs
+	end
+	local found: any = if next(result) then result else response.EMPTY_OBJECT
+	return response.ok(params, { [container] = found })
+end
+
 module.methods = {
 	getAlbumList2 = function(req: Request): ApiResponse
 		return album_list(req, "albumList2", albums.list)
@@ -196,37 +237,13 @@ module.methods = {
 		return response.ok(params, { songsByGenre = songs_result(items) })
 	end,
 
-	-- Every starred artist, album and song, most recently starred first.
 	getStarred2 = function(req: Request): ApiResponse
-		local params = req.params
-		local library_id = folders.library_id(params)
-		local starred_artists = artist_items.list(artists.query({
-			favorite = true,
-			library_id = library_id,
-			sort = { { key = "favorited_at", order = "descending" } },
-		}).items)
-		local starred_albums = albums.list(releases.query({
-			favorite = true,
-			library_id = library_id,
-			sort = { { key = "favorited_at", order = "descending" } },
-		}).items)
-		local starred_songs = songs.list(tracks.query({
-			favorite = true,
-			library_id = library_id,
-			sort = { { key = "favorited_at", order = "descending" } },
-		}).items)
+		return starred(req, "starred2", artist_items.list, albums.list)
+	end,
 
-		local result: JsonObject = {}
-		if #starred_artists > 0 then
-			result.artist = starred_artists
-		end
-		if #starred_albums > 0 then
-			result.album = starred_albums
-		end
-		if #starred_songs > 0 then
-			result.song = starred_songs
-		end
-		return response.ok(params, { starred2 = if next(result) then result else response.EMPTY_OBJECT })
+	-- The same as `getStarred2`, with artists as `Artist` and albums as directory `Child`ren.
+	getStarred = function(req: Request): ApiResponse
+		return starred(req, "starred", artist_items.directories, albums.children)
 	end,
 }
 

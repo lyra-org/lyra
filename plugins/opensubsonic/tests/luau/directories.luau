@@ -107,3 +107,27 @@ assert(string.find(directory_tag, `id="{ids.solo}"`, 1, true), directory_xml)
 assert(string.find(directory_tag, `parent="{ids.amy}"`, 1, true), directory_xml)
 local _, child_elements = string.gsub(directory_xml, "<child ", "")
 assert(child_elements == 3, `three child elements, got {child_elements}`)
+
+-- What the caller starred and can see, as `Artist`s, directory albums and songs.
+local starred = call.ok("getStarred", key).starred
+call.same(call.ids(starred.artist), { ids.amy }, "starred artists")
+call.same(call.ids(starred.album), { ids.solo }, "starred albums")
+call.same(call.ids(starred.song), { ids.s2 }, "starred songs")
+assert(starred.artist[1].userRating == 4 and starred.artist[1].albumCount == nil, "an Artist")
+local starred_album = starred.album[1]
+assert(starred_album.isDir == true and starred_album.parent == ids.amy and starred_album.title == "Solo", "a Child")
+assert(starred_album.name == nil and starred_album.songCount == nil, "no AlbumID3 fields")
+assert(starred.song[1].parent == ids.solo and starred.song[1].isDir == false, "a song")
+
+local in_extra = call.ok("getStarred", key, { musicFolderId = folder_of("extra") }).starred
+call.same(call.ids(in_extra.artist), { ids.amy }, "starred artists in Extra")
+assert(in_extra.album == nil and in_extra.song == nil, "nothing else starred in Extra")
+assert(call.error_code("getStarred", key, { musicFolderId = folder_of("hidden") }) == 70, "a hidden folder")
+local starred_xml = call.raw("getStarred", { apiKey = key }).body
+assert(string.find(starred_xml, "<starred><", 1, true), starred_xml)
+
+-- `getStarred2` lists the same items.
+local starred2 = call.ok("getStarred2", key).starred2
+call.same(call.ids(starred2.artist), { ids.amy }, "starred2 artists")
+call.same(call.ids(starred2.album), { ids.solo }, "starred2 albums")
+call.same(call.ids(starred2.song), { ids.s2 }, "starred2 songs")
