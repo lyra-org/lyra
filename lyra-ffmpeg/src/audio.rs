@@ -335,6 +335,28 @@ impl AudioCodec {
         }
     }
 
+    /// The sample rate this codec's encoder produces from audio at `source_hz`, capped at
+    /// `cap_hz`: with a cap, the highest rate it supports at or below the cap; without one, the
+    /// lowest at or above the source. When no supported rate qualifies, the closest one it has.
+    /// `Copy` keeps the source's rate.
+    pub fn encoded_sample_rate_hz(
+        &self,
+        source_hz: u32,
+        cap_hz: Option<u32>,
+    ) -> crate::Result<u32> {
+        let Some(encoder) = self.ffmpeg_encoder() else {
+            return Ok(source_hz);
+        };
+        let rate = |hz: u32| {
+            i32::try_from(hz)
+                .map_err(|_| crate::Error::OpenEncoder(format!("sample rate {hz} is too large")))
+        };
+        let cap = cap_hz.map(rate).transpose()?;
+        let rate = crate::context::encoder_sample_rate(encoder, rate(source_hz)?, cap)?;
+        u32::try_from(rate)
+            .map_err(|_| crate::Error::OpenEncoder(format!("encoder chose sample rate {rate}")))
+    }
+
     pub fn native_sample_rate_hz(&self) -> Option<u32> {
         match self {
             Self::Opus => Some(48_000),
@@ -403,6 +425,20 @@ mod tests {
         AudioFormat,
         AudioVbrMode,
     };
+
+    #[test]
+    fn encoded_sample_rate_stays_under_a_cap_and_above_an_uncapped_source() {
+        let rate =
+            |codec: AudioCodec, hz, cap| codec.encoded_sample_rate_hz(hz, cap).expect("encoder");
+        assert_eq!(rate(AudioCodec::Mp3, 96_000, None), 48_000);
+        assert_eq!(rate(AudioCodec::Mp3, 45_000, None), 48_000);
+        assert_eq!(rate(AudioCodec::Mp3, 96_000, Some(23_000)), 22_050);
+        assert_eq!(rate(AudioCodec::Mp3, 96_000, Some(4_000)), 8_000);
+        assert_eq!(rate(AudioCodec::Opus, 44_100, None), 48_000);
+        assert_eq!(rate(AudioCodec::Flac, 96_000, None), 96_000);
+        assert_eq!(rate(AudioCodec::Flac, 96_000, Some(50_000)), 50_000);
+        assert_eq!(rate(AudioCodec::Copy, 22_050, None), 22_050);
+    }
 
     #[test]
     fn format_names_parse_back() {

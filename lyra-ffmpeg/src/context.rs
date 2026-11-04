@@ -530,13 +530,27 @@ mod tests {
     }
 
     #[test]
-    fn sample_rate_selection_uses_exact_or_nearest_supported_rate() {
+    fn sample_rate_selection_never_exceeds_a_cap_nor_drops_below_the_input_uncapped() {
         let supported = [44_100, 48_000, 96_000];
 
-        assert_eq!(select_sample_rate(48_000, Some(&supported)), 48_000);
-        assert_eq!(select_sample_rate(47_000, Some(&supported)), 48_000);
-        assert_eq!(select_sample_rate(45_000, Some(&supported)), 44_100);
-        assert_eq!(select_sample_rate(50_000, None), 50_000);
+        assert_eq!(select_sample_rate(48_000, None, Some(&supported)), 48_000);
+        assert_eq!(select_sample_rate(47_000, None, Some(&supported)), 48_000);
+        assert_eq!(select_sample_rate(45_000, None, Some(&supported)), 48_000);
+        assert_eq!(select_sample_rate(192_000, None, Some(&supported)), 96_000);
+        assert_eq!(
+            select_sample_rate(96_000, Some(47_000), Some(&supported)),
+            44_100
+        );
+        assert_eq!(
+            select_sample_rate(96_000, Some(48_000), Some(&supported)),
+            48_000
+        );
+        assert_eq!(
+            select_sample_rate(96_000, Some(22_050), Some(&supported)),
+            44_100
+        );
+        assert_eq!(select_sample_rate(50_000, None, None), 50_000);
+        assert_eq!(select_sample_rate(50_000, Some(22_050), None), 22_050);
     }
 
     #[test]
@@ -1293,9 +1307,8 @@ unsafe fn setup_encoder(
         let enc_ctx_ptr = enc_ctx.as_mut_ptr();
 
         let input_sample_rate = (*in_codecpar).sample_rate.max(1);
-        let requested_sample_rate = output.audio_sample_rate.unwrap_or(input_sample_rate);
         let output_sample_rate =
-            select_encoder_sample_rate(enc_ctx_ptr, encoder, requested_sample_rate)?;
+            select_encoder_sample_rate(encoder, input_sample_rate, output.audio_sample_rate)?;
 
         (*enc_ctx_ptr).sample_rate = output_sample_rate;
         if let Some(channels) = output.audio_channels.filter(|&c| c > 0) {
@@ -1395,14 +1408,17 @@ unsafe fn query_encoder_supported_config(
     }
 }
 
+/// The sample rate `encoder` encodes audio at `input_rate`, capped at `cap`, with; see
+/// [`select_sample_rate`]. The encoder's options don't change its rates, so they are queried
+/// without a codec context.
 unsafe fn select_encoder_sample_rate(
-    enc_ctx: *const AVCodecContext,
     encoder: *const AVCodec,
     input_rate: i32,
+    cap: Option<i32>,
 ) -> Result<i32> {
     unsafe {
         let supported = query_encoder_supported_config(
-            enc_ctx,
+            null(),
             encoder,
             AVCodecConfig::AV_CODEC_CONFIG_SAMPLE_RATE,
             "query encoder sample rates",
@@ -1410,19 +1426,50 @@ unsafe fn select_encoder_sample_rate(
         let supported =
             supported.map(|(configs, len)| std::slice::from_raw_parts(configs.cast::<i32>(), len));
 
-        Ok(select_sample_rate(input_rate, supported))
+        Ok(select_sample_rate(input_rate, cap, supported))
     }
 }
 
-fn select_sample_rate(input_rate: i32, supported: Option<&[i32]>) -> i32 {
-    supported
-        .and_then(|rates| {
-            rates
-                .iter()
-                .copied()
-                .min_by_key(|&rate| (i64::from(rate) - i64::from(input_rate)).abs())
-        })
-        .unwrap_or(input_rate)
+/// The sample rate the encoder named `encoder_name` encodes audio at `input_rate`, capped at
+/// `cap`, with.
+pub(crate) fn encoder_sample_rate(
+    encoder_name: &str,
+    input_rate: i32,
+    cap: Option<i32>,
+) -> Result<i32> {
+    let name = to_cstring(encoder_name, "codec name")?;
+    // SAFETY: `name` is a valid C string, and the encoder FFmpeg returns is static.
+    unsafe {
+        let encoder = avcodec_find_encoder_by_name(name.as_ptr());
+        if encoder.is_null() {
+            return Err(Error::FindEncoder(encoder_name.to_string()));
+        }
+        select_encoder_sample_rate(encoder, input_rate, cap)
+    }
+}
+
+/// The rate to encode audio at `input_rate` with, from the encoder's `supported` rates: under a
+/// `cap`, the highest supported rate at or below it, so a cap is never exceeded; without one, the
+/// lowest at or above the input, so the audio loses no bandwidth it needn't. When none qualifies,
+/// the supported rate nearest that bound. An encoder without a list takes the cap or the input.
+fn select_sample_rate(input_rate: i32, cap: Option<i32>, supported: Option<&[i32]>) -> i32 {
+    let Some(rates) = supported.filter(|rates| !rates.is_empty()) else {
+        return cap.unwrap_or(input_rate);
+    };
+    let rates = rates.iter().copied();
+    match cap {
+        Some(cap) => rates
+            .clone()
+            .filter(|&rate| rate <= cap)
+            .max()
+            .or_else(|| rates.min()),
+        None => rates
+            .clone()
+            .filter(|&rate| rate >= input_rate)
+            .min()
+            .or_else(|| rates.max()),
+    }
+    .unwrap_or(input_rate)
 }
 
 unsafe fn select_encoder_sample_format(

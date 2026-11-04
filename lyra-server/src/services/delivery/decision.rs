@@ -395,6 +395,29 @@ pub(crate) fn apply_transcode_policy(
             _ => Some(hz),
         },
     };
+    let sample_rate_hz = match sample_rate_hz {
+        None => None,
+        Some(hz) => {
+            let delivered_hz =
+                encoded_sample_rate(output_codec, source.sample_rate_hz.unwrap_or(hz), Some(hz))?;
+            if source
+                .sample_rate_hz
+                .is_some_and(|source_hz| delivered_hz >= source_hz)
+            {
+                tracing::info!(
+                    target: "transcode_policy",
+                    codec = ?output_codec,
+                    requested_hz = hz,
+                    delivered_hz,
+                    source_hz = source.sample_rate_hz,
+                    "encoder rate for the requested sample rate is not below the source; delivering the source rate"
+                );
+                None
+            } else {
+                Some(hz)
+            }
+        }
+    };
 
     let channels = match knobs.channels {
         None => None,
@@ -496,6 +519,17 @@ pub(crate) fn apply_transcode_policy(
         encoder_bit_depth,
         prefer_vbr: knobs.prefer_vbr.unwrap_or(false),
     })
+}
+
+/// The sample rate `codec`'s encoder produces from audio at `source_hz`, capped at `cap_hz`.
+fn encoded_sample_rate(
+    codec: AudioCodec,
+    source_hz: u32,
+    cap_hz: Option<u32>,
+) -> Result<u32, DeliveryError> {
+    codec
+        .encoded_sample_rate_hz(source_hz, cap_hz)
+        .map_err(|error| DeliveryError::Internal(error.into()))
 }
 
 /// Which endpoint a decision is being resolved for. Decides both whether the
@@ -625,6 +659,8 @@ pub(crate) struct DeliveryDecision {
     /// The source file can be served verbatim; no ffmpeg run is needed.
     pub(crate) direct_passthrough: bool,
     pub(crate) encoder: EncoderSettings,
+    /// The sample rate of the delivered audio, when known: the encoder's rate for an encode.
+    pub(crate) sample_rate_hz: Option<u32>,
     /// Empty exactly when `direct_passthrough` is set.
     pub(crate) reasons: TranscodeReasons,
 }
@@ -738,11 +774,7 @@ impl DeliveryDecision {
             content_type: self.content_type,
             bitrate_bps,
             vbr_quality,
-            sample_rate_hz: self
-                .encoder
-                .sample_rate_hz
-                .or_else(|| self.codec.native_sample_rate_hz())
-                .or(format.sample_rate_hz),
+            sample_rate_hz: self.sample_rate_hz,
             channels: self.encoder.channels.or(format.channel_count),
             bit_depth: self.encoder.bit_depth,
             source: source_description,
@@ -883,12 +915,27 @@ pub(crate) fn resolve_delivery(
             range: trimmed,
         }
     };
+    let encoder = EncoderSettings::resolve(codec, &policy);
+    let sample_rate_hz = if direct_passthrough {
+        source.format.sample_rate_hz
+    } else {
+        match (encoder.sample_rate_hz, source.format.sample_rate_hz) {
+            (Some(cap), source_hz) => Some(encoded_sample_rate(
+                codec,
+                source_hz.unwrap_or(cap),
+                Some(cap),
+            )?),
+            (None, Some(source_hz)) => Some(encoded_sample_rate(codec, source_hz, None)?),
+            (None, None) => codec.native_sample_rate_hz(),
+        }
+    };
     let decision = DeliveryDecision {
         output_format,
         codec,
         content_type: target.content_type(output_format),
         direct_passthrough,
-        encoder: EncoderSettings::resolve(codec, &policy),
+        encoder,
+        sample_rate_hz,
         reasons,
     };
     if target.is_streaming() && !decision.is_streamable() {
@@ -966,6 +1013,7 @@ mod tests {
             content_type: DeliveryTarget::Stream.content_type(format),
             direct_passthrough: false,
             encoder: EncoderSettings::resolve(codec, policy),
+            sample_rate_hz: None,
             reasons: Default::default(),
         }
         .configure_output(Output::with_callback(|_| 0))
@@ -2056,6 +2104,88 @@ mod tests {
             validate_request(format.map(str::to_string), codec.map(str::to_string), None)
                 .expect("the request parses");
         resolve_delivery(&validated, source, knobs, DeliveryTarget::Stream)
+    }
+
+    #[test]
+    fn describe_reports_the_rate_the_encoder_produces() {
+        let source = flac_source(None, None);
+        let mp3 =
+            stream(&source, Some("mp3"), None, knobs(None, None, None)).expect("mp3 resolves");
+        assert_eq!(mp3.describe(&source).sample_rate_hz, Some(48_000));
+
+        let capped = stream(&source, Some("mp3"), None, knobs(None, Some(45_000), None))
+            .expect("a capped mp3 resolves");
+        assert_eq!(capped.encoder.sample_rate_hz, Some(45_000));
+        assert_eq!(capped.describe(&source).sample_rate_hz, Some(44_100));
+
+        let flac = stream(&source, Some("flac"), None, knobs(None, Some(88_200), None))
+            .expect("a capped flac resolves");
+        assert_eq!(flac.describe(&source).sample_rate_hz, Some(88_200));
+
+        let passthrough = stream(&source, None, None, knobs(None, None, None)).expect("as it is");
+        assert!(passthrough.direct_passthrough);
+        assert_eq!(passthrough.describe(&source).sample_rate_hz, Some(96_000));
+    }
+
+    #[test]
+    fn policy_drops_a_sample_rate_the_encoder_delivers_at_the_source_rate() {
+        let source = SourceAudio {
+            bitrate_bps: None,
+            sample_rate_hz: Some(44_100),
+            channels: Some(2),
+            bit_depth: None,
+            lossy: true,
+        };
+        let lowest = SourceAudio {
+            sample_rate_hz: Some(8_000),
+            ..source
+        };
+        let rounded_up =
+            apply_transcode_policy(knobs(None, Some(4_000), None), AudioCodec::Mp3, lowest)
+                .expect("a cap below every rate the encoder has resolves");
+        assert_eq!(
+            rounded_up.sample_rate_hz, None,
+            "mp3 encodes nothing below 8 kHz, so the cap can't lower an 8 kHz source"
+        );
+
+        let between =
+            apply_transcode_policy(knobs(None, Some(43_000), None), AudioCodec::Mp3, source)
+                .expect("a cap between two encoder rates resolves");
+        assert_eq!(between.sample_rate_hz, Some(43_000));
+
+        let opus = SourceAudio {
+            sample_rate_hz: Some(48_000),
+            ..source
+        };
+        let native =
+            apply_transcode_policy(knobs(None, Some(44_100), None), AudioCodec::Opus, opus)
+                .expect("opus resolves");
+        assert_eq!(native.sample_rate_hz, None, "opus always encodes at 48 kHz");
+
+        let lowered =
+            apply_transcode_policy(knobs(None, Some(23_000), None), AudioCodec::Mp3, source)
+                .expect("a cap below the source resolves");
+        assert_eq!(lowered.sample_rate_hz, Some(23_000));
+    }
+
+    #[test]
+    fn resolve_delivery_describes_the_highest_encoder_rate_under_a_cap() {
+        let source = flac_source(None, None);
+        let decision = stream(
+            &source,
+            Some("mp3"),
+            None,
+            TranscodeKnobs {
+                sample_rate_hz: Some(23_000),
+                ..TranscodeKnobs::default()
+            },
+        )
+        .expect("the mp3 resolves");
+        assert_eq!(decision.describe(&source).sample_rate_hz, Some(22_050));
+
+        let uncapped = stream(&source, Some("mp3"), None, TranscodeKnobs::default())
+            .expect("the mp3 resolves");
+        assert_eq!(uncapped.describe(&source).sample_rate_hz, Some(48_000));
     }
 
     #[test]

@@ -322,4 +322,53 @@ mod tests {
         let _ = std::fs::remove_file(deep_flac);
         let _ = std::fs::remove_file(wav);
     }
+
+    /// The sample rate of the first MPEG audio frame in `mp3`, past any ID3v2 tag.
+    fn mp3_sample_rate(mp3: &[u8]) -> u32 {
+        let start = if mp3.starts_with(b"ID3") {
+            let size = mp3[6..10]
+                .iter()
+                .fold(0usize, |size, byte| (size << 7) | usize::from(byte & 0x7f));
+            10 + size
+        } else {
+            0
+        };
+        let header = mp3[start..]
+            .windows(4)
+            .find(|window| window[0] == 0xff && window[1] & 0xe0 == 0xe0)
+            .expect("an MPEG audio frame");
+        let base = [44_100, 48_000, 32_000][usize::from((header[2] >> 2) & 0x03)];
+        match (header[1] >> 3) & 0x03 {
+            0b11 => base,
+            0b10 => base / 2,
+            0b00 => base / 4,
+            version => panic!("reserved MPEG version {version}"),
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
+    fn mp3_stays_at_or_below_a_sample_rate_cap() {
+        for (cap, expected) in [
+            (None, 44_100),
+            (Some(23_000), 22_050),
+            (Some(32_000), 32_000),
+        ] {
+            let target = std::env::temp_dir().join(format!(
+                "lyra-ffmpeg-mp3-rate-{cap:?}-{}.mp3",
+                std::process::id()
+            ));
+            let mut output = Output::new(&target)
+                .audio_format(AudioFormat::Mp3)
+                .codec(AudioCodec::Mp3)
+                .audio_bitrate_kbps(64);
+            if let Some(cap) = cap {
+                output = output.sample_rate_hz(cap);
+            }
+            encode(std::path::Path::new(TEST_INPUT), output);
+            let mp3 = std::fs::read(&target).expect("the mp3 is read");
+            assert_eq!(mp3_sample_rate(&mp3), expected, "cap {cap:?}");
+            let _ = std::fs::remove_file(target);
+        }
+    }
 }
