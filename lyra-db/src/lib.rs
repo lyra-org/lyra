@@ -8,6 +8,7 @@
 
 pub mod api_keys;
 pub mod artists;
+pub mod bookmarks;
 pub mod bootstrap;
 pub mod catalog;
 pub mod chains;

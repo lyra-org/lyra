@@ -374,6 +374,7 @@ pub fn delete_user(db: &mut impl super::DbAccess, user_db_id: DbId) -> anyhow::R
     super::settings::plugins::remove_all_for_user(db, user_db_id)?;
     super::favorites::remove_outbound_for_user(db, user_db_id)?;
     super::ratings::remove_outbound_for_user(db, user_db_id)?;
+    super::bookmarks::remove_outbound_for_user(db, user_db_id)?;
     super::tags::remove_outbound_for_user(db, user_db_id)?;
     super::libraries::remove_access_edges_for_user(db, user_db_id)?;
     db.exec_mut(QueryBuilder::remove().ids(user_db_id).query())?;

@@ -136,6 +136,7 @@ fn cascade_remove_favorites_and_nodes(
     for &id in node_ids {
         super::favorites::remove_inbound_for_target(db, id)?;
         super::ratings::remove_inbound_for_target(db, id)?;
+        super::bookmarks::remove_inbound_for_target(db, id)?;
     }
     let credited = super::credits::credited_artist_ids(db, node_ids)?;
     db.exec_mut(QueryBuilder::remove().ids(node_ids).query())?;
