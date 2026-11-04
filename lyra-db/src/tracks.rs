@@ -9,6 +9,7 @@ use std::collections::{
 };
 
 use agdb::{
+    CountComparison,
     DbAny,
     DbAnyTransactionMut,
     DbElement,
@@ -316,8 +317,9 @@ pub fn get_by_releases(db: &DbAny, release_db_ids: &[DbId]) -> anyhow::Result<Ve
     Ok(deduped)
 }
 
-/// The tracks sourced from the entry. The search stops at the library: above it are only the
-/// users with access and everything they have done.
+/// The tracks sourced from the entry. The search stops at the library, above which are only the
+/// users with access and everything they have done, and at the directories holding the entry,
+/// since no track reaches it through them.
 pub fn get_by_entry(db: &DbAny, entry_db_id: DbId) -> anyhow::Result<Vec<Track>> {
     let tracks: Vec<Track> = db
         .exec(
@@ -333,6 +335,13 @@ pub fn get_by_entry(db: &DbAny, entry_db_id: DbId) -> anyhow::Result<Vec<Track>>
                 .or()
                 .key("db_element_id")
                 .value("Library")
+                .or()
+                .where_()
+                .distance(CountComparison::GreaterThan(0))
+                .and()
+                .key("db_element_id")
+                .value("Entry")
+                .end_where()
                 .end_where()
                 .query(),
         )?
