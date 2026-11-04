@@ -75,3 +75,38 @@ end)
 refuses("decide's options", "decide options: unknown field 'container'", function()
 	return playback_sources.decide("track", { container = "mp3" } :: any)
 end)
+
+-- A response Lyra serves takes a body-only fallback, sent in place of Lyra's error.
+local refused = api.response.text(200, "refused", { ["content-type"] = "text/xml" })
+local guarded = api.response.with_fallback(stream, refused)
+assert(guarded.kind == "stream_track" and guarded.track_id == "track" and guarded.options.public == true)
+assert(guarded == stream and guarded.fallback == refused, "the fallback is set on the response")
+for _, response in
+	{
+		api.response.download_track("track"),
+		api.response.hls_playlist("track"),
+		api.response.file(200, "/music/cover.jpg"),
+	} :: { api.ApiResponse }
+do
+	assert(api.response.with_fallback(response, api.response.empty(404)).fallback ~= nil, response.kind)
+end
+for _, fallback in { api.response.json(503, {}), api.response.bytes(500, "x") } do
+	assert(api.response.with_fallback(download, fallback).fallback == fallback, fallback.kind)
+end
+
+refuses(
+	"a fallback for a body the plugin builds",
+	"takes a file, stream_track, download_track or hls_playlist response, got text",
+	function()
+		return api.response.with_fallback(refused, api.response.empty(404))
+	end
+)
+refuses("a fallback Lyra serves", "fallback must be a json, empty, text or bytes response, got file", function()
+	return api.response.with_fallback(stream, api.response.file(200, "/music/cover.jpg"))
+end)
+refuses("a redirect fallback", "got redirect", function()
+	return api.response.with_fallback(stream, api.response.redirect(302, "/elsewhere"))
+end)
+refuses("a fallback that isn't a response", "fallback must be a response built by api.response", function()
+	return api.response.with_fallback(stream, { kind = "bogus" } :: any)
+end)

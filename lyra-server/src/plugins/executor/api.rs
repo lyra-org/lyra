@@ -12,6 +12,7 @@ use harmony_luau as luau;
 use super::{
     PluginExecutor,
     messages::{
+        ApiFallbackResponse,
         ApiHandlerRequest,
         ApiHandlerResponse,
         ApiResponseBody,
@@ -177,32 +178,9 @@ pub(super) fn parse_api_response(
             value.type_name()
         );
     };
-    let status = match table.get("status")? {
-        luau::Value::Integer(status) => status,
-        luau::Value::Number(status) => status as i64,
-        luau::Value::Nil => 200,
-        other => anyhow::bail!(
-            "response status must be a number, got {}",
-            other.type_name()
-        ),
-    };
-    let status = u16::try_from(status)
-        .ok()
-        .and_then(|status| {
-            axum::http::StatusCode::from_u16(status)
-                .ok()
-                .map(|_| status)
-        })
-        .ok_or_else(|| anyhow::anyhow!("invalid response status code: {status}"))?;
-    let kind = match table.get("kind")? {
-        luau::Value::String(kind) => String::from_utf8(kind)?,
-        luau::Value::Nil => anyhow::bail!("response table must include kind"),
-        other => anyhow::bail!("response kind must be a string, got {}", other.type_name()),
-    };
-    let kind = ApiResponseKind::parse(&kind)
-        .ok_or_else(|| anyhow::anyhow!("unsupported response kind: {kind}"))?;
+    let status = response_status(&table)?;
+    let kind = response_kind(&table)?;
     let headers = harmony_serde::optional_string_pairs_field(&table, "headers")?;
-    let body_value = table.get("body").unwrap_or(luau::Value::Nil);
     let path = table.optional_string_field("path")?;
     let transform = harmony_serde::optional_json_field(&table, "transform")?;
     let options = match kind {
@@ -223,7 +201,85 @@ pub(super) fn parse_api_response(
         _ => None,
     };
 
-    let body = match kind {
+    let body = response_body(kind, &table)?;
+    let fallback = match table.get("fallback")? {
+        luau::Value::Nil => None,
+        luau::Value::Table(fallback) if kind.takes_fallback() => {
+            Some(fallback_response(&fallback)?)
+        }
+        luau::Value::Table(_) => anyhow::bail!("{kind} responses take no fallback"),
+        other => anyhow::bail!(
+            "response fallback must be a response table, got {}",
+            other.type_name()
+        ),
+    };
+
+    let response = ApiHandlerResponse {
+        kind,
+        status,
+        headers,
+        body,
+        path,
+        transform,
+        track_id,
+        options,
+        principal: None,
+        client: Default::default(),
+        fallback,
+    };
+    Ok(ParsedApiResponse { response, produce })
+}
+
+/// The body-only response a plugin sends in place of Lyra's error.
+fn fallback_response(table: &luau::Table) -> Result<ApiFallbackResponse> {
+    let kind = response_kind(table)?;
+    if !kind.is_body_only() {
+        anyhow::bail!(
+            "a response fallback must be a json, empty, text or bytes response, got {kind}"
+        );
+    }
+    Ok(ApiFallbackResponse {
+        kind,
+        status: response_status(table)?,
+        headers: harmony_serde::optional_string_pairs_field(table, "headers")?,
+        body: response_body(kind, table)?,
+    })
+}
+
+fn response_status(table: &luau::Table) -> Result<u16> {
+    let status = match table.get("status")? {
+        luau::Value::Integer(status) => status,
+        luau::Value::Number(status) => status as i64,
+        luau::Value::Nil => 200,
+        other => anyhow::bail!(
+            "response status must be a number, got {}",
+            other.type_name()
+        ),
+    };
+    u16::try_from(status)
+        .ok()
+        .and_then(|status| {
+            axum::http::StatusCode::from_u16(status)
+                .ok()
+                .map(|_| status)
+        })
+        .ok_or_else(|| anyhow::anyhow!("invalid response status code: {status}"))
+}
+
+fn response_kind(table: &luau::Table) -> Result<ApiResponseKind> {
+    let kind = match table.get("kind")? {
+        luau::Value::String(kind) => String::from_utf8(kind)?,
+        luau::Value::Nil => anyhow::bail!("response table must include kind"),
+        other => anyhow::bail!("response kind must be a string, got {}", other.type_name()),
+    };
+    ApiResponseKind::parse(&kind)
+        .ok_or_else(|| anyhow::anyhow!("unsupported response kind: {kind}"))
+}
+
+/// The body of a response of `kind`, for the kinds whose body the table carries.
+fn response_body(kind: ApiResponseKind, table: &luau::Table) -> Result<Option<ApiResponseBody>> {
+    let body_value = table.get("body").unwrap_or(luau::Value::Nil);
+    Ok(match kind {
         ApiResponseKind::Json => Some(ApiResponseBody::Json(
             if matches!(body_value, luau::Value::Nil) {
                 serde_json::Value::Null
@@ -257,19 +313,5 @@ pub(super) fn parse_api_response(
         | ApiResponseKind::DownloadTrack
         | ApiResponseKind::HlsPlaylist
         | ApiResponseKind::Stream => None,
-    };
-
-    let response = ApiHandlerResponse {
-        kind,
-        status,
-        headers,
-        body,
-        path,
-        transform,
-        track_id,
-        options,
-        principal: None,
-        client: Default::default(),
-    };
-    Ok(ParsedApiResponse { response, produce })
+    })
 }

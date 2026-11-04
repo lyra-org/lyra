@@ -7,19 +7,24 @@ use axum::http::header::{
     CACHE_CONTROL,
     EXPIRES,
     PRAGMA,
+    RETRY_AFTER,
     TRANSFER_ENCODING,
 };
 
+use super::image::ParsedImageTransformOptions;
 use super::*;
 use crate::plugins::api::options::{
     TrackResponseOptions,
     TrackStreamRequest,
 };
 use crate::plugins::executor::{
+    ApiFallbackResponse,
     ApiHandlerResponse,
+    ApiResponseBody,
     ApiResponseKind,
 };
 use crate::routes::AppError;
+use crate::services::auth::Principal;
 use crate::services::auth::media_tokens::MediaTokenPurpose;
 use crate::services::delivery::{
     DeliveryTarget,
@@ -36,6 +41,9 @@ const FRAMING_HEADERS: [HeaderName; 4] = [
     TRANSFER_ENCODING,
 ];
 
+/// The headers of Lyra's error that a client acts on, which a fallback sent in its place keeps.
+const CARRIED_ERROR_HEADERS: [HeaderName; 1] = [RETRY_AFTER];
+
 pub(super) fn header_pairs(headers: &HeaderMap) -> Vec<(String, String)> {
     headers
         .iter()
@@ -46,112 +54,217 @@ pub(super) fn header_pairs(headers: &HeaderMap) -> Vec<(String, String)> {
 }
 
 pub(super) async fn plugin_api_response_to_axum(
-    response: ApiHandlerResponse,
+    mut response: ApiHandlerResponse,
     request_method: &Method,
     request_headers: &HeaderMap,
 ) -> Result<Response> {
-    let headers = response_headers(&response)?;
-    let mut status =
-        StatusCode::from_u16(response.status).context("invalid response status code")?;
-    match response.kind {
+    let headers = framed_headers(response.kind, &response.headers)?;
+    let status = StatusCode::from_u16(response.status).context("invalid response status code")?;
+    if response.kind != ApiResponseKind::File && response.path.is_some() {
+        bail!("{} response cannot include path", response.kind);
+    }
+    let fallback = response.fallback.take().map(Fallback::of).transpose()?;
+    let served = match response.kind {
         ApiResponseKind::StreamTrack
         | ApiResponseKind::DownloadTrack
         | ApiResponseKind::HlsPlaylist => {
             let status = served_status(response.kind, status)?;
-            let served = serve_track(&response, request_method, request_headers).await?;
-            return Ok(with_plugin_status_and_headers(served, status, headers));
+            let track = served_track(&response)?;
+            serve_track(&response, track, request_method, request_headers)
+                .await
+                .map(|served| with_plugin_status_and_headers(served, status, headers))
+                .map_err(ServeFailure::Lyra)
+        }
+        ApiResponseKind::File => {
+            let file = FileRequest::of(response)?;
+            serve_file(file, status, headers, request_headers)
+                .await
+                .map_err(ServeFailure::Unserved)
         }
         ApiResponseKind::Json
         | ApiResponseKind::Empty
         | ApiResponseKind::Text
         | ApiResponseKind::Bytes
         | ApiResponseKind::Redirect
-        | ApiResponseKind::File
         | ApiResponseKind::Filler
-        | ApiResponseKind::Stream => {}
-    }
-
-    let principal = response.principal.as_ref();
-    let mut content_type = None::<HeaderValue>;
-    let mut content_length = None::<HeaderValue>;
-    let mut content_range = None::<HeaderValue>;
-    let mut accept_ranges = None::<HeaderValue>;
-
-    let body = if let Some(path) = response.path {
-        if response.kind != ApiResponseKind::File {
-            bail!("{} response cannot include path", response.kind);
-        }
-        let trimmed = path.trim();
-        if trimmed.is_empty() {
-            bail!("file path must not be empty");
-        }
-        let confined =
-            crate::services::libraries::confine_to_media_roots(trimmed, principal).await?;
-        if let Some(transform) = parse_image_transform_options(response.transform.as_ref())? {
-            let owned_path = confined
-                .to_str()
-                .with_context(|| format!("file response path '{trimmed}' is not valid UTF-8"))?
-                .to_owned();
-            let (bytes, format) =
-                tokio::task::spawn_blocking(move || transform_image(&owned_path, &transform))
-                    .await
-                    .map_err(|err| {
-                        anyhow::anyhow!("failed to join image transform task: {err}")
-                    })??;
-            content_type = Some(HeaderValue::from_static(image_format_mime(format)));
-            Body::from(bytes)
-        } else {
-            let ranged =
-                build_ranged_file_body(confined.as_path(), request_headers.get(RANGE), status)
-                    .await?;
-            status = ranged.status;
-            content_type = Some(HeaderValue::from_static(infer_content_type(trimmed)));
-            content_length = Some(ranged.content_length);
-            content_range = ranged.content_range;
-            accept_ranges = Some(HeaderValue::from_static("bytes"));
-            ranged.body
-        }
-    } else {
-        match response.body {
-            Some(crate::plugins::executor::ApiResponseBody::Json(value)) => {
-                content_type = Some(HeaderValue::from_static("application/json"));
-                Body::from(serde_json::to_vec(&value)?)
-            }
-            Some(crate::plugins::executor::ApiResponseBody::Bytes(bytes)) => Body::from(bytes),
-            Some(crate::plugins::executor::ApiResponseBody::Filler(size)) => {
-                content_type = Some(HeaderValue::from_static("application/octet-stream"));
-                content_length = Some(HeaderValue::from(size));
-                filler_body(size)
-            }
-            Some(crate::plugins::executor::ApiResponseBody::Stream(stream)) => {
-                content_type = Some(HeaderValue::from_static("application/octet-stream"));
-                Body::from_stream(stream)
-            }
-            None => Body::empty(),
+        | ApiResponseKind::Stream => {
+            return body_response(status, headers, response.body);
         }
     };
+    match (served, fallback) {
+        (Ok(served), _) => Ok(served),
+        (Err(ServeFailure::Lyra(error)), None) => Ok(error.into_response()),
+        (Err(ServeFailure::Unserved(error)), None) => Err(error),
+        (Err(failure), Some(fallback)) => fallback.answer(failure),
+    }
+}
 
-    let mut response_out = Response::builder()
+/// Why Lyra failed to serve a response whose body it serves itself.
+enum ServeFailure {
+    /// An error Lyra answers with its own response.
+    Lyra(AppError),
+    /// A well-formed response Lyra could not serve, which it answers as an invalid response.
+    Unserved(anyhow::Error),
+}
+
+/// A response's fallback, checked before Lyra serves the response.
+struct Fallback {
+    status: StatusCode,
+    headers: HeaderMap,
+    body: Option<ApiResponseBody>,
+}
+
+impl Fallback {
+    fn of(fallback: ApiFallbackResponse) -> Result<Self> {
+        Ok(Self {
+            status: StatusCode::from_u16(fallback.status)
+                .context("invalid fallback status code")?,
+            headers: framed_headers(fallback.kind, &fallback.headers)?,
+            body: fallback.body,
+        })
+    }
+
+    /// The fallback in place of the response Lyra failed to serve, with the headers of Lyra's
+    /// error that a client acts on.
+    fn answer(self, failure: ServeFailure) -> Result<Response> {
+        let lyra = match failure {
+            ServeFailure::Lyra(error) => {
+                tracing::debug!(%error, "answering a failed plugin response with its fallback");
+                // Lyra's own answer also logs an internal error and acts on a poisoned database.
+                Some(error.into_response())
+            }
+            ServeFailure::Unserved(error) => {
+                tracing::warn!(%error, "answering a failed plugin response with its fallback");
+                None
+            }
+        };
+        let mut response = body_response(self.status, self.headers, self.body)?;
+        if let Some(lyra) = lyra {
+            for name in CARRIED_ERROR_HEADERS {
+                if let Some(value) = lyra.headers().get(&name) {
+                    response.headers_mut().insert(name, value.clone());
+                }
+            }
+        }
+        Ok(response)
+    }
+}
+
+/// A response whose body is whole once built.
+fn body_response(
+    status: StatusCode,
+    headers: HeaderMap,
+    body: Option<ApiResponseBody>,
+) -> Result<Response> {
+    let mut content_type = None::<HeaderValue>;
+    let mut content_length = None::<HeaderValue>;
+    let body = match body {
+        Some(ApiResponseBody::Json(value)) => {
+            content_type = Some(HeaderValue::from_static("application/json"));
+            Body::from(serde_json::to_vec(&value)?)
+        }
+        Some(ApiResponseBody::Bytes(bytes)) => Body::from(bytes),
+        Some(ApiResponseBody::Filler(size)) => {
+            content_type = Some(HeaderValue::from_static("application/octet-stream"));
+            content_length = Some(HeaderValue::from(size));
+            filler_body(size)
+        }
+        Some(ApiResponseBody::Stream(stream)) => {
+            content_type = Some(HeaderValue::from_static("application/octet-stream"));
+            Body::from_stream(stream)
+        }
+        None => Body::empty(),
+    };
+    let mut response = with_headers(status, body, headers, content_type)?;
+    if let Some(content_length) = content_length {
+        response
+            .headers_mut()
+            .insert(CONTENT_LENGTH, content_length);
+    }
+    Ok(response)
+}
+
+/// A response of `status` and `body` with `headers`, and `content_type` where they set none.
+fn with_headers(
+    status: StatusCode,
+    body: Body,
+    headers: HeaderMap,
+    content_type: Option<HeaderValue>,
+) -> Result<Response> {
+    let mut response = Response::builder()
         .status(status)
         .body(body)
         .map_err(|err| anyhow::anyhow!("failed to build response: {err}"))?;
-    *response_out.headers_mut() = headers;
+    *response.headers_mut() = headers;
     if let Some(content_type) = content_type {
-        response_out
+        response
             .headers_mut()
             .entry(CONTENT_TYPE)
             .or_insert(content_type);
     }
-    for (name, value) in [
-        (CONTENT_LENGTH, content_length),
-        (CONTENT_RANGE, content_range),
-        (ACCEPT_RANGES, accept_ranges),
-    ] {
-        if let Some(value) = value {
-            response_out.headers_mut().insert(name, value);
+    Ok(response)
+}
+
+/// What a `file` response asks Lyra to serve. A response that doesn't say is a plugin error,
+/// which its fallback doesn't answer.
+struct FileRequest {
+    path: String,
+    transform: Option<ParsedImageTransformOptions>,
+    principal: Option<Principal>,
+}
+
+impl FileRequest {
+    fn of(response: ApiHandlerResponse) -> Result<Self> {
+        let path = response.path.context("file response requires path")?;
+        let path = path.trim();
+        if path.is_empty() {
+            bail!("file path must not be empty");
         }
+        Ok(Self {
+            path: path.to_owned(),
+            transform: parse_image_transform_options(response.transform.as_ref())?,
+            principal: response.principal,
+        })
     }
-    Ok(response_out)
+}
+
+/// A `file` response's file, confined to the media roots the response's principal sees.
+async fn serve_file(
+    file: FileRequest,
+    status: StatusCode,
+    headers: HeaderMap,
+    request_headers: &HeaderMap,
+) -> Result<Response> {
+    let trimmed = file.path.as_str();
+    let confined =
+        crate::services::libraries::confine_to_media_roots(trimmed, file.principal.as_ref())
+            .await?;
+    if let Some(transform) = file.transform {
+        let owned_path = confined
+            .to_str()
+            .with_context(|| format!("file response path '{trimmed}' is not valid UTF-8"))?
+            .to_owned();
+        let (bytes, format) =
+            tokio::task::spawn_blocking(move || transform_image(&owned_path, &transform))
+                .await
+                .map_err(|err| anyhow::anyhow!("failed to join image transform task: {err}"))??;
+        let content_type = HeaderValue::from_static(image_format_mime(format));
+        return with_headers(status, Body::from(bytes), headers, Some(content_type));
+    }
+    let ranged =
+        build_ranged_file_body(confined.as_path(), request_headers.get(RANGE), status).await?;
+    let content_type = HeaderValue::from_static(infer_content_type(trimmed));
+    let mut served = with_headers(ranged.status, ranged.body, headers, Some(content_type))?;
+    served
+        .headers_mut()
+        .insert(CONTENT_LENGTH, ranged.content_length);
+    if let Some(content_range) = ranged.content_range {
+        served.headers_mut().insert(CONTENT_RANGE, content_range);
+    }
+    served
+        .headers_mut()
+        .insert(ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+    Ok(served)
 }
 
 /// `size` zero bytes, sent a chunk at a time from one shared buffer.
@@ -165,10 +278,10 @@ fn filler_body(size: u64) -> Body {
     Body::from_stream(futures::stream::iter(chunks))
 }
 
-/// The response's headers, refusing the framing headers on the kinds whose body Lyra frames.
-fn response_headers(response: &ApiHandlerResponse) -> Result<HeaderMap> {
+/// A response's headers, refusing the framing headers on the kinds whose body Lyra frames.
+fn framed_headers(kind: ApiResponseKind, pairs: &[(String, String)]) -> Result<HeaderMap> {
     let framed = matches!(
-        response.kind,
+        kind,
         ApiResponseKind::File
             | ApiResponseKind::StreamTrack
             | ApiResponseKind::DownloadTrack
@@ -176,14 +289,13 @@ fn response_headers(response: &ApiHandlerResponse) -> Result<HeaderMap> {
             | ApiResponseKind::Filler
             | ApiResponseKind::Stream
     );
-    let mut headers = HeaderMap::with_capacity(response.headers.len());
-    for (name, value) in &response.headers {
+    let mut headers = HeaderMap::with_capacity(pairs.len());
+    for (name, value) in pairs {
         let name = HeaderName::from_bytes(name.as_bytes())
             .with_context(|| format!("invalid header name '{name}'"))?;
         if framed && FRAMING_HEADERS.contains(&name) {
             bail!(
-                "{} responses cannot set the {name} header; Lyra sets it for the body it serves",
-                response.kind
+                "{kind} responses cannot set the {name} header; Lyra sets it for the body it serves"
             );
         }
         let value = HeaderValue::from_str(value)
@@ -201,8 +313,8 @@ fn served_status(kind: ApiResponseKind, status: StatusCode) -> Result<StatusCode
     Ok(status)
 }
 
-/// `served` with the plugin's status in place of a 200 and its headers over Lyra's. Lyra's
-/// errors, a 416 among them, are left as Lyra answers them.
+/// `served` with the plugin's status in place of a 200 and its headers over Lyra's. A 416 is
+/// left as Lyra answers it.
 fn with_plugin_status_and_headers(
     mut served: Response,
     status: StatusCode,
@@ -225,15 +337,10 @@ fn with_plugin_status_and_headers(
     served
 }
 
-/// What Lyra answers a `stream_track`, `download_track` or `hls_playlist` response with, before
-/// the plugin's status and headers apply.
-async fn serve_track(
-    response: &ApiHandlerResponse,
-    request_method: &Method,
-    request_headers: &HeaderMap,
-) -> Result<Response> {
+/// The track a `stream_track`, `download_track` or `hls_playlist` response serves, and the
+/// options it is served with.
+fn served_track(response: &ApiHandlerResponse) -> Result<(&str, TrackResponseOptions)> {
     let kind = response.kind;
-    let principal = response.principal.as_ref();
     let track_id = response
         .track_id
         .as_deref()
@@ -242,18 +349,24 @@ async fn serve_track(
         .options
         .clone()
         .with_context(|| format!("{kind} response has no options"))?;
-    let served = match options {
+    Ok((track_id, options))
+}
+
+/// What Lyra answers a `stream_track`, `download_track` or `hls_playlist` response with, before
+/// the plugin's status and headers apply. A 416 for an unsatisfiable range is an answer, not an
+/// error.
+async fn serve_track(
+    response: &ApiHandlerResponse,
+    (track_id, options): (&str, TrackResponseOptions),
+    request_method: &Method,
+    request_headers: &HeaderMap,
+) -> Result<Response, AppError> {
+    let principal = response.principal.as_ref();
+    match options {
         TrackResponseOptions::Hls(options) => {
-            let (track_id, access) = match require_plugin_track_access(
-                principal,
-                track_id,
-                MediaTokenPurpose::HlsPlaylist,
-            )
-            .await
-            {
-                Ok(resolved) => resolved,
-                Err(error) => return Ok(AppError::from(error).into_response()),
-            };
+            let (track_id, access) =
+                require_plugin_track_access(principal, track_id, MediaTokenPurpose::HlsPlaylist)
+                    .await?;
             serve_hls_playlist_for_track(request_method, &track_id, &access, options).await
         }
         TrackResponseOptions::Stream(TrackStreamRequest {
@@ -262,10 +375,7 @@ async fn serve_track(
             options,
         }) => {
             let (track_id, access) =
-                match stream_track_access(principal, response.client, track_id, public).await {
-                    Ok(resolved) => resolved,
-                    Err(error) => return Ok(AppError::from(error).into_response()),
-                };
+                stream_track_access(principal, response.client, track_id, public).await?;
             track_response(
                 request_method,
                 request_headers,
@@ -279,12 +389,8 @@ async fn serve_track(
         }
         TrackResponseOptions::Download(options) => {
             let (track_id, access) =
-                match require_plugin_track_access(principal, track_id, MediaTokenPurpose::Download)
-                    .await
-                {
-                    Ok(resolved) => resolved,
-                    Err(error) => return Ok(AppError::from(error).into_response()),
-                };
+                require_plugin_track_access(principal, track_id, MediaTokenPurpose::Download)
+                    .await?;
             track_response(
                 request_method,
                 request_headers,
@@ -296,8 +402,7 @@ async fn serve_track(
             )
             .await
         }
-    };
-    Ok(served.unwrap_or_else(IntoResponse::into_response))
+    }
 }
 
 #[cfg(test)]
@@ -332,7 +437,9 @@ mod tests {
         stream_track_access,
     };
     use crate::plugins::executor::{
+        ApiFallbackResponse,
         ApiHandlerResponse,
+        ApiResponseBody,
         ApiResponseKind,
     };
     use crate::routes::AppError;
@@ -469,6 +576,7 @@ mod tests {
             options: Some(stream_options(public)),
             principal: None,
             client: ClientAddress::default(),
+            fallback: None,
         }
     }
 
@@ -580,6 +688,7 @@ mod tests {
             options: None,
             principal: None,
             client: ClientAddress::default(),
+            fallback: None,
         }
     }
 
@@ -1041,6 +1150,203 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    fn text_fallback(status: u16, headers: &[(&str, &str)]) -> ApiFallbackResponse {
+        ApiFallbackResponse {
+            kind: ApiResponseKind::Text,
+            status,
+            headers: headers
+                .iter()
+                .map(|(name, value)| (name.to_string(), value.to_string()))
+                .collect(),
+            body: Some(ApiResponseBody::Bytes(b"fallback".to_vec())),
+        }
+    }
+
+    async fn body_text(response: axum::response::Response) -> anyhow::Result<String> {
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        Ok(String::from_utf8(body.to_vec())?)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn failed_track_responses_answer_with_their_fallback() -> anyhow::Result<()> {
+        use crate::routes::serve::tests::{
+            create_user_with_permissions,
+            initialize_test_runtime,
+            prepare_streamable_track,
+        };
+
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let listener = create_user_with_permissions("plugin-fallback-listener", Vec::new()).await?;
+        let listener = crate::services::auth::require_authenticated(
+            crate::routes::request::bearer_credential(&listener),
+        )
+        .await?;
+        let plugin_headers = [("x-plugin", "kept")];
+        let with_fallback = |kind, track_id: &str, options| ApiHandlerResponse {
+            principal: Some(listener.clone()),
+            fallback: Some(text_fallback(
+                200,
+                &[("content-type", "text/xml"), ("retry-after", "99")],
+            )),
+            ..track_kind_response(kind, track_id, 200, &plugin_headers, options)
+        };
+        let no_range = axum::http::HeaderMap::new();
+
+        for (kind, track_id, options) in [
+            (
+                ApiResponseKind::StreamTrack,
+                "missing-track",
+                stream_options(false),
+            ),
+            (
+                ApiResponseKind::DownloadTrack,
+                track_id.as_str(),
+                TrackResponseOptions::Download(Default::default()),
+            ),
+            (
+                ApiResponseKind::HlsPlaylist,
+                "missing-track",
+                TrackResponseOptions::Hls(Default::default()),
+            ),
+        ] {
+            let answered = plugin_api_response_to_axum(
+                with_fallback(kind, track_id, options),
+                &Method::GET,
+                &no_range,
+            )
+            .await?;
+            assert_eq!(answered.status(), StatusCode::OK, "{kind}");
+            assert_eq!(
+                header(&answered, "content-type"),
+                Some("text/xml"),
+                "{kind}"
+            );
+            assert_eq!(
+                header(&answered, "x-plugin"),
+                None,
+                "{kind}: the failed response's headers don't apply"
+            );
+            assert_eq!(
+                header(&answered, "retry-after"),
+                Some("99"),
+                "{kind}: the fallback keeps its own headers"
+            );
+            assert_eq!(body_text(answered).await?, "fallback", "{kind}");
+        }
+
+        let mut range = axum::http::HeaderMap::new();
+        range.insert(
+            axum::http::header::RANGE,
+            axum::http::HeaderValue::from_static("bytes=999999999-"),
+        );
+        let unsatisfiable = plugin_api_response_to_axum(
+            with_fallback(
+                ApiResponseKind::StreamTrack,
+                &track_id,
+                stream_options(false),
+            ),
+            &Method::GET,
+            &range,
+        )
+        .await?;
+        assert_eq!(
+            unsatisfiable.status(),
+            StatusCode::RANGE_NOT_SATISFIABLE,
+            "a 416 stays Lyra's"
+        );
+
+        let served = plugin_api_response_to_axum(
+            with_fallback(
+                ApiResponseKind::StreamTrack,
+                &track_id,
+                stream_options(false),
+            ),
+            &Method::GET,
+            &no_range,
+        )
+        .await?;
+        assert_eq!(served.status(), StatusCode::OK);
+        assert_eq!(header(&served, "x-plugin"), Some("kept"));
+        let body = axum::body::to_bytes(served.into_body(), usize::MAX).await?;
+        assert_ne!(&body[..], b"fallback", "a served track ignores it");
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn failed_file_responses_answer_with_their_fallback() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = unique_test_dir("lyra-plugin-bridge-file-fallback")?;
+        std::fs::create_dir_all(&test_dir)?;
+        init_library_test_state(test_dir.clone()).await?;
+        let outside = unique_test_dir("lyra-plugin-bridge-file-fallback-outside")?;
+        std::fs::create_dir_all(&outside)?;
+        let secret = outside.join("secret.txt");
+        std::fs::write(&secret, b"secret")?;
+
+        let answered = plugin_api_response_to_axum(
+            ApiHandlerResponse {
+                fallback: Some(text_fallback(404, &[])),
+                ..file_response(&secret)
+            },
+            &Method::GET,
+            &axum::http::HeaderMap::new(),
+        )
+        .await?;
+        assert_eq!(answered.status(), StatusCode::NOT_FOUND);
+        assert_eq!(body_text(answered).await?, "fallback");
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        let _ = std::fs::remove_dir_all(outside);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn malformed_file_responses_ignore_their_fallback() {
+        for response in [
+            ApiHandlerResponse {
+                path: None,
+                ..file_response(std::path::Path::new("cover.jpg"))
+            },
+            file_response(std::path::Path::new("  ")),
+            ApiHandlerResponse {
+                transform: Some(serde_json::json!("not a table")),
+                ..file_response(std::path::Path::new("cover.jpg"))
+            },
+        ] {
+            let answered = plugin_api_response_to_axum(
+                ApiHandlerResponse {
+                    fallback: Some(text_fallback(404, &[])),
+                    ..response
+                },
+                &Method::GET,
+                &axum::http::HeaderMap::new(),
+            )
+            .await;
+            assert!(answered.is_err(), "a malformed file response was answered");
+        }
+    }
+
+    #[test]
+    fn fallbacks_carry_lyras_retry_after() -> anyhow::Result<()> {
+        for error in [
+            AppError::too_many_requests(std::time::Duration::from_secs(5)),
+            AppError::service_unavailable_for("busy", std::time::Duration::from_secs(5)),
+        ] {
+            let answered = super::Fallback::of(text_fallback(200, &[("retry-after", "99")]))?
+                .answer(super::ServeFailure::Lyra(error))?;
+            assert_eq!(answered.status(), StatusCode::OK);
+            assert_eq!(header(&answered, "retry-after"), Some("5"));
+        }
+        let answered = super::Fallback::of(text_fallback(200, &[]))?
+            .answer(super::ServeFailure::Lyra(AppError::not_found("gone")))?;
+        assert_eq!(header(&answered, "retry-after"), None);
         Ok(())
     }
 }

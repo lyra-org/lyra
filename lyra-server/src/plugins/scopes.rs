@@ -1465,6 +1465,7 @@ mod tests {
                 "response.stream_track(track_id, options)",
                 "response.download_track(track_id, options)",
                 "response.hls_playlist(track_id, options)",
+                "response.with_fallback(response, fallback)",
                 "delivery_format(name)",
                 "query.bool(query, key, default)",
                 "query.int(query, key, default, min, max)",

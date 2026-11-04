@@ -221,6 +221,20 @@ impl ApiResponseKind {
             Self::Stream => "stream",
         }
     }
+
+    /// Whether Lyra serves the body itself, so a failure to serve it can be answered with the
+    /// response's fallback.
+    pub(crate) fn takes_fallback(self) -> bool {
+        matches!(
+            self,
+            Self::File | Self::StreamTrack | Self::DownloadTrack | Self::HlsPlaylist
+        )
+    }
+
+    /// Whether the response is whole once built, as a fallback must be.
+    pub(crate) fn is_body_only(self) -> bool {
+        matches!(self, Self::Json | Self::Empty | Self::Text | Self::Bytes)
+    }
 }
 
 impl fmt::Display for ApiResponseKind {
@@ -245,6 +259,17 @@ pub(crate) struct ApiHandlerResponse {
     pub(crate) principal: Option<crate::services::auth::Principal>,
     /// The requesting client's address, from the dispatch's request.
     pub(crate) client: crate::services::auth::caller::ClientAddress,
+    /// What to answer in place of Lyra's error when it can't serve the response.
+    pub(crate) fallback: Option<ApiFallbackResponse>,
+}
+
+/// A body-only response a plugin sends when Lyra fails to serve the one it returned.
+#[derive(Debug)]
+pub(crate) struct ApiFallbackResponse {
+    pub(crate) kind: ApiResponseKind,
+    pub(crate) status: u16,
+    pub(crate) headers: Vec<(String, String)>,
+    pub(crate) body: Option<ApiResponseBody>,
 }
 
 pub(crate) struct WebSocketStartRequest {

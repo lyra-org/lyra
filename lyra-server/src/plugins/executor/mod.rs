@@ -18,6 +18,7 @@ mod websocket;
 pub(crate) use self::actor::PluginExecutorHandle;
 use self::messages::TaskIdKey;
 pub(crate) use self::messages::{
+    ApiFallbackResponse,
     ApiHandlerRequest,
     ApiHandlerResponse,
     ApiResponseBody,

@@ -43,6 +43,7 @@ pub(crate) use self::types::ApiWebSocketSender as WebSocketSenderType;
 use self::types::{
     ApiAuth,
     ApiContext,
+    ApiFallbackResponse,
     ApiHandler,
     ApiHeaders,
     ApiPathParams,
@@ -560,7 +561,7 @@ impl ApiModule {
 
     #[harmony(
         name = "response.file",
-        description = "Builds a file response. The path must resolve inside a library root or the configured cover storage root. Its headers may not include the framing headers content-length, content-range, accept-ranges and transfer-encoding, which Lyra sets for the file it serves; a ranged request answers with 206 or 416 whatever its status.",
+        description = "Builds a file response. The path must resolve inside a library root or the configured cover storage root. Its headers may not include the framing headers content-length, content-range, accept-ranges and transfer-encoding, which Lyra sets for the file it serves; a ranged request answers with 206 or 416 whatever its status. When Lyra can't serve the file it fails as for an invalid response, or answers with the fallback `response.with_fallback` attaches.",
         args(status: Option<u16>, path: String, headers: Option<ApiHeaders>, transform: Option<ImageTransformOptions>),
         returns(ApiResponse)
     )]
@@ -591,7 +592,7 @@ impl ApiModule {
 
     #[harmony(
         name = "response.stream_track",
-        description = "Builds a response that streams the track, delivered as `options` ask. A `status` or `headers` set on the response apply to the audio Lyra serves. Its headers replace Lyra's of the same name, and its cache-control also Lyra's pragma and expires, but may not include the framing headers content-length, content-range, accept-ranges and transfer-encoding. Its status, which must be 200 to 203, replaces the 200 of a whole body; a ranged 206 and a 416 keep theirs. When Lyra can't serve the track it answers with its own error, without the response's status or headers.",
+        description = "Builds a response that streams the track, delivered as `options` ask. A `status` or `headers` set on the response apply to the audio Lyra serves. Its headers replace Lyra's of the same name, and its cache-control also Lyra's pragma and expires, but may not include the framing headers content-length, content-range, accept-ranges and transfer-encoding. Its status, which must be 200 to 203, replaces the 200 of a whole body; a ranged 206 and a 416 keep theirs. When Lyra can't serve the track it answers with its own error, without the response's status or headers, or with the fallback `response.with_fallback` attaches.",
         args(track_id: String, options: Option<TrackStreamOptions>),
         returns(ApiResponse)
     )]
@@ -604,7 +605,7 @@ impl ApiModule {
 
     #[harmony(
         name = "response.download_track",
-        description = "Builds a response that sends the track as a download, delivered as `options` ask; without `public` the caller needs the download permission. A `status` or `headers` set on the response apply to the audio Lyra serves. Its headers replace Lyra's of the same name, and its cache-control also Lyra's pragma and expires, but may not include the framing headers content-length, content-range, accept-ranges and transfer-encoding. Its status, which must be 200 to 203, replaces the 200 of a whole body; a ranged 206 and a 416 keep theirs. When Lyra can't serve the track it answers with its own error, without the response's status or headers.",
+        description = "Builds a response that sends the track as a download, delivered as `options` ask; without `public` the caller needs the download permission. A `status` or `headers` set on the response apply to the audio Lyra serves. Its headers replace Lyra's of the same name, and its cache-control also Lyra's pragma and expires, but may not include the framing headers content-length, content-range, accept-ranges and transfer-encoding. Its status, which must be 200 to 203, replaces the 200 of a whole body; a ranged 206 and a 416 keep theirs. When Lyra can't serve the track it answers with its own error, without the response's status or headers, or with the fallback `response.with_fallback` attaches.",
         args(track_id: String, options: Option<TrackServeOptions>),
         returns(ApiResponse)
     )]
@@ -617,7 +618,7 @@ impl ApiModule {
 
     #[harmony(
         name = "response.hls_playlist",
-        description = "Builds a response that serves the track's HLS media playlist, encoded as `options` ask. A `status` or `headers` set on the response apply to the playlist Lyra serves. Its headers replace Lyra's of the same name, and its cache-control also Lyra's pragma and expires, but may not include the framing headers content-length, content-range, accept-ranges and transfer-encoding. Its status, which must be 200 to 203, replaces Lyra's 200. When Lyra can't serve the track it answers with its own error, without the response's status or headers.",
+        description = "Builds a response that serves the track's HLS media playlist, encoded as `options` ask. A `status` or `headers` set on the response apply to the playlist Lyra serves. Its headers replace Lyra's of the same name, and its cache-control also Lyra's pragma and expires, but may not include the framing headers content-length, content-range, accept-ranges and transfer-encoding. Its status, which must be 200 to 203, replaces Lyra's 200. When Lyra can't serve the track it answers with its own error, without the response's status or headers, or with the fallback `response.with_fallback` attaches.",
         args(track_id: String, options: Option<HlsServeOptions>),
         returns(ApiResponse)
     )]
@@ -626,6 +627,32 @@ impl ApiModule {
         options: Option<luau::Value>,
     ) -> luau::runtime::Result<luau::OwnedTable> {
         track_response(ApiResponseKind::HlsPlaylist, track_id, options)
+    }
+
+    #[harmony(
+        name = "response.with_fallback",
+        description = "Sets `fallback` on `response`, a `file`, `stream_track`, `download_track` or `hls_playlist` response, and returns it: the response then answers with `fallback` when Lyra can't serve it, in place of Lyra's own error. `fallback` must be a `json`, `empty`, `text` or `bytes` response, and is sent as it is, but with Lyra's retry-after when Lyra's error has one, as when it is out of transcoding capacity. A 416 for an unsatisfiable range stays Lyra's, and a failure after the body has started only cuts the body short.",
+        args(response: ApiResponse, fallback: ApiResponse),
+        returns(ApiResponse)
+    )]
+    fn response_with_fallback(
+        response: luau::Table,
+        fallback: luau::Table,
+    ) -> luau::runtime::Result<luau::Table> {
+        let kind = table_response_kind(&response, "response")?;
+        if !kind.takes_fallback() {
+            return Err(crate::plugins::runtime_error(format!(
+                "response.with_fallback takes a file, stream_track, download_track or hls_playlist response, got {kind}"
+            )));
+        }
+        let fallback_kind = table_response_kind(&fallback, "fallback")?;
+        if !fallback_kind.is_body_only() {
+            return Err(crate::plugins::runtime_error(format!(
+                "response.with_fallback fallback must be a json, empty, text or bytes response, got {fallback_kind}"
+            )));
+        }
+        response.set("fallback", luau::Value::Table(fallback))?;
+        Ok(response)
     }
 
     #[harmony(
@@ -717,6 +744,22 @@ fn register_route(
         case_insensitive: options.case_insensitive,
         max_body_bytes: options.max_body_bytes,
         context: context.clone(),
+    })
+}
+
+/// The kind of the response table `table`, which `what` names in the error raised for one that
+/// isn't a response.
+fn table_response_kind(table: &luau::Table, what: &str) -> luau::runtime::Result<ApiResponseKind> {
+    match table.get("kind")? {
+        luau::Value::String(kind) => String::from_utf8(kind)
+            .ok()
+            .and_then(|kind| ApiResponseKind::parse(&kind)),
+        _ => None,
+    }
+    .ok_or_else(|| {
+        crate::plugins::runtime_error(format!(
+            "response.with_fallback {what} must be a response built by api.response"
+        ))
     })
 }
 
@@ -984,6 +1027,7 @@ fn api_response_aliases() -> Vec<TypeAliasDescriptor> {
                     "transform",
                     LuauType::optional(ImageTransformOptions::luau_type()),
                 ),
+                fallback_field(),
             ],
         ),
         response_alias(
@@ -995,6 +1039,7 @@ fn api_response_aliases() -> Vec<TypeAliasDescriptor> {
                     "options",
                     LuauType::optional(TrackStreamOptions::luau_type()),
                 ),
+                fallback_field(),
             ],
         ),
         response_alias(
@@ -1006,6 +1051,7 @@ fn api_response_aliases() -> Vec<TypeAliasDescriptor> {
                     "options",
                     LuauType::optional(TrackServeOptions::luau_type()),
                 ),
+                fallback_field(),
             ],
         ),
         response_alias(
@@ -1014,6 +1060,7 @@ fn api_response_aliases() -> Vec<TypeAliasDescriptor> {
             [
                 field("track_id", String::luau_type()),
                 field("options", LuauType::optional(HlsServeOptions::luau_type())),
+                fallback_field(),
             ],
         ),
         response_alias(
@@ -1025,6 +1072,18 @@ fn api_response_aliases() -> Vec<TypeAliasDescriptor> {
             "ApiStreamResponse",
             "stream",
             [field("produce", LuauType::literal("ApiStreamProducer"))],
+        ),
+        TypeAliasDescriptor::new(
+            "ApiFallbackResponse",
+            LuauType::union(vec![
+                LuauType::literal("ApiJsonResponse"),
+                LuauType::literal("ApiEmptyResponse"),
+                LuauType::literal("ApiTextResponse"),
+                LuauType::literal("ApiBytesResponse"),
+            ]),
+            Some(
+                "A response `response.with_fallback` attaches, sent when Lyra can't serve the one it is attached to.",
+            ),
         ),
         TypeAliasDescriptor::new(
             "ApiResponse",
@@ -1044,6 +1103,14 @@ fn api_response_aliases() -> Vec<TypeAliasDescriptor> {
             Some("API response returned by route handlers."),
         ),
     ]
+}
+
+#[cfg(feature = "docgen")]
+fn fallback_field() -> FieldDescriptor {
+    field(
+        "fallback",
+        LuauType::optional(ApiFallbackResponse::luau_type()),
+    )
 }
 
 #[cfg(feature = "docgen")]

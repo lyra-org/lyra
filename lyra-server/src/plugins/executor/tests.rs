@@ -3102,3 +3102,62 @@ fn track_source_bindings_hide_inaccessible_tracks() -> Result<()> {
     assert_eq!(values, vec![text("shown"), yes.clone(), yes]);
     Ok(())
 }
+
+#[test]
+fn api_responses_take_only_body_fallbacks_on_served_bodies() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+    init_api_test_state()?;
+    let runtime = runtime_with_scopes(&["lyra.api"])?;
+    runtime.run_plugin_source(
+        "demo",
+        "init.luau",
+        &br#"
+            local api = require("@lyra/api")
+
+            api.get("/fallback", function()
+                return api.response.with_fallback(
+                    api.response.stream_track("track"),
+                    api.response.text(200, "refused", { ["x-fallback"] = "yes" })
+                )
+            end, { auth = "public" })
+
+            api.get("/file-fallback", function()
+                return { kind = "stream_track", track_id = "track", fallback = { kind = "file", path = "/x" } }
+            end, { auth = "public" })
+
+            api.get("/json-with-fallback", function()
+                return { kind = "json", body = {}, fallback = api.response.empty(204) }
+            end, { auth = "public" })
+        "#[..],
+    )?;
+    let dispatch = |path: &str| {
+        let handler = futures::executor::block_on(crate::plugins::api::tests::registered_handler(
+            "GET", path,
+        ))
+        .context("registered API handler")?;
+        runtime.dispatch_api_handler(api_request(handler, path))
+    };
+
+    let response = dispatch("/fallback")?;
+    assert_eq!(response.kind, ApiResponseKind::StreamTrack);
+    let fallback = response.fallback.context("the fallback is kept")?;
+    assert_eq!(fallback.kind, ApiResponseKind::Text);
+    assert_eq!(fallback.status, 200);
+    assert!(
+        fallback
+            .headers
+            .contains(&("x-fallback".to_string(), "yes".to_string()))
+    );
+    assert!(matches!(fallback.body, Some(ApiResponseBody::Bytes(ref body)) if body == b"refused"));
+
+    let error = dispatch("/file-fallback").expect_err("a file fallback is refused");
+    assert!(
+        error
+            .to_string()
+            .contains("must be a json, empty, text or bytes response"),
+        "{error}"
+    );
+    let error = dispatch("/json-with-fallback").expect_err("a json response takes no fallback");
+    assert!(error.to_string().contains("take no fallback"), "{error}");
+    Ok(())
+}

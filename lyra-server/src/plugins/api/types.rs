@@ -30,6 +30,8 @@ pub(super) struct ApiPathParams;
 #[cfg(feature = "docgen")]
 pub(super) struct ApiResponse;
 #[cfg(feature = "docgen")]
+pub(super) struct ApiFallbackResponse;
+#[cfg(feature = "docgen")]
 pub(super) struct ApiHandler;
 #[cfg(feature = "docgen")]
 pub(super) struct ApiRouteOptions;
@@ -83,6 +85,13 @@ impl LuauTypeInfo for ApiPathParams {
 impl LuauTypeInfo for ApiResponse {
     fn luau_type() -> LuauType {
         LuauType::literal("ApiResponse")
+    }
+}
+
+#[cfg(feature = "docgen")]
+impl LuauTypeInfo for ApiFallbackResponse {
+    fn luau_type() -> LuauType {
+        LuauType::literal("ApiFallbackResponse")
     }
 }
 
