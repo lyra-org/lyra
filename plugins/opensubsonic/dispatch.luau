@@ -66,6 +66,25 @@ end
 
 local module = {}
 
+-- What method `name` answers, given how its protected call ended: its result, or the Subsonic
+-- error it raised, through `failed`.
+local function answered(
+	name: string,
+	failed: (response.SubsonicError) -> ApiResponse,
+	ok: boolean,
+	result: any
+): ApiResponse
+	if ok then
+		return result
+	end
+	local failure = request.failure_of(result)
+	if failure then
+		return failed(failure)
+	end
+	warn(`{name} failed: {tostring(result)}`)
+	return failed(response.error(0, "Internal server error"))
+end
+
 -- Answers `/rest/{method}`, with or without the `.view` suffix; `hls` also answers as `hls.m3u8`.
 function module.dispatch(ctx: ApiContext): ApiResponse
 	local params = request.params(ctx)
@@ -76,7 +95,9 @@ function module.dispatch(ctx: ApiContext): ApiResponse
 
 	local public_method = system.public_methods[name]
 	if public_method then
-		return public_method(params)
+		return answered(name, function(err: response.SubsonicError): ApiResponse
+			return response.failed(params, err)
+		end, pcall(public_method, params))
 	end
 
 	local method = methods[name]
@@ -107,16 +128,7 @@ function module.dispatch(ctx: ApiContext): ApiResponse
 		return failed(err :: response.SubsonicError)
 	end
 
-	local ok, result = pcall(method, { ctx = ctx, params = params, auth = resolved })
-	if ok then
-		return result
-	end
-	local failure = request.failure_of(result)
-	if failure then
-		return failed(failure)
-	end
-	warn(`{name} failed: {tostring(result)}`)
-	return failed(response.error(0, "Internal server error"))
+	return answered(name, failed, pcall(method, { ctx = ctx, params = params, auth = resolved }))
 end
 
 return module
