@@ -50,7 +50,7 @@ local function unknown(method: string, params: { [string]: string })
 	end
 	local raw = call.raw(method, query)
 	local body = (serde.json.decode(raw.body) :: any)["subsonic-response"]
-	assert(raw.status == 404 and body.error.code == 0, `{method} is unknown`)
+	assert(raw.status == 200 and body.error.code == 0, `{method} is unknown`)
 	assert(body.error.message == `Unknown method: {method}`, body.error.message)
 end
 

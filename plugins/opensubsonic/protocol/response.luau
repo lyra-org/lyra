@@ -236,13 +236,15 @@ function module.ok_stream(query: ApiQueryParams, container: string, lists: { Str
 	end, headers)
 end
 
-function module.failed(query: ApiQueryParams, err: SubsonicError, http_status: number?): ApiResponse
-	return render(query, envelope("failed", { error = err :: any }), http_status or 200)
+-- Failures answer HTTP 200 with the error in the body, as Subsonic clients expect; some
+-- report any other status as an unreachable server.
+function module.failed(query: ApiQueryParams, err: SubsonicError): ApiResponse
+	return render(query, envelope("failed", { error = err :: any }), 200)
 end
 
 -- The failure for a method the plugin doesn't serve.
 function module.unknown_method(query: ApiQueryParams, name: string): ApiResponse
-	return module.failed(query, module.error(0, `Unknown method: {name}`), 404)
+	return module.failed(query, module.error(0, `Unknown method: {name}`))
 end
 
 -- A failure in XML, whatever format the request asks for.
