@@ -35,6 +35,13 @@ songs take bookmarks, one per song: saving another replaces it. A position past 
 kept as its end. Bookmarks are separate from play queues and listens, and nothing saves or clears
 them for you.
 
+## Browsing by folder
+
+Clients that browse by folder (`getIndexes`, `getMusicDirectory`) see artists, their albums and
+the albums' songs, not the folders on disk. The top folders are the artists credited on albums,
+each holding its albums, oldest first; an album holds its songs in disc and track order, and sits
+under its first artist. Music folders choose which libraries to list, and aren't folders to open.
+
 ## Top songs
 
 An artist's top songs (`getTopSongs`) are your own most played songs of that artist, from your

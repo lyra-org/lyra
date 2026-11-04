@@ -82,9 +82,9 @@ local LATIN1_LETTERS = "AAAAAAACEEEEIIIIDNOOOOO#OUUUUY#S"
 
 -- An artist is indexed under the first letter of its sort name, else its name, ignoring Latin
 -- accents and case, or under `#` without one, as Navidrome's default index groups do.
-local function index_name(item: JsonObject): string
-	local sort_name: string = item.sortName
-	local name: string = if sort_name ~= "" then sort_name else item.name
+local function index_name(summary: ArtistSummary): string
+	local sort_name = summary.sort_name
+	local name: string = if sort_name and sort_name ~= "" then sort_name else summary.artist_name
 	local first = string.byte(name, 1)
 	if first == nil then
 		return "#"
@@ -102,20 +102,20 @@ local function index_name(item: JsonObject): string
 	return string.sub(LATIN1_LETTERS, letter, letter)
 end
 
--- The `IndexID3` list of these `ArtistID3`s: `#` first, then each letter in order, each holding
--- its artists in the order given.
-function module.indexes(items: { JsonObject }): { JsonObject }
+-- The `IndexID3` or `Index` list of these artists, `items` holding each summary's `ArtistID3` or
+-- `Artist`: `#` first, then each letter in order, each holding its artists in the order given.
+function module.indexes(summaries: { ArtistSummary }, items: { JsonObject }): { JsonObject }
 	local by_name: { [string]: { JsonObject } } = {}
 	local names: { string } = {}
-	for _, item in items do
-		local name = index_name(item)
+	for position, summary in summaries do
+		local name = index_name(summary)
 		local group = by_name[name]
 		if not group then
 			group = {}
 			by_name[name] = group
 			table.insert(names, name)
 		end
-		table.insert(group, item)
+		table.insert(group, items[position])
 	end
 	table.sort(names)
 	local indexes: { JsonObject } = {}

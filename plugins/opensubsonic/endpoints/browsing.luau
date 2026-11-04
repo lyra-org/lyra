@@ -131,6 +131,30 @@ local function album_info(req: Request): ApiResponse
 	return response.ok(req.params, { albumInfo = if next(info) ~= nil then info else response.EMPTY_OBJECT })
 end
 
+-- Every artist credited on an album the caller can see, by sort name, as Navidrome and gonic list
+-- album artists only: artists credited only on songs have no albums to show.
+local function album_artists(params: api.ApiQueryParams): { artists.ArtistSummary }
+	return artists.query({
+		library_id = folders.library_id(params),
+		credit_role = "release",
+		sort = { { key = "sort_name" } },
+	}).items
+end
+
+-- The albums an artist's `albumCount` counts: those crediting the artist themselves, oldest first.
+local function artist_albums(artist_id: string): { releases.ReleaseSummary }
+	return releases.query({
+		artist_ids = { artist_id },
+		credit_role = "release",
+		sort = { { key = "year" }, { key = "sort_name" } },
+	}).items
+end
+
+-- An album's songs, in disc and track order: the host's order for a query of one release.
+local function album_songs(release_id: string): { JsonObject }
+	return songs.list(tracks.query({ release_ids = { release_id } }).items)
+end
+
 local module = {}
 
 module.methods = {
@@ -138,19 +162,72 @@ module.methods = {
 		return response.ok(req.params, { musicFolders = { musicFolder = folders.list() } })
 	end,
 
-	-- Every artist credited on an album the caller can see, as Navidrome and gonic list album
-	-- artists only: artists credited only on songs have no albums to show.
 	getArtists = function(req: Request): ApiResponse
-		local found = artists.query({
-			library_id = folders.library_id(req.params),
-			credit_role = "release",
-			sort = { { key = "sort_name" } },
-		}).items
+		local found = album_artists(req.params)
 		local result: JsonObject = { ignoredArticles = IGNORED_ARTICLES }
 		if #found > 0 then
-			result.index = artist_items.indexes(artist_items.list(found))
+			result.index = artist_items.indexes(found, artist_items.list(found))
 		end
 		return response.ok(req.params, { artists = result })
+	end,
+
+	-- The artists of `getArtists`, as the top directories of the folder tree: artists, their
+	-- albums, the albums' songs. Lyra keeps no time the catalog last changed, so `lastModified` is
+	-- 0 and `ifModifiedSince` changes nothing, as on gonic.
+	getIndexes = function(req: Request): ApiResponse
+		local found = album_artists(req.params)
+		local result: JsonObject = { ignoredArticles = IGNORED_ARTICLES, lastModified = 0 }
+		if #found > 0 then
+			result.index = artist_items.indexes(found, artist_items.directories(found))
+		end
+		return response.ok(req.params, { indexes = result })
+	end,
+
+	-- An artist's directory holds its albums, an album's its songs, as `getArtist` and `getAlbum`
+	-- list them. Only artists and albums are directories.
+	getMusicDirectory = function(req: Request): ApiResponse
+		local id = request.required(req.params, "id")
+		local kind = entities.get_type(id)
+		local directory: JsonObject? = nil
+		if kind == "Artist" then
+			local summary = artists.query({ ids = { id }, limit = 1 }).items[1]
+			if summary then
+				local artist = artist_items.directories({ summary })[1]
+				directory = {
+					id = id,
+					name = artist.name,
+					starred = artist.starred,
+					userRating = artist.userRating,
+					averageRating = artist.averageRating,
+				}
+				local children = albums.children(artist_albums(id))
+				if #children > 0 then
+					directory.child = children
+				end
+			end
+		elseif kind == "Release" then
+			local summary = releases.query({ ids = { id }, limit = 1 }).items[1]
+			if summary then
+				local album = albums.children({ summary })[1]
+				directory = {
+					id = id,
+					parent = album.parent,
+					name = album.title,
+					starred = album.starred,
+					userRating = album.userRating,
+					averageRating = album.averageRating,
+					playCount = album.playCount,
+				}
+				local children = album_songs(id)
+				if #children > 0 then
+					directory.child = children
+				end
+			end
+		end
+		if not directory then
+			return request.not_found("Directory")
+		end
+		return response.ok(req.params, { directory = directory })
 	end,
 
 	getArtist = function(req: Request): ApiResponse
@@ -160,14 +237,9 @@ module.methods = {
 			return request.not_found("Artist")
 		end
 		local artist = artist_items.list({ summary })[1]
-		-- The albums `albumCount` counts: those crediting the artist themselves, oldest first.
-		local artist_albums = releases.query({
-			artist_ids = { id },
-			credit_role = "release",
-			sort = { { key = "year" }, { key = "sort_name" } },
-		}).items
-		if #artist_albums > 0 then
-			artist.album = albums.list(artist_albums)
+		local found = artist_albums(id)
+		if #found > 0 then
+			artist.album = albums.list(found)
 		end
 		return response.ok(req.params, { artist = artist })
 	end,
@@ -238,9 +310,9 @@ module.methods = {
 			return request.not_found("Album")
 		end
 		local album = albums.list({ summary })[1]
-		local album_tracks = tracks.query({ release_ids = { id } }).items
-		if #album_tracks > 0 then
-			album.song = songs.list(album_tracks)
+		local album_song_items = album_songs(id)
+		if #album_song_items > 0 then
+			album.song = album_song_items
 		end
 		return response.ok(req.params, { album = album })
 	end,
