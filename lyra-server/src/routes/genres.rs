@@ -166,6 +166,24 @@ fn genre_to_response(genre: genres::Genre) -> GenreResponse {
     }
 }
 
+/// The genre `id` names, or `None` when it names no genre or only one on releases the principal
+/// cannot see, so a hidden genre answers like a missing one.
+pub(super) fn accessible_genre_db_id(
+    db: &impl lyra_db::DbAccess,
+    principal: &crate::services::auth::Principal,
+    id: &str,
+) -> anyhow::Result<Option<DbId>> {
+    let Some(genre_db_id) = lyra_db::lookup::find_node_id_by_id(db, id)? else {
+        return Ok(None);
+    };
+    if genres::get_by_id(db, genre_db_id)?.is_none()
+        || !genre_accessible_to_principal(db, principal, genre_db_id)?
+    {
+        return Ok(None);
+    }
+    Ok(Some(genre_db_id))
+}
+
 fn genre_accessible_to_principal(
     db: &impl lyra_db::DbAccess,
     principal: &crate::services::auth::Principal,
@@ -266,13 +284,9 @@ async fn get_genre(
     let inc = parse_genre_inc(query.inc)?;
 
     let db = &*STATE.db.read().await;
-    let genre_db_id = lyra_db::lookup::find_node_id_by_id(db, &id)?
-        .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
-    let genre = genres::get_by_id(db, genre_db_id)?
-        .ok_or_else(|| AppError::not_found(format!("Genre not found: {id}")))?;
-    if !genre_accessible_to_principal(db, &principal, genre_db_id)? {
-        return Err(AppError::not_found(format!("Genre not found: {id}")));
-    }
+    let not_found = || AppError::not_found(format!("Genre not found: {id}"));
+    let genre_db_id = accessible_genre_db_id(db, &principal, &id)?.ok_or_else(not_found)?;
+    let genre = genres::get_by_id(db, genre_db_id)?.ok_or_else(not_found)?;
 
     let parents = if inc.parents {
         Some(
@@ -805,16 +819,30 @@ mod tests {
         .map_err(|err| anyhow::anyhow!("{err:?}"))?;
         assert_eq!(visible_genre.name, "Visible Detail Genre");
 
-        let hidden_result = get_genre(
-            headers,
-            Path(hidden_genre_id),
+        let Err(hidden) = get_genre(
+            headers.clone(),
+            Path(hidden_genre_id.clone()),
             Query(GenreQuery { inc: None }),
         )
-        .await;
-        let Err(err) = hidden_result else {
+        .await
+        else {
             return Err(anyhow::anyhow!("hidden genre detail should be opaque"));
         };
-        assert_eq!(err.into_response().status(), StatusCode::NOT_FOUND);
+        let missing_genre_id = nanoid::nanoid!();
+        let Err(missing) = get_genre(
+            headers,
+            Path(missing_genre_id.clone()),
+            Query(GenreQuery { inc: None }),
+        )
+        .await
+        else {
+            return Err(anyhow::anyhow!("a missing genre should not be found"));
+        };
+        assert_eq!(
+            format!("{hidden:?}").replace(&hidden_genre_id, "ID"),
+            format!("{missing:?}").replace(&missing_genre_id, "ID"),
+        );
+        assert_eq!(hidden.into_response().status(), StatusCode::NOT_FOUND);
         Ok(())
     }
 

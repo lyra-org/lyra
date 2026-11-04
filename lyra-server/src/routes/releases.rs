@@ -226,17 +226,16 @@ fn parse_genre_id_filter(genre_id: Option<Vec<String>>) -> Vec<String> {
 
 fn resolve_genre_id_filter(
     db: &impl lyra_db::DbAccess,
+    principal: &Principal,
     genre_ids: &[String],
 ) -> Result<Vec<DbId>, AppError> {
-    let mut resolved = Vec::new();
-    for genre_id in genre_ids {
-        let genre_db_id = lyra_db::lookup::find_node_id_by_id(db, genre_id)?
-            .ok_or_else(|| AppError::not_found(format!("Genre not found: {genre_id}")))?;
-        lyra_db::genres::get_by_id(db, genre_db_id)?
-            .ok_or_else(|| AppError::not_found(format!("Genre not found: {genre_id}")))?;
-        resolved.push(genre_db_id);
-    }
-    Ok(resolved)
+    genre_ids
+        .iter()
+        .map(|genre_id| {
+            super::genres::accessible_genre_db_id(db, principal, genre_id)?
+                .ok_or_else(|| AppError::not_found(format!("Genre not found: {genre_id}")))
+        })
+        .collect()
 }
 
 /// The covers the responses of `details` show: each release's own, and its artists' and track
@@ -452,7 +451,7 @@ pub(crate) fn release_page(
         )?;
         (release_items, page.next_cursor)
     } else {
-        let genres = resolve_genre_id_filter(db, &parse_genre_id_filter(genre_id))?;
+        let genres = resolve_genre_id_filter(db, principal, &parse_genre_id_filter(genre_id))?;
         let viewer = catalog::Viewer::user(db, principal.clone())?;
         let mut query = catalog::Query::<Releases>::new(ReleaseFilter {
             library,
@@ -1310,6 +1309,72 @@ mod tests {
         assert_eq!(page.items.len(), 1);
         assert_eq!(page.items[0].title, "Rock Release");
         assert!(page.next_cursor.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_releases_answers_a_hidden_genre_filter_like_a_missing_one() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let (user_db_id, hidden_genre_id) = {
+            let mut db = STATE.db.write().await;
+            let user_db_id = lyra_db::test_db::insert_user(&mut db, "release-hidden-genre")?;
+            let hidden_library = insert_library(
+                &mut db,
+                "Hidden Genre Releases",
+                "/tmp/lyra-hidden-genre-releases",
+            )?;
+            let hidden_release = insert_test_release(&mut db, "Hidden Genre Release")?;
+            connect(&mut db, hidden_library, hidden_release)?;
+            lyra_db::genres::sync_release_genres(
+                &mut *db,
+                hidden_release,
+                &["Hidden Filter Genre".to_string()],
+            )?;
+            let hidden_genre_id = lyra_db::genres::get_for_release(&*db, hidden_release)?
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("hidden genre missing"))?
+                .id;
+            (user_db_id, hidden_genre_id)
+        };
+        let session =
+            crate::services::testing::create_session(user_db_id, Default::default()).await?;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            format!("Bearer {}", session.token)
+                .parse()
+                .expect("valid auth header"),
+        );
+        let filtered = |genre_id: String| {
+            Query(ReleaseListQuery {
+                inc: None,
+                query: None,
+                year: None,
+                library_id: None,
+                genre_id: Some(vec![genre_id]),
+                sort_by: None,
+                sort_order: None,
+                personal: PersonalFilterQuery::default(),
+                page: super::super::PageQuery::default(),
+            })
+        };
+
+        let missing_genre_id = nanoid!();
+        let Err(hidden) = get_releases(headers.clone(), filtered(hidden_genre_id.clone())).await
+        else {
+            return Err(anyhow::anyhow!("a hidden genre filter should be refused"));
+        };
+        let Err(missing) = get_releases(headers, filtered(missing_genre_id.clone())).await else {
+            return Err(anyhow::anyhow!("a missing genre filter should be refused"));
+        };
+        assert_eq!(
+            format!("{hidden:?}").replace(&hidden_genre_id, "ID"),
+            format!("{missing:?}").replace(&missing_genre_id, "ID"),
+        );
+        assert_eq!(hidden.into_response().status(), StatusCode::NOT_FOUND);
         Ok(())
     }
 
