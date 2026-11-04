@@ -1214,8 +1214,23 @@ impl LuauRequireRuntime {
     }
 }
 
+/// The error `require` raises for a failed load. A module whose code raised a kinded error or ran
+/// out of memory raises that again, so callers can still tell it apart.
 fn module_load_runtime_error(error: ModuleLoadError) -> luau::Error {
-    luau::Error::Runtime(error.to_string())
+    let raised = match &error {
+        ModuleLoadError::InstallFailed(source)
+        | ModuleLoadError::SourceResolveFailed(source)
+        | ModuleLoadError::SourceLoadFailed(source) => source.downcast_ref::<luau::Error>(),
+        _ => None,
+    };
+    match raised {
+        Some(luau::Error::OutOfMemory) => luau::Error::OutOfMemory,
+        Some(luau::Error::Kinded { kind, .. }) => luau::Error::Kinded {
+            kind,
+            message: error.to_string(),
+        },
+        _ => luau::Error::Runtime(error.to_string()),
+    }
 }
 
 /// Installs `module` directly, outside any registry, so its functions carry
@@ -1694,6 +1709,14 @@ mod tests {
                     async { boom() },
                 ))
             })))
+            .function(FunctionSpec::new("fail_kinded").call_async(Arc::new(|_| {
+                Ok(luau::ScheduledFuture::new(wait_once(|| {
+                    Err::<(), _>(luau::Error::Kinded {
+                        kind: "missing",
+                        message: "gone".to_string(),
+                    })
+                })))
+            })))
             .function(
                 FunctionSpec::new("fail_out_of_memory").call_async(Arc::new(|_| {
                     Ok(luau::ScheduledFuture::new(wait_once(|| {
@@ -1787,6 +1810,35 @@ mod tests {
                 luau::Value::Number(42.0),
             ]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn waiting_async_callback_errors_keep_their_kind() -> luau::runtime::Result<()> {
+        let (vm, snapshot) = run_waiting_module_task(
+            r#"
+                local ok, err = pcall(module.fail_kinded)
+                result = { ok, err, tostring(err) }
+            "#,
+        )?;
+        assert_eq!(
+            snapshot.state,
+            crate::TaskState::Completed,
+            "{:?}",
+            snapshot.error
+        );
+        let result = vm.eval(
+            Arc::<[u8]>::from(&b"return table.unpack(result, 1, 3)"[..]),
+            luau::ChunkOrigin::default(),
+        )?;
+        let message = "module 'demo/async' function 'fail_kinded' plugin 'demo': gone";
+        assert_eq!(result[0], luau::Value::Boolean(false));
+        assert_eq!(vm.error_kind(&result[1]), Some("missing"));
+        assert_eq!(result[2], luau::Value::String(message.as_bytes().to_vec()));
+
+        let (_, snapshot) = run_waiting_module_task("module.fail_kinded()")?;
+        assert_eq!(snapshot.state, crate::TaskState::Failed);
+        assert_eq!(snapshot.error.as_deref(), Some(message));
         Ok(())
     }
 
@@ -2131,6 +2183,60 @@ mod tests {
                 luau::Value::String(b"alpha".to_vec()),
                 luau::Value::String(b"beta".to_vec()),
             ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn required_sources_raise_kinded_load_errors_with_their_kind() -> luau::runtime::Result<()> {
+        let vm = luau::Vm::new()?;
+        vm.open_standard_libraries(luau::StandardLibraries::all_supported())?;
+        let mut loader = MemorySourceLoader::new();
+        loader.insert(
+            "plugin:demo/lib/broken",
+            b"local fail = require(\"@harmony/fail\"); fail.now(); return {}".as_slice(),
+        );
+        let origin = ChunkOrigin {
+            plugin: Some(Arc::from("demo")),
+            path: Some(Arc::from("plugins/demo/init.luau")),
+            ..ChunkOrigin::default()
+        };
+        let runtime = LuauRequireRuntime::new(loader, AllowAllCapabilities);
+        runtime
+            .register(GatedModule::new(
+                "harmony.fail",
+                ModuleSpec::new("harmony/fail").function(FunctionSpec::new("now").call(|_| {
+                    Err(luau::Error::Kinded {
+                        kind: "missing",
+                        message: "gone".to_string(),
+                    })
+                })),
+            ))
+            .expect("register module");
+        let scheduler = crate::LocalScheduler::new();
+        let run = runtime.plugin_group(&scheduler, "demo");
+        vm.data().insert(runtime)?;
+        vm.data().insert(scheduler)?;
+        vm.set_global_function("require", &bound_require(&vm, &origin, run)?)?;
+
+        let values = vm.eval(
+            Arc::<[u8]>::from(
+                &br#"
+                    local ok, err = pcall(require, "@self/lib/broken.luau")
+                    return ok, err, tostring(err)
+                "#[..],
+            ),
+            luau::ChunkOrigin::default(),
+        )?;
+
+        assert_eq!(values[0], luau::Value::Boolean(false));
+        assert_eq!(vm.error_kind(&values[1]), Some("missing"));
+        let luau::Value::String(message) = &values[2] else {
+            panic!("expected a message, got {:?}", values[2]);
+        };
+        assert!(
+            String::from_utf8_lossy(message).ends_with("gone"),
+            "{message:?}"
         );
         Ok(())
     }

@@ -57,6 +57,11 @@ int harmony_luau_gateway_newuserdatatagged(lua_State* L, size_t size, int tag, v
     return protect(L, [&](lua_State* L) { *data = lua_newuserdatatagged(L, size, tag); });
 }
 
+int harmony_luau_gateway_newuserdatataggedwithmetatable(lua_State* L, size_t size, int tag, void** data)
+{
+    return protect(L, [&](lua_State* L) { *data = lua_newuserdatataggedwithmetatable(L, size, tag); });
+}
+
 int harmony_luau_gateway_newuserdatadtor(lua_State* L, size_t size, lua_Destructor dtor, void** data)
 {
     return protect(L, [&](lua_State* L) { *data = lua_newuserdatadtor(L, size, dtor); });

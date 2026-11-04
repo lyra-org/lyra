@@ -1468,7 +1468,7 @@ fn poll_work(
                 Poll::Ready(Ok(values)) => Ok(values),
                 // Raised where the thread waits, as the call would have raised it had it not
                 // waited, so a `pcall` around the call catches it.
-                Poll::Ready(Err(error)) => Err(future.error_message(&error)),
+                Poll::Ready(Err(error)) => Err(future.raised_error(&error)),
                 Poll::Pending => return WorkPoll::Pending,
             };
             let (vm, thread) = (vm.clone(), thread.clone());
@@ -1486,7 +1486,7 @@ fn poll_work(
             let _guard = resume_limit.map(|limit| limit.guard(&vm));
             let result = match output {
                 Ok(values) => thread.resume(&vm, values.as_slice()),
-                Err(message) => thread.resume_error(&vm, &message),
+                Err(error) => thread.resume_error(&vm, &error),
             };
             poll_luau_resume(&vm, &thread, result, previous)
         }

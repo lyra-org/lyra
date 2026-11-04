@@ -120,6 +120,45 @@ pub enum Error {
     UserDataTypeMismatch { expected: i32, actual: i32 },
     #[error("Luau serialization failed: {0}")]
     Serialize(String),
+    /// A host error of a fixed kind, which Luau code can branch on rather than match its message.
+    /// Raised into Luau, it is a `HostError` value whose `tostring` is the message.
+    #[error("{message}")]
+    Kinded { kind: &'static str, message: String },
+}
+
+/// An error as it is raised into Luau: a `HostError` value when it has a kind, else its message.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RaisedError {
+    pub kind: Option<&'static str>,
+    pub message: String,
+}
+
+impl RaisedError {
+    fn of(error: &Error, message: String) -> Self {
+        let kind = match error {
+            Error::Kinded { kind, .. } => Some(*kind),
+            _ => None,
+        };
+        Self { kind, message }
+    }
+}
+
+impl From<&str> for RaisedError {
+    fn from(message: &str) -> Self {
+        Self {
+            kind: None,
+            message: message.to_string(),
+        }
+    }
+}
+
+impl From<String> for RaisedError {
+    fn from(message: String) -> Self {
+        Self {
+            kind: None,
+            message,
+        }
+    }
 }
 
 /// A host error raised into Luau as a runtime error with its message. Running out of memory stays
@@ -129,6 +168,10 @@ impl From<anyhow::Error> for Error {
     fn from(error: anyhow::Error) -> Self {
         match error.downcast_ref::<Error>() {
             Some(Error::OutOfMemory) => Error::OutOfMemory,
+            Some(Error::Kinded { kind, .. }) => Error::Kinded {
+                kind,
+                message: error.to_string(),
+            },
             _ => Error::Runtime(error.to_string()),
         }
     }
@@ -296,7 +339,7 @@ impl Vm {
             sys::lua_set_callback_userdata(state.as_ptr(), control.as_ptr().cast());
             (*sys::lua_callbacks(state.as_ptr())).userthread = Some(userthread);
         }
-        Ok(Self {
+        let vm = Self {
             inner: Rc::new(VmInner {
                 id: NEXT_VM_ID.fetch_add(1, Ordering::Relaxed),
                 state,
@@ -305,7 +348,46 @@ impl Vm {
                 userdata_tags: RwLock::new(HashMap::new()),
                 started_at: Instant::now(),
             }),
-        })
+        };
+        vm.install_host_errors()?;
+        Ok(vm)
+    }
+
+    /// Gives `HostError` values their metatable. Luau holds it for the tag, so it lives as long
+    /// as the state and holds no reference back to the [`Vm`].
+    fn install_host_errors(&self) -> Result<()> {
+        self.register_userdata_tag::<HostError>(HOST_ERROR_TAG)?;
+        let _guard = self.stack_guard();
+        let state = self.inner.state.as_ptr();
+        unsafe {
+            gateway::create_table(state, 0, 1)?;
+            gateway::push_cclosure(state, Some(host_error_tostring), c"__tostring", 0)?;
+            gateway::raw_set_field(state, -2, c"__tostring")?;
+            gateway::set_readonly(state, -1, true)?;
+            sys::lua_setuserdatametatable(state, HOST_ERROR_TAG.0);
+        }
+        Ok(())
+    }
+
+    /// The kind of a `HostError` value; `None` for any other value.
+    pub fn error_kind(&self, value: &Value) -> Option<&'static str> {
+        self.host_error(value).map(|error| error.kind)
+    }
+
+    /// The message of a `HostError` value, as `tostring` gives it; `None` for any other value.
+    pub fn error_message(&self, value: &Value) -> Option<String> {
+        self.host_error(value).map(|error| error.message.clone())
+    }
+
+    fn host_error<'a>(&self, value: &'a Value) -> Option<UserDataRef<'a, HostError>> {
+        match value {
+            Value::UserData(userdata)
+                if userdata.tag == HOST_ERROR_TAG && userdata.vm_id() == self.inner.id =>
+            {
+                userdata.borrow(self, HOST_ERROR_TAG).ok()
+            }
+            _ => None,
+        }
     }
 
     pub fn id(&self) -> u64 {
@@ -1390,12 +1472,12 @@ impl Thread {
         self.finish_resume(vm, resumed)
     }
 
-    /// Resumes the thread by raising `message` where it yielded, as if the call it yielded in had
+    /// Resumes the thread by raising `error` where it yielded, as if the call it yielded in had
     /// raised it: the nearest `pcall` in this thread catches it, and with none the thread fails.
-    pub fn resume_error(&self, vm: &Vm, message: &str) -> Result<ThreadStatus> {
+    pub fn resume_error(&self, vm: &Vm, error: &RaisedError) -> Result<ThreadStatus> {
         let state = self.prepare_resume(vm)?;
         self.inner.started.set(true);
-        let resumed = unsafe { gateway::resume_error(vm.inner.state.as_ptr(), state, message) };
+        let resumed = unsafe { gateway::resume_error(vm.inner.state.as_ptr(), state, error) };
         self.finish_resume(vm, resumed)
     }
 
@@ -2824,11 +2906,11 @@ impl ScheduledFuture {
         self
     }
 
-    /// The message to raise in the waiting thread for the future's `error`.
-    pub fn error_message(&self, error: &Error) -> String {
+    /// The error to raise in the waiting thread for the future's `error`.
+    pub fn raised_error(&self, error: &Error) -> RaisedError {
         match &self.site {
-            Some(site) => site.error_message(error),
-            None => error.to_string(),
+            Some(site) => site.raised_error(error),
+            None => RaisedError::of(error, error.to_string()),
         }
     }
 
@@ -3062,13 +3144,7 @@ enum CallbackExit {
 /// Luau's entry into a native function. Everything with a destructor lives in
 /// [`call_native_function`], so this frame holds nothing a raise would skip.
 unsafe extern "C-unwind" fn native_callback(state: *mut sys::lua_State) -> c_int {
-    let exit = abort_on_panic(|| match unsafe { call_native_function(state) } {
-        Ok(exit) => exit,
-        Err(message) => {
-            unsafe { gateway::push_error(state, &message) };
-            CallbackExit::Raise
-        }
-    });
+    let exit = abort_on_panic(|| unsafe { call_native_function(state) });
     match exit {
         CallbackExit::Return(count) => count,
         CallbackExit::Yield(count) => unsafe { gateway::yield_results(state, count) },
@@ -3076,11 +3152,20 @@ unsafe extern "C-unwind" fn native_callback(state: *mut sys::lua_State) -> c_int
     }
 }
 
-/// Runs a native function and leaves its results on top of the stack, or returns the message to
-/// raise.
-unsafe fn call_native_function(
+/// Runs a native function and leaves its results on top of the stack, or the error to raise.
+unsafe fn call_native_function(state: *mut sys::lua_State) -> CallbackExit {
+    match unsafe { run_native_function(state) } {
+        Ok(exit) => exit,
+        Err(error) => {
+            unsafe { push_raised(state, &error) };
+            CallbackExit::Raise
+        }
+    }
+}
+
+unsafe fn run_native_function(
     state_ptr: *mut sys::lua_State,
-) -> std::result::Result<CallbackExit, String> {
+) -> std::result::Result<CallbackExit, RaisedError> {
     let slot = unsafe {
         sys::lua_touserdata(state_ptr, sys::lua_upvalueindex(1))
             .cast::<CallbackSlot>()
@@ -3151,8 +3236,8 @@ unsafe fn call_native_function(
     };
     match result {
         Ok(Ok(())) => {}
-        Ok(Err(error)) => return Err(slot.site.error_message(&error)),
-        Err(_) => return Err("Harmony callback panicked".to_string()),
+        Ok(Err(error)) => return Err(slot.site.raised_error(&error)),
+        Err(_) => return Err("Harmony callback panicked".into()),
     }
     for value in &return_state.values {
         vm.push_value_to(state, value)
@@ -3163,9 +3248,79 @@ unsafe fn call_native_function(
         return Ok(CallbackExit::Return(count));
     }
     if unsafe { sys::lua_isyieldable(state_ptr) } == 0 {
-        return Err("attempt to yield from a non-yieldable Harmony callback".to_string());
+        return Err("attempt to yield from a non-yieldable Harmony callback".into());
     }
     Ok(CallbackExit::Yield(count))
+}
+
+/// The userdata tag of `HostError` values, kept from the tags [`Vm::userdata_tag`] hands out.
+const HOST_ERROR_TAG: UserDataTag = UserDataTag(sys::LUA_UTAG_LIMIT - 1);
+
+/// What a `HostError` value holds: an [`Error::Kinded`] raised into Luau.
+struct HostError {
+    kind: &'static str,
+    message: String,
+}
+
+/// Pushes `error` as the value to raise: a `HostError` when it has a kind, else its message. A
+/// `HostError` that can't be made falls back to the message, so exactly one value is pushed.
+unsafe fn push_raised(state: *mut sys::lua_State, error: &RaisedError) {
+    if let Some(kind) = error.kind {
+        let pushed = unsafe {
+            gateway::new_userdata_tagged_with_metatable(
+                state,
+                mem::size_of::<HostError>(),
+                HOST_ERROR_TAG.0,
+            )
+        };
+        if let Ok(data) = pushed {
+            unsafe {
+                ptr::write(
+                    data.cast::<HostError>(),
+                    HostError {
+                        kind,
+                        message: error.message.clone(),
+                    },
+                )
+            };
+            return;
+        }
+    }
+    unsafe { gateway::push_error(state, &error.message) };
+}
+
+/// The `HostError` at `index`, or `None` for any other value. It lives as long as the value does.
+unsafe fn host_error_at<'a>(state: *mut sys::lua_State, index: c_int) -> Option<&'a HostError> {
+    unsafe {
+        sys::lua_touserdatatagged(state, index, HOST_ERROR_TAG.0)
+            .cast::<HostError>()
+            .as_ref()
+    }
+}
+
+/// `HostError.__tostring`: the error's message. Luau gives a C function enough stack for it, so
+/// pushing it fails only by running out of memory.
+unsafe extern "C-unwind" fn host_error_tostring(state: *mut sys::lua_State) -> c_int {
+    let pushed = abort_on_panic(|| unsafe {
+        match host_error_at(state, 1) {
+            Some(error) => match gateway::push_bytes(state, error.message.as_bytes()) {
+                Ok(()) => true,
+                Err(error) => {
+                    gateway::push_error(state, &error.to_string());
+                    false
+                }
+            },
+            None => {
+                gateway::push_error(state, "expected a host error");
+                false
+            }
+        }
+    });
+    if pushed {
+        1
+    } else {
+        unsafe { gateway::raise(state) }
+    }
 }
 
 /// The native function a call went to, which names where its errors came from.
@@ -3176,12 +3331,12 @@ pub struct CallSite {
 }
 
 impl CallSite {
-    /// The message the call raises for `error`: prefixed with where it came from, except running
-    /// out of memory, which keeps Luau's own message so callers further out still see
+    /// The error the call raises for `error`: its message prefixed with where it came from, except
+    /// running out of memory, which keeps Luau's own message so callers further out still see
     /// [`Error::OutOfMemory`].
-    pub fn error_message(&self, error: &Error) -> String {
+    pub fn raised_error(&self, error: &Error) -> RaisedError {
         if matches!(error, Error::OutOfMemory) {
-            return error.to_string();
+            return error.to_string().into();
         }
         let module = self
             .origin
@@ -3194,7 +3349,10 @@ impl CallSite {
             .as_deref()
             .unwrap_or("<unknown function>");
         let plugin = self.origin.plugin.as_deref().unwrap_or("<non-plugin>");
-        format!("module '{module}' function '{function}' plugin '{plugin}': {error}")
+        RaisedError::of(
+            error,
+            format!("module '{module}' function '{function}' plugin '{plugin}': {error}"),
+        )
     }
 }
 
@@ -3452,6 +3610,19 @@ mod tests {
 
         let error = Error::from(anyhow::Error::new(Error::OutOfMemory).context("loading track"));
         assert!(matches!(error, Error::OutOfMemory));
+
+        let kinded = || Error::Kinded {
+            kind: "missing",
+            message: "track not found".to_string(),
+        };
+        let error = Error::from(anyhow::Error::new(kinded()));
+        assert!(
+            matches!(error, Error::Kinded { kind: "missing", message } if message == "track not found")
+        );
+        let error = Error::from(anyhow::Error::new(kinded()).context("loading track"));
+        assert!(
+            matches!(error, Error::Kinded { kind: "missing", message } if message == "loading track")
+        );
     }
 
     #[test]
@@ -3935,7 +4106,7 @@ mod tests {
             ThreadStatus::Yielded(vec![Value::String(b"waiting".to_vec())])
         );
         assert_eq!(
-            thread.resume_error(&vm, "boom")?,
+            thread.resume_error(&vm, &"boom".into())?,
             ThreadStatus::Yielded(vec![Value::String(b"caught".to_vec())])
         );
         assert_eq!(
@@ -3966,7 +4137,7 @@ mod tests {
         ] {
             let thread = vm.create_thread(&function)?;
             assert_eq!(thread.resume(&vm, &[])?, ThreadStatus::Yielded(vec![]));
-            let failed = thread.resume_error(&vm, message);
+            let failed = thread.resume_error(&vm, &message.into());
             assert_eq!(
                 failed.map_err(|error| error.to_string()),
                 Err(expected.to_string())
@@ -4909,6 +5080,213 @@ mod tests {
         assert_eq!(
             thread.resume(&vm, &[Value::Number(2.0), Value::Buffer(vec![0; 2 << 20])])?,
             ThreadStatus::Completed(vec![Value::Number(2.0), Value::String(b"buffer".to_vec())])
+        );
+        assert_eq!(stack_top(&vm), 0);
+        Ok(())
+    }
+
+    const KINDED_FAILURE: &str = "module 'test/native' function 'fail' plugin 'demo': gone";
+
+    fn kinded_failure(vm: &Vm) -> Result<Function> {
+        vm.create_function_with_options(
+            NativeFunctionOptions::new(ChunkOrigin {
+                module: Some(ModuleId(Arc::from("test/native"))),
+                plugin: Some(Arc::from("demo")),
+                ..ChunkOrigin::default()
+            })
+            .function_name("fail"),
+            Arc::new(|_| {
+                Err(Error::Kinded {
+                    kind: "missing",
+                    message: "gone".to_string(),
+                })
+            }),
+        )
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn kinded_errors_raise_host_errors_that_keep_their_kind() -> Result<()> {
+        let vm = Vm::new()?;
+        vm.open_standard_libraries(StandardLibraries::all_supported())?;
+        let probe = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(
+                &br#"
+                    local fail = ...
+                    local ok, err = pcall(fail)
+                    local rethrown_ok, rethrown = pcall(function()
+                        error(err, 0)
+                    end)
+                    local _, plain = pcall(error, "plain", 0)
+                    return ok, err, typeof(err), tostring(err), `{err}`, rethrown_ok, rawequal(rethrown, err), plain, {}
+                "#[..],
+            ),
+            ChunkOrigin::default(),
+        ))?;
+
+        let values = probe.call(&vm, &[Value::Function(kinded_failure(&vm)?)])?;
+        let [
+            Value::Boolean(false),
+            error @ Value::UserData(_),
+            Value::String(type_name),
+            Value::String(tostring),
+            Value::String(interpolated),
+            Value::Boolean(false),
+            Value::Boolean(true),
+            plain,
+            table,
+        ] = values.as_slice()
+        else {
+            panic!("expected a host error, got {values:?}");
+        };
+        assert_eq!(type_name.as_slice(), b"userdata");
+        assert_eq!(tostring.as_slice(), KINDED_FAILURE.as_bytes());
+        assert_eq!(interpolated.as_slice(), KINDED_FAILURE.as_bytes());
+        assert_eq!(vm.error_kind(error), Some("missing"));
+        assert_eq!(vm.error_message(error).as_deref(), Some(KINDED_FAILURE));
+
+        let other = vm.create_userdata_auto(1_u8)?;
+        for value in [plain, table, &Value::UserData(other), &Value::Nil] {
+            assert_eq!(vm.error_kind(value), None, "{value:?}");
+            assert_eq!(vm.error_message(value), None, "{value:?}");
+        }
+        assert_eq!(stack_top(&vm), 0);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn kinded_errors_reach_rust_callers_with_their_kind() -> Result<()> {
+        let vm = Vm::new()?;
+        vm.open_standard_libraries(StandardLibraries::all_supported())?;
+        let fail = kinded_failure(&vm)?;
+        let through_luau = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(&b"local fail = ... fail()"[..]),
+            ChunkOrigin::default(),
+        ))?;
+        let kinded = |message: &str| Error::Kinded {
+            kind: "missing",
+            message: message.to_string(),
+        };
+
+        let direct = fail.call(&vm, &[]);
+        assert_eq!(
+            direct.map_err(|error| error.to_string()),
+            Err(kinded(KINDED_FAILURE).to_string())
+        );
+        let called = through_luau.call(&vm, &[Value::Function(fail.clone())]);
+        assert!(
+            matches!(&called, Err(Error::Kinded { kind: "missing", message }) if message == KINDED_FAILURE),
+            "{called:?}"
+        );
+
+        // A native function passing on the error of Luau it called raises it with the same kind.
+        let relay = vm.create_function(
+            ChunkOrigin::default(),
+            Arc::new(|mut frame| {
+                let through_luau: Function = frame.args.read()?;
+                let fail: Value = frame.args.read()?;
+                through_luau.call(frame.vm, &[fail])?;
+                Ok(())
+            }),
+        )?;
+        let probe = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(&b"local _, err = pcall(...) return err"[..]),
+            ChunkOrigin::default(),
+        ))?;
+        let relayed = probe.call(
+            &vm,
+            &[
+                Value::Function(relay),
+                Value::Function(through_luau),
+                Value::Function(fail),
+            ],
+        )?;
+        assert_eq!(vm.error_kind(&relayed[0]), Some("missing"));
+        assert!(
+            vm.error_message(&relayed[0])
+                .is_some_and(|message| message.ends_with(KINDED_FAILURE))
+        );
+        assert_eq!(stack_top(&vm), 0);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn thread_resume_error_raises_kinded_errors_as_host_errors() -> Result<()> {
+        let vm = Vm::new()?;
+        vm.open_standard_libraries(StandardLibraries::all_supported())?;
+        let caught = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(
+                &br#"
+                    local ok, err = pcall(coroutine.yield)
+                    return ok, err, tostring(err)
+                "#[..],
+            ),
+            ChunkOrigin::default(),
+        ))?;
+        let uncaught = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(&b"coroutine.yield()"[..]),
+            ChunkOrigin::default(),
+        ))?;
+        let error = RaisedError {
+            kind: Some("missing"),
+            message: "gone".to_string(),
+        };
+
+        let thread = vm.create_thread(&caught)?;
+        thread.resume(&vm, &[])?;
+        let ThreadStatus::Completed(values) = thread.resume_error(&vm, &error)? else {
+            panic!("expected the thread to finish");
+        };
+        assert_eq!(values[0], Value::Boolean(false));
+        assert_eq!(vm.error_kind(&values[1]), Some("missing"));
+        assert_eq!(values[2], Value::String(b"gone".to_vec()));
+
+        let thread = vm.create_thread(&uncaught)?;
+        thread.resume(&vm, &[])?;
+        let failed = thread.resume_error(&vm, &error);
+        assert!(
+            matches!(&failed, Err(Error::Kinded { kind: "missing", message }) if message == "gone"),
+            "{failed:?}"
+        );
+        assert_eq!(stack_top(&vm), 0);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn kinded_errors_fall_back_to_their_message_when_memory_runs_out() -> Result<()> {
+        let vm = limited_vm(1 << 20)?;
+        let fail = kinded_failure(&vm)?;
+        let probe = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(
+                &br#"
+                    local fail = ...
+                    for _ = 1, 1000000 do
+                        local _, err = pcall(fail)
+                        if type(err) == "string" then
+                            return err
+                        end
+                    end
+                    return nil
+                "#[..],
+            ),
+            ChunkOrigin::default(),
+        ))?;
+
+        // Nothing is freed, so each raise holds on to its error until one can't be made.
+        set_gc_running(&vm, false);
+        let values = probe.call(&vm, &[Value::Function(fail)])?;
+        set_gc_running(&vm, true);
+        let [Value::String(message)] = values.as_slice() else {
+            panic!("expected a string error, got {values:?}");
+        };
+        assert!(
+            [KINDED_FAILURE.as_bytes(), gateway::MEMORY_ERROR.as_bytes()]
+                .contains(&message.as_slice()),
+            "{}",
+            String::from_utf8_lossy(message)
         );
         assert_eq!(stack_top(&vm), 0);
         Ok(())

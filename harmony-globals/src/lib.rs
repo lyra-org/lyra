@@ -53,7 +53,7 @@ fn log_function_spec(name: &'static str, level: Level) -> FunctionSpec {
 }
 
 fn emit_callback(level: Level, mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let joined = join_log_values(&frame.args.drain_remaining()?);
+    let joined = join_log_values(frame.vm, &frame.args.drain_remaining()?);
     let sanitized = sanitize_message(&joined);
     let final_msg = truncate_to_byte_cap(&sanitized, MAX_LINE_BYTES);
 
@@ -68,14 +68,17 @@ fn emit_callback(level: Level, mut frame: luau::CallFrame<'_>) -> luau::runtime:
     Ok(())
 }
 
-fn join_log_values(args: &[luau::Value]) -> String {
+fn join_log_values(vm: &luau::Vm, args: &[luau::Value]) -> String {
     args.iter()
-        .map(log_value_to_display_string)
+        .map(|value| log_value_to_display_string(vm, value))
         .collect::<Vec<_>>()
         .join("\t")
 }
 
-fn log_value_to_display_string(value: &luau::Value) -> String {
+fn log_value_to_display_string(vm: &luau::Vm, value: &luau::Value) -> String {
+    if let Some(message) = vm.error_message(value) {
+        return message;
+    }
     match value {
         luau::Value::Nil => "nil".to_string(),
         luau::Value::Boolean(value) => value.to_string(),
@@ -124,4 +127,38 @@ fn floor_char_boundary(s: &str, index: usize) -> usize {
         idx -= 1;
     }
     idx
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+
+    #[test]
+    fn host_errors_log_their_message() -> luau::runtime::Result<()> {
+        let vm = luau::Vm::new()?;
+        vm.open_standard_libraries(luau::StandardLibraries::all_supported())?;
+        let fail = vm.create_function(
+            luau::ChunkOrigin::default(),
+            Arc::new(|_| {
+                Err(luau::Error::Kinded {
+                    kind: "missing",
+                    message: "gone".to_string(),
+                })
+            }),
+        )?;
+        let caught = vm.load_chunk(&luau::Chunk::new(
+            Arc::<[u8]>::from(&b"local _, err = pcall(...) return err"[..]),
+            luau::ChunkOrigin::default(),
+        ))?;
+        let error = caught.call(&vm, &[luau::Value::Function(fail)])?.remove(0);
+        let other = vm.create_userdata_auto(1_u8)?;
+
+        assert_eq!(
+            join_log_values(&vm, &[error, luau::Value::UserData(other)]),
+            "module '<unknown module>' function '<unknown function>' plugin '<non-plugin>': gone\t<userdata>"
+        );
+        Ok(())
+    }
 }

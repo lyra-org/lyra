@@ -48,6 +48,7 @@ pub use runtime::{
     NativeFunctionOptions,
     NativeFunctionValue,
     OwnedTable,
+    RaisedError,
     RegistryRef,
     ReturnValues,
     ReturnWriter,

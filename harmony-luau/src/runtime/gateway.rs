@@ -26,6 +26,7 @@ use harmony_luau_sys::{
 
 use super::{
     Error,
+    RaisedError,
     Result,
 };
 
@@ -37,6 +38,12 @@ unsafe extern "C-unwind" {
         data: *mut *mut c_void,
     ) -> c_int;
     fn harmony_luau_gateway_newuserdatatagged(
+        L: *mut lua_State,
+        size: usize,
+        tag: c_int,
+        data: *mut *mut c_void,
+    ) -> c_int;
+    fn harmony_luau_gateway_newuserdatataggedwithmetatable(
         L: *mut lua_State,
         size: usize,
         tag: c_int,
@@ -115,6 +122,11 @@ unsafe fn take_error(state: *mut lua_State, status: c_int) -> Error {
     let error = unsafe {
         if status == sys::LUA_ERRMEM || is_memory_error(state, -1) {
             Error::OutOfMemory
+        } else if let Some(error) = super::host_error_at(state, -1) {
+            Error::Kinded {
+                kind: error.kind,
+                message: error.message.clone(),
+            }
         } else {
             Error::Runtime(error_message(state, -1))
         }
@@ -167,6 +179,23 @@ pub(super) unsafe fn new_userdata_tagged(
         check(
             state,
             harmony_luau_gateway_newuserdatatagged(state, size, tag, &mut data),
+        )?
+    };
+    Ok(data)
+}
+
+/// Pushes a userdata of `size` uninitialized bytes with the metatable Luau holds for `tag`, and
+/// returns them.
+pub(super) unsafe fn new_userdata_tagged_with_metatable(
+    state: *mut lua_State,
+    size: usize,
+    tag: c_int,
+) -> Result<*mut c_void> {
+    let mut data = ptr::null_mut();
+    unsafe {
+        check(
+            state,
+            harmony_luau_gateway_newuserdatataggedwithmetatable(state, size, tag, &mut data),
         )?
     };
     Ok(data)
@@ -409,19 +438,19 @@ pub(super) unsafe fn resume(
     }
 }
 
-/// Resumes `thread` from `from` by raising `message` where it yielded, so the nearest `pcall` in
+/// Resumes `thread` from `from` by raising `error` where it yielded, so the nearest `pcall` in
 /// that thread catches it; with none, the thread finishes with the error. Returns whether it
 /// yielded again rather than finished.
 pub(super) unsafe fn resume_error(
     from: *mut lua_State,
     thread: *mut lua_State,
-    message: &str,
+    error: &RaisedError,
 ) -> Result<bool> {
     let mut status = 0;
     unsafe {
-        // Failing to push the message leaves the out-of-memory error in its place, which is
-        // raised instead.
-        push_error(thread, message);
+        // Failing to push the error leaves the out-of-memory error in its place, which is raised
+        // instead.
+        super::push_raised(thread, error);
         check(
             from,
             harmony_luau_gateway_resumeerror(from, thread, &mut status),
