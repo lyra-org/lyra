@@ -43,17 +43,45 @@ use lyra_db::{
 pub(crate) struct EntryScanPlan {
     pub(crate) groups: Vec<SourceDirGroup>,
     pub(crate) observed_paths: HashSet<PathBuf>,
+    /// The paths the scan couldn't read, with why. What lies under them is no evidence either way.
+    pub(crate) unlistable: Vec<(PathBuf, String)>,
 }
 
-pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<Vec<Entry>> {
+impl EntryScanPlan {
+    pub(crate) fn protected_paths(&self) -> Vec<PathBuf> {
+        self.unlistable
+            .iter()
+            .map(|(path, _)| path.clone())
+            .collect()
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ScanError {
+    #[error("library root has no supported files")]
+    EmptyRoot,
+    #[error("library root can't be listed: {0}")]
+    UnlistableRoot(String),
+}
+
+pub(crate) struct ScanResult {
+    pub(crate) entries: Vec<Entry>,
+    pub(crate) unlistable: Vec<(PathBuf, String)>,
+}
+
+pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<ScanResult> {
     let mut entries = Vec::new();
-    let mut errors = Vec::new();
+    let mut unlistable = Vec::new();
 
     for entry in WalkDir::new(root).into_iter() {
         let de = match entry {
             Ok(de) => de,
             Err(err) => {
-                errors.push(err.into());
+                let message = err.to_string();
+                match err.path() {
+                    Some(path) if path != root => unlistable.push((path.to_path_buf(), message)),
+                    _ => return Err(ScanError::UnlistableRoot(message).into()),
+                }
                 continue;
             }
         };
@@ -61,7 +89,10 @@ pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<Vec<Entry>> {
         let md = match de.metadata() {
             Ok(md) => md,
             Err(err) => {
-                errors.push(err.into());
+                if de.path() == root {
+                    return Err(ScanError::UnlistableRoot(err.to_string()).into());
+                }
+                unlistable.push((de.path().to_path_buf(), err.to_string()));
                 continue;
             }
         };
@@ -84,9 +115,9 @@ pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<Vec<Entry>> {
         {
             Some(modified) => modified.as_millis() as u64,
             None => {
-                errors.push(anyhow::anyhow!(
-                    "failed to read mtime for {}",
-                    de.path().display()
+                unlistable.push((
+                    de.path().to_path_buf(),
+                    "failed to read the modification time".to_string(),
                 ));
                 continue;
             }
@@ -118,19 +149,12 @@ pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<Vec<Entry>> {
         });
     }
 
-    if !errors.is_empty() {
-        let first = errors.swap_remove(0);
-        if entries.is_empty() {
-            return Err(anyhow::anyhow!(
-                "filesystem scan failed for {} entries (first error: {})",
-                errors.len() + 1,
-                first
-            ));
-        }
+    if !unlistable.is_empty() {
         tracing::warn!(
-            error = %first,
-            error_count = errors.len() + 1,
-            "filesystem scan skipped some entries"
+            path = %unlistable[0].0.display(),
+            error = %unlistable[0].1,
+            count = unlistable.len(),
+            "filesystem scan could not read some paths"
         );
     }
 
@@ -146,16 +170,14 @@ pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<Vec<Entry>> {
         }
     }
 
-    Ok(entries
+    let entries = entries
         .into_iter()
-        .filter(|entry| {
-            if entry.kind == EntryKind::File {
-                return true;
-            }
-
-            valid_dirs.contains(&entry.full_path)
-        })
-        .collect())
+        .filter(|entry| entry.kind == EntryKind::File || valid_dirs.contains(&entry.full_path))
+        .collect();
+    Ok(ScanResult {
+        entries,
+        unlistable,
+    })
 }
 
 pub(crate) fn diff_and_needs_hash(
@@ -240,11 +262,19 @@ pub(crate) fn compute_hashes(to_hash: Vec<PathBuf>) -> HashMap<String, String> {
     pairs.into_iter().collect()
 }
 
+/// Scans the library and plans what changed. Fails closed when the scan finds no supported file
+/// while the library has entries, as on an unmounted share: nothing then counts as gone.
 pub(crate) fn prepare_entry_scan_plan(
     library: &Library,
     existing: Vec<Entry>,
 ) -> anyhow::Result<EntryScanPlan> {
-    let scanned = scan_fs(&library.path)?;
+    let ScanResult {
+        entries: scanned,
+        unlistable,
+    } = scan_fs(&library.path)?;
+    if !existing.is_empty() && !scanned.iter().any(|entry| entry.kind == EntryKind::File) {
+        return Err(ScanError::EmptyRoot.into());
+    }
     let (enriched, _) = diff_and_needs_hash(scanned, existing);
     let observed_paths = enriched
         .iter()
@@ -254,6 +284,7 @@ pub(crate) fn prepare_entry_scan_plan(
     Ok(EntryScanPlan {
         groups,
         observed_paths,
+        unlistable,
     })
 }
 
@@ -304,12 +335,23 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
         let existing = load_existing(db, library_db_id)?;
         let plan = prepare_entry_scan_plan(library, existing)?;
+        let protected = plan.protected_paths();
         for group in plan.groups {
             sync_entry_group(db, library, hash_entry_group(group.entries))?;
         }
-        prune_missing_entries(db, library, &plan.observed_paths, |removed, surviving| {
-            crate::services::metadata::ingestion::albums_left_by(&library.path, removed, surviving)
-        })?;
+        prune_missing_entries(
+            db,
+            library,
+            &plan.observed_paths,
+            &protected,
+            |removed, surviving| {
+                crate::services::metadata::ingestion::albums_left_by(
+                    &library.path,
+                    removed,
+                    surviving,
+                )
+            },
+        )?;
         Ok(())
     }
 
@@ -321,18 +363,26 @@ mod tests {
         fs::create_dir_all(&disc_dir)?;
         fs::write(album_dir.join("track1.mp3"), b"track1")?;
         fs::write(disc_dir.join("track2.mp3"), b"track2")?;
+        let kept = root.join("kept.mp3");
+        fs::write(&kept, b"kept")?;
 
         let mut db = new_db()?;
         let library = new_library(&mut db, &root)?;
 
         full_sync(&mut db, &library)?;
         let existing = load_existing(&db, library.db_id.unwrap())?;
-        assert_eq!(existing.len(), 4);
+        assert_eq!(existing.len(), 5);
 
         fs::remove_dir_all(&album_dir)?;
         full_sync(&mut db, &library)?;
         let remaining = load_existing(&db, library.db_id.unwrap())?;
-        assert!(remaining.is_empty());
+        assert_eq!(
+            remaining
+                .into_iter()
+                .map(|entry| entry.full_path)
+                .collect::<Vec<_>>(),
+            vec![kept]
+        );
 
         let _ = fs::remove_dir_all(&root);
         Ok(())
@@ -488,12 +538,101 @@ mod tests {
             "group sync should not delete entries missing from other groups"
         );
 
-        prune_missing_entries(&mut db, &library, &observed_paths, |removed, surviving| {
-            crate::services::metadata::ingestion::albums_left_by(&library.path, removed, surviving)
-        })?;
+        prune_missing_entries(
+            &mut db,
+            &library,
+            &observed_paths,
+            &[],
+            |removed, surviving| {
+                crate::services::metadata::ingestion::albums_left_by(
+                    &library.path,
+                    removed,
+                    surviving,
+                )
+            },
+        )?;
         let after_prune = load_existing(&db, library.db_id.unwrap())?;
         assert!(!after_prune.iter().any(|entry| entry.full_path == track_a));
         assert!(after_prune.iter().any(|entry| entry.full_path == track_b));
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn an_emptied_root_fails_closed() -> anyhow::Result<()> {
+        let root = temp_path("empty-root");
+        let album_dir = root.join("album");
+        fs::create_dir_all(&album_dir)?;
+        fs::write(album_dir.join("track1.mp3"), b"track1")?;
+
+        let mut db = new_db()?;
+        let library = new_library(&mut db, &root)?;
+        full_sync(&mut db, &library)?;
+
+        fs::remove_dir_all(&album_dir)?;
+        let err = full_sync(&mut db, &library).expect_err("an emptied root syncs nothing");
+        assert!(matches!(
+            err.downcast_ref::<ScanError>(),
+            Some(ScanError::EmptyRoot)
+        ));
+        assert_eq!(load_existing(&db, library.db_id.unwrap())?.len(), 2);
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn an_empty_new_library_scans() -> anyhow::Result<()> {
+        let root = temp_path("empty-new");
+        fs::create_dir_all(&root)?;
+        let mut db = new_db()?;
+        let library = new_library(&mut db, &root)?;
+        full_sync(&mut db, &library)?;
+        assert!(load_existing(&db, library.db_id.unwrap())?.is_empty());
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn an_unlistable_folder_keeps_its_entries() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = temp_path("unlistable");
+        let locked = root.join("locked");
+        let open = root.join("open");
+        fs::create_dir_all(&locked)?;
+        fs::create_dir_all(&open)?;
+        fs::write(locked.join("a.mp3"), b"a")?;
+        fs::write(open.join("b.mp3"), b"b")?;
+        fs::write(open.join("c.mp3"), b"c")?;
+
+        let mut db = new_db()?;
+        let library = new_library(&mut db, &root)?;
+        full_sync(&mut db, &library)?;
+
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000))?;
+        if fs::read_dir(&locked).is_ok() {
+            // Running with privileges that ignore permissions.
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o755))?;
+            let _ = fs::remove_dir_all(&root);
+            return Ok(());
+        }
+        fs::remove_file(open.join("c.mp3"))?;
+        let plan = prepare_entry_scan_plan(&library, load_existing(&db, library.db_id.unwrap())?)?;
+        assert_eq!(plan.protected_paths(), vec![locked.clone()]);
+        let result = full_sync(&mut db, &library);
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755))?;
+        result?;
+
+        let paths = load_existing(&db, library.db_id.unwrap())?
+            .into_iter()
+            .map(|entry| entry.full_path)
+            .collect::<HashSet<_>>();
+        assert!(paths.contains(&locked));
+        assert!(paths.contains(&locked.join("a.mp3")));
+        assert!(paths.contains(&open.join("b.mp3")));
+        assert!(!paths.contains(&open.join("c.mp3")));
 
         let _ = fs::remove_dir_all(&root);
         Ok(())

@@ -325,13 +325,23 @@ pub fn mark_synced(db: &mut DbAny, entry_ids: &[DbId]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Removes the entries missing from `observed_paths`. The surviving entries `left_behind` picks
-/// from the removed and surviving ones, and those a removed one shared a cue sheet with, lose
-/// their sync so the next one reads them again.
+/// Whether a scan that couldn't read `protected` paths can tell anything about `path`: not when
+/// it lies under one of them, nor when one lies under it.
+pub fn is_protected(path: &Path, protected: &[PathBuf]) -> bool {
+    protected
+        .iter()
+        .any(|protected| path.starts_with(protected) || protected.starts_with(path))
+}
+
+/// Removes the entries missing from `observed_paths`, except where `protected` paths leave the
+/// scan without evidence. The surviving entries `left_behind` picks from the removed and
+/// surviving ones, and those a removed one shared a cue sheet with, lose their sync so the next
+/// one reads them again.
 pub fn prune_missing_entries(
     db: &mut DbAny,
     library: &Library,
     observed_paths: &HashSet<PathBuf>,
+    protected: &[PathBuf],
     left_behind: impl FnOnce(&[Entry], &[Entry]) -> Vec<DbId>,
 ) -> anyhow::Result<EntrySyncResult> {
     let library_db_id = library
@@ -339,7 +349,9 @@ pub fn prune_missing_entries(
         .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
     let (to_delete, surviving): (Vec<_>, Vec<_>) = load_existing(db, library_db_id)?
         .into_iter()
-        .partition(|entry| !observed_paths.contains(&entry.full_path));
+        .partition(|entry| {
+            !observed_paths.contains(&entry.full_path) && !is_protected(&entry.full_path, protected)
+        });
 
     let mut dir_deletes: Vec<Entry> = to_delete
         .iter()
@@ -616,7 +628,7 @@ mod tests {
             .chain(std::iter::once(paths[4]))
             .map(PathBuf::from)
             .collect::<HashSet<_>>();
-        prune_missing_entries(&mut db, &library, &observed, |removed, surviving| {
+        prune_missing_entries(&mut db, &library, &observed, &[], |removed, surviving| {
             surviving
                 .iter()
                 .filter(|entry| {

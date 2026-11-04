@@ -109,11 +109,17 @@ fn trace_run_id(progress: Option<&SyncRunProgress>) -> String {
         .unwrap_or_default()
 }
 
+/// What the scan saw: the paths it observed and those it couldn't read.
+struct ScanObservation {
+    observed_paths: HashSet<std::path::PathBuf>,
+    protected_paths: Vec<std::path::PathBuf>,
+}
+
 async fn sync_entries_incremental(
     db: &DbAsync,
     library: &Library,
     progress: Option<SyncRunProgress>,
-) -> anyhow::Result<HashSet<std::path::PathBuf>> {
+) -> anyhow::Result<ScanObservation> {
     let run_id = trace_run_id(progress.as_ref());
     let library_db_id = library
         .db_id
@@ -124,6 +130,8 @@ async fn sync_entries_incremental(
         lyra_db::entries::get(&db_read, library_db_id)?
     };
     let scan_plan = prepare_entry_scan_plan(library, existing)?;
+    report_unlistable(&scan_plan.unlistable, progress.as_ref()).await;
+    let protected_paths = scan_plan.protected_paths();
     let entry_group_count = scan_plan.groups.len();
     if let Some(progress) = &progress {
         progress
@@ -233,13 +241,46 @@ async fn sync_entries_incremental(
         group_result?;
     }
 
-    Ok(scan_plan.observed_paths)
+    Ok(ScanObservation {
+        observed_paths: scan_plan.observed_paths,
+        protected_paths,
+    })
+}
+
+/// Reports each path the scan couldn't read as a failed unit, so the run shows it.
+async fn report_unlistable(
+    unlistable: &[(std::path::PathBuf, String)],
+    progress: Option<&SyncRunProgress>,
+) {
+    let Some(progress) = progress else {
+        return;
+    };
+    if unlistable.is_empty() {
+        return;
+    }
+    progress
+        .add_stage_total(
+            SyncStageKey::Discover,
+            unlistable.len() as u64,
+            SyncTotalState::Final,
+        )
+        .await;
+    for (path, error) in unlistable {
+        let details = SyncWorkDetails::new("scan_folder")
+            .source_dir(Some(path.to_string_lossy().into_owned()));
+        let work_id = progress
+            .start_work(SyncStageKey::Discover, details.clone())
+            .await;
+        progress
+            .fail_work(work_id, SyncStageKey::Discover, details, error.clone())
+            .await;
+    }
 }
 
 async fn prune_missing_entries_for_scan(
     db: &DbAsync,
     library: &Library,
-    observed_paths: &HashSet<std::path::PathBuf>,
+    observation: &ScanObservation,
     progress: Option<SyncRunProgress>,
 ) -> anyhow::Result<usize> {
     let run_id = trace_run_id(progress.as_ref());
@@ -262,7 +303,8 @@ async fn prune_missing_entries_for_scan(
         prune_missing_entries(
             &mut db_write,
             library,
-            observed_paths,
+            &observation.observed_paths,
+            &observation.protected_paths,
             |removed, surviving| albums_left_by(&library.path, removed, surviving),
         )
     };
@@ -359,8 +401,8 @@ pub(crate) async fn sync_library_pipeline(
         progress.set_status(SyncRunStatus::Running).await;
         progress.check_cancelled().await?;
     }
-    let observed_paths = sync_entries_incremental(db, library, progress.clone()).await?;
-    prune_missing_entries_for_scan(db, library, &observed_paths, progress.clone()).await?;
+    let observation = sync_entries_incremental(db, library, progress.clone()).await?;
+    prune_missing_entries_for_scan(db, library, &observation, progress.clone()).await?;
     if let Some(progress) = &progress {
         progress.check_cancelled().await?;
     }
