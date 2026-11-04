@@ -394,6 +394,93 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn a_merged_releases_favorites_ratings_and_tags_move_to_the_winner() -> anyhow::Result<()> {
+        use lyra_db::{
+            favorites::FavoriteKind,
+            ratings::RatingValue,
+            test_db::insert_user,
+        };
+        let mut db = new_test_db()?;
+        let alice = insert_user(&mut db, "alice")?;
+        let bob = insert_user(&mut db, "bob")?;
+        let library_db_id = insert_library(&mut db, "Music", "/music")?;
+        let mut candidates = Vec::new();
+        for title in ["Release A", "Release B"] {
+            let release = insert_release(&mut db, title)?;
+            connect(&mut db, library_db_id, release)?;
+            external_ids::upsert(
+                &mut db,
+                release,
+                "musicbrainz",
+                "release_id",
+                "same-release",
+                IdSource::Resolved,
+            )?;
+            candidates.push(release);
+        }
+        let (first, second) = (candidates[0], candidates[1]);
+        let rating = |value| RatingValue::new(value).expect("rating");
+
+        lyra_db::favorites::add(&mut db, alice, first, FavoriteKind::Release, 10)?;
+        lyra_db::favorites::add(&mut db, alice, second, FavoriteKind::Release, 5)?;
+        lyra_db::favorites::add(&mut db, bob, second, FavoriteKind::Release, 7)?;
+        lyra_db::ratings::upsert(&mut db, alice, first, rating(2), 10)?;
+        lyra_db::ratings::upsert(&mut db, alice, second, rating(5), 20)?;
+        lyra_db::ratings::upsert(&mut db, bob, second, rating(3), 8)?;
+        for (user, target, name) in [
+            (alice, first, "kept"),
+            (alice, second, "kept"),
+            (alice, second, "moved"),
+            (bob, second, "bob"),
+        ] {
+            lyra_db::tags::create(&mut db, user, target, name, "blue", 1)?;
+        }
+
+        let merged = deduplicate_releases_by_external_id(
+            &mut db,
+            library_db_id,
+            &DeclaredIds::unique([("musicbrainz", "release_id")]),
+            &HashSet::new(),
+            None,
+        )?;
+        assert_eq!(merged, 1);
+        let [winner] = release_ids_for_library(&db, library_db_id)?[..] else {
+            panic!("expected one release");
+        };
+
+        let favorited = |db: &DbAny, user| -> anyhow::Result<Option<i64>> {
+            Ok(
+                lyra_db::favorites::first_favorited_at(db, user, FavoriteKind::Release)?
+                    .get(&winner)
+                    .copied(),
+            )
+        };
+        assert_eq!(favorited(&db, alice)?, Some(5), "the earlier favorite wins");
+        assert_eq!(favorited(&db, bob)?, Some(7));
+
+        let alice_rating = lyra_db::ratings::get(&db, alice, winner)?.expect("alice's rating");
+        assert_eq!(
+            (alice_rating.value.get(), alice_rating.updated_at_ms),
+            (5, 20),
+            "the rating changed last wins"
+        );
+        let bob_rating = lyra_db::ratings::get(&db, bob, winner)?.expect("bob's rating");
+        assert_eq!(bob_rating.value.get(), 3);
+
+        let tags = |db: &DbAny, user| -> anyhow::Result<Vec<String>> {
+            let mut names: Vec<String> = lyra_db::tags::get_for_target(db, user, winner)?
+                .into_iter()
+                .map(|tag| tag.tag)
+                .collect();
+            names.sort();
+            Ok(names)
+        };
+        assert_eq!(tags(&db, alice)?, ["kept", "moved"]);
+        assert_eq!(tags(&db, bob)?, ["bob"]);
+        Ok(())
+    }
+
     /// Two releases of one library that hold `release_id`s, written in order,
     /// deduplicated with no provider ranked. Returns the winner and the
     /// number merged.
