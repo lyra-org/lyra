@@ -33,6 +33,7 @@
     "lyra.playback_sessions.all",
     "lyra.playback_sources",
     "lyra.playlists",
+    "lyra.ratings",
     "lyra.plugins",
     "lyra.releases",
     "lyra.server",

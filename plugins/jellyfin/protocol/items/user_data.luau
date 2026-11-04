@@ -8,6 +8,7 @@ local api = require("@lyra/api")
 local bookmarks = require("@lyra/bookmarks")
 local favorites = require("@lyra/favorites")
 local listens = require("@lyra/listens")
+local ratings = require("@lyra/ratings")
 
 local constants = require("../../constants")
 local enrichment = require("./enrichment")
@@ -28,6 +29,9 @@ export type UserDataOpts = {
 	-- milliseconds, by track id, when already read.
 	include_position: boolean?,
 	position_lookup: { [string]: number }?,
+	-- The caller's ratings in stars by item id, when already read.
+	include_rating: boolean?,
+	rating_lookup: { [string]: number }?,
 	run_time_ticks: number?,
 	key: string?,
 	item_hex_id: string?,
@@ -42,9 +46,37 @@ export type UserData = {
 	IsFavorite: boolean,
 	Played: boolean,
 	LastPlayedDate: string?,
+	Rating: number?,
+	Likes: boolean?,
 }
 
 local module = {}
+
+-- Lyra keeps 1-5 stars where upstream keeps 0-10, so a rating reads back as twice its stars: a
+-- client that saves 7 reads 8.
+local MIN_LIKE_RATING = 6.5 -- upstream's UserItemData.MinLikeValue
+
+-- The stars a Jellyfin rating saves: nil for 0, which clears it (upstream keeps 0 as a rating).
+-- Rounds to the nearest star, except that a like never rounds down to a dislike. False when the
+-- rating is outside 0-10.
+function module.stars_from_rating(rating: number): (boolean, number?)
+	if not (rating >= 0 and rating <= 10) then
+		return false, nil
+	end
+	if rating == 0 then
+		return true, nil
+	end
+	local stars = math.clamp(math.floor(rating / 2 + 0.5), 1, 5)
+	if rating >= MIN_LIKE_RATING then
+		stars = math.max(stars, 4)
+	end
+	return true, stars
+end
+
+-- As upstream, which saves a like as 10 and a dislike as 1.
+function module.stars_from_likes(likes: boolean): number
+	return if likes then 5 else 1
+end
 
 -- Favorites belong to the dispatch principal; `user_id` only says a user is present.
 local function has_favorite(user_id: string?, item_id: string?): boolean
@@ -160,6 +192,12 @@ function module.get_user_data(opts: UserDataOpts?): UserData
 		position_ticks = enrichment.ms_to_ticks(position_ms) or 0
 	end
 
+	local rating: number? = nil
+	if opts.include_rating == true and item_id ~= nil then
+		local stars = if opts.rating_lookup then opts.rating_lookup[item_id] else ratings.get({ item_id })[item_id]
+		rating = if stars then stars * 2 else nil
+	end
+
 	-- As upstream, the share of the run time the position has reached, absent at the start.
 	local run_time_ticks = opts.run_time_ticks
 	local played_percentage = if run_time_ticks
@@ -177,6 +215,8 @@ function module.get_user_data(opts: UserDataOpts?): UserData
 		IsFavorite = is_favorite,
 		Played = play_count > 0,
 		LastPlayedDate = last_played_date,
+		Rating = rating,
+		Likes = if rating then rating >= MIN_LIKE_RATING else nil,
 	}
 end
 
@@ -195,6 +235,10 @@ function module.user_data_to_json(user_data: UserData): JsonObject
 	end
 	if user_data.LastPlayedDate ~= nil then
 		result.LastPlayedDate = user_data.LastPlayedDate
+	end
+	if user_data.Rating ~= nil then
+		result.Rating = user_data.Rating
+		result.Likes = user_data.Likes
 	end
 	if user_data.PlayedPercentage ~= nil then
 		result.PlayedPercentage = user_data.PlayedPercentage

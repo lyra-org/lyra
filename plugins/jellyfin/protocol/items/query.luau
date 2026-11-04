@@ -215,7 +215,7 @@ local USER_STATE_FILTERS: { [string]: boolean } =
 
 -- The favourite flag `IsFavorite` and `Filters` ask for together; false when they contradict.
 -- As upstream, `Filters=IsFavorite` overrides `IsFavorite`, while `IsFavoriteOrLikes` must also
--- hold; Lyra has no likes, so it asks for a favourite.
+-- hold; it asks only for a favourite, as catalog queries can't filter on ratings.
 function module.favorite(options: ItemsQueryOptions): (boolean?, boolean)
 	local favorite = options.is_favorite
 	local favorite_or_liked = false

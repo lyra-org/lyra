@@ -14,6 +14,7 @@ local listens = require("@lyra/listens")
 local lyrics = require("@lyra/lyrics")
 local playback_sources = require("@lyra/playback_sources")
 local playlists = require("@lyra/playlists")
+local ratings = require("@lyra/ratings")
 local releases = require("@lyra/releases")
 local tags_module = require("@lyra/tags")
 local tracks = require("@lyra/tracks")
@@ -129,12 +130,14 @@ type LyricsLookup = { [string]: boolean }
 type PlayCountLookup = { [string]: number }
 type LastPlayedLookup = { [string]: number }
 type PositionLookup = { [string]: number }
+type RatingLookup = { [string]: number }
 type ItemContext = {
 	user_id: string?,
 	favorite_lookup: FavoriteLookup,
 	play_count_lookup: PlayCountLookup,
 	last_played_lookup: LastPlayedLookup,
 	position_lookup: PositionLookup?,
+	rating_lookup: RatingLookup?,
 	include_user_data: boolean,
 	include_images: boolean,
 	include_people: boolean,
@@ -316,10 +319,12 @@ function helpers.build_item_user_data(
 		include_favorite = true,
 		include_play_count = is_track,
 		include_position = is_track,
+		include_rating = true,
 		favorite_lookup = favorite_lookup,
 		play_count_lookup = if context then context.play_count_lookup else nil,
 		last_played_lookup = if context then context.last_played_lookup else nil,
 		position_lookup = if context then context.position_lookup else nil,
+		rating_lookup = if context then context.rating_lookup else nil,
 		run_time_ticks = run_time_ticks,
 		key = key,
 		item_hex_id = item_hex_id,
@@ -1915,6 +1920,16 @@ function helpers.prefetch_track_stats_and_media(
 	end
 end
 
+function helpers.prefetch_ratings(context: ItemContext, seed: RealizationSeedInfo): ()
+	if context.include_user_data ~= true then
+		return
+	end
+	local ids = table.move(seed.track_ids, 1, #seed.track_ids, 1, {})
+	table.move(seed.release_ids, 1, #seed.release_ids, #ids + 1, ids)
+	table.move(seed.artist_ids, 1, #seed.artist_ids, #ids + 1, ids)
+	context.rating_lookup = if #ids > 0 then ratings.get(ids) else {}
+end
+
 function helpers.prefetch_track_lyrics(context: ItemContext, seed: RealizationSeedInfo): ()
 	if #seed.track_ids == 0 then
 		return
@@ -2003,6 +2018,7 @@ function helpers.build_realization_context(stubs: { ItemInfo }, options: ItemsQu
 	helpers.prefetch_release_tracks(context, seed)
 	helpers.prefetch_artist_people_relations(context, seed)
 	helpers.prefetch_track_stats_and_media(context, seed, options)
+	helpers.prefetch_ratings(context, seed)
 	helpers.prefetch_track_lyrics(context, seed)
 	helpers.prefetch_playlist_covers(context, seed)
 	helpers.prefetch_playlist_runtimes(context, seed)

@@ -1,0 +1,48 @@
+run_as = "listener"
+
+# "Album" by Amy holds Song and Liked; the listener rated Liked 4 stars and owns the playlist "Mix".
+
+[[users]]
+key = "listener"
+
+[[api_keys]]
+key = "phone"
+user = "listener"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener"]
+
+[[artists]]
+key = "amy"
+name = "Amy"
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+artists = ["amy"]
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+artists = ["amy"]
+
+[[tracks]]
+key = "liked"
+title = "Liked"
+release = "album"
+artists = ["amy"]
+
+[[playlists]]
+key = "mix"
+owner = "listener"
+name = "Mix"
+tracks = ["song"]
+
+[[ratings]]
+user = "listener"
+target = "liked"
+value = 4
