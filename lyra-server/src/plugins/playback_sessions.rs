@@ -233,7 +233,7 @@ impl PlaybackSessionsModule {
 
     #[harmony(
         description = concat!(
-            "Reports an observation for a plugin's player context. Returns (public /api/me/playbacks ID, nil) when accepted, (nil, nil) when ignored, or (nil, rejection reason) when admission is refused. Raises a `conflict` error when the report gives its play a `counts_as_listen` other than the one its start declared. Internal failures raise an error. Track changes retain the context ID. ",
+            "Reports an observation for a plugin's player context. Returns (public /api/me/playbacks ID, nil) when accepted, (nil, nil) when ignored, or (nil, rejection reason) when admission is refused. Raises an error for a malformed `play_id`, and a `conflict` error when the report gives its play a `counts_as_listen` other than the one its start declared. Internal failures raise an error. Track changes retain the context ID. ",
             reported_context_expiry_description!(),
             " ",
             live_window_description!(),
@@ -257,7 +257,9 @@ impl PlaybackSessionsModule {
         if let Some(play_id) = request.play_id.as_deref()
             && !crate::services::listens::is_play_id(play_id)
         {
-            return Ok((None, Some(format!("malformed play_id: {play_id}"))));
+            return Err(crate::plugins::runtime_error(format!(
+                "malformed play_id: {play_id}"
+            )));
         }
         let client_name = crate::services::auth::sessions::tidy_client_name(request.client_name);
         let active_event = playbacks::classify_active_event(request.event)
