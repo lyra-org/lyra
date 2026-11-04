@@ -434,7 +434,7 @@ async fn get_hls_segment(
 fn hls_playlist_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Create HLS playlist")
         .description(
-            "Generates an HLS VOD media playlist for a finite track and returns M3U8 with segment URLs under `/api/stream/hls/{session_id}/...`. Requires either bearer authentication with access to the track or a scoped `media_token` from `POST /api/tracks/{track_id}/playback-url`. The optional `codec` query parameter supports `aac` (default), `alac`, `flac`, and `copy` when the source audio is already HLS-compatible and the request does not require audio changes.",
+            "Generates an HLS VOD media playlist for a finite track and returns M3U8 with segment URLs under `/api/stream/hls/{session_id}/...`. Requires either bearer authentication with access to the track or a scoped `media_token` from `POST /api/tracks/{track_id}/playback-url`. The optional `codec` query parameter supports `aac` (default), `alac`, `flac`, `mp3`, `opus`, and `copy` when the source audio is already HLS-compatible and the request does not require audio changes.",
         )
 }
 
