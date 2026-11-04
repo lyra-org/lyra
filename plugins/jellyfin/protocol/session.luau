@@ -301,6 +301,12 @@ function module.unauthorized(): ApiResponse
 	})
 end
 
+-- Upstream's answer to a request naming a user other than the caller, from the `SecurityException`
+-- its user check throws, as its exception middleware writes it outside development.
+function module.forbidden_user(): ApiResponse
+	return api.response.text(403, "Error processing request.")
+end
+
 local function resolve_jellyfin_auth(ctx: ApiContext?): (ResolvedAuth?, string?)
 	local request = if ctx then ctx.request else nil
 	local headers = if request then request.headers else nil

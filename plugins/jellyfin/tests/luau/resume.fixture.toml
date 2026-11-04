@@ -1,0 +1,127 @@
+run_as = "listener"
+
+# The listener is granted "Music" and "Spoken", not "Closed". Music's "Album" holds First, Plain
+# and Last, its "Other" by Amy holds Middle; Spoken's "Talks" holds Talk; Closed's "Hidden" holds
+# Secret. The listener bookmarked all but Plain, in the order First, Middle, Last, Talk, Secret,
+# and is playing Last now.
+
+[[users]]
+key = "listener"
+
+[[api_keys]]
+key = "phone"
+user = "listener"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener"]
+
+[[libraries]]
+key = "spoken"
+name = "Spoken"
+users = ["listener"]
+
+[[libraries]]
+key = "closed"
+name = "Closed"
+
+[[artists]]
+key = "amy"
+name = "Amy"
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+
+[[releases]]
+key = "other"
+title = "Other"
+library = "music"
+artists = ["amy"]
+
+[[releases]]
+key = "talks"
+title = "Talks"
+library = "spoken"
+
+[[releases]]
+key = "hidden"
+title = "Hidden"
+library = "closed"
+
+[[tracks]]
+key = "first"
+title = "First"
+release = "album"
+track = 1
+duration_ms = 200000
+
+[[tracks]]
+key = "plain"
+title = "Plain"
+release = "album"
+track = 2
+duration_ms = 200000
+
+[[tracks]]
+key = "last"
+title = "Last"
+release = "album"
+track = 3
+duration_ms = 200000
+
+[[tracks]]
+key = "middle"
+title = "Middle"
+release = "other"
+artists = ["amy"]
+duration_ms = 200000
+
+[[tracks]]
+key = "talk"
+title = "Talk"
+release = "talks"
+duration_ms = 200000
+
+[[tracks]]
+key = "secret"
+title = "Secret"
+release = "hidden"
+duration_ms = 200000
+
+[[bookmarks]]
+user = "listener"
+track = "first"
+position_ms = 10000
+at = 1700000001000
+
+[[bookmarks]]
+user = "listener"
+track = "middle"
+position_ms = 20000
+at = 1700000002000
+
+[[bookmarks]]
+user = "listener"
+track = "last"
+position_ms = 30000
+at = 1700000003000
+
+[[bookmarks]]
+user = "listener"
+track = "talk"
+position_ms = 40000
+at = 1700000004000
+
+[[bookmarks]]
+user = "listener"
+track = "secret"
+position_ms = 50000
+at = 1700000005000
+
+[[playbacks]]
+user = "listener"
+tracks = ["last"]
+state = "playing"

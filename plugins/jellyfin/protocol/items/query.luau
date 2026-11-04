@@ -121,8 +121,16 @@ local function has_artist_filter(options: ItemsQueryOptions): boolean
 end
 
 -- The Lyra sort for a listing, with upstream's defaults: request order with `Ids`, newest year
--- first for an artist's albums, relevance when searching, and SortName otherwise.
+-- first for an artist's albums, relevance when searching, and SortName otherwise. Resume listings
+-- put the most recently saved position first, after relevance when searching.
 function module.sort(entity: Entity, options: ItemsQueryOptions): Sort
+	if options.resume and entity == "track" then
+		local newest: SortTerm = { key = "bookmarked_at", order = "descending" }
+		if options.search_term ~= nil then
+			return { sort = { { key = "relevance", order = "ascending" }, newest }, seed = nil }
+		end
+		return { sort = { newest }, seed = nil }
+	end
 	local sort_by = options.sort_by
 	if #sort_by == 0 then
 		if #options.ids > 0 then
@@ -190,6 +198,7 @@ type Common = {
 	genre_ids: { string }?,
 	favorite: boolean?,
 	listened: boolean?,
+	resumable: boolean,
 }
 
 -- Sets a filter flag, failing when it contradicts an earlier one.
@@ -274,11 +283,14 @@ local function common(options: ItemsQueryOptions): Common?
 	if not favorite_ok or not played_ok then
 		return nil
 	end
+	-- Lyra has no likes. A track resumes from the caller's bookmark of it.
+	local resumable = options.resume
 	for _, raw_filter in options.filters do
 		local filter = string.lower(raw_filter)
-		-- Lyra has no likes and nothing resumes.
-		if filter == "likes" or filter == "isresumable" then
+		if filter == "likes" then
 			return nil
+		elseif filter == "isresumable" then
+			resumable = true
 		end
 	end
 
@@ -288,6 +300,7 @@ local function common(options: ItemsQueryOptions): Common?
 		genre_ids = genre_ids,
 		favorite = favorite,
 		listened = listened,
+		resumable = resumable,
 	}
 end
 
@@ -373,6 +386,7 @@ function module.tracks(options: ItemsQueryOptions, scope: Scope): TrackQuery?
 	query.years = if #options.years > 0 then options.years else nil
 	query.favorite = filters.favorite
 	query.listened = filters.listened
+	query.bookmarked = if filters.resumable then true else nil
 	query.artist_ids = artist_ids
 	query.credit_role = credit_role
 	query.exclude_credit_role = exclude_credit_role
@@ -406,7 +420,8 @@ end
 
 function module.releases(options: ItemsQueryOptions, scope: Scope): ReleaseQuery?
 	local filters = common(options)
-	if not filters then
+	-- Only tracks resume.
+	if not filters or filters.resumable then
 		return nil
 	end
 	local artist_ids, credit_role, exclude_credit_role, artists_ok = artist_credit(options)
@@ -462,7 +477,8 @@ end
 -- `role` limits the listing to artists credited in that role, as `/AlbumArtists` does.
 function module.artists(options: ItemsQueryOptions, scope: Scope, role: CreditRole?): ArtistQuery?
 	local filters = common(options)
-	if not filters then
+	-- Only tracks resume.
+	if not filters or filters.resumable then
 		return nil
 	end
 	local release_ids, albums_ok = decode(options.album_ids)
@@ -624,8 +640,8 @@ end
 
 function module.genres(options: ItemsQueryOptions, scope: Scope): GenreQuery?
 	local filters = common(options)
-	-- Genres can't be favourites in Lyra.
-	if not filters or filters.favorite == true then
+	-- Genres can't be favourites in Lyra, and only tracks resume.
+	if not filters or filters.favorite == true or filters.resumable then
 		return nil
 	end
 	local release_ids, albums_ok = decode(options.album_ids)

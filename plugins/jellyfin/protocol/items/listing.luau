@@ -110,6 +110,7 @@ local function playlist_source(options: ItemsQueryOptions, scope: Scope): Source
 		or #options.studio_ids > 0
 		or query.filters_beyond_user_state(options)
 		or options.requires_rating
+		or options.resume
 		or options.name_starts_with ~= nil
 		or options.name_starts_with_or_greater ~= nil
 		or options.name_less_than ~= nil
@@ -543,6 +544,18 @@ function module.list_items(options: ItemsQueryOptions): ({ ItemInfo }, number, n
 	return items, total, start_index
 end
 
+-- The caller's libraries it keeps in and excludes from its latest media (`LatestItemsExcludes`),
+-- which upstream's latest and resume listings leave out when they have no parent.
+function module.libraries_by_latest_exclusion(user_id: string): ({ ItemInfo }, { ItemInfo })
+	local excludes = preferences.user_configuration_ids(user_id, "LatestItemsExcludes")
+	local kept: { ItemInfo } = {}
+	local excluded: { ItemInfo } = {}
+	for _, library in catalog.to_music_view_items(false) do
+		table.insert(if excludes[library.Id or ""] then excluded else kept, library)
+	end
+	return kept, excluded
+end
+
 -- The newest albums by the date they were added. As upstream for music, `IsPlayed` and with it
 -- `HidePlayedInLatest` are ignored. Audio groups into its albums unless `GroupItems=false` asks
 -- for the newest tracks themselves.
@@ -570,15 +583,8 @@ function module.list_latest_items(options: ItemsQueryOptions): { ItemInfo }
 	-- exclude from its latest media: the newest of each library, then the newest of those.
 	local user_id = latest.user_id
 	if options.parent_id == nil and user_id then
-		local excluded = preferences.user_configuration_ids(user_id, "LatestItemsExcludes")
-		local libraries = catalog.to_music_view_items(false)
-		local kept: { ItemInfo } = {}
-		for _, library in libraries do
-			if not excluded[library.Id or ""] then
-				table.insert(kept, library)
-			end
-		end
-		if #kept < #libraries then
+		local kept, excluded = module.libraries_by_latest_exclusion(user_id)
+		if #excluded > 0 then
 			local candidates: { string } = {}
 			for _, library in kept do
 				local library_source = source_for(latest, lookups.scope(library.Id))

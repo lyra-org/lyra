@@ -19,5 +19,7 @@ A user data update can also favorite or unfavorite the item (`IsFavorite`). Your
 decide `Played`, `PlayCount` and `LastPlayedDate`, so an update's values for them are ignored, as
 are `Rating` and `Likes`. Unlike Jellyfin, a negative position is refused.
 
-The resume lists (`/UserItems/Resume`) are always empty, though Jellyfin lists every song with a
-position there.
+The resume lists (`/UserItems/Resume`) hold the songs you have a position for and can see, with
+their parent, type, search and paging filters applied as Jellyfin applies them; a list asking only
+for types other than songs is empty. Jellyfin orders the list by when you last played each item,
+Lyra by when you last saved its position, the newest first.

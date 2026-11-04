@@ -77,6 +77,7 @@ local playlist_access = require("@self/protocol/playlist_access")
 local preferences = require("@self/protocol/preferences")
 local requests = require("@self/protocol/items/requests")
 local responses = require("@self/protocol/items/responses")
+local resume_routes = require("@self/routes/resume")
 local scheduled_tasks = require("@self/routes/scheduled_tasks")
 local session = require("@self/protocol/session")
 local similar = require("@self/protocol/items/similar")
@@ -1013,6 +1014,7 @@ api.get(P .. "/Items/{id}", function(ctx: ApiContext)
 end, { auth = "public", case_insensitive = true })
 
 user_data_routes.register()
+resume_routes.register()
 api.get(P .. "/Playlists/{playlistId}/Items", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -1846,28 +1848,6 @@ api.get(P .. "/Items/Latest", function(ctx: ApiContext)
 		return session.unauthorized()
 	end
 	return respond_with_latest_items(ctx, principal)
-end, { auth = "public", case_insensitive = true })
-api.get(P .. "/Users/{userId}/Items/Resume", function(ctx: ApiContext)
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-	if not session.require_matching_user_scope(ctx, principal) then
-		return session.unauthorized()
-	end
-
-	return api.response.json(200, empty_query_result())
-end, { auth = "public", case_insensitive = true })
-api.get(P .. "/UserItems/Resume", function(ctx: ApiContext)
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-	if not session.require_matching_user_scope(ctx, principal) then
-		return session.unauthorized()
-	end
-
-	return api.response.json(200, empty_query_result())
 end, { auth = "public", case_insensitive = true })
 api.get(P .. "/Shows/NextUp", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)

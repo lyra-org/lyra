@@ -56,14 +56,33 @@ assert(artist_albums == "year descending,sort_name ascending", artist_albums)
 assert(keys("artist", { SearchTerm = "amy" }) == "relevance ascending")
 assert(keys("artist", { SearchTerm = "amy", SortBy = "Name" }) == "name ascending")
 
+-- Resume listings put the newest bookmark first, after relevance when searching, whatever SortBy asks.
+local function resume_keys(params: { [string]: string }): string
+	local resume = parse(params)
+	resume.resume = true
+	local values: { string } = {}
+	for _, term in query.sort("track", resume).sort :: { query.SortTerm } do
+		table.insert(values, `{term.key} {term.order}`)
+	end
+	return table.concat(values, ",")
+end
+assert(resume_keys({ SortBy = "Name" }) == "bookmarked_at descending")
+assert(resume_keys({ SearchTerm = "amy" }) == "relevance ascending,bookmarked_at descending")
+
 local random = query.sort("track", parse({ SortBy = "Random" }))
 assert(random.seed ~= nil)
 assert(query.sort("track", parse({})).seed == nil)
 
 -- Filters without a Lyra meaning match nothing or nothing more.
 assert(query.tracks(parse({ Filters = "Likes" }), root) == nil)
-assert(query.tracks(parse({ Filters = "IsResumable" }), root) == nil)
 assert(query.tracks(parse({ Filters = "Dislikes" }), root) ~= nil)
+-- Tracks resume from the caller's bookmarks; nothing else resumes.
+local resumable = query.tracks(parse({ Filters = "IsResumable" }), root)
+assert(resumable ~= nil and resumable.bookmarked == true)
+assert(query.tracks(parse({}), root).bookmarked == nil)
+assert(query.releases(parse({ Filters = "IsResumable" }), root) == nil)
+assert(query.artists(parse({ Filters = "IsResumable" }), root, nil) == nil)
+assert(query.genres(parse({ Filters = "IsResumable" }), root) == nil)
 assert(query.releases(parse({ MinCommunityRating = "5" }), root) == nil)
 -- As upstream, `Filters=IsFavorite` overrides `IsFavorite`; `IsFavoriteOrLikes` must also hold.
 local overridden = query.releases(parse({ Filters = "IsFavorite", IsFavorite = "false" }), root)
