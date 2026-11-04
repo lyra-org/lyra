@@ -1,0 +1,64 @@
+run_as = "listener"
+
+# The listener is granted "Music", whose "Album" holds Song, Saved and Untimed, and not "Closed",
+# whose "Hidden" holds Secret. The listener has played Song once and bookmarked Saved.
+
+[[users]]
+key = "listener"
+
+[[api_keys]]
+key = "phone"
+user = "listener"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener"]
+
+[[libraries]]
+key = "closed"
+name = "Closed"
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+
+[[releases]]
+key = "hidden"
+title = "Hidden"
+library = "closed"
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+duration_ms = 200000
+
+[[tracks]]
+key = "saved"
+title = "Saved"
+release = "album"
+duration_ms = 200000
+
+[[tracks]]
+key = "untimed"
+title = "Untimed"
+release = "album"
+
+[[tracks]]
+key = "secret"
+title = "Secret"
+release = "hidden"
+duration_ms = 200000
+
+[[listens]]
+user = "listener"
+track = "song"
+at = 1700000000000
+
+[[bookmarks]]
+user = "listener"
+track = "saved"
+position_ms = 42000
+comment = "Chorus"

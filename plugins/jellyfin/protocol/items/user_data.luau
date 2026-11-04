@@ -5,10 +5,12 @@
 -- www.meshiplaw.com/lyra.
 
 local api = require("@lyra/api")
+local bookmarks = require("@lyra/bookmarks")
 local favorites = require("@lyra/favorites")
 local listens = require("@lyra/listens")
 
 local constants = require("../../constants")
+local enrichment = require("./enrichment")
 
 local RESOLVE_MERGE_TRACK_COUNT = constants.RESOLVE_MERGE_TRACK_COUNT
 
@@ -22,6 +24,11 @@ export type UserDataOpts = {
 	favorite_lookup: { [string]: boolean }?,
 	play_count_lookup: { [string]: number }?,
 	last_played_lookup: { [string]: number }?,
+	-- Set for tracks, the only items that hold a position: the caller's bookmark positions, in
+	-- milliseconds, by track id, when already read.
+	include_position: boolean?,
+	position_lookup: { [string]: number }?,
+	run_time_ticks: number?,
 	key: string?,
 	item_hex_id: string?,
 }
@@ -30,6 +37,7 @@ export type UserData = {
 	Key: string?,
 	ItemId: string?,
 	PlaybackPositionTicks: number,
+	PlayedPercentage: number?,
 	PlayCount: number,
 	IsFavorite: boolean,
 	Played: boolean,
@@ -140,10 +148,31 @@ function module.get_user_data(opts: UserDataOpts?): UserData
 		last_played_date = ms_to_iso8601(opts.last_played_lookup[item_id])
 	end
 
+	local position_ticks = 0
+	if opts.include_position == true and item_id ~= nil then
+		local position_ms: number?
+		if opts.position_lookup then
+			position_ms = opts.position_lookup[item_id]
+		else
+			local bookmark = bookmarks.get({ item_id })[item_id]
+			position_ms = if bookmark then bookmark.position_ms else nil
+		end
+		position_ticks = enrichment.ms_to_ticks(position_ms) or 0
+	end
+
+	-- As upstream, the share of the run time the position has reached, absent at the start.
+	local run_time_ticks = opts.run_time_ticks
+	local played_percentage = if run_time_ticks
+			and run_time_ticks > 0
+			and position_ticks > 0
+		then 100 * position_ticks / run_time_ticks
+		else nil
+
 	return {
 		Key = opts.key,
 		ItemId = opts.item_hex_id,
-		PlaybackPositionTicks = 0,
+		PlaybackPositionTicks = position_ticks,
+		PlayedPercentage = played_percentage,
 		PlayCount = play_count,
 		IsFavorite = is_favorite,
 		Played = play_count > 0,
@@ -166,6 +195,9 @@ function module.user_data_to_json(user_data: UserData): JsonObject
 	end
 	if user_data.LastPlayedDate ~= nil then
 		result.LastPlayedDate = user_data.LastPlayedDate
+	end
+	if user_data.PlayedPercentage ~= nil then
+		result.PlayedPercentage = user_data.PlayedPercentage
 	end
 	return result
 end

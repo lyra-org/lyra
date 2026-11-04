@@ -6,6 +6,7 @@
 
 local api = require("@lyra/api")
 local artists_module = require("@lyra/artists")
+local bookmarks = require("@lyra/bookmarks")
 local entities = require("@lyra/entities")
 local favorites = require("@lyra/favorites")
 local genres = require("@lyra/genres")
@@ -126,11 +127,13 @@ type PlaybackSourceMap = { [string]: PlaybackSourceInfo }
 type LyricsLookup = { [string]: boolean }
 type PlayCountLookup = { [string]: number }
 type LastPlayedLookup = { [string]: number }
+type PositionLookup = { [string]: number }
 type ItemContext = {
 	user_id: string?,
 	favorite_lookup: FavoriteLookup,
 	play_count_lookup: PlayCountLookup,
 	last_played_lookup: LastPlayedLookup,
+	position_lookup: PositionLookup?,
 	include_user_data: boolean,
 	include_images: boolean,
 	include_people: boolean,
@@ -297,9 +300,10 @@ function helpers.build_item_user_data(
 	item_hex_id: string?,
 	user_id: string?,
 	key: string?,
-	include_play_count: boolean,
+	is_track: boolean,
 	favorite_lookup: FavoriteLookup?,
-	context: ItemContext?
+	context: ItemContext?,
+	run_time_ticks: number?
 ): UserData?
 	if not helpers.should_include_user_data(context) then
 		return nil
@@ -309,10 +313,13 @@ function helpers.build_item_user_data(
 		item_id = item_id,
 		user_id = user_id,
 		include_favorite = true,
-		include_play_count = include_play_count,
+		include_play_count = is_track,
+		include_position = is_track,
 		favorite_lookup = favorite_lookup,
 		play_count_lookup = if context then context.play_count_lookup else nil,
 		last_played_lookup = if context then context.last_played_lookup else nil,
+		position_lookup = if context then context.position_lookup else nil,
+		run_time_ticks = run_time_ticks,
 		key = key,
 		item_hex_id = item_hex_id,
 	})
@@ -1396,6 +1403,7 @@ function helpers.to_track_item(
 	local track_genres = helpers.lookup_by_id(if context then context.genre_infos_by_release_id else nil, release_id)
 		or helpers.resolve_release_genres(release_id)
 	local track_sort_name = helpers.track_sort_name(track)
+	local run_time_ticks = enrichment.ms_to_ticks(track.duration_ms)
 
 	local item: ItemInfo = {
 		Id = track_item_id,
@@ -1406,7 +1414,7 @@ function helpers.to_track_item(
 		LocationType = "FileSystem",
 		Container = container,
 		SortName = track_sort_name,
-		RunTimeTicks = enrichment.ms_to_ticks(track.duration_ms),
+		RunTimeTicks = run_time_ticks,
 		DateCreated = helpers.unix_ms_to_iso8601(track.file_created_at_ms or track.created_at_ms),
 		IndexNumber = track.track,
 		ParentIndexNumber = track.disc,
@@ -1436,7 +1444,8 @@ function helpers.to_track_item(
 			`{track.disc or 0}-{track.track or 0}{requests.trim(track.track_title) or ""}`,
 			true,
 			favorite_lookup,
-			context
+			context,
+			run_time_ticks
 		),
 		MediaSources = media_sources,
 		MediaStreams = media_streams,
@@ -1888,6 +1897,11 @@ function helpers.prefetch_track_stats_and_media(
 				context.last_played_lookup[id] = stats.last_played_at_ms
 			end
 		end
+		local positions: PositionLookup = {}
+		for id, bookmark in bookmarks.get(seed.track_ids) do
+			positions[id] = bookmark.position_ms
+		end
+		context.position_lookup = positions
 	end
 
 	local sources = playback_sources.get_many(seed.track_ids, options.include_media_info == true)

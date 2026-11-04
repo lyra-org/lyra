@@ -83,6 +83,7 @@ local similar = require("@self/protocol/items/similar")
 local statics = require("@self/protocol/statics")
 local syncplay = require("@self/routes/syncplay")
 local user_data = require("@self/protocol/items/user_data")
+local user_data_routes = require("@self/routes/user_data")
 local websocket = require("@self/protocol/websocket")
 
 -- Represents the last known supported Jellyfin server version.
@@ -1011,123 +1012,7 @@ api.get(P .. "/Items/{id}", function(ctx: ApiContext)
 	return api.response.json(200, catalog.item_to_json(item))
 end, { auth = "public", case_insensitive = true })
 
-local function handle_item_user_data_route(ctx: ApiContext): ApiResponse
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-	if not session.require_matching_user_scope(ctx, principal) then
-		return responses.forbidden("user is not allowed to view this item user data")
-	end
-
-	local params = if ctx then ctx.params else nil
-	local raw_item_id = if params then params.itemId else nil
-	if not raw_item_id then
-		return responses.bad_request("missing item id")
-	end
-
-	local item_id = item_ids.decode_jellyfin_item_id(raw_item_id)
-	if not item_id then
-		return responses.not_found("item not found")
-	end
-
-	local item = listing.find_item_by_id(item_id, principal.user_id)
-	if not item then
-		return responses.not_found("item not found")
-	end
-
-	local item_hex_id = item_ids.encode_jellyfin_item_id(item_id)
-	local item_name = requests.trim(item.Name)
-	local item_type = requests.trim(item.Type)
-	local key = item_hex_id
-	if item_type == "MusicArtist" then
-		key = `Artist-{item_name or ""}`
-	elseif item_type == "MusicAlbum" then
-		key = `{requests.trim(item.AlbumArtist) or ""}-{item_name or ""}`
-	elseif item_type == "Audio" then
-		key = `{item.ParentIndexNumber or 0}-{item.IndexNumber or 0}{item_name or ""}`
-	elseif item_type == "Playlist" then
-		key = `Playlist-{item_name or ""}`
-	elseif item_type == "MusicGenre" then
-		key = `MusicGenre-{item_name or ""}`
-	end
-
-	local item_user_data = item.UserData
-		or user_data.get_user_data({
-			item_id = item_id,
-			user_id = principal.user_id,
-			item_hex_id = item_hex_id,
-			key = key,
-			include_favorite = true,
-			include_play_count = item_type == "Audio",
-		})
-
-	return api.response.json(200, user_data.user_data_to_json(item_user_data))
-end
-
-api.get(P .. "/UserItems/{itemId}/UserData", handle_item_user_data_route, { auth = "public", case_insensitive = true })
-api.get(
-	P .. "/Users/{userId}/Items/{itemId}/UserData",
-	handle_item_user_data_route,
-	{ auth = "public", case_insensitive = true }
-)
-
-local function handle_favorite_item_route(ctx: ApiContext, should_favorite: boolean)
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-
-	if not session.require_matching_user_scope(ctx, principal) then
-		return session.unauthorized()
-	end
-
-	local params = if ctx then ctx.params else nil
-	local item_id = if params then params.itemId else nil
-	if not item_id then
-		return responses.bad_request("missing item id")
-	end
-
-	local target_id = item_ids.decode_jellyfin_item_id(item_id)
-	if target_id == nil then
-		return responses.not_found("item not found")
-	end
-
-	local item = listing.find_item_by_id(target_id, principal.user_id)
-	if not item then
-		return responses.not_found("item not found")
-	end
-
-	local update_ok = if should_favorite
-		then user_data.add_favorite(target_id)
-		else user_data.remove_favorite(target_id)
-	if not update_ok then
-		return responses.bad_request(if should_favorite then "failed to add favorite" else "failed to remove favorite")
-	end
-
-	return api.response.json(
-		200,
-		user_data.user_data_to_json(user_data.get_user_data({
-			item_id = target_id,
-			user_id = principal.user_id,
-			include_favorite = true,
-			include_play_count = requests.trim(item.Type) == "Audio",
-		}))
-	)
-end
-
-api.post(P .. "/UserFavoriteItems/{itemId}", function(ctx: ApiContext)
-	return handle_favorite_item_route(ctx, true)
-end, { auth = "public", case_insensitive = true })
-api.post(P .. "/Users/{userId}/FavoriteItems/{itemId}", function(ctx: ApiContext)
-	return handle_favorite_item_route(ctx, true)
-end, { auth = "public", case_insensitive = true })
-api.delete(P .. "/UserFavoriteItems/{itemId}", function(ctx: ApiContext)
-	return handle_favorite_item_route(ctx, false)
-end, { auth = "public", case_insensitive = true })
-api.delete(P .. "/Users/{userId}/FavoriteItems/{itemId}", function(ctx: ApiContext)
-	return handle_favorite_item_route(ctx, false)
-end, { auth = "public", case_insensitive = true })
+user_data_routes.register()
 api.get(P .. "/Playlists/{playlistId}/Items", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
