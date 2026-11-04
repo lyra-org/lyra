@@ -317,7 +317,7 @@ function module.handle_universal_route(ctx: ApiContext): ApiResponse
 			source_channels,
 			true
 		)
-		local _, hls_codecs, refused = delivery_request(nil, preferred_codecs)
+		local _, hls_codecs, refused = delivery_request(nil, preferred_codecs or { "aac" })
 		if refused then
 			return refused
 		end
@@ -558,7 +558,7 @@ local function resolve_audio_hls_query_options(
 		true
 	)
 
-	local _, hls_codecs, refused = delivery_request(nil, preferred_codecs)
+	local _, hls_codecs, refused = delivery_request(nil, preferred_codecs or { "aac" })
 	if refused then
 		return nil, nil, refused
 	end

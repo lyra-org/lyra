@@ -104,6 +104,18 @@ assert(
 	universal_hls.kind == "hls_playlist",
 	`universal opus hls kind {universal_hls.kind} status {universal_hls.status}`
 )
+-- HLS without a codec asks the server for AAC, the codec its master playlist names.
+local default_main = request(audio.handle_hls_main_route, ids.song, fixture.api_keys.desk, {})
+assert(default_main.kind == "hls_playlist", `default main kind {default_main.kind} status {default_main.status}`)
+assert(default_main.options.preferred_codecs[1] == "aac", "default main codec")
+local default_universal = request(
+	audio.handle_universal_route,
+	ids.song,
+	fixture.api_keys.desk,
+	{ container = "mp3", transcodingProtocol = "hls" }
+)
+assert(default_universal.kind == "hls_playlist", `default universal hls kind {default_universal.kind}`)
+assert(default_universal.options.preferred_codecs[1] == "aac", "default universal hls codec")
 assert(
 	request(audio.handle_hls_master_route, ids.song, fixture.api_keys.desk, { audioCodec = "vorbis" }).status == 400,
 	"vorbis has no HLS segments"
