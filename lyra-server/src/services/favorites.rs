@@ -45,19 +45,26 @@ pub(crate) fn add_for_principal(
     })
 }
 
-/// Remove a favorite. No visibility gate — a caller must always be able to evict their own
-/// edge, else a "ghost favorite" reappears if the target becomes visible again.
-pub(crate) fn remove(
+/// Remove a favorite, even of a target the caller can no longer see, else a "ghost favorite"
+/// reappears if it becomes visible again. A hidden target still answers `NotTargetable`, so
+/// removal does not reveal that it exists.
+pub(crate) fn remove_for_principal(
     db: &mut DbAny,
-    user_db_id: DbId,
+    principal: &Principal,
     target_db_id: DbId,
 ) -> anyhow::Result<MutationOutcome> {
     db.transaction_mut(|t| -> anyhow::Result<MutationOutcome> {
         if lyra_db::favorites::target_kind(t, target_db_id)?.is_none() {
             return Ok(MutationOutcome::NotTargetable);
         }
+        let user_db_id = principal.require(t)?;
         lyra_db::favorites::remove(t, user_db_id, target_db_id)?;
-        Ok(MutationOutcome::Applied)
+        Ok(
+            match targetable_kind(t, principal, user_db_id, target_db_id)? {
+                Some(_) => MutationOutcome::Applied,
+                None => MutationOutcome::NotTargetable,
+            },
+        )
     })
 }
 
@@ -308,7 +315,7 @@ mod tests {
                 MutationOutcome::NotTargetable,
             );
             assert_eq!(
-                remove(&mut db, user, target)?,
+                remove_for_principal(&mut db, &principal, target)?,
                 MutationOutcome::NotTargetable
             );
             assert!(!has_for_principal(&db, &principal, target)?);
@@ -512,7 +519,7 @@ mod tests {
     }
 
     #[test]
-    fn remove_bypasses_visibility_gate_for_private_playlist() -> anyhow::Result<()> {
+    fn remove_clears_a_hidden_playlist_without_revealing_it() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let owner = create_user(&mut db, "alice")?;
         let other = create_user(&mut db, "bob")?;
@@ -526,11 +533,11 @@ mod tests {
         set_playlist_public(&mut db, playlist_db_id, &pub_id, false)?;
         assert!(!has_for_principal(&db, &principal, playlist_db_id)?);
 
-        let removed = remove(&mut db, other, playlist_db_id)?;
+        let removed = remove_for_principal(&mut db, &principal, playlist_db_id)?;
         assert_eq!(
             removed,
-            MutationOutcome::Applied,
-            "DELETE on non-visible playlist must still be Applied (idempotent)",
+            MutationOutcome::NotTargetable,
+            "DELETE on a non-visible playlist answers like a missing one",
         );
 
         set_playlist_public(&mut db, playlist_db_id, &pub_id, true)?;
@@ -548,7 +555,8 @@ mod tests {
         let caller = create_user(&mut db, "alice")?;
         let victim_db_id = create_user(&mut db, "victim")?;
 
-        let outcome = remove(&mut db, caller, victim_db_id)?;
+        let principal = principal_for(&db, caller, HashSet::new());
+        let outcome = remove_for_principal(&mut db, &principal, victim_db_id)?;
         assert_eq!(
             outcome,
             MutationOutcome::NotTargetable,
@@ -562,9 +570,14 @@ mod tests {
     fn remove_idempotent_over_whitelisted_kind() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user = create_user(&mut db, "alice")?;
+        let library_db_id = insert_library(&mut db, "Favorites", "/tmp/lyra-favorites-remove")?;
+        let library_public_id = lyra_db::lookup::find_id_by_db_id(&db, library_db_id)?
+            .expect("library should have a public id");
         let track = create_track(&mut db, &nanoid!())?;
+        connect(&mut db, library_db_id, track)?;
 
-        let outcome = remove(&mut db, user, track)?;
+        let principal = principal_for(&db, user, HashSet::from([library_public_id]));
+        let outcome = remove_for_principal(&mut db, &principal, track)?;
         assert_eq!(
             outcome,
             MutationOutcome::Applied,

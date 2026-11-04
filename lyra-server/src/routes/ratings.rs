@@ -225,9 +225,9 @@ async fn delete_rating(
     validate_target_id(&target_id)?;
 
     let mut db = STATE.db.write().await;
-    let user_db_id = principal.require(&db)?;
+    principal.require(&db)?;
     let target_db_id = resolve_target(&*db, &target_id, || target_not_found(&target_id))?;
-    let outcome = rating_service::remove(&mut db, user_db_id, target_db_id)?;
+    let outcome = rating_service::remove_for_principal(&mut db, &principal, target_db_id)?;
     mutation_response(outcome, &target_id)
 }
 
@@ -351,8 +351,9 @@ fn delete_rating_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Delete a personal rating")
         .description(
             "Deletes the authenticated user's rating. The operation is idempotent for supported \
-             targets and bypasses the visibility gate so ratings cannot become undeletable after \
-             library access changes.",
+             targets. Returns 404 for missing targets, unsupported kinds and targets the user \
+             cannot see; the rating of a target they can no longer see is still deleted, so it \
+             cannot become undeletable after library access changes.",
         )
         .response::<204, ()>()
 }

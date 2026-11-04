@@ -71,13 +71,12 @@ impl RatingsModule {
         #[context] principal: Principal,
     ) -> luau::runtime::Result<bool> {
         let mut db = db.write().await;
-        let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
+        crate::plugins::auth::require_user_db_id(&principal, &db)?;
         let Some(target) = ids::db_id(&*db, &target_id)? else {
             return Ok(false);
         };
-        let visible = ids::visible_db_id(&db, &ids::viewer_of(&*db, &principal)?, &target_id)?;
-        let outcome = rating_service::remove(&mut db, user_db_id, target)?;
-        Ok(visible.is_some() && outcome == rating_service::MutationOutcome::Applied)
+        let outcome = rating_service::remove_for_principal(&mut db, &principal, target)?;
+        Ok(outcome == rating_service::MutationOutcome::Applied)
     }
 
     #[harmony(

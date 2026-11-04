@@ -111,9 +111,9 @@ async fn delete_favorite(
     validate_target_id(&target_id)?;
 
     let mut db = STATE.db.write().await;
-    let user_db_id = principal.require(&db)?;
+    principal.require(&db)?;
     let target_db_id = resolve_target(&*db, &target_id, || target_not_found(&target_id))?;
-    let outcome = favorite_service::remove(&mut db, user_db_id, target_db_id)?;
+    let outcome = favorite_service::remove_for_principal(&mut db, &principal, target_db_id)?;
     mutation_response(outcome, &target_id)
 }
 
@@ -201,8 +201,9 @@ fn delete_favorite_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Unmark a target as favorited")
         .description(
             "Unmarks a target as favorited. Idempotent: returns 204 whether an edge existed \
-         or not, including for private playlists the authenticated user can no longer read. \
-         Returns 400 for malformed IDs and 404 only when the target is not a supported kind.",
+         or not. Returns 400 for malformed IDs, and 404 when the target is missing, not a \
+         supported kind, or one the authenticated user cannot see, such as a private \
+         playlist; the favorite of a target they can no longer see is still removed.",
         )
         .response::<204, ()>()
 }
@@ -486,8 +487,8 @@ mod tests {
             send(&routes, "DELETE", &format!("/{hidden_id}"), &auth, None)
                 .await?
                 .0,
-            StatusCode::NO_CONTENT,
-            "remove has no visibility gate",
+            StatusCode::NOT_FOUND,
+            "a hidden target answers like a missing one",
         );
         let db = STATE.db.read().await;
         let hidden = lyra_db::lookup::find_node_id_by_id(&*db, &hidden_id)?.unwrap();

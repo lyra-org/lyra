@@ -47,18 +47,24 @@ pub(crate) fn set_for_principal(
     })
 }
 
-/// No visibility gate: callers must be able to remove their own stored state after access changes.
-pub(crate) fn remove(
+/// Clears the caller's rating even of a target it can no longer see, so stored state can be
+/// removed after access changes. A hidden target still answers `NotTargetable`, so removal does
+/// not reveal that it exists.
+pub(crate) fn remove_for_principal(
     db: &mut DbAny,
-    user_db_id: DbId,
+    principal: &Principal,
     target_db_id: DbId,
 ) -> anyhow::Result<MutationOutcome> {
     db.transaction_mut(|t| -> anyhow::Result<MutationOutcome> {
         if target_kind(t, target_db_id)?.is_none() {
             return Ok(MutationOutcome::NotTargetable);
         }
-        lyra_db::ratings::remove(t, user_db_id, target_db_id)?;
-        Ok(MutationOutcome::Applied)
+        lyra_db::ratings::remove(t, principal.require(t)?, target_db_id)?;
+        Ok(if targetable_by_principal(t, principal, target_db_id)? {
+            MutationOutcome::Applied
+        } else {
+            MutationOutcome::NotTargetable
+        })
     })
 }
 
@@ -193,7 +199,10 @@ mod tests {
         set_for_principal(&mut db, &principal, track, RatingValue::new(5).unwrap())?;
         assert_eq!(get_for_principal(&db, &principal, track)?.unwrap().get(), 5);
 
-        assert_eq!(remove(&mut db, user, track)?, MutationOutcome::Applied);
+        assert_eq!(
+            remove_for_principal(&mut db, &principal, track)?,
+            MutationOutcome::Applied
+        );
         assert!(get_for_principal(&db, &principal, track)?.is_none());
         Ok(())
     }
@@ -291,7 +300,7 @@ mod tests {
     }
 
     #[test]
-    fn inaccessible_media_is_opaque_but_rating_can_be_removed() -> anyhow::Result<()> {
+    fn inaccessible_media_is_opaque_but_its_rating_is_still_cleared() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user = users::create(&mut db, &test_user("alice")?)?;
         let library = insert_library(&mut db, "Music", "/tmp/lyra-ratings-hidden")?;
@@ -303,7 +312,11 @@ mod tests {
 
         let hidden = principal(&db, user, HashSet::new());
         assert!(get_for_principal(&db, &hidden, track)?.is_none());
-        assert_eq!(remove(&mut db, user, track)?, MutationOutcome::Applied);
+        assert_eq!(
+            remove_for_principal(&mut db, &hidden, track)?,
+            MutationOutcome::NotTargetable
+        );
+        assert!(get_for_principal(&db, &visible, track)?.is_none());
         Ok(())
     }
 
@@ -320,7 +333,7 @@ mod tests {
                 MutationOutcome::NotTargetable,
             );
             assert_eq!(
-                remove(&mut db, user, target)?,
+                remove_for_principal(&mut db, &principal, target)?,
                 MutationOutcome::NotTargetable
             );
         }
