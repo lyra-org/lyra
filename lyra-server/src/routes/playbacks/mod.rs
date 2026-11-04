@@ -80,9 +80,9 @@ use crate::services::listens::PLAY_ID_DESCRIPTION;
 use crate::services::playback_sessions::{
     COUNTS_AS_LISTEN_DESCRIPTION,
     RATE_DESCRIPTION,
+    live_window_description,
+    reported_context_expiry_description,
 };
-#[cfg(test)]
-const ACTIVE_PLAYBACK_TIMEOUT_MS: u64 = sessions::ACTIVE_SESSION_TTL_MS;
 
 #[cfg(feature = "docgen")]
 const POSITION_MS_DESCRIPTION: &str = "Position in the current track. A position past the duration, this report's or else the stored one, reads as the end.";
@@ -295,11 +295,7 @@ fn playback_is_active(
     current_session: Option<&playbacks::CurrentSession>,
     current_ms: u64,
 ) -> bool {
-    current_session.is_some_and(|current| {
-        !current.playback.state.is_terminal()
-            && current.playback.updated_at_ms
-                >= current_ms.saturating_sub(ACTIVE_PLAYBACK_TIMEOUT_MS)
-    })
+    current_session.is_some_and(|current| current.playback.is_live(current_ms))
 }
 
 fn map_playback_error(error: PlaybackError) -> AppError {
@@ -578,7 +574,13 @@ fn create_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn list_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List playbacks").description(
-        "Returns `{ items, next_cursor }` for the authenticated user's playback contexts, including plugin-reported playback, ordered by most recently updated. `active=true` filters the initial snapshot to recent non-terminal current sessions. Reported contexts expire after five minutes without a current playback observation; of queue-backed playbacks, a user keeps the 100 most recently updated inactive ones, and older inactive ones are removed. `client_name` and `plugin_id` name the client and plugin of the current track's play. A queue-backed playback whose current track the caller can no longer see is listed without `current`, though still with those; `GET /queue` gives what of its queue is playable. A null `queue_revision` means there is no server-managed queue. `inc=controller` includes the WebSocket connection driving each playback as `controller`, or `null` when none is. Drive pagination from `next_cursor`.",
+        concat!(
+            "Returns `{ items, next_cursor }` for the authenticated user's playback contexts, including plugin-reported playback, ordered by most recently updated. `active=true` filters the initial snapshot to playbacks whose current session is live. ",
+            live_window_description!(),
+            " ",
+            reported_context_expiry_description!(),
+            " Of queue-backed playbacks, a user keeps the 100 most recently updated inactive ones, and older inactive ones are removed. `client_name` and `plugin_id` name the client and plugin of the current track's play. A queue-backed playback whose current track the caller can no longer see is listed without `current`, though still with those; `GET /queue` gives what of its queue is playable. A null `queue_revision` means there is no server-managed queue. `inc=controller` includes the WebSocket connection driving each playback as `controller`, or `null` when none is. Drive pagination from `next_cursor`."
+        ),
     )
 }
 

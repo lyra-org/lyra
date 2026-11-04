@@ -206,7 +206,7 @@ impl ReportingConnection {
             &bindings::ConnectionKey::new(&self.user_public_id, &self.session_key),
             playback_id,
             session.playback_session_id,
-            session.playback_session_public_id.clone(),
+            &session.playback,
             now_ms,
         );
     }
@@ -680,8 +680,12 @@ pub(crate) fn get_owned_detail(
         return Ok(None);
     };
     if playback.is_reported()
-        && playback.updated_at_ms
-            < now_ms.saturating_sub(lyra_db::playbacks::REPORTED_PLAYBACK_TTL_MS)
+        && lyra_db::playbacks::is_reported_lapsed(
+            db,
+            playback_db_id,
+            playback.updated_at_ms,
+            now_ms,
+        )?
     {
         return Ok(None);
     }
@@ -721,11 +725,20 @@ pub(crate) fn get_owned_projection(
     if lyra_db::playbacks::get_owner_id(db, playback_db_id)? != Some(user_db_id) {
         return Ok(None);
     }
-    let cutoff = now_ms.saturating_sub(lyra_db::playbacks::REPORTED_PLAYBACK_TTL_MS);
-    Ok(
-        lyra_db::playbacks::get_projection_by_id(db, playback_db_id)?
-            .filter(|p| !p.reported || p.updated_at_ms >= cutoff),
-    )
+    let Some(projection) = lyra_db::playbacks::get_projection_by_id(db, playback_db_id)? else {
+        return Ok(None);
+    };
+    if projection.reported
+        && lyra_db::playbacks::is_reported_lapsed(
+            db,
+            playback_db_id,
+            projection.updated_at_ms,
+            now_ms,
+        )?
+    {
+        return Ok(None);
+    }
+    Ok(Some(projection))
 }
 
 pub(crate) fn list_visible_projections(
@@ -785,20 +798,22 @@ pub(crate) fn list_projections_with_current(
         let current_track_ids = track_ids.values().copied().collect::<Vec<_>>();
         lyra_db::libraries::accessible_track_ids(db, viewer_db_id, &current_track_ids)?
     };
-    let active_cutoff = now_ms.saturating_sub(playback_sessions::ACTIVE_SESSION_TTL_MS);
     let mut visible = Vec::with_capacity(projections.len());
     for projection in projections {
-        if projection.reported
-            && projection.updated_at_ms
-                < now_ms.saturating_sub(lyra_db::playbacks::REPORTED_PLAYBACK_TTL_MS)
-        {
-            continue;
-        }
         let current = current_ids.get(&projection.db_id).and_then(|session_id| {
             sessions
                 .get(session_id)
                 .map(|session| (*session_id, session))
         });
+        if projection.reported
+            && lyra_db::playbacks::reported_lapsed(
+                projection.updated_at_ms,
+                current.map(|(_, session)| session),
+                now_ms,
+            )
+        {
+            continue;
+        }
         let accessible = match current {
             Some((session_id, _)) => match track_ids.get(&session_id) {
                 Some(track_db_id) => is_admin || accessible_track_ids.contains(track_db_id),
@@ -815,9 +830,7 @@ pub(crate) fn list_projections_with_current(
         };
         if active_only
             && !current.is_some_and(|(session_id, current)| {
-                track_ids.contains_key(&session_id)
-                    && !current.state.is_terminal()
-                    && current.updated_at_ms >= active_cutoff
+                track_ids.contains_key(&session_id) && current.is_live(now_ms)
             })
         {
             continue;
@@ -1320,7 +1333,7 @@ mod tests {
         state: lyra_db::PlaybackState,
         position_ms: u64,
     ) -> anyhow::Result<lyra_db::playbacks::Playback> {
-        let session = lyra_db::PlaybackSession {
+        let mut session = lyra_db::PlaybackSession {
             db_id: None,
             id: nanoid::nanoid!(),
             play_id: nanoid::nanoid!(),
@@ -1336,6 +1349,7 @@ mod tests {
             counts_as_listen: true,
             state,
             updated_at_ms: 1,
+            live_until_ms: 0,
             created_at_ms: 1,
         };
         let playback = lyra_db::playbacks::Playback {
@@ -1353,7 +1367,7 @@ mod tests {
         };
         let playback_db_id = db.transaction_mut(|t| {
             let session_db_id =
-                lyra_db::playback_sessions::insert(t, &session, session_track, user_db_id)?;
+                playback_sessions::insert_session(t, &mut session, session_track, user_db_id)?;
             lyra_db::playbacks::insert(t, &playback, user_db_id, session_db_id)
         })?;
         Ok(lyra_db::playbacks::get_by_id(db, playback_db_id)?.expect("stored playback"))

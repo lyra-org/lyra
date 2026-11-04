@@ -128,6 +128,7 @@ mod tests {
             counts_as_listen: false,
             state: PlaybackState::Stopped,
             updated_at_ms: 1,
+            live_until_ms: 1,
             created_at_ms: 1,
         }
     }

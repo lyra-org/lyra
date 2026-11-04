@@ -25,13 +25,15 @@ mod reported;
 mod saved;
 pub use reported::{
     ExpiredReported,
-    REPORTED_PLAYBACK_TTL_MS,
+    REPORTED_PLAYBACK_RETENTION_MS,
     ReportedPlaybackLimitReached,
     ReportedSource,
     expire_reported,
     expire_reported_for_user,
     get_reported,
     insert_reported,
+    is_reported_lapsed,
+    reported_lapsed,
 };
 pub use saved::{
     claim as claim_saved,
@@ -378,15 +380,15 @@ pub struct CurrentPlayback {
     pub track_db_id: DbId,
 }
 
-/// The playbacks whose current track session was updated at or after `since_ms`: every user's
-/// without `owners`, otherwise only those the given users own.
-pub fn list_current_since(
+/// The playbacks whose current track session is live at `now_ms`, by its stored live window:
+/// every user's without `owners`, otherwise only those the given users own.
+pub fn list_live(
     db: &impl DbAccess,
     owners: Option<&[DbId]>,
-    since_ms: u64,
+    now_ms: u64,
 ) -> anyhow::Result<Vec<CurrentPlayback>> {
     let Some(owners) = owners else {
-        return list_every_current_since(db, since_ms);
+        return list_every_live(db, now_ms);
     };
     let mut current = Vec::new();
     for &owner_db_id in owners {
@@ -421,7 +423,7 @@ pub fn list_current_since(
         for (playback_db_id, session_db_id) in current_session_ids {
             if projections
                 .get(&session_db_id)
-                .is_some_and(|projection| projection.updated_at_ms >= since_ms)
+                .is_some_and(|projection| projection.is_live(now_ms))
                 && let Some(session) = crate::playback_sessions::get_by_id(db, session_db_id)?
                 && let Some(found) =
                     current_playback(db, playback_db_id, Some(owner_db_id), session)?
@@ -433,10 +435,7 @@ pub fn list_current_since(
     Ok(current)
 }
 
-fn list_every_current_since(
-    db: &impl DbAccess,
-    since_ms: u64,
-) -> anyhow::Result<Vec<CurrentPlayback>> {
+fn list_every_live(db: &impl DbAccess, now_ms: u64) -> anyhow::Result<Vec<CurrentPlayback>> {
     let sessions: Vec<crate::PlaybackSession> = db
         .exec(
             QueryBuilder::select()
@@ -446,13 +445,16 @@ fn list_every_current_since(
                 .where_()
                 .neighbor()
                 .and()
-                .key("updated_at_ms")
-                .greater_than_or_equal(since_ms)
+                .key("live_until_ms")
+                .greater_than_or_equal(now_ms)
                 .query(),
         )?
         .try_into()?;
     let mut current = Vec::new();
     for session in sessions {
+        if !session.is_live(now_ms) {
+            continue;
+        }
         let Some(session_db_id) = session.db_id else {
             continue;
         };
@@ -997,6 +999,7 @@ mod tests {
                 counts_as_listen: true,
                 last_position_at_ms: 1,
                 updated_at_ms: 1,
+                live_until_ms: 1,
                 created_at_ms: 1,
             },
             track_id,
@@ -1025,6 +1028,7 @@ mod tests {
                 counts_as_listen: true,
                 last_position_at_ms: 1,
                 updated_at_ms: 1,
+                live_until_ms: 1,
                 created_at_ms: 1,
             },
             track_id,
@@ -1040,6 +1044,7 @@ mod tests {
         let mut other_session =
             crate::playback_sessions::get_by_id(&db, other_session_id)?.expect("session");
         other_session.updated_at_ms = 50;
+        other_session.live_until_ms = 50;
         db.transaction_mut(|t| crate::playback_sessions::update(t, &other_session))?;
         let unheld_id = insert_session(&mut db, other_id)?;
         db.transaction_mut(|t| insert_reported(t, user_id, "external", "a", session_id, 1))?;
@@ -1058,8 +1063,8 @@ mod tests {
             )
         })?;
 
-        let listed = |owners: Option<&[DbId]>, since_ms| -> anyhow::Result<Vec<(DbId, DbId)>> {
-            let mut listed = list_current_since(&db, owners, since_ms)?
+        let listed = |owners: Option<&[DbId]>, now_ms| -> anyhow::Result<Vec<(DbId, DbId)>> {
+            let mut listed = list_live(&db, owners, now_ms)?
                 .into_iter()
                 .map(|current| (current.owner_db_id, current.session.db_id.unwrap()))
                 .collect::<Vec<_>>();
@@ -1078,7 +1083,7 @@ mod tests {
             vec![(other_id, other_session_id)]
         );
         for owners in [None, Some(&[other_id][..])] {
-            let current = list_current_since(&db, owners, 10)?.remove(0);
+            let current = list_live(&db, owners, 10)?.remove(0);
             assert_eq!(current.playback.id, other_root.id);
             assert!(matches!(
                 &current.playback.source,
@@ -1182,14 +1187,13 @@ mod tests {
         let reported = db.transaction_mut(|t| {
             insert_reported(t, user_id, "external", "device", session_id, 1)
         })?;
-        let expired_at = REPORTED_PLAYBACK_TTL_MS + 2;
+        let expired_at = REPORTED_PLAYBACK_RETENTION_MS + 2;
         assert!(get_reported(&db, user_id, "external", "device", expired_at)?.is_none());
         assert_eq!(
             db.transaction_mut(|t| expire_reported_for_user(t, user_id, expired_at))?,
             vec![ExpiredReported {
                 user_db_id: user_id,
                 current_session_db_id: Some(session_id),
-                updated_at_ms: 1,
             }]
         );
         assert!(get_by_id(&db, reported.db_id.unwrap())?.is_none());
@@ -1205,7 +1209,7 @@ mod tests {
     #[test]
     fn global_reported_expiry_keeps_live_contexts_and_accounting() -> anyhow::Result<()> {
         let (mut db, user_id, session_id) = setup()?;
-        let now_ms = REPORTED_PLAYBACK_TTL_MS + 2;
+        let now_ms = REPORTED_PLAYBACK_RETENTION_MS + 2;
         let (expired, live) = db.transaction_mut(|t| -> anyhow::Result<_> {
             let live = insert_reported(t, user_id, "reporter", "live", session_id, now_ms)?;
             let expired = insert_reported(t, user_id, "reporter", "expired", session_id, 1)?;
@@ -1216,12 +1220,59 @@ mod tests {
             vec![ExpiredReported {
                 user_db_id: user_id,
                 current_session_db_id: Some(session_id),
-                updated_at_ms: 1,
             }]
         );
         assert!(get_by_id(&db, expired.db_id.unwrap())?.is_none());
         assert!(get_by_id(&db, live.db_id.unwrap())?.is_some());
         assert!(crate::playback_sessions::get_by_id(&db, session_id)?.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn reported_expiry_waits_for_the_current_play_live_window() -> anyhow::Result<()> {
+        let (mut db, user_id, session_id) = setup()?;
+        let now_ms = REPORTED_PLAYBACK_RETENTION_MS + 2;
+        let mut session = crate::playback_sessions::get_by_id(&db, session_id)?.unwrap();
+        session.live_until_ms = now_ms;
+        db.transaction_mut(|t| crate::playback_sessions::update(t, &session))?;
+        let reported = db.transaction_mut(|t| {
+            insert_reported(t, user_id, "external", "device", session_id, 1)
+        })?;
+
+        assert!(get_reported(&db, user_id, "external", "device", now_ms)?.is_some());
+        assert!(
+            db.transaction_mut(|t| expire_reported_for_user(t, user_id, now_ms))?
+                .is_empty()
+        );
+        assert!(
+            db.transaction_mut(|t| expire_reported(t, now_ms))?
+                .is_empty()
+        );
+        assert_eq!(list_live(&db, Some(&[user_id]), now_ms)?.len(), 1);
+
+        assert!(get_reported(&db, user_id, "external", "device", now_ms + 1)?.is_none());
+        assert_eq!(
+            db.transaction_mut(|t| expire_reported(t, now_ms + 1))?,
+            vec![ExpiredReported {
+                user_db_id: user_id,
+                current_session_db_id: Some(session_id),
+            }]
+        );
+        assert!(get_by_id(&db, reported.db_id.unwrap())?.is_none());
+
+        // A stopped play is never live, however its window reads.
+        let stopped = db.transaction_mut(|t| {
+            insert_reported(t, user_id, "external", "stopped", session_id, 1)
+        })?;
+        session.state = PlaybackState::Stopped;
+        db.transaction_mut(|t| crate::playback_sessions::update(t, &session))?;
+        assert!(get_reported(&db, user_id, "external", "stopped", now_ms)?.is_none());
+        assert_eq!(
+            db.transaction_mut(|t| expire_reported(t, now_ms))?.len(),
+            1,
+            "{} lapses with its play stopped",
+            stopped.id
+        );
         Ok(())
     }
 
@@ -1267,7 +1318,7 @@ mod tests {
         );
         assert!(get_reported(&db, user_id, "reporter", "0", 1)?.is_some());
         let replacement = db.transaction_mut(|t| {
-            let now_ms = REPORTED_PLAYBACK_TTL_MS + 2;
+            let now_ms = REPORTED_PLAYBACK_RETENTION_MS + 2;
             expire_reported_for_user(t, user_id, now_ms)?;
             insert_reported(t, user_id, "reporter", "new", session_id, now_ms)
         })?;

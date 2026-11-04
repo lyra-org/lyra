@@ -114,7 +114,7 @@ fn move_saved_session(
     session.last_position_ms = position_ms;
     session.last_position_at_ms = now_ms;
     session.updated_at_ms = now_ms;
-    lyra_db::playback_sessions::update(db, &session)?;
+    playback_sessions::update_session(db, &mut session)?;
     Ok(())
 }
 
@@ -130,7 +130,7 @@ fn insert_saved_session(
     let position_ms = duration_ms.map_or(request.position_ms, |duration_ms| {
         request.position_ms.min(duration_ms)
     });
-    let session = PlaybackSession {
+    let mut session = PlaybackSession {
         db_id: None,
         id: nanoid::nanoid!(),
         play_id: nanoid::nanoid!(),
@@ -146,11 +146,12 @@ fn insert_saved_session(
         counts_as_listen: false,
         state: PlaybackState::Stopped,
         updated_at_ms: request.now_ms,
+        live_until_ms: 0,
         created_at_ms: request.now_ms,
     };
-    Ok(lyra_db::playback_sessions::insert(
+    Ok(playback_sessions::insert_session(
         db,
-        &session,
+        &mut session,
         track_db_id,
         request.user_db_id,
     )?)

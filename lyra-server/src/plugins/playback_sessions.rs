@@ -33,6 +33,11 @@ use harmony_core::UserDataBinding;
 use crate::plugins::api::WebSocketSenderType;
 use crate::plugins::args;
 use crate::plugins::executor::ApiWebSocketSender;
+#[cfg(feature = "docgen")]
+use crate::services::playback_sessions::{
+    live_window_description,
+    reported_context_expiry_description,
+};
 use crate::services::playbacks::socket_claims::ClaimedSession;
 use crate::{
     plugins::{
@@ -222,7 +227,13 @@ impl PlaybackSessionsModule {
     }
 
     #[harmony(
-        description = "Reports an observation for a plugin's player context. Returns (public /api/me/playbacks ID, nil) when accepted, (nil, nil) when ignored, or (nil, rejection reason) when admission is refused. Raises an error when the report gives its play a `counts_as_listen` other than the one its start declared. Internal failures raise an error. Track changes retain the context ID; stopped contexts expire after five minutes without an accepted current observation. A position past the duration reads as the end. Without a `play_id`, only a `started` observation begins a new play of the track playing; any other observation after its play stopped resumes that play, so it counts at most one listen. A play left playing when another play replaces it, or when its context expires, is credited for the time since its last report, at most what was left of its track; only the listen this records is announced. A replaced play pauses there, so a late report credits it nothing more, and its start resumes it.",
+        description = concat!(
+            "Reports an observation for a plugin's player context. Returns (public /api/me/playbacks ID, nil) when accepted, (nil, nil) when ignored, or (nil, rejection reason) when admission is refused. Raises an error when the report gives its play a `counts_as_listen` other than the one its start declared. Internal failures raise an error. Track changes retain the context ID. ",
+            reported_context_expiry_description!(),
+            " ",
+            live_window_description!(),
+            " A position past the duration reads as the end. Without a `play_id`, only a `started` observation begins a new play of the track playing; any other observation after its play stopped resumes that play, so it counts at most one listen. A play left playing is credited for the time from its last report to when another play replaced it, or, when its context expires, to when it stopped being live, where it stops, at most what was left of its track; only the listen this records is announced. A replaced play pauses there, so a late report credits it nothing more, and its start resumes it."
+        ),
         returns(Option<String>, Option<String>)
     )]
     async fn report_session(
@@ -398,7 +409,11 @@ impl PlaybackSessionsModule {
     }
 
     #[harmony(
-        description = "Lists active playbacks, from Lyra's own clients and every plugin, most recently reported first: those whose current track is playing, paused or buffering and was reported within the last five minutes. Without a query, lists the dispatch principal's own; another user's or all users' require the manage_users permission, and an admin's also the admin permission. All users' leaves out the admins' without it. Playbacks whose current track the principal can't see are left out. Needs the `lyra.playback_sessions.all` scope too.",
+        description = concat!(
+            "Lists active playbacks, from Lyra's own clients and every plugin, most recently reported first. ",
+            live_window_description!(),
+            " Without a query, lists the dispatch principal's own; another user's or all users' require the manage_users permission, and an admin's also the admin permission. All users' leaves out the admins' without it. Playbacks whose current track the principal can't see are left out. Needs the `lyra.playback_sessions.all` scope too."
+        ),
         returns(Vec<ActivePlaybackInfo>)
     )]
     async fn list_playbacks(

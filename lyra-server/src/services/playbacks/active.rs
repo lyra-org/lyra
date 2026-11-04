@@ -17,16 +17,12 @@ use lyra_db::{
 };
 
 use super::PlaybackError;
-use crate::services::{
-    auth::{
-        Principal,
-        access,
-    },
-    playback_sessions::ACTIVE_SESSION_TTL_MS,
+use crate::services::auth::{
+    Principal,
+    access,
 };
 
-/// A playback whose current track session is playing, paused or buffering, and was reported
-/// within the active window.
+/// A playback whose current track session is live.
 #[derive(Clone, Debug)]
 pub(crate) struct ActivePlayback {
     pub(crate) playback_id: String,
@@ -39,7 +35,8 @@ pub(crate) struct ActivePlayback {
 }
 
 /// The active playbacks of `owners`, most recently reported first, leaving out those whose
-/// current track the viewer can't see. Reported playbacks past their expiry are left out too.
+/// current track the viewer can't see. A reported playback with a live current play hasn't
+/// lapsed.
 /// With `all_users`, `owners` covers every user the viewer may read for, so every user's playback
 /// is read in one pass rather than owner by owner.
 pub(crate) fn list_active(
@@ -54,20 +51,11 @@ pub(crate) fn list_active(
         .filter_map(|user| Some((user.db_id?, user)))
         .collect::<HashMap<DbId, _>>();
     let owner_db_ids = owners.keys().copied().collect::<Vec<_>>();
-    let reported_cutoff_ms = now_ms.saturating_sub(lyra_db::playbacks::REPORTED_PLAYBACK_TTL_MS);
-    let current = lyra_db::playbacks::list_current_since(
-        db,
-        (!all_users).then_some(owner_db_ids.as_slice()),
-        now_ms.saturating_sub(ACTIVE_SESSION_TTL_MS),
-    )?
-    .into_iter()
-    .filter(|current| {
-        owners.contains_key(&current.owner_db_id)
-            && !current.session.state.is_terminal()
-            && (!current.playback.is_reported()
-                || current.playback.updated_at_ms >= reported_cutoff_ms)
-    })
-    .collect::<Vec<_>>();
+    let current =
+        lyra_db::playbacks::list_live(db, (!all_users).then_some(owner_db_ids.as_slice()), now_ms)?
+            .into_iter()
+            .filter(|current| owners.contains_key(&current.owner_db_id))
+            .collect::<Vec<_>>();
     let track_db_ids = current
         .iter()
         .map(|current| current.track_db_id)

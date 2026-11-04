@@ -31,6 +31,9 @@ use serde::{
 use super::tracks::get_by_id as get_track_by_id;
 use super::users::get_by_id as get_user_by_id;
 
+/// How long an unheld session outlasts its last change. Live sessions are kept by
+/// [`PlaybackSession::is_live`], so what this still does is keep a stopped or completed session
+/// for five minutes, for late reports of its play to land.
 const STALE_TTL_MS: u64 = 5 * 60 * 1000;
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -124,7 +127,22 @@ pub struct PlaybackSession {
     pub counts_as_listen: bool,
     pub state: PlaybackState,
     pub updated_at_ms: u64,
+    /// The last moment the play counts as live, as the server decided at its latest change.
+    /// Terminal plays are never live.
+    pub live_until_ms: u64,
     pub created_at_ms: u64,
+}
+
+/// Whether a play in `state` whose stored live window ends at `live_until_ms` is live at
+/// `now_ms`: not ended, and within its window.
+pub fn is_live(state: PlaybackState, live_until_ms: u64, now_ms: u64) -> bool {
+    !state.is_terminal() && now_ms <= live_until_ms
+}
+
+impl PlaybackSession {
+    pub fn is_live(&self, now_ms: u64) -> bool {
+        is_live(self.state, self.live_until_ms, now_ms)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -138,6 +156,13 @@ pub struct EvictedPlayback {
 pub struct PlaybackSessionListProjection {
     pub state: PlaybackState,
     pub updated_at_ms: u64,
+    pub live_until_ms: u64,
+}
+
+impl PlaybackSessionListProjection {
+    pub fn is_live(&self, now_ms: u64) -> bool {
+        is_live(self.state, self.live_until_ms, now_ms)
+    }
 }
 
 pub fn get_track_id(
@@ -267,7 +292,11 @@ pub fn get_list_projections_by_ids(
     }
     let elements = db.exec(
         QueryBuilder::select()
-            .values(vec![DbValue::from("state"), DbValue::from("updated_at_ms")])
+            .values(vec![
+                DbValue::from("state"),
+                DbValue::from("updated_at_ms"),
+                DbValue::from("live_until_ms"),
+            ])
             .ids(typed_ids)
             .query(),
     )?;
@@ -281,19 +310,19 @@ pub fn get_list_projections_by_ids(
                 .map(|kv| kv.value.clone())
                 .ok_or_else(|| anyhow::anyhow!("playback session {} missing {key}", element.id.0))
         };
-        let state = PlaybackState::try_from(value("state")?)?;
-        let updated_at_ms = match value("updated_at_ms")? {
-            DbValue::U64(value) => value,
+        let time = |key: &str| match value(key)? {
+            DbValue::U64(value) => Ok(value),
             value => anyhow::bail!(
-                "playback session {} has invalid updated_at_ms: {value:?}",
+                "playback session {} has invalid {key}: {value:?}",
                 element.id.0
             ),
         };
         projections.insert(
             element.id,
             PlaybackSessionListProjection {
-                state,
-                updated_at_ms,
+                state: PlaybackState::try_from(value("state")?)?,
+                updated_at_ms: time("updated_at_ms")?,
+                live_until_ms: time("live_until_ms")?,
             },
         );
     }
@@ -393,8 +422,8 @@ pub fn get(db: &DbAny) -> anyhow::Result<Vec<PlaybackSession>> {
     Ok(playback_sessions)
 }
 
-/// Removes sessions untouched for longer than the stale TTL, except those a playback holds and
-/// those `is_active` holds for.
+/// Removes sessions untouched for longer than the stale TTL, except live ones, those a playback
+/// holds and those `is_active` holds for.
 pub fn evict_stale(
     db: &mut DbAny,
     now_ms: u64,
@@ -405,7 +434,7 @@ pub fn evict_stale(
     let mut to_remove = Vec::new();
 
     for playback_session in get(db)? {
-        if playback_session.updated_at_ms >= cutoff_ms {
+        if playback_session.updated_at_ms >= cutoff_ms || playback_session.is_live(now_ms) {
             continue;
         }
 
@@ -531,6 +560,7 @@ mod tests {
             counts_as_listen: true,
             last_position_at_ms: now_ms,
             updated_at_ms: now_ms,
+            live_until_ms: now_ms,
             created_at_ms: now_ms,
         }
     }
@@ -752,6 +782,7 @@ mod tests {
             counts_as_listen: true,
             last_position_at_ms: stale_time,
             updated_at_ms: stale_time,
+            live_until_ms: stale_time,
             created_at_ms: stale_time,
         };
         let session_id = create(&mut db, &session, track_id, user_id)?;
@@ -790,6 +821,7 @@ mod tests {
             counts_as_listen: true,
             last_position_at_ms: now_ms,
             updated_at_ms: now_ms,
+            live_until_ms: now_ms,
             created_at_ms: now_ms,
         };
         let session_id = create(&mut db, &session, track_id, user_id)?;
@@ -799,6 +831,29 @@ mod tests {
 
         // Session should still exist
         assert!(get_by_id(&db, session_id)?.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn evict_stale_keeps_live_sessions_unreported_past_the_stale_ttl() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_id = create_test_user(&mut db)?;
+        let track_id = create_test_track(&mut db, "Track")?;
+
+        let now_ms = 1_000_000;
+        let stale_time = now_ms - STALE_TTL_MS - 1;
+        let session = PlaybackSession {
+            updated_at_ms: stale_time,
+            last_position_at_ms: stale_time,
+            live_until_ms: now_ms,
+            ..make_session(stale_time)
+        };
+        let session_id = create(&mut db, &session, track_id, user_id)?;
+
+        assert!(evict_stale(&mut db, now_ms, |_| false)?.is_empty());
+        assert!(get_by_id(&db, session_id)?.is_some());
+        let evicted = evict_stale(&mut db, now_ms + 1, |_| false)?;
+        assert_eq!(evicted.len(), 1, "past its live window, it goes");
         Ok(())
     }
 
@@ -827,6 +882,7 @@ mod tests {
             counts_as_listen: true,
             last_position_at_ms: stale_time,
             updated_at_ms: stale_time,
+            live_until_ms: stale_time,
             created_at_ms: stale_time,
         };
         let session_id = create(&mut db, &session, track_id, user_id)?;

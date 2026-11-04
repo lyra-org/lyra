@@ -22,14 +22,17 @@ pub(crate) use self::workflow::{
     advanced_in,
     current_position_ms,
     evicted_records,
+    insert_session,
     pause_playback_in_transaction,
     report_playback_in_transaction,
     resolve_merged_track_ids_for_play_count,
     start_playback_in_transaction,
+    update_session,
 };
 #[cfg(test)]
 pub(crate) use self::workflow::{
     collect_playback_records,
+    live_until_ms,
     report_playback,
 };
 pub(crate) use lyra_db::PlaybackSession;
@@ -47,7 +50,31 @@ pub(crate) use updates::{
     watch_connection_changes,
 };
 
-pub(crate) const ACTIVE_SESSION_TTL_MS: u64 = 5 * 60 * 1000;
+/// The grace a playing play stays live past the later of its last report and its planned end, and
+/// a buffering one past its last report.
+const LIVE_GRACE_MS: u64 = 5 * 60 * 1000;
+/// How long a paused play stays live after its last report.
+const PAUSED_LIVE_MS: u64 = 30 * 60 * 1000;
+/// When a play is live, for API and plugin documentation; it states [`LIVE_GRACE_MS`] and
+/// [`PAUSED_LIVE_MS`]. A macro so `concat!` can splice it into literal descriptions.
+#[cfg(any(test, feature = "docgen"))]
+macro_rules! live_window_description {
+    () => {
+        "A play is live while it plays until five minutes after the later of its last report and its planned end, when its last reported position reaches its duration at its rate; while paused until thirty minutes after its last report; and while buffering until five minutes after its last report. A stopped or completed play is not live."
+    };
+}
+#[cfg(feature = "docgen")]
+pub(crate) use live_window_description;
+/// When a plugin's reported context expires, for API and plugin documentation; it states
+/// [`lyra_db::playbacks::REPORTED_PLAYBACK_RETENTION_MS`].
+#[cfg(any(test, feature = "docgen"))]
+macro_rules! reported_context_expiry_description {
+    () => {
+        "A reported context expires once its current play is no longer live and five minutes have passed since its last accepted current observation."
+    };
+}
+#[cfg(feature = "docgen")]
+pub(crate) use reported_context_expiry_description;
 pub(crate) const PREVIOUS_PLAYBACK_GRACE_MS: u64 = 30_000;
 /// Playing time a play may be credited beyond the server's elapsed time, to absorb report latency.
 const PLAY_LATENCY_ALLOWANCE_MS: u64 = 5_000;
@@ -434,7 +461,7 @@ mod tests {
     }
 
     fn playing_session(position_ms: u64, at_ms: u64) -> PlaybackSession {
-        PlaybackSession {
+        let mut playback = PlaybackSession {
             db_id: None,
             id: nanoid!(),
             play_id: nanoid!(),
@@ -450,8 +477,11 @@ mod tests {
             counts_as_listen: true,
             state: PlaybackState::Playing,
             updated_at_ms: at_ms,
+            live_until_ms: 0,
             created_at_ms: 0,
-        }
+        };
+        playback.live_until_ms = live_until_ms(&playback);
+        playback
     }
 
     #[test]
@@ -459,17 +489,161 @@ mod tests {
         let mut playback = playing_session(10_000, 1_000);
         // A report without a position leaves the position's time alone.
         playback.updated_at_ms = 5_000;
+        playback.live_until_ms = live_until_ms(&playback);
         assert_eq!(current_position_ms(&playback, 11_000), 20_000);
-        let last_active_ms = 5_000 + ACTIVE_SESSION_TTL_MS;
-        assert_eq!(current_position_ms(&playback, last_active_ms), 300_000);
+        let planned_end_ms = 1_000 + 290_000;
+        let last_live_ms = planned_end_ms + LIVE_GRACE_MS;
+        assert_eq!(playback.live_until_ms, last_live_ms);
+        assert_eq!(current_position_ms(&playback, last_live_ms), 300_000);
         assert_eq!(
-            current_position_ms(&playback, last_active_ms + 1),
+            current_position_ms(&playback, last_live_ms + 1),
             10_000,
-            "a play unreported past the active window stays where it was reported"
+            "a play no longer live stays where it was reported"
         );
 
         playback.state = PlaybackState::Paused;
         assert_eq!(current_position_ms(&playback, 11_000), 10_000);
+    }
+
+    #[test]
+    fn a_long_play_unreported_stays_live_until_after_its_planned_end() {
+        const MINUTE_MS: u64 = 60 * 1000;
+        let reported_at_ms = 1_000;
+        let playback = PlaybackSession {
+            duration_ms: Some(20 * MINUTE_MS),
+            ..playing_session(0, reported_at_ms)
+        };
+        let playback = PlaybackSession {
+            live_until_ms: live_until_ms(&playback),
+            ..playback
+        };
+        let planned_end_ms = reported_at_ms + 20 * MINUTE_MS;
+        assert_eq!(playback.live_until_ms, planned_end_ms + 5 * MINUTE_MS);
+
+        let unreported_ms = reported_at_ms + 6 * MINUTE_MS;
+        assert!(
+            playback.is_live(unreported_ms),
+            "six minutes without a report"
+        );
+        assert_eq!(current_position_ms(&playback, unreported_ms), 6 * MINUTE_MS);
+        assert_eq!(
+            current_position_ms(&playback, reported_at_ms + 19 * MINUTE_MS),
+            19 * MINUTE_MS,
+            "it keeps advancing until its planned end"
+        );
+        assert_eq!(
+            current_position_ms(&playback, planned_end_ms + 5 * MINUTE_MS),
+            20 * MINUTE_MS,
+            "at its end until five minutes past it"
+        );
+        assert!(playback.is_live(planned_end_ms + 5 * MINUTE_MS));
+        assert!(!playback.is_live(planned_end_ms + 5 * MINUTE_MS + 1));
+        assert_eq!(
+            current_position_ms(&playback, planned_end_ms + 5 * MINUTE_MS + 1),
+            0
+        );
+    }
+
+    #[test]
+    fn the_rate_scales_the_planned_end() {
+        const MINUTE_MS: u64 = 60 * 1000;
+        for (rate_permille, planned_end_ms) in [
+            (500, 40 * MINUTE_MS),
+            (1_000, 20 * MINUTE_MS),
+            (2_000, 10 * MINUTE_MS),
+        ] {
+            let playback = PlaybackSession {
+                duration_ms: Some(25 * MINUTE_MS),
+                rate_permille,
+                ..playing_session(5 * MINUTE_MS, 0)
+            };
+            assert_eq!(
+                live_until_ms(&playback),
+                planned_end_ms + LIVE_GRACE_MS,
+                "at {rate_permille}"
+            );
+        }
+    }
+
+    #[test]
+    fn liveness_follows_the_play_state() {
+        let reported_at_ms = 1_000_000;
+        let near_end = playing_session(300_000, reported_at_ms);
+        assert_eq!(
+            live_until_ms(&near_end),
+            reported_at_ms + LIVE_GRACE_MS,
+            "a play reported at its end stays live five minutes after the report"
+        );
+        let unknown = PlaybackSession {
+            duration_ms: None,
+            ..playing_session(0, reported_at_ms)
+        };
+        assert_eq!(live_until_ms(&unknown), reported_at_ms + LIVE_GRACE_MS);
+        for (state, live_until) in [
+            (PlaybackState::Paused, reported_at_ms + PAUSED_LIVE_MS),
+            (PlaybackState::Buffering, reported_at_ms + LIVE_GRACE_MS),
+            (PlaybackState::Stopped, reported_at_ms),
+            (PlaybackState::Completed, reported_at_ms),
+        ] {
+            let mut playback = PlaybackSession {
+                state,
+                ..playing_session(0, reported_at_ms)
+            };
+            playback.live_until_ms = live_until_ms(&playback);
+            assert_eq!(playback.live_until_ms, live_until, "{state}");
+            assert_eq!(
+                playback.is_live(reported_at_ms),
+                !state.is_terminal(),
+                "{state} at its report"
+            );
+            assert!(!playback.is_live(live_until + 1), "{state} past its window");
+        }
+        assert_eq!(PAUSED_LIVE_MS, 30 * 60 * 1000);
+        assert_eq!(LIVE_GRACE_MS, 5 * 60 * 1000);
+        assert_eq!(
+            lyra_db::playbacks::REPORTED_PLAYBACK_RETENTION_MS,
+            5 * 60 * 1000,
+            "{}",
+            reported_context_expiry_description!()
+        );
+        let description = live_window_description!();
+        assert!(
+            description.contains("five minutes after the later")
+                && description.contains("thirty minutes"),
+            "the description states the windows"
+        );
+    }
+
+    #[test]
+    fn the_live_window_follows_each_mutation() {
+        let mut playback = PlaybackSession {
+            duration_ms: Some(1_200_000),
+            ..playing_session(0, 0)
+        };
+        apply_playback_mutation(
+            &mut playback,
+            &PlaybackMutation {
+                state: Some(PlaybackState::Paused),
+                position_ms: Some(60_000),
+                ..PlaybackMutation::default()
+            },
+            60_000,
+        );
+        assert_eq!(live_until_ms(&playback), 60_000 + PAUSED_LIVE_MS);
+        apply_playback_mutation(
+            &mut playback,
+            &PlaybackMutation {
+                state: Some(PlaybackState::Playing),
+                rate_permille: Some(2_000),
+                ..PlaybackMutation::default()
+            },
+            100_000,
+        );
+        assert_eq!(
+            live_until_ms(&playback),
+            100_000 + (1_200_000 - 60_000) / 2 + LIVE_GRACE_MS,
+            "playing resumes from the paused position, at the new rate"
+        );
     }
 
     #[test]
@@ -649,6 +823,7 @@ mod tests {
             counts_as_listen: true,
             last_position_at_ms: 1_000,
             updated_at_ms: 1_000,
+            live_until_ms: 0,
             created_at_ms: 0,
         };
 
@@ -684,6 +859,7 @@ mod tests {
             counts_as_listen: true,
             last_position_at_ms: 1_000,
             updated_at_ms: 1_000,
+            live_until_ms: 0,
             created_at_ms: 0,
         };
 
@@ -723,6 +899,7 @@ mod tests {
             state: PlaybackState::Playing,
             last_position_at_ms: 1_000,
             updated_at_ms: 1_000,
+            live_until_ms: 0,
             created_at_ms: 0,
         };
 
@@ -765,6 +942,7 @@ mod tests {
             counts_as_listen: true,
             last_position_at_ms: 1_000,
             updated_at_ms: 1_000,
+            live_until_ms: 0,
             created_at_ms: 0,
         };
 
@@ -800,6 +978,7 @@ mod tests {
             counts_as_listen: true,
             last_position_at_ms: 22_000,
             updated_at_ms: 22_000,
+            live_until_ms: 0,
             created_at_ms: 0,
         };
 
@@ -835,6 +1014,7 @@ mod tests {
             counts_as_listen: true,
             last_position_at_ms: 22_000,
             updated_at_ms: 22_000,
+            live_until_ms: 0,
             created_at_ms: 0,
         };
 
@@ -870,6 +1050,7 @@ mod tests {
             state: PlaybackState::Playing,
             last_position_at_ms: 150_000,
             updated_at_ms: 150_000,
+            live_until_ms: 0,
             created_at_ms: 0,
         };
 
@@ -910,6 +1091,7 @@ mod tests {
             counts_as_listen: true,
             state: PlaybackState::Playing,
             updated_at_ms: 0,
+            live_until_ms: 0,
             created_at_ms: 0,
         };
 

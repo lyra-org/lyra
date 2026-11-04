@@ -16,10 +16,7 @@ use super::{
     bindings,
     saved,
 };
-use crate::services::{
-    playback_sessions::ACTIVE_SESSION_TTL_MS,
-    remote::handoffs,
-};
+use crate::services::remote::handoffs;
 
 /// The inactive queue-backed playbacks each user keeps; the maintenance sweep deletes the oldest
 /// beyond them.
@@ -81,7 +78,7 @@ pub(crate) fn delete(
 /// Deletes the oldest inactive queue-backed playbacks of each user beyond
 /// [`RETAINED_QUEUE_PLAYBACKS_PER_USER`], at most a bounded batch at a time, so a user far past
 /// the target drains over several sweeps. A playback is inactive while its current session isn't
-/// a non-terminal one reported within the active window and no connection drives it.
+/// live and no connection drives it.
 pub(crate) fn sweep_retained(
     db: &mut DbAny,
     now_ms: u64,
@@ -148,7 +145,6 @@ fn inactive_queue_playbacks(
         db,
         current_ids.values().copied().collect(),
     )?;
-    let active_cutoff_ms = now_ms.saturating_sub(ACTIVE_SESSION_TTL_MS);
     let driven = bindings::driven_playback_ids();
     Ok(projections
         .into_iter()
@@ -156,9 +152,7 @@ fn inactive_queue_playbacks(
             let live = current_ids
                 .get(&projection.db_id)
                 .and_then(|session_id| sessions.get(session_id))
-                .is_some_and(|session| {
-                    !session.state.is_terminal() && session.updated_at_ms >= active_cutoff_ms
-                });
+                .is_some_and(|session| session.is_live(now_ms));
             !live && !driven.contains(&projection.id)
         })
         .map(|projection| (projection.db_id, projection.updated_at_ms))
@@ -188,7 +182,7 @@ mod tests {
         let other_db_id = lyra_db::users::create(&mut db, &test_user("other")?)?;
         let track_db_id = insert_track(&mut db, "Track")?;
         let track_id = lyra_db::lookup::find_id_by_db_id(&db, track_db_id)?.unwrap();
-        let now_ms = 10 * ACTIVE_SESSION_TTL_MS;
+        let now_ms = 60 * 60 * 1000;
         let mut store = |user_db_id, state, updated_at_ms| -> anyhow::Result<DbId> {
             let playback =
                 store_queue_playback(&mut db, user_db_id, &[&track_id], 0, track_db_id, state, 0)?;
@@ -198,7 +192,7 @@ mod tests {
             let mut session = lyra_db::playback_sessions::get_by_id(&db, session_db_id)?.unwrap();
             session.updated_at_ms = updated_at_ms;
             db.transaction_mut(|t| {
-                lyra_db::playback_sessions::update(t, &session)?;
+                crate::services::playback_sessions::update_session(t, &mut session)?;
                 lyra_db::playbacks::touch(t, playback_db_id, updated_at_ms)
             })?;
             Ok(playback_db_id)

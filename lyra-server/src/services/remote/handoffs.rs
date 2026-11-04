@@ -676,6 +676,7 @@ mod tests {
                 counts_as_listen: true,
                 last_position_at_ms: 2,
                 updated_at_ms: 2,
+                live_until_ms: 2 + 5 * 60 * 1000,
                 created_at_ms: 1,
             },
         }
@@ -849,7 +850,6 @@ mod tests {
             .expected_session
             .db_id
             .expect("persisted playback session must have a database ID");
-        let playback_session_public_id = applied.expected_session.id.clone();
         let source = registry::register(
             applied.user_public_id.clone(),
             None,
@@ -874,7 +874,7 @@ mod tests {
             &source_scope,
             &applied.playback_public_id,
             playback_session_id,
-            playback_session_public_id,
+            &applied.expected_session,
             1,
         );
         let (token, completion_rx) = begin(
@@ -891,7 +891,10 @@ mod tests {
             &source_scope,
             &applied.playback_public_id,
             newer_source_playback_id,
-            "newer-source-playback".to_string(),
+            &lyra_db::PlaybackSession {
+                id: "newer-source-playback".to_string(),
+                ..applied.expected_session.clone()
+            },
             2,
         );
         let committed = claim_progress(

@@ -76,7 +76,10 @@ async fn reported_reads_share_the_supplied_expiry_cutoff() -> anyhow::Result<()>
     )?
     .unwrap();
     let id = playback.db_id.unwrap();
-    let cutoff = observed_at + lyra_db::playbacks::REPORTED_PLAYBACK_TTL_MS;
+    let session_id = lyra_db::playbacks::get_current_session_id(&*db, id)?.unwrap();
+    let cutoff = lyra_db::playback_sessions::get_by_id(&*db, session_id)?
+        .unwrap()
+        .live_until_ms;
     for (current_ms, visible) in [(cutoff, true), (cutoff + 1, false)] {
         assert_eq!(
             !playbacks::list_visible_projections(&db, &principal, false, current_ms)?.is_empty(),
@@ -152,7 +155,7 @@ async fn assert_queue_revision_conflict(
 }
 
 #[test]
-fn active_filter_requires_recent_non_terminal_current_session() {
+fn active_filter_requires_a_live_current_session() {
     let current_ms = 1_000_000;
     let playback = lyra_db::playbacks::Playback {
         db_id: Some(DbId(1)),
@@ -186,6 +189,7 @@ fn active_filter_requires_recent_non_terminal_current_session() {
             counts_as_listen: true,
             last_position_at_ms: current_ms,
             updated_at_ms: current_ms,
+            live_until_ms: current_ms,
             created_at_ms: 1,
         },
     };
@@ -213,7 +217,7 @@ fn active_filter_requires_recent_non_terminal_current_session() {
         .as_mut()
         .unwrap()
         .playback
-        .updated_at_ms = current_ms - ACTIVE_PLAYBACK_TIMEOUT_MS - 1;
+        .live_until_ms = current_ms - 1;
     assert!(!playback_is_active(
         stale.current_session.as_ref(),
         current_ms

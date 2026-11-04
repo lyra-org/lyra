@@ -254,7 +254,10 @@ With the `plugins.auto_update` setting on, the default, it then installs
 the newer releases that are not held; pinned, incompatible, and unknown
 plugins are never updated. The runtime reloads to apply them once nothing
 is playing: no audio is being streamed, no HLS session is open, and no
-playback session reported playing in the last five minutes. With the
+live playback session is playing or buffering. A playing session stays
+live until five minutes after the later of its last report and its
+planned end, when its reported position reaches the track's duration; a
+buffering one until five minutes after its last report. With the
 setting off, updates are only reported.
 
 Plugins without a repository source are local: bundled or hand-copied.

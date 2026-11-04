@@ -1081,7 +1081,7 @@ mod tests {
                 &scope(user_public_id),
                 "playback",
                 agdb::DbId(1),
-                "playback".to_string(),
+                &crate::services::playbacks::bindings::bound_session("playback", 2),
                 1,
             );
         }

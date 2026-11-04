@@ -39,8 +39,9 @@ pub(super) struct Transition {
     pub(super) displaced_session: Option<DetachedSession>,
 }
 
-/// Finishes a committed report: announces the listens it recorded, binds the reporting
-/// connection, unbinds the sessions it ended or displaced, and evicts stale sessions.
+/// Finishes a committed report: announces the listens it recorded, moves the live window of the
+/// connections bound to its play, binds the reporting connection, unbinds the sessions it ended
+/// or displaced, and evicts stale sessions.
 pub(super) fn finish(
     db: &mut DbAny,
     transition: Transition,
@@ -57,6 +58,11 @@ pub(super) fn finish(
         displaced.announce_recorded_listen();
     }
 
+    // Whichever connection reported, those bound to the play follow its live window.
+    bindings::follow_live_window(
+        session.playback.playback_session_id,
+        &session.playback.playback,
+    );
     let ended = session.playback.playback.state.is_terminal();
     // Bound before the displaced session is cleared, so the reporter moves straight from the
     // replaced track session to its successor.
@@ -88,15 +94,14 @@ pub(super) fn finish(
 }
 
 /// Removes stale track sessions nothing holds: no playback, as its current or recent previous
-/// session, and no connection bound since the active window.
+/// session, and no connection whose bound play is still live.
 pub(crate) fn cleanup_evicted_playbacks(
     db: &mut DbAny,
     now_ms: u64,
 ) -> Result<Vec<EvictedPlaybackRecord>, PlaybackError> {
-    bindings::cleanup_stale(now_ms, playback_sessions::ACTIVE_SESSION_TTL_MS);
-    let active_cutoff_ms = now_ms.saturating_sub(playback_sessions::ACTIVE_SESSION_TTL_MS);
+    bindings::cleanup_stale(now_ms);
     let evicted = lyra_db::playback_sessions::evict_stale(db, now_ms, |playback_session_id| {
-        bindings::holds_session(playback_session_id, active_cutoff_ms)
+        bindings::holds_session(playback_session_id, now_ms)
     })?;
     bindings::clear_sessions(&evicted);
     Ok(playback_sessions::evicted_records(db, evicted)?)
@@ -352,6 +357,74 @@ mod tests {
             paused_at(&second),
             Some((PlaybackState::Paused, 20_000, 5_000))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_report_from_elsewhere_keeps_the_connection_bound_while_its_play_is_live()
+    -> anyhow::Result<()> {
+        let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+        crate::services::testing::init_default_test_state()?;
+        let mut db = lyra_db::test_db::new_test_db()?;
+        let user = test_user("alice")?;
+        let user_public_id = user.id.clone();
+        let user_db_id = lyra_db::users::create(&mut db, &user)?;
+        let track_db_id = insert_track(&mut db, "Track")?;
+        let track_id = lyra_db::lookup::find_id_by_db_id(&db, track_db_id)?.expect("track id");
+        let play_id = nanoid::nanoid!();
+        // 190 s into a 200 s track, the binding's window ends 10 s plus the grace later.
+        let created = create_playback(
+            &mut db,
+            CreatePlaybackRequest {
+                id: nanoid::nanoid!(),
+                play_id: play_id.clone(),
+                user_db_id,
+                client_name: None,
+                queue: ValidatedQueue {
+                    snapshot: QueueSnapshot::single(track_id),
+                    current_track_db_id: track_db_id,
+                },
+                mutation: playing(190_000),
+                now_ms: 1_000,
+                reporting_connection: Some(ReportingConnection {
+                    user_public_id: user_public_id.clone(),
+                    session_key: "device:1".to_string(),
+                }),
+            },
+        )?;
+        let first_window = created.session.playback.live_until_ms;
+        // A seek back to the start, reported without the connection.
+        let seeked = crate::services::playbacks::report_progress(
+            &mut db,
+            crate::services::playbacks::ReportProgressRequest {
+                playback_db_id: created.playback.db_id.expect("stored playback"),
+                play_id,
+                user_db_id,
+                client_name: None,
+                queue_revision: created.playback.queue().expect("queue-backed").revision,
+                current_track_db_id: track_db_id,
+                mutation: playing(0),
+                now_ms: 2_000,
+                require_full_queue_access: false,
+                reporting_connection: None,
+            },
+        )?;
+        assert!(seeked.session.playback.live_until_ms > first_window + 1);
+
+        let after_first_window = first_window + 1;
+        cleanup_evicted_playbacks(&mut db, after_first_window)?;
+        let epoch = binding_epoch(&user_public_id, "device:1");
+        assert!(epoch.is_some(), "the binding follows the play's window");
+
+        let (paused, _) = pause_disconnected_connection(
+            &mut db,
+            &user_public_id,
+            "device:1",
+            epoch,
+            after_first_window,
+        )?;
+        assert_eq!(paused.len(), 1, "the closed connection pauses its play");
+        assert_eq!(paused[0].playback.state, PlaybackState::Paused);
         Ok(())
     }
 }

@@ -1254,7 +1254,7 @@ impl Fixture {
         let duration_ms = lyra_db::tracks::get_by_id(db, current_track_db_id)?
             .and_then(|track| track.duration_ms);
         let position_ms = playback.position_ms.unwrap_or(0);
-        let session = lyra_db::PlaybackSession {
+        let mut session = lyra_db::PlaybackSession {
             db_id: None,
             id: nanoid::nanoid!(),
             play_id: nanoid::nanoid!(),
@@ -1274,6 +1274,7 @@ impl Fixture {
                 playback.state.unwrap_or(lyra_db::PlaybackState::Paused)
             },
             updated_at_ms,
+            live_until_ms: 0,
             created_at_ms: updated_at_ms,
         };
         let stored = lyra_db::playbacks::Playback {
@@ -1290,8 +1291,12 @@ impl Fixture {
             updated_at_ms,
         };
         db.transaction_mut(|t| {
-            let session_db_id =
-                lyra_db::playback_sessions::insert(t, &session, current_track_db_id, user_db_id)?;
+            let session_db_id = crate::services::playback_sessions::insert_session(
+                t,
+                &mut session,
+                current_track_db_id,
+                user_db_id,
+            )?;
             let playback_db_id = lyra_db::playbacks::insert(t, &stored, user_db_id, session_db_id)?;
             if let Some(plugin) = &playback.plugin {
                 lyra_db::playbacks::claim_saved(

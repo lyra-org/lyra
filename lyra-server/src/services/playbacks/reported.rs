@@ -222,16 +222,15 @@ fn demote(current: Option<DbId>, now_ms: u64) -> Option<PreviousSession> {
 
 /// Credits a play its player left playing without a stop report for the time from its last report
 /// to `left_at_ms`, moving it at its rate up to at most the end of the track, as a report of
-/// reaching that position would,
-/// and leaves it in `then` if given. A play of unknown duration gets no credit; a buffering one
-/// gets none either, but still leaves in `then`. Returns the update when it changed anything; only
-/// its listen is announced.
+/// reaching that position would, and leaves it in `then`. A play of unknown duration gets no
+/// credit; a buffering one gets none either, but still leaves in `then`. A paused or ended play is
+/// left as it is. Returns the update when it changed anything; only its listen is announced.
 fn leave_play(
     db: &mut impl lyra_db::DbAccess,
     user_db_id: DbId,
     session: PlaybackSession,
     left_at_ms: u64,
-    then: Option<PlaybackState>,
+    then: PlaybackState,
 ) -> Result<Option<TransactionPlaybackUpdate>, PlaybackError> {
     let credit_ms = match session.state {
         // At most the elapsed time, so no latency allowance is added on top.
@@ -248,9 +247,6 @@ fn leave_play(
         }
     };
     let position_ms = (credit_ms > 0).then(|| session.last_position_ms + credit_ms);
-    if position_ms.is_none() && then.is_none() {
-        return Ok(None);
-    }
     let now_ms = left_at_ms.max(session.updated_at_ms);
     Ok(Some(playback_sessions::report_playback_in_transaction(
         db,
@@ -258,7 +254,7 @@ fn leave_play(
             user_db_id,
             mutation: PlaybackMutation {
                 position_ms,
-                state: then,
+                state: Some(then),
                 ..PlaybackMutation::default()
             },
             now_ms,
@@ -283,15 +279,15 @@ fn leave_replaced(
             user_db_id,
             replaced.session,
             now_ms,
-            Some(PlaybackState::Paused),
+            PlaybackState::Paused,
         )?);
     }
     Ok(())
 }
 
 /// Opens a report's transaction: the user's lapsed reported playbacks go first, so they hold no
-/// capacity against the limits. A current play each left playing is credited up to when it
-/// lapsed; returns those updates, to announce after commit.
+/// capacity against the limits. A current play each left playing or buffering is credited up to
+/// when it stopped being live, and stopped there; returns those updates, to announce after commit.
 pub(super) fn expire_lapsed(
     db: &mut impl lyra_db::DbAccess,
     user_db_id: DbId,
@@ -315,15 +311,14 @@ fn credit_lapsed(
         else {
             continue;
         };
-        let lapsed_at_ms = expired
-            .updated_at_ms
-            .saturating_add(lyra_db::playbacks::REPORTED_PLAYBACK_TTL_MS);
+        // Settled as stopped at the lapse, so the orphaned play isn't live again from it.
+        let lapsed_at_ms = session.live_until_ms;
         credited.extend(leave_play(
             db,
             expired.user_db_id,
             session,
             lapsed_at_ms,
-            None,
+            PlaybackState::Stopped,
         )?);
     }
     Ok(credited)

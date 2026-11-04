@@ -17,10 +17,11 @@ use lyra_db::{
 };
 
 use super::{
-    ACTIVE_SESSION_TTL_MS,
     ActiveEvent,
     EvictedPlaybackRecord,
+    LIVE_GRACE_MS,
     NORMAL_RATE_PERMILLE,
+    PAUSED_LIVE_MS,
     PLAY_LATENCY_ALLOWANCE_MS,
     PlaybackMutation,
     PlaybackRecord,
@@ -157,13 +158,56 @@ fn time_to_advance(advanced_ms: u64, rate_permille: u32) -> u64 {
     advanced_ms.saturating_mul(u64::from(NORMAL_RATE_PERMILLE)) / u64::from(rate_permille.max(1))
 }
 
+/// The last moment the play counts as live, from its state as last changed: a playing one until
+/// [`LIVE_GRACE_MS`] after the later of its last report and its planned end, when its
+/// position reaches its duration at its rate; a paused one until [`PAUSED_LIVE_MS`]
+/// after its last report; a buffering one until [`LIVE_GRACE_MS`] after it. A terminal
+/// play stopped being live at its last report. Every change to a session stores it anew.
+pub(crate) fn live_until_ms(playback: &PlaybackSession) -> u64 {
+    match playback.state {
+        PlaybackState::Playing => {
+            let planned_end_ms = playback.duration_ms.map_or(0, |duration_ms| {
+                playback.last_position_at_ms.saturating_add(time_to_advance(
+                    duration_ms.saturating_sub(playback.position_ms),
+                    playback.rate_permille,
+                ))
+            });
+            playback
+                .updated_at_ms
+                .max(planned_end_ms)
+                .saturating_add(LIVE_GRACE_MS)
+        }
+        PlaybackState::Paused => playback.updated_at_ms.saturating_add(PAUSED_LIVE_MS),
+        PlaybackState::Buffering => playback.updated_at_ms.saturating_add(LIVE_GRACE_MS),
+        PlaybackState::Stopped | PlaybackState::Completed => playback.updated_at_ms,
+    }
+}
+
+/// Stores a new session of the track for the user, with its live window.
+pub(crate) fn insert_session(
+    db: &mut impl lyra_db::DbAccess,
+    session: &mut PlaybackSession,
+    track_db_id: DbId,
+    user_db_id: DbId,
+) -> anyhow::Result<DbId> {
+    session.live_until_ms = live_until_ms(session);
+    lyra_db::playback_sessions::insert(db, session, track_db_id, user_db_id)
+}
+
+/// Stores a change to the stored session with its live window anew.
+pub(crate) fn update_session(
+    db: &mut impl lyra_db::DbAccess,
+    session: &mut PlaybackSession,
+) -> anyhow::Result<()> {
+    session.live_until_ms = live_until_ms(session);
+    lyra_db::playback_sessions::update(db, session)
+}
+
 /// The play's position at `now_ms`: its last reported position, advanced while it plays at its
-/// rate for the time since that report, within its duration. A play unreported for longer than the
-/// active window, as one whose player went away without pausing it, stays at that position.
+/// rate for the time since that report, within its duration. A play no longer live, as one whose
+/// player went away without pausing it, stays at that position.
 pub(crate) fn current_position_ms(playback: &PlaybackSession, now_ms: u64) -> u64 {
-    let position_ms = if playback.state == PlaybackState::Playing
-        && playback.updated_at_ms >= now_ms.saturating_sub(ACTIVE_SESSION_TTL_MS)
-    {
+    let position_ms = if playback.state == PlaybackState::Playing && playback.is_live(now_ms) {
         playback.position_ms.saturating_add(advanced_in(
             now_ms.saturating_sub(playback.last_position_at_ms),
             playback.rate_permille,
@@ -438,14 +482,10 @@ pub(crate) fn start_playback_in_transaction(
     {
         return Err(PlaybackServiceError::PlayConflict(play_id));
     }
-    let playback = new_playback_session(play_id, client_name, plugin_id, mutation, now_ms);
+    let mut playback = new_playback_session(play_id, client_name, plugin_id, mutation, now_ms);
 
-    let playback_session_id = map_internal(lyra_db::playback_sessions::insert(
-        db,
-        &playback,
-        track_db_id,
-        user_db_id,
-    ))?;
+    let playback_session_id =
+        map_internal(insert_session(db, &mut playback, track_db_id, user_db_id))?;
 
     let playback = require_playback_record(
         db,
@@ -491,6 +531,7 @@ fn new_playback_session(
         counts_as_listen: mutation.counts_as_listen.unwrap_or(true),
         last_position_at_ms: now_ms,
         updated_at_ms: now_ms,
+        live_until_ms: 0,
         created_at_ms: now_ms,
     }
 }
@@ -548,7 +589,7 @@ pub(crate) fn report_playback_in_transaction(
     }
 
     apply_playback_mutation(&mut playback, &mutation, now_ms);
-    map_internal(lyra_db::playback_sessions::update(db, &playback))?;
+    map_internal(update_session(db, &mut playback))?;
     let track_db_id = map_internal(lyra_db::playback_sessions::get_track_id(
         db,
         playback_session_id,

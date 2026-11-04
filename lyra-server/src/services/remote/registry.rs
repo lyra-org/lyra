@@ -386,7 +386,7 @@ pub(super) async fn finish_handoff_progress(
             .expected_session
             .db_id
             .expect("applied handoff progress must retain its session database ID"),
-        applied.expected_session.id.clone(),
+        &applied.expected_session,
         applied.expected_session.updated_at_ms,
     );
     if let Some(source) = ready.source_binding {

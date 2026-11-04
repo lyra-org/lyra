@@ -534,10 +534,9 @@ async fn reported_playback_expires_without_losing_credited_listen() -> anyhow::R
     assert!(lyra_db::listens::find_by_play_id(&db, user, &credited.playback.play_id)?.is_some());
     let root =
         lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", T0 + 111_000)?.unwrap();
-    cleanup_evicted_playbacks(&mut db, T0 + 411_001)?;
-    assert!(
-        lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", T0 + 411_001)?.is_none()
-    );
+    let lapsed = credited.playback.live_until_ms + 1;
+    cleanup_evicted_playbacks(&mut db, lapsed)?;
+    assert!(lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", lapsed)?.is_none());
     report_test_playback_session(
         &mut db,
         user,
@@ -549,12 +548,12 @@ async fn reported_playback_expires_without_losing_credited_listen() -> anyhow::R
             state: Some(PlaybackState::Playing),
             ..PlaybackMutation::default()
         },
-        T0 + 412_000,
+        lapsed + 1_000,
     )?;
     let fresh =
-        lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", T0 + 412_000)?.unwrap();
+        lyra_db::playbacks::get_reported(&db, user, "external", "auth:1", lapsed + 1_000)?.unwrap();
     assert_ne!(fresh.id, root.id);
-    cleanup_evicted_playbacks(&mut db, T0 + 900_000)?;
+    cleanup_evicted_playbacks(&mut db, lapsed + 400_000)?;
     assert!(
         lyra_db::playback_sessions::get_by_id(&db, credited.playback_session_id)?.is_none(),
         "a counted play's session goes once nothing holds it"
@@ -2287,7 +2286,8 @@ async fn a_lapsed_play_is_credited_up_to_its_tracks_end_and_counts() -> anyhow::
     )?;
     assert_eq!(listen_count(&db, user, short)?, 0);
 
-    let later = T0 + 10_000 + lyra_db::playbacks::REPORTED_PLAYBACK_TTL_MS + 1;
+    let lapsed_at = stored(&db, &a)?.live_until_ms;
+    let later = lapsed_at + 1;
     let other = insert_track(&mut db, "Other", 200_000)?;
     report_at(
         &mut db,
@@ -2302,8 +2302,8 @@ async fn a_lapsed_play_is_credited_up_to_its_tracks_end_and_counts() -> anyhow::
     let a_now = stored(&db, &a)?;
     assert_eq!(a_now.played_ms, 60_000);
     assert_eq!(a_now.position_ms, 60_000);
-    assert!(
-        a_now.updated_at_ms < later,
+    assert_eq!(
+        a_now.updated_at_ms, lapsed_at,
         "the credit is dated to the lapse, not the sweep"
     );
     assert_eq!(listen_count(&db, user, short)?, 1);
@@ -2331,13 +2331,136 @@ async fn the_sweep_credits_a_lapsed_play_once() -> anyhow::Result<()> {
     )?
     .expect("A starts");
 
-    let lapsed = T0 + lyra_db::playbacks::REPORTED_PLAYBACK_TTL_MS + 1;
+    let lapsed = stored(&db, &a)?.live_until_ms + 1;
+    crate::services::playbacks::expire_all_lapsed(&mut db, lapsed - 1)?;
+    assert_eq!(
+        stored(&db, &a)?.played_ms,
+        0,
+        "still live, it isn't credited"
+    );
     crate::services::playbacks::expire_all_lapsed(&mut db, lapsed)?;
     assert_eq!(stored(&db, &a)?.played_ms, 60_000);
     assert_eq!(listen_count(&db, user, short)?, 1);
 
     crate::services::playbacks::expire_all_lapsed(&mut db, lapsed + 1_000)?;
     assert_eq!(stored(&db, &a)?.played_ms, 60_000);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_long_play_stays_active_unreported_and_lapses_after_its_planned_end() -> anyhow::Result<()>
+{
+    const MINUTE_MS: u64 = 60 * 1000;
+    let (mut db, _guard) = new_scoped_test_db().await?;
+    let user = insert_user(&mut db, "alice")?;
+    let long = insert_track(&mut db, "Long", 20 * MINUTE_MS)?;
+    let a = report_at(
+        &mut db,
+        user,
+        long,
+        ActiveEvent::Started,
+        PlaybackState::Playing,
+        2 * MINUTE_MS,
+        T0,
+    )?
+    .expect("A starts");
+    let planned_end = T0 + 18 * MINUTE_MS;
+    assert_eq!(stored(&db, &a)?.live_until_ms, planned_end + 5 * MINUTE_MS);
+
+    let owner = lyra_db::users::get_by_id(&db, user)?.expect("user");
+    let viewer = crate::services::auth::Principal::for_user(
+        &db,
+        user,
+        vec![lyra_db::Permission::Admin],
+        std::collections::HashSet::new(),
+    );
+    let active = |db: &DbAny, now_ms| {
+        crate::services::playbacks::list_active(
+            db,
+            &viewer,
+            std::slice::from_ref(&owner),
+            false,
+            now_ms,
+        )
+    };
+
+    let unreported = T0 + 6 * MINUTE_MS;
+    crate::services::playbacks::expire_all_lapsed(&mut db, unreported)?;
+    let listed = active(&db, unreported)?;
+    assert_eq!(listed.len(), 1, "six minutes unreported, it still plays");
+    assert_eq!(
+        crate::services::playback_sessions::current_position_ms(&listed[0].session, unreported),
+        8 * MINUTE_MS
+    );
+    let last_live = planned_end + 5 * MINUTE_MS;
+    crate::services::playbacks::expire_all_lapsed(&mut db, last_live)?;
+    assert_eq!(active(&db, last_live)?.len(), 1);
+    assert_eq!(stored(&db, &a)?.played_ms, 0);
+
+    crate::services::playbacks::expire_all_lapsed(&mut db, last_live + 1)?;
+    assert!(active(&db, last_live + 1)?.is_empty());
+    let credited = stored(&db, &a)?;
+    assert_eq!(
+        credited.state,
+        PlaybackState::Stopped,
+        "settled at its lapse"
+    );
+    assert!(
+        !credited.is_live(last_live),
+        "an orphaned play is not live again"
+    );
+    crate::services::playbacks::expire_all_lapsed(&mut db, last_live + 2)?;
+    assert_eq!(stored(&db, &a)?.played_ms, 18 * MINUTE_MS, "credited once");
+    assert_eq!(
+        credited.played_ms,
+        18 * MINUTE_MS,
+        "credited up to its lapse, at most what was left of the track"
+    );
+    assert_eq!(credited.position_ms, 20 * MINUTE_MS);
+    assert_eq!(credited.updated_at_ms, last_live, "dated to the lapse");
+    assert_eq!(listen_count(&db, user, long)?, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_paused_play_keeps_its_context_for_thirty_minutes() -> anyhow::Result<()> {
+    const MINUTE_MS: u64 = 60 * 1000;
+    let (mut db, _guard) = new_scoped_test_db().await?;
+    let user = insert_user(&mut db, "alice")?;
+    let track = insert_track(&mut db, "Track", 4 * MINUTE_MS)?;
+    let a = report_at(
+        &mut db,
+        user,
+        track,
+        ActiveEvent::Started,
+        PlaybackState::Playing,
+        0,
+        T0,
+    )?
+    .expect("A starts");
+    report_at(
+        &mut db,
+        user,
+        track,
+        ActiveEvent::Progress,
+        PlaybackState::Paused,
+        MINUTE_MS,
+        T0 + MINUTE_MS,
+    )?;
+    let reported = |db: &DbAny, now_ms| {
+        lyra_db::playbacks::get_reported(db, user, "external", "auth:1", now_ms)
+            .map(|found| found.is_some())
+    };
+    let last_live = T0 + 31 * MINUTE_MS;
+    crate::services::playbacks::expire_all_lapsed(&mut db, last_live)?;
+    assert!(reported(&db, last_live)?, "paused for thirty minutes");
+    crate::services::playbacks::expire_all_lapsed(&mut db, last_live + 1)?;
+    assert!(!reported(&db, last_live + 1)?);
+    assert_eq!(
+        stored(&db, &a)?.played_ms,
+        MINUTE_MS,
+        "a paused play earns nothing more"
+    );
     Ok(())
 }
 
@@ -2830,10 +2953,8 @@ async fn a_replaced_or_lapsed_play_declared_not_to_count_records_no_listen() -> 
     );
     assert_eq!(listen_count(&db, user, replaced)?, 0);
 
-    expire_all_lapsed(
-        &mut db,
-        T0 + 100_000 + lyra_db::playbacks::REPORTED_PLAYBACK_TTL_MS + 1,
-    )?;
+    let b_lapsed_at = stored(&db, &b)?.live_until_ms + 1;
+    expire_all_lapsed(&mut db, b_lapsed_at)?;
     assert!(
         stored(&db, &b)?.played_ms >= 100_000,
         "the lapsed play is credited"

@@ -27,6 +27,10 @@ use super::{
     get_owner_id,
     insert,
 };
+use crate::playback_sessions::{
+    PlaybackSessionListProjection,
+    get_list_projections_by_ids,
+};
 
 pub(super) const MAX_REPORTED_PLAYBACKS_PER_USER: usize = 100;
 
@@ -36,7 +40,41 @@ pub(super) const MAX_REPORTED_PLAYBACKS_PER_USER: usize = 100;
 )]
 pub struct ReportedPlaybackLimitReached;
 
-pub const REPORTED_PLAYBACK_TTL_MS: u64 = 5 * 60 * 1_000;
+/// How long a reported playback outlasts its last current observation however its current play
+/// stands, so a report resuming a stopped play still reaches it.
+pub const REPORTED_PLAYBACK_RETENTION_MS: u64 = 5 * 60 * 1_000;
+
+/// Whether a reported playback last observed at `updated_at_ms` lapsed by `now_ms`: its retention
+/// passed and its current play, if any, is no longer live.
+pub fn reported_lapsed(
+    updated_at_ms: u64,
+    current: Option<&PlaybackSessionListProjection>,
+    now_ms: u64,
+) -> bool {
+    updated_at_ms < now_ms.saturating_sub(REPORTED_PLAYBACK_RETENTION_MS)
+        && !current.is_some_and(|current| current.is_live(now_ms))
+}
+
+/// [`reported_lapsed`] for the stored reported playback, reading its current session.
+pub fn is_reported_lapsed(
+    db: &impl DbAccess,
+    playback_db_id: DbId,
+    updated_at_ms: u64,
+    now_ms: u64,
+) -> anyhow::Result<bool> {
+    if !reported_lapsed(updated_at_ms, None, now_ms) {
+        return Ok(false);
+    }
+    let Some(session_db_id) = get_current_session_id(db, playback_db_id)? else {
+        return Ok(true);
+    };
+    let current = get_list_projections_by_ids(db, vec![session_db_id])?;
+    Ok(reported_lapsed(
+        updated_at_ms,
+        current.get(&session_db_id),
+        now_ms,
+    ))
+}
 
 /// The player session a plugin reports a playback for. The plugin is the one its sessions name.
 #[derive(Clone, Debug, Serialize, Deserialize, DbTypeMarker)]
@@ -106,10 +144,7 @@ pub fn get_reported(
             ),
         "reported playback binding identity mismatch"
     );
-    Ok(
-        (playback.updated_at_ms >= now_ms.saturating_sub(REPORTED_PLAYBACK_TTL_MS))
-            .then_some(playback),
-    )
+    Ok((!is_reported_lapsed(db, element.id, playback.updated_at_ms, now_ms)?).then_some(playback))
 }
 
 /// Binds a new reported playback. The caller expires the user's lapsed ones first, with
@@ -173,7 +208,6 @@ pub struct ExpiredReported {
     pub user_db_id: DbId,
     /// The track session it held current, which outlives it until eviction.
     pub current_session_db_id: Option<DbId>,
-    pub updated_at_ms: u64,
 }
 
 pub fn expire_reported_for_user(
@@ -181,8 +215,8 @@ pub fn expire_reported_for_user(
     user_db_id: DbId,
     now_ms: u64,
 ) -> anyhow::Result<Vec<ExpiredReported>> {
-    let cutoff = now_ms.saturating_sub(REPORTED_PLAYBACK_TTL_MS);
-    let expired = db
+    let cutoff = now_ms.saturating_sub(REPORTED_PLAYBACK_RETENTION_MS);
+    let candidates = db
         .exec(
             QueryBuilder::search()
                 .to(user_db_id)
@@ -200,15 +234,15 @@ pub fn expire_reported_for_user(
                 .query(),
         )?
         .ids();
-    remove_expired(db, expired)
+    remove_expired(db, candidates, now_ms)
 }
 
 pub fn expire_reported(
     db: &mut impl DbAccess,
     now_ms: u64,
 ) -> anyhow::Result<Vec<ExpiredReported>> {
-    let cutoff = now_ms.saturating_sub(REPORTED_PLAYBACK_TTL_MS);
-    let expired = db
+    let cutoff = now_ms.saturating_sub(REPORTED_PLAYBACK_RETENTION_MS);
+    let candidates = db
         .exec(
             QueryBuilder::search()
                 .from("playbacks")
@@ -225,23 +259,33 @@ pub fn expire_reported(
                 .query(),
         )?
         .ids();
-    remove_expired(db, expired)
+    remove_expired(db, candidates, now_ms)
 }
 
+/// Removes the candidates, reported playbacks past their retention, whose current play is no
+/// longer live.
 fn remove_expired(
     db: &mut impl DbAccess,
-    playback_db_ids: Vec<DbId>,
+    candidates: Vec<DbId>,
+    now_ms: u64,
 ) -> anyhow::Result<Vec<ExpiredReported>> {
-    let mut expired = Vec::with_capacity(playback_db_ids.len());
-    for id in playback_db_ids {
-        let playback =
-            get_by_id(db, id)?.ok_or_else(|| anyhow::anyhow!("missing playback {}", id.0))?;
+    let current_ids = super::current_session_ids(db, &candidates)?;
+    let sessions =
+        get_list_projections_by_ids(db, current_ids.values().copied().collect::<Vec<_>>())?;
+    let mut expired = Vec::new();
+    for id in candidates {
+        let current_session_db_id = current_ids.get(&id).copied();
+        if current_session_db_id
+            .and_then(|session_db_id| sessions.get(&session_db_id))
+            .is_some_and(|current| current.is_live(now_ms))
+        {
+            continue;
+        }
         let user_db_id = get_owner_id(db, id)?
             .ok_or_else(|| anyhow::anyhow!("playback {} has no owner", id.0))?;
         expired.push(ExpiredReported {
             user_db_id,
-            current_session_db_id: get_current_session_id(db, id)?,
-            updated_at_ms: playback.updated_at_ms,
+            current_session_db_id,
         });
         delete_in_transaction(db, id)?;
     }
