@@ -22,6 +22,7 @@ local EXTENSIONS = {
 	{ name = "songLyrics", versions = { 1 } },
 	{ name = "topSongsByArtistId", versions = { 1 } },
 	{ name = "transcodeOffset", versions = { 1 } },
+	{ name = "transcoding", versions = { 1 } },
 }
 
 local SONIC_SIMILARITY = { name = "sonicSimilarity", versions = { 1 } }

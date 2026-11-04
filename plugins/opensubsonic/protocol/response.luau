@@ -253,4 +253,25 @@ function module.failed_xml(err: SubsonicError): ApiResponse
 	return render({}, envelope("failed", { error = err :: any }), 200)
 end
 
+-- A bare HTTP error, for methods whose errors aren't Subsonic responses.
+function module.http_error(status: number, message: string): ApiResponse
+	return api.response.text(status, message, { ["content-type"] = "text/plain; charset=utf-8" })
+end
+
+local HTTP_STATUSES: { [number]: number } = {
+	[10] = 400,
+	[40] = 401,
+	[41] = 401,
+	[42] = 401,
+	[43] = 401,
+	[44] = 401,
+	[50] = 403,
+	[70] = 404,
+}
+
+-- A Subsonic error as a bare HTTP error.
+function module.failed_http(err: SubsonicError): ApiResponse
+	return module.http_error(HTTP_STATUSES[err.code] or 500, err.message)
+end
+
 return module

@@ -19,6 +19,7 @@ local scanning = require("./endpoints/scanning")
 local search = require("./endpoints/search")
 local sonic = require("./endpoints/sonic")
 local system = require("./endpoints/system")
+local transcoding = require("./endpoints/transcoding")
 local users = require("./endpoints/users")
 
 type ApiContext = api.ApiContext
@@ -26,26 +27,40 @@ type ApiResponse = api.ApiResponse
 type Request = request.Request
 type Method = (req: Request) -> ApiResponse
 
-local xml_errors: { [string]: boolean } = media.xml_errors
+-- A family of methods, with those that answer every error in XML or as a bare HTTP error.
+type Family = {
+	methods: { [string]: Method },
+	xml_errors: { [string]: boolean }?,
+	http_errors: { [string]: boolean }?,
+}
 
 local methods: { [string]: Method } = {}
-for _, family: { [string]: Method } in
+local xml_errors: { [string]: boolean } = {}
+local http_errors: { [string]: boolean } = {}
+for _, family: Family in
 	{
-		system.methods,
-		browsing.methods,
-		lists.methods,
-		search.methods,
-		media.methods,
-		playlists.methods,
-		scanning.methods,
-		annotation.methods,
-		users.methods,
-		bookmarks.methods,
-		sonic.methods,
-	} :: { { [string]: Method } }
+		system,
+		browsing,
+		lists,
+		search,
+		media,
+		playlists,
+		scanning,
+		annotation,
+		users,
+		bookmarks,
+		sonic,
+		transcoding,
+	} :: { Family }
 do
-	for name, method in family do
+	for name, method in family.methods do
 		methods[name] = method
+	end
+	for name in family.xml_errors or {} do
+		xml_errors[name] = true
+	end
+	for name in family.http_errors or {} do
+		http_errors[name] = true
 	end
 end
 
@@ -67,6 +82,9 @@ function module.dispatch(ctx: ApiContext): ApiResponse
 	end
 
 	local function failed(err: response.SubsonicError): ApiResponse
+		if http_errors[name] then
+			return response.failed_http(err)
+		end
 		return if xml_errors[name] then response.failed_xml(err) else response.failed(params, err)
 	end
 

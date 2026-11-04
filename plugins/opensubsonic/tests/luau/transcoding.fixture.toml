@@ -1,0 +1,68 @@
+run_as = "listener"
+
+# The listener sees "Album": Hires, a 24-bit 96 kHz stereo FLAC; Lossy, a stereo MP3; Opus, a mono
+# Ogg Opus; Span, part of Hires's file as a cue sheet's; and Fileless, which has no file.
+# "Secret" is in a library nobody is granted.
+
+[[users]]
+key = "listener"
+
+[[api_keys]]
+key = "listener_key"
+user = "listener"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener"]
+
+[[libraries]]
+key = "locked"
+name = "Locked"
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+
+[[releases]]
+key = "secret"
+title = "Secret"
+library = "locked"
+
+[[tracks]]
+key = "hires"
+title = "Hires"
+release = "album"
+file = "hires.flac"
+
+[[tracks]]
+key = "lossy"
+title = "Lossy"
+release = "album"
+file = "song.mp3"
+
+[[tracks]]
+key = "opus"
+title = "Opus"
+release = "album"
+file = "song.opus"
+
+[[tracks]]
+key = "span"
+title = "Span"
+release = "album"
+file = "hires.flac"
+start_ms = 10
+end_ms = 60
+
+[[tracks]]
+key = "fileless"
+title = "Fileless"
+release = "album"
+
+[[tracks]]
+key = "hidden"
+title = "Hidden"
+release = "secret"
+file = "hires.flac"

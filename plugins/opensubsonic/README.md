@@ -39,14 +39,15 @@ specification groups them. Others fail with error 0.
 - **Playlists:** `createPlaylist`, `deletePlaylist`, `getPlaylist`, `getPlaylists`, `updatePlaylist`
 - **Searching:** `search2`, `search3`
 - **System:** `getLicense`, `getOpenSubsonicExtensions`, `ping`, `tokenInfo`
+- **Transcoding:** [`getTranscodeDecision`](#transcoding), [`getTranscodeStream`](#transcoding)
 - **User management:** `getUser`, `getUsers`
 
 Extensions: `apiKeyAuthentication`, `formPost`, `indexBasedQueue`, `playbackReport`, `songLyrics`,
-`topSongsByArtistId`, `transcodeOffset`, and [`sonicSimilarity`](#sonic-similarity) while a mixer
-is set.
+`topSongsByArtistId`, `transcodeOffset`, [`transcoding`](#transcoding), and
+[`sonicSimilarity`](#sonic-similarity) while a mixer is set.
 
-Not served: sharing, podcasts, internet radio, jukebox, chat, video, avatars, HLS, the Transcoding
-methods, user management beyond reading users, and the deprecated `search`.
+Not served: sharing, podcasts, internet radio, jukebox, chat, video, avatars, HLS, user management
+beyond reading users, and the deprecated `search`.
 
 ## Play queues
 
@@ -96,6 +97,26 @@ clients supporting `topSongsByArtistId` can name one artist by its ID instead.
 
 Clients download songs as their original files, which takes the download permission on your Lyra
 account. Without it, a download fails with error 50, while streaming still works.
+
+## Transcoding
+
+Clients supporting `transcoding` describe what they can play, and Lyra answers whether it sends a
+song as it is or transcodes it, and how. A song plays as it is through the first direct play
+profile that takes it. Otherwise Lyra transcodes it for the first transcoding profile it can meet,
+lowered as far as the client's limits ask, but never upsampled, upmixed, or made lossless from a
+lossy file. A lossy file keeps its own bitrate unless a limit lowers it. Lyra streams over HTTP
+only, so profiles asking for HLS are skipped.
+
+A limit marked as not required lowers a transcode where it can, but never rules a profile out.
+Lyra settles a transcode's channels, then its sample rate, then its bit depth or bitrate, each
+once and with the limits on that property alone, so it can miss a combination such as more
+channels to reach a required bitrate.
+A required one that Lyra can't check, such as an AAC profile or a limit it doesn't know, counts
+as unmet. Containers, codecs, and protocols Lyra doesn't know match nothing.
+
+The decision's `transcodeParams` stay valid while the song's file is unchanged; once its format
+or audio properties change, `getTranscodeStream` answers 410 and the client asks for a new
+decision.
 
 ## Sonic similarity
 
