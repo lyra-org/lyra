@@ -18,6 +18,7 @@ local response = require("../protocol/response")
 type ApiQueryParams = api.ApiQueryParams
 type ApiResponse = api.ApiResponse
 type EntityProjectionInfo = entities.EntityProjectionInfo
+type HlsServeOptions = api.HlsServeOptions
 type ImageTransformOptions = api.ImageTransformOptions
 type LyricsInfo = lyrics.LyricsInfo
 type Request = request.Request
@@ -42,6 +43,20 @@ local REFUSED_OPTIONS = "The song can't be streamed with these options"
 -- host's error, which can name the file on disk.
 local function or_failed(served: ApiResponse, message: string): ApiResponse
 	return api.response.with_fallback(served, response.failed_xml(response.error(0, message)))
+end
+
+-- The bitrate an `hls` request asks for, in kbps: the first `bitRate`, as `1000` or a video's
+-- `1000@480x360`; nil when it asks for none.
+local function hls_bitrate_kbps(params: ApiQueryParams): number?
+	local raw = request.param(params, "bitRate")
+	if not raw then
+		return nil
+	end
+	local kbps = tonumber(string.match(raw, "^%s*(%d+)%s*$") or string.match(raw, "^%s*(%d+)@"))
+	if not kbps then
+		return request.fail(0, `Invalid bitRate: {raw}`)
+	end
+	return if kbps > 0 then kbps else nil
 end
 
 -- The stream options a request asks for; nil asks for none. `format=raw` asks for no encoding
@@ -218,6 +233,7 @@ end
 module.xml_errors = {
 	download = true,
 	getCoverArt = true,
+	hls = true,
 	stream = true,
 } :: { [string]: boolean }
 
@@ -238,6 +254,21 @@ module.methods = {
 		end
 		local track = find_track(req.params)
 		return or_failed(api.response.download_track(track.id), "The song can't be downloaded")
+	end,
+
+	-- A media playlist of one bitrate, the first `bitRate` asked for; a repeated `bitRate`, which
+	-- asks for a playlist of each, gets only the first.
+	hls = function(req: Request): ApiResponse
+		local track = find_track(req.params)
+		local kbps = hls_bitrate_kbps(req.params)
+		-- AAC, which every HLS player plays, rather than whatever the host defaults to.
+		local options: HlsServeOptions = {
+			preferred_codecs = { "aac" },
+			bitrate_bps = if kbps then kbps * 1000 else nil,
+		}
+		local playlist = api.response.hls_playlist(track.id, options)
+		playlist.headers = { ["content-type"] = "application/vnd.apple.mpegurl" }
+		return or_failed(playlist, "The song can't be streamed")
 	end,
 
 	-- The best ranked lyrics of the first song titled `title`, by an artist named `artist` when

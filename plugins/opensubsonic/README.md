@@ -35,7 +35,7 @@ specification groups them. Others fail with error 0.
 - **Media annotation:** [`reportPlayback`](#now-playing), `scrobble`, `setRating`, `star`, `unstar`
 - **Media library scanning:** `getScanStatus`, `startScan`
 - **Media retrieval:** [`download`](#downloading), `getCoverArt`, `getLyrics`, `getLyricsBySongId`,
-  `stream`
+  [`hls`](#streaming-over-hls), `stream`
 - **Playlists:** `createPlaylist`, `deletePlaylist`, `getPlaylist`, `getPlaylists`, `updatePlaylist`
 - **Searching:** `search2`, `search3`
 - **System:** `getLicense`, `getOpenSubsonicExtensions`, `ping`, `tokenInfo`
@@ -46,8 +46,8 @@ Extensions: `apiKeyAuthentication`, `formPost`, `indexBasedQueue`, `playbackRepo
 `topSongsByArtistId`, `transcodeOffset`, [`transcoding`](#transcoding), and
 [`sonicSimilarity`](#sonic-similarity) while a mixer is set.
 
-Not served: sharing, podcasts, internet radio, jukebox, chat, video, avatars, HLS, user management
-beyond reading users, and the deprecated `search`.
+Not served: sharing, podcasts, internet radio, jukebox, chat, video, avatars, user management beyond
+reading users, and the deprecated `search`.
 
 ## Play queues
 
@@ -97,6 +97,11 @@ clients supporting `topSongsByArtistId` can name one artist by its ID instead.
 
 Clients download songs as their original files, which takes the download permission on your Lyra
 account. Without it, a download fails with error 50, while streaming still works.
+
+## Streaming over HLS
+
+`hls` serves a song as an HLS playlist of one bitrate. A client asking for several bitrates, by
+repeating `bitRate`, gets a playlist of the first alone, rather than one to switch between.
 
 ## Transcoding
 

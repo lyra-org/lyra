@@ -66,10 +66,13 @@ end
 
 local module = {}
 
--- Answers `/rest/{method}`, with or without the `.view` suffix.
+-- Answers `/rest/{method}`, with or without the `.view` suffix; `hls` also answers as `hls.m3u8`.
 function module.dispatch(ctx: ApiContext): ApiResponse
 	local params = request.params(ctx)
 	local name = string.gsub(ctx.params.method, "%.view$", "")
+	if name == "hls.m3u8" then
+		name = "hls"
+	end
 
 	local public_method = system.public_methods[name]
 	if public_method then

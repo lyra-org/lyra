@@ -225,3 +225,40 @@ assert(string.find(lyrics_xml, ">One\nTwo</lyrics>", 1, true), lyrics_xml)
 assert(string.find(lyrics_xml, 'artist="Amy"', 1, true) and string.find(lyrics_xml, 'title="Plain"', 1, true))
 local nothing_xml = call.raw("getLyrics", { apiKey = key, title = "Segment" }).body
 assert(string.find(nothing_xml, "<lyrics/>", 1, true), nothing_xml)
+
+-- `hls` serves a media playlist of one bitrate, as `hls.m3u8` and `hls.view` too, failing in XML
+-- as `stream` does.
+local function hls(params: { [string]: string | { string } }, method: string?): any
+	local query: { [string]: string | { string } } = { apiKey = key, f = "json" }
+	for name, value in params do
+		query[name] = value
+	end
+	return call.raw(method or "hls", query)
+end
+local function hls_error(params: { [string]: string | { string } }): number
+	local failed = hls(params)
+	assert(failed.kind == "text", `hls answered {failed.kind}`)
+	assert(string.find(failed.headers["content-type"], "^text/xml"), failed.headers["content-type"])
+	local code = string.match(failed.body, '<error code="(%d+)"')
+	assert(code, failed.body)
+	return tonumber(code) :: number
+end
+
+for _, method in { "hls", "hls.m3u8", "hls.view" } do
+	local playlist = hls({ id = ids.synced }, method)
+	assert(playlist.kind == "hls_playlist" and playlist.track_id == ids.synced, `{method} answered {playlist.kind}`)
+	assert(playlist.headers["content-type"] == "application/vnd.apple.mpegurl", playlist.headers["content-type"])
+	assert(playlist.options.preferred_codecs[1] == "aac" and #playlist.options.preferred_codecs == 1, "AAC")
+	assert(playlist.options.bitrate_bps == nil, "no bitRate leaves the bitrate to the host")
+	local hls_code, hls_message = fallback_error(playlist)
+	assert(hls_code == 0 and hls_message == "The song can't be streamed", hls_message)
+end
+assert(hls({ id = ids.synced, bitRate = "192" }).options.bitrate_bps == 192000, "a bitrate")
+assert(hls({ id = ids.synced, bitRate = { "128", "320" } }).options.bitrate_bps == 128000, "the first bitrate")
+assert(hls({ id = ids.synced, bitRate = "1000@480x360" }).options.bitrate_bps == 1000000, "a video bitrate")
+assert(hls({ id = ids.synced, bitRate = "0" }).options.bitrate_bps == nil, "no bitrate")
+assert(hls({ id = ids.synced, audioTrack = "2" }).options.bitrate_bps == nil, "audioTrack is for video")
+assert(hls_error({ id = ids.synced, bitRate = "fast" }) == 0, "a bad bitrate")
+assert(hls_error({}) == 10, "hls needs an id")
+assert(hls_error({ id = ids.hidden }) == 70, "a hidden song isn't streamed")
+assert(hls_error({ id = ids.album }) == 70, "an album isn't streamed")
