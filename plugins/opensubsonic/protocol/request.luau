@@ -29,7 +29,8 @@ local FORM_MEDIA_TYPE = "application/x-www-form-urlencoded"
 
 local module = {}
 
-local function header(ctx: ApiContext, name: string): string?
+-- A request header's value, `name` in lowercase.
+function module.header(ctx: ApiContext, name: string): string?
 	for key, value in ctx.request.headers do
 		if string.lower(key) == name then
 			return value
@@ -50,7 +51,7 @@ end
 -- The query parameters, followed by the fields of a form-encoded POST body.
 function module.params(ctx: ApiContext): ApiQueryParams
 	local query = ctx.request.query
-	local content_type = header(ctx, "content-type")
+	local content_type = module.header(ctx, "content-type")
 	if string.upper(ctx.request.method) ~= "POST" or not content_type then
 		return query
 	end

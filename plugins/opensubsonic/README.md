@@ -28,6 +28,18 @@ Saving an empty queue deletes only that client's queue, after which `getPlayQueu
 recent queue of another client, if there is one. Other servers keep one queue per user, which an
 empty save clears.
 
+## Now playing
+
+Clients supporting `playbackReport` report what they play as they play it, and Lyra counts a song
+as played once enough of it plays, as it does for its own clients. Other clients' "now playing"
+scrobbles show the song playing without counting it; their submitted scrobble counts it.
+Lyra tells players apart by client name and the app's User-Agent, so two devices using the same
+app show as one player only when both send the same User-Agent. Updating an app can change its
+User-Agent, which makes it a new player.
+
+`getNowPlaying` lists only your own playing songs, from every client, Lyra's own included. Other
+users' are never shown.
+
 ## Bookmarks
 
 A bookmark saves your place in a song, with an optional comment of up to 1,000 characters. Only

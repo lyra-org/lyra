@@ -1,0 +1,79 @@
+run_as = "listener"
+
+# The listener and the neighbour see "Album": the short songs One to Five and the long Long. Hidden
+# is in a library nobody is granted.
+
+[[users]]
+key = "listener"
+
+[[users]]
+key = "neighbour"
+
+[[api_keys]]
+key = "listener_key"
+user = "listener"
+
+[[api_keys]]
+key = "neighbour_key"
+user = "neighbour"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener", "neighbour"]
+
+[[libraries]]
+key = "locked"
+name = "Locked"
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+
+[[releases]]
+key = "secret"
+title = "Secret"
+library = "locked"
+
+[[tracks]]
+key = "one"
+title = "One"
+release = "album"
+duration_ms = 5000
+
+[[tracks]]
+key = "two"
+title = "Two"
+release = "album"
+duration_ms = 5000
+
+[[tracks]]
+key = "three"
+title = "Three"
+release = "album"
+duration_ms = 5000
+
+[[tracks]]
+key = "four"
+title = "Four"
+release = "album"
+duration_ms = 5000
+
+[[tracks]]
+key = "five"
+title = "Five"
+release = "album"
+duration_ms = 5000
+
+[[tracks]]
+key = "long"
+title = "Long"
+release = "album"
+duration_ms = 200000
+
+[[tracks]]
+key = "hidden"
+title = "Hidden"
+release = "secret"
+duration_ms = 5000

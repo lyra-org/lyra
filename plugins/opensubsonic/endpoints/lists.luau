@@ -6,6 +6,8 @@
 
 local api = require("@lyra/api")
 local artists = require("@lyra/artists")
+local crypt = require("@harmony/crypt")
+local playback_sessions = require("@lyra/playback_sessions")
 local releases = require("@lyra/releases")
 local tracks = require("@lyra/tracks")
 
@@ -21,6 +23,7 @@ type ApiQueryParams = api.ApiQueryParams
 type ApiResponse = api.ApiResponse
 type ArtistSummary = artists.ArtistSummary
 type JsonObject = { [string]: any }
+type PlaybackState = playback_sessions.PlaybackState
 type ReleaseQuery = releases.ReleaseQuery
 type ReleaseSummary = releases.ReleaseSummary
 type Request = request.Request
@@ -36,7 +39,19 @@ local MAX_YEAR = 0xFFFFFFFF
 
 math.randomseed(os.time() + math.floor(os.clock() * 1e6))
 
+-- How each live playback state reads in `getNowPlaying`.
+local NOW_PLAYING_STATES: { [PlaybackState]: string } = {
+	buffering = "starting",
+	playing = "playing",
+	paused = "paused",
+}
+
 local module = {}
+
+-- A player's integer id, which Subsonic clients hold in a 32-bit signed integer.
+local function player_id(playback_id: string): number
+	return tonumber(string.sub(crypt.hash("sha256", playback_id), 1, 7), 16) :: number
+end
 
 local function year_range(params: ApiQueryParams): ({ number }, "ascending" | "descending")
 	local from_year = request.int(params, "fromYear")
@@ -235,6 +250,41 @@ module.methods = {
 			}).items)
 		end
 		return response.ok(params, { songsByGenre = songs_result(items) })
+	end,
+
+	-- The caller's own live playbacks, from every client, most recently reported first.
+	getNowPlaying = function(req: Request): ApiResponse
+		local playing = playback_sessions.list_playbacks()
+		local ids: { string } = {}
+		for _, playback in playing do
+			table.insert(ids, playback.track_id)
+		end
+		local found = tracks.get(ids)
+		local listed: { tracks.Track } = {}
+		local shown: { playback_sessions.ActivePlaybackInfo } = {}
+		for _, playback in playing do
+			local track = found[playback.track_id]
+			if track then
+				table.insert(listed, track)
+				table.insert(shown, playback)
+			end
+		end
+		local now_ms = os.time() * 1000
+		local entries = songs.list(listed)
+		for index, entry in entries do
+			local playback = shown[index]
+			entry.username = playback.username
+			entry.minutesAgo = math.max(math.floor((now_ms - playback.updated_at_ms) / 60000), 0)
+			entry.playerId = player_id(playback.id)
+			entry.playerName = playback.client_name
+			entry.state = NOW_PLAYING_STATES[playback.state]
+			entry.positionMs = playback.effective_position_ms
+			entry.playbackRate = playback.rate
+		end
+		return response.ok(
+			req.params,
+			{ nowPlaying = if #entries > 0 then { entry = entries } else response.EMPTY_OBJECT }
+		)
 	end,
 
 	getStarred2 = function(req: Request): ApiResponse

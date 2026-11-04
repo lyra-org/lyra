@@ -8,6 +8,7 @@ local api = require("@lyra/api")
 local crypt = require("@harmony/crypt")
 local favorites = require("@lyra/favorites")
 local listens = require("@lyra/listens")
+local playback_sessions = require("@lyra/playback_sessions")
 local ratings = require("@lyra/ratings")
 local tracks = require("@lyra/tracks")
 
@@ -16,6 +17,9 @@ local response = require("../protocol/response")
 
 type ApiQueryParams = api.ApiQueryParams
 type ApiResponse = api.ApiResponse
+type PlaybackEvent = playback_sessions.PlaybackEvent
+type PlaybackSessionReportRequest = playback_sessions.PlaybackSessionReportRequest
+type PlaybackState = playback_sessions.PlaybackState
 type Request = request.Request
 type SubmittedPlay = listens.SubmittedPlay
 
@@ -64,6 +68,64 @@ local function submit(plays: { SubmittedPlay })
 	end
 end
 
+local PLUGIN_ID = "opensubsonic"
+
+-- The host's playback rates, as multiples of normal speed.
+local MIN_RATE = 0.25
+local MAX_RATE = 4
+
+-- How each `reportPlayback` state reports to the host. A starting player buffers, so its position
+-- holds until it plays.
+local REPORTED_STATES: { [string]: { event: PlaybackEvent, state: PlaybackState } } = {
+	starting = { event = "started", state = "buffering" },
+	playing = { event = "progress", state = "playing" },
+	paused = { event = "progress", state = "paused" },
+	stopped = { event = "stopped", state = "stopped" },
+}
+
+-- Fails the request with the host's reason when it refuses the report.
+local function report(playback: PlaybackSessionReportRequest)
+	local _, refused = playback_sessions.report_session(playback)
+	if refused then
+		request.fail(0, refused)
+	end
+end
+
+-- Whether `err` is the host refusing to change whether a play counts as a listen.
+local function changes_counting(err: unknown): boolean
+	return string.find(tostring(err), "cannot change during a play", 1, true) ~= nil
+end
+
+-- The calling client's player: its client name and User-Agent, so devices running the same app
+-- under one name are told apart where their User-Agents differ.
+local function player_key(req: Request): string
+	local client = request.param(req.params, "c") or ""
+	local agent = request.header(req.ctx, "user-agent") or ""
+	return `{client}#{string.sub(crypt.hash("sha256", agent), 1, 16)}`
+end
+
+-- The calling client's live play of `track_id`, if any.
+local function live_play(req: Request, track_id: string): playback_sessions.ActivePlaybackInfo?
+	local key = player_key(req)
+	for _, playing in playback_sessions.list_playbacks() do
+		if playing.plugin_id == PLUGIN_ID and playing.session_key == key and playing.track_id == track_id then
+			return playing
+		end
+	end
+	return nil
+end
+
+-- A report of the calling client's playback of `track`.
+local function playback_of(req: Request, track: tracks.Track): PlaybackSessionReportRequest
+	local client = request.param(req.params, "c") or ""
+	return {
+		session_key = player_key(req),
+		client_name = client,
+		track_id = track.id,
+		duration_ms = track.duration_ms,
+	}
+end
+
 module.methods = {
 	star = function(req: Request): ApiResponse
 		return annotate(req.params, favorites.add)
@@ -90,7 +152,8 @@ module.methods = {
 	end,
 
 	-- Each submitted song is a listen the client already judged, played through from the `time` it
-	-- was listened to, else ending now. "Now playing" notifications are accepted and dropped.
+	-- was listened to, else ending now. A "now playing" notification shows its first song playing,
+	-- from its start, counting no listen, unless the client already reports that song's playback.
 	scrobble = function(req: Request): ApiResponse
 		local params = req.params
 		local ids = request.values(params, "id")
@@ -106,11 +169,26 @@ module.methods = {
 				return request.fail(0, `Invalid time: {time}`)
 			end
 		end
+		local found = tracks.get(ids)
 		if request.bool(params, "submission") == false then
+			for _, id in ids do
+				local track = found[id]
+				if track then
+					local live = live_play(req, id)
+					if not (live and live.counts_as_listen) then
+						local playback = playback_of(req, track)
+						playback.event = "started"
+						playback.state = "playing"
+						playback.position_ms = 0
+						playback.counts_as_listen = false
+						report(playback)
+					end
+					break
+				end
+			end
 			return response.ok(params)
 		end
 
-		local found = tracks.get(ids)
 		local now_ms = os.time() * 1000
 		local plays: { SubmittedPlay } = {}
 		local occurrences: { [string]: number } = {}
@@ -134,6 +212,69 @@ module.methods = {
 			end
 		end
 		submit(plays)
+		return response.ok(params)
+	end,
+
+	-- Only songs play. Whether a play counts as a listen is set by the report that starts it: a
+	-- starting report declaring otherwise stops the play and starts another, and any other report
+	-- keeps the play's. A starting report of the song the client already plays, counted alike,
+	-- arrived after the client's playing report and is dropped, so the play keeps moving.
+	reportPlayback = function(req: Request): ApiResponse
+		local params = req.params
+		local id = request.required(params, "mediaId")
+		local media_type = request.required(params, "mediaType")
+		if media_type ~= "song" then
+			return request.fail(0, `Unsupported mediaType: {media_type}`)
+		end
+		local position = request.int(params, "positionMs")
+		if position == nil then
+			return request.fail(10, "Required parameter is missing: positionMs")
+		elseif position < 0 then
+			return request.fail(0, `Invalid positionMs: {position}`)
+		end
+		local state = request.required(params, "state")
+		local reported = REPORTED_STATES[state]
+		if not reported then
+			return request.fail(0, `Invalid state: {state}`)
+		end
+		local rate = request.number(params, "playbackRate")
+		if rate and rate <= 0 then
+			return request.fail(0, `Invalid playbackRate: {rate}`)
+		end
+		local counts_as_listen = request.bool(params, "ignoreScrobble") ~= true
+		local track = tracks.get({ id })[id]
+		if not track then
+			return request.not_found(`Song {id}`)
+		end
+
+		if state == "starting" then
+			local live = live_play(req, id)
+			if live and live.counts_as_listen ~= counts_as_listen then
+				local stop = playback_of(req, track)
+				stop.event = "stopped"
+				stop.state = "stopped"
+				stop.position_ms = position
+				report(stop)
+			elseif live and live.state == "playing" then
+				return response.ok(params)
+			end
+		end
+
+		local playback = playback_of(req, track)
+		playback.event = reported.event
+		playback.state = reported.state
+		playback.position_ms = position
+		playback.rate = if rate then math.clamp(rate, MIN_RATE, MAX_RATE) else nil
+		playback.counts_as_listen = counts_as_listen
+		local ok, err = pcall(report, playback)
+		if not ok then
+			-- A play the list doesn't show, such as a stopped one this report resumes, keeps its own.
+			if not changes_counting(err) then
+				error(err, 0)
+			end
+			playback.counts_as_listen = nil
+			report(playback)
+		end
 		return response.ok(params)
 	end,
 }
