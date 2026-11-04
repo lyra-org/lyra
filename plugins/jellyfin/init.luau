@@ -7,6 +7,7 @@
 local api = require("@lyra/api")
 local auth = require("@lyra/auth")
 local datastore = require("@lyra/datastore")
+local errors = require("@lyra/errors")
 local libraries = require("@lyra/libraries")
 local playback_sessions = require("@lyra/playback_sessions")
 local playlists = require("@lyra/playlists")
@@ -1379,10 +1380,11 @@ api.post(P .. "/Sessions/Capabilities/Full", function(ctx: ApiContext)
 	return handle_capabilities_post(ctx, true)
 end, { auth = "public", case_insensitive = true })
 local function handle_send_command_error(err: unknown): ApiResponse
-	if string.find(tostring(err), "not found") then
+	local kind = errors.kind(err)
+	if kind == "not_found" then
 		return responses.not_found("session not found")
 	end
-	if string.find(tostring(err), "not authorized") then
+	if kind == "forbidden" then
 		return responses.forbidden()
 	end
 	return api.response.empty(500)

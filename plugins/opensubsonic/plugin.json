@@ -16,6 +16,7 @@
     "lyra.covers",
     "lyra.entities",
     "lyra.entries",
+    "lyra.errors",
     "lyra.favorites",
     "lyra.genres",
     "lyra.libraries",

@@ -5,6 +5,7 @@
 -- www.meshiplaw.com/lyra.
 
 local api = require("@lyra/api")
+local errors = require("@lyra/errors")
 local playback_sessions = require("@lyra/playback_sessions")
 local tracks = require("@lyra/tracks")
 
@@ -318,12 +319,11 @@ function module.push(entry: SessionEntry)
 		local list = module.list_visible(entry.principal, nil)
 		entry.sender:send(websocket.encode("Sessions", list, nil))
 	end, function(err)
-		local message = tostring(err)
-		if string.find(message, "invalid bearer credential", 1, true) then
+		if errors.kind(err) == "unauthenticated" then
 			entry.sender:close()
 			return
 		end
-		warn(`sessions push failed (user_id={entry.user_id}): {message}`)
+		warn(`sessions push failed (user_id={entry.user_id}): {err}`)
 	end)
 end
 

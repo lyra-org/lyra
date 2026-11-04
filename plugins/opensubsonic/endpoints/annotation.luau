@@ -6,6 +6,7 @@
 
 local api = require("@lyra/api")
 local crypt = require("@harmony/crypt")
+local errors = require("@lyra/errors")
 local favorites = require("@lyra/favorites")
 local listens = require("@lyra/listens")
 local playback_sessions = require("@lyra/playback_sessions")
@@ -91,9 +92,10 @@ local function report(playback: PlaybackSessionReportRequest)
 	end
 end
 
--- Whether `err` is the host refusing to change whether a play counts as a listen.
+-- Whether `err` is the host refusing to change whether a play counts as a listen. Reports here
+-- never pass a `play_id`, so the play conflict can't reach them and a conflict is this one.
 local function changes_counting(err: unknown): boolean
-	return string.find(tostring(err), "cannot change during a play", 1, true) ~= nil
+	return errors.kind(err) == "conflict"
 end
 
 -- The calling client's player: its client name and User-Agent, so devices running the same app
