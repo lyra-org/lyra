@@ -8,7 +8,6 @@ local api = require("@lyra/api")
 local artists = require("@lyra/artists")
 local entities = require("@lyra/entities")
 local lyrics = require("@lyra/lyrics")
-local playback_sources = require("@lyra/playback_sources")
 local tracks = require("@lyra/tracks")
 
 local cover_art = require("../catalog/cover_art")
@@ -38,6 +37,12 @@ local function find_track(params: ApiQueryParams): Track
 end
 
 local REFUSED_OPTIONS = "The song can't be streamed with these options"
+
+-- `served` answering a failure to serve it with a Subsonic error of `message`, rather than the
+-- host's error, which can name the file on disk.
+local function or_failed(served: ApiResponse, message: string): ApiResponse
+	return api.response.with_fallback(served, response.failed_xml(response.error(0, message)))
+end
 
 -- The stream options a request asks for; nil asks for none. `format=raw` asks for no encoding
 -- options whatever else the request says.
@@ -194,6 +199,8 @@ local function can_download(req: Request): boolean
 	return table.find(permissions, "admin") ~= nil or table.find(permissions, "download") ~= nil
 end
 
+local COVER_FAILED = "The cover art can't be served"
+
 -- The largest bound the host takes; no image is that large, and none is scaled up.
 local MAX_IMAGE_SIZE = 4294967295
 
@@ -218,15 +225,10 @@ module.methods = {
 	stream = function(req: Request): ApiResponse
 		local track = find_track(req.params)
 		local options = stream_options(req.params)
-		-- The stream answers a request it can't serve with a bare HTTP error; ask first, so the
-		-- client gets a Subsonic one.
-		-- Its errors can name the file on disk, so they stay in the log.
-		local ok, err = pcall(playback_sources.decide, track.id, options)
-		if not ok then
-			warn(`stream of {track.id} refused: {tostring(err)}`)
-			return request.fail(0, if options then REFUSED_OPTIONS else "The song can't be streamed")
-		end
-		return api.response.stream_track(track.id, options)
+		return or_failed(
+			api.response.stream_track(track.id, options),
+			if options then REFUSED_OPTIONS else "The song can't be streamed"
+		)
 	end,
 
 	-- The file as it is, for callers allowed to download.
@@ -235,13 +237,7 @@ module.methods = {
 			return request.fail(50, "Only users allowed to download can download songs")
 		end
 		local track = find_track(req.params)
-		-- As with `stream`, ask first, so the client gets a Subsonic error rather than a bare one.
-		local ok, err = pcall(playback_sources.decide, track.id, nil)
-		if not ok then
-			warn(`download of {track.id} refused: {tostring(err)}`)
-			return request.fail(0, "The song can't be downloaded")
-		end
-		return api.response.download_track(track.id)
+		return or_failed(api.response.download_track(track.id), "The song can't be downloaded")
 	end,
 
 	-- The best ranked lyrics of the first song titled `title`, by an artist named `artist` when
@@ -275,9 +271,9 @@ module.methods = {
 			local bound = math.min(size, MAX_IMAGE_SIZE)
 			local transform: ImageTransformOptions =
 				{ format = image_format(cover.mime_type), max_width = bound, max_height = bound }
-			return api.response.file(200, cover.path, nil, transform)
+			return or_failed(api.response.file(200, cover.path, nil, transform), COVER_FAILED)
 		end
-		return api.response.file(200, cover.path, { ["content-type"] = cover.mime_type })
+		return or_failed(api.response.file(200, cover.path, { ["content-type"] = cover.mime_type }), COVER_FAILED)
 	end,
 
 	-- Every lyrics entry the caller sees, in rank order.

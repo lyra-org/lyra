@@ -68,8 +68,23 @@ assert(
 assert(stream_error({}) == 10, "stream needs an id")
 assert(stream_error({ id = ids.hidden }) == 70, "a hidden song isn't streamed")
 assert(stream_error({ id = ids.album }) == 70, "an album isn't streamed")
-assert(stream_error({ id = ids.fileless }) == 0, "a song the host can't serve fails before streaming")
-assert(string.find(stream({ id = ids.fileless }).body, "The song can't be streamed\"", 1, true), "refused unasked")
+
+-- A stream the host fails to serve answers with a Subsonic error in XML, never the host's, whose
+-- message can name the file on disk.
+local function fallback_error(served: any): (number, string)
+	local fallback = served.fallback
+	assert(fallback and fallback.kind == "text", `{served.kind} has no fallback`)
+	assert(string.find(fallback.headers["content-type"], "^text/xml"), fallback.headers["content-type"])
+	local code, message = string.match(fallback.body, '<error code="(%d+)" message="([^"]*)"')
+	assert(code, fallback.body)
+	return tonumber(code) :: number, message :: string
+end
+local fileless = stream({ id = ids.fileless })
+assert(fileless.kind == "stream_track" and fileless.track_id == ids.fileless, "served without asking first")
+local code, message = fallback_error(fileless)
+assert(code == 0 and message == "The song can't be streamed", message)
+local _, refused_options = fallback_error(stream({ id = ids.synced, format = "mp3" }))
+assert(refused_options == "The song can't be streamed with these options", refused_options)
 assert(stream_error({ id = ids.synced, timeOffset = "soon" }) == 0, "a bad offset")
 assert(stream_error({ apiKey = "not-a-key", id = ids.synced }) == 44, "streaming needs a key")
 assert(stream_error({ f = "jsonp", callback = "cb", id = ids.hidden }) == 70, "jsonp asks for nothing else")
@@ -158,7 +173,8 @@ assert(download_error(key, { id = ids.synced }) == 50, "the listener may not dow
 assert(download_error(downloader, {}) == 10, "download needs an id")
 assert(download_error(downloader, { id = ids.hidden }) == 70, "a hidden song isn't downloaded")
 assert(download_error(downloader, { id = ids.album }) == 70, "an album isn't downloaded")
-assert(download_error(downloader, { id = ids.fileless }) == 0, "a song the host can't serve")
+local download_code, download_message = fallback_error(download(downloader, { id = ids.fileless }))
+assert(download_code == 0 and download_message == "The song can't be downloaded", download_message)
 assert(download_error("not-a-key", { id = ids.synced }) == 44, "downloading needs a key")
 
 -- `getLyrics` finds a visible song by its exact title and, when given, an artist's name, ignoring

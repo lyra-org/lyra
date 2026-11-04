@@ -54,6 +54,9 @@ assert(served.kind == "file", `getCoverArt answered {served.kind}`)
 assert(served.path == cover.path and served.status == 200, served.path)
 assert(served.headers["content-type"] == cover.mime_type, served.headers["content-type"])
 assert(served.transform == nil, "no size serves the file as it is")
+-- A file the host fails to serve answers with a Subsonic error in XML, not the host's.
+assert(served.fallback.kind == "text" and string.find(served.fallback.body, '<error code="0"', 1, true))
+assert(string.find(served.fallback.headers["content-type"], "^text/xml"), "a fallback in XML")
 assert(cover_art({ id = album_art, size = "0" }).transform == nil, "size 0 is the stored image")
 assert(cover_art({ id = album_art, size = "-5" }).transform == nil, "a negative size too")
 
@@ -64,6 +67,7 @@ local transform = resized.transform
 assert(transform.max_width == 300 and transform.max_height == 300, "fits both sides")
 assert(transform.format == "png", `keeps PNG, got {transform.format}`)
 assert(resized.headers == nil, "the host types the resized image")
+assert(resized.fallback ~= nil, "a resized image fails as the stored one does")
 local huge = cover_art({ id = album_art, size = "99999999999" }).transform
 assert(huge.max_width == 4294967295, `a size past the host's bound, got {huge.max_width}`)
 

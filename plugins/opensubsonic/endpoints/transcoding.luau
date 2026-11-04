@@ -704,6 +704,8 @@ module.methods = {
 		if not built then
 			return response.http_error(410, "transcodeParams no longer fit the song; ask getTranscodeDecision again")
 		end
+		-- No fallback: when Lyra can't serve the stream, its own answer is already a bare HTTP
+		-- status and message, and a fallback would replace that status with one of its own.
 		return streamed
 	end,
 }
