@@ -28,6 +28,13 @@ Saving an empty queue deletes only that client's queue, after which `getPlayQueu
 recent queue of another client, if there is one. Other servers keep one queue per user, which an
 empty save clears.
 
+## Bookmarks
+
+A bookmark saves your place in a song, with an optional comment of up to 1,000 characters. Only
+songs take bookmarks, one per song: saving another replaces it. A position past the song's end is
+kept as its end. Bookmarks are separate from play queues and listens, and nothing saves or clears
+them for you.
+
 ## Top songs
 
 An artist's top songs (`getTopSongs`) are your own most played songs of that artist, from your

@@ -12,6 +12,7 @@
     "lyra.api",
     "lyra.artists",
     "lyra.auth",
+    "lyra.bookmarks",
     "lyra.covers",
     "lyra.entities",
     "lyra.entries",

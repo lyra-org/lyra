@@ -5,6 +5,7 @@
 -- www.meshiplaw.com/lyra.
 
 local api = require("@lyra/api")
+local bookmarks = require("@lyra/bookmarks")
 local entities = require("@lyra/entities")
 local favorites = require("@lyra/favorites")
 local genres = require("@lyra/genres")
@@ -71,7 +72,8 @@ local function replay_gain(track: Track): any
 end
 
 -- The `Child` of each track, in order, with every field the caller's view of it fills.
-function module.list(track_list: { Track }): { JsonObject }
+-- `saved_bookmarks` are the caller's bookmarks of the tracks when already read.
+function module.list(track_list: { Track }, saved_bookmarks: { [string]: bookmarks.Bookmark }?): { JsonObject }
 	if #track_list == 0 then
 		return {}
 	end
@@ -109,6 +111,7 @@ function module.list(track_list: { Track }): { JsonObject }
 	local user_ratings = ratings.get(ids)
 	local average_ratings = ratings.average(ids)
 	local starred = favorites.get(ids)
+	local bookmarks_by_id = saved_bookmarks or bookmarks.get(ids)
 	local cover_art_ids = cover_art.ids(ids)
 
 	local songs: { JsonObject } = {}
@@ -123,6 +126,7 @@ function module.list(track_list: { Track }): { JsonObject }
 		local contributors, display_composer = credits.contributors(projections[id])
 		local genre_items, genre = albums.genres(if album then genres_by_release[album.id] else nil)
 		local stats = listen_stats[id]
+		local bookmark = bookmarks_by_id[id]
 
 		local source: PlaybackSourceInfo? = sources[id]
 		local entry = if source then source.entry else nil
@@ -163,6 +167,8 @@ function module.list(track_list: { Track }): { JsonObject }
 			discNumber = track.disc,
 			created = dates.iso8601(track.file_created_at_ms or track.created_at_ms),
 			starred = dates.iso8601(starred[id]),
+			-- In milliseconds, as clients and the spec's example read it, though its schema says seconds.
+			bookmarkPosition = if bookmark then bookmark.position_ms else nil,
 			albumId = if album then album.id else nil,
 			artistId = if artists then artists[1].id else nil,
 			type = "music",

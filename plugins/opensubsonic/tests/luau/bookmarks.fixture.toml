@@ -1,0 +1,86 @@
+run_as = "listener"
+
+# The listener and the neighbour see "Solo" (Amy), holding S1, of 180 seconds, S2, whose duration is
+# unknown, and S3. "Secret", in a library nobody is granted, holds H1. The listener bookmarked S3
+# long ago, and the neighbour bookmarked S1.
+
+[[users]]
+key = "listener"
+
+[[users]]
+key = "neighbour"
+
+[[api_keys]]
+key = "listener_key"
+user = "listener"
+
+[[api_keys]]
+key = "neighbour_key"
+user = "neighbour"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener", "neighbour"]
+
+[[libraries]]
+key = "hidden"
+name = "Hidden"
+
+[[artists]]
+key = "amy"
+name = "Amy"
+
+[[releases]]
+key = "solo"
+title = "Solo"
+library = "music"
+artists = ["amy"]
+
+[[releases]]
+key = "secret"
+title = "Secret"
+library = "hidden"
+artists = ["amy"]
+
+[[tracks]]
+key = "s1"
+title = "S1"
+release = "solo"
+track = 1
+duration_ms = 180000
+artists = ["amy"]
+
+[[tracks]]
+key = "s2"
+title = "S2"
+release = "solo"
+track = 2
+artists = ["amy"]
+
+[[tracks]]
+key = "s3"
+title = "S3"
+release = "solo"
+track = 3
+duration_ms = 200000
+artists = ["amy"]
+
+[[tracks]]
+key = "h1"
+title = "H1"
+release = "secret"
+artists = ["amy"]
+
+[[bookmarks]]
+user = "listener"
+track = "s3"
+position_ms = 30000
+comment = "Bridge"
+at = 1700000000000
+
+[[bookmarks]]
+user = "neighbour"
+track = "s1"
+position_ms = 5000
+at = 1700000000000

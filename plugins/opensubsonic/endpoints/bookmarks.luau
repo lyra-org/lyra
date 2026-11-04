@@ -5,6 +5,7 @@
 -- www.meshiplaw.com/lyra.
 
 local api = require("@lyra/api")
+local bookmarks = require("@lyra/bookmarks")
 local playback_sessions = require("@lyra/playback_sessions")
 local tracks = require("@lyra/tracks")
 
@@ -109,7 +110,75 @@ local function save_queue(req: Request, current_of: (ids: { string }) -> number?
 	return response.ok(params)
 end
 
+-- Every bookmark of the caller's, of the songs they can see, most recently changed first.
+local function bookmark_list(req: Request): { JsonObject }
+	local found = tracks.query({ bookmarked = true, sort = { { key = "bookmarked_at", order = "descending" } } }).items
+	if #found == 0 then
+		return {}
+	end
+	local ids: { string } = {}
+	for _, track in found do
+		table.insert(ids, track.id)
+	end
+	local saved = bookmarks.get(ids)
+	local items: { JsonObject } = {}
+	for index, entry in songs.list(found, saved) do
+		local bookmark = saved[ids[index]]
+		if bookmark then
+			local item: JsonObject = {
+				entry = entry,
+				position = bookmark.position_ms,
+				username = req.auth.principal.username,
+				comment = bookmark.comment,
+				created = dates.iso8601(bookmark.created_at_ms),
+				changed = dates.iso8601(bookmark.updated_at_ms),
+			}
+			table.insert(items, item)
+		end
+	end
+	return items
+end
+
 module.methods = {
+	-- A position past the song's end is kept as its end.
+	createBookmark = function(req: Request): ApiResponse
+		local params = req.params
+		local id = request.required(params, "id")
+		local position = request.int(params, "position")
+		if position == nil then
+			return request.fail(10, "Required parameter is missing: position")
+		elseif position < 0 then
+			return request.fail(0, `Invalid position: {position}`)
+		end
+		local comment = request.param(params, "comment")
+		-- Counts the bytes that start a UTF-8 character.
+		local _, characters = string.gsub(comment or "", "[^\128-\191]", "")
+		if characters > bookmarks.MAX_COMMENT_CHARS then
+			return request.fail(0, `The comment must be at most {bookmarks.MAX_COMMENT_CHARS} characters`)
+		end
+		if not bookmarks.set(id, position, { comment = comment }) then
+			return request.not_found(`Song {id}`)
+		end
+		return response.ok(params)
+	end,
+
+	deleteBookmark = function(req: Request): ApiResponse
+		local params = req.params
+		local id = request.required(params, "id")
+		if not bookmarks.remove(id) then
+			return request.not_found(`Song {id}`)
+		end
+		return response.ok(params)
+	end,
+
+	getBookmarks = function(req: Request): ApiResponse
+		local items = bookmark_list(req)
+		return response.ok(
+			req.params,
+			{ bookmarks = if #items > 0 then { bookmark = items } else response.EMPTY_OBJECT }
+		)
+	end,
+
 	getPlayQueue = function(req: Request): ApiResponse
 		local queue, current = latest_queue(req)
 		if current then

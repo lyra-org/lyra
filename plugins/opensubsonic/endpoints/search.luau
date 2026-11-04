@@ -104,7 +104,9 @@ local function search(
 		end, artist_list),
 		paged("song", song_count, song_offset, function(offset, limit)
 			return tracks.query(query(offset, limit)).items
-		end, songs.list),
+		end, function(items)
+			return songs.list(items)
+		end),
 	})
 end
 
