@@ -118,7 +118,7 @@ function module.handle_get(ctx: ApiContext): ApiResponse
 		return session.unauthorized()
 	end
 	if not session.require_matching_user_scope(ctx, principal) then
-		return responses.forbidden("user is not allowed to view this item user data")
+		return session.forbidden_user()
 	end
 
 	local item_id, item, err = resolve_item(ctx, principal)
@@ -142,7 +142,7 @@ function module.handle_post(ctx: ApiContext): ApiResponse
 		return session.unauthorized()
 	end
 	if not session.require_matching_user_scope(ctx, principal) then
-		return responses.forbidden("user is not allowed to update this item user data")
+		return session.forbidden_user()
 	end
 
 	local request = if ctx then ctx.request else nil
@@ -195,7 +195,7 @@ local function handle_favorite(ctx: ApiContext, should_favorite: boolean): ApiRe
 		return session.unauthorized()
 	end
 	if not session.require_matching_user_scope(ctx, principal) then
-		return session.unauthorized()
+		return session.forbidden_user()
 	end
 
 	local item_id, item, err = resolve_item(ctx, principal)

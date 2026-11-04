@@ -140,11 +140,49 @@ assert((favorites.get({ ids.song })[ids.song] ~= nil) == favorite_before, "a ref
 assert(update("song", { PlaybackPositionTicks = "10" }) == 400, "a string position")
 assert(update("song", { IsFavorite = "yes" }) == 400, "a string favorite")
 
--- The legacy route answers for the caller only.
-local other = user_data.handle_post(
-	context("POST", { userId = string.rep("b", 32), itemId = hex(ids.song) }, { PlaybackPositionTicks = 0 })
+-- The routes answer for the caller only: another user's item user data and favorites are
+-- forbidden, as upstream answers them, whether the legacy path or the query names the user.
+local OTHER_USER = string.rep("b", 32)
+local function expect_forbidden(response: any, label: string)
+	assert(response.status == 403, `{label}: {response.status}`)
+	assert(response.kind == "text" and response.body == "Error processing request.", `{label}: body {response.body}`)
+end
+local function by_query(ctx: any): any
+	ctx.request.query = { userId = { OTHER_USER } }
+	return ctx
+end
+local song_params = { userId = OTHER_USER, itemId = hex(ids.song) }
+expect_forbidden(user_data.handle_get(context("GET", song_params)), "reading another user's")
+expect_forbidden(
+	user_data.handle_get(by_query(context("GET", { itemId = hex(ids.song) }))),
+	"reading another user's by query"
 )
-assert(other.status == 403, `another user: {other.status}`)
+expect_forbidden(
+	user_data.handle_post(context("POST", song_params, { PlaybackPositionTicks = 0 })),
+	"updating another user's"
+)
+expect_forbidden(
+	user_data.handle_post(by_query(context("POST", { itemId = hex(ids.song) }, { PlaybackPositionTicks = 0 }))),
+	"updating another user's by query"
+)
+local favorite_now = favorites.get({ ids.song })[ids.song] ~= nil
+expect_forbidden(user_data.handle_favorite(context("POST", song_params)), "favoriting for another user")
+expect_forbidden(user_data.handle_unfavorite(context("DELETE", song_params)), "unfavoriting for another user")
+expect_forbidden(
+	user_data.handle_favorite(by_query(context("POST", { itemId = hex(ids.song) }))),
+	"favoriting for another user by query"
+)
+assert((favorites.get({ ids.song })[ids.song] ~= nil) == favorite_now, "a forbidden favorite changes nothing")
+
+-- The caller's own favorites change, by either route.
+local favorited = user_data.handle_favorite(context("POST", { itemId = hex(ids.song) }))
+assert(favorited.status == 200 and favorited.body.IsFavorite == true, `favorited: {favorited.status}`)
+local unfavorited =
+	user_data.handle_unfavorite(context("DELETE", { userId = hex(ids.listener), itemId = hex(ids.song) }))
+assert(unfavorited.status == 200 and unfavorited.body.IsFavorite == false, `unfavorited: {unfavorited.status}`)
+if favorite_now then
+	assert(user_data.handle_favorite(context("POST", { itemId = hex(ids.song) })).status == 200, "favorite restored")
+end
 local own = user_data.handle_post(
 	context("POST", { userId = hex(ids.listener), itemId = hex(ids.song) }, { PlaybackPositionTicks = TICKS_PER_MS })
 )
