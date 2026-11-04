@@ -2751,8 +2751,7 @@ mod tests {
                 },
             )
             .await;
-            let admitted = *admitted.lock().unwrap();
-            admitted
+            *admitted.lock().unwrap()
         });
         tokio::task::yield_now().await;
         let waiting = admissions(host, &[None, None]).await;
