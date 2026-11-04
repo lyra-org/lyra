@@ -16,6 +16,38 @@ Lyra can't check Subsonic tokens (`t`/`s`), so a client using token authenticati
 error 41 until it is switched to one of the options above. Revoking a key signs out the client
 that uses it.
 
+## Supported methods
+
+Lyra serves these [methods](https://opensubsonic.netlify.app/docs/endpoints/), grouped as the
+specification groups them. Others fail with error 0.
+
+- **Bookmarks:** [`createBookmark`](#bookmarks), [`deleteBookmark`](#bookmarks),
+  [`getBookmarks`](#bookmarks), [`getPlayQueue`](#play-queues),
+  [`getPlayQueueByIndex`](#play-queues), [`savePlayQueue`](#play-queues),
+  [`savePlayQueueByIndex`](#play-queues)
+- **Browsing:** [`findSonicPath`](#sonic-similarity), `getAlbum`, `getAlbumInfo`, `getAlbumInfo2`,
+  `getArtist`, `getArtistInfo`, `getArtistInfo2`, `getArtists`, `getGenres`,
+  [`getIndexes`](#browsing-by-folder), [`getMusicDirectory`](#browsing-by-folder),
+  `getMusicFolders`, `getSimilarSongs`, `getSimilarSongs2`, `getSong`,
+  [`getSonicSimilarTracks`](#sonic-similarity), [`getTopSongs`](#top-songs)
+- **Lists:** `getAlbumList`, `getAlbumList2`, [`getNowPlaying`](#now-playing), `getRandomSongs`,
+  `getSongsByGenre`, `getStarred`, `getStarred2`
+- **Media annotation:** [`reportPlayback`](#now-playing), `scrobble`, `setRating`, `star`, `unstar`
+- **Media library scanning:** `getScanStatus`, `startScan`
+- **Media retrieval:** [`download`](#downloading), `getCoverArt`, `getLyrics`, `getLyricsBySongId`,
+  `stream`
+- **Playlists:** `createPlaylist`, `deletePlaylist`, `getPlaylist`, `getPlaylists`, `updatePlaylist`
+- **Searching:** `search2`, `search3`
+- **System:** `getLicense`, `getOpenSubsonicExtensions`, `ping`, `tokenInfo`
+- **User management:** `getUser`, `getUsers`
+
+Extensions: `apiKeyAuthentication`, `formPost`, `indexBasedQueue`, `playbackReport`, `songLyrics`,
+`topSongsByArtistId`, `transcodeOffset`, and [`sonicSimilarity`](#sonic-similarity) while a mixer
+is set.
+
+Not served: sharing, podcasts, internet radio, jukebox, chat, video, avatars, HLS, the Transcoding
+methods, user management beyond reading users, and the deprecated `search`.
+
 ## Play queues
 
 Each client saves its own play queue, named by the client name it sends, and Lyra keeps it as a
