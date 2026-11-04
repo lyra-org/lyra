@@ -55,6 +55,11 @@ export type ItemsQueryOptions = {
 	start_index: number,
 	limit: number?,
 	recursive: boolean?,
+	-- Whether the request named `Recursive`, which upstream only defaults when it doesn't.
+	recursive_given: boolean,
+	-- `EnableTotalRecordCount`: whether `TotalRecordCount` counts every match, or only those upstream
+	-- counts with it off (see `listing.luau`).
+	enable_total_record_count: boolean,
 	sort_by: { string },
 	sort_order: string?,
 	fields: { string },
@@ -240,6 +245,8 @@ function module.parse(query: ApiQueryParams?): ItemsQueryOptions
 		start_index = requests.parse_query_int(query, { "StartIndex" }, 0, 0, nil) or 0,
 		limit = requests.parse_query_int(query, { "Limit" }, nil, 0, nil),
 		recursive = parse_bool(query, { "Recursive" }, false),
+		recursive_given = requests.query_lookup(query, { "Recursive" }) ~= nil,
+		enable_total_record_count = parse_bool(query, { "EnableTotalRecordCount" }, true) ~= false,
 		sort_by = parse_csv(query, { "SortBy" }),
 		sort_order = requests.parse_query_string(query, { "SortOrder" }, nil),
 		fields = fields,

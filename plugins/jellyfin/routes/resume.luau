@@ -38,6 +38,7 @@ local LISTING_PARAMS: { [string]: boolean } = {
 	enableimages = true,
 	excludeitemtypes = true,
 	includeitemtypes = true,
+	enabletotalrecordcount = true,
 }
 
 local module = {}

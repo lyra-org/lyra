@@ -97,6 +97,10 @@ expect(page, "Last,Middle", 4, "page")
 assert(page.StartIndex == 1, `page start {page.StartIndex}`)
 expect(list({ StartIndex = "4" }), "", 4, "past the end")
 expect(list({ Limit = "0" }), "", 4, "no items")
+-- Without the total, as upstream, the page's own count stands in for it.
+expect(list({ Limit = "1", EnableTotalRecordCount = "false" }), "Talk", 1, "uncounted page")
+expect(list({ StartIndex = "3", EnableTotalRecordCount = "false" }), "First", 1, "uncounted last page")
+expect(list({ Limit = "1", EnableTotalRecordCount = "true" }), "Talk", 4, "counted page")
 
 -- Only types that may be audio list.
 expect(list({ MediaTypes = "Video" }), "", 0, "video")

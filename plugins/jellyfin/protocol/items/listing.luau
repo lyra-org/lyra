@@ -257,12 +257,22 @@ local function playlist_source(options: ItemsQueryOptions, scope: Scope): Source
 end
 
 -- Pages across the sources as if they were one list, in source order, handing `emit` the page a
--- batch at a time; returns the total.
-local function page_sources(sources: { Source }, start_index: number, limit: number?, emit: Emit): number
+-- batch at a time; returns the total. Unless `count_all`, the sources after the page are left
+-- unqueried and the total leaves them out.
+local function page_sources(
+	sources: { Source },
+	start_index: number,
+	limit: number?,
+	count_all: boolean,
+	emit: Emit
+): number
 	local total = 0
 	local skip = start_index
 	local remaining = limit
 	for _, source in sources do
+		if remaining == 0 and not count_all then
+			break
+		end
 		local offset = skip
 		local wanted = if remaining ~= nil then math.min(BATCH_SIZE, remaining) else BATCH_SIZE
 		local items, count = source(offset, wanted)
@@ -453,7 +463,12 @@ end
 -- stubs a batch at a time; returns the total and the start. `Ids` without `SortBy` answer in
 -- request order; a playlist's children keep playlist order also when their `SortBy` has no Lyra
 -- meaning.
-local function list(options: ItemsQueryOptions, playlist_order: boolean, emit: Emit): (number, number)
+local function list(
+	options: ItemsQueryOptions,
+	playlist_order: boolean,
+	count_all: boolean,
+	emit: Emit
+): (number, number)
 	local scope = lookups.scope(options.parent_id)
 	local sources: { Source } = {}
 	local function add(source: Source?)
@@ -487,9 +502,41 @@ local function list(options: ItemsQueryOptions, playlist_order: boolean, emit: E
 				return results.paginate_items(extras, offset, limit), #extras
 			end)
 		end
-		total = page_sources(sources, options.start_index, options.limit, emit)
+		total = page_sources(sources, options.start_index, options.limit, count_all, emit)
 	end
 	return total, options.start_index
+end
+
+-- What a listing's total counts: every match, only the page's items, or none. As upstream, only
+-- `EnableTotalRecordCount=false` narrows it, and not for the listings upstream holds in memory
+-- whole: searches and a parent's own children. Its database counts only the page of resume and
+-- recursive listings and those by `Ids`, as of those at the root or of a library's items by type,
+-- which upstream makes recursive unless the request says otherwise. Playlists alone, which upstream lists from the root under any
+-- parent but a playlist and filters in memory, count none.
+type Counted = "all" | "page" | "none"
+
+local function counted(options: ItemsQueryOptions, scope: Scope): Counted
+	if options.enable_total_record_count then
+		return "all"
+	elseif options.resume then
+		return "page"
+	elseif options.search_term ~= nil then
+		return "all"
+	elseif #options.ids > 0 then
+		return "page"
+	end
+	local only_playlists = #options.include_item_types == 1
+		and string.lower(options.include_item_types[1]) == "playlist"
+	if only_playlists and scope.entity_type ~= "Playlist" then
+		return "none"
+	elseif
+		options.recursive == true
+		or scope.id == nil
+		or (scope.entity_type == "Library" and #options.include_item_types > 0 and not options.recursive_given)
+	then
+		return "page"
+	end
+	return "all"
 end
 
 -- Lists the items `options` asks for as `list_items` does, handing `emit` the realized items a batch
@@ -503,6 +550,7 @@ function module.each_item_batch(options: ItemsQueryOptions, emit: ({ ItemInfo })
 		options.recursive = true
 	end
 	local scope = lookups.scope(options.parent_id)
+	local count = counted(options, scope)
 	local child_types = if scope.entity_type then CHILD_TYPES[scope.entity_type] else nil
 	if child_types and #options.include_item_types == 0 then
 		local wanted: { string } = {}
@@ -527,13 +575,21 @@ function module.each_item_batch(options: ItemsQueryOptions, emit: ({ ItemInfo })
 		playlist_order = true
 	end
 	local realize_with = options
-	return list(options, playlist_order, function(stubs)
+	local listed = 0
+	local total, start_index = list(options, playlist_order, count == "all", function(stubs)
 		local items = catalog.realize(stubs, realize_with)
 		stubs = nil :: any
+		listed += #items
 		if #items > 0 then
 			emit(items)
 		end
 	end)
+	if count == "page" then
+		return listed, start_index
+	elseif count == "none" then
+		return 0, start_index
+	end
+	return total, start_index
 end
 
 function module.list_items(options: ItemsQueryOptions): ({ ItemInfo }, number, number)
@@ -611,6 +667,12 @@ function module.list_latest_items(options: ItemsQueryOptions): { ItemInfo }
 	return catalog.realize(stubs, latest)
 end
 
+-- Upstream's total of a listing by name, such as `/Artists` or `/Genres`: zero with
+-- `EnableTotalRecordCount=false`, which leaves it uncounted.
+local function by_name_total(options: ItemsQueryOptions, total: number): number
+	return if options.enable_total_record_count then total else 0
+end
+
 -- `/Artists` lists artists credited in any role; `/Artists/AlbumArtists` passes the release role.
 function module.list_artist_items(options: ItemsQueryOptions, role: CreditRole?): ({ ItemInfo }, number, number)
 	local source = artist_source(options, lookups.scope(options.parent_id), role)
@@ -618,7 +680,7 @@ function module.list_artist_items(options: ItemsQueryOptions, role: CreditRole?)
 		return empty(options)
 	end
 	local stubs, total = source(options.start_index, options.limit)
-	return catalog.realize(stubs, options), total, options.start_index
+	return catalog.realize(stubs, options), by_name_total(options, total), options.start_index
 end
 
 function module.list_person_items(options: ItemsQueryOptions): ({ ItemInfo }, number, number)
@@ -658,7 +720,7 @@ function module.list_genre_items(options: ItemsQueryOptions): ({ ItemInfo }, num
 			table.insert(items, item)
 		end
 	end
-	return items, page.total, page.offset
+	return items, by_name_total(options, page.total), page.offset
 end
 
 -- Library views answer searches by name. As upstream, the playlists view shows only while the

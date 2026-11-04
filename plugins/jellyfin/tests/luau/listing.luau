@@ -238,3 +238,71 @@ do
 	)
 	assert(#playlist_access.entries_of_items(mix, { hex(ids.v1) }) == 1)
 end
+
+-- As upstream, `EnableTotalRecordCount=false` counts only the page of a listing its database
+-- answers: a recursive one, one by `Ids`, and one at the root or of a library's items by type. A
+-- parent's own children and a search count every match; playlists alone and listings by name
+-- count none.
+do
+	local function uncounted(params: Params): Params
+		return with(params, { EnableTotalRecordCount = "false" })
+	end
+	local audio = { Recursive = "true", IncludeItemTypes = "Audio" }
+	check(items(with(audio, { Limit = "1" })), "S1:Audio (3)", "counted by default")
+	check(items(uncounted(with(audio, { Limit = "1" }))), "S1:Audio (1)", "a recursive page")
+	check(items(uncounted(with(audio, { StartIndex = "2" }))), "S2:Audio (1)", "the last page")
+	check(items(uncounted(with(audio, { Limit = "0" }))), " (0)", "an empty page")
+	check(
+		items(uncounted({ Recursive = "true", IncludeItemTypes = "MusicAlbum,Audio", Limit = "1" })),
+		"Solo:MusicAlbum (1)",
+		"a page across types"
+	)
+	check(items(uncounted({ Ids = `{hex(ids.s2)},{hex(ids.s1)}`, Limit = "1" })), "S2:Audio (1)", "a page by Ids")
+	check(items(uncounted({ IncludeItemTypes = "Audio", Limit = "1" })), "S1:Audio (1)", "a page at the root")
+	check(
+		items(uncounted({ IncludeItemTypes = "Audio", Limit = "1" }), fixture.libraries.albums),
+		"S1:Audio (1)",
+		"a page of a library's tracks"
+	)
+	check(items(uncounted({ Limit = "1" }), ids.solo), "S1:Audio (2)", "an album's own tracks")
+	check(items(uncounted({ StartIndex = "1", Limit = "1" }), ids.mix), "S2:Audio (3)", "a playlist's own tracks")
+	check(items(uncounted(with(audio, { SearchTerm = "S", Limit = "1" }))), "S1:Audio (2)", "a search")
+	check(
+		items(uncounted({ Ids = `{hex(ids.s1)},{hex(ids.s2)}`, SearchTerm = "S", Limit = "1" })),
+		"S1:Audio (2)",
+		"a search by Ids"
+	)
+	check(
+		items(uncounted({ IncludeItemTypes = "Audio", Recursive = "false", Limit = "1" }), fixture.libraries.albums),
+		"S1:Audio (2)",
+		"a library's own items by type"
+	)
+
+	check(
+		items(uncounted({ IncludeItemTypes = "Playlist", Recursive = "true", SortBy = "SortName", Limit = "1" })),
+		"Liked:Playlist (0)",
+		"playlists"
+	)
+	check(
+		items(uncounted({ ParentId = constants.PLAYLISTS_FOLDER_ID, SortBy = "SortName", Limit = "1" })),
+		"Liked:Playlist (0)",
+		"the playlists view"
+	)
+	check(
+		items(uncounted({ IncludeItemTypes = "Playlist", Ids = `{hex(ids.mix)},{hex(ids.liked)}` })),
+		"Mix:Playlist,Liked:Playlist (2)",
+		"playlists by Ids"
+	)
+
+	local function by_name(list_items: (options.ItemsQueryOptions) -> any, params: Params): string
+		return list(list_items, params)
+	end
+	local function artists(params: Params): string
+		return by_name(function(listed)
+			return listing.list_artist_items(listed, nil)
+		end, params)
+	end
+	check(artists({ Limit = "1" }), "Aaron:MusicArtist (3)", "artists counted by default")
+	check(artists(uncounted({ Limit = "1" })), "Aaron:MusicArtist (0)", "artists uncounted")
+	check(by_name(listing.list_genre_items, uncounted({})), "Rock:MusicGenre (0)", "genres uncounted")
+end
