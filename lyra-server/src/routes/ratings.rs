@@ -3,10 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use agdb::{
-    DbAny,
-    DbId,
-};
 #[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
@@ -32,16 +28,14 @@ use std::collections::HashMap;
 
 use crate::routes::request::bearer_credential;
 use crate::routes::targets::{
+    dense_lookup,
     resolve_target,
     validate_target_id,
 };
 use crate::{
     services::STATE,
     services::{
-        auth::{
-            Principal,
-            require_authenticated,
-        },
+        auth::require_authenticated,
         ratings as rating_service,
     },
 };
@@ -53,8 +47,6 @@ use lyra_db::ratings::{
 };
 
 use super::AppError;
-
-const CHECK_TARGET_CAP: usize = 500;
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
@@ -278,39 +270,6 @@ async fn average_ratings(
     Ok(Json(AverageRatingsResponse { averages }))
 }
 
-/// A value from `lookup` for each submitted id, `None` where it has none. Errs above
-/// [`CHECK_TARGET_CAP`] submitted ids.
-async fn dense_lookup<T>(
-    headers: &HeaderMap,
-    submitted: Vec<String>,
-    label: &str,
-    lookup: impl FnOnce(&DbAny, &Principal, &[DbId]) -> anyhow::Result<HashMap<DbId, T>>,
-) -> Result<HashMap<String, Option<T>>, AppError> {
-    let principal = require_authenticated(bearer_credential(headers)).await?;
-    if submitted.len() > CHECK_TARGET_CAP {
-        return Err(AppError::bad_request(format!(
-            "{label} cap exceeded: {} > {CHECK_TARGET_CAP}",
-            submitted.len(),
-        )));
-    }
-
-    let db = STATE.db.read().await;
-    let mut values: HashMap<String, Option<T>> = submitted
-        .into_iter()
-        .map(|target_id| (target_id, None))
-        .collect();
-    let target_ids: Vec<&str> = values.keys().map(String::as_str).collect();
-    let resolved = lyra_db::lookup::find_node_ids_by_ids(&*db, &target_ids)?;
-    let target_db_ids: Vec<DbId> = resolved.values().copied().collect();
-    let mut found = lookup(&db, &principal, &target_db_ids)?;
-    for (target_id, target_db_id) in resolved {
-        if let Some(value) = found.remove(&target_db_id) {
-            values.insert(target_id, Some(value));
-        }
-    }
-    Ok(values)
-}
-
 fn parse_rating(raw: i64) -> Result<RatingValue, AppError> {
     parse_rating_bound("rating", raw)
 }
@@ -428,6 +387,7 @@ pub(super) fn me_rating_openapi_routes() -> aide::axum::ApiRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::routes::targets::CHECK_TARGET_CAP;
     use crate::{
         plugins::testing::init_library_test_state,
         services::testing::runtime_test_lock,

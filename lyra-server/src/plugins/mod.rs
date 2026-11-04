@@ -7,6 +7,7 @@ pub(crate) mod api;
 pub(crate) mod args;
 pub(crate) mod artists;
 pub(crate) mod auth;
+pub(crate) mod bookmarks;
 pub(crate) mod bootstrap;
 pub(crate) mod callback_table;
 pub(crate) mod catalog;

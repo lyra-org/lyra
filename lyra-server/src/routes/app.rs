@@ -138,6 +138,7 @@ fn me_routes() -> Router {
         )
         .nest("/favorites", super::favorites::me_favorite_routes())
         .nest("/ratings", super::ratings::me_rating_routes())
+        .nest("/bookmarks", super::bookmarks::me_bookmark_routes())
         .nest("/tags", super::tags::me_tag_routes())
         .nest("/playbacks", super::playbacks::me_playback_routes())
         .nest("/connections", super::connections::me_connection_routes())
@@ -163,6 +164,7 @@ fn me_openapi_routes() -> aide::axum::ApiRouter {
         )
         .nest("/favorites", super::favorites::me_favorite_openapi_routes())
         .nest("/ratings", super::ratings::me_rating_openapi_routes())
+        .nest("/bookmarks", super::bookmarks::me_bookmark_openapi_routes())
         .nest("/tags", super::tags::me_tag_openapi_routes())
         .nest("/playbacks", super::playbacks::me_playback_openapi_routes())
         .nest(
@@ -369,6 +371,10 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("GET", "/api/me/ratings/{target_id}"),
     ("PUT", "/api/me/ratings/{target_id}"),
     ("DELETE", "/api/me/ratings/{target_id}"),
+    ("POST", "/api/me/bookmarks/check"),
+    ("GET", "/api/me/bookmarks/{track_id}"),
+    ("PUT", "/api/me/bookmarks/{track_id}"),
+    ("DELETE", "/api/me/bookmarks/{track_id}"),
     ("GET", "/api/me/tags/"),
     ("POST", "/api/me/tags/"),
     ("GET", "/api/me/tags/{id}"),

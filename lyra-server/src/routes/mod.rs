@@ -5,6 +5,7 @@
 
 mod app;
 mod artists;
+mod bookmarks;
 mod connections;
 mod cors;
 mod covers;

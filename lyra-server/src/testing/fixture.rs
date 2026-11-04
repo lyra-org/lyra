@@ -70,6 +70,8 @@ pub struct Fixture {
     #[serde(default)]
     ratings: Vec<Rating>,
     #[serde(default)]
+    bookmarks: Vec<Bookmark>,
+    #[serde(default)]
     tags: Vec<Tag>,
     #[serde(default)]
     lyrics: Vec<LyricsEntry>,
@@ -292,6 +294,19 @@ struct Rating {
     user: String,
     target: String,
     value: u8,
+}
+
+/// A user's bookmark of a track, written without the check that the user can see it or clamping
+/// its position.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Bookmark {
+    user: String,
+    track: String,
+    position_ms: u64,
+    comment: Option<String>,
+    /// When the user set the bookmark, in Unix milliseconds.
+    at: Option<i64>,
 }
 
 /// A user's tag, written without the check that the user can see its target, as one the user
@@ -1096,6 +1111,21 @@ impl Fixture {
                 anyhow::anyhow!("rating of {} must be from 1 to 5", rating.target)
             })?;
             lyra_db::ratings::upsert(db, keys.user(&rating.user)?, target_db_id, value, 1)?;
+        }
+
+        for bookmark in &self.bookmarks {
+            let (track_db_id, kind) = keys.entity(&bookmark.track)?;
+            if kind != lyra_db::favorites::FavoriteKind::Track {
+                anyhow::bail!("bookmark target {} is not a track", bookmark.track);
+            }
+            lyra_db::bookmarks::upsert(
+                db,
+                keys.user(&bookmark.user)?,
+                track_db_id,
+                bookmark.position_ms,
+                bookmark.comment.as_deref(),
+                bookmark.at.unwrap_or(1),
+            )?;
         }
 
         for tag in &self.tags {

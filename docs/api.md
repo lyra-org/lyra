@@ -11,7 +11,7 @@ A REST path says whose data it touches:
 | Path | Kind |
 |---|---|
 | `/api/me`, `/api/me/api-keys`, `/api/me/plugins` | Caller's account and settings |
-| `/api/me/favorites`, `/api/me/ratings`, `/api/me/tags`, `/api/me/playbacks` | Caller-private collections |
+| `/api/me/favorites`, `/api/me/ratings`, `/api/me/bookmarks`, `/api/me/tags`, `/api/me/playbacks` | Caller-private collections |
 | `/api/me/listens` | Caller-private views |
 | `/api/me/connections` | Caller's open WebSocket connections |
 | `/api/releases`, `/api/tracks`, `/api/playlists`, ... | Shared resources |
@@ -41,7 +41,8 @@ batch lookups by ID (`POST /api/me/ratings/check`, `POST /api/ratings/averages`)
 fields on the resource. `inc` only includes related resources.
 
 Browsing by the caller's state goes through the shared list endpoints, which filter and sort
-by it: `rated`, `favorite`, `listened`, `sort_by=rated_at` and `sort_by=favorited_at`, as in
+by it: `rated`, `favorite`, `listened`, `bookmarked`, `sort_by=rated_at`,
+`sort_by=favorited_at` and `sort_by=bookmarked_at`, as in
 `GET /api/tracks?favorite=true&sort_by=favorited_at`. `/api/me` holds no second list of the
 same entities.
 

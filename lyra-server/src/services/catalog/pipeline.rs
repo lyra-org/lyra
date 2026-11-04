@@ -120,6 +120,7 @@ pub(crate) trait SortKey: Copy + Eq + std::fmt::Debug + 'static {
 /// Data of the viewer's own that a query can filter or sort by.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum PersonalData {
+    Bookmarks,
     Favorites,
     Listens,
     Ratings,

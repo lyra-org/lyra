@@ -3,7 +3,8 @@ local genres = require("@lyra/genres")
 local releases = require("@lyra/releases")
 local tracks = require("@lyra/tracks")
 
--- The test goes without `lyra.favorites`, `lyra.listens` and `lyra.ratings`.
+-- The test goes without `lyra.bookmarks`, `lyra.favorites`, `lyra.listens` and `lyra.ratings`.
+local BOOKMARKS = "filtering or sorting by the caller's bookmarks requires the lyra.bookmarks scope"
 local FAVORITES = "filtering or sorting by the caller's favorites requires the lyra.favorites scope"
 local LISTENS = "filtering or sorting by the caller's listens requires the lyra.listens scope"
 local RATINGS = "filtering or sorting by the caller's ratings requires the lyra.ratings scope"
@@ -13,6 +14,9 @@ local function rejects(f: (...any) -> ...any, message: string, ...: any)
 	assert(not ok, `rejected: {message}`)
 	assert(string.find(tostring(err), message, 1, true), `error {err}`)
 end
+
+rejects(tracks.query, BOOKMARKS, { bookmarked = true })
+rejects(tracks.query, BOOKMARKS, { sort = { { key = "bookmarked_at", order = "descending" } } })
 
 rejects(tracks.query, FAVORITES, { favorite = true })
 rejects(releases.query, FAVORITES, { favorite = false })

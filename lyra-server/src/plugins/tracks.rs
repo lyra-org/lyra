@@ -50,6 +50,7 @@ impl<'vm> luau::FromLuau<'vm> for TrackQuery {
             years: catalog::read_years(&opts)?,
             year_range: read_year_range(&opts)?,
             personal: catalog::read_personal(&opts)?,
+            bookmarked: opts.optional_bool_field("bookmarked")?,
             ..TrackFilter::default()
         };
         catalog::read_query::<Tracks>(&opts, filter).map(Self)
@@ -136,7 +137,7 @@ impl TracksModule {
     }
 
     #[harmony(
-        description = "The tracks the caller can see that pass every filter, sorted and paged. Without `sort`, a search ranks by relevance, a query scoped to one release is in disc and track order, and anything else is by sort name. Filtering by `favorite`, `listened` or a rating, or sorting by favorite time, listens or rating, needs the `lyra.favorites`, `lyra.listens` or `lyra.ratings` scope respectively.",
+        description = "The tracks the caller can see that pass every filter, sorted and paged. Without `sort`, a search ranks by relevance, a query scoped to one release is in disc and track order, and anything else is by sort name. Filtering by `favorite`, `listened`, a rating or `bookmarked`, or sorting by favorite time, listens, rating or bookmark time, needs the `lyra.favorites`, `lyra.listens`, `lyra.ratings` or `lyra.bookmarks` scope respectively.",
         returns(TrackPage)
     )]
     async fn query(
@@ -268,6 +269,13 @@ fn track_query() -> InterfaceDescriptor {
         },
         field("favorite", Option::<bool>::luau_type()),
         field("listened", Option::<bool>::luau_type()),
+        FieldDescriptor {
+            name: "bookmarked",
+            ty: Option::<bool>::luau_type(),
+            description: Some(
+                "Keeps tracks the caller bookmarked (`true`) or did not (`false`).",
+            ),
+        },
     ]);
     descriptor.fields.extend(catalog::rating_fields());
     descriptor.fields.extend(catalog::credit_fields());

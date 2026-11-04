@@ -9,6 +9,7 @@ use crate::plugins::{
     api,
     artists,
     auth,
+    bookmarks,
     chromaprint,
     covers,
     datastore,
@@ -96,6 +97,11 @@ fn surfaces() -> &'static [Surface] {
             genres::render_luau_definition
         ),
         surface!("lyra/tags", tags::get_module, tags::render_luau_definition),
+        surface!(
+            "lyra/bookmarks",
+            bookmarks::get_module,
+            bookmarks::render_luau_definition
+        ),
         surface!(
             "lyra/favorites",
             favorites::get_module,

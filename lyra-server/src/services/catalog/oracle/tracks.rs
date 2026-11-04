@@ -104,6 +104,11 @@ impl Old for Tracks {
         restrict_rating(db, viewer, filter.personal.rating, &mut tracks, || {
             all_tracks(db)
         })?;
+        if let Some(bookmarked) = filter.bookmarked {
+            let user = viewer.user_db_id("the bookmarked filter")?;
+            let bookmarks = lyra_db::bookmarks::target_ids(db, user)?;
+            tracks.restrict_membership(bookmarks, bookmarked, || all_tracks(db))?;
+        }
 
         let mut excluded = filter.exclude_ids.clone();
         if !filter.exclude_artists.is_empty() {
@@ -146,6 +151,12 @@ impl Old for Tracks {
             FavoriteKind::Track,
             keys.contains(&TrackKey::FavoritedAt),
         )?;
+        let bookmarked_at = if keys.contains(&TrackKey::BookmarkedAt) {
+            let user = viewer.user_db_id("the bookmarked_at sort key")?;
+            lyra_db::bookmarks::updated_at(db, user)?
+        } else {
+            HashMap::new()
+        };
         let artist_names = if keys.contains(&TrackKey::ArtistName) {
             lyra_db::artists::first_credited_names(db, &ids)?
         } else {
@@ -224,6 +235,9 @@ impl Old for Tracks {
                             .and_then(|edge| timestamp_value(edge.updated_at_ms)),
                         TrackKey::FavoritedAt => {
                             favorited_at.get(&id).and_then(|ms| timestamp_value(*ms))
+                        }
+                        TrackKey::BookmarkedAt => {
+                            bookmarked_at.get(&id).and_then(|ms| timestamp_value(*ms))
                         }
                         TrackKey::Relevance | TrackKey::Random | TrackKey::Id => None,
                     })

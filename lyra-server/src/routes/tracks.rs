@@ -127,7 +127,7 @@ struct TrackListQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Comma-separated or repeated values: name, sort_name, date_created, year, duration, disc, track, release_title, artist_name, release_artist_name, listen_count, last_played_at, rating, rated_at, favorited_at, relevance (with query), random, id."
+            description = "Comma-separated or repeated values: name, sort_name, date_created, year, duration, disc, track, release_title, artist_name, release_artist_name, listen_count, last_played_at, rating, rated_at, favorited_at, bookmarked_at, relevance (with query), random, id."
         )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
@@ -139,6 +139,14 @@ struct TrackListQuery {
     sort_order: Option<String>,
     #[serde(flatten)]
     personal: PersonalFilterQuery,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Optional: `true` keeps only tracks the authenticated user has bookmarked, `false` only those they have not."
+        )
+    )]
+    #[serde(default, deserialize_with = "super::deserialize_optional_scalar")]
+    bookmarked: Option<bool>,
     #[serde(flatten)]
     page: super::PageQuery,
 }
@@ -151,6 +159,7 @@ pub(crate) struct TrackListOptions {
     sort_by: Option<Vec<String>>,
     sort_order: Option<String>,
     personal: catalog::PersonalFilter,
+    bookmarked: Option<bool>,
     page_request: super::SnapshotPageRequest,
 }
 
@@ -171,6 +180,7 @@ impl TrackListOptions {
             sort_by: None,
             sort_order: None,
             personal,
+            bookmarked: None,
             page_request,
         }
     }
@@ -330,6 +340,7 @@ pub(crate) fn track_page(
         sort_by,
         sort_order,
         personal,
+        bookmarked,
         page_request,
     } = options;
     let includes = parse_inc(inc)?;
@@ -341,6 +352,7 @@ pub(crate) fn track_page(
         .values(sort_by.as_deref())
         .field(sort_order.as_deref())
         .personal(personal)
+        .flag(bookmarked)
         .finish();
     let library = crate::services::auth::access::resolve_optional_library_filter(
         db,
@@ -365,6 +377,7 @@ pub(crate) fn track_page(
             library,
             releases: release.map(|release| vec![release]),
             personal,
+            bookmarked,
             ..TrackFilter::default()
         });
         query.search = search_term;
@@ -622,6 +635,7 @@ async fn get_tracks(
         sort_by,
         sort_order,
         personal,
+        bookmarked,
         page,
     } = list_query;
     let page = page.resolve_snapshot();
@@ -638,6 +652,7 @@ async fn get_tracks(
                 sort_by,
                 sort_order,
                 personal,
+                bookmarked,
                 page_request: page,
             },
         )
@@ -657,7 +672,7 @@ async fn get_track(
 #[cfg(feature = "docgen")]
 fn list_tracks_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List tracks").description(
-        "Returns tracks as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `release_id`, `sort_by`, `sort_order`, `rated`, `min_rating`, `max_rating`, `favorite`, `listened`, `limit`, `cursor`. `min_rating` and `max_rating` filter tracks by the authenticated user's inclusive personal rating range; either bound excludes unrated tracks. `rated=true` keeps only tracks the user has rated and `rated=false` only those they have not; `rated=false` cannot be combined with a rating bound. `favorite=true` keeps only tracks the user has favorited and `favorite=false` the rest. `listened=true` keeps only tracks the user has listened to at least once and `listened=false` the rest. `library_id` scopes results to tracks belonging to that public library ID. `release_id` scopes results to one public release ID and defaults ordering to album order: disc, track, sort name, id. `sort_by` supports `name`, `sort_name`, `date_created`, `year`, `duration`, `disc`, `track`, `release_title` (the title of the track's release), `artist_name` (the first credited artist), `release_artist_name` (the first artist credited on the track's release), `listen_count`, `last_played_at`, `rating` (the authenticated user's personal rating), `rated_at` (when the authenticated user last set their rating), `favorited_at` (when they first favorited the track), `relevance` (with `query`), `random`, and `id`. `random` moves the tracks of a chain as one, keeping them together and in chain order in either direction. `sort_order` supports `ascending` and `descending` and applies to every key. Tracks without a value for a key sort last in both directions, except missing disc and track numbers, which sort first. Ties fall back to sort name, name, then id. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` matches track titles and sort titles, the tracks' artists, and the titles and artists of the releases holding them that the caller can see; each of its words must start a word, ignoring case, accents, apostrophes and punctuation; no character is an operator, and a word in a script written without spaces, such as Japanese, matches anywhere in a word. It defaults ordering to relevance: exact names rank first, then names starting with the query, then names holding every word, then names holding some, then matches only through related items. A track in a chain carries `chain` with the chain's `id` and the track's 0-based `position` in it. Use `inc` to include releases and/or artists. When `inc=releases,release_covers`, nested release metadata includes a public cover image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
+        "Returns tracks as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `release_id`, `sort_by`, `sort_order`, `rated`, `min_rating`, `max_rating`, `favorite`, `listened`, `bookmarked`, `limit`, `cursor`. `min_rating` and `max_rating` filter tracks by the authenticated user's inclusive personal rating range; either bound excludes unrated tracks. `rated=true` keeps only tracks the user has rated and `rated=false` only those they have not; `rated=false` cannot be combined with a rating bound. `favorite=true` keeps only tracks the user has favorited and `favorite=false` the rest. `listened=true` keeps only tracks the user has listened to at least once and `listened=false` the rest. `bookmarked=true` keeps only tracks the user has bookmarked and `bookmarked=false` the rest. `library_id` scopes results to tracks belonging to that public library ID. `release_id` scopes results to one public release ID and defaults ordering to album order: disc, track, sort name, id. `sort_by` supports `name`, `sort_name`, `date_created`, `year`, `duration`, `disc`, `track`, `release_title` (the title of the track's release), `artist_name` (the first credited artist), `release_artist_name` (the first artist credited on the track's release), `listen_count`, `last_played_at`, `rating` (the authenticated user's personal rating), `rated_at` (when the authenticated user last set their rating), `favorited_at` (when they first favorited the track), `bookmarked_at` (when they last set their bookmark of the track), `relevance` (with `query`), `random`, and `id`. `random` moves the tracks of a chain as one, keeping them together and in chain order in either direction. `sort_order` supports `ascending` and `descending` and applies to every key. Tracks without a value for a key sort last in both directions, except missing disc and track numbers, which sort first. Ties fall back to sort name, name, then id. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` matches track titles and sort titles, the tracks' artists, and the titles and artists of the releases holding them that the caller can see; each of its words must start a word, ignoring case, accents, apostrophes and punctuation; no character is an operator, and a word in a script written without spaces, such as Japanese, matches anywhere in a word. It defaults ordering to relevance: exact names rank first, then names starting with the query, then names holding every word, then names holding some, then matches only through related items. A track in a chain carries `chain` with the chain's `id` and the track's 0-based `position` in it. Use `inc` to include releases and/or artists. When `inc=releases,release_covers`, nested release metadata includes a public cover image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
     )
 }
 
@@ -950,6 +965,7 @@ mod tests {
                 sort_by: None,
                 sort_order: None,
                 personal: catalog::PersonalFilter::default(),
+                bookmarked: None,
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
@@ -1005,6 +1021,7 @@ mod tests {
                 sort_by: None,
                 sort_order: None,
                 personal: catalog::PersonalFilter::default(),
+                bookmarked: None,
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
@@ -1070,6 +1087,7 @@ mod tests {
                     .unwrap(),
                     ..catalog::PersonalFilter::default()
                 },
+                bookmarked: None,
                 page_request: super::super::PageQuery {
                     limit: None,
                     cursor: None,
@@ -1184,6 +1202,7 @@ mod tests {
                     rating: rating_filter,
                     ..catalog::PersonalFilter::default()
                 },
+                bookmarked: None,
                 page_request: super::super::PageQuery {
                     limit: Some(1),
                     cursor: None,
@@ -1210,6 +1229,7 @@ mod tests {
                     rating: rating_filter,
                     ..catalog::PersonalFilter::default()
                 },
+                bookmarked: None,
                 page_request: super::super::PageQuery {
                     limit: Some(1),
                     cursor: Some(cursor.clone()),
@@ -1249,6 +1269,7 @@ mod tests {
                     rating: exact_five,
                     ..catalog::PersonalFilter::default()
                 },
+                bookmarked: None,
                 page_request: super::super::PageQuery {
                     limit: Some(1),
                     cursor: Some(cursor),
@@ -1276,6 +1297,7 @@ mod tests {
                     rating: exact_five,
                     ..catalog::PersonalFilter::default()
                 },
+                bookmarked: None,
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
@@ -1316,6 +1338,7 @@ mod tests {
                 sort_by: None,
                 sort_order: None,
                 personal: catalog::PersonalFilter::default(),
+                bookmarked: None,
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
@@ -1461,6 +1484,7 @@ mod tests {
                 sort_by: None,
                 sort_order: None,
                 personal: catalog::PersonalFilter::default(),
+                bookmarked: None,
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
@@ -1499,6 +1523,7 @@ mod tests {
                 sort_by: sort_by.map(|value| vec![value.to_string()]),
                 sort_order: sort_order.map(str::to_string),
                 personal: catalog::PersonalFilter::default(),
+                bookmarked: None,
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
@@ -1693,6 +1718,7 @@ mod tests {
                     listened,
                     rating,
                 },
+                bookmarked: None,
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
@@ -1861,6 +1887,71 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_track_responses_filter_and_sort_by_bookmarks() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let principal = {
+            let mut db = STATE.db.write().await;
+            let user_db_id = lyra_db::test_db::insert_user(&mut db, "track-bookmark-user")?;
+            let other_user = lyra_db::test_db::insert_user(&mut db, "track-bookmark-other")?;
+            insert_track(&mut db, "Neither")?;
+            let early = insert_track(&mut db, "Early")?;
+            let late = insert_track(&mut db, "Late")?;
+            let others = insert_track(&mut db, "Others")?;
+            lyra_db::bookmarks::upsert(&mut *db, user_db_id, late, 0, None, 1_000)?;
+            lyra_db::bookmarks::upsert(&mut *db, user_db_id, early, 0, None, 1_500)?;
+            lyra_db::bookmarks::upsert(&mut *db, user_db_id, late, 10, None, 2_000)?;
+            lyra_db::bookmarks::upsert(&mut *db, other_user, others, 0, None, 3_000)?;
+            Principal::for_user(
+                &*db,
+                user_db_id,
+                vec![lyra_db::Permission::Admin],
+                HashSet::new(),
+            )
+        };
+        let titles = |bookmarked, sort_by: Option<&str>| {
+            let principal = principal.clone();
+            let sort_by = sort_by.map(|key| vec![key.to_string()]);
+            async move {
+                let page = list_track_responses(
+                    &principal,
+                    TrackListOptions {
+                        inc: None,
+                        query: None,
+                        library_id: None,
+                        release_id: None,
+                        sort_by,
+                        sort_order: Some("descending".to_string()),
+                        personal: catalog::PersonalFilter::default(),
+                        bookmarked,
+                        page_request: super::super::SnapshotPageRequest::first_page(100),
+                    },
+                )
+                .await
+                .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+                anyhow::Ok(
+                    page.items
+                        .into_iter()
+                        .map(|track| track.title)
+                        .collect::<Vec<_>>(),
+                )
+            }
+        };
+
+        assert_eq!(
+            titles(Some(true), Some("bookmarked_at")).await?,
+            vec!["Late", "Early"]
+        );
+        assert_eq!(titles(Some(false), None).await?, vec!["Neither", "Others"]);
+        assert_eq!(
+            titles(None, Some("bookmarked_at")).await?,
+            vec!["Late", "Early", "Neither", "Others"]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn list_track_responses_rejects_unknown_sort_keys() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         setup_route_test().await?;
@@ -1907,6 +1998,7 @@ mod tests {
             sort_by: None,
             sort_order: None,
             personal: catalog::PersonalFilter::default(),
+            bookmarked: None,
             page_request: super::super::PageQuery {
                 limit: Some(1),
                 cursor,

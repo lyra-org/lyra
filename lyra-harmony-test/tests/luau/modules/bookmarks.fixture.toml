@@ -1,0 +1,66 @@
+run_as = "listener"
+
+[[users]]
+key = "listener"
+
+[[users]]
+key = "other"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener", "other"]
+
+[[artists]]
+key = "amy"
+name = "Amy"
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+artists = ["amy"]
+
+[[tracks]]
+key = "timed"
+title = "Timed"
+release = "album"
+duration_ms = 180000
+
+[[tracks]]
+key = "untimed"
+title = "Untimed"
+release = "album"
+
+[[tracks]]
+key = "early"
+title = "Early"
+release = "album"
+
+[[tracks]]
+key = "hidden"
+title = "Hidden"
+
+[[playlists]]
+key = "mix"
+owner = "listener"
+name = "Mix"
+public = false
+
+[[bookmarks]]
+user = "listener"
+track = "early"
+position_ms = 5000
+at = 1000
+
+[[bookmarks]]
+user = "listener"
+track = "hidden"
+position_ms = 1000
+at = 1000
+
+[[bookmarks]]
+user = "other"
+track = "untimed"
+position_ms = 7000
+at = 1000

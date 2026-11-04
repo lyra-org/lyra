@@ -151,6 +151,13 @@ user = "owner"
 target = "s1"        # any artist, release or track key, seen by the user or not
 value = 4            # 1 through 5
 
+[[bookmarks]]
+user = "owner"
+track = "s1"         # any track key, seen by the user or not
+position_ms = 42000  # stored as given, past the track's duration or not
+comment = "Chorus"   # optional
+at = 1700000000000   # optional creation and last change, in unix milliseconds
+
 [[tags]]
 user = "owner"
 target = "solo"      # any artist, release, track or playlist key, seen by the user or not

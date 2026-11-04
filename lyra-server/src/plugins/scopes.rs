@@ -53,6 +53,7 @@ use crate::plugins::{
     api,
     artists,
     auth,
+    bookmarks,
     chromaprint,
     covers,
     datastore,
@@ -163,6 +164,7 @@ data_kinds! {
         RecentListens => ("recent_listens", "recent listens"),
         Playlists => ("playlists", "playlists"),
         Ratings => ("ratings", "ratings"),
+        Bookmarks => ("bookmarks", "bookmarks"),
         Tags => ("tags", "tags"),
         Lyrics => ("personal_lyrics", "personal lyrics"),
         PlaybackActivity => ("playback_activity", "playback activity"),
@@ -288,6 +290,14 @@ scopes! {
         id: "lyra.auth",
         module: auth::AuthModule::module_spec,
         effects: &[Effect::Authority],
+    },
+    Bookmarks => {
+        id: "lyra.bookmarks",
+        module: bookmarks::BookmarksModule::module_spec,
+        effects: &[
+            Effect::ReadsPersonal(PersonalKind::Bookmarks, Users::Acting),
+            Effect::WritesPersonal(PersonalKind::Bookmarks, Users::Acting),
+        ],
     },
     Chromaprint => {
         id: "lyra.chromaprint",
@@ -976,6 +986,13 @@ mod tests {
                 &["Signs users in to Lyra, checks their credentials and manages their sessions"],
             ),
             (
+                "lyra.bookmarks",
+                &[
+                    "Reads the bookmarks of the users it acts for",
+                    "Changes the bookmarks of the users it acts for",
+                ],
+            ),
+            (
                 "lyra.covers.manage",
                 &[
                     "Changes the library's covers",
@@ -1104,6 +1121,7 @@ mod tests {
                 "recent_listens",
                 "playlists",
                 "ratings",
+                "bookmarks",
                 "tags",
                 "personal_lyrics",
                 "playback_activity",
@@ -1448,6 +1466,14 @@ mod tests {
                 "revoke_session(session_id)",
                 "login(username, password, user_agent, client_name)",
                 "capabilities()",
+            ],
+        ),
+        (
+            "lyra/bookmarks",
+            &[
+                "set(track_id, position_ms, options)",
+                "remove(track_id)",
+                "get(track_ids)",
             ],
         ),
         ("lyra/chromaprint", &["compute(entry_id)"]),

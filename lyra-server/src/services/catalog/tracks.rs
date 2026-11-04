@@ -64,6 +64,8 @@ pub(crate) enum TrackKey {
     RatedAt,
     /// When the viewer first favorited the track.
     FavoritedAt,
+    /// When the viewer last set their bookmark of the track.
+    BookmarkedAt,
     Relevance,
     Random,
     Id,
@@ -86,6 +88,7 @@ impl SortKey for TrackKey {
         ("rating", Self::Rating),
         ("rated_at", Self::RatedAt),
         ("favorited_at", Self::FavoritedAt),
+        ("bookmarked_at", Self::BookmarkedAt),
         ("relevance", Self::Relevance),
         ("random", Self::Random),
         ("id", Self::Id),
@@ -117,6 +120,7 @@ impl SortKey for TrackKey {
             Self::ListenCount | Self::LastPlayedAt => Some(PersonalData::Listens),
             Self::Rating | Self::RatedAt => Some(PersonalData::Ratings),
             Self::FavoritedAt => Some(PersonalData::Favorites),
+            Self::BookmarkedAt => Some(PersonalData::Bookmarks),
             _ => None,
         }
     }
@@ -140,6 +144,8 @@ pub(crate) struct TrackFilter {
     pub(crate) years: Vec<u32>,
     pub(crate) year_range: YearRange,
     pub(crate) personal: PersonalFilter,
+    /// Keeps tracks the viewer bookmarked (`true`) or did not (`false`).
+    pub(crate) bookmarked: Option<bool>,
 }
 
 /// Inclusive bounds on a track's own year, either of them open. Any bound leaves out tracks
@@ -193,7 +199,9 @@ impl Catalog for Tracks {
     type Item = Track;
 
     fn personal(filter: &TrackFilter) -> Vec<PersonalData> {
-        filter.personal.reads()
+        let mut reads = filter.personal.reads();
+        reads.extend(filter.bookmarked.map(|_| PersonalData::Bookmarks));
+        reads
     }
 
     fn id_filter(ids: Vec<DbId>) -> TrackFilter {
@@ -283,6 +291,17 @@ impl Catalog for Tracks {
             |listened| index.tracks.slots(listened),
         )?;
         let mut tracks = personal.unwrap_or_else(|| Bits::full(len));
+        if let Some(bookmarked) = filter.bookmarked {
+            let user = cx.viewer.user_db_id("the bookmarked filter")?;
+            let members = index
+                .tracks
+                .slots(&lyra_db::bookmarks::target_ids(cx.db, user)?);
+            if bookmarked {
+                tracks.and(&members);
+            } else {
+                tracks.and_not(&members);
+            }
+        }
 
         tracks.and_not(&index.tracks.slots(&filter.exclude_ids));
         if !filter.exclude_artists.is_empty() {
@@ -373,6 +392,18 @@ impl Catalog for Tracks {
             TrackKey::Rating => ratings_column(cx, tracks, slots, false)?,
             TrackKey::RatedAt => ratings_column(cx, tracks, slots, true)?,
             TrackKey::FavoritedAt => favorited_at_column(cx, tracks, slots, FavoriteKind::Track)?,
+            TrackKey::BookmarkedAt => {
+                let user = cx.viewer.user_db_id("the bookmarked_at sort key")?;
+                let bookmarked = if slots.is_empty() {
+                    HashMap::new()
+                } else {
+                    lyra_db::bookmarks::updated_at(cx.db, user)?
+                        .into_iter()
+                        .filter_map(|(id, ms)| Some((tracks.slot(id)?, u64::try_from(ms).ok()?)))
+                        .collect()
+                };
+                Column::computed(tracks.len(), slots, |slot| bookmarked.get(&slot).copied())
+            }
             TrackKey::Relevance | TrackKey::Random | TrackKey::Id => {
                 unreachable!("{key:?} is not a field key")
             }

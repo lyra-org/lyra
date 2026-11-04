@@ -67,7 +67,7 @@ pub(crate) fn error(error: CatalogError) -> luau::Error {
 }
 
 /// The personal data whose scopes the calling plugin declares. Filtering or
-/// sorting by a viewer's favorites, listens or ratings reads them, so a query
+/// sorting by a viewer's bookmarks, favorites, listens or ratings reads them, so a query
 /// needs the scope that gates them, as if it used that module.
 pub(crate) struct PersonalScopes(BTreeSet<PersonalData>);
 
@@ -76,6 +76,7 @@ impl luau::FromCallFrame for PersonalScopes {
         let require = vm.data().get::<harmony_core::luau::RequireRuntime>()?;
         Ok(Self(
             [
+                PersonalData::Bookmarks,
                 PersonalData::Favorites,
                 PersonalData::Listens,
                 PersonalData::Ratings,
@@ -104,6 +105,7 @@ impl PersonalScopes {
         Err(crate::plugins::runtime_error(format!(
             "filtering or sorting by the caller's {} requires the {} scope",
             match data {
+                PersonalData::Bookmarks => "bookmarks",
                 PersonalData::Favorites => "favorites",
                 PersonalData::Listens => "listens",
                 PersonalData::Ratings => "ratings",
@@ -115,6 +117,7 @@ impl PersonalScopes {
 
 fn scope_of(data: PersonalData) -> Scope {
     match data {
+        PersonalData::Bookmarks => Scope::Bookmarks,
         PersonalData::Favorites => Scope::Favorites,
         PersonalData::Listens => Scope::Listens,
         PersonalData::Ratings => Scope::Ratings,
