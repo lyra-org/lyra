@@ -1093,11 +1093,7 @@ mod tests {
 mod benches {
     extern crate test;
 
-    use agdb::{
-        DbAny,
-        DbId,
-    };
-    use nanoid::nanoid;
+    use agdb::DbAny;
     use test::{
         Bencher,
         black_box,

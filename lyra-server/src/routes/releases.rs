@@ -1578,7 +1578,6 @@ mod benches {
         DbAny,
         DbId,
     };
-    use nanoid::nanoid;
     use test::{
         Bencher,
         black_box,

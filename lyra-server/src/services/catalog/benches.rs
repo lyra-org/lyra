@@ -110,7 +110,7 @@ const SECOND: &[&str] = &[
 /// A name from the word lists, unique by `index`; one in twenty carries the selective phrase
 /// "Velvet Horizon".
 fn name(index: usize, kind: &str) -> String {
-    if index % 20 == 0 {
+    if index.is_multiple_of(20) {
         return format!("Velvet Horizon {kind} {index:06}");
     }
     format!(
@@ -512,7 +512,7 @@ fn scope_cycling() {
             ),
             ("search", &searched as &dyn Fn(&Viewer) -> u64),
         ] {
-            let round = || cycle.iter().map(|viewer| query(viewer)).sum::<u64>();
+            let round = || cycle.iter().map(query).sum::<u64>();
             let time = median(3, round);
             println!(
                 "  {sets} sets round robin, {label}: {} a cycle, {} a query",
