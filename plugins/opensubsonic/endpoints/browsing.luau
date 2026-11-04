@@ -118,6 +118,22 @@ local function album_projection(id: string): any
 	return projection
 end
 
+-- What Lyra keeps of an artist: its description and MusicBrainz id. Lyra keeps no similar
+-- artists, so `count` and `includeNotPresent` change nothing.
+local function artist_info(req: Request)
+	local id = request.required(req.params, "id")
+	request.int(req.params, "count")
+	request.bool(req.params, "includeNotPresent")
+	local projection = artist_projection(id)
+	local description: string? = projection.entity.description
+	local external_ids = projection.includes.external_ids or {}
+	local info: JsonObject = {
+		biography = if description and description ~= "" then description else nil,
+		musicBrainzId = external_ids[MUSICBRAINZ_ARTIST],
+	}
+	return if next(info) ~= nil then info else response.EMPTY_OBJECT
+end
+
 -- What Lyra keeps of an album: its description and MusicBrainz id. Image URLs would need the
 -- caller's credentials to load, so they stay out.
 local function album_info(req: Request): ApiResponse
@@ -244,20 +260,12 @@ module.methods = {
 		return response.ok(req.params, { artist = artist })
 	end,
 
-	-- What Lyra keeps of an artist: its description and MusicBrainz id. Lyra keeps no similar
-	-- artists, so `count` and `includeNotPresent` change nothing.
 	getArtistInfo2 = function(req: Request): ApiResponse
-		local id = request.required(req.params, "id")
-		request.int(req.params, "count")
-		request.bool(req.params, "includeNotPresent")
-		local projection = artist_projection(id)
-		local description: string? = projection.entity.description
-		local external_ids = projection.includes.external_ids or {}
-		local info: JsonObject = {
-			biography = if description and description ~= "" then description else nil,
-			musicBrainzId = external_ids[MUSICBRAINZ_ARTIST],
-		}
-		return response.ok(req.params, { artistInfo2 = if next(info) ~= nil then info else response.EMPTY_OBJECT })
+		return response.ok(req.params, { artistInfo2 = artist_info(req) })
+	end,
+	-- Artists are folders of the same ids, so their info is the same.
+	getArtistInfo = function(req: Request): ApiResponse
+		return response.ok(req.params, { artistInfo = artist_info(req) })
 	end,
 
 	-- Songs like an artist, album or song.
