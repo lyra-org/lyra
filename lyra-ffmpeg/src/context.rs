@@ -32,6 +32,7 @@ use std::time::Duration;
 
 use ffmpeg_sys_next::*;
 
+use crate::audio::AudioCodec;
 use crate::error::{
     Error,
     Result,
@@ -275,7 +276,7 @@ mod tests {
 
     #[test]
     fn copy_codec_keeps_time_ranges_on_remux_path() {
-        let output = Output::new("/tmp/lyra-ffmpeg-copy.caf").codec(crate::audio::AudioCodec::Copy);
+        let output = Output::new("/tmp/lyra-ffmpeg-copy.caf").codec(AudioCodec::Copy);
 
         assert!(!should_transcode(&output, Some(1_000), Some(2_000)));
     }
@@ -536,6 +537,39 @@ mod tests {
         assert_eq!(select_sample_rate(47_000, Some(&supported)), 48_000);
         assert_eq!(select_sample_rate(45_000, Some(&supported)), 44_100);
         assert_eq!(select_sample_rate(50_000, None), 50_000);
+    }
+
+    #[test]
+    fn integer_sample_format_selection_matches_the_bit_depth() {
+        let flac = [
+            AVSampleFormat::AV_SAMPLE_FMT_S16,
+            AVSampleFormat::AV_SAMPLE_FMT_S32,
+        ];
+        let alac = [
+            AVSampleFormat::AV_SAMPLE_FMT_S32P,
+            AVSampleFormat::AV_SAMPLE_FMT_S16P,
+        ];
+
+        assert_eq!(
+            select_integer_sample_format(16, &flac),
+            Some(AVSampleFormat::AV_SAMPLE_FMT_S16)
+        );
+        assert_eq!(
+            select_integer_sample_format(24, &flac),
+            Some(AVSampleFormat::AV_SAMPLE_FMT_S32)
+        );
+        assert_eq!(
+            select_integer_sample_format(16, &alac),
+            Some(AVSampleFormat::AV_SAMPLE_FMT_S16P)
+        );
+        assert_eq!(
+            select_integer_sample_format(24, &alac),
+            Some(AVSampleFormat::AV_SAMPLE_FMT_S32P)
+        );
+        assert_eq!(
+            select_integer_sample_format(24, &[AVSampleFormat::AV_SAMPLE_FMT_FLTP]),
+            None
+        );
     }
 
     #[test]
@@ -1188,10 +1222,7 @@ unsafe fn run_transcode_inner(mut ctx: FfmpegContext, abort_flag: Arc<AtomicBool
 }
 
 fn should_transcode(output: &Output, start_ms: Option<u64>, end_ms: Option<u64>) -> bool {
-    if matches!(
-        output.audio_codec_kind,
-        Some(crate::audio::AudioCodec::Copy)
-    ) {
+    if matches!(output.audio_codec_kind, Some(AudioCodec::Copy)) {
         return false;
     }
     if start_ms.is_some() || end_ms.is_some() {
@@ -1280,11 +1311,25 @@ unsafe fn setup_encoder(
             den: output_sample_rate,
         };
 
-        (*enc_ctx_ptr).sample_fmt = select_encoder_sample_format(
-            enc_ctx_ptr,
-            encoder,
-            output.audio_sample_fmt.map(|format| format.as_ffmpeg()),
-        )?;
+        let bit_depth = match output.audio_codec_kind {
+            Some(codec @ (AudioCodec::Flac | AudioCodec::Alac)) => codec.encoded_bit_depth(
+                output
+                    .audio_bit_depth
+                    .unwrap_or_else(|| source_bit_depth(in_codecpar)),
+            ),
+            _ => None,
+        };
+        (*enc_ctx_ptr).sample_fmt = match bit_depth {
+            Some(bits) => select_encoder_integer_sample_format(enc_ctx_ptr, encoder, bits)?,
+            None => select_encoder_sample_format(
+                enc_ctx_ptr,
+                encoder,
+                output.audio_sample_fmt.map(|format| format.as_ffmpeg()),
+            )?,
+        };
+        if let Some(bits) = bit_depth {
+            (*enc_ctx_ptr).bits_per_raw_sample = bits as i32;
+        }
 
         for (key, value) in &output.audio_codec_opts {
             let key_c = to_cstring(key.as_str(), "codec option key")?;
@@ -1398,6 +1443,69 @@ unsafe fn select_encoder_sample_format(
 
         Ok(select_sample_format(requested, supported))
     }
+}
+
+/// The bit depth of the source's samples: as its stream records it, else as wide as the samples
+/// it decodes to, with floating-point samples read as 16 bits.
+unsafe fn source_bit_depth(in_codecpar: *const AVCodecParameters) -> u32 {
+    unsafe {
+        let recorded = [
+            (*in_codecpar).bits_per_raw_sample,
+            (*in_codecpar).bits_per_coded_sample,
+        ];
+        if let Some(bits) = recorded.into_iter().find(|bits| *bits > 0) {
+            return bits as u32;
+        }
+        let decoded = (*in_codecpar).format;
+        if decoded == AVSampleFormat::AV_SAMPLE_FMT_S32 as i32
+            || decoded == AVSampleFormat::AV_SAMPLE_FMT_S32P as i32
+        {
+            24
+        } else {
+            16
+        }
+    }
+}
+
+/// The encoder's integer sample format wide enough for `bits`: 16-bit samples up to 16 bits,
+/// 32-bit ones above.
+unsafe fn select_encoder_integer_sample_format(
+    enc_ctx: *const AVCodecContext,
+    encoder: *const AVCodec,
+    bits: u32,
+) -> Result<AVSampleFormat> {
+    unsafe {
+        let supported = query_encoder_supported_config(
+            enc_ctx,
+            encoder,
+            AVCodecConfig::AV_CODEC_CONFIG_SAMPLE_FORMAT,
+            "query encoder sample formats",
+        )?;
+        let supported = supported
+            .map(|(configs, len)| std::slice::from_raw_parts(configs.cast::<AVSampleFormat>(), len))
+            .unwrap_or_default();
+        select_integer_sample_format(bits, supported).ok_or_else(|| {
+            Error::OpenEncoder(format!("the encoder stores no {bits}-bit integer samples"))
+        })
+    }
+}
+
+fn select_integer_sample_format(bits: u32, supported: &[AVSampleFormat]) -> Option<AVSampleFormat> {
+    let wanted: &[AVSampleFormat] = if bits <= 16 {
+        &[
+            AVSampleFormat::AV_SAMPLE_FMT_S16,
+            AVSampleFormat::AV_SAMPLE_FMT_S16P,
+        ]
+    } else {
+        &[
+            AVSampleFormat::AV_SAMPLE_FMT_S32,
+            AVSampleFormat::AV_SAMPLE_FMT_S32P,
+        ]
+    };
+    supported
+        .iter()
+        .copied()
+        .find(|format| wanted.contains(format))
 }
 
 fn select_sample_format(

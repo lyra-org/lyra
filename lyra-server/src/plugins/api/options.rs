@@ -74,6 +74,7 @@ const SERVE_FIELDS: &[&str] = &[
     "bitrate_bps",
     "sample_rate_hz",
     "channels",
+    "bit_depth",
     "prefer_vbr",
     "start_offset_ms",
 ];
@@ -84,6 +85,7 @@ const STREAM_FIELDS: &[&str] = &[
     "bitrate_bps",
     "sample_rate_hz",
     "channels",
+    "bit_depth",
     "prefer_vbr",
     "start_offset_ms",
     "wait_for_transcode",
@@ -207,6 +209,7 @@ fn serve_options(table: &luau::Table, owner: &str) -> luau::runtime::Result<Serv
         bitrate_bps: optional_u32(table, "bitrate_bps", owner)?,
         sample_rate_hz: optional_u32(table, "sample_rate_hz", owner)?,
         channels: optional_u32(table, "channels", owner)?,
+        bit_depth: optional_u32(table, "bit_depth", owner)?,
         prefer_vbr: args::optional_bool(table, "prefer_vbr", owner)?,
         start_offset_ms: optional_u64(table, "start_offset_ms", owner)?,
     })
@@ -301,6 +304,19 @@ fn serve_interface(name: &'static str) -> InterfaceDescriptor {
             "format",
             Option::<DeliveryFormat>::luau_type(),
             "The format to deliver. Defaults to the first preferred codec's format, or else the source's.",
+        ),
+    );
+    let after_channels = descriptor
+        .fields
+        .iter()
+        .position(|field| field.name == "channels")
+        .map_or(descriptor.fields.len(), |index| index + 1);
+    descriptor.fields.insert(
+        after_channels,
+        option_field(
+            "bit_depth",
+            Option::<u32>::luau_type(),
+            "The most bits per sample of lossless output: 16 or 24. A deeper source is re-encoded, in its own lossless codec when it would otherwise be sent as it is. Ignored for lossy output and when the source is no deeper.",
         ),
     );
     descriptor

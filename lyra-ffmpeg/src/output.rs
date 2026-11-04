@@ -133,6 +133,7 @@ pub struct Output {
     pub(crate) audio_sample_rate: Option<i32>,
     pub(crate) audio_channels: Option<i32>,
     pub(crate) audio_sample_fmt: Option<SampleFormat>,
+    pub(crate) audio_bit_depth: Option<u32>,
     pub(crate) is_streaming: bool,
 }
 
@@ -155,6 +156,7 @@ impl Output {
             audio_sample_rate: None,
             audio_channels: None,
             audio_sample_fmt: None,
+            audio_bit_depth: None,
             is_streaming: false,
         }
     }
@@ -181,6 +183,7 @@ impl Output {
             audio_sample_rate: None,
             audio_channels: None,
             audio_sample_fmt: None,
+            audio_bit_depth: None,
             is_streaming: false,
         }
     }
@@ -216,6 +219,13 @@ impl Output {
 
     pub fn channels(mut self, channels: u32) -> Self {
         self.audio_channels = i32::try_from(channels).ok();
+        self
+    }
+
+    /// The bit depth FLAC and ALAC store samples at, as [`AudioCodec::encoded_bit_depth`] reads
+    /// it; other codecs ignore it. Without one they keep the source's.
+    pub fn bit_depth(mut self, bits: u32) -> Self {
+        self.audio_bit_depth = Some(bits);
         self
     }
 
@@ -360,6 +370,10 @@ impl Output {
             .and_then(|channels| u32::try_from(channels).ok())
     }
 
+    pub fn configured_bit_depth(&self) -> Option<u32> {
+        self.audio_bit_depth
+    }
+
     pub(crate) fn validate(&self) -> crate::Result<()> {
         if self.url.is_none() && self.write_callback.is_none() {
             return Err(crate::Error::InvalidOutputSpec(
@@ -401,6 +415,11 @@ impl Output {
         {
             return Err(crate::Error::InvalidOutputSpec(
                 "audio channel count must be greater than zero".to_string(),
+            ));
+        }
+        if matches!(self.audio_bit_depth, Some(0)) {
+            return Err(crate::Error::InvalidOutputSpec(
+                "audio bit depth must be greater than zero".to_string(),
             ));
         }
         validate_no_nul("format name", self.format.as_deref())?;

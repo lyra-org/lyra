@@ -467,6 +467,7 @@ fn file_delivery_options(query: &PlaybackUrlQuery) -> DeliveryOptions {
         bitrate_bps: query.bitrate_bps,
         sample_rate_hz: query.sample_rate_hz,
         channels: query.channels,
+        bit_depth: query.bit_depth,
         prefer_vbr: query.prefer_vbr,
     }
 }
@@ -477,6 +478,7 @@ fn hls_delivery_options(query: &PlaybackUrlQuery) -> DeliveryOptions {
         format: None,
         codec: non_empty(query.hls_codec.as_ref()),
         copy_profiles: None,
+        bit_depth: None,
         ..file_delivery_options(query)
     }
 }
@@ -486,6 +488,7 @@ fn playback_transcode_knobs(query: &PlaybackUrlQuery) -> delivery::TranscodeKnob
         bitrate_bps: query.bitrate_bps,
         sample_rate_hz: query.sample_rate_hz,
         channels: query.channels,
+        bit_depth: query.bit_depth,
         prefer_vbr: query.prefer_vbr,
     }
 }
@@ -731,6 +734,13 @@ struct PlaybackUrlQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
+            description = "Bit depth cap for lossless output of `stream_url` and `download_url`: 16 or 24. A deeper source is re-encoded, in its own lossless codec when it would otherwise be sent as it is; ignored for lossy output and when the source is no deeper. `hls_url` ignores it."
+        )
+    )]
+    bit_depth: Option<u32>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
             description = "Prefer VBR for lossy transcodes when the selected encoder supports it."
         )
     )]
@@ -811,7 +821,7 @@ fn create_track_playback_url_docs(op: TransformOperation) -> TransformOperation 
          `wait_for_transcode` may change per request.\n\n\
          `stream_delivery` and `download_delivery` describe what their URLs deliver without starting \
          anything: whether the source file is served as it is or transcoded and why, and the \
-         delivered container, codec, content type, bitrate, sample rate and channels. They describe \
+         delivered container, codec, content type, bitrate, sample rate, channels and bit depth. They describe \
          the URLs as minted: the start offset stays free per request for seeking, and an offset \
          turns a source served as it is into a transcode of the rest of it.\n\n\
          The request is resolved once against the track's source, and a transport is omitted when \
@@ -2037,6 +2047,7 @@ mod tests {
             bitrate_bps: Some(128_000),
             sample_rate_hz: Some(44_100),
             channels: Some(2),
+            bit_depth: None,
             prefer_vbr: Some(true),
             start_offset_ms: Some(12_345),
             wait_for_transcode: true,
@@ -2061,6 +2072,7 @@ mod tests {
                 bitrate_bps: Some(128_000),
                 sample_rate_hz: Some(44_100),
                 channels: Some(2),
+                bit_depth: None,
                 prefer_vbr: Some(true),
             }
         );
@@ -2082,6 +2094,7 @@ mod tests {
             bitrate_bps: None,
             sample_rate_hz: None,
             channels: None,
+            bit_depth: None,
             prefer_vbr: None,
             start_offset_ms: None,
             wait_for_transcode: false,

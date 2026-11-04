@@ -17,6 +17,7 @@ pub(crate) struct ServeTrackOptions {
     pub(crate) bitrate_bps: Option<u32>,
     pub(crate) sample_rate_hz: Option<u32>,
     pub(crate) channels: Option<u32>,
+    pub(crate) bit_depth: Option<u32>,
     pub(crate) prefer_vbr: Option<bool>,
     pub(crate) start_offset_ms: Option<u64>,
 }
@@ -30,6 +31,7 @@ impl ServeTrackOptions {
             bitrate_bps: self.bitrate_bps,
             sample_rate_hz: self.sample_rate_hz,
             channels: self.channels,
+            bit_depth: self.bit_depth,
             prefer_vbr: self.prefer_vbr,
         }
     }
@@ -48,6 +50,7 @@ impl ServeTrackOptions {
             bitrate_bps,
             sample_rate_hz,
             channels,
+            bit_depth,
             prefer_vbr,
         } = token.options.clone();
         Ok(Self {
@@ -57,6 +60,7 @@ impl ServeTrackOptions {
             bitrate_bps,
             sample_rate_hz,
             channels,
+            bit_depth,
             prefer_vbr,
             start_offset_ms: self.start_offset_ms,
         })

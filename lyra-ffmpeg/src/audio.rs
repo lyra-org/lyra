@@ -279,6 +279,27 @@ impl AudioCodec {
         )
     }
 
+    /// The bit depth this codec stores `source_bits`-deep audio at: FLAC and ALAC keep 16 bits
+    /// up to 16 and 24 above, PCM codecs have their own, and lossy codecs and copy have none.
+    pub fn encoded_bit_depth(&self, source_bits: u32) -> Option<u32> {
+        match self {
+            Self::Flac | Self::Alac => Some(if source_bits <= 16 { 16 } else { 24 }),
+            Self::PcmS16Le | Self::PcmS16Be => Some(16),
+            Self::PcmS24Le | Self::PcmS24Be => Some(24),
+            Self::Copy | Self::Mp3 | Self::Aac | Self::Opus | Self::Vorbis | Self::Wma => None,
+        }
+    }
+
+    /// This codec storing samples of at most `bits`: a 24-bit PCM codec becomes its 16-bit
+    /// counterpart below 24 bits; every other codec stays as it is.
+    pub fn capped_to_bit_depth(self, bits: u32) -> Self {
+        match self {
+            Self::PcmS24Le if bits < 24 => Self::PcmS16Le,
+            Self::PcmS24Be if bits < 24 => Self::PcmS16Be,
+            codec => codec,
+        }
+    }
+
     pub fn min_bitrate_bps(&self) -> Option<u32> {
         match self {
             Self::Mp3 => Some(32_000),

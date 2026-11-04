@@ -27,7 +27,7 @@ assert(hls.kind == "hls_playlist" and hls.options.preferred_codecs[1] == "opus")
 
 refuses(
 	"an unknown option",
-	"stream_track options: unknown field 'container'; expected format, preferred_codecs, bitrate_bps, sample_rate_hz, channels, prefer_vbr, start_offset_ms, wait_for_transcode, public",
+	"stream_track options: unknown field 'container'; expected format, preferred_codecs, bitrate_bps, sample_rate_hz, channels, bit_depth, prefer_vbr, start_offset_ms, wait_for_transcode, public",
 	function()
 		return api.response.stream_track("track", { container = "mp3" } :: any)
 	end

@@ -231,6 +231,11 @@ pub(crate) struct TranscodePolicy {
     pub(crate) encoder_bitrate_bps: Option<u32>,
     pub(crate) sample_rate_hz: Option<u32>,
     pub(crate) channels: Option<u32>,
+    /// The bit depth cap that constrains the delivery decision; `None` when the request asked for
+    /// none, the source is no deeper, or the codec is lossy.
+    pub(crate) bit_depth: Option<u32>,
+    /// The bit depth a lossless encoder should store: the cap, else the source's.
+    pub(crate) encoder_bit_depth: Option<u32>,
     pub(crate) prefer_vbr: bool,
 }
 
@@ -240,6 +245,7 @@ pub(crate) struct TranscodeKnobs {
     pub(crate) bitrate_bps: Option<u32>,
     pub(crate) sample_rate_hz: Option<u32>,
     pub(crate) channels: Option<u32>,
+    pub(crate) bit_depth: Option<u32>,
     pub(crate) prefer_vbr: Option<bool>,
 }
 
@@ -260,6 +266,9 @@ impl TranscodeKnobs {
                 "channels must be greater than zero",
             ));
         }
+        if self.bit_depth.is_some_and(|bits| bits != 16 && bits != 24) {
+            return Err(DeliveryError::bad_request("bit_depth must be 16 or 24"));
+        }
 
         Ok(self)
     }
@@ -271,6 +280,8 @@ pub(crate) struct SourceAudio {
     pub(crate) bitrate_bps: Option<u32>,
     pub(crate) sample_rate_hz: Option<u32>,
     pub(crate) channels: Option<u32>,
+    /// Lossy sources read as 16 bits, the depth a lossless encoder stores their decoded audio at.
+    pub(crate) bit_depth: Option<u32>,
     /// Whether the source is a known *lossy* codec, and therefore whether
     /// `bitrate_bps` is a quality ceiling worth encoding to.
     ///
@@ -282,13 +293,15 @@ pub(crate) struct SourceAudio {
 
 impl From<&ValidatedTrackSource> for SourceAudio {
     fn from(source: &ValidatedTrackSource) -> Self {
+        let lossy = source
+            .source_codec
+            .is_some_and(|codec| !codec.is_lossless());
         Self {
             bitrate_bps: source.format.bitrate_bps,
             sample_rate_hz: source.format.sample_rate_hz,
             channels: source.format.channel_count,
-            lossy: source
-                .source_codec
-                .is_some_and(|codec| !codec.is_lossless()),
+            bit_depth: source.format.bit_depth.or(lossy.then_some(16)),
+            lossy,
         }
     }
 }
@@ -397,6 +410,38 @@ pub(crate) fn apply_transcode_policy(
         }
         Some(ch) => Some(ch),
     };
+    let lossless_output = output_codec.is_lossless();
+    let bit_depth = match knobs.bit_depth {
+        None => None,
+        Some(bits) if !lossless_output => {
+            tracing::info!(
+                target: "transcode_policy",
+                codec = ?output_codec,
+                requested_bits = bits,
+                "bit depth ignored for lossy codec"
+            );
+            None
+        }
+        Some(bits)
+            if source
+                .bit_depth
+                .is_some_and(|source_bits| bits >= source_bits) =>
+        {
+            tracing::info!(
+                target: "transcode_policy",
+                codec = ?output_codec,
+                requested_bits = bits,
+                source_bits = source.bit_depth,
+                "requested bit depth is not below the source; delivering the source depth"
+            );
+            None
+        }
+        Some(bits) => Some(bits),
+    };
+    let encoder_bit_depth = lossless_output
+        .then(|| bit_depth.or(source.bit_depth))
+        .flatten();
+
     let encoder_channels = channels
         .or(source.channels)
         .filter(|channels| *channels > 0)
@@ -447,6 +492,8 @@ pub(crate) fn apply_transcode_policy(
         encoder_bitrate_bps,
         sample_rate_hz,
         channels,
+        bit_depth,
+        encoder_bit_depth,
         prefer_vbr: knobs.prefer_vbr.unwrap_or(false),
     })
 }
@@ -490,6 +537,9 @@ pub(crate) struct EncoderSettings {
     pub(crate) rate_control: Option<RateControl>,
     pub(crate) sample_rate_hz: Option<u32>,
     pub(crate) channels: Option<u32>,
+    /// The bit depth the encoder stores; `None` for lossy codecs, copy, and a lossless encode of
+    /// a source of unknown depth.
+    pub(crate) bit_depth: Option<u32>,
 }
 
 impl EncoderSettings {
@@ -523,6 +573,9 @@ impl EncoderSettings {
             rate_control,
             sample_rate_hz: policy.sample_rate_hz,
             channels: policy.channels,
+            bit_depth: policy
+                .encoder_bit_depth
+                .and_then(|bits| codec.encoded_bit_depth(bits)),
         }
     }
 }
@@ -540,6 +593,8 @@ pub(crate) struct TranscodeReasons {
     pub(crate) sample_rate: bool,
     /// A channel count below the source.
     pub(crate) channels: bool,
+    /// A bit depth below the source.
+    pub(crate) bit_depth: bool,
     /// Only part of the file is delivered: a CUE segment or a start offset.
     pub(crate) range: bool,
 }
@@ -552,6 +607,7 @@ impl TranscodeReasons {
             (self.bitrate, "bitrate"),
             (self.sample_rate, "sample_rate"),
             (self.channels, "channels"),
+            (self.bit_depth, "bit_depth"),
             (self.range, "range"),
         ]
         .into_iter()
@@ -595,6 +651,9 @@ impl DeliveryDecision {
         if let Some(ch) = self.encoder.channels {
             output = output.channels(ch);
         }
+        if let Some(bits) = self.encoder.bit_depth {
+            output = output.bit_depth(bits);
+        }
         output
     }
 }
@@ -606,7 +665,8 @@ pub(crate) struct DeliveryDescription {
     /// `false` when the source file is served as it is.
     pub(crate) transcode: bool,
     /// Why the source is re-encoded: `container`, `codec`, `bitrate`, `sample_rate`,
-    /// `channels`, or `range` (a CUE segment or a start offset). Empty for the source file.
+    /// `channels`, `bit_depth`, or `range` (a CUE segment or a start offset). Empty for the
+    /// source file.
     pub(crate) reasons: Vec<&'static str>,
     /// The delivered file format, as the `format` request option names it.
     pub(crate) container: &'static str,
@@ -620,6 +680,8 @@ pub(crate) struct DeliveryDescription {
     pub(crate) vbr_quality: Option<i32>,
     pub(crate) sample_rate_hz: Option<u32>,
     pub(crate) channels: Option<u32>,
+    /// The bits per sample of lossless audio; absent for lossy audio and when unknown.
+    pub(crate) bit_depth: Option<u32>,
     pub(crate) source: SourceDescription,
 }
 
@@ -657,6 +719,7 @@ impl DeliveryDecision {
                 vbr_quality: None,
                 sample_rate_hz: format.sample_rate_hz,
                 channels: format.channel_count,
+                bit_depth: format.bit_depth,
                 source: source_description,
             };
         }
@@ -681,6 +744,7 @@ impl DeliveryDecision {
                 .or_else(|| self.codec.native_sample_rate_hz())
                 .or(format.sample_rate_hz),
             channels: self.encoder.channels.or(format.channel_count),
+            bit_depth: self.encoder.bit_depth,
             source: source_description,
         }
     }
@@ -764,23 +828,31 @@ pub(crate) fn resolve_delivery(
 
     let policy = apply_transcode_policy(knobs, transcode_codec, source.into())?;
     let trimmed = source.start_ms.is_some() || source.end_ms.is_some();
-    let forcing_transcode = policy.bitrate_bps.is_some()
+    let reshaping = policy.bitrate_bps.is_some()
         || policy.sample_rate_hz.is_some()
         || policy.channels.is_some();
-    let copy_ruled_out = trimmed || forcing_transcode;
+    let own_lossless = match lossless_source_encoding(source) {
+        Some((format, codec)) if copy_selected && !reshaping => Some((
+            format,
+            codec,
+            apply_transcode_policy(knobs, codec, source.into())?,
+        )),
+        _ => None,
+    };
+    let reducing_depth = match &own_lossless {
+        Some((_, _, own_policy)) => own_policy.bit_depth.is_some(),
+        None => policy.bit_depth.is_some(),
+    };
+    let copy_ruled_out = trimmed || reshaping || reducing_depth;
 
     let (output_format, codec, policy) = if copy_selected && copy_ruled_out {
-        match lossless_source_encoding(source).filter(|_| !forcing_transcode) {
-            Some((format, codec)) => (
-                format,
-                codec,
-                apply_transcode_policy(knobs, codec, source.into())?,
-            ),
-            None => (transcode_output_format, transcode_codec, policy),
-        }
+        own_lossless.unwrap_or((transcode_output_format, transcode_codec, policy))
     } else {
         (copy_output_format, copy_codec, policy)
     };
+    let codec = policy
+        .bit_depth
+        .map_or(codec, |bits| codec.capped_to_bit_depth(bits));
 
     if matches!(codec, AudioCodec::Copy) && !allow_copy {
         return Err(DeliveryError::bad_request(format!(
@@ -800,12 +872,14 @@ pub(crate) fn resolve_delivery(
         let bitrate = policy.bitrate_bps.is_some();
         let sample_rate = policy.sample_rate_hz.is_some();
         let channels = policy.channels.is_some();
+        let bit_depth = policy.bit_depth.is_some();
         TranscodeReasons {
             container,
-            codec: !(container || bitrate || sample_rate || channels || trimmed),
+            codec: !(container || bitrate || sample_rate || channels || bit_depth || trimmed),
             bitrate,
             sample_rate,
             channels,
+            bit_depth,
             range: trimmed,
         }
     };
@@ -879,6 +953,8 @@ mod tests {
             encoder_bitrate_bps: bitrate_bps,
             sample_rate_hz,
             channels,
+            bit_depth: None,
+            encoder_bit_depth: None,
             prefer_vbr: false,
         }
     }
@@ -961,6 +1037,8 @@ mod tests {
                 encoder_bitrate_bps: Some(192_000),
                 sample_rate_hz: None,
                 channels: Some(2),
+                bit_depth: None,
+                encoder_bit_depth: None,
                 prefer_vbr: true,
             },
         );
@@ -975,6 +1053,8 @@ mod tests {
             encoder_bitrate_bps: None,
             sample_rate_hz: None,
             channels: None,
+            bit_depth: None,
+            encoder_bit_depth: None,
             prefer_vbr: true,
         };
         assert_eq!(
@@ -995,6 +1075,8 @@ mod tests {
             encoder_bitrate_bps: Some(64_000),
             sample_rate_hz: None,
             channels: Some(2),
+            bit_depth: None,
+            encoder_bit_depth: None,
             prefer_vbr: true,
         };
         assert_eq!(
@@ -1015,6 +1097,8 @@ mod tests {
             encoder_bitrate_bps: Some(128_000),
             sample_rate_hz: None,
             channels: Some(2),
+            bit_depth: None,
+            encoder_bit_depth: None,
             prefer_vbr: true,
         };
         assert_eq!(
@@ -1035,6 +1119,8 @@ mod tests {
             encoder_bitrate_bps: Some(96_000),
             sample_rate_hz: Some(48_000),
             channels: None,
+            bit_depth: None,
+            encoder_bit_depth: None,
             prefer_vbr: true,
         };
         assert_eq!(
@@ -1059,6 +1145,8 @@ mod tests {
             encoder_bitrate_bps: Some(96_000),
             sample_rate_hz: None,
             channels: None,
+            bit_depth: None,
+            encoder_bit_depth: None,
             prefer_vbr: true,
         };
         assert_eq!(
@@ -1080,6 +1168,7 @@ mod tests {
             bitrate_bps,
             sample_rate_hz,
             channels,
+            bit_depth: None,
             prefer_vbr: None,
         }
     }
@@ -1388,6 +1477,7 @@ mod tests {
             bitrate_bps: None,
             sample_rate_hz: Some(44_100),
             channels: Some(2),
+            bit_depth: None,
             lossy: true,
         };
 
@@ -1416,6 +1506,7 @@ mod tests {
                 bitrate_bps: None,
                 sample_rate_hz: Some(44_100),
                 channels: Some(2),
+                bit_depth: None,
                 lossy: true,
             },
         )
@@ -1449,6 +1540,7 @@ mod tests {
                 bitrate_bps: Some(320_000),
                 sample_rate_hz: Some(96_000),
                 channels: Some(6),
+                bit_depth: None,
                 lossy: true,
             },
         )
@@ -1940,5 +2032,140 @@ mod tests {
         assert_eq!(decision.codec, AudioCodec::Mp3);
         assert_eq!(decision.encoder.rate_control, Some(RateControl::Quality(2)));
         assert_eq!(decision.content_type, "audio/mpeg");
+    }
+
+    fn with_bit_depth(mut source: ValidatedTrackSource, bits: u32) -> ValidatedTrackSource {
+        source.format.bit_depth = Some(bits);
+        source
+    }
+
+    fn capped_to(bits: u32) -> TranscodeKnobs {
+        TranscodeKnobs {
+            bit_depth: Some(bits),
+            ..TranscodeKnobs::default()
+        }
+    }
+
+    fn stream(
+        source: &ValidatedTrackSource,
+        format: Option<&str>,
+        codec: Option<&str>,
+        knobs: TranscodeKnobs,
+    ) -> Result<DeliveryDecision, DeliveryError> {
+        let validated =
+            validate_request(format.map(str::to_string), codec.map(str::to_string), None)
+                .expect("the request parses");
+        resolve_delivery(&validated, source, knobs, DeliveryTarget::Stream)
+    }
+
+    #[test]
+    fn knobs_reject_a_bit_depth_other_than_16_or_24() {
+        for bits in [0, 8, 20, 32] {
+            let err = capped_to(bits)
+                .validate()
+                .expect_err("only 16 and 24 bits are deliverable");
+            assert_eq!(bad_request_message(err), "bit_depth must be 16 or 24");
+        }
+        capped_to(16).validate().expect("16 bits validate");
+        capped_to(24).validate().expect("24 bits validate");
+    }
+
+    #[test]
+    fn resolve_delivery_reencodes_a_deeper_flac_at_the_cap() {
+        let source = with_bit_depth(flac_source(None, None), 24);
+        let decision = stream(&source, None, None, capped_to(16)).expect("the cap resolves");
+
+        assert!(!decision.direct_passthrough);
+        assert_eq!(decision.output_format, AudioFormat::Flac);
+        assert_eq!(decision.codec, AudioCodec::Flac);
+        assert_eq!(decision.encoder.bit_depth, Some(16));
+        assert_eq!(decision.reasons.names(), vec!["bit_depth"]);
+        let description = decision.describe(&source);
+        assert_eq!(description.bit_depth, Some(16));
+        assert_eq!(description.source.bit_depth, Some(24));
+    }
+
+    #[test]
+    fn resolve_delivery_keeps_passthrough_when_the_source_is_no_deeper_than_the_cap() {
+        for bits in [16, 24] {
+            let source = with_bit_depth(flac_source(None, None), 16);
+            let decision = stream(&source, None, None, capped_to(bits)).expect("the cap resolves");
+            assert!(
+                decision.direct_passthrough,
+                "a {bits}-bit cap on a 16-bit source"
+            );
+            assert_eq!(decision.describe(&source).bit_depth, Some(16));
+        }
+    }
+
+    #[test]
+    fn resolve_delivery_reencodes_a_deeper_alac_in_its_own_codec() {
+        let source = with_bit_depth(m4a_source(Some(SourceCodec::Alac)), 24);
+        let decision = stream(&source, None, None, capped_to(16)).expect("the cap resolves");
+
+        assert_eq!(decision.output_format, AudioFormat::M4a);
+        assert_eq!(
+            decision.codec,
+            AudioCodec::Alac,
+            "the cap must not turn ALAC into the container's default AAC"
+        );
+        assert_eq!(decision.encoder.bit_depth, Some(16));
+        assert_eq!(decision.reasons.names(), vec!["bit_depth"]);
+    }
+
+    #[test]
+    fn resolve_delivery_swaps_a_24_bit_pcm_codec_for_its_16_bit_counterpart() {
+        let mut source = with_bit_depth(flac_source(None, None), 24);
+        source.entry_format = Some(AudioFormat::Wav);
+        source.source_codec = Some(AudioCodec::PcmS24Le);
+        source.format.container = Some(SourceContainer::Wav);
+        source.format.codec = Some(SourceCodec::PcmS24Le);
+
+        let own = stream(&source, None, None, capped_to(16)).expect("the cap resolves");
+        assert_eq!(own.output_format, AudioFormat::Wav);
+        assert_eq!(own.codec, AudioCodec::PcmS16Le);
+        assert_eq!(own.describe(&source).bit_depth, Some(16));
+
+        let requested = stream(&source, Some("wav"), Some("pcm_s24le"), capped_to(16))
+            .expect("the cap resolves");
+        assert_eq!(requested.codec, AudioCodec::PcmS16Le);
+    }
+
+    #[test]
+    fn resolve_delivery_ignores_the_cap_for_lossy_output() {
+        let source = with_bit_depth(flac_source(None, None), 24);
+        let decision = stream(&source, Some("mp3"), None, capped_to(16)).expect("the mp3 resolves");
+
+        assert_eq!(decision.codec, AudioCodec::Mp3);
+        assert_eq!(decision.encoder.bit_depth, None);
+        assert_eq!(decision.reasons.names(), vec!["container"]);
+        assert_eq!(decision.describe(&source).bit_depth, None);
+    }
+
+    #[test]
+    fn resolve_delivery_keeps_the_source_depth_for_a_lossless_reencode() {
+        let source = with_bit_depth(flac_source(Some(1_000), Some(5_000)), 24);
+        let decision =
+            stream(&source, None, None, TranscodeKnobs::default()).expect("the slice resolves");
+
+        assert_eq!(decision.codec, AudioCodec::Flac);
+        assert_eq!(decision.encoder.bit_depth, Some(24));
+        assert_eq!(
+            decision
+                .configure_output(Output::with_callback(|_| 0))
+                .configured_bit_depth(),
+            Some(24)
+        );
+    }
+
+    #[test]
+    fn resolve_delivery_reads_a_lossy_source_as_16_bits_for_lossless_output() {
+        let mut source = m4a_source(Some(SourceCodec::Aac));
+        source.format.bit_depth = None;
+        let decision =
+            stream(&source, Some("flac"), None, capped_to(16)).expect("the flac resolves");
+
+        assert_eq!(decision.encoder.bit_depth, Some(16));
+        assert_eq!(decision.reasons.names(), vec!["container"]);
     }
 }

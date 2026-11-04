@@ -83,6 +83,13 @@ struct DownloadQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
+            description = "Bit depth cap for lossless output: 16 or 24. A deeper source is re-encoded, in its own lossless codec when it would otherwise be sent as it is; ignored for lossy output and when the source is no deeper."
+        )
+    )]
+    bit_depth: Option<u32>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
             description = "Prefer VBR for lossy transcodes when the selected encoder supports it."
         )
     )]
@@ -119,6 +126,7 @@ async fn get_download(
             bitrate_bps: query.bitrate_bps,
             sample_rate_hz: query.sample_rate_hz,
             channels: query.channels,
+            bit_depth: query.bit_depth,
             prefer_vbr: query.prefer_vbr,
             start_offset_ms: query.start_offset_ms,
         }

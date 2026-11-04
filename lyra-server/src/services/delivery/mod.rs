@@ -115,6 +115,7 @@ pub(crate) async fn resolve_track_delivery(
         bitrate_bps,
         sample_rate_hz,
         channels,
+        bit_depth,
         prefer_vbr,
         start_offset_ms,
     } = options;
@@ -131,6 +132,7 @@ pub(crate) async fn resolve_track_delivery(
             bitrate_bps,
             sample_rate_hz,
             channels,
+            bit_depth,
             prefer_vbr,
         },
         target,

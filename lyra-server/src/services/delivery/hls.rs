@@ -53,6 +53,7 @@ impl HlsPlaylistOptions {
             bitrate_bps: self.bitrate_bps,
             sample_rate_hz: self.sample_rate_hz,
             channels: self.channels,
+            bit_depth: None,
             prefer_vbr: self.prefer_vbr,
         })?;
         let options = token.options.clone();
@@ -116,6 +117,7 @@ pub(crate) async fn resolve_hls(
         bitrate_bps,
         sample_rate_hz,
         channels,
+        bit_depth: None,
         prefer_vbr,
     };
     let profile = resolve_hls_profile(&source, &validated, knobs)?;

@@ -467,7 +467,7 @@ impl DescribeInterface for DeliveryDescription {
                 "reasons",
                 Vec::<String>::luau_type(),
                 Some(
-                    "Why the source is re-encoded: `container`, `codec`, `bitrate`, `sample_rate`, `channels`, or `range`. Empty for the source file.",
+                    "Why the source is re-encoded: `container`, `codec`, `bitrate`, `sample_rate`, `channels`, `bit_depth`, or `range`. Empty for the source file.",
                 ),
             ),
             field(
@@ -481,6 +481,11 @@ impl DescribeInterface for DeliveryDescription {
             field("vbr_quality", Option::<i32>::luau_type(), None),
             field("sample_rate_hz", Option::<u32>::luau_type(), None),
             field("channels", Option::<u32>::luau_type(), None),
+            field(
+                "bit_depth",
+                Option::<u32>::luau_type(),
+                Some("The bits per sample of lossless audio; absent for lossy audio and when unknown."),
+            ),
             field("source", SourceDescription::luau_type(), None),
         ]);
         descriptor

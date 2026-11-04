@@ -1390,8 +1390,15 @@ pub(crate) mod tests {
         assert_eq!(delivery["codec"], "flac");
         assert_eq!(delivery["content_type"], "audio/flac");
         assert_eq!(delivery["sample_rate_hz"], 44_100);
+        assert_eq!(delivery["bit_depth"], 16);
         assert_eq!(delivery["source"]["container"], "flac");
         assert_eq!(original["download_delivery"]["transcode"], false);
+
+        let capped = playback_urls(&track_id, &headers, "bit_depth=16").await?;
+        assert_eq!(
+            capped["stream_delivery"]["transcode"], false,
+            "a cap the 16-bit source already meets keeps it as it is"
+        );
 
         let mp3 = playback_urls(&track_id, &headers, "format=mp3&bitrate_bps=96000").await?;
         let delivery = &mp3["stream_delivery"];
@@ -1404,6 +1411,7 @@ pub(crate) mod tests {
         assert_eq!(delivery["codec"], "mp3");
         assert_eq!(delivery["content_type"], "audio/mpeg");
         assert_eq!(delivery["bitrate_bps"], 96_000);
+        assert_eq!(delivery["bit_depth"], serde_json::Value::Null);
         assert_eq!(delivery["source"]["codec"], "flac");
 
         let caf = playback_urls(&track_id, &headers, "format=caf").await?;
@@ -1983,6 +1991,39 @@ pub(crate) mod tests {
 
         let status = result
             .expect_err("bitrate_bps=0 must surface a policy rejection")
+            .into_response()
+            .status();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn stream_rejects_an_unsupported_bit_depth_with_400() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let headers = HeaderMap::new();
+
+        let result = super::track_response(
+            &Method::GET,
+            &headers,
+            &track_id,
+            &crate::services::delivery::TrackAccess::PublicPluginRoute(Caller::Client(
+                ClientAddress::default(),
+            )),
+            ServeTrackOptions {
+                bit_depth: Some(20),
+                ..ServeTrackOptions::default()
+            },
+            crate::services::delivery::DeliveryTarget::Stream,
+            false,
+        )
+        .await;
+
+        let status = result
+            .expect_err("bit_depth=20 must surface a policy rejection")
             .into_response()
             .status();
         assert_eq!(status, StatusCode::BAD_REQUEST);
