@@ -13,6 +13,7 @@ use proc_macro2::{
 use quote::quote;
 use syn::{
     Attribute,
+    Expr,
     Fields,
     FnArg,
     Ident,
@@ -57,7 +58,9 @@ struct HarmonyMethodOptions {
     name: Option<LitStr>,
     args: Option<Vec<DocParameterOverride>>,
     returns: Option<Vec<Type>>,
-    description: Option<LitStr>,
+    /// A string literal, or an expression for one, such as a `concat!` of literal-producing
+    /// macros.
+    description: Option<Expr>,
 }
 
 struct DocParameterOverride {
@@ -80,7 +83,7 @@ enum HarmonyMethodOption {
     Name(LitStr),
     Args(DocParameterList),
     Returns(DocReturnList),
-    Description(LitStr),
+    Description(Expr),
 }
 
 struct HarmonyMethodOptionList(Punctuated<HarmonyMethodOption, Token![,]>);
@@ -683,7 +686,7 @@ pub fn userdata_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
             .name
             .clone()
             .unwrap_or_else(|| lit_str(&fn_name.to_string(), fn_name.span()));
-        let description = option_lit_str_tokens(options.description.as_ref());
+        let description = option_expr_tokens(options.description.as_ref());
         let kind = CallKind::of(&fn_item.sig);
         let parameters = match function_parameters(&fn_item.sig.inputs) {
             Ok(parameters) => parameters,
@@ -1215,7 +1218,7 @@ fn module_impl(mut ast: ItemImpl, options: ModuleOptions) -> syn::Result<TokenSt
             .split('.')
             .map(|segment| lit_str(segment, lua_name.span()))
             .collect::<Vec<_>>();
-        let function_description = option_lit_str_tokens(method_options.description.as_ref());
+        let function_description = option_expr_tokens(method_options.description.as_ref());
         let params = parameter_descriptors(&method_options, &arguments, fn_name.span());
         let returns = return_descriptor_tokens(&method_options, &fn_item.sig.output);
         let yields = kind.yields();
@@ -1570,6 +1573,13 @@ fn is_type_path_named(type_path: &TypePath, name: &str) -> bool {
 }
 
 fn option_lit_str_tokens(value: Option<&LitStr>) -> TokenStream2 {
+    match value {
+        Some(value) => quote! { Some(#value) },
+        None => quote! { None },
+    }
+}
+
+fn option_expr_tokens(value: Option<&Expr>) -> TokenStream2 {
     match value {
         Some(value) => quote! { Some(#value) },
         None => quote! { None },
