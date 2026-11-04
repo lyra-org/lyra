@@ -2,8 +2,8 @@
   "schema_version": 1,
   "id": "wikidata",
   "name": "WikiData Provider",
-  "version": "0.0.2",
-  "lyra": "0.0.1-dev.3",
+  "version": "0.0.3",
+  "lyra": "0.0.1-dev.4",
   "description": "Enriches album genres and artist descriptions from WikiData and Wikipedia",
   "entrypoint": "init.luau",
   "scopes": [
