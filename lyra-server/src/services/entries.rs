@@ -157,7 +157,64 @@ pub(crate) fn visible_entry(
     let Some(entry) = lyra_db::entries::get_by_id(db, entry_db_id)? else {
         return Ok(None);
     };
-    Ok(viewer.sees_entity(db, entry_db_id)?.then_some(entry))
+    let libraries = viewer.visible_libraries(db)?;
+    Ok(sees_held(db, libraries.as_deref(), entry_db_id)?.then_some(entry))
+}
+
+/// Whether a viewer limited to `libraries`, or unlimited when `None`, sees the entry
+/// `entry_db_id`. An entry is seen through the library or directory holding it, never through
+/// the tracks sourced from it.
+fn sees_held(db: &DbAny, libraries: Option<&[DbId]>, entry_db_id: DbId) -> anyhow::Result<bool> {
+    if libraries.is_none() {
+        return Ok(true);
+    }
+    match lyra_db::entries::parent_id(db, entry_db_id)? {
+        Some(parent) => sees_children(db, libraries, parent),
+        None => Ok(false),
+    }
+}
+
+/// Whether a viewer limited to `libraries` sees what `parent`, a library or a directory entry,
+/// holds.
+fn sees_children(db: &DbAny, libraries: Option<&[DbId]>, parent: DbId) -> anyhow::Result<bool> {
+    if lyra_db::libraries::get_by_id(db, parent)?.is_some() {
+        return Ok(libraries.is_none_or(|libraries| libraries.contains(&parent)));
+    }
+    if !lyra_db::entries::get_by_id(db, parent)?.is_some_and(|entry| entry.kind == EntryKind::Dir) {
+        return Ok(false);
+    }
+    sees_held(db, libraries, parent)
+}
+
+/// The entries among `ids` that the viewer can see, in order. Siblings share one check of what
+/// holds them.
+pub(crate) fn visible_ids(db: &DbAny, viewer: &Viewer, ids: &[DbId]) -> anyhow::Result<Vec<DbId>> {
+    let libraries = viewer.visible_libraries(db)?;
+    let mut parents: HashMap<DbId, bool> = HashMap::new();
+    let mut visible = Vec::new();
+    for &id in ids {
+        if lyra_db::graph::element_kind(db, id)?.as_deref() != Some("Entry") {
+            continue;
+        }
+        if libraries.is_some() {
+            let Some(parent) = lyra_db::entries::parent_id(db, id)? else {
+                continue;
+            };
+            let seen = match parents.get(&parent) {
+                Some(&seen) => seen,
+                None => {
+                    let seen = sees_children(db, libraries.as_deref(), parent)?;
+                    parents.insert(parent, seen);
+                    seen
+                }
+            };
+            if !seen {
+                continue;
+            }
+        }
+        visible.push(id);
+    }
+    Ok(visible)
 }
 
 /// The entries with these ids that the viewer can see, keyed by id.
@@ -184,14 +241,7 @@ pub(crate) fn by_parent(
     let libraries = viewer.visible_libraries(db)?;
     let mut children = HashMap::new();
     for &parent in parents {
-        let visible = if lyra_db::libraries::get_by_id(db, parent)?.is_some() {
-            libraries
-                .as_ref()
-                .is_none_or(|libraries| libraries.contains(&parent))
-        } else {
-            visible_entry(db, viewer, parent)?.is_some_and(|entry| entry.kind == EntryKind::Dir)
-        };
-        if !visible {
+        if !sees_children(db, libraries.as_deref(), parent)? {
             continue;
         }
         let mut entries = lyra_db::entries::children(db, parent)?;
@@ -213,6 +263,7 @@ pub(crate) fn by_track(
     viewer: &Viewer,
     tracks: &[DbId],
 ) -> Result<HashMap<DbId, Vec<PlacedEntry>>, CatalogError> {
+    let libraries = viewer.visible_libraries(db)?;
     let mut entries = HashMap::new();
     for &track in tracks {
         if lyra_db::tracks::get_by_id(db, track)?.is_none() || !viewer.sees_entity(db, track)? {
@@ -223,7 +274,7 @@ pub(crate) fn by_track(
             let entry_db_id = entry
                 .db_id
                 .ok_or_else(|| anyhow::anyhow!("entry missing db id"))?;
-            if viewer.sees_entity(db, entry_db_id)? {
+            if sees_held(db, libraries.as_deref(), entry_db_id)? {
                 placed.push(PlacedEntry::locate(db, entry)?);
             }
         }
@@ -265,10 +316,7 @@ pub(crate) fn get_details(
 ) -> Result<EntryDetails, EntryServiceError> {
     let not_found = || EntryServiceError::NotFound(format!("Entry not found: {id}"));
     let entry_db_id = lyra_db::lookup::find_node_id_by_id(db, id)?.ok_or_else(not_found)?;
-    let entry = lyra_db::entries::get_by_id(db, entry_db_id)?.ok_or_else(not_found)?;
-    if !viewer.sees_entity(db, entry_db_id)? {
-        return Err(not_found());
-    }
+    let entry = visible_entry(db, viewer, entry_db_id)?.ok_or_else(not_found)?;
 
     Ok(build_entry_details(db, entry, include)?)
 }
@@ -298,13 +346,18 @@ mod tests {
         },
     };
 
-    fn insert_entry(db: &mut DbAny, parent: DbId, name: &str) -> anyhow::Result<DbId> {
+    fn insert_entry(
+        db: &mut DbAny,
+        parent: DbId,
+        name: &str,
+        kind: EntryKind,
+    ) -> anyhow::Result<DbId> {
         let entry = Entry {
             db_id: None,
             id: nanoid!(),
             full_path: PathBuf::from(format!("/music/{name}")),
-            kind: EntryKind::File,
-            file_kind: Some("audio".to_string()),
+            file_kind: (kind == EntryKind::File).then(|| "audio".to_string()),
+            kind,
             name: name.to_string(),
             hash: None,
             size: 1,
@@ -330,8 +383,8 @@ mod tests {
         let shown_db_id = insert_library(&mut db, "Shown", "/music/shown")?;
         let hidden_db_id = insert_library(&mut db, "Hidden", "/music/hidden")?;
         let shown_public_id = lyra_db::libraries::get_by_id(&db, shown_db_id)?.unwrap().id;
-        let shown_entry = insert_entry(&mut db, shown_db_id, "shown.flac")?;
-        let hidden_entry = insert_entry(&mut db, hidden_db_id, "hidden.flac")?;
+        let shown_entry = insert_entry(&mut db, shown_db_id, "shown.flac", EntryKind::File)?;
+        let hidden_entry = insert_entry(&mut db, hidden_db_id, "hidden.flac", EntryKind::File)?;
         let hidden_track = insert_track(&mut db, "Hidden")?;
         connect(&mut db, hidden_db_id, hidden_track)?;
         connect(&mut db, hidden_track, hidden_entry)?;
@@ -382,6 +435,42 @@ mod tests {
             assert_eq!(held[&hidden_track].len(), 1);
             assert_eq!(held[&hidden_track][0].parent_id, hidden_db_id);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn entries_are_seen_through_what_holds_them() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = lyra_db::users::create(&mut db, &test_user("listener")?)?;
+        let shown_db_id = insert_library(&mut db, "Shown", "/music/shown")?;
+        let hidden_db_id = insert_library(&mut db, "Hidden", "/music/hidden")?;
+        let shown_public_id = lyra_db::libraries::get_by_id(&db, shown_db_id)?.unwrap().id;
+        let album = insert_entry(&mut db, shown_db_id, "Album", EntryKind::Dir)?;
+        let first = insert_entry(&mut db, album, "01.flac", EntryKind::File)?;
+        let second = insert_entry(&mut db, album, "02.flac", EntryKind::File)?;
+        let hidden_file = insert_entry(&mut db, hidden_db_id, "hidden.flac", EntryKind::File)?;
+        // The shown library holds a track sourced from the hidden library's file.
+        let track = insert_track(&mut db, "Shared")?;
+        connect(&mut db, shown_db_id, track)?;
+        connect(&mut db, track, hidden_file)?;
+
+        let listener = Viewer::user(
+            &db,
+            Principal::for_user(&db, user_db_id, vec![], HashSet::from([shown_public_id])),
+        )?;
+
+        assert_eq!(
+            visible_ids(&db, &listener, &[first, hidden_file, second, album, track])?,
+            vec![first, second, album]
+        );
+        assert!(listener.sees(&db, track)?);
+        assert!(!listener.sees(&db, hidden_file)?);
+        assert!(visible_entry(&db, &listener, hidden_file)?.is_none());
+        assert!(by_track(&db, &listener, &[track])?[&track].is_empty());
+        assert_eq!(
+            visible_ids(&db, &Viewer::System, &[first, hidden_file])?,
+            vec![first, hidden_file]
+        );
         Ok(())
     }
 }

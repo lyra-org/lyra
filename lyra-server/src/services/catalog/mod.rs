@@ -170,6 +170,9 @@ impl Viewer {
             None => Ok(false),
             Some("Artist") => self.sees_artist(db, node_db_id),
             Some("Playlist") => self.sees_playlist(db, node_db_id),
+            Some("Entry") => {
+                Ok(crate::services::entries::visible_entry(db, self, node_db_id)?.is_some())
+            }
             Some("Genre") => Ok(self.sees_everything()
                 || lookups::visible::<genres::Genres>(db, self, &[node_db_id])?
                     .contains(&node_db_id)),

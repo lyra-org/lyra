@@ -156,10 +156,8 @@ pub(crate) fn tracks_by_entry(
     entries: &[DbId],
 ) -> Result<HashMap<DbId, Vec<Track>>, CatalogError> {
     let mut tracks = HashMap::new();
-    for &entry in entries {
-        if crate::services::entries::visible_entry(db, viewer, entry)?.is_some() {
-            tracks.insert(entry, lyra_db::tracks::get_by_entry(db, entry)?);
-        }
+    for entry in crate::services::entries::visible_ids(db, viewer, entries)? {
+        tracks.insert(entry, lyra_db::tracks::get_by_entry(db, entry)?);
     }
     Ok(tracks)
 }
