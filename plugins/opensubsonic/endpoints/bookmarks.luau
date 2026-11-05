@@ -42,7 +42,7 @@ local function latest_queue(req: Request): (JsonObject, number?)
 	local position = latest.position_ms
 	for index, id in latest.track_ids do
 		local track = found[id]
-		if track then
+		if track and track.available then
 			table.insert(entries, track)
 			if current == nil and index > latest.current_index then
 				current = #entries
@@ -112,7 +112,11 @@ end
 
 -- Every bookmark of the caller's, of the songs they can see, most recently changed first.
 local function bookmark_list(req: Request): { JsonObject }
-	local found = tracks.query({ bookmarked = true, sort = { { key = "bookmarked_at", order = "descending" } } }).items
+	local found = tracks.query({
+		bookmarked = true,
+		available = true,
+		sort = { { key = "bookmarked_at", order = "descending" } },
+	}).items
 	if #found == 0 then
 		return {}
 	end

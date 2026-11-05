@@ -135,6 +135,7 @@ local function album_list(req: Request, container: string, build: ({ ReleaseSumm
 	local items: { JsonObject } = {}
 	if query and size > 0 then
 		query.library_id = library_id
+		query.available = true
 		query.offset = offset
 		query.limit = size
 		items = build(releases.query(query).items)
@@ -158,16 +159,19 @@ local function starred(
 	local starred_artists = artist_list(artists.query({
 		favorite = true,
 		library_id = library_id,
+		available = true,
 		sort = { { key = "favorited_at", order = "descending" } },
 	}).items)
 	local starred_albums = album_list(releases.query({
 		favorite = true,
 		library_id = library_id,
+		available = true,
 		sort = { { key = "favorited_at", order = "descending" } },
 	}).items)
 	local starred_songs = songs.list(tracks.query({
 		favorite = true,
 		library_id = library_id,
+		available = true,
 		sort = { { key = "favorited_at", order = "descending" } },
 	}).items)
 
@@ -200,7 +204,7 @@ module.methods = {
 		local size = request.count(params, "size", DEFAULT_SIZE, MAX_SIZE)
 		local from_year = request.int(params, "fromYear")
 		local to_year = request.int(params, "toYear")
-		local query: TrackQuery = { library_id = folders.library_id(params) }
+		local query: TrackQuery = { library_id = folders.library_id(params), available = true }
 		local matches = true
 		if
 			(from_year and to_year and from_year > to_year)
@@ -244,6 +248,7 @@ module.methods = {
 			items = songs.list(tracks.query({
 				genre_ids = genre_ids,
 				library_id = library_id,
+				available = true,
 				sort = { { key = "sort_name" } },
 				offset = offset,
 				limit = count,
@@ -264,7 +269,7 @@ module.methods = {
 		local shown: { playback_sessions.ActivePlaybackInfo } = {}
 		for _, playback in playing do
 			local track = found[playback.track_id]
-			if track then
+			if track and track.available then
 				table.insert(listed, track)
 				table.insert(shown, playback)
 			end

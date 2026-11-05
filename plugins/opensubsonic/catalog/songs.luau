@@ -46,6 +46,20 @@ local CONTENT_TYPES: { [string]: string } = {
 
 local module = {}
 
+-- What a song whose files are all missing answers with when asked for directly.
+module.FILE_MISSING = "The song's file is missing"
+
+-- The songs among `track_list` that can play, in order: clients can't show the others.
+function module.playable(track_list: { Track }): { Track }
+	local kept: { Track } = {}
+	for _, track in track_list do
+		if track.available then
+			table.insert(kept, track)
+		end
+	end
+	return kept
+end
+
 local function unique_ids(items: { { id: string } }): { string }
 	local ids: { string } = {}
 	local seen: { [string]: boolean } = {}

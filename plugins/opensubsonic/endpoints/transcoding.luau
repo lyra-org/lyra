@@ -11,6 +11,7 @@ local tracks = require("@lyra/tracks")
 local client_info = require("../protocol/client_info")
 local request = require("../protocol/request")
 local response = require("../protocol/response")
+local songs = require("../catalog/songs")
 
 type ApiQueryParams = api.ApiQueryParams
 type ApiResponse = api.ApiResponse
@@ -639,8 +640,12 @@ local function media_of(params: ApiQueryParams): (string?, MediaFailure?)
 		return nil, { status = 404, code = 70, message = "Podcast episode not found" }
 	elseif media_type ~= SONG then
 		return nil, { status = 400, code = 0, message = `Invalid mediaType: {media_type}` }
-	elseif not tracks.get({ id })[id] then
+	end
+	local track = tracks.get({ id })[id]
+	if not track then
 		return nil, { status = 404, code = 70, message = "Song not found" }
+	elseif not track.available then
+		return nil, { status = 410, code = 70, message = songs.FILE_MISSING }
 	end
 	return id, nil
 end

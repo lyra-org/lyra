@@ -11,7 +11,7 @@ local module = {}
 -- The ids of the genres named `name`, compared as search compares names.
 function module.ids_named(name: string): { string }
 	local ids: { string } = {}
-	for _, genre in genres.query({ name = name }).items do
+	for _, genre in genres.query({ name = name, available = true }).items do
 		table.insert(ids, genre.id)
 	end
 	return ids

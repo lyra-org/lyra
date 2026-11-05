@@ -14,6 +14,7 @@ local cover_art = require("../catalog/cover_art")
 local credits = require("../catalog/credits")
 local request = require("../protocol/request")
 local response = require("../protocol/response")
+local songs = require("../catalog/songs")
 
 type ApiQueryParams = api.ApiQueryParams
 type ApiResponse = api.ApiResponse
@@ -33,6 +34,8 @@ local function find_track(params: ApiQueryParams): Track
 	local track = tracks.get({ id })[id]
 	if not track then
 		return request.not_found("Song")
+	elseif not track.available then
+		return request.fail(70, songs.FILE_MISSING)
 	end
 	return track
 end
@@ -146,12 +149,12 @@ end
 -- `artist` is given, only songs crediting an artist of that name as a song's `artist` count;
 -- credits of other types, and the album's artists, don't.
 local function lyrics_named(title: string, artist: string?): (Track?, LyricsInfo?, EntityProjectionInfo?)
-	local query: TrackQuery = { name = title, limit = LYRICS_PAGE }
+	local query: TrackQuery = { name = title, available = true, limit = LYRICS_PAGE }
 	local named: { [string]: boolean }? = nil
 	if artist then
 		local ids: { string } = {}
 		local found: { [string]: boolean } = {}
-		for _, summary in artists.query({ name = artist, limit = LYRICS_ARTISTS }).items do
+		for _, summary in artists.query({ name = artist, available = true, limit = LYRICS_ARTISTS }).items do
 			table.insert(ids, summary.id)
 			found[summary.id] = true
 		end

@@ -88,7 +88,7 @@ local function search(
 	local text = search_text(params)
 	local library_id = folders.library_id(params)
 	local function query(offset: number, limit: number): any
-		return { search = text, library_id = library_id, offset = offset, limit = limit }
+		return { search = text, library_id = library_id, available = true, offset = offset, limit = limit }
 	end
 	local artist_count, artist_offset = page(params, "artist")
 	local album_count, album_offset = page(params, "album")

@@ -89,13 +89,13 @@ end
 local function top_artist_ids(params: api.ApiQueryParams): { string }
 	local id = request.param(params, "id")
 	if id then
-		if not artists.query({ ids = { id }, limit = 1 }).items[1] then
+		if not artists.query({ ids = { id }, available = true, limit = 1 }).items[1] then
 			return request.not_found("Artist")
 		end
 		return { id }
 	end
 	local ids: { string } = {}
-	for _, artist in artists.query({ name = request.required(params, "artist") }).items do
+	for _, artist in artists.query({ name = request.required(params, "artist"), available = true }).items do
 		table.insert(ids, artist.id)
 	end
 	return ids
@@ -153,6 +153,7 @@ local function album_artists(params: api.ApiQueryParams): { artists.ArtistSummar
 	return artists.query({
 		library_id = folders.library_id(params),
 		credit_role = "release",
+		available = true,
 		sort = { { key = "sort_name" } },
 	}).items
 end
@@ -162,13 +163,14 @@ local function artist_albums(artist_id: string): { releases.ReleaseSummary }
 	return releases.query({
 		artist_ids = { artist_id },
 		credit_role = "release",
+		available = true,
 		sort = { { key = "year" }, { key = "sort_name" } },
 	}).items
 end
 
 -- An album's songs, in disc and track order: the host's order for a query of one release.
 local function album_songs(release_id: string): { JsonObject }
-	return songs.list(tracks.query({ release_ids = { release_id } }).items)
+	return songs.list(tracks.query({ release_ids = { release_id }, available = true }).items)
 end
 
 local module = {}
@@ -206,7 +208,7 @@ module.methods = {
 		local kind = entities.get_type(id)
 		local directory: JsonObject? = nil
 		if kind == "Artist" then
-			local summary = artists.query({ ids = { id }, limit = 1 }).items[1]
+			local summary = artists.query({ ids = { id }, available = true, limit = 1 }).items[1]
 			if summary then
 				local artist = artist_items.directories({ summary })[1]
 				directory = {
@@ -222,7 +224,7 @@ module.methods = {
 				end
 			end
 		elseif kind == "Release" then
-			local summary = releases.query({ ids = { id }, limit = 1 }).items[1]
+			local summary = releases.query({ ids = { id }, available = true, limit = 1 }).items[1]
 			if summary then
 				local album = albums.children({ summary })[1]
 				directory = {
@@ -248,7 +250,7 @@ module.methods = {
 
 	getArtist = function(req: Request): ApiResponse
 		local id = request.required(req.params, "id")
-		local summary = artists.query({ ids = { id }, limit = 1 }).items[1]
+		local summary = artists.query({ ids = { id }, available = true, limit = 1 }).items[1]
 		if not summary then
 			return request.not_found("Artist")
 		end
@@ -287,6 +289,7 @@ module.methods = {
 			items = songs.list(tracks.query({
 				artist_ids = artist_ids,
 				listened = true,
+				available = true,
 				sort = {
 					{ key = "listen_count", order = "descending" },
 					{ key = "last_played_at", order = "descending" },
@@ -303,7 +306,7 @@ module.methods = {
 
 	getGenres = function(req: Request): ApiResponse
 		local items: { JsonObject } = {}
-		for _, genre in genres.query({ sort = { { key = "name" } } }).items do
+		for _, genre in genres.query({ available = true, sort = { { key = "name" } } }).items do
 			local item: JsonObject =
 				{ value = genre.name, songCount = genre.track_count, albumCount = genre.release_count }
 			table.insert(items, item)
@@ -313,7 +316,7 @@ module.methods = {
 
 	getAlbum = function(req: Request): ApiResponse
 		local id = request.required(req.params, "id")
-		local summary = releases.query({ ids = { id }, limit = 1 }).items[1]
+		local summary = releases.query({ ids = { id }, available = true, limit = 1 }).items[1]
 		if not summary then
 			return request.not_found("Album")
 		end
@@ -330,6 +333,8 @@ module.methods = {
 		local track = tracks.get({ id })[id]
 		if not track then
 			return request.not_found("Song")
+		elseif not track.available then
+			return request.fail(70, songs.FILE_MISSING)
 		end
 		return response.ok(req.params, { song = songs.list({ track })[1] })
 	end,

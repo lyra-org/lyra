@@ -71,7 +71,7 @@ local function describe(
 		local duration_ms = 0
 		for _, link in links_by_playlist[playlist.id] or {} do
 			local track = found[link.track_id]
-			if track then
+			if track and track.available then
 				table.insert(entry_tracks, track)
 				duration_ms += track.duration_ms or 0
 			end
@@ -117,6 +117,23 @@ local function song_ids(params: ApiQueryParams, name: string): { string }
 		end
 	end
 	return ids
+end
+
+-- The entries of `links` the caller is shown, in order: those of songs they see that can play.
+local function shown_entries(links: { PlaylistEntry }): { PlaylistEntry }
+	local ids: { string } = {}
+	for _, link in links do
+		table.insert(ids, link.track_id)
+	end
+	local found = if #ids > 0 then tracks.get(ids) else {}
+	local shown: { PlaylistEntry } = {}
+	for _, link in links do
+		local track = found[link.track_id]
+		if track and track.available then
+			table.insert(shown, link)
+		end
+	end
+	return shown
 end
 
 local function visible_playlist(id: string): Playlist
@@ -222,7 +239,7 @@ module.methods = {
 
 		local remove_entries: { string } = {}
 		if #indices > 0 then
-			local links: { PlaylistEntry } = playlists.entries({ playlist.id })[playlist.id] or {}
+			local links = shown_entries(playlists.entries({ playlist.id })[playlist.id] or {})
 			local removing: { [string]: boolean } = {}
 			for _, index in indices do
 				local link = links[index + 1]

@@ -1,0 +1,68 @@
+run_as = "listener"
+
+# "Mixed" holds Playing and Missing, whose file a sync no longer found; "Lost" holds only Gone,
+# missing too. The listener favorited Missing and has "Mine" (Missing, Playing).
+
+[[users]]
+key = "listener"
+
+[[api_keys]]
+key = "listener_key"
+user = "listener"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener"]
+
+[[artists]]
+key = "amy"
+name = "Amy"
+
+[[releases]]
+key = "mixed"
+title = "Mixed"
+library = "music"
+artists = ["amy"]
+
+[[releases]]
+key = "lost"
+title = "Lost"
+library = "music"
+artists = ["amy"]
+
+[[tracks]]
+key = "playing"
+title = "Playing"
+release = "mixed"
+track = 1
+artists = ["amy"]
+file = "song.opus"
+
+[[tracks]]
+key = "missing"
+title = "Missing"
+release = "mixed"
+track = 2
+artists = ["amy"]
+file = "song.opus"
+missing = true
+
+[[tracks]]
+key = "gone"
+title = "Gone"
+release = "lost"
+artists = ["amy"]
+file = "song.opus"
+missing = true
+
+[[favorites]]
+user = "listener"
+target = "missing"
+
+[[playlists]]
+key = "mine"
+owner = "listener"
+name = "Mine"
+public = false
+tracks = ["missing", "playing"]
