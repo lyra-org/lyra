@@ -1611,6 +1611,58 @@ mod tests {
     }
 
     #[test]
+    fn panicking_async_callback_raises_where_the_thread_waits() -> luau::runtime::Result<()> {
+        let vm = luau::Vm::new()?;
+        vm.open_standard_libraries(luau::StandardLibraries {
+            base: true,
+            ..luau::StandardLibraries::none()
+        })?;
+        vm.data().insert(crate::LocalScheduler::new())?;
+        let scheduler = vm.data().get::<crate::LocalScheduler>()?;
+        let module = ModuleSpec::new("demo/async").function(
+            FunctionSpec::new("explode").call_async(Arc::new(|_frame| {
+                let mut pending_once = true;
+                Ok(luau::ScheduledFuture::new(std::future::poll_fn(
+                    move |_cx| -> std::task::Poll<luau::runtime::Result<()>> {
+                        if std::mem::take(&mut pending_once) {
+                            return std::task::Poll::Pending;
+                        }
+                        panic!("upstream sent nonsense");
+                    },
+                )))
+            })),
+        );
+        let table = install_luau_module(&vm, &ChunkOrigin::default(), &module)?;
+        vm.set_global_table("module", &table)?;
+        let root = vm.load_chunk(&luau::Chunk::new(
+            Arc::<[u8]>::from(&b"ok, message = pcall(module.explode)"[..]),
+            luau::ChunkOrigin::default(),
+        ))?;
+        let thread = vm.create_thread(&root)?;
+        let handle =
+            scheduler.spawn_luau_thread(crate::CallContext::default(), vm.clone(), thread, vec![]);
+
+        scheduler.poll_ready();
+        scheduler.poll_ready();
+
+        assert_eq!(
+            scheduler.snapshot(handle.id()).map(|task| task.state),
+            Some(crate::TaskState::Completed)
+        );
+        let values = vm.eval(
+            Arc::<[u8]>::from(&b"return ok, message"[..]),
+            luau::ChunkOrigin::default(),
+        )?;
+        assert_eq!(values[0], luau::Value::Boolean(false));
+        let luau::Value::String(message) = &values[1] else {
+            panic!("expected an error message, got {:?}", values[1]);
+        };
+        let message = String::from_utf8_lossy(message);
+        assert!(message.contains("upstream sent nonsense"), "{message}");
+        Ok(())
+    }
+
+    #[test]
     fn luau_module_installer_schedules_pending_async_callbacks() -> luau::runtime::Result<()> {
         let vm = luau::Vm::new()?;
         vm.data().insert(crate::LocalScheduler::new())?;

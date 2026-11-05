@@ -5,6 +5,10 @@ use std::{
         VecDeque,
     },
     future::Future,
+    panic::{
+        AssertUnwindSafe,
+        catch_unwind,
+    },
     pin::Pin,
     rc::Rc,
     sync::{
@@ -533,7 +537,7 @@ impl Scheduler {
                     if let Some(completion) = task.completion.as_ref() {
                         completion.complete(Err(format!("Luau task {} failed: {error}", id.0)));
                     }
-                    task.work = None;
+                    drop_catching_panic(&task.context, task.work.take());
                     task.state = TaskState::Failed;
                     task.wake_at = None;
                     task.error = Some(Arc::from(error));
@@ -1438,10 +1442,11 @@ fn poll_work(
     resume_limit: Option<&ResumeLimit>,
 ) -> WorkPoll {
     match work {
-        TaskWork::Future(future) => match future.as_mut().poll(cx) {
-            Poll::Ready(Ok(())) => WorkPoll::Completed { output: None },
-            Poll::Ready(Err(error)) => WorkPoll::Failed(error.to_string()),
-            Poll::Pending => WorkPoll::Pending,
+        TaskWork::Future(future) => match catch_host_panic(context, || future.as_mut().poll(cx)) {
+            Ok(Poll::Ready(Ok(()))) => WorkPoll::Completed { output: None },
+            Ok(Poll::Ready(Err(error))) => WorkPoll::Failed(error.to_string()),
+            Ok(Poll::Pending) => WorkPoll::Pending,
+            Err(panic) => WorkPoll::Failed(panic),
         },
         TaskWork::LuauThread {
             vm,
@@ -1464,21 +1469,26 @@ fn poll_work(
             poll_luau_resume(vm, thread, result, previous)
         }
         TaskWork::LuauFuture { vm, thread, future } => {
-            let output = match Pin::new(&mut *future).poll(cx) {
-                Poll::Ready(Ok(values)) => Ok(values),
+            let output = match catch_host_panic(context, || Pin::new(&mut *future).poll(cx)) {
+                Ok(Poll::Ready(Ok(values))) => Ok(values),
                 // Raised where the thread waits, as the call would have raised it had it not
                 // waited, so a `pcall` around the call catches it.
-                Poll::Ready(Err(error)) => Err(future.raised_error(&error)),
-                Poll::Pending => return WorkPoll::Pending,
+                Ok(Poll::Ready(Err(error))) => Err(future.raised_error(&error)),
+                Err(panic) => Err(future.raised_error(&luau::Error::Runtime(panic))),
+                Ok(Poll::Pending) => return WorkPoll::Pending,
             };
             let (vm, thread) = (vm.clone(), thread.clone());
             // The future is done; what is left is the thread itself.
-            *work = TaskWork::LuauThread {
-                vm: vm.clone(),
-                thread: thread.clone(),
-                args: Vec::new(),
-                pending_start: false,
-            };
+            let finished = std::mem::replace(
+                work,
+                TaskWork::LuauThread {
+                    vm: vm.clone(),
+                    thread: thread.clone(),
+                    args: Vec::new(),
+                    pending_start: false,
+                },
+            );
+            drop_catching_panic(context, finished);
             let previous = match vm.set_thread_call_context(&thread, context.clone()) {
                 Ok(previous) => previous,
                 Err(error) => return WorkPoll::Failed(error.to_string()),
@@ -1491,6 +1501,35 @@ fn poll_work(
             poll_luau_resume(&vm, &thread, result, previous)
         }
     }
+}
+
+/// Drops finished or failed work, whose destructor runs host code too, most suspectly after
+/// that code panicked.
+fn drop_catching_panic<T>(context: &CallContext, work: T) {
+    let _ = catch_host_panic(context, move || drop(work));
+}
+
+/// Runs host code, turning a panic into an error so that it fails only the task it ran in and not
+/// the thread every task shares.
+fn catch_host_panic<T>(context: &CallContext, run: impl FnOnce() -> T) -> Result<T, String> {
+    catch_unwind(AssertUnwindSafe(run)).map_err(|payload| {
+        let message = payload
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+            .unwrap_or("non-string panic payload");
+        tracing::error!(
+            plugin = context.origin.plugin.as_deref(),
+            module = context
+                .origin
+                .module
+                .as_ref()
+                .map(|module| module.0.as_ref()),
+            panic = message,
+            "host task panicked"
+        );
+        format!("host task panicked: {message}")
+    })
 }
 
 fn resume_luau_thread(
@@ -1577,6 +1616,72 @@ mod tests {
         assert_eq!(snapshot.state, TaskState::Completed);
         assert_eq!(snapshot.group, group);
         assert_eq!(snapshot.origin.plugin.as_deref(), Some("demo"));
+    }
+
+    #[test]
+    fn panicking_future_fails_only_its_own_task() {
+        let mut scheduler = Scheduler::new();
+        let panicking = scheduler.spawn(CallContext::default(), async {
+            panic!("upstream sent nonsense");
+        });
+        let healthy = scheduler.spawn(CallContext::default(), async { Ok(()) });
+
+        assert_eq!(scheduler.poll_ready(), 2);
+        let failed = scheduler.snapshot(panicking.id()).expect("panicking task");
+        assert_eq!(failed.state, TaskState::Failed);
+        assert!(
+            failed
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("upstream sent nonsense")),
+            "{:?}",
+            failed.error
+        );
+        assert_eq!(
+            scheduler
+                .snapshot(healthy.id())
+                .expect("healthy task")
+                .state,
+            TaskState::Completed
+        );
+    }
+
+    #[test]
+    fn future_panicking_again_when_dropped_fails_only_its_own_task() {
+        struct PanicsTwice;
+        impl Future for PanicsTwice {
+            type Output = Result<()>;
+            fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<()>> {
+                panic!("poll panicked");
+            }
+        }
+        impl Drop for PanicsTwice {
+            fn drop(&mut self) {
+                if !std::thread::panicking() {
+                    panic!("drop panicked");
+                }
+            }
+        }
+
+        let mut scheduler = Scheduler::new();
+        let panicking = scheduler.spawn(CallContext::default(), PanicsTwice);
+        let healthy = scheduler.spawn(CallContext::default(), async { Ok(()) });
+
+        assert_eq!(scheduler.poll_ready(), 2);
+        assert_eq!(
+            scheduler
+                .snapshot(panicking.id())
+                .expect("panicking task")
+                .state,
+            TaskState::Failed
+        );
+        assert_eq!(
+            scheduler
+                .snapshot(healthy.id())
+                .expect("healthy task")
+                .state,
+            TaskState::Completed
+        );
     }
 
     #[test]
