@@ -51,6 +51,7 @@ use super::sync::{
     MAX_CONCURRENT_ALBUM_PIPELINE,
     sync_library_pipeline,
 };
+use lyra_db::entries::PurgeScope;
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -58,6 +59,7 @@ use super::sync::{
 pub(crate) enum SyncRunKind {
     LibrarySync,
     LibraryRefresh,
+    LibraryPurge,
 }
 
 impl SyncRunKind {
@@ -65,6 +67,7 @@ impl SyncRunKind {
         match self {
             Self::LibrarySync => "library_sync",
             Self::LibraryRefresh => "library_refresh",
+            Self::LibraryPurge => "library_purge",
         }
     }
 
@@ -72,6 +75,7 @@ impl SyncRunKind {
         match value {
             "library_sync" => Ok(Self::LibrarySync),
             "library_refresh" => Ok(Self::LibraryRefresh),
+            "library_purge" => Ok(Self::LibraryPurge),
             _ => anyhow::bail!("unknown sync run kind: {value}"),
         }
     }
@@ -207,6 +211,8 @@ pub(crate) enum SyncStageKey {
     Lyrics,
     ProviderCover,
     Cleanup,
+    /// The tracks a purge removes, a unit each.
+    Purge,
 }
 
 impl SyncStageKey {
@@ -221,6 +227,7 @@ impl SyncStageKey {
             Self::Lyrics => "lyrics",
             Self::ProviderCover => "provider_cover",
             Self::Cleanup => "cleanup",
+            Self::Purge => "purge",
         }
     }
 
@@ -235,6 +242,7 @@ impl SyncStageKey {
             "lyrics" => Ok(Self::Lyrics),
             "provider_cover" => Ok(Self::ProviderCover),
             "cleanup" => Ok(Self::Cleanup),
+            "purge" => Ok(Self::Purge),
             _ => anyhow::bail!("unknown sync stage: {value}"),
         }
     }
@@ -962,11 +970,13 @@ pub(crate) async fn library_has_active_run(library_id: &str) -> anyhow::Result<b
 }
 
 /// A run to start on a library.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum LibraryRun {
     Sync(LibrarySyncOptions),
     /// A refresh fetching these covers.
     Refresh(CoverSyncOptions),
+    /// A purge of these missing files.
+    Purge(PurgeScope),
 }
 
 pub(crate) async fn start_library_sync(
@@ -1000,8 +1010,16 @@ pub(crate) async fn start_library_run<E: From<anyhow::Error>>(
     run: LibraryRun,
     resolve: impl FnOnce(&agdb::DbAny) -> Result<Library, E>,
 ) -> Result<SyncRunStartResponse, E> {
+    start_resolved_run(db, |db| Ok((resolve(db)?, run))).await
+}
+
+/// [`start_library_run`] with the run `resolve` picks as well, under the same lock.
+pub(crate) async fn start_resolved_run<E: From<anyhow::Error>>(
+    db: DbAsync,
+    resolve: impl FnOnce(&agdb::DbAny) -> Result<(Library, LibraryRun), E>,
+) -> Result<SyncRunStartResponse, E> {
     let _start_guard = SYNC_START_LOCK.lock().await;
-    let library = resolve(&*db.read().await)?;
+    let (library, run) = resolve(&*db.read().await)?;
     Ok(start_locked(db, library, run).await?)
 }
 
@@ -1022,6 +1040,7 @@ async fn start_locked(
     let kind = match run {
         LibraryRun::Sync(_) => SyncRunKind::LibrarySync,
         LibraryRun::Refresh(_) => SyncRunKind::LibraryRefresh,
+        LibraryRun::Purge(_) => SyncRunKind::LibraryPurge,
     };
     let now_ms = now_unix_ms();
     let sequence = next_run_sequence(&db, &library_id).await?;
@@ -1043,6 +1062,9 @@ async fn start_locked(
         }
         LibraryRun::Refresh(covers) => {
             tokio::spawn(run_library_refresh(library, progress, covers));
+        }
+        LibraryRun::Purge(selection) => {
+            tokio::spawn(run_library_purge(db, library, progress, selection));
         }
     }
 
@@ -1073,6 +1095,25 @@ async fn run_library_sync(
     }
     .await;
     finish_run(progress, result, started, "library sync").await;
+}
+
+async fn run_library_purge(
+    db: DbAsync,
+    library: Library,
+    progress: SyncRunProgress,
+    selection: PurgeScope,
+) {
+    let started = Instant::now();
+    tracing::info!(
+        run_id = progress.run_id(),
+        library_public_id = %library.id,
+        "library purge started"
+    );
+    progress.set_status(SyncRunStatus::Running).await;
+    let result = super::purge::purge(&db, &library, &selection, Some(&progress))
+        .await
+        .map(|_| ());
+    finish_run(progress, result, started, "library purge").await;
 }
 
 async fn run_library_refresh(

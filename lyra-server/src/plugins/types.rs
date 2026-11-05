@@ -244,7 +244,7 @@ mirror_string_enum!(
 mirror_string_enum!(
     LuauSyncRunKind for crate::services::libraries::SyncRunKind,
     "SyncRunKind",
-    [LibrarySync, LibraryRefresh]
+    [LibrarySync, LibraryRefresh, LibraryPurge]
 );
 
 mirror_string_enum!(
@@ -273,6 +273,7 @@ mirror_string_enum!(
         Lyrics,
         ProviderCover,
         Cleanup,
+        Purge,
     ]
 );
 

@@ -32,6 +32,10 @@ use crate::services::{
         require_authenticated,
     },
 };
+use lyra_db::entries::{
+    PurgePlanError,
+    PurgeScope,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum LibraryControlError {
@@ -113,6 +117,63 @@ pub(crate) async fn start(
         managed_library(db, principal, library_id).map(|(_, library)| library)
     })
     .await
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum PurgeStartError {
+    #[error(transparent)]
+    Control(#[from] LibraryControlError),
+    /// A named track isn't one of the library's unavailable tracks.
+    #[error("track {0} is not an unavailable track of this library")]
+    NotMissing(String),
+    /// Another run of the library is active.
+    #[error("a sync, refresh or purge of the library is running")]
+    Busy,
+}
+
+impl From<anyhow::Error> for PurgeStartError {
+    fn from(error: anyhow::Error) -> Self {
+        Self::Control(error.into())
+    }
+}
+
+/// Starts a purge of the library's missing files: those of `track_ids`, which must be the
+/// library's unavailable tracks, or all of them without any. Checks the principal and the tracks
+/// under the lock that serializes starts, and starts nothing while another run is active.
+pub(crate) async fn start_purge(
+    principal: &Principal,
+    library_id: &str,
+    track_ids: Option<Vec<String>>,
+) -> Result<SyncRunStartResponse, PurgeStartError> {
+    let response = orchestrator::start_resolved_run(
+        STATE.db.get(),
+        |db| -> Result<(Library, LibraryRun), PurgeStartError> {
+            let (_, library) = managed_library(db, principal, library_id)?;
+            let Some(track_ids) = &track_ids else {
+                return Ok((library, LibraryRun::Purge(PurgeScope::All)));
+            };
+            let mut tracks = Vec::with_capacity(track_ids.len());
+            for id in track_ids {
+                let track = lyra_db::lookup::find_node_id_by_id(db, id)?
+                    .filter(|track| lyra_db::graph::is_kind(db, *track, "Track").unwrap_or(false))
+                    .ok_or_else(|| PurgeStartError::NotMissing(id.clone()))?;
+                tracks.push(track);
+            }
+            let selection = PurgeScope::Tracks(tracks);
+            lyra_db::entries::missing_purge_plan(db, &library, &selection).map_err(
+                |err| match err {
+                    PurgePlanError::NotMissing(id) => PurgeStartError::NotMissing(id),
+                    PurgePlanError::Db(err) => err.into(),
+                },
+            )?;
+            Ok((library, LibraryRun::Purge(selection)))
+        },
+    )
+    .await?;
+    if !response.started {
+        return Err(PurgeStartError::Busy);
+    }
+    Ok(response)
 }
 
 /// What a caller may read of library sync runs: the libraries it can see, as the database has it

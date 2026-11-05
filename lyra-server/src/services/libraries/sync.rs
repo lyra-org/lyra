@@ -489,7 +489,34 @@ pub(crate) async fn sync_library_pipeline(
         sync_changed_artist_covers(db, library, &changed_releases, stages.covers, &progress)
             .await?;
     }
+    purge_expired_missing(db, library, &observation, progress.as_ref()).await?;
     cleanup_metadata_orphans(db, library_db_id, progress).await?;
+    Ok(())
+}
+
+/// Purges the files missing longer than the library keeps them, when it sets a limit, before the
+/// orphan cleanup that collects what they leave.
+async fn purge_expired_missing(
+    db: &DbAsync,
+    library: &Library,
+    observation: &ScanObservation,
+    progress: Option<&SyncRunProgress>,
+) -> anyhow::Result<()> {
+    let Some(days) = library.purge_missing_after_days else {
+        return Ok(());
+    };
+    let selection = lyra_db::entries::PurgeScope::Expired {
+        missing_before_ms: lyra_db::users::now_ms()
+            .unsigned_abs()
+            .saturating_sub(u64::from(days) * 86_400_000),
+        protected: observation.protected_paths.clone(),
+    };
+    let plan = {
+        let db_read = db.read().await;
+        lyra_db::entries::missing_purge_plan(&*db_read, library, &selection)
+            .map_err(anyhow::Error::from)?
+    };
+    super::purge::apply(db, library, plan, progress).await?;
     Ok(())
 }
 
@@ -2520,6 +2547,134 @@ FILE "album.flac" WAVE
             );
         }
         drop(db);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    /// A library of the albums Gone and Kept, a track each, after Gone's file went missing; the
+    /// root, the library, and the tracks' ids.
+    async fn library_with_a_missing_album(
+        name: &str,
+    ) -> anyhow::Result<(PathBuf, Library, DbId, DbId)> {
+        let (root, library) = empty_library(name).await?;
+        let gone = album_track(&root.join("Gone"), "Gone")?;
+        let kept = album_track(&root.join("Kept"), "Kept")?;
+        sync(&library).await?;
+        std::fs::remove_dir_all(root.join("Gone"))?;
+        sync(&library).await?;
+        let mut tracks = Vec::new();
+        for path in [gone, kept] {
+            let entry = entry_for(&library, &path).await?;
+            let db = STATE.db.read().await;
+            tracks.push(
+                lyra_db::tracks::get_by_entry(&db, entry.db_id.expect("entry db_id"))?
+                    .into_iter()
+                    .next()
+                    .and_then(|track| track.db_id.map(DbId::from))
+                    .ok_or_else(|| anyhow::anyhow!("no track for {}", path.display()))?,
+            );
+        }
+        let (gone_track, kept_track) = (tracks[0], tracks[1]);
+        Ok((root, library, gone_track, kept_track))
+    }
+
+    async fn track_exists(track: DbId) -> anyhow::Result<bool> {
+        Ok(lyra_db::tracks::get_by_id(&*STATE.db.read().await, track)?.is_some())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn purging_removes_missing_tracks_their_files_and_emptied_releases() -> anyhow::Result<()>
+    {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library, gone, kept) = library_with_a_missing_album("purge-all").await?;
+        let gone_release = {
+            let db = STATE.db.read().await;
+            lyra_db::releases::get_by_track(&db, gone)?[0]
+                .db_id
+                .clone()
+                .map(DbId::from)
+                .expect("release")
+        };
+
+        let purged = super::super::purge::purge(
+            &STATE.db.get(),
+            &library,
+            &lyra_db::entries::PurgeScope::All,
+            None,
+        )
+        .await?;
+        assert_eq!(purged, 1);
+        assert!(!track_exists(gone).await?);
+        assert!(track_exists(kept).await?);
+        let db = STATE.db.read().await;
+        assert!(lyra_db::releases::get_by_id(&*db, gone_release)?.is_none());
+        let entries = lyra_db::entries::get(&db, library.db_id.expect("library db_id"))?;
+        assert!(entries.iter().all(|entry| !entry.is_missing()));
+        assert!(lyra_db::entries::missing_ids(&*db)?.is_empty());
+        drop(db);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_purge_of_chosen_tracks_takes_only_unavailable_ones() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library, gone, kept) = library_with_a_missing_album("purge-chosen").await?;
+        {
+            let db = STATE.db.read().await;
+            let refused = lyra_db::entries::missing_purge_plan(
+                &db,
+                &library,
+                &lyra_db::entries::PurgeScope::Tracks(vec![gone, kept]),
+            );
+            assert!(matches!(
+                refused,
+                Err(lyra_db::entries::PurgePlanError::NotMissing(_))
+            ));
+        }
+        super::super::purge::purge(
+            &STATE.db.get(),
+            &library,
+            &lyra_db::entries::PurgeScope::Tracks(vec![gone]),
+            None,
+        )
+        .await?;
+        assert!(!track_exists(gone).await?);
+        assert!(track_exists(kept).await?);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_sync_purges_files_missing_longer_than_the_library_keeps_them() -> anyhow::Result<()>
+    {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, mut library, gone, kept) = library_with_a_missing_album("purge-expired").await?;
+        library.purge_missing_after_days = Some(2);
+
+        sync(&library).await?;
+        assert!(
+            track_exists(gone).await?,
+            "a file missing for less was purged"
+        );
+
+        let gone_entry = {
+            let db = STATE.db.read().await;
+            lyra_db::entries::missing_ids(&*db)?
+        };
+        let three_days_ago = lyra_db::users::now_ms().unsigned_abs() - 3 * 86_400_000;
+        STATE.db.write().await.exec_mut(
+            agdb::QueryBuilder::insert()
+                .values_uniform([("missing_at_ms", three_days_ago).into()])
+                .ids(&gone_entry)
+                .query(),
+        )?;
+        sync(&library).await?;
+        assert!(!track_exists(gone).await?, "an expired file's track stayed");
+        assert!(track_exists(kept).await?);
         let _ = std::fs::remove_dir_all(root);
         Ok(())
     }

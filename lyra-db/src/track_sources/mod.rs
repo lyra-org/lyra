@@ -137,6 +137,14 @@ pub fn cue_entry_id(db: &impl DbAccess, source_id: DbId) -> anyhow::Result<Optio
     Ok(None)
 }
 
+/// The entries a source depends on: its audio entry, and the cue sheet entry its segment comes
+/// from, if any.
+pub fn depended_entries(db: &impl DbAccess, source_id: DbId) -> anyhow::Result<Vec<DbId>> {
+    let mut entries = super::graph::neighbor_ids(db, source_id, "Entry")?;
+    entries.extend(cue_entry_id(db, source_id)?);
+    Ok(entries)
+}
+
 /// The sources depending on `entry_id`: those playing it, and, for a cue sheet entry, its
 /// segments.
 pub fn depending_on(db: &impl DbAccess, entry_id: DbId) -> anyhow::Result<Vec<DbId>> {

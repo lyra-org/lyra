@@ -6,6 +6,7 @@
 mod configured;
 pub(crate) mod control;
 mod orchestrator;
+pub(crate) mod purge;
 mod roots;
 pub(crate) mod scanning;
 mod sync;

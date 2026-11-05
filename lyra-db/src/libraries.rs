@@ -42,7 +42,13 @@ pub struct Library {
     pub path_key: String,
     pub language: Option<String>,
     pub country: Option<String>,
+    /// How many days an entry stays missing before a sync purges it; never without.
+    pub purge_missing_after_days: Option<u32>,
 }
+
+/// The bounds of [`Library::purge_missing_after_days`].
+pub const PURGE_MISSING_AFTER_DAYS: std::ops::RangeInclusive<u32> = 1..=3650;
+
 pub fn get(db: &impl super::DbAccess) -> anyhow::Result<Vec<Library>> {
     let libraries: Vec<Library> = db
         .exec(
@@ -340,6 +346,7 @@ fn create_inner(
         path_key: request.path_key,
         language: request.language,
         country: request.country,
+        purge_missing_after_days: None,
     };
     let qr = db.exec_mut(QueryBuilder::insert().element(&created).query())?;
     let library_db_id = qr
@@ -404,6 +411,10 @@ pub fn update(
         [
             ("language", stored.language.is_none()),
             ("country", stored.country.is_none()),
+            (
+                "purge_missing_after_days",
+                stored.purge_missing_after_days.is_none(),
+            ),
         ],
         &stored,
     )?;

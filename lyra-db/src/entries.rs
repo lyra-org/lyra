@@ -391,6 +391,211 @@ fn insert_owned_edge(
     Ok(())
 }
 
+/// The missing files a purge removes.
+#[derive(Clone, Debug)]
+pub enum PurgeScope {
+    /// Every missing file of the library, and the tracks only they hold.
+    All,
+    /// These tracks, which must be the library's and unable to play, and the missing files no
+    /// other track needs.
+    Tracks(Vec<DbId>),
+    /// The files missing since before this time, outside paths a sync couldn't read, and the
+    /// tracks only they hold.
+    Expired {
+        missing_before_ms: u64,
+        protected: Vec<PathBuf>,
+    },
+}
+
+/// The tracks and missing entries a purge removes.
+#[derive(Debug, Default)]
+pub struct PurgePlan {
+    pub tracks: Vec<DbId>,
+    pub entries: Vec<DbId>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum PurgePlanError {
+    /// A chosen track isn't one of the library's tracks, or can still play; by its public id.
+    #[error("track {0} is not an unavailable track of this library")]
+    NotMissing(String),
+    #[error(transparent)]
+    Db(#[from] anyhow::Error),
+}
+
+/// What purging `scope` from `library` removes, as `db` has it now. A track is held by missing
+/// files when every one of its sources depends on one of them.
+pub fn missing_purge_plan(
+    db: &DbAny,
+    library: &Library,
+    scope: &PurgeScope,
+) -> Result<PurgePlan, PurgePlanError> {
+    let library_db_id = library
+        .db_id
+        .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
+    let missing = load_existing(db, library_db_id)?
+        .into_iter()
+        .filter(Entry::is_missing)
+        .collect::<Vec<_>>();
+    let ids_of = |entries: &mut dyn Iterator<Item = &Entry>| -> HashSet<DbId> {
+        entries.filter_map(|entry| entry.db_id).collect()
+    };
+    match scope {
+        PurgeScope::All => Ok(entries_plan(db, ids_of(&mut missing.iter()))?),
+        PurgeScope::Expired {
+            missing_before_ms,
+            protected,
+        } => Ok(entries_plan(
+            db,
+            ids_of(&mut missing.iter().filter(|entry| {
+                entry
+                    .missing_at_ms
+                    .is_some_and(|at| at <= *missing_before_ms)
+                    && !is_protected(&entry.full_path, protected)
+            })),
+        )?),
+        PurgeScope::Tracks(tracks) => {
+            tracks_plan(db, library_db_id, tracks, &ids_of(&mut missing.iter()))
+        }
+    }
+}
+
+fn entries_plan(db: &impl super::DbAccess, entries: HashSet<DbId>) -> anyhow::Result<PurgePlan> {
+    use super::graph::{
+        inbound_neighbor_ids,
+        neighbor_ids,
+    };
+
+    let mut candidates = HashSet::new();
+    for &entry in &entries {
+        for source in crate::track_sources::depending_on(db, entry)? {
+            candidates.extend(inbound_neighbor_ids(db, source, "Track")?);
+        }
+    }
+    let mut tracks = Vec::new();
+    'tracks: for track in candidates {
+        for source in neighbor_ids(db, track, "TrackSource")? {
+            let depended = crate::track_sources::depended_entries(db, source)?;
+            if !depended.iter().any(|entry| entries.contains(entry)) {
+                continue 'tracks;
+            }
+        }
+        tracks.push(track);
+    }
+    Ok(PurgePlan {
+        tracks,
+        entries: entries.into_iter().collect(),
+    })
+}
+
+fn tracks_plan(
+    db: &impl super::DbAccess,
+    library_db_id: DbId,
+    tracks: &[DbId],
+    missing: &HashSet<DbId>,
+) -> Result<PurgePlan, PurgePlanError> {
+    use super::graph::{
+        inbound_neighbor_ids,
+        neighbor_ids,
+    };
+
+    let selected = tracks.iter().copied().collect::<HashSet<_>>();
+    let mut candidates = HashSet::new();
+    for &track in tracks {
+        let mut in_library = false;
+        for release in inbound_neighbor_ids(db, track, "Release")? {
+            in_library |= inbound_neighbor_ids(db, release, "Library")?.contains(&library_db_id);
+        }
+        if !in_library || crate::track_sources::track_available(db, track)? {
+            let public_id = crate::lookup::find_id_by_db_id(db, track)?.unwrap_or_default();
+            return Err(PurgePlanError::NotMissing(public_id));
+        }
+        for source in neighbor_ids(db, track, "TrackSource")? {
+            candidates.extend(
+                crate::track_sources::depended_entries(db, source)?
+                    .into_iter()
+                    .filter(|entry| missing.contains(entry)),
+            );
+        }
+    }
+    let mut entries = Vec::new();
+    'entries: for entry in candidates {
+        for source in crate::track_sources::depending_on(db, entry)? {
+            if inbound_neighbor_ids(db, source, "Track")?
+                .iter()
+                .any(|track| !selected.contains(track))
+            {
+                continue 'entries;
+            }
+        }
+        entries.push(entry);
+    }
+    Ok(PurgePlan {
+        tracks: tracks.to_vec(),
+        entries,
+    })
+}
+
+/// Removes the missing entries among `entry_ids`, with the sources and cue sheets depending on
+/// them, then the library's missing directories left without a file beneath. Tracks the sources
+/// leave without any are left for the orphan cleanup.
+pub fn remove_missing(
+    db: &mut DbAny,
+    library: &Library,
+    entry_ids: &[DbId],
+) -> anyhow::Result<usize> {
+    let library_db_id = library
+        .db_id
+        .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
+    let wanted = entry_ids.iter().copied().collect::<HashSet<_>>();
+    let existing = load_existing(db, library_db_id)?;
+    let removed = existing
+        .iter()
+        .filter(|entry| entry.is_missing())
+        .filter_map(|entry| entry.db_id)
+        .filter(|id| wanted.contains(id))
+        .collect::<HashSet<_>>();
+    if removed.is_empty() {
+        return Ok(0);
+    }
+    let emptied_dirs = existing
+        .iter()
+        .filter(|dir| dir.kind == EntryKind::Dir && dir.is_missing())
+        .filter(|dir| {
+            !existing.iter().any(|entry| {
+                entry.kind == EntryKind::File
+                    && entry.full_path.starts_with(&dir.full_path)
+                    && !entry.db_id.is_some_and(|id| removed.contains(&id))
+            })
+        })
+        .filter_map(|dir| dir.db_id);
+    // The missing root lists its newest members first; removing in that order keeps each
+    // edge removal short.
+    let mut doomed = removed.clone();
+    doomed.extend(emptied_dirs);
+    let mut order = missing_ids(db)?;
+    order.retain(|id| doomed.remove(id));
+    order.extend(doomed);
+    db.transaction_mut(|t| -> anyhow::Result<()> {
+        let mut dependents = Vec::new();
+        for &entry_id in &order {
+            dependents.extend(crate::track_sources::depending_on(t, entry_id)?);
+            for sheet in super::graph::inbound_neighbor_ids(t, entry_id, "CueSheet")? {
+                dependents.extend(super::graph::neighbor_ids(t, sheet, "CueTrack")?);
+                dependents.push(sheet);
+            }
+        }
+        dependents.sort_unstable();
+        dependents.dedup();
+        if !dependents.is_empty() {
+            t.exec_mut(QueryBuilder::remove().ids(&dependents).query())?;
+        }
+        t.exec_mut(QueryBuilder::remove().ids(&order).query())?;
+        Ok(())
+    })?;
+    Ok(removed.len())
+}
+
 pub fn mark_synced(db: &mut DbAny, entry_ids: &[DbId]) -> anyhow::Result<()> {
     if entry_ids.is_empty() {
         return Ok(());
@@ -818,7 +1023,7 @@ mod tests {
     }
 
     #[test]
-    fn the_missing_root_follows_marking_and_reviving() -> anyhow::Result<()> {
+    fn the_missing_root_follows_marking_reviving_and_removal() -> anyhow::Result<()> {
         let mut db = TestDb::initialized()?.into_inner();
         let library_db_id = crate::test_db::insert_library(&mut db, "Music", "/music")?;
         let library = crate::libraries::get_by_id(&db, library_db_id)?.expect("library");
@@ -854,6 +1059,13 @@ mod tests {
             &[],
             |_, _| Vec::new(),
         )?;
+        assert_missing_root_matches(&db, library_db_id)?;
+        let gone = get(&db, library_db_id)?
+            .into_iter()
+            .filter(|entry| entry.is_missing())
+            .filter_map(|entry| entry.db_id)
+            .collect::<Vec<_>>();
+        remove_missing(&mut db, &library, &gone)?;
         assert_missing_root_matches(&db, library_db_id)?;
         mark_missing(&mut db, &library, &seen(&[]), &[], &[], |_, _| Vec::new())?;
         assert_missing_root_matches(&db, library_db_id)?;

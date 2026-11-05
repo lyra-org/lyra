@@ -404,6 +404,7 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("PATCH", "/api/libraries/{id}"),
     ("DELETE", "/api/libraries/{id}"),
     ("POST", "/api/libraries/{id}/refresh"),
+    ("POST", "/api/libraries/{id}/purge"),
     ("GET", "/api/libraries/{id}/sync"),
     ("POST", "/api/libraries/{id}/sync"),
     ("GET", "/api/libraries/{id}/access"),

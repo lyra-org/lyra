@@ -148,6 +148,7 @@ fn build_test_library(
         path_key,
         language: None,
         country: None,
+        purge_missing_after_days: None,
     })
 }
 

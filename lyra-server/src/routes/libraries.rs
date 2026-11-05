@@ -104,6 +104,14 @@ struct LibraryResponse {
     language: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     country: Option<String>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Whole days an entry stays missing before a sync purges its tracks; omitted when missing tracks stay until purged by hand."
+        )
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    purge_missing_after_days: Option<u32>,
 }
 
 impl LibraryResponse {
@@ -114,6 +122,7 @@ impl LibraryResponse {
             directory: include_directory.then_some(lib.path),
             language: lib.language,
             country: lib.country,
+            purge_missing_after_days: lib.purge_missing_after_days,
         }
     }
 }
@@ -135,6 +144,14 @@ struct LibraryUpdateRequest {
     )]
     #[serde(default, deserialize_with = "double_option")]
     country: Option<Option<String>>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Updated whole days, 1 to 3650, an entry stays missing before a sync purges its tracks; set to null to keep missing tracks until purged by hand."
+        )
+    )]
+    #[serde(default, deserialize_with = "double_option")]
+    purge_missing_after_days: Option<Option<u32>>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -337,8 +354,19 @@ async fn update_library(
 ) -> Result<Json<LibraryResponse>, AppError> {
     let _principal = require_manage_libraries_on(bearer_credential(&headers), &id).await?;
 
-    if update.name.is_none() && update.language.is_none() && update.country.is_none() {
+    if update.name.is_none()
+        && update.language.is_none()
+        && update.country.is_none()
+        && update.purge_missing_after_days.is_none()
+    {
         return Err(AppError::bad_request("no library fields provided"));
+    }
+    if let Some(Some(days)) = update.purge_missing_after_days
+        && !lyra_db::libraries::PURGE_MISSING_AFTER_DAYS.contains(&days)
+    {
+        return Err(AppError::bad_request(
+            "purge_missing_after_days must be from 1 to 3650",
+        ));
     }
 
     let mut db = STATE.db.write().await;
@@ -350,6 +378,9 @@ async fn update_library(
     let mut updated_name = library.name;
     let mut updated_language = library.language;
     let mut updated_country = library.country;
+    let updated_purge = update
+        .purge_missing_after_days
+        .unwrap_or(library.purge_missing_after_days);
 
     if let Some(name) = update.name {
         updated_name = name;
@@ -380,6 +411,7 @@ async fn update_library(
         path_key: library.path_key,
         language: updated_language,
         country: updated_country,
+        purge_missing_after_days: updated_purge,
     };
 
     let outcome = db.transaction_mut(
@@ -514,6 +546,42 @@ async fn start_library_sync_for_library(
     Ok(Json(
         control::start(&principal, &id, LibraryRun::Sync(options)).await?,
     ))
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Default, Deserialize)]
+struct PurgeRequest {
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Public ids of the library's unavailable tracks to purge, with the missing files only they need. Omitted, every missing file of the library and the tracks only they hold."
+        )
+    )]
+    track_ids: Option<Vec<String>>,
+}
+
+async fn purge_library(
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    body: Option<Json<PurgeRequest>>,
+) -> Result<Json<SyncRunStartResponse>, AppError> {
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
+    let Json(request) = body.unwrap_or_default();
+    match control::start_purge(&principal, &id, request.track_ids).await {
+        Ok(response) => Ok(Json(response)),
+        Err(control::PurgeStartError::Control(err)) => Err(err.into()),
+        Err(err @ control::PurgeStartError::NotMissing(_)) => {
+            Err(AppError::conflict(err.to_string()))
+        }
+        Err(err @ control::PurgeStartError::Busy) => Err(AppError::conflict(err.to_string())),
+    }
+}
+
+#[cfg(feature = "docgen")]
+fn purge_library_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Purge missing files").description(
+        "Starts a background purge of what a library's missing files leave: with `track_ids`, those unavailable tracks and the missing files no other track needs; without, every missing file and the tracks only they hold. A purged track goes with its favorites, ratings, tags, listens, bookmarks, playlist entries, chains, lyrics and covers; releases and artists left with nothing go too. Answers 409 when a named track isn't an unavailable track of the library, or while a sync, refresh or purge of the library is running. The run's `purge` stage counts the tracks purged. Requires ManageLibraries and library access.",
+    )
 }
 
 #[cfg(feature = "docgen")]
@@ -669,6 +737,7 @@ pub fn library_routes() -> Router {
         .route("/", get(list_libraries).post(create_library))
         .route("/{id}", patch(update_library).delete(delete_library))
         .route("/{id}/refresh", post(refresh_library))
+        .route("/{id}/purge", post(purge_library))
         .route(
             "/{id}/sync",
             get(get_library_sync_status).post(start_library_sync_for_library),
@@ -704,6 +773,7 @@ pub(crate) fn library_openapi_routes() -> aide::axum::ApiRouter {
             "/{id}/refresh",
             post_with(refresh_library, refresh_library_docs),
         )
+        .api_route("/{id}/purge", post_with(purge_library, purge_library_docs))
         .api_route(
             "/{id}/sync",
             get_with(get_library_sync_status, get_library_sync_status_docs)
