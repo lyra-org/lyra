@@ -36,6 +36,7 @@ const LYRA_PORT_ENV: &str = "LYRA_PORT";
 const DEFAULT_DATA_DIR: &str = "data";
 const TRANSCODE_CACHE_DIR_NAME: &str = "transcodes";
 const HLS_DIR_NAME: &str = "hls";
+const COVER_CACHE_DIR_NAME: &str = "cover-transforms";
 
 /// Boot-class environment overrides. Read once from the process environment;
 /// tests construct it directly so they never touch real variables.
@@ -120,6 +121,10 @@ impl BootConfig {
 
     pub(crate) fn transcode_cache_dir(&self) -> PathBuf {
         self.data_dir.join(TRANSCODE_CACHE_DIR_NAME)
+    }
+
+    pub(crate) fn cover_cache_dir(&self) -> PathBuf {
+        self.data_dir.join(COVER_CACHE_DIR_NAME)
     }
 
     pub(crate) fn hls_dir(&self) -> PathBuf {

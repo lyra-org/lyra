@@ -42,7 +42,7 @@ use super::{
     },
     sync::{
         PreparedCover,
-        discard_cover_file,
+        discard_cover,
         download_cover,
     },
 };
@@ -340,7 +340,7 @@ pub(crate) async fn remove_manual(
     let detached = detached
         .ok_or_else(|| CoverSelectionError::NotFound("no manual cover is stored".to_string()))?;
     if detached.orphaned {
-        discard_cover_file(&configured_covers_root(), &detached.cover.path);
+        discard_cover(&configured_covers_root(), &detached.cover);
     }
     Ok(collect_candidates(&db, principal, kind, owner_db_id)?)
 }

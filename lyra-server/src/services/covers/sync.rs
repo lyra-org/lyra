@@ -146,7 +146,7 @@ async fn write_cover_image(path: &Path, bytes: &[u8]) -> Result<()> {
 /// Deletes a cover file Lyra wrote. Only a regular file whose directory, resolved on disk, lies
 /// inside the covers root is deleted, so library files and anything a symlink leads to are never
 /// touched. A missing path has nothing to delete.
-pub(crate) fn discard_cover_file(covers_root: &Path, path: &str) {
+fn discard_cover_file(covers_root: &Path, path: &str) {
     let path = Path::new(path);
     let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
         return;
@@ -169,6 +169,13 @@ pub(crate) fn discard_cover_file(covers_root: &Path, path: &str) {
     {
         tracing::warn!(path = %target.display(), error = %err, "failed to remove replaced cover file");
     }
+}
+
+/// Discards a cover no owner refers to anymore: its file under the covers root, and its
+/// transformed variants.
+pub(crate) fn discard_cover(covers_root: &Path, cover: &Cover) {
+    discard_cover_file(covers_root, &cover.path);
+    super::forget_cover_transforms(&cover.hash);
 }
 
 /// Discards the files of covers detached inside a transaction, once that transaction is over
@@ -195,7 +202,7 @@ pub(crate) fn discard_unreferenced_cover_files(covers: Vec<Cover>) {
                 .collect::<Vec<_>>()
         };
         for cover in unreferenced {
-            discard_cover_file(&covers_root, &cover.path);
+            discard_cover(&covers_root, &cover);
         }
     });
 }
@@ -265,7 +272,7 @@ impl PreparedCover {
         if let Some(replaced) = upserted.replaced
             && replaced.orphaned
         {
-            discard_cover_file(covers_root, &replaced.cover.path);
+            discard_cover(covers_root, &replaced.cover);
         }
         Ok(upserted.cover)
     }

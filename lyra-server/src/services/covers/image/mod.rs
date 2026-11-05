@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+mod cache;
 mod header;
 
 use std::{
@@ -31,15 +32,21 @@ use anyhow::{
 use image::GenericImageView;
 use tokio::sync::Semaphore;
 
-use self::header::{
-    CoverHeader,
-    read_cover_header,
+pub(crate) use self::cache::{
+    TransformCache,
+    forget_cover_transforms,
+};
+use self::{
+    cache::Variant,
+    header::{
+        CoverHeader,
+        read_cover_header,
+    },
 };
 use super::{
     CoverRendition,
     CoverTransformError,
     CoverTransformOptions,
-    TransformedCoverImage,
 };
 
 pub(crate) const COVER_EXTENSIONS: [&str; 4] = ["jpg", "jpeg", "png", "webp"];
@@ -229,19 +236,6 @@ fn target_cover_size(
     (target_width.max(1), target_height.max(1))
 }
 
-/// Whether the options would re-encode the source as it already is. Quality alone changes
-/// nothing worth an encode.
-fn transform_is_noop(source: &CoverHeader, options: &CoverTransformOptions) -> bool {
-    let size = target_cover_size(
-        source.width,
-        source.height,
-        options.max_width,
-        options.max_height,
-    );
-    size == (source.width, source.height)
-        && options.format.is_none_or(|format| format == source.format)
-}
-
 /// Why a cover that meets the cover limits is served as it is rather than transformed: the
 /// decoders size animation frames and lossless entropy codes from the bitstream alone.
 fn transform_refusal(header: &CoverHeader) -> Option<&'static str> {
@@ -254,10 +248,7 @@ fn transform_refusal(header: &CoverHeader) -> Option<&'static str> {
     }
 }
 
-fn transform_cover_file(
-    path: &Path,
-    options: &CoverTransformOptions,
-) -> Result<TransformedCoverImage> {
+fn transform_cover_file(path: &Path, options: &CoverTransformOptions) -> Result<Vec<u8>> {
     let bytes = read_cover_file(path)?;
     let (header, image) = decode_cover(&bytes)
         .with_context(|| format!("failed to decode cover image '{}'", path.display()))?;
@@ -308,10 +299,7 @@ fn transform_cover_file(
         }
     }
 
-    Ok(TransformedCoverImage {
-        bytes: cursor.into_inner(),
-        mime_type: cover_mime_from_format(format),
-    })
+    Ok(cursor.into_inner())
 }
 
 /// Transforms run on at most one blocking thread per two cores across the server, leaving the
@@ -324,21 +312,34 @@ static TRANSFORM_SLOTS: LazyLock<Arc<Semaphore>> = LazyLock::new(|| {
 /// How long a transform waits for a slot before the request is refused as busy.
 const TRANSFORM_SLOT_WAIT: Duration = Duration::from_secs(5);
 
-/// The cover file as the options ask for it. The file itself is served when they would change
-/// nothing, and when the image is over the cover limits, would not transform safely, or fails to.
+/// The cover file with content `hash` as the options ask for it. The file itself is served when
+/// they would change nothing, and when the image is over the cover limits, would not transform
+/// safely, or fails to.
 pub(crate) async fn render_cover(
     path: &Path,
+    hash: &str,
     options: CoverTransformOptions,
 ) -> Result<CoverRendition, CoverTransformError> {
-    render_cover_on(&TRANSFORM_SLOTS, TRANSFORM_SLOT_WAIT, path, options).await
+    let cache = TransformCache::current();
+    render_cover_on(
+        &cache,
+        &TRANSFORM_SLOTS,
+        TRANSFORM_SLOT_WAIT,
+        path,
+        hash,
+        options,
+    )
+    .await
 }
 
-/// The permit moves into the blocking task, so a caller that stops waiting does not free its slot
-/// while the work still runs.
+/// A cached variant is served without a slot. The slot and the variant's flight move into the
+/// blocking task, so a caller that stops waiting frees neither while the work still runs.
 async fn render_cover_on(
+    cache: &Arc<TransformCache>,
     slots: &Arc<Semaphore>,
     wait: Duration,
     path: &Path,
+    hash: &str,
     options: CoverTransformOptions,
 ) -> Result<CoverRendition, CoverTransformError> {
     let source_path = path.to_path_buf();
@@ -354,15 +355,58 @@ async fn render_cover_on(
             });
         }
     };
-    let original = CoverRendition::Original {
+    let original = || CoverRendition::Original {
         mime_type: cover_mime_from_format(header.format),
     };
     if let Some(refusal) = transform_refusal(&header) {
         tracing::debug!(path = %path.display(), refusal, "serving cover untransformed");
-        return Ok(original);
+        return Ok(original());
     }
-    if transform_is_noop(&header, &options) {
-        return Ok(original);
+    let Some(variant) = Variant::of(&header, &options) else {
+        return Ok(original());
+    };
+    let Some(cached) = cache.path(hash, &variant) else {
+        tracing::warn!(
+            hash,
+            "serving cover untransformed: its hash names no cache entry"
+        );
+        return Ok(original());
+    };
+    let mime_type = cover_mime_from_format(variant.format);
+    let served = |(file, len)| CoverRendition::Cached {
+        file,
+        len,
+        mime_type,
+    };
+    // What a request serves without transforming: the stored variant, or the original when the
+    // variant failed before, nothing can be stored, or the stored one cannot be opened.
+    let settled = || {
+        let (cache, cached) = (Arc::clone(cache), cached.clone());
+        async move {
+            let opened = tokio::task::spawn_blocking({
+                let (cache, cached) = (Arc::clone(&cache), cached.clone());
+                move || cache.open(&cached)
+            })
+            .await
+            .context("cover cache task failed")
+            .and_then(|opened| opened.context("failed to open a transformed cover"));
+            match opened {
+                Ok(Some(stored)) => Some(served(stored)),
+                Ok(None) if cache.failed(&cached) || cache.unwritable() => Some(original()),
+                Ok(None) => None,
+                Err(err) => {
+                    tracing::warn!(error = %format!("{err:#}"), "serving cover untransformed");
+                    Some(original())
+                }
+            }
+        }
+    };
+    if let Some(rendition) = settled().await {
+        return Ok(rendition);
+    }
+    let flight = cache.flight(&cached).await;
+    if let Some(rendition) = settled().await {
+        return Ok(rendition);
     }
 
     let permit = tokio::time::timeout(wait, Arc::clone(slots).acquire_owned())
@@ -370,17 +414,31 @@ async fn render_cover_on(
         .map_err(|_| CoverTransformError::Busy)?
         .expect("the cover transform semaphore is never closed");
     let source_path = path.to_path_buf();
+    let target = cached.clone();
+    let task_cache = Arc::clone(cache);
     let transformed = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        transform_cover_file(&source_path, &options)
+        let _flight = flight;
+        let bytes = transform_cover_file(&source_path, &variant.options()).inspect_err(|_| {
+            task_cache.record_failure(&target);
+        })?;
+        let len = bytes.len() as u64;
+        // A failed write is logged by the cache, once for its backoff.
+        anyhow::Ok(
+            task_cache
+                .store(&target, &bytes)
+                .ok()
+                .map(|file| (file, len)),
+        )
     })
     .await
     .context("cover transform task failed")?;
     match transformed {
-        Ok(transformed) => Ok(CoverRendition::Transformed(transformed)),
+        Ok(Some(stored)) => Ok(served(stored)),
+        Ok(None) => Ok(original()),
         Err(err) => {
             tracing::warn!(error = %format!("{err:#}"), "serving cover untransformed");
-            Ok(original)
+            Ok(original())
         }
     }
 }
@@ -442,18 +500,47 @@ mod tests {
         }
     }
 
+    const HASH: &str = "0123456789abcdef0123456789abcdef";
+
+    async fn render_on(
+        cache: &Arc<TransformCache>,
+        slots: &Arc<Semaphore>,
+        path: &Path,
+        options: CoverTransformOptions,
+    ) -> Result<CoverRendition, CoverTransformError> {
+        render_cover_on(cache, slots, Duration::from_millis(10), path, HASH, options).await
+    }
+
     /// Renders with one free slot, which a transform must leave free again.
-    async fn render(path: &Path, options: CoverTransformOptions) -> CoverRendition {
+    async fn render(
+        cache: &Arc<TransformCache>,
+        path: &Path,
+        options: CoverTransformOptions,
+    ) -> CoverRendition {
         let slots = Arc::new(Semaphore::new(1));
-        let rendered = render_cover_on(&slots, Duration::from_millis(10), path, options)
+        let rendered = render_on(cache, &slots, path, options)
             .await
             .expect("renders");
         assert_eq!(slots.available_permits(), 1);
+        assert_eq!(cache::testing::flights(cache), 0);
         rendered
     }
 
     fn is_original(rendition: &CoverRendition, mime: &str) -> bool {
         matches!(rendition, CoverRendition::Original { mime_type } if *mime_type == mime)
+    }
+
+    /// The bytes of a cached rendition, read from the handle it was served with.
+    fn cached_bytes(rendition: CoverRendition) -> Option<Vec<u8>> {
+        match rendition {
+            CoverRendition::Cached { mut file, len, .. } => {
+                let mut bytes = Vec::new();
+                file.read_to_end(&mut bytes).expect("reads cached cover");
+                assert_eq!(bytes.len() as u64, len);
+                Some(bytes)
+            }
+            CoverRendition::Original { .. } => None,
+        }
     }
 
     #[test]
@@ -579,44 +666,30 @@ mod tests {
         );
         let resized =
             transform_cover_file(&png, &options(None, Some(2), None)).expect("transforms");
-        assert_eq!(resized.mime_type, "image/png");
+        assert_eq!(
+            read_cover_header(&mut Cursor::new(resized))
+                .map(|header| header.format)
+                .ok(),
+            Some(image::ImageFormat::Png)
+        );
         assert!(probe_cover_file(&text).is_err());
         assert!(cover_blurhash(&text).is_none());
-    }
-
-    #[test]
-    fn transforms_that_change_nothing_are_noops() {
-        let source = read_cover_header(&mut Cursor::new(jpeg_header(600, 400))).expect("header");
-        let jpeg = Some(image::ImageFormat::Jpeg);
-        let png = Some(image::ImageFormat::Png);
-
-        for noop in [
-            options(None, None, None),
-            options(jpeg, None, None),
-            options(None, Some(600), Some(400)),
-            options(jpeg, Some(u32::MAX), Some(u32::MAX)),
-            options(None, Some(1200), None),
-        ] {
-            assert!(transform_is_noop(&source, &noop), "{noop:?}");
-        }
-        for change in [
-            options(png, None, None),
-            options(None, Some(599), None),
-            options(jpeg, None, Some(200)),
-            options(png, Some(u32::MAX), None),
-        ] {
-            assert!(!transform_is_noop(&source, &change), "{change:?}");
-        }
     }
 
     #[tokio::test]
     async fn covers_that_would_not_transform_safely_are_served_as_they_are() {
         let dir = tempfile::tempdir().expect("tempdir");
+        let cache = cache::testing::cache(&dir.path().join("cache"), 1 << 20);
         let mut apng = png_start(8, 8);
         png_chunk(&mut apng, b"acTL", &[0, 0, 0, 2, 0, 0, 0, 0]);
         png_chunk(&mut apng, b"IDAT", &[]);
         let canvas = vp8x(0, 8, 8);
         let mismatched_frame = webp(&[(b"VP8X", &canvas), (b"VP8 ", &vp8_frame(16_000, 16_000))]);
+        let late_lossless_alpha = webp(&[
+            (b"VP8X", &vp8x(0b1_0000, 8, 8)),
+            (b"VP8 ", &vp8_frame(8, 8)),
+            (b"ALPH", &[1]),
+        ]);
         let png = encoded(image::ImageFormat::Png, 8, 8);
         let truncated_png = &png[..png.len() / 2];
 
@@ -638,12 +711,14 @@ mod tests {
                 "image/webp",
             ),
             ("mismatched.webp", &mismatched_frame, "image/webp"),
+            ("late-alpha.webp", &late_lossless_alpha, "image/webp"),
             ("huge.jpg", &jpeg_header(7_000, 7_000), "image/jpeg"),
             ("truncated.png", truncated_png, "image/png"),
             ("text.jpg", b"secret data, not an image", "image/jpeg"),
         ] {
             let path = write_cover(&dir, name, bytes);
             let rendered = render(
+                &cache,
                 &path,
                 options(Some(image::ImageFormat::Jpeg), Some(4), None),
             )
@@ -653,32 +728,180 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn failed_transforms_are_not_tried_again() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cache = cache::testing::cache(&dir.path().join("cache"), 1 << 20);
+        let png = encoded(image::ImageFormat::Png, 200, 200);
+        let path = write_cover(&dir, "cover.png", &png[..png.len() / 2]);
+        let resize = || options(None, Some(100), None);
+
+        assert!(is_original(
+            &render(&cache, &path, resize()).await,
+            "image/png"
+        ));
+        let no_slots = Arc::new(Semaphore::new(0));
+        let again = render_on(&cache, &no_slots, &path, resize()).await;
+        assert!(matches!(again, Ok(ref rendered) if is_original(rendered, "image/png")));
+    }
+
+    #[tokio::test]
+    async fn cached_transforms_are_served_without_a_slot() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cache = cache::testing::cache(&dir.path().join("cache"), 1 << 20);
+        let path = write_cover(
+            &dir,
+            "cover.png",
+            &encoded(image::ImageFormat::Png, 200, 200),
+        );
+
+        let rendered = render(&cache, &path, options(None, Some(100), None)).await;
+        let served = cached_bytes(rendered).expect("is cached");
+        let stored = dir.path().join("cache").join(HASH).join("128x0.png");
+        assert_eq!(std::fs::read(&stored).ok(), Some(served));
+        let header = probe_cover_file(&stored).expect("stored a cover");
+        assert_eq!((header.width, header.height), (128, 128));
+
+        let no_slots = Arc::new(Semaphore::new(0));
+        let again = render_on(&cache, &no_slots, &path, options(None, Some(120), None))
+            .await
+            .expect("renders");
+        assert_eq!(cached_bytes(again), std::fs::read(&stored).ok());
+    }
+
+    #[tokio::test]
+    async fn concurrent_misses_of_one_variant_transform_once() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cache = cache::testing::cache(&dir.path().join("cache"), 1 << 20);
+        let path = write_cover(
+            &dir,
+            "cover.png",
+            &encoded(image::ImageFormat::Png, 200, 200),
+        );
+        let slots = Arc::new(Semaphore::new(1));
+        let held = Arc::clone(&slots).acquire_owned().await.expect("slot");
+
+        let spawn = |wait: Duration| {
+            let (cache, slots, path) = (Arc::clone(&cache), Arc::clone(&slots), path.clone());
+            tokio::spawn(async move {
+                let options = options(None, Some(100), None);
+                render_cover_on(&cache, &slots, wait, &path, HASH, options).await
+            })
+        };
+        let first = spawn(Duration::from_secs(10));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        // Waiting for a slot of its own, the second would be refused as busy.
+        let second = spawn(Duration::from_millis(10));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        drop(held);
+
+        for rendered in [first.await, second.await] {
+            let rendered = rendered.expect("joins").expect("renders");
+            assert!(cached_bytes(rendered).is_some());
+        }
+        assert_eq!(cache::testing::flights(&cache), 0);
+        assert_eq!(slots.available_permits(), 1);
+    }
+
+    #[tokio::test]
     async fn noop_renders_serve_the_file_without_a_transform_slot() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = write_cover(&dir, "cover.png", &encoded(image::ImageFormat::Png, 8, 8));
+        let cache = cache::testing::cache(&dir.path().join("cache"), 1 << 20);
+        let path = write_cover(
+            &dir,
+            "cover.png",
+            &encoded(image::ImageFormat::Png, 200, 100),
+        );
         let no_slots = Arc::new(Semaphore::new(0));
 
-        let rendered = render_cover_on(
-            &no_slots,
-            Duration::from_millis(10),
-            &path,
-            options(None, Some(64), Some(64)),
-        )
-        .await
-        .expect("renders");
-        assert!(is_original(&rendered, "image/png"));
+        for noop in [
+            options(None, None, None),
+            options(Some(image::ImageFormat::Png), Some(200), None),
+            options(None, Some(150), Some(100)),
+            options(None, Some(4096), None),
+        ] {
+            let rendered = render_on(&cache, &no_slots, &path, noop.clone()).await;
+            assert!(
+                matches!(rendered, Ok(ref rendered) if is_original(rendered, "image/png")),
+                "{noop:?}"
+            );
+        }
     }
 
     #[tokio::test]
     async fn transforms_without_a_free_slot_are_busy() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = write_cover(&dir, "cover.png", &encoded(image::ImageFormat::Png, 8, 8));
+        let cache = cache::testing::cache(&dir.path().join("cache"), 1 << 20);
+        let path = write_cover(
+            &dir,
+            "cover.png",
+            &encoded(image::ImageFormat::Png, 200, 200),
+        );
         let no_slots = Arc::new(Semaphore::new(0));
-        let resize = || options(None, Some(4), None);
+        let resize = || options(None, Some(100), None);
 
-        let busy = render_cover_on(&no_slots, Duration::from_millis(10), &path, resize()).await;
+        let busy = render_on(&cache, &no_slots, &path, resize()).await;
         assert!(matches!(busy, Err(CoverTransformError::Busy)));
-        let rendered = render(&path, resize()).await;
-        assert!(matches!(rendered, CoverRendition::Transformed(_)));
+        assert_eq!(cache::testing::flights(&cache), 0);
+        let rendered = render(&cache, &path, resize()).await;
+        assert!(cached_bytes(rendered).is_some());
+    }
+
+    #[tokio::test]
+    async fn variants_evicted_after_they_are_found_are_still_served() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cache = cache::testing::cache(&dir.path().join("cache"), 1);
+        let path = write_cover(
+            &dir,
+            "cover.png",
+            &encoded(image::ImageFormat::Png, 200, 200),
+        );
+        let small = || options(None, Some(64), None);
+
+        let first = render(&cache, &path, small()).await;
+        let found = render(&cache, &path, small()).await;
+        // Stored past the cap, the next variant evicts the one both requests hold.
+        let next = render(&cache, &path, options(None, Some(128), None)).await;
+        let evicted = dir.path().join("cache").join(HASH).join("64x0.png");
+        assert!(!evicted.exists());
+
+        for rendered in [first, found, next] {
+            let bytes = cached_bytes(rendered).expect("is cached");
+            assert!(read_cover_header(&mut Cursor::new(bytes)).is_ok());
+        }
+        let again = render(&cache, &path, small()).await;
+        assert!(cached_bytes(again).is_some());
+    }
+
+    #[tokio::test]
+    async fn failed_writes_stop_transforms_for_the_backoff() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let blocked = dir.path().join("cache");
+        std::fs::write(&blocked, b"a file where the cache directory goes").expect("block");
+        let path = write_cover(
+            &dir,
+            "cover.png",
+            &encoded(image::ImageFormat::Png, 200, 200),
+        );
+        let no_slots = Arc::new(Semaphore::new(0));
+        let resize = || options(None, Some(100), None);
+
+        let cache = cache::testing::cache_with_backoff(&blocked, Duration::from_secs(3600));
+        assert!(is_original(
+            &render(&cache, &path, resize()).await,
+            "image/png"
+        ));
+        let other = options(None, Some(50), None);
+        for options in [resize(), other] {
+            let again = render_on(&cache, &no_slots, &path, options).await;
+            assert!(matches!(again, Ok(ref rendered) if is_original(rendered, "image/png")));
+        }
+
+        let expired = cache::testing::cache_with_backoff(&blocked, Duration::ZERO);
+        assert!(is_original(
+            &render(&expired, &path, resize()).await,
+            "image/png"
+        ));
+        let retried = render_on(&expired, &no_slots, &path, resize()).await;
+        assert!(matches!(retried, Err(CoverTransformError::Busy)));
     }
 }

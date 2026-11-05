@@ -49,7 +49,10 @@ use crate::{
         AppError,
         request::bearer_credential,
         responses::CoverResponse,
-        serve::file_response_with_cache_control,
+        serve::{
+            file_response_with_cache_control,
+            open_file_response_with_cache_control,
+        },
     },
     services::STATE,
     services::{
@@ -263,21 +266,27 @@ pub(crate) fn map_provider_cover_search_results(
 }
 
 async fn serve_public_cover_response(
-    path: &FsPath,
+    cover: &lyra_db::Cover,
     transform_options: Option<covers::CoverTransformOptions>,
     request_headers: &HeaderMap,
 ) -> Result<Response<Body>, AppError> {
+    let path = FsPath::new(&cover.path);
     let content_type = match transform_options {
         None => covers::cover_mime_from_path(path),
-        Some(options) => match covers::render_cover(path, options).await? {
+        Some(options) => match covers::render_cover(path, &cover.hash, options).await? {
             covers::CoverRendition::Original { mime_type } => mime_type,
-            covers::CoverRendition::Transformed(transformed) => {
-                return Response::builder()
-                    .header(header::CONTENT_TYPE, transformed.mime_type)
-                    .header(header::CONTENT_LENGTH, transformed.bytes.len().to_string())
-                    .header(header::CACHE_CONTROL, PUBLIC_COVER_CACHE_CONTROL)
-                    .body(Body::from(transformed.bytes))
-                    .map_err(AppError::from);
+            covers::CoverRendition::Cached {
+                file,
+                len,
+                mime_type,
+            } => {
+                return open_file_response_with_cache_control(
+                    tokio::fs::File::from_std(file),
+                    len,
+                    mime_type,
+                    request_headers,
+                    PUBLIC_COVER_CACHE_CONTROL,
+                );
             }
         },
     };
@@ -309,13 +318,13 @@ async fn get_public_cover(
         return Err(AppError::not_found(format!("Cover not found: {id}")));
     }
 
-    serve_public_cover_response(&path, transform_options, &headers).await
+    serve_public_cover_response(&cover, transform_options, &headers).await
 }
 
 #[cfg(feature = "docgen")]
 fn get_public_cover_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get cover image").description(
-        "Returns a public cover image by cover ID. Cover metadata returns URLs with a `v` query parameter derived from the cover hash for cache versioning; clients should treat the full URL as opaque. Supports optional transform parameters: `format`, `quality`, `max_width`, and `max_height`.",
+        "Returns a public cover image by cover ID. Cover metadata returns URLs with a `v` query parameter derived from the cover hash for cache versioning; clients should treat the full URL as opaque. Supports optional transform parameters: `format`, `quality`, `max_width`, and `max_height`. Bounds snap up to 64, 128, 256, 512, 1024 or 2048 pixels, and larger ones serve the full size; JPEG quality snaps up to 50, 75, 90 or 100. Images that cannot be transformed safely, such as animated or lossless WebP, are served unchanged.",
     )
 }
 
@@ -926,6 +935,66 @@ mod tests {
             .oneshot(request.body(Body::empty())?)
             .await?;
         assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn transformed_covers_are_served_from_the_cache_until_the_cover_goes()
+    -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("cover.png");
+        image::DynamicImage::new_rgb8(200, 200).save(&path)?;
+        let hash = "0123456789abcdef0123456789abcdef";
+        let cover_id = {
+            let mut db = STATE.db.write().await;
+            let release = lyra_db::fixtures::insert_release(&mut db, "Release")?;
+            db.transaction_mut(|t| {
+                lyra_db::covers::upsert(
+                    t,
+                    release,
+                    CoverSource::Local,
+                    lyra_db::Cover {
+                        db_id: None,
+                        id: nanoid::nanoid!(),
+                        path: path.to_string_lossy().into_owned(),
+                        mime_type: "image/png".to_string(),
+                        hash: hash.to_string(),
+                        blurhash: None,
+                        provider_id: None,
+                    },
+                )
+            })?
+            .cover
+            .id
+        };
+        let query = || CoverQuery {
+            max_width: Some(100),
+            ..CoverQuery::default()
+        };
+
+        let response = get_public_cover(HeaderMap::new(), Path(cover_id.clone()), Query(query()))
+            .await
+            .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let served = image::load_from_memory(&body)?;
+        assert_eq!((served.width(), served.height()), (128, 128));
+        let cached = STATE.boot.get().cover_cache_dir.join(hash);
+        assert_eq!(std::fs::read(cached.join("128x0.png"))?, body);
+
+        let mut range = HeaderMap::new();
+        range.insert(header::RANGE, "bytes=0-3".parse()?);
+        let response = get_public_cover(range, Path(cover_id.clone()), Query(query()))
+            .await
+            .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert_eq!(response.status(), axum::http::StatusCode::PARTIAL_CONTENT);
+
+        std::fs::remove_file(&path)?;
+        let gone = get_public_cover(HeaderMap::new(), Path(cover_id), Query(query())).await;
+        assert!(gone.is_err());
+        assert!(!cached.exists(), "a removed cover's transforms go with it");
         Ok(())
     }
 }

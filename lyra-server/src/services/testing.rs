@@ -114,6 +114,7 @@ fn memory_boot() -> anyhow::Result<Boot> {
     Ok(Boot {
         port: 0,
         transcode_cache_dir: data_dir.join("transcodes"),
+        cover_cache_dir: data_dir.join("cover-transforms"),
         hls_dir: data_dir.join("hls"),
         data_dir,
         db: DbConfig {

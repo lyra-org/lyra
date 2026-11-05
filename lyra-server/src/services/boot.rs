@@ -20,6 +20,9 @@ pub(crate) struct Boot {
     /// Where finished and in-progress transcodes are kept. Server-owned scratch space: emptied at
     /// startup and created on first use.
     pub(crate) transcode_cache_dir: PathBuf,
+    /// Where transformed covers are kept between runs. Server-owned: created on first use, and
+    /// nothing outside it is touched.
+    pub(crate) cover_cache_dir: PathBuf,
     /// Where HLS jobs write their segments. Server-owned: its startup purge and cleanup touch
     /// nothing outside it.
     pub(crate) hls_dir: PathBuf,

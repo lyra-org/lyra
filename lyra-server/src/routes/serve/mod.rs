@@ -238,8 +238,18 @@ fn open_file_response(
     content_type: &str,
     headers: &HeaderMap,
 ) -> Result<Response<Body>, AppError> {
+    open_file_response_with_cache_control(file, size, content_type, headers, NO_STORE)
+}
+
+pub(crate) fn open_file_response_with_cache_control(
+    file: tokio::fs::File,
+    size: u64,
+    content_type: &str,
+    headers: &HeaderMap,
+    cache_control: &str,
+) -> Result<Response<Body>, AppError> {
     let ranged = build_ranged_body(file, size, headers.get(header::RANGE), StatusCode::OK)?;
-    ranged_response(ranged, content_type, NO_STORE)
+    ranged_response(ranged, content_type, cache_control)
 }
 
 pub fn stream_routes() -> Router {

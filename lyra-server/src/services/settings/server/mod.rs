@@ -313,6 +313,7 @@ mod tests {
     use super::{
         config::{
             CorsConfig,
+            CoversConfig,
             HlsConfig,
             PluginsConfig,
             SyncConfig,
@@ -390,6 +391,9 @@ mod tests {
                 max_concurrent_per_user: 3,
                 cache_max_bytes: 1_073_741_824,
                 cache_ttl_seconds: 3_600,
+            },
+            covers: CoversConfig {
+                transform_cache_max_bytes: 536_870_912,
             },
             plugins: PluginsConfig { auto_update: true },
         };

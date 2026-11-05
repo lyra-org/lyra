@@ -151,6 +151,7 @@ pub(crate) fn keep_present<K>(
 pub(crate) fn remove_stale(db: &mut DbAny, stale: &[StaleCover]) -> anyhow::Result<usize> {
     let mut seen = HashSet::new();
     let mut removed = 0;
+    let mut orphaned = Vec::new();
     for stale in stale {
         if !seen.insert((stale.owner_db_id, stale.source, &stale.cover_id)) {
             continue;
@@ -162,9 +163,16 @@ pub(crate) fn remove_stale(db: &mut DbAny, stale: &[StaleCover]) -> anyhow::Resu
             if !cover_gone(&cover) {
                 return Ok(false);
             }
-            Ok(lyra_db::covers::remove(t, stale.owner_db_id, stale.source)?.is_some())
+            let detached = lyra_db::covers::remove(t, stale.owner_db_id, stale.source)?;
+            if let Some(detached) = detached.as_ref().filter(|detached| detached.orphaned) {
+                orphaned.push(detached.cover.hash.clone());
+            }
+            Ok(detached.is_some())
         })?;
         removed += usize::from(removed_one);
+    }
+    for hash in orphaned {
+        super::forget_cover_transforms(&hash);
     }
     Ok(removed)
 }
@@ -172,21 +180,25 @@ pub(crate) fn remove_stale(db: &mut DbAny, stale: &[StaleCover]) -> anyhow::Resu
 /// Removes the cover with public id `cover_id` from every owner holding it when its file is
 /// still confirmed gone. A cover removed since it was read is passed over.
 pub(crate) fn remove_stale_cover(db: &mut DbAny, cover_id: &str) -> anyhow::Result<()> {
-    db.transaction_mut(|t| -> anyhow::Result<()> {
+    let removed = db.transaction_mut(|t| -> anyhow::Result<Option<Cover>> {
         let Some(cover) = lyra_db::covers::get_by_public_id(t, cover_id)? else {
-            return Ok(());
+            return Ok(None);
         };
         let Some(cover_db_id) = cover.db_id else {
-            return Ok(());
+            return Ok(None);
         };
         if !cover_gone(&cover) {
-            return Ok(());
+            return Ok(None);
         }
         for (owner_db_id, source) in lyra_db::covers::owners(t, cover_db_id)? {
             lyra_db::covers::remove(t, owner_db_id, source)?;
         }
-        Ok(())
-    })
+        Ok(Some(cover))
+    })?;
+    if let Some(cover) = removed {
+        super::forget_cover_transforms(&cover.hash);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

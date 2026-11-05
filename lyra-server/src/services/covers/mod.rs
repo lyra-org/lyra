@@ -95,18 +95,16 @@ impl CoverTransformOptions {
     }
 }
 
-pub(crate) struct TransformedCoverImage {
-    pub(crate) bytes: Vec<u8>,
-    pub(crate) mime_type: &'static str,
-}
-
 pub(crate) enum CoverRendition {
     /// The file is served as it is: the options would change nothing, or the image would not
     /// transform.
-    Original {
+    Original { mime_type: &'static str },
+    /// The transformed file, kept in the cover cache, opened while it is there.
+    Cached {
+        file: std::fs::File,
+        len: u64,
         mime_type: &'static str,
     },
-    Transformed(TransformedCoverImage),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -145,7 +143,9 @@ impl ProviderCoverSearchResult {
 // Re-exports for convenient access from the rest of the crate.
 pub(crate) use image::{
     MAX_COVER_BYTES,
+    TransformCache,
     cover_mime_from_path,
+    forget_cover_transforms,
     parse_cover_image_format,
     render_cover,
 };
@@ -157,7 +157,7 @@ pub(crate) use providers::{
 pub(crate) use resolve::configured_covers_root;
 pub(crate) use sync::{
     artist_cover_wanted,
-    discard_cover_file,
+    discard_cover,
     discard_unreferenced_cover_files,
     forget_gone_covers,
     record_local_release_cover,

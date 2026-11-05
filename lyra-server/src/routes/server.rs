@@ -720,6 +720,7 @@ mod tests {
                 "sync",
                 "hls",
                 "transcoding",
+                "covers",
                 "plugins"
             ]
         );

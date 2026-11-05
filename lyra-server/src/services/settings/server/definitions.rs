@@ -51,6 +51,11 @@ const TRANSCODING: SettingGroup = SettingGroup {
     label: "Transcoding",
     permission: Permission::ManageServer,
 };
+const COVERS: SettingGroup = SettingGroup {
+    id: "covers",
+    label: "Covers",
+    permission: Permission::ManageServer,
+};
 const PLUGINS: SettingGroup = SettingGroup {
     id: "plugins",
     label: "Plugins",
@@ -255,6 +260,16 @@ pub(super) static ALL: &[SettingDefinition] = &[
         "Finished transcodes not requested for this long are removed.",
         Live,
         Kind::U64 { default: 3_600 },
+    ),
+    setting(
+        "covers.transform_cache_max_bytes",
+        COVERS,
+        "Resized cover cache size (bytes)",
+        "Resized or converted covers kept on disk; the oldest are removed beyond this size.",
+        Live,
+        Kind::U64 {
+            default: 536_870_912,
+        },
     ),
     setting(
         "plugins.auto_update",

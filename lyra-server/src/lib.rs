@@ -73,6 +73,7 @@ pub async fn run_server(build: BuildInfo, capture: Option<CaptureArgs>) -> Resul
     let boot = services::boot::Boot {
         port: loaded.boot.port,
         transcode_cache_dir: loaded.boot.transcode_cache_dir(),
+        cover_cache_dir: loaded.boot.cover_cache_dir(),
         hls_dir: loaded.boot.hls_dir(),
         data_dir: loaded.boot.data_dir,
         db: loaded.boot.db,

@@ -160,6 +160,7 @@ pub(crate) struct GenerationState {
     pub(crate) catalog_index: crate::services::catalog::index::IndexCache,
     pub(crate) hls_cleanup: HlsCleanupState,
     pub(crate) transcode_cache: Arc<crate::services::transcoding::cache::TranscodeCache>,
+    pub(crate) cover_transforms: OnceLock<Arc<crate::services::covers::TransformCache>>,
 }
 
 /// Per-generation state owned by layers above services, keyed by type. Each

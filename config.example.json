@@ -41,6 +41,9 @@
     "cache_max_bytes": 1073741824,
     "cache_ttl_seconds": 3600
   },
+  "covers": {
+    "transform_cache_max_bytes": 536870912
+  },
   "plugins": {
     "auto_update": true
   }

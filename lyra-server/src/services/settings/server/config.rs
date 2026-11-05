@@ -34,6 +34,7 @@ pub(crate) struct Config {
     pub(crate) sync: SyncConfig,
     pub(crate) hls: HlsConfig,
     pub(crate) transcoding: TranscodingConfig,
+    pub(crate) covers: CoversConfig,
     pub(crate) plugins: PluginsConfig,
 }
 
@@ -82,6 +83,9 @@ impl Config {
                 max_concurrent_per_user: settings.value("transcoding.max_concurrent_per_user"),
                 cache_max_bytes: settings.value("transcoding.cache_max_bytes"),
                 cache_ttl_seconds: settings.value("transcoding.cache_ttl_seconds"),
+            },
+            covers: CoversConfig {
+                transform_cache_max_bytes: settings.value("covers.transform_cache_max_bytes"),
             },
             plugins: PluginsConfig {
                 auto_update: settings.value("plugins.auto_update"),
@@ -150,6 +154,11 @@ pub(crate) struct TranscodingConfig {
     pub(crate) max_concurrent_per_user: u32,
     pub(crate) cache_max_bytes: u64,
     pub(crate) cache_ttl_seconds: u64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct CoversConfig {
+    pub(crate) transform_cache_max_bytes: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
