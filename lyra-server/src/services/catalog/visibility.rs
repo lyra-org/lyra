@@ -247,7 +247,7 @@ fn track_sort_values_come_from_visible_releases_only() -> anyhow::Result<()> {
                 page(db, viewer, &query, offset, Some(1))?
                     .items
                     .into_iter()
-                    .filter_map(|track| track.db_id.map(DbId::from)),
+                    .filter_map(|track| track.item.db_id.map(DbId::from)),
             );
         }
         assert_eq!(paged, ids, "pages follow the order");

@@ -254,6 +254,8 @@ pub(crate) fn read_query<C: Catalog>(
 where
     C::Filter: IdFilter,
 {
+    let mut filter = filter;
+    *C::available_mut(&mut filter) = table.optional_bool_field("available")?;
     let mut query = Query::new(filter);
     query.names = NameRange::new(
         table.optional_string_field("sort_name_prefix")?,
@@ -565,6 +567,13 @@ pub(crate) fn query_fields(sort_key: &'static str) -> Vec<FieldDescriptor> {
                 field("order", LuauType::optional(args::sort_order_type())),
             ]))),
         ),
+        FieldDescriptor {
+            name: "available",
+            ty: Option::<bool>::luau_type(),
+            description: Some(
+                "`true` keeps the items whose `available` field is true; `false` keeps the tracks that can't play, and the releases, artists and genres holding one, partly playable ones included. Either counts only the matching tracks in what a release, artist or genre holds. Defaults to both.",
+            ),
+        },
         field("seed", Option::<u64>::luau_type()),
         field("offset", Option::<u64>::luau_type()),
         field("limit", Option::<u64>::luau_type()),

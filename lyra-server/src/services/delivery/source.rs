@@ -118,9 +118,16 @@ pub(crate) async fn validate_and_get_track_source(
     }
     let track = lyra_db::tracks::get_by_id(db, track_db_id)?.ok_or_else(not_found)?;
 
-    let source = playback_source_service::resolve(db, &track, false)?.ok_or_else(|| {
-        DeliveryError::not_found(format!("Playable source not found for track: {track_id}"))
-    })?;
+    let file_missing = || DeliveryError::gone(format!("the track's file is missing: {track_id}"));
+    let source = match playback_source_service::resolve(db, &track, false)? {
+        Some(source) => source,
+        None if lyra_db::track_sources::get_by_track(db, track_db_id)?.is_empty() => {
+            return Err(DeliveryError::not_found(format!(
+                "Playable source not found for track: {track_id}"
+            )));
+        }
+        None => return Err(file_missing()),
+    };
     let source_public_id = source.source_id;
     let version =
         SourceVersion::read(source_public_id.clone(), &source.full_path).map_err(|err| {
@@ -130,7 +137,7 @@ pub(crate) async fn validate_and_get_track_source(
                 error = %err,
                 "track source file is unreadable"
             );
-            DeliveryError::not_found(format!("Track source file not found for track: {track_id}"))
+            file_missing()
         })?;
     if let TrackAccess::MediaToken(token) = access
         && token.source != version

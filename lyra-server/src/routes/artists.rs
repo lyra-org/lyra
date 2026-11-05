@@ -126,6 +126,8 @@ struct ArtistListQuery {
     #[serde(flatten)]
     personal: PersonalFilterQuery,
     #[serde(flatten)]
+    pub(crate) available: super::AvailableQuery,
+    #[serde(flatten)]
     page: super::PageQuery,
 }
 
@@ -136,6 +138,7 @@ pub(crate) struct ArtistListOptions {
     sort_by: Option<Vec<String>>,
     sort_order: Option<String>,
     personal: catalog::PersonalFilter,
+    available: Option<bool>,
     page_request: super::SnapshotPageRequest,
 }
 
@@ -146,6 +149,7 @@ impl ArtistListOptions {
         inc: Option<Vec<String>>,
         query: String,
         personal: catalog::PersonalFilter,
+        available: Option<bool>,
         page_request: super::SnapshotPageRequest,
     ) -> Self {
         Self {
@@ -155,6 +159,7 @@ impl ArtistListOptions {
             sort_by: None,
             sort_order: None,
             personal,
+            available,
             page_request,
         }
     }
@@ -377,6 +382,7 @@ fn artist_to_response(
         includes.covers,
         detail.artist.db_id.clone().map(DbId::from),
     );
+    let availability = crate::services::catalog::Availability::of(db)?;
     let releases = match release_details {
         Some(release_details) => Some(
             release_details
@@ -394,9 +400,12 @@ fn artist_to_response(
                 })
                 .collect::<anyhow::Result<Vec<_>>>()?,
         ),
-        None => detail
-            .releases
-            .map(|releases| releases.into_iter().map(ReleaseResponse::from).collect()),
+        None => detail.releases.map(|releases| {
+            releases
+                .into_iter()
+                .map(|release| ReleaseResponse::new(release, &availability))
+                .collect()
+        }),
     };
     let relations = detail.relations.map(|v| {
         v.into_iter()
@@ -428,6 +437,14 @@ fn artist_to_response(
             .collect()
     });
     Ok(ArtistResponse {
+        available: Some(
+            detail
+                .artist
+                .db_id
+                .clone()
+                .map(DbId::from)
+                .is_none_or(|id| availability.artist(id)),
+        ),
         id: detail.artist.id,
         name: detail.artist.artist_name,
         sort_name: detail.artist.sort_name,
@@ -462,6 +479,7 @@ pub(crate) fn artist_page(
         sort_by,
         sort_order,
         personal,
+        available,
         page_request,
     } = options;
     let includes = parse_inc(inc)?;
@@ -472,6 +490,7 @@ pub(crate) fn artist_page(
         .values(sort_by.as_deref())
         .field(sort_order.as_deref())
         .personal(personal)
+        .flag(available)
         .finish();
     let sort = super::parse_catalog_sort(sort_by, sort_order)?;
     let library = crate::services::auth::access::resolve_optional_library_filter(
@@ -493,6 +512,7 @@ pub(crate) fn artist_page(
         let mut query = catalog::Query::<Artists>::new(ArtistFilter {
             library,
             personal,
+            available,
             ..ArtistFilter::default()
         });
         query.search = search_term;
@@ -501,7 +521,10 @@ pub(crate) fn artist_page(
         let ids = catalog::leading(db, &viewer, &query, page_request.rank_limit())?;
         let page = page_request.start(&snapshot_key, super::public_ids(db, &ids)?)?;
         (
-            Artists::hydrate(db, &ids[..page.item_ids.len()])?,
+            Artists::hydrate(db, &ids[..page.item_ids.len()])?
+                .into_iter()
+                .map(|listed| listed.item)
+                .collect(),
             page.next_cursor,
         )
     };
@@ -540,6 +563,7 @@ async fn get_artists(
         sort_by,
         sort_order,
         personal,
+        available,
         page,
     } = list_query;
     let page = page.resolve_snapshot();
@@ -555,6 +579,7 @@ async fn get_artists(
                 sort_by,
                 sort_order,
                 personal,
+                available: available.available,
                 page_request: page,
             },
         )
@@ -609,7 +634,7 @@ async fn search_artist_covers(
 #[cfg(feature = "docgen")]
 fn list_artists_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List artists").description(
-        "Returns artists as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `sort_by`, `sort_order`, `rated`, `min_rating`, `max_rating`, `favorite`, `listened`, `limit`, `cursor`. `min_rating` and `max_rating` filter artists by the authenticated user's inclusive personal rating range; either bound excludes unrated artists. `rated=true` keeps only artists the user has rated and `rated=false` only those they have not; `rated=false` cannot be combined with a rating bound. `favorite=true` keeps only artists the user has favorited and `favorite=false` the rest. `listened=true` keeps only artists with at least one listened track among their credited tracks or releases and `listened=false` the rest. `library_id` scopes results to artists credited by releases or tracks belonging to that public library ID, and the `release_count`, `track_count`, `total_duration`, `listen_count` and `last_played_at` sort keys to the releases in it and their tracks. `sort_by` supports `sort_name`, `name`, `date_created`, `last_played_at`, `listen_count`, `release_count`, `track_count`, `total_duration`, `rating` (the authenticated user's personal rating; unrated artists sort last in both directions), `rated_at` (when the authenticated user last set their rating), `favorited_at` (when they first favorited the artist), and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` matches artist names and sort names, and the names of duplicates merged into the artist; each of its words must start a word, ignoring case, accents, apostrophes and punctuation; no character is an operator, and a word in a script written without spaces, such as Japanese, matches anywhere in a word. It defaults ordering to relevance: exact names rank first, then names starting with the query, then names holding every word, then names holding some, then matches only through related items. Use `inc` to include releases, tracks, relations, and/or covers. When `inc=covers`, artist cover metadata includes a public image URL. When `inc=relations`, add `relation_covers` to include public image metadata for related artists. When `inc=releases`, use `release_artists`, `release_covers`, and/or `artist_covers` to hydrate those nested release fields. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
+        "Returns artists as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `sort_by`, `sort_order`, `rated`, `min_rating`, `max_rating`, `favorite`, `listened`, `available`, `limit`, `cursor`. `available=true` keeps the artists whose `available` field is true, counting only their tracks that can play; `available=false` keeps the artists credited on a track that can't play, or on a release holding one, partly playable ones included, counting only such tracks. `min_rating` and `max_rating` filter artists by the authenticated user's inclusive personal rating range; either bound excludes unrated artists. `rated=true` keeps only artists the user has rated and `rated=false` only those they have not; `rated=false` cannot be combined with a rating bound. `favorite=true` keeps only artists the user has favorited and `favorite=false` the rest. `listened=true` keeps only artists with at least one listened track among their credited tracks or releases and `listened=false` the rest. `library_id` scopes results to artists credited by releases or tracks belonging to that public library ID, and the `release_count`, `track_count`, `total_duration`, `listen_count` and `last_played_at` sort keys to the releases in it and their tracks. `sort_by` supports `sort_name`, `name`, `date_created`, `last_played_at`, `listen_count`, `release_count`, `track_count`, `total_duration`, `rating` (the authenticated user's personal rating; unrated artists sort last in both directions), `rated_at` (when the authenticated user last set their rating), `favorited_at` (when they first favorited the artist), and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` matches artist names and sort names, and the names of duplicates merged into the artist; each of its words must start a word, ignoring case, accents, apostrophes and punctuation; no character is an operator, and a word in a script written without spaces, such as Japanese, matches anywhere in a word. It defaults ordering to relevance: exact names rank first, then names starting with the query, then names holding every word, then names holding some, then matches only through related items. Use `inc` to include releases, tracks, relations, and/or covers. When `inc=covers`, artist cover metadata includes a public image URL. When `inc=relations`, add `relation_covers` to include public image metadata for related artists. When `inc=releases`, use `release_artists`, `release_covers`, and/or `artist_covers` to hydrate those nested release fields. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
     )
 }
 
@@ -1048,6 +1073,7 @@ mod tests {
                 sort_order: None,
                 personal: catalog::PersonalFilter::default(),
                 page_request: super::super::SnapshotPageRequest::first_page(100),
+                available: None,
             },
         )
         .await
@@ -1109,6 +1135,7 @@ mod tests {
                 sort_order: None,
                 personal: catalog::PersonalFilter::default(),
                 page_request: super::super::SnapshotPageRequest::first_page(100),
+                available: None,
             },
         )
         .await
@@ -1177,6 +1204,7 @@ mod tests {
                     ..catalog::PersonalFilter::default()
                 },
                 page_request: super::super::SnapshotPageRequest::first_page(100),
+                available: None,
             },
         )
         .await
@@ -1197,6 +1225,7 @@ mod tests {
             sort_order: sort_order.map(str::to_string),
             personal: catalog::PersonalFilter::default(),
             page_request: super::super::SnapshotPageRequest::first_page(100),
+            available: None,
         }
     }
 
@@ -1382,6 +1411,7 @@ mod tests {
                 sort_order: Some("descending".to_string()),
                 personal: catalog::PersonalFilter::default(),
                 page_request: super::super::SnapshotPageRequest::first_page(100),
+                available: None,
             },
         )
         .await

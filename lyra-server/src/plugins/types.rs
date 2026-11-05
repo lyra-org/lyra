@@ -358,6 +358,7 @@ pub(crate) struct EntryInfo {
     size: u64,
     file_modified_at_ms: u64,
     file_created_at_ms: u64,
+    missing_at_ms: Option<u64>,
 }
 
 impl EntryInfo {
@@ -383,6 +384,7 @@ impl EntryInfo {
             size: entry.size,
             file_modified_at_ms: entry.file_modified_at_ms,
             file_created_at_ms: entry.file_created_at_ms,
+            missing_at_ms: entry.missing_at_ms,
         })
     }
 
@@ -462,6 +464,11 @@ impl DescribeInterface for EntryInfo {
                 field("size", u64::luau_type(), None),
                 field("file_modified_at_ms", u64::luau_type(), None),
                 field("file_created_at_ms", u64::luau_type(), None),
+                field(
+                    "missing_at_ms",
+                    Option::<u64>::luau_type(),
+                    Some("When a sync first failed to find the file; nil while it is there."),
+                ),
             ],
         }
     }

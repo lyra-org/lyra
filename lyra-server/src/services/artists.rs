@@ -206,7 +206,10 @@ mod tests {
     fn credited_names(db: &DbAny, filter: ArtistFilter) -> anyhow::Result<Vec<Artist>> {
         let query = catalog::Query::<Artists>::new(filter);
         let ids = catalog::order(db, &catalog::Viewer::System, &query)?;
-        Artists::hydrate(db, &ids)
+        Ok(Artists::hydrate(db, &ids)?
+            .into_iter()
+            .map(|artist| artist.item)
+            .collect())
     }
 
     /// One page of a system browse with `filter`: its names and the total.
@@ -221,7 +224,7 @@ mod tests {
         Ok((
             page.items
                 .into_iter()
-                .map(|artist| artist.artist_name)
+                .map(|artist| artist.item.artist_name)
                 .collect(),
             page.total,
         ))
@@ -472,7 +475,7 @@ mod tests {
             let ids = catalog::order(&db, &viewer, &query)?;
             Ok(Artists::hydrate(&db, &ids)?
                 .into_iter()
-                .map(|artist| artist.artist_name)
+                .map(|artist| artist.item.artist_name)
                 .collect())
         };
         let favorite = |favorite| catalog::PersonalFilter {

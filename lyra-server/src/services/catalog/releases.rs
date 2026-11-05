@@ -110,6 +110,9 @@ impl SortKey for ReleaseKey {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ReleaseFilter {
+    /// Keeps only available entities (`true`) or only unavailable ones (`false`), narrowing
+    /// what the query counts as a scope does.
+    pub(crate) available: Option<bool>,
     pub(crate) ids: Option<Vec<DbId>>,
     pub(crate) exclude_ids: Vec<DbId>,
     /// Leaves out releases credited to these artists in either role.
@@ -127,10 +130,18 @@ pub(crate) struct Releases;
 impl Catalog for Releases {
     type Key = ReleaseKey;
     type Filter = ReleaseFilter;
-    type Item = Release;
+    type Item = super::Listed<Release>;
 
     fn personal(filter: &ReleaseFilter) -> Vec<PersonalData> {
         filter.personal.reads()
+    }
+
+    fn available(filter: &ReleaseFilter) -> Option<bool> {
+        filter.available
+    }
+
+    fn available_mut(filter: &mut ReleaseFilter) -> &mut Option<bool> {
+        &mut filter.available
     }
 
     fn id_filter(ids: Vec<DbId>) -> ReleaseFilter {
@@ -146,6 +157,10 @@ impl Catalog for Releases {
 
     fn table(index: &Snapshot) -> &Table {
         &index.releases
+    }
+
+    fn scoped(scope: &super::index::Scope) -> &Bits {
+        &scope.releases
     }
 
     fn candidates(cx: &Context<'_>, filter: &ReleaseFilter) -> Result<Bits, CatalogError> {
@@ -189,8 +204,7 @@ impl Catalog for Releases {
                     links.releases_of_tracks(&tracks).iter().filter(|release| {
                         links
                             .tracks_of_release(*release)
-                            .iter()
-                            .all(|track| tracks.contains(*track))
+                            .all(|track| tracks.contains(track))
                     }),
                 )
             },
@@ -217,7 +231,7 @@ impl Catalog for Releases {
         let stored = |compute: &dyn Fn() -> Vec<u64>| Column::stored(&releases.cache, key, compute);
         // Values read through other entities depend on which of them the viewer sees.
         let linked = |compute: &dyn Fn() -> Vec<u64>| cx.linked_column(releases, key, compute);
-        let tracks_of = |release: u32| links.tracks_of_release(release).to_vec();
+        let tracks_of = |release: u32| links.tracks_of_release(release).collect::<Vec<_>>();
         Ok(match key {
             ReleaseKey::Name => stored(&|| {
                 releases
@@ -236,6 +250,23 @@ impl Catalog for Releases {
             ReleaseKey::DateCreated => Column::Fields(&index.release.created),
             ReleaseKey::ReleaseDate => Column::Fields(&index.release.date),
             ReleaseKey::Year => Column::Fields(&index.release.year),
+            // Narrowed to the available tracks or the unavailable ones, a release holds fewer.
+            ReleaseKey::TotalDuration if cx.scope.available.is_some() => linked(&|| {
+                (0..releases.len() as u32)
+                    .map(|release| {
+                        tracks_of(release)
+                            .into_iter()
+                            .map(|track| index.track.duration[track as usize])
+                            .filter(|duration| *duration != super::index::MISSING)
+                            .fold(0u64, u64::saturating_add)
+                    })
+                    .collect()
+            }),
+            ReleaseKey::TrackCount if cx.scope.available.is_some() => linked(&|| {
+                (0..releases.len() as u32)
+                    .map(|release| tracks_of(release).len() as u64)
+                    .collect()
+            }),
             ReleaseKey::TotalDuration => Column::Fields(&index.release.total_duration),
             ReleaseKey::TrackCount => Column::Fields(&index.release.track_count),
             ReleaseKey::ArtistName => linked(&|| {
@@ -276,9 +307,9 @@ impl Catalog for Releases {
         Some(links.releases_of_artists(&links.artists_seen(cx.index.artists.matching(word))))
     }
 
-    fn hydrate(db: &DbAny, ids: &[DbId]) -> anyhow::Result<Vec<Release>> {
-        let mut releases = lyra_db::graph::bulk_fetch_typed(db, ids.to_vec(), "Release")?;
-        Ok(ids.iter().filter_map(|id| releases.remove(id)).collect())
+    fn hydrate(db: &DbAny, ids: &[DbId]) -> anyhow::Result<Vec<super::Listed<Release>>> {
+        let releases = lyra_db::graph::bulk_fetch_typed(db, ids.to_vec(), "Release")?;
+        super::listed(db, ids, releases, super::index::Snapshot::release_available)
     }
 }
 

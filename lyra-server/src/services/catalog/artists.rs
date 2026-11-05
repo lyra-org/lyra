@@ -111,6 +111,9 @@ impl SortKey for ArtistKey {
 /// an artist must hold.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ArtistFilter {
+    /// Keeps only available entities (`true`) or only unavailable ones (`false`), narrowing
+    /// what the query counts as a scope does.
+    pub(crate) available: Option<bool>,
     pub(crate) ids: Option<Vec<DbId>>,
     pub(crate) exclude_ids: Vec<DbId>,
     pub(crate) library: Option<DbId>,
@@ -157,10 +160,18 @@ pub(crate) struct Artists;
 impl Catalog for Artists {
     type Key = ArtistKey;
     type Filter = ArtistFilter;
-    type Item = Artist;
+    type Item = super::Listed<Artist>;
 
     fn personal(filter: &ArtistFilter) -> Vec<PersonalData> {
         filter.personal.reads()
+    }
+
+    fn available(filter: &ArtistFilter) -> Option<bool> {
+        filter.available
+    }
+
+    fn available_mut(filter: &mut ArtistFilter) -> &mut Option<bool> {
+        &mut filter.available
     }
 
     fn id_filter(ids: Vec<DbId>) -> ArtistFilter {
@@ -176,6 +187,10 @@ impl Catalog for Artists {
 
     fn table(index: &Snapshot) -> &Table {
         &index.artists
+    }
+
+    fn scoped(scope: &super::index::Scope) -> &Bits {
+        &scope.artists
     }
 
     fn candidates(cx: &Context<'_>, filter: &ArtistFilter) -> Result<Bits, CatalogError> {
@@ -294,9 +309,9 @@ impl Catalog for Artists {
         })
     }
 
-    fn hydrate(db: &DbAny, ids: &[DbId]) -> anyhow::Result<Vec<Artist>> {
-        let mut artists = lyra_db::graph::bulk_fetch_typed(db, ids.to_vec(), "Artist")?;
-        Ok(ids.iter().filter_map(|id| artists.remove(id)).collect())
+    fn hydrate(db: &DbAny, ids: &[DbId]) -> anyhow::Result<Vec<super::Listed<Artist>>> {
+        let artists = lyra_db::graph::bulk_fetch_typed(db, ids.to_vec(), "Artist")?;
+        super::listed(db, ids, artists, super::index::Snapshot::artist_available)
     }
 }
 
@@ -339,7 +354,7 @@ fn scoped_tracks(cx: &Context<'_>, scope: Option<&Bits>, artist: u32) -> Vec<u32
         .chain(
             scoped_releases_of(&links, scope, artist)
                 .into_iter()
-                .flat_map(|release| links.tracks_of_release(release).iter().copied()),
+                .flat_map(|release| links.tracks_of_release(release)),
         )
         .collect::<Vec<_>>();
     tracks.sort_unstable();
@@ -659,7 +674,11 @@ mod tests {
                 for offset in (0..expected.len()).step_by(2) {
                     let page = page(db, &viewer, &query, offset as u64, Some(2))?;
                     assert_eq!(page.total, expected.len() as u64);
-                    paged.extend(page.items.into_iter().filter_map(|artist| artist.db_id));
+                    paged.extend(
+                        page.items
+                            .into_iter()
+                            .filter_map(|artist| artist.item.db_id),
+                    );
                 }
                 assert_eq!(
                     paged.into_iter().map(DbId::from).collect::<Vec<_>>(),

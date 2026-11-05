@@ -115,6 +115,8 @@ struct SearchQuery {
     release_inc: Option<Vec<String>>,
     #[serde(flatten)]
     personal: PersonalFilterQuery,
+    #[serde(flatten)]
+    available: super::AvailableQuery,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -155,12 +157,28 @@ async fn search_responses(
             SnapshotPageRequest::only_page(limit)
         }
     };
-    let tracks =
-        TrackListOptions::for_query(params.track_inc, query.clone(), personal, page_request());
-    let artists =
-        ArtistListOptions::for_query(params.artist_inc, query.clone(), personal, page_request());
-    let releases =
-        ReleaseListOptions::for_query(params.release_inc, query, personal, page_request());
+    let available = params.available.available;
+    let tracks = TrackListOptions::for_query(
+        params.track_inc,
+        query.clone(),
+        personal,
+        available,
+        page_request(),
+    );
+    let artists = ArtistListOptions::for_query(
+        params.artist_inc,
+        query.clone(),
+        personal,
+        available,
+        page_request(),
+    );
+    let releases = ReleaseListOptions::for_query(
+        params.release_inc,
+        query,
+        personal,
+        available,
+        page_request(),
+    );
 
     // One guard keeps the branches consistent; ranking each catalog in memory is CPU-bound.
     let db = STATE.db.read().await;
@@ -198,10 +216,11 @@ fn search_docs(op: TransformOperation) -> TransformOperation {
          authenticated user's personal ratings; either bound excludes unrated entities, and an \
          equal pair matches an exact rating. `rated=true` keeps only rated entities and \
          `rated=false` only unrated ones; `rated=false` cannot be combined with a bound. \
-         `favorite` and `listened` filter as on each list endpoint. \
+         `favorite`, `listened` and `available` filter as on each list endpoint. \
          Without `paginate=true`, every `next_cursor` is `null`. With it, a branch with more \
          than `limit` matches returns a `next_cursor` for its list endpoint, resumed there with \
-         the same `query`, `favorite`, `listened`, `rated`, `min_rating` and `max_rating` and no \
+         the same `query`, `favorite`, `listened`, `available`, `rated`, `min_rating` and \
+         `max_rating` and no \
          other filter or sort; `limit` \
          and `inc` may differ. Each such cursor takes one of the user's limited cursor \
          snapshots and may evict their oldest.",
@@ -370,6 +389,7 @@ mod tests {
                 None,
                 "blue".to_string(),
                 crate::services::catalog::PersonalFilter::default(),
+                None,
                 super::super::PageQuery {
                     limit: Some(10),
                     cursor: Some(cursor),
@@ -416,6 +436,7 @@ mod tests {
                 None,
                 "blue".to_string(),
                 crate::services::catalog::PersonalFilter::default(),
+                None,
                 super::super::PageQuery {
                     limit: Some(10),
                     cursor: Some(cursor),

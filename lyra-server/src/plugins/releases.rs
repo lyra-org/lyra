@@ -290,10 +290,22 @@ impl ReleasesModule {
             };
             let options =
                 release_service::SimilarReleaseOptions::for_principal(&principal, request.limit);
-            match similar_in_vm(release_db_id, &options, provider_vm).await? {
-                Some(releases) => harmony_luau::serializable_to_luau_owned(releases),
-                None => Ok(luau::Value::Nil),
-            }
+            let Some(releases) = similar_in_vm(release_db_id, &options, provider_vm).await? else {
+                return Ok(luau::Value::Nil);
+            };
+            let availability = services::catalog::Availability::of(&*db.read().await)?;
+            let releases = releases
+                .into_iter()
+                .map(|release| services::catalog::Listed {
+                    available: release
+                        .db_id
+                        .clone()
+                        .map(DbId::from)
+                        .is_none_or(|id| availability.release(id)),
+                    item: release,
+                })
+                .collect::<Vec<_>>();
+            harmony_luau::serializable_to_luau_owned(releases)
         }))
     }
 }
@@ -381,6 +393,11 @@ fn string_enum(values: impl IntoIterator<Item = &'static str>) -> LuauType {
 fn release_type() -> LuauType {
     LuauType::object(vec![
         field("id", String::luau_type()),
+        FieldDescriptor {
+            name: "available",
+            ty: bool::luau_type(),
+            description: Some("Whether any of the release's tracks can play."),
+        },
         field("release_title", String::luau_type()),
         field("sort_title", Option::<String>::luau_type()),
         field(

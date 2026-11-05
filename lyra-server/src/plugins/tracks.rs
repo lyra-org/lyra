@@ -202,6 +202,11 @@ fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
 fn track_type() -> LuauType {
     LuauType::object(vec![
         field("id", String::luau_type()),
+        FieldDescriptor {
+            name: "available",
+            ty: bool::luau_type(),
+            description: Some("Whether the track can play: false when none of its files is there."),
+        },
         field("track_title", String::luau_type()),
         field("sort_title", Option::<String>::luau_type()),
         field("year", Option::<u32>::luau_type()),

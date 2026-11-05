@@ -396,11 +396,12 @@ fn build_track_response_unchecked(
     position: u64,
     inc: PlaylistInc,
 ) -> anyhow::Result<PlaylistTrackResponse> {
+    let availability = crate::services::catalog::Availability::of(db)?;
     let artists: Option<Vec<ArtistResponse>> = if inc.artists {
         Some(
             resolve_track_artists(db, track_db_id)?
                 .into_iter()
-                .map(Into::into)
+                .map(|artist| ArtistResponse::new(artist, &availability))
                 .collect(),
         )
     } else {
@@ -410,7 +411,7 @@ fn build_track_response_unchecked(
         lyra_db::releases::get_by_track(db, track_db_id)?
             .into_iter()
             .next()
-            .map(ReleaseResponse::from)
+            .map(|release| ReleaseResponse::new(release, &availability))
     } else {
         None
     };

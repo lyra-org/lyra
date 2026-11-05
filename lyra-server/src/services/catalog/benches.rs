@@ -526,3 +526,78 @@ fn scope_cycling() {
         index.memory() as f64 / 1e6
     );
 }
+
+/// The index rebuild with every track playing from a file of its own, with none of the files
+/// missing, then with one in a hundred missing.
+#[test]
+#[ignore = "a report for release builds"]
+fn availability_rebuild() {
+    let track_count = std::env::var("CATALOG_REPORT_TRACKS")
+        .ok()
+        .and_then(|tracks| tracks.parse().ok())
+        .unwrap_or(100_000);
+    let (mut db, _) = search_fixture(track_count, 1, true);
+    let rebuild = |db: &DbAny| {
+        median(5, || {
+            Snapshot::build(db).unwrap().unavailable.tracks.count() as u64
+        })
+    };
+    println!("{track_count} tracks");
+    println!("  index rebuild without sources: {}", ms(rebuild(&db)));
+    let library = insert_library(&mut db, "Files", "/availability-bench").unwrap();
+    let tracks = roots::member_ids(&db, Root::Tracks).unwrap();
+    let mut entries = Vec::with_capacity(tracks.len());
+    for chunk in tracks.chunks(1_000) {
+        db.transaction_mut(|t| -> anyhow::Result<()> {
+            for &track in chunk {
+                let entry = lyra_db::Entry {
+                    db_id: None,
+                    id: nanoid!(),
+                    full_path: format!("/availability-bench/{}.flac", track.0).into(),
+                    kind: lyra_db::entries::EntryKind::File,
+                    file_kind: Some("audio".into()),
+                    name: format!("{}.flac", track.0),
+                    hash: None,
+                    size: 1,
+                    file_modified_at_ms: 1,
+                    file_created_at_ms: 1,
+                    synced_at_ms: None,
+                    missing_at_ms: None,
+                };
+                let entry_id = t
+                    .exec_mut(QueryBuilder::insert().element(&entry).query())?
+                    .ids()[0];
+                lyra_db::graph::ensure_owned_edge(t, library, entry_id)?;
+                lyra_db::track_sources::upsert(
+                    t,
+                    track,
+                    entry_id,
+                    lyra_db::track_sources::TrackSourceUpsert {
+                        source_kind: "embedded_tags".into(),
+                        source_key: format!("entry:{}:embedded", entry.id),
+                        is_primary: true,
+                        start_ms: None,
+                        end_ms: None,
+                        format: Default::default(),
+                    },
+                    None,
+                )?;
+                entries.push(entry_id);
+            }
+            Ok(())
+        })
+        .unwrap();
+    }
+    println!("  index rebuild, every file there: {}", ms(rebuild(&db)));
+    let missing = entries.iter().step_by(100).copied().collect::<Vec<DbId>>();
+    lyra_db::entries::set_missing(&mut db, &missing, 1).unwrap();
+    assert_eq!(
+        Snapshot::build(&db).unwrap().unavailable.tracks.count(),
+        missing.len()
+    );
+    println!(
+        "  index rebuild, {} files missing: {}",
+        missing.len(),
+        ms(rebuild(&db))
+    );
+}

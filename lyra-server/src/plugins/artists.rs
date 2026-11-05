@@ -336,6 +336,13 @@ fn string_enum(values: impl IntoIterator<Item = &'static str>) -> LuauType {
 fn artist_type() -> LuauType {
     LuauType::object(vec![
         field("id", String::luau_type()),
+        FieldDescriptor {
+            name: "available",
+            ty: bool::luau_type(),
+            description: Some(
+                "Whether anything the artist is credited on can play; false for an artist credited on nothing.",
+            ),
+        },
         field("artist_name", String::luau_type()),
         field("scan_name", String::luau_type()),
         field("sort_name", Option::<String>::luau_type()),

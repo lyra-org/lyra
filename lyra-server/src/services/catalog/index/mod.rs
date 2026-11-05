@@ -547,6 +547,56 @@ impl Credits {
     }
 }
 
+/// The entities that can't play: tracks none of whose sources can, releases with tracks none of
+/// which can, and artists and genres with nothing that can: no release or track crediting the
+/// artist, and no release of the genre, that can play. Availability is the same for every viewer.
+#[derive(Debug)]
+pub(crate) struct Unavailable {
+    pub(crate) tracks: Bits,
+    pub(crate) releases: Bits,
+    pub(crate) artists: Bits,
+    pub(crate) genres: Bits,
+}
+
+struct UnavailableLinks<'a> {
+    release_tracks: &'a Links,
+    track_releases: &'a Links,
+    release_artists: &'a Links,
+    track_artists: &'a Links,
+    release_genres: &'a Links,
+}
+
+impl Unavailable {
+    fn new(
+        tracks: Bits,
+        links: UnavailableLinks<'_>,
+        (track_len, releases, artists, genres): (usize, usize, usize, usize),
+    ) -> Self {
+        let complement = |len: usize, held: &Bits| {
+            let mut unavailable = Bits::full(len);
+            unavailable.and_not(held);
+            unavailable
+        };
+        let available_tracks = complement(track_len, &tracks);
+        let mut unavailable_releases = links.release_tracks.linked(releases);
+        unavailable_releases.and_not(&links.track_releases.reach(&available_tracks, releases));
+        let available_releases = complement(releases, &unavailable_releases);
+        let mut available_artists = links.release_artists.reach(&available_releases, artists);
+        available_artists.or(&links.track_artists.reach(&available_tracks, artists));
+        let available_genres = links.release_genres.reach(&available_releases, genres);
+        Self {
+            tracks,
+            releases: unavailable_releases,
+            artists: complement(artists, &available_artists),
+            genres: complement(genres, &available_genres),
+        }
+    }
+
+    fn memory(&self) -> usize {
+        self.tracks.memory() + self.releases.memory() + self.artists.memory() + self.genres.memory()
+    }
+}
+
 /// What a set of libraries lets a viewer see.
 #[derive(Debug)]
 pub(crate) struct Scope {
@@ -563,9 +613,19 @@ pub(crate) struct Scope {
     pub(crate) cache: Cache,
     /// The library slots the scope may see, or `None` for every library.
     libraries: Option<Vec<u32>>,
+    /// Whether the scope keeps only available entities (`true`) or only unavailable ones
+    /// (`false`), counting what they hold the same way; `None` keeps both.
+    pub(crate) available: Option<bool>,
 }
 
+/// What a scope is built for: the library slots it may see, and the availability it keeps.
+type ScopeKey = (Option<Vec<u32>>, Option<bool>);
+
 impl Scope {
+    fn key(&self) -> ScopeKey {
+        (self.libraries.clone(), self.available)
+    }
+
     fn memory(&self) -> usize {
         self.libraries
             .as_ref()
@@ -583,12 +643,12 @@ impl Scope {
 const SCOPES_KEPT: usize = 32;
 const SCOPE_BYTES_KEPT: usize = 256 << 20;
 
-/// The scopes built for a snapshot, by library set, with when each was last used. The scope
-/// that sees everything is never evicted.
+/// The scopes built for a snapshot, by library set and availability, with when each was last
+/// used. The scope that sees everything is never evicted.
 #[derive(Debug)]
 struct Scopes {
     everything: Option<Arc<Scope>>,
-    limited: HashMap<Vec<u32>, (Arc<Scope>, u64)>,
+    limited: HashMap<ScopeKey, (Arc<Scope>, u64)>,
     uses: u64,
     kept: usize,
     bytes_kept: usize,
@@ -613,23 +673,27 @@ impl Scopes {
     fn bytes(&self) -> usize {
         self.limited
             .iter()
-            .map(|(libraries, (scope, _))| {
-                SCOPE_ENTRY_BYTES + libraries.capacity() * 4 + scope.memory()
+            .map(|((libraries, _), (scope, _))| {
+                SCOPE_ENTRY_BYTES
+                    + libraries
+                        .as_ref()
+                        .map_or(0, |libraries| libraries.capacity() * 4)
+                    + scope.memory()
             })
             .sum()
     }
 
     /// Drops the least recently used scopes other than the one for `keep` until the rest fit,
     /// then that one too if it alone does not. Queries holding a dropped scope keep using it.
-    fn evict(&mut self, keep: &[u32]) {
+    fn evict(&mut self, keep: &ScopeKey) {
         while self.limited.len() > self.kept || self.bytes() > self.bytes_kept {
             let oldest = self
                 .limited
                 .iter()
-                .filter(|(libraries, _)| libraries.as_slice() != keep)
+                .filter(|(key, _)| *key != keep)
                 .min_by_key(|(_, (_, used))| *used)
-                .map(|(libraries, _)| libraries.clone())
-                .unwrap_or_else(|| keep.to_vec());
+                .map(|(key, _)| key.clone())
+                .unwrap_or_else(|| keep.clone());
             if self.limited.remove(&oldest).is_none() {
                 return;
             }
@@ -666,6 +730,7 @@ pub(crate) struct Snapshot {
     /// order, and the first in name order among several.
     track_lead: Vec<Option<u32>>,
     release_lead: Vec<Option<u32>>,
+    pub(crate) unavailable: Unavailable,
     scopes: Mutex<Scopes>,
 }
 
@@ -685,6 +750,7 @@ impl Snapshot {
             library_releases,
             genre_releases,
             credits,
+            unavailable_tracks,
         } = catalog;
 
         let track = TrackFields {
@@ -934,8 +1000,23 @@ impl Snapshot {
         };
         let track_lead = lead(&track_credits, tracks.len());
         let release_lead = lead(&release_credits, releases.len());
+        let unavailable = Unavailable::new(
+            Bits::of(
+                tracks.len(),
+                unavailable_tracks.iter().filter_map(|id| tracks.slot(*id)),
+            ),
+            UnavailableLinks {
+                release_tracks: &release_tracks,
+                track_releases: &track_releases,
+                release_artists: &release_artists,
+                track_artists: &track_artists,
+                release_genres: &release_genres,
+            },
+            (tracks.len(), releases.len(), artists.len(), genres.len()),
+        );
 
         Self {
+            unavailable,
             stamp,
             tracks,
             releases,
@@ -969,11 +1050,21 @@ impl Snapshot {
 
     /// What a viewer limited to the libraries with these public ids sees, or one who sees every
     /// library without any.
+    #[cfg(test)]
     pub(crate) fn scope<'a>(
         &self,
         libraries: Option<impl IntoIterator<Item = &'a String>>,
     ) -> Arc<Scope> {
-        let key = libraries.map(|libraries| {
+        self.scope_with(libraries, None)
+    }
+
+    /// [`Self::scope`] narrowed to the available entities, or to the unavailable ones.
+    pub(crate) fn scope_with<'a>(
+        &self,
+        libraries: Option<impl IntoIterator<Item = &'a String>>,
+        available: Option<bool>,
+    ) -> Arc<Scope> {
+        let libraries = libraries.map(|libraries| {
             let mut slots = libraries
                 .into_iter()
                 .filter_map(|id| self.library_public_ids.get(id).copied())
@@ -982,72 +1073,95 @@ impl Snapshot {
             slots.dedup();
             slots
         });
+        let key = (libraries, available);
         let mut scopes = self.scopes.lock().expect("index scopes poisoned");
         scopes.uses += 1;
         let uses = scopes.uses;
-        match &key {
-            None => {
-                if let Some(scope) = &scopes.everything {
-                    return Arc::clone(scope);
-                }
+        if key == (None, None) {
+            if let Some(scope) = &scopes.everything {
+                return Arc::clone(scope);
             }
-            Some(libraries) => {
-                if let Some((scope, used)) = scopes.limited.get_mut(libraries) {
-                    *used = uses;
-                    let scope = Arc::clone(scope);
-                    scopes.evict(libraries);
-                    return scope;
-                }
-            }
+        } else if let Some((scope, used)) = scopes.limited.get_mut(&key) {
+            *used = uses;
+            let scope = Arc::clone(scope);
+            scopes.evict(&key);
+            return scope;
         }
-        let scope = Arc::new(match &key {
-            None => Scope {
-                restricted: false,
-                releases: Bits::full(self.releases.len()),
-                tracks: Bits::full(self.tracks.len()),
-                artists: self.artist.credited.clone(),
-                genres: self.genre_releases.linked(self.genres.len()),
-                cache: Cache::default(),
-                libraries: None,
-            },
+        let scope = Arc::new(self.build_scope(key.0.clone(), available));
+        if key == (None, None) {
+            scopes.everything = Some(Arc::clone(&scope));
+        } else {
+            scopes
+                .limited
+                .insert(key.clone(), (Arc::clone(&scope), uses));
+            scopes.evict(&key);
+        }
+        scope
+    }
+
+    fn build_scope(&self, libraries: Option<Vec<u32>>, available: Option<bool>) -> Scope {
+        let (releases, tracks) = match &libraries {
+            None => (
+                Bits::full(self.releases.len()),
+                Bits::full(self.tracks.len()),
+            ),
             Some(libraries) => {
                 let releases = self
                     .library_releases
                     .reach_slots(libraries.iter().copied(), self.releases.len());
                 let tracks = self.release_tracks.reach(&releases, self.tracks.len());
-                let mut artists = self.release_artists.reach(&releases, self.artists.len());
-                artists.or(&self.track_artists.reach(&tracks, self.artists.len()));
-                artists.and(&self.artist.credited);
-                Scope {
-                    restricted: true,
-                    genres: self.release_genres.reach(&releases, self.genres.len()),
-                    releases,
-                    tracks,
-                    artists,
-                    cache: Cache::default(),
-                    libraries: Some(libraries.clone()),
-                }
+                (releases, tracks)
             }
-        });
-        match key {
-            None => scopes.everything = Some(Arc::clone(&scope)),
-            Some(libraries) => {
-                scopes
-                    .limited
-                    .insert(libraries.clone(), (Arc::clone(&scope), uses));
-                scopes.evict(&libraries);
+        };
+        let (releases, tracks) = match available {
+            None => (releases, tracks),
+            Some(true) => {
+                let (mut releases, mut tracks) = (releases, tracks);
+                tracks.and_not(&self.unavailable.tracks);
+                releases.and_not(&self.unavailable.releases);
+                (releases, tracks)
             }
+            Some(false) => {
+                let (mut releases, mut tracks) = (releases, tracks);
+                tracks.and(&self.unavailable.tracks);
+                releases.and(&self.track_releases.reach(&tracks, self.releases.len()));
+                (releases, tracks)
+            }
+        };
+        if libraries.is_none() && available.is_none() {
+            return Scope {
+                restricted: false,
+                releases,
+                tracks,
+                artists: self.artist.credited.clone(),
+                genres: self.genre_releases.linked(self.genres.len()),
+                cache: Cache::default(),
+                libraries: None,
+                available: None,
+            };
         }
-        scope
+        let mut artists = self.release_artists.reach(&releases, self.artists.len());
+        artists.or(&self.track_artists.reach(&tracks, self.artists.len()));
+        artists.and(&self.artist.credited);
+        Scope {
+            restricted: true,
+            genres: self.release_genres.reach(&releases, self.genres.len()),
+            releases,
+            tracks,
+            artists,
+            cache: Cache::default(),
+            libraries,
+            available,
+        }
     }
 
     /// Keeps the retained scopes within their budget after `scope`'s cache grew.
     pub(crate) fn trim_scopes(&self, scope: &Scope) {
-        if let Some(libraries) = &scope.libraries {
+        if scope.restricted {
             self.scopes
                 .lock()
                 .expect("index scopes poisoned")
-                .evict(libraries);
+                .evict(&scope.key());
         }
     }
 
@@ -1117,6 +1231,32 @@ impl Snapshot {
             + self.genre_releases.memory()
             + self.release_genres.memory()
             + (self.track_lead.capacity() + self.release_lead.capacity()) * 8
+            + self.unavailable.memory()
+    }
+
+    /// Whether the track `id` can play; ids the snapshot doesn't hold count as available.
+    pub(crate) fn track_available(&self, id: DbId) -> bool {
+        self.tracks
+            .slot(id)
+            .is_none_or(|slot| !self.unavailable.tracks.contains(slot))
+    }
+
+    pub(crate) fn release_available(&self, id: DbId) -> bool {
+        self.releases
+            .slot(id)
+            .is_none_or(|slot| !self.unavailable.releases.contains(slot))
+    }
+
+    pub(crate) fn artist_available(&self, id: DbId) -> bool {
+        self.artists
+            .slot(id)
+            .is_none_or(|slot| !self.unavailable.artists.contains(slot))
+    }
+
+    pub(crate) fn genre_available(&self, id: DbId) -> bool {
+        self.genres
+            .slot(id)
+            .is_none_or(|slot| !self.unavailable.genres.contains(slot))
     }
 }
 
@@ -1213,18 +1353,26 @@ impl<'a> Scoped<'a> {
 
     pub(crate) fn tracks_of_releases(&self, releases: &Bits) -> Bits {
         let releases = self.seen(releases.clone(), &self.scope.releases);
-        self.index
-            .release_tracks
-            .reach(&releases, self.index.tracks.len())
+        self.seen(
+            self.index
+                .release_tracks
+                .reach(&releases, self.index.tracks.len()),
+            &self.scope.tracks,
+        )
     }
 
-    /// The tracks of `release`, none when the scope cannot see it.
-    pub(crate) fn tracks_of_release(&self, release: u32) -> &'a [u32] {
-        if self.release_seen(release) {
+    /// The tracks of `release` the scope sees, none when it cannot see the release.
+    pub(crate) fn tracks_of_release(&self, release: u32) -> impl Iterator<Item = u32> + 'a {
+        let scoped = *self;
+        let tracks = if self.release_seen(release) {
             self.index.release_tracks.of(release)
         } else {
             &[]
-        }
+        };
+        tracks
+            .iter()
+            .copied()
+            .filter(move |track| scoped.track_seen(*track))
     }
 
     pub(crate) fn releases_of_tracks(&self, tracks: &Bits) -> Bits {
@@ -1429,6 +1577,42 @@ mod tests {
     };
 
     #[test]
+    fn artists_and_genres_are_available_only_through_something_that_plays() {
+        // Releases: 0 holds track 0, which plays; 1 holds track 1, which doesn't; 2 holds none.
+        let release_tracks = Links::new(3, vec![(0, 0), (1, 1)]);
+        let track_releases = release_tracks.inverted(2);
+        // Artists: 0 credited on release 0, 1 on track 1, 2 on nothing.
+        let release_artists = Links::new(3, vec![(0, 0)]);
+        let track_artists = Links::new(2, vec![(1, 1)]);
+        // Genres: 0 of release 1, 1 of the trackless release 2, 2 of none.
+        let release_genres = Links::new(3, vec![(1, 0), (2, 1)]);
+        let unavailable = Unavailable::new(
+            Bits::of(2, [1]),
+            UnavailableLinks {
+                release_tracks: &release_tracks,
+                track_releases: &track_releases,
+                release_artists: &release_artists,
+                track_artists: &track_artists,
+                release_genres: &release_genres,
+            },
+            (2, 3, 3, 3),
+        );
+        let slots = |bits: &Bits| bits.iter().collect::<Vec<_>>();
+        assert_eq!(slots(&unavailable.tracks), vec![1]);
+        assert_eq!(
+            slots(&unavailable.releases),
+            vec![1],
+            "a trackless release has none that can't play"
+        );
+        assert_eq!(
+            slots(&unavailable.artists),
+            vec![1, 2],
+            "an artist credited on nothing can't play"
+        );
+        assert_eq!(slots(&unavailable.genres), vec![0, 2]);
+    }
+
+    #[test]
     fn a_name_that_folds_away_matches_nothing_and_builds_no_key_order() -> anyhow::Result<()> {
         let mut db = lyra_db::test_db::new_test_db()?;
         for title in ["'", " ", "Hunter"] {
@@ -1451,7 +1635,7 @@ mod tests {
             .expect("the query runs")
             .items
             .into_iter()
-            .map(|release| release.release_title)
+            .map(|release| release.item.release_title)
             .collect()
     }
 

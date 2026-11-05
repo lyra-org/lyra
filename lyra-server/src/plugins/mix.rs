@@ -633,7 +633,7 @@ fn request_fields(
 fn tracks_to_luau(tracks: Option<Vec<MixedTrack>>) -> luau::runtime::Result<luau::Value> {
     #[derive(serde::Serialize)]
     struct Entry {
-        track: Track,
+        track: crate::services::catalog::Listed<Track>,
         #[serde(skip_serializing_if = "Option::is_none")]
         score: Option<f64>,
     }
@@ -645,7 +645,10 @@ fn tracks_to_luau(tracks: Option<Vec<MixedTrack>>) -> luau::runtime::Result<luau
         tracks
             .into_iter()
             .map(|mixed| Entry {
-                track: mixed.track,
+                track: crate::services::catalog::Listed {
+                    item: mixed.track,
+                    available: mixed.available,
+                },
                 score: mixed.score,
             })
             .collect::<Vec<_>>(),
@@ -714,6 +717,11 @@ fn track_type() -> LuauType {
             name: "id",
             ty: String::luau_type(),
             description: None,
+        },
+        FieldDescriptor {
+            name: "available",
+            ty: bool::luau_type(),
+            description: Some("Whether the track can play: false when none of its files is there."),
         },
         FieldDescriptor {
             name: "track_title",

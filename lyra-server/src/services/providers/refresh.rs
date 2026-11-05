@@ -422,7 +422,18 @@ async fn refresh_library_metadata_inner_with_progress(
         let db = STATE.db.read().await;
         lyra_db::libraries::get_by_id(&db, library_db_id)?
             .ok_or(ProviderServiceError::LibraryNotFound(library_db_id.0))?;
+        // Providers aren't asked about releases none of whose files are there.
+        let availability = crate::services::catalog::Availability::of(&db)?;
         lyra_db::releases::get(&db, library_db_id)?
+            .into_iter()
+            .filter(|release| {
+                release
+                    .db_id
+                    .clone()
+                    .map(DbId::from)
+                    .is_some_and(|id| availability.release(id))
+            })
+            .collect::<Vec<_>>()
     };
 
     let providers = read_active_providers().await?.only(options.provider_id);

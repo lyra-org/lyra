@@ -5,7 +5,12 @@
 
 use std::collections::HashMap;
 
-use agdb::DbId;
+use agdb::{
+    DbAny,
+    DbId,
+};
+
+use crate::services::catalog::Availability;
 use serde::Serialize;
 
 use crate::services::entities::{
@@ -196,6 +201,14 @@ pub struct LyricsWordResponse {
 pub struct ReleaseResponse {
     pub id: String,
     pub title: String,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Whether any of the release's tracks can play; omitted for a release the caller can't see."
+        )
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub available: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort_title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -218,9 +231,17 @@ pub struct ReleaseResponse {
     pub cover: Option<Option<CoverResponse>>,
 }
 
-impl From<lyra_db::Release> for ReleaseResponse {
-    fn from(release: lyra_db::Release) -> Self {
+impl ReleaseResponse {
+    /// The response for `release`, with its availability as `index` has it.
+    pub(crate) fn new(release: lyra_db::Release, availability: &Availability) -> Self {
         Self {
+            available: Some(
+                release
+                    .db_id
+                    .clone()
+                    .map(DbId::from)
+                    .is_none_or(|id| availability.release(id)),
+            ),
             id: release.id,
             title: release.release_title,
             sort_title: release.sort_title,
@@ -240,6 +261,7 @@ impl ReleaseResponse {
         Self {
             id,
             title: "unavailable".to_string(),
+            available: None,
             sort_title: None,
             release_date: None,
             description: None,
@@ -295,6 +317,14 @@ pub struct TrackResponse {
     pub duration_ms: Option<u64>,
     #[cfg_attr(
         feature = "docgen",
+        schemars(
+            description = "Whether the track can play: false when none of its files is there; omitted for a track the caller can't see."
+        )
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub available: Option<bool>,
+    #[cfg_attr(
+        feature = "docgen",
         schemars(description = "The track's chain; omitted when the track is in none.")
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -316,20 +346,24 @@ pub struct TrackChainResponse {
     pub position: u64,
 }
 
-/// The chain places of a batch of tracks, read in one lookup.
-pub(crate) struct TrackChains(HashMap<DbId, TrackChainResponse>);
+/// The chain places of a batch of tracks, read in one lookup, and their availability as the
+/// catalog index has it.
+pub(crate) struct TrackChains {
+    chains: HashMap<DbId, TrackChainResponse>,
+    availability: Availability,
+}
 
 impl TrackChains {
     pub(crate) fn of<'a>(
-        db: &impl lyra_db::DbAccess,
+        db: &DbAny,
         tracks: impl IntoIterator<Item = &'a lyra_db::Track>,
     ) -> anyhow::Result<Self> {
         let track_db_ids = tracks
             .into_iter()
             .filter_map(|track| track.db_id.clone().map(DbId::from))
             .collect::<Vec<_>>();
-        Ok(Self(
-            lyra_db::chains::links_for_tracks(db, &track_db_ids)?
+        Ok(Self {
+            chains: lyra_db::chains::links_for_tracks(db, &track_db_ids)?
                 .into_iter()
                 .map(|(track_db_id, link)| {
                     (
@@ -341,17 +375,30 @@ impl TrackChains {
                     )
                 })
                 .collect(),
-        ))
+            availability: crate::services::catalog::Availability::of(db)?,
+        })
     }
 
     pub(crate) fn get(&self, track: &lyra_db::Track) -> Option<TrackChainResponse> {
         let track_db_id = track.db_id.clone().map(DbId::from)?;
-        self.0.get(&track_db_id).cloned()
+        self.chains.get(&track_db_id).cloned()
+    }
+
+    pub(crate) fn availability(&self) -> &Availability {
+        &self.availability
+    }
+
+    pub(crate) fn available(&self, track: &lyra_db::Track) -> bool {
+        track
+            .db_id
+            .clone()
+            .map(DbId::from)
+            .is_none_or(|id| self.availability.track(id))
     }
 
     /// The responses for `tracks`, in order, with their chains read in one lookup.
     pub(crate) fn responses(
-        db: &impl lyra_db::DbAccess,
+        db: &DbAny,
         tracks: Vec<lyra_db::Track>,
     ) -> anyhow::Result<Vec<TrackResponse>> {
         let chains = Self::of(db, &tracks)?;
@@ -363,6 +410,7 @@ impl TrackChains {
 
     pub(crate) fn response(&self, track: lyra_db::Track) -> TrackResponse {
         TrackResponse {
+            available: Some(self.available(&track)),
             chain: self.get(&track),
             id: track.id,
             title: track.track_title,
@@ -384,6 +432,7 @@ impl TrackResponse {
         Self {
             id,
             title: "unavailable".to_string(),
+            available: None,
             sort_title: None,
             year: None,
             disc: None,
@@ -403,6 +452,14 @@ impl TrackResponse {
 pub struct ArtistResponse {
     pub id: String,
     pub name: String,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Whether anything the artist is credited on can play; false for an artist credited on nothing, omitted for an artist the caller can't see."
+        )
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub available: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -476,9 +533,17 @@ impl From<ArtistCreditSource> for ArtistCreditSourceResponse {
     }
 }
 
-impl From<lyra_db::Artist> for ArtistResponse {
-    fn from(artist: lyra_db::Artist) -> Self {
+impl ArtistResponse {
+    /// The response for `artist`, with its availability as `index` has it.
+    pub(crate) fn new(artist: lyra_db::Artist, availability: &Availability) -> Self {
         Self {
+            available: Some(
+                artist
+                    .db_id
+                    .clone()
+                    .map(DbId::from)
+                    .is_none_or(|id| availability.artist(id)),
+            ),
             id: artist.id,
             name: artist.artist_name,
             sort_name: artist.sort_name,
@@ -492,9 +557,12 @@ impl From<lyra_db::Artist> for ArtistResponse {
     }
 }
 
-impl From<ResolvedCreditedArtist> for ArtistResponse {
-    fn from(credited_artist: ResolvedCreditedArtist) -> Self {
-        let mut response = Self::from(credited_artist.artist);
+impl ArtistResponse {
+    pub(crate) fn credited(
+        credited_artist: ResolvedCreditedArtist,
+        availability: &Availability,
+    ) -> Self {
+        let mut response = Self::new(credited_artist.artist, availability);
         response.credit = Some(ArtistCreditResponse {
             credit_type: credited_artist.credit.credit_type,
             detail: credited_artist.credit.detail,
@@ -509,6 +577,7 @@ impl ArtistResponse {
         Self {
             id,
             name: "unavailable".to_string(),
+            available: None,
             sort_name: None,
             description: None,
             credit: None,
@@ -538,6 +607,14 @@ pub struct EntryResponse {
         schemars(description = "Filesystem modification time as an RFC3339 timestamp.")
     )]
     pub modified_at: String,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "When a sync first failed to find the file, as an RFC3339 timestamp; omitted while it is there."
+        )
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub missing_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tracks: Option<Vec<TrackResponse>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -559,6 +636,9 @@ impl EntryResponse {
             modified_at: crate::services::timestamps::unix_ms_to_rfc3339_u64(
                 entry.file_modified_at_ms,
             ),
+            missing_at: entry
+                .missing_at_ms
+                .map(crate::services::timestamps::unix_ms_to_rfc3339_u64),
             tracks: None,
             releases: None,
             artists: None,

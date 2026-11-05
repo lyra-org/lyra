@@ -22,6 +22,7 @@ use serde::Deserialize;
 use crate::routes::request::bearer_credential;
 use crate::{
     routes::responses::{
+        ArtistResponse,
         EntryResponse,
         ReleaseResponse,
         TrackChains,
@@ -74,21 +75,26 @@ fn parse_inc(inc: Option<Vec<String>>) -> Result<EntryIncludes, AppError> {
 }
 
 fn detail_to_entry_response(
-    db: &impl lyra_db::DbAccess,
+    db: &agdb::DbAny,
     detail: EntryDetails,
     include_full_path: bool,
 ) -> anyhow::Result<EntryResponse> {
+    let availability = crate::services::catalog::Availability::of(db)?;
     let mut response = EntryResponse::from_entry(detail.entry, include_full_path);
     response.tracks = detail
         .tracks
         .map(|tracks| TrackChains::responses(db, tracks))
         .transpose()?;
-    response.releases = detail
-        .releases
-        .map(|v| v.into_iter().map(ReleaseResponse::from).collect());
-    response.artists = detail
-        .artists
-        .map(|v| v.into_iter().map(Into::into).collect());
+    response.releases = detail.releases.map(|v| {
+        v.into_iter()
+            .map(|release| ReleaseResponse::new(release, &availability))
+            .collect()
+    });
+    response.artists = detail.artists.map(|v| {
+        v.into_iter()
+            .map(|artist| ArtistResponse::new(artist, &availability))
+            .collect()
+    });
     Ok(response)
 }
 

@@ -108,6 +108,8 @@ pub(crate) struct MixedTrack {
     /// mix. `None` when the mixer gave none, for a pinned seed the mixer didn't return, and for
     /// tracks the built-in mixer chose.
     pub(crate) score: Option<f64>,
+    /// Whether the track can play: false only for a pinned seed whose files are missing.
+    pub(crate) available: bool,
 }
 
 /// Mixes `request` for `viewer`. Seeds are resolved by public id under each guard taken, so a
@@ -115,7 +117,7 @@ pub(crate) struct MixedTrack {
 /// hidden seed does.
 ///
 /// Blends keep each chain together, truncate to the limit and, with `pin_seed`, lead with the
-/// seed. Paths keep the mixer's order and length up to [`MAX_LIMIT`] tracks, dropping only the
+/// seed unless none of its files is there, since a mix holds only tracks that can play. Paths keep the mixer's order and length up to [`MAX_LIMIT`] tracks, dropping only the
 /// tracks the viewer can't see.
 pub(crate) async fn mix(
     request: &MixRequest,
@@ -151,13 +153,24 @@ pub(crate) async fn mix(
             )?,
             dispatched.scores,
         ),
-        None if builtin.is_some() => (builtin::mix(&db, &resolved, viewer, limit)?, HashMap::new()),
+        None if builtin.is_some() => (
+            filter_existing_tracks(&db, builtin::mix(&db, &resolved, viewer, limit)?)?,
+            HashMap::new(),
+        ),
         None => (Vec::new(), HashMap::new()),
     };
     let tracks = if request.shape == MixShape::Path {
         tracks
     } else {
-        let pinned = request.pin_seed.then(|| resolved.explicit[0].db_id);
+        let seed = resolved.explicit.first().map(|seed| seed.db_id);
+        let pinned = match seed {
+            Some(seed)
+                if request.pin_seed && lyra_db::track_sources::track_available(&*db, seed)? =>
+            {
+                Some(seed)
+            }
+            _ => None,
+        };
         let links = chain_links(&db, &tracks, pinned)?;
         let tracks = keep_chains_together(tracks, &links);
         match pinned {
@@ -169,25 +182,36 @@ pub(crate) async fn mix(
             None => tracks,
         }
     };
-    Ok(with_scores(tracks, &scores))
+    let availability = crate::services::catalog::Availability::of(&db)?;
+    Ok(with_scores(tracks, &scores, &availability))
 }
 
-fn with_scores(tracks: Vec<Track>, scores: &HashMap<String, f64>) -> Vec<MixedTrack> {
+fn with_scores(
+    tracks: Vec<Track>,
+    scores: &HashMap<String, f64>,
+    availability: &crate::services::catalog::Availability,
+) -> Vec<MixedTrack> {
     tracks
         .into_iter()
         .map(|track| MixedTrack {
             score: scores.get(&track.id).copied(),
+            available: track
+                .db_id
+                .clone()
+                .map(DbId::from)
+                .is_none_or(|id| availability.track(id)),
             track,
         })
         .collect()
 }
 
-/// Drops missing or wrong-type tracks, keeping the rest in provider order for the chain
-/// regrouping that follows.
+/// Drops missing or wrong-type tracks, and those that can't play, since a mix is for playing,
+/// keeping the rest in provider order for the chain regrouping that follows.
 fn filter_existing_tracks(db: &DbAny, tracks: Vec<Track>) -> anyhow::Result<Vec<Track>> {
     if tracks.is_empty() {
         return Ok(tracks);
     }
+    let availability = crate::services::catalog::Availability::of(db)?;
     let track_ids: Vec<DbId> = tracks
         .iter()
         .filter_map(|t| t.db_id.clone().map(DbId::from))
@@ -202,7 +226,7 @@ fn filter_existing_tracks(db: &DbAny, tracks: Vec<Track>) -> anyhow::Result<Vec<
             let track_db_id = track.db_id.clone().map(DbId::from)?;
             existing
                 .get(&track_db_id)
-                .filter(|current| current.id == track.id)
+                .filter(|current| current.id == track.id && availability.track(track_db_id))
                 .cloned()
         })
         .collect())

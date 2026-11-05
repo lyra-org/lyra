@@ -130,6 +130,7 @@ pub(crate) fn db_ids_from_credited_artists<'a>(
 }
 
 pub(crate) fn credited_artist_responses(
+    availability: &crate::services::catalog::Availability,
     artists: Vec<ResolvedCreditedArtist>,
     artist_covers: &HashMap<DbId, ResolvedCover>,
     include_covers: bool,
@@ -138,13 +139,27 @@ pub(crate) fn credited_artist_responses(
         .into_iter()
         .map(|artist| {
             let artist_db_id = artist.artist.db_id.clone().map(DbId::from);
-            let mut response = responses::ArtistResponse::from(artist);
+            let mut response = responses::ArtistResponse::credited(artist, availability);
             if include_covers {
                 response.cover = covers::cover_field(artist_covers, true, artist_db_id);
             }
             response
         })
         .collect()
+}
+
+/// The `available` filter of a catalog list.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Default, serde::Deserialize)]
+pub(crate) struct AvailableQuery {
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Optional: `true` keeps the items whose `available` field is true; `false` keeps the tracks that can't play, and the releases, artists and genres holding one, partly playable ones included. Either counts only the matching tracks in the totals it sorts by."
+        )
+    )]
+    #[serde(default, deserialize_with = "deserialize_optional_scalar")]
+    pub(crate) available: Option<bool>,
 }
 
 const DEFAULT_PAGE_LIMIT: u64 = 100;

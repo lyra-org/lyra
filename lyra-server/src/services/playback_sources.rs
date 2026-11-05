@@ -42,8 +42,8 @@ pub(crate) struct PlaybackSource {
     pub(crate) entry: Option<PlacedEntry>,
 }
 
-/// The source `track` plays from: its primary source when that file is there, else the first
-/// other audio file of it that is.
+/// The source `track` plays from: its primary source when it is available and its file is
+/// there, else the first other audio file of it that is.
 pub(crate) fn resolve(
     db: &DbAny,
     track: &Track,
@@ -66,6 +66,9 @@ pub(crate) fn resolve(
         let Some(source_id) = source.db_id else {
             continue;
         };
+        if !lyra_db::track_sources::is_available(db, source_id)? {
+            continue;
+        }
         let Some(entry_db_id) = lyra_db::track_sources::get_entry_id(db, source_id)? else {
             continue;
         };

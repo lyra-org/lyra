@@ -130,6 +130,8 @@ pub(crate) struct ReleaseListQuery {
     #[serde(flatten)]
     pub(crate) personal: PersonalFilterQuery,
     #[serde(flatten)]
+    pub(crate) available: super::AvailableQuery,
+    #[serde(flatten)]
     pub(crate) page: super::PageQuery,
 }
 
@@ -321,8 +323,10 @@ pub(crate) fn detail_to_release_response(
     } else {
         None
     };
+    let availability = crate::services::catalog::Availability::of(db)?;
 
     Ok(ReleaseResponse {
+        available: Some(availability.release(detail.release_db_id)),
         id: detail.release.id,
         title: detail.release.release_title,
         sort_title: detail.release.sort_title,
@@ -330,9 +334,9 @@ pub(crate) fn detail_to_release_response(
         description: detail.release.description,
         genres,
         cover,
-        artists: detail
-            .artists
-            .map(|v| super::credited_artist_responses(v, covers, include_artist_covers)),
+        artists: detail.artists.map(|v| {
+            super::credited_artist_responses(&availability, v, covers, include_artist_covers)
+        }),
         tracks: detail
             .tracks
             .map(|tracks| -> anyhow::Result<_> {
@@ -343,6 +347,7 @@ pub(crate) fn detail_to_release_response(
                         let artists = detail.track_artists.as_ref().and_then(|m| {
                             let db_id = track.db_id.clone().map(DbId::from)?;
                             Some(super::credited_artist_responses(
+                                &availability,
                                 m.get(&db_id)?.clone(),
                                 covers,
                                 include_artist_covers,
@@ -368,6 +373,7 @@ pub(crate) struct ReleaseListOptions {
     sort_by: Option<Vec<String>>,
     sort_order: Option<String>,
     personal: catalog::PersonalFilter,
+    available: Option<bool>,
     page_request: super::SnapshotPageRequest,
 }
 
@@ -378,6 +384,7 @@ impl ReleaseListOptions {
         inc: Option<Vec<String>>,
         query: String,
         personal: catalog::PersonalFilter,
+        available: Option<bool>,
         page_request: super::SnapshotPageRequest,
     ) -> Self {
         Self {
@@ -389,6 +396,7 @@ impl ReleaseListOptions {
             sort_by: None,
             sort_order: None,
             personal,
+            available,
             page_request,
         }
     }
@@ -415,6 +423,7 @@ pub(crate) fn release_page(
         sort_by,
         sort_order,
         personal,
+        available,
         page_request,
     } = options;
     let include_entry_paths =
@@ -432,6 +441,7 @@ pub(crate) fn release_page(
         .values(sort_by.as_deref())
         .field(sort_order.as_deref())
         .personal(personal)
+        .flag(available)
         .finish();
     let sort = super::parse_catalog_sort(sort_by, sort_order)?;
     let library = crate::services::auth::access::resolve_optional_library_filter(
@@ -458,6 +468,7 @@ pub(crate) fn release_page(
             genres,
             years: year.into_iter().collect(),
             personal,
+            available,
             ..ReleaseFilter::default()
         });
         query.search = search_term;
@@ -466,7 +477,10 @@ pub(crate) fn release_page(
         let ids = catalog::leading(db, &viewer, &query, page_request.rank_limit())?;
         let page = page_request.start(&snapshot_key, super::public_ids(db, &ids)?)?;
         (
-            Releases::hydrate(db, &ids[..page.item_ids.len()])?,
+            Releases::hydrate(db, &ids[..page.item_ids.len()])?
+                .into_iter()
+                .map(|listed| listed.item)
+                .collect(),
             page.next_cursor,
         )
     };
@@ -497,6 +511,7 @@ async fn get_releases(
         sort_by,
         sort_order,
         personal,
+        available,
         page,
     } = list_query;
     let page_request = page.resolve_snapshot();
@@ -514,6 +529,7 @@ async fn get_releases(
                 sort_by,
                 sort_order,
                 personal,
+                available: available.available,
                 page_request,
             },
         )
@@ -597,7 +613,7 @@ async fn search_release_covers(
 #[cfg(feature = "docgen")]
 fn list_releases_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List releases").description(
-        "Returns releases as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `year`, `library_id`, `genre_id`, `sort_by`, `sort_order`, `rated`, `min_rating`, `max_rating`, `favorite`, `listened`, `limit`, `cursor`. `min_rating` and `max_rating` filter releases by the authenticated user's inclusive personal rating range; either bound excludes unrated releases. `rated=true` keeps only releases the user has rated and `rated=false` only those they have not; `rated=false` cannot be combined with a rating bound. `favorite=true` keeps only releases the user has favorited and `favorite=false` the rest. `listened=true` keeps only releases whose every track the user has listened to and `listened=false` the rest. `library_id` scopes results to releases belonging to that public library ID. `genre_id` filters by one or more public genre IDs. `query` matches release titles and sort titles and their artists' names; each of its words must start a word, ignoring case, accents, apostrophes and punctuation; no character is an operator, and a word in a script written without spaces, such as Japanese, matches anywhere in a word. It defaults ordering to relevance: exact names rank first, then names starting with the query, then names holding every word, then names holding some, then matches only through related items. `sort_by` supports `sort_name`, `name`, `date_created`, `release_date`, `last_played_at`, `listen_count`, `total_duration`, `rating` (the authenticated user's personal rating; unrated releases sort last in both directions), `rated_at` (when the authenticated user last set their rating), `favorited_at` (when they first favorited the release), and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. Supported `inc` values: `artists`, `tracks`, `track_artists`, `entries`, `covers`, `artist_covers`, `genres`. When `inc=covers`, cover metadata includes a public image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits (for example, artist and producer). Track artists without direct credits inherit from the release (`source: release`). When `inc=entries`, `full_path` is included only for authenticated users with ManageLibraries permission.",
+        "Returns releases as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `year`, `library_id`, `genre_id`, `sort_by`, `sort_order`, `rated`, `min_rating`, `max_rating`, `favorite`, `listened`, `available`, `limit`, `cursor`. `available=true` keeps the releases whose `available` field is true, counting only their tracks that can play; `available=false` keeps the releases holding a track that can't play, partly playable ones included, counting only such tracks. `min_rating` and `max_rating` filter releases by the authenticated user's inclusive personal rating range; either bound excludes unrated releases. `rated=true` keeps only releases the user has rated and `rated=false` only those they have not; `rated=false` cannot be combined with a rating bound. `favorite=true` keeps only releases the user has favorited and `favorite=false` the rest. `listened=true` keeps only releases whose every track the user has listened to and `listened=false` the rest. `library_id` scopes results to releases belonging to that public library ID. `genre_id` filters by one or more public genre IDs. `query` matches release titles and sort titles and their artists' names; each of its words must start a word, ignoring case, accents, apostrophes and punctuation; no character is an operator, and a word in a script written without spaces, such as Japanese, matches anywhere in a word. It defaults ordering to relevance: exact names rank first, then names starting with the query, then names holding every word, then names holding some, then matches only through related items. `sort_by` supports `sort_name`, `name`, `date_created`, `release_date`, `last_played_at`, `listen_count`, `total_duration`, `rating` (the authenticated user's personal rating; unrated releases sort last in both directions), `rated_at` (when the authenticated user last set their rating), `favorited_at` (when they first favorited the release), and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. Supported `inc` values: `artists`, `tracks`, `track_artists`, `entries`, `covers`, `artist_covers`, `genres`. When `inc=covers`, cover metadata includes a public image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits (for example, artist and producer). Track artists without direct credits inherit from the release (`source: release`). When `inc=entries`, `full_path` is included only for authenticated users with ManageLibraries permission.",
     )
 }
 
@@ -830,6 +846,7 @@ mod tests {
                 sort_order: sort_order.map(str::to_string),
                 personal: PersonalFilterQuery::default(),
                 page: super::super::PageQuery::default(),
+                available: Default::default(),
             }),
         )
         .await
@@ -917,6 +934,7 @@ mod tests {
                     limit: Some(1),
                     cursor,
                 },
+                available: Default::default(),
             })
         };
 
@@ -1058,6 +1076,7 @@ mod tests {
                 sort_order: None,
                 personal: PersonalFilterQuery::default(),
                 page: super::super::PageQuery::default(),
+                available: Default::default(),
             }),
         )
         .await
@@ -1106,6 +1125,7 @@ mod tests {
                 sort_order: None,
                 personal: PersonalFilterQuery::default(),
                 page: super::super::PageQuery::default(),
+                available: Default::default(),
             }),
         )
         .await
@@ -1252,6 +1272,7 @@ mod tests {
                 sort_order: None,
                 personal: PersonalFilterQuery::from_bounds(Some(4), Some(4)),
                 page: super::super::PageQuery::default(),
+                available: Default::default(),
             }),
         )
         .await
@@ -1301,6 +1322,7 @@ mod tests {
                 sort_order: None,
                 personal: PersonalFilterQuery::default(),
                 page: super::super::PageQuery::default(),
+                available: Default::default(),
             }),
         )
         .await
@@ -1359,6 +1381,7 @@ mod tests {
                 sort_order: None,
                 personal: PersonalFilterQuery::default(),
                 page: super::super::PageQuery::default(),
+                available: Default::default(),
             })
         };
 
@@ -1484,6 +1507,7 @@ mod tests {
             description: None,
             genres: None,
             cover: None,
+            available: Some(true),
         };
 
         let value = serde_json::to_value(response)?;
@@ -1504,6 +1528,7 @@ mod tests {
             description: None,
             genres: None,
             cover: Some(None),
+            available: Some(true),
         };
 
         let value = serde_json::to_value(response)?;

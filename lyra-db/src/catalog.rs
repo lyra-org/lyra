@@ -92,6 +92,9 @@ pub struct Catalog {
     pub genre_releases: Vec<(DbId, DbId)>,
     /// Credits on releases and tracks.
     pub credits: Vec<CatalogCredit>,
+    /// The tracks with sources none of which can play, as `track_sources::is_available` decides
+    /// for one.
+    pub unavailable_tracks: HashSet<DbId>,
 }
 
 /// Reads in parallel: the reads share `db` and agdb reads take it by reference.
@@ -100,6 +103,7 @@ pub fn read(db: &(impl DbAccess + Sync)) -> anyhow::Result<Catalog> {
         let tracks = scope.spawn(|| nodes(db, roots::member_ids(db, Root::Tracks)?, "Track"));
         let release_edges = scope.spawn(|| member_edges(db, Root::Releases));
         let track_edges = scope.spawn(|| member_edges(db, Root::Tracks));
+        let unavailable = scope.spawn(|| unavailable_tracks(db));
         let others = scope.spawn(|| -> anyhow::Result<_> {
             Ok((
                 nodes(db, roots::member_ids(db, Root::Releases)?, "Release")?,
@@ -115,6 +119,7 @@ pub fn read(db: &(impl DbAccess + Sync)) -> anyhow::Result<Catalog> {
             join(others)?;
         let release_edges = join(release_edges)?;
         let track_edges = join(track_edges)?;
+        let unavailable_tracks = join(unavailable)?;
 
         let artists = artists
             .into_iter()
@@ -216,6 +221,7 @@ pub fn read(db: &(impl DbAccess + Sync)) -> anyhow::Result<Catalog> {
             .collect();
 
         Ok(Catalog {
+            unavailable_tracks,
             release_tracks: leading_to(&release_edges, &track_ids),
             library_releases: leading_to(&library_edges, &release_ids),
             genre_releases: leading_to(&genre_edges, &release_ids),
@@ -227,6 +233,24 @@ pub fn read(db: &(impl DbAccess + Sync)) -> anyhow::Result<Catalog> {
             credits,
         })
     })
+}
+
+/// The tracks some of whose sources' entries are missing and none of whose sources can play, as
+/// `track_sources::is_available` decides for each. Reads only around the missing entries.
+fn unavailable_tracks(db: &impl DbAccess) -> anyhow::Result<HashSet<DbId>> {
+    let mut tracks = HashSet::new();
+    for entry in super::entries::missing_ids(db)? {
+        for source in super::track_sources::depending_on(db, entry)? {
+            tracks.extend(super::graph::inbound_neighbor_ids(db, source, "Track")?);
+        }
+    }
+    let mut unavailable = HashSet::new();
+    for track in tracks {
+        if !super::track_sources::track_available(db, track)? {
+            unavailable.insert(track);
+        }
+    }
+    Ok(unavailable)
 }
 
 fn join<T>(handle: std::thread::ScopedJoinHandle<'_, anyhow::Result<T>>) -> anyhow::Result<T> {

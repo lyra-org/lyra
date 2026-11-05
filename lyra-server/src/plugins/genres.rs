@@ -3,7 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use agdb::DbId;
+use agdb::{
+    DbAny,
+    DbId,
+};
 use harmony_luau as luau;
 use harmony_luau::{
     DescribeInterface,
@@ -225,15 +228,12 @@ impl GenresModule {
         if trimmed.is_empty() {
             return Ok(luau::Value::Nil);
         }
-        let genre = {
-            let db = db.read().await;
-            match lyra_db::genres::find_by_name(&db, &trimmed)? {
-                Some(db_id) => lyra_db::genres::get_by_id(&db, db_id)?,
-                None => None,
-            }
+        let db = db.read().await;
+        let genre = match lyra_db::genres::find_by_name(&db, &trimmed)? {
+            Some(db_id) => lyra_db::genres::get_by_id(&db, db_id)?,
+            None => None,
         };
-
-        optional_genre_value(genre)
+        optional_genre_value(&db, genre)
     }
 }
 
@@ -300,24 +300,37 @@ fn resolve_genre_from_request(
 pub(crate) struct GenreRecord {
     id: String,
     name: String,
+    available: bool,
 }
 
-impl From<lyra_db::genres::Genre> for GenreRecord {
-    fn from(genre: lyra_db::genres::Genre) -> Self {
+impl From<services::catalog::Listed<lyra_db::genres::Genre>> for GenreRecord {
+    fn from(genre: services::catalog::Listed<lyra_db::genres::Genre>) -> Self {
         Self {
-            id: genre.id,
-            name: genre.name,
+            id: genre.item.id,
+            name: genre.item.name,
+            available: genre.available,
         }
     }
 }
 
 fn optional_genre_value(
+    db: &DbAny,
     genre: Option<lyra_db::genres::Genre>,
 ) -> luau::runtime::Result<luau::Value> {
-    match genre {
-        Some(genre) => harmony_luau::serializable_to_luau_owned(GenreRecord::from(genre)),
-        None => Ok(luau::Value::Nil),
-    }
+    let Some(genre) = genre else {
+        return Ok(luau::Value::Nil);
+    };
+    let availability = services::catalog::Availability::of(db)?;
+    let available = genre
+        .db_id
+        .clone()
+        .map(DbId::from)
+        .is_none_or(|id| availability.genre(id));
+    harmony_luau::serializable_to_luau_owned(GenreRecord {
+        id: genre.id,
+        name: genre.name,
+        available,
+    })
 }
 
 impl LuauTypeInfo for GenreRecord {
@@ -339,6 +352,11 @@ impl DescribeInterface for GenreRecord {
                 name: "name",
                 ty: String::luau_type(),
                 description: None,
+            },
+            FieldDescriptor {
+                name: "available",
+                ty: bool::luau_type(),
+                description: Some("Whether any of the genre's releases can play."),
             },
         ]);
         descriptor

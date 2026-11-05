@@ -1741,7 +1741,7 @@ pub(crate) mod tests {
         .map_err(AppError::from)
         .expect_err("the source file is gone");
         let message = err.to_string();
-        assert!(message.starts_with("404"), "{message}");
+        assert!(message.starts_with("410"), "{message}");
         assert!(
             !message.contains(&*test_dir.to_string_lossy()),
             "the message must not reveal where the library lives: {message}"

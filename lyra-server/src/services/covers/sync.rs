@@ -912,11 +912,13 @@ fn find_gone_covers(
     library_root: Option<&Path>,
 ) -> Result<GoneCovers> {
     let mut gone = GoneCovers::default();
+    // A missing release's or artist's cover is as likely gone with its files as replaced.
+    let availability = crate::services::catalog::Availability::of(db)?;
     for release in lyra_db::releases::get(db, library_id)? {
         let Some(release_id) = release.db_id.map(DbId::from) else {
             continue;
         };
-        if release.locked.unwrap_or(false) {
+        if release.locked.unwrap_or(false) || !availability.release(release_id) {
             continue;
         }
         for stale in StaleCover::read_all(db, release_id)? {
@@ -936,7 +938,7 @@ fn find_gone_covers(
         let Some(artist_id) = artist.db_id.map(DbId::from) else {
             continue;
         };
-        if artist.locked.unwrap_or(false) {
+        if artist.locked.unwrap_or(false) || !availability.artist(artist_id) {
             continue;
         }
         gone.removed.extend(StaleCover::read_all(db, artist_id)?);

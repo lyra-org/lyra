@@ -2301,7 +2301,7 @@ FILE "album.flac" WAVE
         assert!(synced(&library, &audio_named).await?);
         let available = |db: &agdb::DbAny, id: &str| -> anyhow::Result<bool> {
             let track_db_id = lyra_db::lookup::find_node_id_by_id(db, id)?.expect("track");
-            lyra_db::track_sources::track_available(db, track_db_id)
+            Ok(crate::services::catalog::Availability::of(db)?.track(track_db_id))
         };
         {
             let db = STATE.db.read().await;

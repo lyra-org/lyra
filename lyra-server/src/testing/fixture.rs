@@ -214,6 +214,9 @@ struct Track {
     start_ms: Option<u64>,
     /// Where the track ends within `file`.
     end_ms: Option<u64>,
+    /// Whether `file`'s entry is missing, as a sync that no longer found it leaves it.
+    #[serde(default)]
+    missing: bool,
     /// Identifier values by scheme, stored as [`ID_PROVIDER`]'s, which declares each scheme.
     #[serde(default)]
     identifiers: BTreeMap<String, String>,
@@ -986,6 +989,11 @@ impl Fixture {
                 "fixture track {} has a folder but no file",
                 track.key
             );
+            anyhow::ensure!(
+                track.file.is_some() || !track.missing,
+                "fixture track {} is missing but has no file",
+                track.key
+            );
             if let Some(file) = &track.file {
                 let library_db_id = match self.release_library(track)? {
                     Some(library) => keys.library(library)?,
@@ -1021,6 +1029,9 @@ impl Fixture {
                     .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
                     .ids()[0];
                 lyra_db::graph::ensure_owned_edge(db, parent, entry_db_id)?;
+                if track.missing {
+                    lyra_db::entries::set_missing(db, &[entry_db_id], 1)?;
+                }
                 db.transaction_mut(|t| {
                     lyra_db::track_sources::upsert(
                         t,

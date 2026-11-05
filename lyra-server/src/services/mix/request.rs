@@ -54,8 +54,9 @@ pub(crate) struct MixRequestFields {
     /// Each mixer receives only its own declared options.
     #[serde(default)]
     pub(crate) options: HashMap<String, serde_json::Value>,
-    /// Leads a blend with its single track seed. When the seed is in a chain, only the chain's
-    /// later tracks in the mix follow it; its earlier ones are left out.
+    /// Leads a blend with its single track seed, unless none of the seed's files is there. When
+    /// the seed is in a chain, only the chain's later tracks in the mix follow it; its earlier
+    /// ones are left out.
     #[serde(default)]
     pub(crate) pin_seed: bool,
     /// For a blend, the most tracks returned (default 200). For a path, a hint for how many

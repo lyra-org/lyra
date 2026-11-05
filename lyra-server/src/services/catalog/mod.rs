@@ -22,7 +22,10 @@ mod visibility;
 
 use std::{
     cmp::Ordering,
-    collections::HashSet,
+    collections::{
+        HashMap,
+        HashSet,
+    },
 };
 
 use agdb::{
@@ -58,6 +61,93 @@ pub(crate) use pipeline::{
     order,
     page,
 };
+
+/// An entity as the catalog lists it, with whether it can play as the index snapshot has it.
+#[derive(Clone, Debug, serde::Serialize)]
+pub(crate) struct Listed<T> {
+    #[serde(flatten)]
+    pub(crate) item: T,
+    pub(crate) available: bool,
+}
+
+impl<T> std::ops::Deref for Listed<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.item
+    }
+}
+
+/// Which catalog entities can play, as the current catalog snapshot has it; the same for every
+/// viewer.
+pub(crate) struct Availability(std::sync::Arc<Snapshot>);
+
+impl Availability {
+    pub(crate) fn of(db: &DbAny) -> anyhow::Result<Self> {
+        Ok(Self(index::snapshot(db)?))
+    }
+
+    /// Whether the track `id` can play; ids the catalog doesn't hold count as playable.
+    pub(crate) fn track(&self, id: DbId) -> bool {
+        self.0.track_available(id)
+    }
+
+    pub(crate) fn release(&self, id: DbId) -> bool {
+        self.0.release_available(id)
+    }
+
+    pub(crate) fn artist(&self, id: DbId) -> bool {
+        self.0.artist_available(id)
+    }
+
+    pub(crate) fn genre(&self, id: DbId) -> bool {
+        self.0.genre_available(id)
+    }
+}
+
+/// Each of `ids` found in `found`, in order, with its availability as `available` reads it from
+/// the current snapshot.
+pub(crate) fn listed<T>(
+    db: &DbAny,
+    ids: &[DbId],
+    mut found: HashMap<DbId, T>,
+    available: impl Fn(&Snapshot, DbId) -> bool,
+) -> anyhow::Result<Vec<Listed<T>>> {
+    let index = index::snapshot(db)?;
+    Ok(ids
+        .iter()
+        .filter_map(|id| {
+            Some(Listed {
+                item: found.remove(id)?,
+                available: available(&index, *id),
+            })
+        })
+        .collect())
+}
+
+/// Each group of `groups` with its items' availability, as `available` reads it from the current
+/// snapshot by each item's id.
+pub(crate) fn listed_groups<T>(
+    db: &DbAny,
+    groups: HashMap<DbId, Vec<T>>,
+    id_of: impl Fn(&T) -> Option<DbId>,
+    available: impl Fn(&Snapshot, DbId) -> bool,
+) -> anyhow::Result<HashMap<DbId, Vec<Listed<T>>>> {
+    let index = index::snapshot(db)?;
+    Ok(groups
+        .into_iter()
+        .map(|(owner, items)| {
+            let items = items
+                .into_iter()
+                .map(|item| Listed {
+                    available: id_of(&item).is_none_or(|id| available(&index, id)),
+                    item,
+                })
+                .collect();
+            (owner, items)
+        })
+        .collect())
+}
 
 /// Who a catalog query runs for.
 #[derive(Clone, Debug)]

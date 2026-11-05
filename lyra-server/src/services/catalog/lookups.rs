@@ -18,9 +18,11 @@ use serde::Serialize;
 
 use super::{
     CatalogError,
+    Listed,
     Viewer,
     artists::Artists,
     genres::Genres,
+    index::Snapshot,
     pipeline::{
         Catalog,
         Context,
@@ -63,7 +65,7 @@ fn visible_in<C: Catalog>(cx: &Context<'_>, ids: &[DbId]) -> Result<HashSet<DbId
 fn releases_by_owner(
     cx: &Context<'_>,
     owners: Vec<(DbId, Vec<u32>)>,
-) -> Result<HashMap<DbId, Vec<Release>>, CatalogError> {
+) -> Result<HashMap<DbId, Vec<Listed<Release>>>, CatalogError> {
     let index = &cx.index;
     let owners = owners
         .into_iter()
@@ -140,7 +142,7 @@ pub(crate) fn tracks_by_release(
     db: &DbAny,
     viewer: &Viewer,
     releases: &[DbId],
-) -> Result<HashMap<DbId, Vec<Track>>, CatalogError> {
+) -> Result<HashMap<DbId, Vec<Listed<Track>>>, CatalogError> {
     let mut tracks = HashMap::new();
     for release in visible_in_order::<Releases>(db, viewer, releases)? {
         let ids = lyra_db::graph::neighbor_ids(db, release, "Track")?;
@@ -154,12 +156,17 @@ pub(crate) fn tracks_by_entry(
     db: &DbAny,
     viewer: &Viewer,
     entries: &[DbId],
-) -> Result<HashMap<DbId, Vec<Track>>, CatalogError> {
+) -> Result<HashMap<DbId, Vec<Listed<Track>>>, CatalogError> {
     let mut tracks = HashMap::new();
     for entry in crate::services::entries::visible_ids(db, viewer, entries)? {
         tracks.insert(entry, lyra_db::tracks::get_by_entry(db, entry)?);
     }
-    Ok(tracks)
+    Ok(super::listed_groups(
+        db,
+        tracks,
+        |track| track.db_id.clone().map(DbId::from),
+        Snapshot::track_available,
+    )?)
 }
 
 /// A track's chain and its 0-based place in it.
@@ -214,7 +221,7 @@ pub(crate) fn releases_by_track(
     db: &DbAny,
     viewer: &Viewer,
     tracks: &[DbId],
-) -> Result<HashMap<DbId, Vec<Release>>, CatalogError> {
+) -> Result<HashMap<DbId, Vec<Listed<Release>>>, CatalogError> {
     if tracks.is_empty() {
         return Ok(HashMap::new());
     }
@@ -241,7 +248,7 @@ pub(crate) fn releases_by_genre(
     db: &DbAny,
     viewer: &Viewer,
     genres: &[DbId],
-) -> Result<HashMap<DbId, Vec<Release>>, CatalogError> {
+) -> Result<HashMap<DbId, Vec<Listed<Release>>>, CatalogError> {
     if genres.is_empty() {
         return Ok(HashMap::new());
     }
@@ -268,9 +275,14 @@ pub(crate) fn artists_by_owner<C: Catalog>(
     db: &DbAny,
     viewer: &Viewer,
     owners: &[DbId],
-) -> Result<HashMap<DbId, Vec<Artist>>, CatalogError> {
+) -> Result<HashMap<DbId, Vec<Listed<Artist>>>, CatalogError> {
     let owners = visible_in_order::<C>(db, viewer, owners)?;
-    Ok(lyra_db::artists::get_many_by_owner(db, &owners)?)
+    Ok(super::listed_groups(
+        db,
+        lyra_db::artists::get_many_by_owner(db, &owners)?,
+        |artist| artist.db_id.clone().map(DbId::from),
+        Snapshot::artist_available,
+    )?)
 }
 
 /// The genres of each visible release.
@@ -278,9 +290,14 @@ pub(crate) fn genres_by_release(
     db: &DbAny,
     viewer: &Viewer,
     releases: &[DbId],
-) -> Result<HashMap<DbId, Vec<Genre>>, CatalogError> {
+) -> Result<HashMap<DbId, Vec<Listed<Genre>>>, CatalogError> {
     let releases = visible_in_order::<Releases>(db, viewer, releases)?;
-    Ok(lyra_db::genres::get_for_releases_many(db, &releases)?)
+    Ok(super::listed_groups(
+        db,
+        lyra_db::genres::get_for_releases_many(db, &releases)?,
+        |genre| genre.db_id.clone().map(DbId::from),
+        Snapshot::genre_available,
+    )?)
 }
 
 /// The relations of each visible artist to other visible artists.

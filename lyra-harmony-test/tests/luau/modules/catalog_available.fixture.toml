@@ -1,0 +1,68 @@
+run_as = "owner"
+
+[[users]]
+key = "owner"
+admin = true
+
+[[libraries]]
+key = "music"
+name = "Music"
+
+[[artists]]
+key = "here"
+name = "Here"
+
+[[artists]]
+key = "gone"
+name = "Gone"
+
+[[genres]]
+key = "rock"
+name = "Rock"
+
+[[genres]]
+key = "jazz"
+name = "Jazz"
+
+[[releases]]
+key = "mixed"
+title = "Mixed"
+library = "music"
+artists = ["here"]
+genres = ["rock"]
+
+[[releases]]
+key = "lost"
+title = "Lost"
+library = "music"
+artists = ["gone"]
+genres = ["jazz"]
+
+[[tracks]]
+key = "playing"
+title = "Playing"
+release = "mixed"
+track = 1
+file = "song.opus"
+
+[[tracks]]
+key = "missing"
+title = "Missing"
+release = "mixed"
+track = 2
+file = "song.opus"
+missing = true
+
+[[tracks]]
+key = "lost_one"
+title = "Lost One"
+release = "lost"
+file = "song.opus"
+missing = true
+
+[[playlists]]
+key = "mix"
+owner = "owner"
+name = "Mix"
+public = false
+tracks = ["missing", "playing"]

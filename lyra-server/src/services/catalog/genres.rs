@@ -83,6 +83,9 @@ impl SortKey for GenreKey {
 /// Genres are reached through the releases in them.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct GenreFilter {
+    /// Keeps only available entities (`true`) or only unavailable ones (`false`), narrowing
+    /// what the query counts as a scope does.
+    pub(crate) available: Option<bool>,
     pub(crate) ids: Option<Vec<DbId>>,
     pub(crate) exclude_ids: Vec<DbId>,
     pub(crate) library: Option<DbId>,
@@ -95,7 +98,15 @@ pub(crate) struct Genres;
 impl Catalog for Genres {
     type Key = GenreKey;
     type Filter = GenreFilter;
-    type Item = Genre;
+    type Item = super::Listed<Genre>;
+
+    fn available(filter: &GenreFilter) -> Option<bool> {
+        filter.available
+    }
+
+    fn available_mut(filter: &mut GenreFilter) -> &mut Option<bool> {
+        &mut filter.available
+    }
 
     fn id_filter(ids: Vec<DbId>) -> GenreFilter {
         GenreFilter {
@@ -110,6 +121,10 @@ impl Catalog for Genres {
 
     fn table(index: &Snapshot) -> &Table {
         &index.genres
+    }
+
+    fn scoped(scope: &super::index::Scope) -> &Bits {
+        &scope.genres
     }
 
     fn candidates(cx: &Context<'_>, filter: &GenreFilter) -> Result<Bits, CatalogError> {
@@ -153,7 +168,7 @@ impl Catalog for Genres {
         };
         let tracks_of = |genre: u32| {
             let mut tracks = releases_of(genre)
-                .flat_map(|release| links.tracks_of_release(release).iter().copied())
+                .flat_map(|release| links.tracks_of_release(release))
                 .collect::<Vec<_>>();
             tracks.sort_unstable();
             tracks.dedup();
@@ -176,9 +191,9 @@ impl Catalog for Genres {
         })
     }
 
-    fn hydrate(db: &DbAny, ids: &[DbId]) -> anyhow::Result<Vec<Genre>> {
-        let mut genres = lyra_db::graph::bulk_fetch_typed(db, ids.to_vec(), "Genre")?;
-        Ok(ids.iter().filter_map(|id| genres.remove(id)).collect())
+    fn hydrate(db: &DbAny, ids: &[DbId]) -> anyhow::Result<Vec<super::Listed<Genre>>> {
+        let genres = lyra_db::graph::bulk_fetch_typed(db, ids.to_vec(), "Genre")?;
+        super::listed(db, ids, genres, super::index::Snapshot::genre_available)
     }
 }
 

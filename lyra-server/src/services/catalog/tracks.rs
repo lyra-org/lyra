@@ -132,6 +132,9 @@ impl SortKey for TrackKey {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct TrackFilter {
+    /// Keeps only available entities (`true`) or only unavailable ones (`false`), narrowing
+    /// what the query counts as a scope does.
+    pub(crate) available: Option<bool>,
     pub(crate) ids: Option<Vec<DbId>>,
     pub(crate) exclude_ids: Vec<DbId>,
     /// Leaves out tracks credited to these artists in either role.
@@ -196,12 +199,20 @@ pub(crate) struct Tracks;
 impl Catalog for Tracks {
     type Key = TrackKey;
     type Filter = TrackFilter;
-    type Item = Track;
+    type Item = super::Listed<Track>;
 
     fn personal(filter: &TrackFilter) -> Vec<PersonalData> {
         let mut reads = filter.personal.reads();
         reads.extend(filter.bookmarked.map(|_| PersonalData::Bookmarks));
         reads
+    }
+
+    fn available(filter: &TrackFilter) -> Option<bool> {
+        filter.available
+    }
+
+    fn available_mut(filter: &mut TrackFilter) -> &mut Option<bool> {
+        &mut filter.available
     }
 
     fn id_filter(ids: Vec<DbId>) -> TrackFilter {
@@ -225,6 +236,10 @@ impl Catalog for Tracks {
 
     fn table(index: &Snapshot) -> &Table {
         &index.tracks
+    }
+
+    fn scoped(scope: &super::index::Scope) -> &Bits {
+        &scope.tracks
     }
 
     fn candidates(cx: &Context<'_>, filter: &TrackFilter) -> Result<Bits, CatalogError> {
@@ -422,9 +437,9 @@ impl Catalog for Tracks {
         Some(tracks)
     }
 
-    fn hydrate(db: &DbAny, ids: &[DbId]) -> anyhow::Result<Vec<Track>> {
-        let mut tracks = lyra_db::tracks::get_by_ids(db, ids)?;
-        Ok(ids.iter().filter_map(|id| tracks.remove(id)).collect())
+    fn hydrate(db: &DbAny, ids: &[DbId]) -> anyhow::Result<Vec<super::Listed<Track>>> {
+        let tracks = lyra_db::tracks::get_by_ids(db, ids)?;
+        super::listed(db, ids, tracks, super::index::Snapshot::track_available)
     }
 
     /// A chain on a release the viewer sees shuffles as one, its tracks in chain order.

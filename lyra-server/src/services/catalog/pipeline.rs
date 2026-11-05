@@ -242,12 +242,36 @@ impl<'a> Context<'a> {
         Ok(Self::with(super::index::snapshot(db)?, db, viewer))
     }
 
+    /// A context for a query with `filter`, narrowed to the availability it asks for.
+    pub(crate) fn filtered<C: Catalog>(
+        db: &'a DbAny,
+        viewer: &'a Viewer,
+        filter: &C::Filter,
+    ) -> Result<Self, CatalogError> {
+        Ok(Self::with_available(
+            super::index::snapshot(db)?,
+            db,
+            viewer,
+            C::available(filter),
+        ))
+    }
+
     /// A context reading `index`, which must be a snapshot of `db`.
     pub(crate) fn with(index: Arc<Snapshot>, db: &'a DbAny, viewer: &'a Viewer) -> Self {
-        let scope = index.scope(
+        Self::with_available(index, db, viewer, None)
+    }
+
+    fn with_available(
+        index: Arc<Snapshot>,
+        db: &'a DbAny,
+        viewer: &'a Viewer,
+        available: Option<bool>,
+    ) -> Self {
+        let scope = index.scope_with(
             viewer
                 .restricted()
                 .map(|principal| &principal.accessible_library_ids),
+            available,
         );
         Self {
             index,
@@ -256,6 +280,19 @@ impl<'a> Context<'a> {
             scope,
         }
     }
+}
+
+/// [`Catalog::candidates`] narrowed to the scope's availability, which a filter by ids, say,
+/// doesn't reach through the scope's links.
+fn available_candidates<C: Catalog>(
+    cx: &Context<'_>,
+    filter: &C::Filter,
+) -> Result<Bits, CatalogError> {
+    let mut candidates = C::candidates(cx, filter)?;
+    if cx.scope.available.is_some() {
+        candidates.and(C::scoped(&cx.scope));
+    }
+    Ok(candidates)
 }
 
 /// Where a key's column and orders are kept.
@@ -318,6 +355,12 @@ pub(crate) trait Catalog {
     /// The filter that keeps just these ids.
     fn id_filter(ids: Vec<DbId>) -> Self::Filter;
 
+    /// Whether the filter keeps only available entities (`true`) or only unavailable ones
+    /// (`false`). Either narrows what the query counts, as a scope does.
+    fn available(filter: &Self::Filter) -> Option<bool>;
+
+    fn available_mut(filter: &mut Self::Filter) -> &mut Option<bool>;
+
     /// The order used when a query names no keys and has no search term.
     fn default_sort(filter: &Self::Filter) -> SortSpec<Self::Key>;
 
@@ -325,6 +368,9 @@ pub(crate) trait Catalog {
 
     /// The slots the viewer can see that pass the filter.
     fn candidates(cx: &Context<'_>, filter: &Self::Filter) -> Result<Bits, CatalogError>;
+
+    /// The slots of this catalog that `scope` holds.
+    fn scoped(scope: &Scope) -> &Bits;
 
     /// The values of a field key for at least `slots`.
     fn column<'a>(
@@ -446,7 +492,11 @@ pub(crate) fn leading<C: Catalog>(
     query: &Query<C>,
     keep: Option<usize>,
 ) -> Result<Vec<DbId>, CatalogError> {
-    leading_in(&Context::new(db, viewer)?, query, keep)
+    leading_in(
+        &Context::filtered::<C>(db, viewer, &query.filter)?,
+        query,
+        keep,
+    )
 }
 
 /// [`leading`] in an existing context.
@@ -490,7 +540,12 @@ pub(crate) fn numbers<C: Catalog>(
     ids: Vec<DbId>,
     keys: &[C::Key],
 ) -> Result<HashMap<DbId, Vec<Option<u64>>>, CatalogError> {
-    numbers_in::<C>(&Context::new(db, viewer)?, filter, ids, keys)
+    numbers_in::<C>(
+        &Context::filtered::<C>(db, viewer, filter)?,
+        filter,
+        ids,
+        keys,
+    )
 }
 
 /// [`numbers`] in an existing context.
@@ -501,7 +556,7 @@ pub(crate) fn numbers_in<C: Catalog>(
     keys: &[C::Key],
 ) -> Result<HashMap<DbId, Vec<Option<u64>>>, CatalogError> {
     let table = C::table(&cx.index);
-    let slots = C::candidates(cx, &C::id_filter(ids))?
+    let slots = available_candidates::<C>(cx, &C::id_filter(ids))?
         .iter()
         .collect::<Vec<_>>();
     let columns = keys
@@ -534,7 +589,12 @@ pub(crate) fn page<C: Catalog>(
     offset: u64,
     limit: Option<u64>,
 ) -> Result<Page<C::Item>, CatalogError> {
-    page_in(&Context::new(db, viewer)?, query, offset, limit)
+    page_in(
+        &Context::filtered::<C>(db, viewer, &query.filter)?,
+        query,
+        offset,
+        limit,
+    )
 }
 
 /// [`page`] in an existing context.
@@ -587,7 +647,7 @@ fn sorted<C: Catalog>(
     }
 
     let table = C::table(&cx.index);
-    let mut candidates = C::candidates(cx, &query.filter)?;
+    let mut candidates = available_candidates::<C>(cx, &query.filter)?;
     let in_names = |slot: &u32| query.names.contains(table.sort_name(*slot));
     // A name matches few slots, so each is checked on its own and only they are sorted.
     let named = query.name.as_deref().map(|name| {

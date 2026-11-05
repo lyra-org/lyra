@@ -61,6 +61,11 @@ use std::collections::HashMap;
 struct GenreResponse {
     id: String,
     name: String,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Whether any of the genre's releases can play.")
+    )]
+    available: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     parents: Option<Vec<GenreSummary>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -111,6 +116,8 @@ struct GenreListQuery {
     )]
     sort_order: Option<String>,
     #[serde(flatten)]
+    available: super::AvailableQuery,
+    #[serde(flatten)]
     page: super::PageQuery,
 }
 
@@ -156,8 +163,16 @@ fn genre_to_summary(genre: genres::Genre) -> GenreSummary {
     }
 }
 
-fn genre_to_response(genre: genres::Genre) -> GenreResponse {
+fn genre_to_response(
+    availability: &crate::services::catalog::Availability,
+    genre: genres::Genre,
+) -> GenreResponse {
     GenreResponse {
+        available: genre
+            .db_id
+            .clone()
+            .map(DbId::from)
+            .is_none_or(|id| availability.genre(id)),
         id: genre.id,
         name: genre.name,
         parents: None,
@@ -207,8 +222,10 @@ async fn list_genres(
         library_id,
         sort_by,
         sort_order,
+        available,
         page,
     } = query;
+    let available = available.available;
     let page_request = page.resolve_snapshot();
     let principal = require_authenticated(bearer_credential(&headers)).await?;
     let inc = parse_genre_inc(inc)?;
@@ -220,6 +237,7 @@ async fn list_genres(
         .field(library_id.as_deref())
         .values(sort_by.as_deref())
         .field(sort_order.as_deref())
+        .flag(available)
         .finish();
     let library_scope = crate::services::auth::access::resolve_optional_library_filter(
         db,
@@ -239,6 +257,7 @@ async fn list_genres(
     } else {
         let mut query = catalog::Query::<Genres>::new(GenreFilter {
             library: library_scope,
+            available,
             ..GenreFilter::default()
         });
         query.search = search_term;
@@ -246,7 +265,10 @@ async fn list_genres(
         query.seed = rand::random();
         let ids = catalog::order(db, &viewer, &query)?;
         let page = page_request.start(&snapshot_key, super::public_ids(db, &ids)?)?;
-        let genres = Genres::hydrate(db, &ids[..page.item_ids.len()])?;
+        let genres = Genres::hydrate(db, &ids[..page.item_ids.len()])?
+            .into_iter()
+            .map(|listed| listed.item)
+            .collect::<Vec<_>>();
         (genres, page.next_cursor)
     };
     let covers = if inc.covers {
@@ -260,11 +282,12 @@ async fn list_genres(
         HashMap::new()
     };
 
+    let availability = crate::services::catalog::Availability::of(db)?;
     let items: Vec<GenreResponse> = genres
         .into_iter()
         .map(|genre| {
             let genre_db_id = genre.db_id.clone().map(DbId::from);
-            let mut response = genre_to_response(genre);
+            let mut response = genre_to_response(&availability, genre);
             if inc.covers {
                 response.cover = route_covers::cover_field(&covers, true, genre_db_id);
             }
@@ -318,6 +341,7 @@ async fn get_genre(
     };
 
     Ok(Json(GenreResponse {
+        available: crate::services::catalog::Availability::of(db)?.genre(genre_db_id),
         id: genre.id,
         name: genre.name,
         parents,
@@ -329,7 +353,7 @@ async fn get_genre(
 #[cfg(feature = "docgen")]
 fn list_genres_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List genres").description(
-        "Returns genres as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `sort_by`, `sort_order`, `limit`, `cursor`. Results are limited to genres attached to releases visible to the authenticated user. `library_id` scopes results to releases belonging to that public library ID. `sort_by` supports `name`, `last_played_at`, `listen_count`, `release_count`, `track_count`, `total_duration`, and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` matches genre names and aliases; each of its words must start a word, ignoring case, accents, apostrophes and punctuation; no character is an operator, and a word in a script written without spaces, such as Japanese, matches anywhere in a word. Exact names rank first, then names starting with the query, then names holding every word, then names holding some, then matches only through related items. `inc=covers` includes personalized display cover metadata.",
+        "Returns genres as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `sort_by`, `sort_order`, `available`, `limit`, `cursor`. `available=true` keeps the genres whose `available` field is true, counting only their tracks that can play; `available=false` keeps the genres of a release holding a track that can't play, partly playable ones included, counting only such tracks. Results are limited to genres attached to releases visible to the authenticated user. `library_id` scopes results to releases belonging to that public library ID. `sort_by` supports `name`, `last_played_at`, `listen_count`, `release_count`, `track_count`, `total_duration`, and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` matches genre names and aliases; each of its words must start a word, ignoring case, accents, apostrophes and punctuation; no character is an operator, and a word in a script written without spaces, such as Japanese, matches anywhere in a word. Exact names rank first, then names starting with the query, then names holding every word, then names holding some, then matches only through related items. `inc=covers` includes personalized display cover metadata.",
     )
 }
 
@@ -481,6 +505,7 @@ mod tests {
                 sort_by: None,
                 sort_order: None,
                 page: Default::default(),
+                available: Default::default(),
             }),
         )
         .await
@@ -525,6 +550,7 @@ mod tests {
                     limit: Some(1),
                     cursor: None,
                 },
+                available: Default::default(),
             }),
         )
         .await
@@ -557,6 +583,7 @@ mod tests {
                     limit: Some(1),
                     cursor: Some(cursor),
                 },
+                available: Default::default(),
             }),
         )
         .await
@@ -583,6 +610,7 @@ mod tests {
                 sort_by: sort_by.map(|value| vec![value.to_string()]),
                 sort_order: sort_order.map(str::to_string),
                 page: Default::default(),
+                available: Default::default(),
             }),
         )
         .await
@@ -673,6 +701,7 @@ mod tests {
                 sort_by: None,
                 sort_order: None,
                 page: Default::default(),
+                available: Default::default(),
             }),
         )
         .await
@@ -744,6 +773,7 @@ mod tests {
                 sort_by: None,
                 sort_order: None,
                 page: Default::default(),
+                available: Default::default(),
             }),
         )
         .await
@@ -881,6 +911,7 @@ mod tests {
                 sort_by: None,
                 sort_order: None,
                 page: Default::default(),
+                available: Default::default(),
             }),
         )
         .await
@@ -943,6 +974,7 @@ mod tests {
                 sort_by: None,
                 sort_order: None,
                 page: Default::default(),
+                available: Default::default(),
             }),
         )
         .await
@@ -1017,6 +1049,7 @@ mod tests {
                 sort_by: None,
                 sort_order: None,
                 page: Default::default(),
+                available: Default::default(),
             }),
         )
         .await
@@ -1078,6 +1111,7 @@ mod tests {
                 sort_by: None,
                 sort_order: None,
                 page: Default::default(),
+                available: Default::default(),
             }),
         )
         .await

@@ -176,7 +176,11 @@ mod tests {
     ) -> anyhow::Result<Vec<ReleaseDetails>> {
         let ids = catalog::order(db, &catalog::Viewer::System, query)?;
         let releases = Releases::hydrate(db, &ids)?;
-        list_details_for_releases(db, includes, releases)
+        list_details_for_releases(
+            db,
+            includes,
+            releases.into_iter().map(|release| release.item).collect(),
+        )
     }
 
     fn insert_release(
