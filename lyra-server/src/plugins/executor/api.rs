@@ -284,7 +284,7 @@ fn response_body(kind: ApiResponseKind, table: &luau::Table) -> Result<Option<Ap
             if matches!(body_value, luau::Value::Nil) {
                 serde_json::Value::Null
             } else {
-                harmony_serde::luau_to_json(&body_value, 0)?
+                harmony_serde::luau_to_json(&body_value)?
             },
         )),
         ApiResponseKind::Empty => None,

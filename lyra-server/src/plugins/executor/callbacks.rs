@@ -124,9 +124,7 @@ impl CallbackReply {
                 let result = result.and_then(|values| {
                     let values = values
                         .iter()
-                        .map(|value| {
-                            harmony_serde::luau_to_json(value, 0).map_err(anyhow::Error::new)
-                        })
+                        .map(|value| harmony_serde::luau_to_json(value).map_err(anyhow::Error::new))
                         .collect::<Result<Vec<_>>>()?;
                     Ok(MetadataRefreshResult { values })
                 });

@@ -4,6 +4,8 @@
 // www.meshiplaw.com/lyra.
 
 mod encoder;
+mod node;
+mod write;
 
 use std::fmt;
 
@@ -45,8 +47,10 @@ impl SerdeModule {
         args(input: JsonValue)
     )]
     fn json_encode(input: luau::Value) -> luau::runtime::Result<String> {
-        let json = luau_to_json(&input, 0)?;
-        serde_json::to_string(&json).map_err(|error| runtime_error("JSON encode failed", error))
+        let node = node::Reader::new(MAX_ENCODED_BYTES, &too_large).value(&input)?;
+        let mut out = Vec::new();
+        write::json(&mut out, &node, MAX_ENCODED_BYTES, &too_large)?;
+        String::from_utf8(out).map_err(|error| runtime_error("JSON encode failed", error))
     }
 
     #[harmony(
@@ -82,8 +86,8 @@ impl SerdeModule {
         args(input: JsonValue)
     )]
     fn yaml_encode(input: luau::Value) -> luau::runtime::Result<String> {
-        let json = luau_to_json(&input, 0)?;
-        serde_saphyr::to_string(&json).map_err(|error| runtime_error("YAML encode failed", error))
+        let node = node::Reader::new(MAX_ENCODED_BYTES, &too_large).value(&input)?;
+        write::yaml(&node, MAX_ENCODED_BYTES, &too_large)
     }
 
     #[harmony(
@@ -103,9 +107,8 @@ impl SerdeModule {
         args(root: String, input: JsonValue)
     )]
     fn xml_encode(root: String, input: luau::Value) -> luau::runtime::Result<String> {
-        let json = luau_to_json(&input, 0)?;
-        quick_xml::se::to_string_with_root(&root, &json)
-            .map_err(|error| runtime_error("XML encode failed", error))
+        let node = node::Reader::new(MAX_ENCODED_BYTES, &too_large).value(&input)?;
+        write::xml(&root, &node, MAX_ENCODED_BYTES, &too_large)
     }
 
     #[harmony(
@@ -155,13 +158,18 @@ impl SerdeModule {
 }
 
 const MAX_BUFFERED_BYTES_FIELD: &str = "MAX_BUFFERED_BYTES";
+const MAX_ENCODED_BYTES_FIELD: &str = "MAX_ENCODED_BYTES";
 
-/// Exports `MAX_BUFFERED_BYTES`, so callers flush against the value the encoders enforce.
+/// Exports the limits the module enforces, so callers can plan against them.
 fn install_limits(spec: harmony_core::ModuleSpec) -> harmony_core::ModuleSpec {
     spec.initializer(|_vm, _origin, root| {
         root.set(
             MAX_BUFFERED_BYTES_FIELD,
             luau::Value::Number(MAX_BUFFERED_BYTES as f64),
+        )?;
+        root.set(
+            MAX_ENCODED_BYTES_FIELD,
+            luau::Value::Number(MAX_ENCODED_BYTES as f64),
         )
     })
 }
@@ -174,43 +182,57 @@ fn describe_limits(descriptor: &mut harmony_luau::ModuleDescriptor) {
         description: Some("The most an encoder holds unflushed, in bytes."),
         ty: u64::luau_type(),
     });
+    descriptor.fields.push(harmony_luau::ModuleFieldDescriptor {
+        path: vec![MAX_ENCODED_BYTES_FIELD],
+        description: Some(
+            "The most `json.encode`, `yaml.encode` and `xml.encode` encode a value to, in bytes.",
+        ),
+        ty: u64::luau_type(),
+    });
 }
 
-pub fn luau_to_json(value: &luau::Value, depth: usize) -> luau::runtime::Result<serde_json::Value> {
-    if depth > 128 {
-        return Err(luau::Error::Runtime(
-            "JSON value is too deeply nested".into(),
-        ));
-    }
+/// The most a one-shot encode, or a value converted for the host, may encode to, in bytes.
+pub const MAX_ENCODED_BYTES: usize = 16 * 1024 * 1024;
 
-    match value {
-        luau::Value::Nil => Ok(serde_json::Value::Null),
-        luau::Value::Boolean(value) => Ok(serde_json::Value::Bool(*value)),
-        luau::Value::Integer(value) => Ok(serde_json::Value::Number((*value).into())),
-        luau::Value::Number(value) => json_number_from_f64(*value)
-            .map(serde_json::Value::Number)
-            .ok_or_else(|| luau::Error::Runtime("JSON numbers must be finite".into())),
-        luau::Value::String(value) => String::from_utf8(value.clone())
-            .map(serde_json::Value::String)
-            .map_err(|error| runtime_error("JSON strings must be valid UTF-8", error)),
-        luau::Value::TableData(table) => owned_table_to_json(table, depth + 1),
-        luau::Value::Table(table) => table_to_json(table, depth + 1),
-        luau::Value::Buffer(_) => Err(luau::Error::Runtime(
-            "buffers cannot be encoded as JSON".into(),
-        )),
-        luau::Value::NativeFunction(_) => Err(luau::Error::Runtime(
-            "functions cannot be encoded as JSON".into(),
-        )),
-        luau::Value::Function(_) => Err(luau::Error::Runtime(
-            "functions cannot be encoded as JSON".into(),
-        )),
-        luau::Value::Thread(_) => Err(luau::Error::Runtime(
-            "threads cannot be encoded as JSON".into(),
-        )),
-        luau::Value::UserData(_) => Err(luau::Error::Runtime(
-            "userdata cannot be encoded as JSON".into(),
-        )),
+/// The most values a value converted for the host may hold. A `serde_json::Value` takes tens of
+/// bytes for each, however few its JSON takes.
+pub const MAX_CONVERTED_VALUES: usize = 1024 * 1024;
+
+fn too_large() -> String {
+    format!("the value encodes to more than {MAX_ENCODED_BYTES} bytes")
+}
+
+/// Converts `value` as `json.encode` does, refusing one that encodes to more than
+/// [`MAX_ENCODED_BYTES`] or holds more than [`MAX_CONVERTED_VALUES`] values.
+pub fn luau_to_json(value: &luau::Value) -> luau::runtime::Result<serde_json::Value> {
+    luau_to_json_within(value, MAX_ENCODED_BYTES)
+}
+
+/// Converts `value` as `json.encode` does, refusing one that encodes to more than `max_bytes` or
+/// holds more than [`MAX_CONVERTED_VALUES`] values.
+///
+/// A table can hold the same subtable or string many times over, so the converted value can be
+/// far larger than the Luau one. The value is measured as JSON before any of it is built.
+pub fn luau_to_json_within(
+    value: &luau::Value,
+    max_bytes: usize,
+) -> luau::runtime::Result<serde_json::Value> {
+    let too_large = || format!("the value encodes to more than {max_bytes} bytes");
+    let node = node::Reader::new(max_bytes, &too_large).value(value)?;
+    let meter = write::Meter::new(MAX_CONVERTED_VALUES);
+    let mut sink = write::Sink::new((), max_bytes);
+    if let Err(error) = serde_json::to_writer(&mut sink, &write::Encoded::new(&node, &meter, None))
+    {
+        return Err(luau::Error::Runtime(match meter.spent() {
+            Some(write::Spent::Values) => {
+                format!("the value holds more than {MAX_CONVERTED_VALUES} values")
+            }
+            Some(write::Spent::Bytes) => too_large(),
+            None if error.is_io() => too_large(),
+            None => format!("JSON encode failed: {error}"),
+        }));
     }
+    Ok(node.to_json())
 }
 
 pub fn optional_json_field(
@@ -221,7 +243,7 @@ pub fn optional_json_field(
     if matches!(value, luau::Value::Nil) {
         Ok(None)
     } else {
-        luau_to_json(&value, 0).map(Some)
+        luau_to_json(&value).map(Some)
     }
 }
 
@@ -251,145 +273,6 @@ pub fn optional_string_pairs_field(
         result.push((key, value));
     }
     Ok(result)
-}
-
-fn json_number_from_f64(value: f64) -> Option<serde_json::Number> {
-    if !value.is_finite() {
-        return None;
-    }
-    if value.fract() == 0.0 && value >= i64::MIN as f64 && value <= i64::MAX as f64 {
-        return Some(serde_json::Number::from(value as i64));
-    }
-    serde_json::Number::from_f64(value)
-}
-
-fn owned_table_to_json(
-    table: &luau::OwnedTable,
-    depth: usize,
-) -> luau::runtime::Result<serde_json::Value> {
-    if !table.array().is_empty() && !table.fields().is_empty() {
-        return Err(luau::Error::Runtime(
-            "JSON tables cannot mix array and object keys".into(),
-        ));
-    }
-
-    if !table.array().is_empty() {
-        return Ok(serde_json::Value::Array(
-            table
-                .array()
-                .iter()
-                .map(|value| luau_to_json(value, depth + 1))
-                .collect::<luau::runtime::Result<Vec<_>>>()?,
-        ));
-    }
-
-    let mut object = serde_json::Map::new();
-    for (key, value) in table.fields() {
-        object.insert(key.clone(), luau_to_json(value, depth + 1)?);
-    }
-    Ok(serde_json::Value::Object(object))
-}
-
-fn table_to_json(table: &luau::Table, depth: usize) -> luau::runtime::Result<serde_json::Value> {
-    if table_is_empty_object_marker(table)? {
-        return Ok(serde_json::Value::Object(serde_json::Map::new()));
-    }
-
-    let pairs = table.pairs()?;
-    if pairs.is_empty() {
-        return Ok(serde_json::Value::Array(Vec::new()));
-    }
-
-    enum TableShape {
-        Unknown,
-        Array(Vec<(usize, serde_json::Value)>),
-        Object(serde_json::Map<String, serde_json::Value>),
-    }
-
-    let mut shape = TableShape::Unknown;
-    for (key, value) in pairs {
-        match (table_array_index(&key), key) {
-            (Some(index), _) => {
-                let json = luau_to_json(&value, depth)?;
-                match &mut shape {
-                    TableShape::Unknown => shape = TableShape::Array(vec![(index, json)]),
-                    TableShape::Array(values) => values.push((index, json)),
-                    TableShape::Object(_) => {
-                        return Err(luau::Error::Runtime(
-                            "JSON tables cannot mix array and object keys".into(),
-                        ));
-                    }
-                }
-            }
-            (None, luau::Value::String(key)) => {
-                let key = String::from_utf8(key).map_err(|error| {
-                    runtime_error("JSON object keys must be valid UTF-8", error)
-                })?;
-                let json = luau_to_json(&value, depth)?;
-                match &mut shape {
-                    TableShape::Unknown => {
-                        let mut object = serde_json::Map::new();
-                        object.insert(key, json);
-                        shape = TableShape::Object(object);
-                    }
-                    TableShape::Object(object) => {
-                        object.insert(key, json);
-                    }
-                    TableShape::Array(_) => {
-                        return Err(luau::Error::Runtime(
-                            "JSON tables cannot mix array and object keys".into(),
-                        ));
-                    }
-                }
-            }
-            (None, other) => {
-                return Err(luau::Error::Runtime(format!(
-                    "JSON object keys must be strings or positive integers, got {}",
-                    other.type_name()
-                )));
-            }
-        }
-    }
-
-    match shape {
-        TableShape::Unknown => Ok(serde_json::Value::Array(Vec::new())),
-        TableShape::Object(object) => Ok(serde_json::Value::Object(object)),
-        TableShape::Array(mut entries) => {
-            entries.sort_by_key(|(index, _)| *index);
-            if entries
-                .iter()
-                .enumerate()
-                .any(|(offset, (index, _))| *index != offset + 1)
-            {
-                return Err(luau::Error::Runtime(
-                    "JSON array tables must use contiguous 1-based integer keys".into(),
-                ));
-            }
-            Ok(serde_json::Value::Array(
-                entries.into_iter().map(|(_, value)| value).collect(),
-            ))
-        }
-    }
-}
-
-fn table_array_index(key: &luau::Value) -> Option<usize> {
-    match key {
-        luau::Value::Integer(value) if *value > 0 => Some(*value as usize),
-        luau::Value::Number(value) if value.is_finite() && *value > 0.0 && value.fract() == 0.0 => {
-            Some(*value as usize)
-        }
-        _ => None,
-    }
-}
-
-fn table_is_empty_object_marker(table: &luau::Table) -> luau::runtime::Result<bool> {
-    let Some(metatable) = table.metatable()? else {
-        return Ok(false);
-    };
-    Ok(matches!(
-        metatable.get(EMPTY_OBJECT_MARKER)?,
-        luau::Value::Boolean(true)
-    ))
 }
 
 pub fn json_to_luau(
@@ -484,6 +367,110 @@ pub fn render_luau_definition() -> std::result::Result<String, fmt::Error> {
 #[cfg(test)]
 mod tests {
     use super::SerdeModule;
+
+    fn eval_value(source: &str) -> harmony_luau::runtime::Result<harmony_luau::Value> {
+        let vm = harmony_luau::Vm::new()?;
+        let mut values = vm.eval(
+            std::sync::Arc::<[u8]>::from(source.as_bytes()),
+            harmony_luau::ChunkOrigin::default(),
+        )?;
+        Ok(values.remove(0))
+    }
+
+    #[test]
+    fn conversion_refuses_shared_tables_that_encode_too_large() -> harmony_luau::runtime::Result<()>
+    {
+        let chain = eval_value(
+            r#"
+            local chain = { "leaf" }
+            for _ = 1, 40 do
+                chain = { a = chain, b = chain }
+            end
+            return chain
+            "#,
+        )?;
+        let error = super::luau_to_json_within(&chain, 1024 * 1024)
+            .expect_err("the chain encodes to 2^40 leaves");
+        assert!(
+            error
+                .to_string()
+                .contains("encodes to more than 1048576 bytes"),
+            "{error}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn conversion_refuses_values_too_many_to_build() -> harmony_luau::runtime::Result<()> {
+        // Fits in MAX_ENCODED_BYTES as JSON, but would build 2^23 values.
+        let chain = eval_value(
+            r#"
+            local chain = 0
+            for _ = 1, 22 do
+                chain = { chain, chain }
+            end
+            return chain
+            "#,
+        )?;
+        let error = super::luau_to_json(&chain).expect_err("the chain holds 2^23 values");
+        assert!(
+            error.to_string().contains(&format!(
+                "holds more than {} values",
+                super::MAX_CONVERTED_VALUES
+            )),
+            "{error}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn writing_a_node_matches_writing_its_json() -> harmony_luau::runtime::Result<()> {
+        let value = eval_value(
+            r#"
+            local shared = { name = "a&b<c>\"d\"", score = -0.125, n = 7, big = 2^70 }
+            return {
+                ["@id"] = "x",
+                ["$text"] = "body",
+                items = { shared, shared, { true, false } },
+                zeta = { 1, 2.5, -3 },
+                alpha = "first",
+            }
+            "#,
+        )?;
+        let too_large = || String::from("too large");
+        let node = super::node::Reader::new(usize::MAX, &too_large).value(&value)?;
+        let json = node.to_json();
+
+        let mut written = Vec::new();
+        super::write::json(&mut written, &node, usize::MAX, &too_large)?;
+        assert_eq!(written, serde_json::to_vec(&json).expect("JSON"));
+        assert_eq!(
+            super::write::yaml(&node, usize::MAX, &too_large)?,
+            serde_saphyr::to_string(&json).expect("YAML")
+        );
+        assert_eq!(
+            super::write::xml("root", &node, usize::MAX, &too_large)?,
+            quick_xml::se::to_string_with_root("root", &json).expect("XML")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn conversion_charges_what_json_writes() -> harmony_luau::runtime::Result<()> {
+        let value = eval_value(
+            r#"
+            local shared = { name = "a\"b\n\1", score = -0.125, tiny = 1.5e-7, count = -42 }
+            return { items = { shared, shared, true, false }, big = 2^70, half = 0.5 }
+            "#,
+        )?;
+        let json = super::luau_to_json(&value)?;
+        let written = serde_json::to_string(&json)
+            .expect("the value encodes")
+            .len();
+        super::luau_to_json_within(&value, written)?;
+        assert!(super::luau_to_json_within(&value, written - 1).is_err());
+        Ok(())
+    }
 
     #[test]
     fn luau_module_encodes_and_decodes_json_values() -> harmony_luau::runtime::Result<()> {

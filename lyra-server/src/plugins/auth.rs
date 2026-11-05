@@ -133,7 +133,7 @@ impl OwnersQuery {
 impl<'vm> luau::FromLuau<'vm> for OwnersQuery {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let query: luau::Value = reader.read()?;
-        match harmony_serde::luau_to_json(&query, 0)? {
+        match harmony_serde::luau_to_json(&query)? {
             // An empty table converts to an empty array.
             serde_json::Value::Array(values) if values.is_empty() => Ok(Self::default()),
             query => serde_json::from_value(query).map_err(crate::plugins::runtime_error),

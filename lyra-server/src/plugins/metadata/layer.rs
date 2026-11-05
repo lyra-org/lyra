@@ -53,7 +53,7 @@ impl LayerOptions {
     pub(super) fn from_luau(options: Option<luau::Value>) -> luau::runtime::Result<Self> {
         match options {
             None | Some(luau::Value::Nil) => Ok(Self::default()),
-            Some(options) => serde_json::from_value(harmony_serde::luau_to_json(&options, 0)?)
+            Some(options) => serde_json::from_value(harmony_serde::luau_to_json(&options)?)
                 .map_err(|error| {
                     crate::plugins::runtime_error(format!("invalid layer options: {error}"))
                 }),
@@ -116,7 +116,7 @@ impl MetadataLayer {
         let field = MetadataField::from_name(&name).ok_or_else(|| {
             crate::plugins::runtime_error(format!("unknown metadata layer field '{name}'"))
         })?;
-        let value = input_from_json(field, harmony_serde::luau_to_json(&value, 0)?)?;
+        let value = input_from_json(field, harmony_serde::luau_to_json(&value)?)?;
         self.state
             .lock()
             .expect("metadata layer mutex poisoned")
@@ -131,7 +131,7 @@ impl MetadataLayer {
     #[harmony(args(role: LuauCreditType, credits: luau::JsonValue))]
     fn set_credits(&self, role: LuauCreditType, credits: luau::Value) -> luau::runtime::Result<()> {
         let entries: Vec<CreditEntry> =
-            serde_json::from_value(harmony_serde::luau_to_json(&credits, 0)?).map_err(|error| {
+            serde_json::from_value(harmony_serde::luau_to_json(&credits)?).map_err(|error| {
                 crate::plugins::runtime_error(format!(
                     "credits must be a list of {{ artist_id, detail? }}: {error}"
                 ))
@@ -165,14 +165,12 @@ impl MetadataLayer {
         relation_type: LuauArtistRelationType,
         relations: luau::Value,
     ) -> luau::runtime::Result<()> {
-        let entries: Vec<RelationEntry> = serde_json::from_value(harmony_serde::luau_to_json(
-            &relations, 0,
-        )?)
-        .map_err(|error| {
-            crate::plugins::runtime_error(format!(
-                "relations must be a list of {{ artist_id, attributes? }}: {error}"
-            ))
-        })?;
+        let entries: Vec<RelationEntry> =
+            serde_json::from_value(harmony_serde::luau_to_json(&relations)?).map_err(|error| {
+                crate::plugins::runtime_error(format!(
+                    "relations must be a list of {{ artist_id, attributes? }}: {error}"
+                ))
+            })?;
         let inputs = entries
             .into_iter()
             .map(|entry| {
@@ -273,7 +271,7 @@ impl MetadataLayer {
                 "custom field name must be a non-empty string",
             ));
         }
-        let value = harmony_serde::luau_to_json(&value, 0)?;
+        let value = harmony_serde::luau_to_json(&value)?;
         let mut layer = self.state.lock().expect("metadata layer mutex poisoned");
         layer.custom_fields.remove.remove(&version);
         layer
@@ -288,7 +286,7 @@ impl MetadataLayer {
     #[harmony(args(version: String, fields: luau::JsonValue))]
     fn set_custom_fields(&self, version: String, fields: luau::Value) -> luau::runtime::Result<()> {
         let version = parse_custom_field_version(&version)?;
-        let JsonValue::Object(fields) = harmony_serde::luau_to_json(&fields, 0)? else {
+        let JsonValue::Object(fields) = harmony_serde::luau_to_json(&fields)? else {
             return Err(crate::plugins::runtime_error(
                 "custom fields payload must be a JSON object",
             ));

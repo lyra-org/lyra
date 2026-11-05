@@ -6,20 +6,32 @@
 //! Encoders that write one JSON or XML document a piece at a time, so a large document never has
 //! to exist whole as Luau values or as one string.
 
-use std::sync::{
-    Arc,
-    Mutex,
+use std::{
+    ops::ControlFlow,
+    rc::Rc,
+    sync::{
+        Arc,
+        Mutex,
+    },
 };
 
 use harmony_luau as luau;
 
 use crate::{
-    luau_to_json,
+    node::{
+        Node,
+        Reader,
+    },
     runtime_error,
+    write,
 };
 
 /// The most an encoder holds before it must be flushed.
 pub const MAX_BUFFERED_BYTES: usize = 4 * 1024 * 1024;
+
+fn overfull() -> String {
+    format!("the encoder holds more than {MAX_BUFFERED_BYTES} bytes; flush it more often")
+}
 
 /// What every encoder shares: its bytes, and whether it can still go on. Any failed operation
 /// poisons the encoder, so a caller that catches the error can't go on to finish a document that
@@ -45,13 +57,21 @@ impl Output {
         Ok(())
     }
 
+    /// What the encoder can still take before it holds too much.
+    fn room(&self) -> usize {
+        MAX_BUFFERED_BYTES.saturating_sub(self.bytes.len())
+    }
+
+    /// A reader for one call's values, refusing once they could not fit.
+    fn reader(&self) -> Reader<'static> {
+        Reader::new(self.room(), &overfull)
+    }
+
     /// Poisons the encoder when `result` failed or left too much buffered.
     fn settle<T>(&mut self, result: luau::runtime::Result<T>) -> luau::runtime::Result<T> {
         let result = result.and_then(|value| {
             if self.bytes.len() > MAX_BUFFERED_BYTES {
-                return Err(luau::Error::Runtime(format!(
-                    "the encoder holds more than {MAX_BUFFERED_BYTES} bytes; flush it more often"
-                )));
+                return Err(luau::Error::Runtime(overfull()));
             }
             Ok(value)
         });
@@ -154,16 +174,20 @@ impl JsonState {
             self.output.bytes.push(b',');
         }
         if let Some(key) = key {
-            write_json(&mut self.output.bytes, &serde_json::Value::from(key))?;
+            write::json(
+                &mut self.output.bytes,
+                &Node::String(Rc::from(key)),
+                MAX_BUFFERED_BYTES,
+                &overfull,
+            )?;
             self.output.bytes.push(b':');
         }
         Ok(())
     }
 
-    fn value(&mut self, key: Option<&str>, value: &luau::Value) -> luau::runtime::Result<()> {
-        let json = luau_to_json(value, 0)?;
+    fn value(&mut self, key: Option<&str>, node: &Node) -> luau::runtime::Result<()> {
         self.begin_value(key)?;
-        write_json(&mut self.output.bytes, &json)?;
+        write::json(&mut self.output.bytes, node, MAX_BUFFERED_BYTES, &overfull)?;
         if self.stack.is_empty() {
             self.output.complete = true;
         }
@@ -215,19 +239,44 @@ impl JsonState {
     }
 }
 
-fn write_json(bytes: &mut Vec<u8>, value: &serde_json::Value) -> luau::runtime::Result<()> {
-    serde_json::to_writer(bytes, value).map_err(|error| runtime_error("JSON encode failed", error))
-}
-
-/// The values of a sequence table, in order.
-fn sequence(values: &luau::Value) -> luau::runtime::Result<Vec<luau::Value>> {
+fn require_list(values: &luau::Value) -> luau::runtime::Result<()> {
     match values {
-        luau::Value::Table(table) => table.array_values(),
-        luau::Value::TableData(table) => Ok(table.array().to_vec()),
+        luau::Value::Table(_) | luau::Value::TableData(_) => Ok(()),
         other => Err(luau::Error::Runtime(format!(
             "expected a list of values, got {}",
             other.type_name()
         ))),
+    }
+}
+
+/// Reads each value of a sequence table, in order, and hands it to `visit` until it breaks.
+fn each_item(
+    values: &luau::Value,
+    reader: &mut Reader<'_>,
+    mut visit: impl FnMut(Node) -> luau::runtime::Result<ControlFlow<()>>,
+) -> luau::runtime::Result<()> {
+    match values {
+        luau::Value::Table(table) => {
+            table.for_each_array_value(|value| visit(reader.value_ref(value)?))
+        }
+        luau::Value::TableData(table) => {
+            for value in table.array() {
+                if visit(reader.value(value)?)?.is_break() {
+                    break;
+                }
+            }
+            Ok(())
+        }
+        other => require_list(other),
+    }
+}
+
+/// Goes on to the next item while the encoder can still take more.
+fn while_room(output: &Output) -> ControlFlow<()> {
+    if output.bytes.len() > MAX_BUFFERED_BYTES {
+        ControlFlow::Break(())
+    } else {
+        ControlFlow::Continue(())
     }
 }
 
@@ -325,7 +374,8 @@ impl JsonEncoder {
             let key = text(args.required(0, "key")?, "an object key")?;
             let value = args.required(1, "value")?;
             state.require(JsonContainer::Object)?;
-            state.value(Some(&key), value)
+            let node = state.output.reader().value(value)?;
+            state.value(Some(&key), &node)
         })
     }
 
@@ -336,15 +386,14 @@ impl JsonEncoder {
     fn items(&self, args: luau::Variadic<luau::Value>) -> luau::runtime::Result<()> {
         let args = Arguments(args.0);
         apply(&self.state, |state| {
-            let values = sequence(args.required(0, "values")?)?;
+            let values = args.required(0, "values")?;
+            require_list(values)?;
             state.require(JsonContainer::Array)?;
-            for value in &values {
-                state.value(None, value)?;
-                if state.output.bytes.len() > MAX_BUFFERED_BYTES {
-                    break;
-                }
-            }
-            Ok(())
+            let mut reader = state.output.reader();
+            each_item(values, &mut reader, |node| {
+                state.value(None, &node)?;
+                Ok(while_room(&state.output))
+            })
         })
     }
 
@@ -398,10 +447,8 @@ impl XmlState {
         }
     }
 
-    fn element(&mut self, name: &str, value: &luau::Value) -> luau::runtime::Result<()> {
-        let json = luau_to_json(value, 0)?;
-        let xml = quick_xml::se::to_string_with_root(name, &json)
-            .map_err(|error| runtime_error("XML encode failed", error))?;
+    fn element(&mut self, name: &str, node: &Node) -> luau::runtime::Result<()> {
+        let xml = write::xml(name, node, self.output.room(), &overfull)?;
         self.begin_child()?;
         self.output.bytes.extend_from_slice(xml.as_bytes());
         if self.stack.is_empty() {
@@ -415,20 +462,10 @@ impl XmlState {
         name: String,
         attributes: &luau::Value,
     ) -> luau::runtime::Result<()> {
-        let mut fields = serde_json::Map::new();
-        for (key, value) in attribute_pairs(attributes)? {
-            let value = luau_to_json(&value, 0)?;
-            if value.is_object() || value.is_array() || value.is_null() {
-                return Err(luau::Error::Runtime(format!(
-                    "attribute {key} must be a string, number or boolean"
-                )));
-            }
-            fields.insert(format!("@{key}"), value);
-        }
+        let fields = attributes_node(attributes, &mut self.output.reader())?;
         // The serializer writes the start tag as it would inside a whole document, escaping
         // included, and closes it as an empty element.
-        let empty = quick_xml::se::to_string_with_root(&name, &serde_json::Value::Object(fields))
-            .map_err(|error| runtime_error("XML encode failed", error))?;
+        let empty = write::xml(&name, &fields, self.output.room(), &overfull)?;
         let start = empty.strip_suffix("/>").ok_or_else(|| {
             luau::Error::Runtime(format!("XML encode failed: unexpected start tag {empty}"))
         })?;
@@ -460,37 +497,80 @@ impl XmlState {
     }
 }
 
-/// An attribute table's pairs, sorted by name as a whole-document encode orders them.
-fn attribute_pairs(attributes: &luau::Value) -> luau::runtime::Result<Vec<(String, luau::Value)>> {
-    let pairs = match attributes {
-        luau::Value::Nil => return Ok(Vec::new()),
-        luau::Value::Table(table) => table.pairs()?,
-        luau::Value::TableData(table) => table
-            .fields()
-            .iter()
-            .map(|(key, value)| (luau::Value::String(key.as_bytes().to_vec()), value.clone()))
-            .collect(),
+/// An attribute table as the object `xml.encode` writes as attributes: each name prefixed with
+/// `@`, in name order. Each value must be a string, number, or boolean, and is checked before it
+/// is read.
+fn attributes_node(
+    attributes: &luau::Value,
+    reader: &mut Reader<'_>,
+) -> luau::runtime::Result<Node> {
+    let mut fields: Vec<(Rc<str>, Node)> = Vec::new();
+    let mut attribute = |reader: &mut Reader<'_>,
+                         name: luau::ValueRef<'_>,
+                         value: luau::ValueRef<'_>|
+     -> luau::runtime::Result<()> {
+        let luau::ValueRef::String(name) = name else {
+            return Err(luau::Error::Runtime(format!(
+                "attribute names must be strings, got {}",
+                name.type_name()
+            )));
+        };
+        let name = reader.string(
+            name,
+            true,
+            name.len() + 4,
+            "attribute names must be valid UTF-8",
+        )?;
+        if !matches!(
+            value,
+            luau::ValueRef::String(_)
+                | luau::ValueRef::Integer(_)
+                | luau::ValueRef::Number(_)
+                | luau::ValueRef::Boolean(_)
+        ) {
+            return Err(luau::Error::Runtime(format!(
+                "attribute {name} must be a string, number or boolean"
+            )));
+        }
+        fields.push((Rc::from(format!("@{name}")), reader.value_ref(value)?));
+        Ok(())
+    };
+    match attributes {
+        luau::Value::Nil => {}
+        luau::Value::Table(table) => table.for_each_pair(|name, value| {
+            attribute(reader, name, value)?;
+            Ok(ControlFlow::Continue(()))
+        })?,
+        luau::Value::TableData(table) => {
+            for (name, value) in table.fields() {
+                attribute(
+                    reader,
+                    luau::ValueRef::String(name.as_bytes()),
+                    owned_scalar(value),
+                )?;
+            }
+        }
         other => {
             return Err(luau::Error::Runtime(format!(
                 "attributes must be a table, got {}",
                 other.type_name()
             )));
         }
-    };
-    let mut named = Vec::with_capacity(pairs.len());
-    for (key, value) in pairs {
-        let luau::Value::String(key) = key else {
-            return Err(luau::Error::Runtime(format!(
-                "attribute names must be strings, got {}",
-                key.type_name()
-            )));
-        };
-        let key = String::from_utf8(key)
-            .map_err(|error| runtime_error("attribute names must be valid UTF-8", error))?;
-        named.push((key, value));
     }
-    named.sort_by(|(left, _), (right, _)| left.cmp(right));
-    Ok(named)
+    fields.sort_by(|(left, _), (right, _)| left.cmp(right));
+    Ok(Node::Object(fields.into()))
+}
+
+/// An owned attribute value as a [`luau::ValueRef`], for the scalar check: anything else reads
+/// as the table it cannot be.
+fn owned_scalar(value: &luau::Value) -> luau::ValueRef<'_> {
+    match value {
+        luau::Value::String(bytes) => luau::ValueRef::String(bytes),
+        luau::Value::Integer(value) => luau::ValueRef::Integer(*value),
+        luau::Value::Number(value) => luau::ValueRef::Number(*value),
+        luau::Value::Boolean(value) => luau::ValueRef::Boolean(*value),
+        _ => luau::ValueRef::Nil,
+    }
 }
 
 #[harmony_macros::userdata(
@@ -534,14 +614,12 @@ impl XmlEncoder {
         let args = Arguments(args.0);
         apply(&self.state, |state| {
             let name = text(args.required(0, "name")?, "an element name")?;
-            let values = sequence(args.required(1, "values")?)?;
-            for value in &values {
-                state.element(&name, value)?;
-                if state.output.bytes.len() > MAX_BUFFERED_BYTES {
-                    break;
-                }
-            }
-            Ok(())
+            let values = args.required(1, "values")?;
+            let mut reader = state.output.reader();
+            each_item(values, &mut reader, |node| {
+                state.element(&name, &node)?;
+                Ok(while_room(&state.output))
+            })
         })
     }
 

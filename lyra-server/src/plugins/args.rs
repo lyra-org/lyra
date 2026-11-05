@@ -354,7 +354,7 @@ pub(crate) struct JsonArg(pub(crate) serde_json::Value);
 impl<'vm> luau::FromLuau<'vm> for JsonArg {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let value: luau::Value = reader.read()?;
-        harmony_serde::luau_to_json(&value, 0).map(Self)
+        harmony_serde::luau_to_json(&value).map(Self)
     }
 }
 
@@ -366,7 +366,7 @@ impl LuauTypeInfo for JsonArg {
 
 /// A Luau value read as the JSON-deserializable `T`.
 pub(crate) fn from_json<T: DeserializeOwned>(value: &luau::Value) -> luau::runtime::Result<T> {
-    serde_json::from_value(harmony_serde::luau_to_json(value, 0)?)
+    serde_json::from_value(harmony_serde::luau_to_json(value)?)
         .map_err(crate::plugins::runtime_error)
 }
 

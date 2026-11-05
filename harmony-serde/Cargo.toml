@@ -9,5 +9,6 @@ harmony-core = { path = "../harmony-core" }
 harmony-luau = { path = "../harmony-luau" }
 harmony-macros = { path = "../harmony-macros" }
 quick-xml = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 serde-saphyr = { workspace = true }

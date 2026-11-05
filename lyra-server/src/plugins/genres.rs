@@ -258,7 +258,7 @@ struct GenreResolveRequest {
 }
 
 fn genre_request_from_table(table: luau::Table) -> luau::runtime::Result<GenreResolveRequest> {
-    let value = harmony_serde::luau_to_json(&luau::Value::Table(table), 0)?;
+    let value = harmony_serde::luau_to_json(&luau::Value::Table(table))?;
     serde_json::from_value(value).map_err(crate::plugins::runtime_error)
 }
 

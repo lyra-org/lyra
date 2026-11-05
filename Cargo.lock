@@ -991,6 +991,7 @@ dependencies = [
  "harmony-luau",
  "harmony-macros",
  "quick-xml",
+ "serde",
  "serde-saphyr",
  "serde_json",
 ]

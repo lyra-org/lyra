@@ -337,7 +337,7 @@ fn read_records(
         };
         let owner = format!("entries['{key}']");
         args::reject_unknown_fields(&record, &owner, &["value", "ttl_ms"])?;
-        let value = harmony_serde::luau_to_json(&record.get("value")?, 0)?;
+        let value = harmony_serde::luau_to_json(&record.get("value")?)?;
         let ttl_ms = read_ttl_ms(&record, &owner)?;
         entries.push((key, value, ttl_ms));
     }
