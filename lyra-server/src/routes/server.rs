@@ -148,6 +148,8 @@ enum SettingFieldResponse {
 struct SettingGroupResponse {
     id: String,
     label: String,
+    /// The permission changing a setting in this group takes; Admin holds every permission.
+    permission: Permission,
     fields: Vec<SettingFieldResponse>,
 }
 
@@ -278,6 +280,7 @@ fn settings_response() -> Result<ServerSettingsResponse, AppError> {
             None => groups.push(SettingGroupResponse {
                 id: group.id.to_string(),
                 label: group.label.to_string(),
+                permission: group.permission,
                 fields: vec![field],
             }),
         }
@@ -425,21 +428,21 @@ fn update_setup_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn get_server_settings_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get server settings").description(
-        "Returns every server setting grouped for display with its effective value, default, source, lock state, and whether a change needs a restart, plus the restart-required settings changed since startup and the boot values in use.",
+        "Returns every server setting grouped for display with its effective value, default, source, lock state, and whether a change needs a restart, each group with the permission changing it takes, plus the restart-required settings changed since startup and the boot values in use.",
     )
 }
 
 #[cfg(feature = "docgen")]
 fn update_server_settings_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Update server settings").description(
-        "Stores the given values (`null` clears one back to its default) and returns the updated settings. Requires a session credential, and Admin for any `auth.*` key. Undeclared keys and invalid values are rejected with 400. A request touching any key set in `config.json` is rejected with 409 listing the locked keys, and nothing is written.",
+        "Stores the given values (`null` clears one back to its default) and returns the updated settings. Requires a session credential and the `permission` of each group the request touches. Undeclared keys and invalid values are rejected with 400. A request touching any key set in `config.json` is rejected with 409 listing the locked keys, and nothing is written.",
     )
 }
 
 #[cfg(feature = "docgen")]
 fn delete_server_settings_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Reset server settings").description(
-        "Clears every stored server setting so file values and defaults apply again, and returns the updated settings. Requires a session credential, and Admin when an `auth.*` value is stored.",
+        "Clears every stored server setting so file values and defaults apply again, and returns the updated settings. Requires a session credential and the `permission` of each group with a stored value.",
     )
 }
 
@@ -1002,6 +1005,16 @@ mod tests {
         initialize_test_state(&[]).await?;
         let manager = manage_server_headers().await?;
         let admin = headers_with(vec![Permission::Admin]).await?;
+
+        let settings = body(get_server_settings(manager.clone()).await);
+        let permissions: HashMap<&str, &Value> = settings["groups"]
+            .as_array()
+            .expect("groups")
+            .iter()
+            .map(|group| (group["id"].as_str().expect("id"), &group["permission"]))
+            .collect();
+        assert_eq!(permissions["auth"], &json!("admin"));
+        assert_eq!(permissions["sync"], &json!("manage_server"));
 
         let (status, message) = error(
             update_server_settings(
