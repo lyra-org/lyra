@@ -56,7 +56,7 @@ pub(crate) type LyricsInFlight = Arc<std::sync::Mutex<HashSet<LyricsInFlightKey>
 #[derive(Default)]
 pub(crate) struct ProviderRegistries {
     registry: Arc<RwLock<ProviderRegistry>>,
-    sync_locks: Arc<tokio::sync::Mutex<HashSet<String>>>,
+    sync_locks: Arc<std::sync::Mutex<HashSet<String>>>,
     library_refresh_locks: Arc<tokio::sync::Mutex<HashSet<agdb::DbId>>>,
     call_locks: Arc<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     id_links: Arc<std::sync::Mutex<IdLinkCache>>,
@@ -88,7 +88,7 @@ pub(crate) async fn declared_artist_ids() -> DeclaredIds {
         .declared_ids(EntityType::Artist)
 }
 
-pub(crate) fn sync_locks() -> Arc<tokio::sync::Mutex<HashSet<String>>> {
+pub(crate) fn sync_locks() -> Arc<std::sync::Mutex<HashSet<String>>> {
     crate::services::STATE
         .generation()
         .providers
@@ -1032,11 +1032,15 @@ pub(crate) async fn teardown_plugin_providers(plugin_id: &PluginId) {
         .await;
 
     if !owned_provider_ids.is_empty() {
-        let mut locks = providers.sync_locks.lock().await;
-        for id in &owned_provider_ids {
-            locks.remove(id);
+        {
+            let mut locks = providers
+                .sync_locks
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            for id in &owned_provider_ids {
+                locks.remove(id);
+            }
         }
-        drop(locks);
 
         let mut call_locks = providers.call_locks.lock().await;
         for id in &owned_provider_ids {

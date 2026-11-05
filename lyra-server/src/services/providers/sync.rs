@@ -4,6 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 use std::{
+    collections::HashSet,
     sync::Arc,
     time::Duration,
 };
@@ -49,20 +50,42 @@ pub(crate) async fn run_provider_sync(provider_id: &str) -> Result<(), ProviderS
         }
     }
 
-    {
-        let mut locks = sync_locks().lock_owned().await;
-        if !locks.insert(provider_id.to_string()) {
+    let _lock = ProviderSyncLock::acquire(provider_id)?;
+    run_provider_sync_inner(provider_id).await
+}
+
+/// Marks a provider's sync as running until dropped, however the sync ends.
+struct ProviderSyncLock {
+    locks: Arc<std::sync::Mutex<HashSet<String>>>,
+    provider_id: String,
+}
+
+impl ProviderSyncLock {
+    fn acquire(provider_id: &str) -> Result<Self, ProviderServiceError> {
+        let locks = sync_locks();
+        if !locks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(provider_id.to_string())
+        {
             return Err(ProviderServiceError::SyncAlreadyRunning(
                 provider_id.to_string(),
             ));
         }
+        Ok(Self {
+            locks,
+            provider_id: provider_id.to_string(),
+        })
     }
+}
 
-    let result = run_provider_sync_inner(provider_id).await;
-
-    sync_locks().lock_owned().await.remove(provider_id);
-
-    result
+impl Drop for ProviderSyncLock {
+    fn drop(&mut self) {
+        self.locks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&self.provider_id);
+    }
 }
 
 async fn run_provider_sync_inner(provider_id: &str) -> Result<(), ProviderServiceError> {
@@ -203,6 +226,26 @@ async fn run_all_provider_syncs() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_provider_sync_lock_is_released_when_its_sync_is_dropped() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+
+        let held = ProviderSyncLock::acquire("provider")?;
+        assert!(matches!(
+            ProviderSyncLock::acquire("provider"),
+            Err(ProviderServiceError::SyncAlreadyRunning(_))
+        ));
+        let sync = tokio::spawn(async move {
+            let _held = held;
+            panic!("sync panicked");
+        });
+        assert!(sync.await.unwrap_err().is_panic());
+
+        drop(ProviderSyncLock::acquire("provider")?);
+        Ok(())
+    }
 
     #[test]
     fn next_sync_due_is_none_when_disabled_and_set_when_enabled() {
