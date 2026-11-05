@@ -157,6 +157,59 @@ pub fn remove(
     Ok(true)
 }
 
+/// Moves the bookmarks of `from` onto `to`. A user who bookmarked both keeps the bookmark they
+/// changed last, created at the earlier of the two times.
+pub fn retarget(db: &mut impl DbAccess, from: DbId, to: DbId) -> anyhow::Result<()> {
+    for element in read_inbound_bookmark_edges(db, from)? {
+        let Some(moved) = parse_bookmark(&element) else {
+            continue;
+        };
+        let user_db_id = element.from;
+        let kept = find_bookmark_edge(db, user_db_id, to)?;
+        db.exec_mut(QueryBuilder::remove().ids(element.id).query())?;
+        let (edge_id, bookmark) = match kept {
+            Some(kept) => {
+                let Some(existing) = parse_bookmark(&kept) else {
+                    continue;
+                };
+                let created_at_ms = existing.created_at_ms.min(moved.created_at_ms);
+                let newest = if moved.updated_at_ms > existing.updated_at_ms {
+                    moved
+                } else {
+                    existing
+                };
+                (
+                    kept.id,
+                    Bookmark {
+                        created_at_ms,
+                        ..newest
+                    },
+                )
+            }
+            None => (
+                db.exec_mut(
+                    QueryBuilder::insert()
+                        .edges()
+                        .from(user_db_id)
+                        .to(to)
+                        .query(),
+                )?
+                .ids()[0],
+                moved,
+            ),
+        };
+        write_values(
+            db,
+            edge_id,
+            bookmark.position_ms,
+            bookmark.comment.as_deref(),
+            bookmark.created_at_ms,
+            bookmark.updated_at_ms,
+        )?;
+    }
+    Ok(())
+}
+
 pub(crate) fn remove_outbound_for_user(
     db: &mut impl DbAccess,
     user_db_id: DbId,

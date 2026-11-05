@@ -427,7 +427,7 @@ fn credits_locked(db: &impl lyra_db::DbAccess, owner_id: DbId) -> anyhow::Result
     })
 }
 
-fn migrate_metadata(
+pub(super) fn migrate_metadata(
     db: &mut DbAnyTransactionMut<'_>,
     winner: DbId,
     loser: DbId,

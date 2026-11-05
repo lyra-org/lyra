@@ -865,11 +865,53 @@ fn create_track_playback_url_docs(op: TransformOperation) -> TransformOperation 
     )
 }
 
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+struct RemapRequest {
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Public id of the available track whose file the missing one now is."
+        )
+    )]
+    target_id: String,
+}
+
+async fn remap_track(
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(request): Json<RemapRequest>,
+) -> Result<Json<TrackResponse>, AppError> {
+    use crate::services::metadata::remap::{
+        RemapError,
+        remap,
+    };
+
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
+    remap(&principal, &id, &request.target_id)
+        .await
+        .map_err(|err| match err {
+            RemapError::NotFound(id) => AppError::not_found(format!("Track not found: {id}")),
+            RemapError::Forbidden(message) => AppError::forbidden(message),
+            RemapError::Conflict(message) => AppError::conflict(message),
+            RemapError::Internal(err) => err.into(),
+        })?;
+    Ok(Json(get_track_response(&principal, id, None).await?))
+}
+
+#[cfg(feature = "docgen")]
+fn remap_track_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Remap a missing track").description(
+        "Makes the available track `target_id` the file of this missing track, as when a file was retagged and moved between two syncs. This track keeps its id, favorites, ratings, tags, listens, bookmarks, playlist entries, lyrics and covers, and takes the target's file, release, chain place and tags' metadata; its manual edits stay, filled by the target's. The target's own favorites, ratings, tags, listens, bookmarks, playlist entries, queued places, lyrics and covers move to it, keeping this track's where a user has both, and the target is removed, its id with it. Returns this track. Answers 409 when this track can still play, the target can't, they are the same track, or a sync, refresh or purge of either library is running; 403 unless the caller manages both tracks' libraries.",
+    )
+}
+
 pub fn track_routes() -> Router {
     Router::new()
         .route("/", get(get_tracks))
         .route("/{id}", get(get_track))
         .route("/{id}/playback-url", post(create_track_playback_url))
+        .route("/{id}/remap", post(remap_track))
         .merge(lyrics::routes())
 }
 
@@ -887,6 +929,7 @@ pub(crate) fn track_openapi_routes() -> aide::axum::ApiRouter {
             "/{id}/playback-url",
             post_with(create_track_playback_url, create_track_playback_url_docs),
         )
+        .api_route("/{id}/remap", post_with(remap_track, remap_track_docs))
         .merge(lyrics::openapi_routes())
 }
 

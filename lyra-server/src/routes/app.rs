@@ -441,6 +441,7 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("GET", "/api/tracks/"),
     ("GET", "/api/tracks/{id}"),
     ("POST", "/api/tracks/{id}/playback-url"),
+    ("POST", "/api/tracks/{id}/remap"),
     ("GET", "/api/tracks/{id}/lyrics"),
     ("GET", "/api/tracks/{id}/lyrics/candidates"),
     ("PUT", "/api/tracks/{id}/lyrics/personal"),

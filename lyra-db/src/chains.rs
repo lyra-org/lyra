@@ -303,6 +303,58 @@ pub(crate) fn remove_for_departing_track(
     remove_ids(db, &departing)
 }
 
+/// Hands `from`'s place in its chains to `to`, and drops `to`'s own places, renumbering what
+/// remains; a chain left with fewer than two tracks goes.
+pub fn hand_over(db: &mut impl DbAccess, from: DbId, to: DbId) -> anyhow::Result<()> {
+    let mut chain_db_ids = super::graph::inbound_neighbor_ids(db, to, "Chain")?;
+    chain_db_ids.extend(super::graph::inbound_neighbor_ids(db, from, "Chain")?);
+    chain_db_ids.sort_unstable();
+    chain_db_ids.dedup();
+    for chain_db_id in chain_db_ids {
+        let mut members = member_edges(db, chain_db_id)?;
+        members.sort_by_key(|(_, position)| *position);
+        let tracks = members
+            .into_iter()
+            .map(|(track, _)| track)
+            .filter(|track| *track != to)
+            .map(|track| if track == from { to } else { track })
+            .collect::<Vec<_>>();
+        super::graph::remove_edges_between(db, chain_db_id, to)?;
+        super::graph::remove_edges_between(db, chain_db_id, from)?;
+        if tracks.len() < 2 {
+            remove_ids(db, &[chain_db_id])?;
+            continue;
+        }
+        if tracks.contains(&to) {
+            db.exec_mut(
+                QueryBuilder::insert()
+                    .edges()
+                    .from(chain_db_id)
+                    .to(to)
+                    .values_uniform([(POSITION_KEY, 0_u64).into()])
+                    .query(),
+            )?;
+        }
+        renumber(db, chain_db_id, &tracks)?;
+    }
+    Ok(())
+}
+
+/// Numbers the chain's member edges in the order of `tracks`.
+fn renumber(db: &mut impl DbAccess, chain_db_id: DbId, tracks: &[DbId]) -> anyhow::Result<()> {
+    for (position, &track) in (0_u64..).zip(tracks) {
+        for edge in super::graph::direct_edge_ids(db, chain_db_id, track)? {
+            db.exec_mut(
+                QueryBuilder::insert()
+                    .values_uniform([(POSITION_KEY, position).into()])
+                    .ids(edge)
+                    .query(),
+            )?;
+        }
+    }
+    Ok(())
+}
+
 /// Remove the chains owned by, or holding, a node that is about to be deleted.
 pub(crate) fn remove_for_entity(db: &mut impl DbAccess, node_db_id: DbId) -> anyhow::Result<()> {
     let mut chain_db_ids = super::graph::neighbor_ids(db, node_db_id, "Chain")?;
@@ -382,6 +434,50 @@ mod tests {
 
     fn chain_count(db: &DbAny) -> anyhow::Result<usize> {
         Ok(crate::graph::neighbor_ids(db, "chains", "Chain")?.len())
+    }
+
+    #[test]
+    fn handing_over_within_one_chain_keeps_it_valid() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let urn = release_with_tracks(&mut db, "Urn", 4)?;
+        let t = &urn.tracks;
+        replace_for_release(&mut db, urn.release, &[vec![t[0], t[1], t[2], t[3]]])??;
+
+        // t[1] takes t[3]'s place and leaves its own.
+        db.transaction_mut(|tx| hand_over(tx, t[3], t[1]))?;
+        crate::releases::unlink_track(&mut db, urn.release, t[3])?;
+        assert_eq!(
+            members(&get_for_release(&db, urn.release)?),
+            vec![vec![t[0], t[2], t[1]]]
+        );
+        assert_eq!(links_for_tracks(&db, &[t[1]])?[&t[1]].position, 2);
+
+        // A chain left with one track goes.
+        let pair = release_with_tracks(&mut db, "Pair", 2)?;
+        let p = &pair.tracks;
+        replace_for_release(&mut db, pair.release, &[vec![p[0], p[1]]])??;
+        db.transaction_mut(|tx| hand_over(tx, p[1], p[0]))?;
+        assert!(get_for_release(&db, pair.release)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn handing_over_takes_the_place_in_another_chain() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let old = release_with_tracks(&mut db, "Old", 3)?;
+        let new = release_with_tracks(&mut db, "New", 2)?;
+        replace_for_release(&mut db, old.release, &[old.tracks.clone()])??;
+        replace_for_release(&mut db, new.release, &[new.tracks.clone()])??;
+
+        db.transaction_mut(|tx| hand_over(tx, new.tracks[1], old.tracks[0]))?;
+        assert_eq!(
+            members(&get_for_release(&db, old.release)?),
+            vec![vec![old.tracks[1], old.tracks[2]]]
+        );
+        let links = links_for_tracks(&db, &[old.tracks[0]])?;
+        assert_eq!(links[&old.tracks[0]].position, 1);
+        assert_eq!(links[&old.tracks[0]].release_db_id, new.release);
+        Ok(())
     }
 
     #[test]

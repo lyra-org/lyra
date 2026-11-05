@@ -2680,6 +2680,120 @@ FILE "album.flac" WAVE
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn a_remapped_missing_track_takes_over_the_new_file() -> anyhow::Result<()> {
+        use crate::services::metadata::remap::{
+            RemapError,
+            remap,
+        };
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library, missing, _) = library_with_a_missing_album("remap").await?;
+        // The same song, retagged and moved before the sync, reads as a new track.
+        let retagged = album_track(&root.join("New"), "New")?;
+        sync(&library).await?;
+        let target_entry = entry_for(&library, &retagged).await?;
+        let (target, missing_id, target_id, admin, other, playlist) = {
+            let mut db = STATE.db.write().await;
+            let target = lyra_db::tracks::get_by_entry(&db, target_entry.db_id.expect("db id"))?[0]
+                .db_id
+                .clone()
+                .map(DbId::from)
+                .expect("target");
+            let id = |db: &agdb::DbAny, track| {
+                lyra_db::lookup::find_id_by_db_id(db, track).map(|id| id.expect("public id"))
+            };
+            let missing_id = id(&db, missing)?;
+            let target_id = id(&db, target)?;
+            let admin = lyra_db::test_db::insert_user(&mut db, "remap-admin")?;
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
+            lyra_db::roles::ensure_user_has_role(
+                &mut db,
+                admin,
+                lyra_db::roles::BUILTIN_ADMIN_ROLE,
+            )?;
+            let other = lyra_db::test_db::insert_user(&mut db, "remap-other")?;
+            let kind = lyra_db::favorites::FavoriteKind::Track;
+            lyra_db::favorites::add(&mut *db, admin, missing, kind, 10)?;
+            lyra_db::favorites::add(&mut *db, other, target, kind, 20)?;
+            lyra_db::favorites::add(&mut *db, admin, target, kind, 5)?;
+            let playlist = lyra_db::playlists::create(
+                &mut db,
+                &lyra_db::playlists::Playlist {
+                    db_id: None,
+                    id: nanoid::nanoid!(),
+                    name: "Both".to_string(),
+                    description: None,
+                    is_public: None,
+                    created_at_ms: None,
+                    updated_at_ms: None,
+                },
+                admin,
+            )?;
+            lyra_db::playlists::add_tracks(&mut *db, playlist, &[missing, target])?;
+            let principal = crate::services::auth::Principal::for_user(
+                &*db,
+                admin,
+                vec![lyra_db::Permission::Admin],
+                std::collections::HashSet::new(),
+            );
+            (target, missing_id, target_id, principal, other, playlist)
+        };
+
+        assert!(matches!(
+            remap(&admin, &target_id, &missing_id).await,
+            Err(RemapError::Conflict(_))
+        ));
+        assert!(matches!(
+            remap(&admin, &missing_id, &missing_id).await,
+            Err(RemapError::Conflict(_))
+        ));
+        remap(&admin, &missing_id, &target_id).await?;
+
+        let db = STATE.db.read().await;
+        assert!(
+            lyra_db::tracks::get_by_id(&*db, target)?.is_none(),
+            "the target stayed"
+        );
+        assert_eq!(
+            lyra_db::lookup::find_node_id_by_id(&*db, &missing_id)?,
+            Some(missing),
+            "the missing track lost its id"
+        );
+        assert!(lyra_db::track_sources::track_available(&*db, missing)?);
+        assert_eq!(
+            lyra_db::entries::get_by_track(&db, missing)?
+                .into_iter()
+                .map(|entry| entry.full_path)
+                .collect::<Vec<_>>(),
+            vec![retagged.clone()]
+        );
+        let release = lyra_db::releases::get_by_track(&db, missing)?;
+        assert_eq!(release.len(), 1);
+        assert_eq!(release[0].release_title, "New");
+        assert!(lyra_db::favorites::has(&*db, other, missing)?);
+        assert_eq!(
+            lyra_db::favorites::first_favorited_at(
+                &*db,
+                admin.require(&db)?,
+                lyra_db::favorites::FavoriteKind::Track,
+            )?
+            .get(&missing)
+            .copied(),
+            Some(5),
+            "a user favoriting both keeps the earlier time"
+        );
+        assert_eq!(
+            lyra_db::graph::direct_edge_ids(&*db, playlist, missing)?.len(),
+            2,
+            "a playlist holding both holds the remapped track twice"
+        );
+        drop(db);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_cue_sheet_in_a_legacy_encoding_keeps_its_segments() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         crate::services::testing::init_default_test_state()?;

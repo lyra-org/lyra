@@ -926,6 +926,58 @@ pub fn replace_queue_in_transaction(
     Ok(playback)
 }
 
+/// Swaps the track `from` for `to` in every saved queue that holds it, as a new revision, both
+/// public ids.
+pub fn retarget_queue_track(db: &mut impl DbAccess, from: &str, to: &str) -> anyhow::Result<()> {
+    let records = db.exec(
+        QueryBuilder::select()
+            .values(["queue_track_ids", "queue_revision"])
+            .search()
+            .from("playbacks")
+            .where_()
+            .distance(CountComparison::Equal(2))
+            .and()
+            .keys(["queue_track_ids", "queue_revision"])
+            .query(),
+    )?;
+    for element in records.elements {
+        let mut track_ids = None;
+        let mut revision = None;
+        for kv in &element.values {
+            match (&kv.key, &kv.value) {
+                (DbValue::String(key), DbValue::VecString(ids)) if key == "queue_track_ids" => {
+                    track_ids = Some(ids.clone());
+                }
+                (DbValue::String(key), DbValue::U64(value)) if key == "queue_revision" => {
+                    revision = Some(*value);
+                }
+                _ => {}
+            }
+        }
+        let (Some(mut track_ids), Some(revision)) = (track_ids, revision) else {
+            continue;
+        };
+        if !track_ids.iter().any(|id| id == from) {
+            continue;
+        }
+        for id in &mut track_ids {
+            if id == from {
+                *id = to.to_string();
+            }
+        }
+        db.exec_mut(
+            QueryBuilder::insert()
+                .values_uniform([
+                    ("queue_track_ids", track_ids).into(),
+                    ("queue_revision", revision.saturating_add(1)).into(),
+                ])
+                .ids(element.id)
+                .query(),
+        )?;
+    }
+    Ok(())
+}
+
 pub fn delete(db: &mut DbAny, playback_db_id: DbId) -> anyhow::Result<()> {
     db.transaction_mut(|t| delete_in_transaction(t, playback_db_id))
 }

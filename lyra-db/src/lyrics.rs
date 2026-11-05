@@ -374,6 +374,45 @@ fn rows_of_kind(
         .try_into()?)
 }
 
+/// What a track holds one lyrics row of at most: a provider's, the shared one, or a user's own.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum Slot {
+    Provider(String),
+    Shared,
+    Personal(DbId),
+}
+
+fn slot_of(db: &impl DbAccess, row: &Lyrics) -> anyhow::Result<Option<Slot>> {
+    Ok(match row.kind {
+        LyricsKind::Provider => row.provider_id.clone().map(Slot::Provider),
+        LyricsKind::Shared => Some(Slot::Shared),
+        LyricsKind::Personal => personal_owner(db, row)?.map(Slot::Personal),
+    })
+}
+
+/// Moves `from`'s lyrics rows onto `to` for the slots `to` has none of; `to` keeps its own, and
+/// the rows of `from` it already has a slot for stay with `from`.
+pub fn retarget_missing(db: &mut impl DbAccess, from: DbId, to: DbId) -> anyhow::Result<()> {
+    let mut taken = std::collections::HashSet::new();
+    for row in rows_for_track(db, to)? {
+        taken.extend(slot_of(db, &row)?);
+    }
+    for row in rows_for_track(db, from)? {
+        let Some(slot) = slot_of(db, &row)? else {
+            continue;
+        };
+        if !taken.insert(slot) {
+            continue;
+        }
+        let Some(row_id) = row.db_id.clone().map(DbId::from) else {
+            continue;
+        };
+        super::graph::remove_edges_between(db, from, row_id)?;
+        db.exec_mut(QueryBuilder::insert().edges().from(to).to(row_id).query())?;
+    }
+    Ok(())
+}
+
 /// `(edge, owner)` for each incoming `LYRICS_OWNER_KEY` edge of `lyrics_db_id`.
 fn owner_edges(db: &impl DbAccess, lyrics_db_id: DbId) -> anyhow::Result<Vec<(DbId, DbId)>> {
     Ok(db

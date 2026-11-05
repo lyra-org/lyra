@@ -73,6 +73,55 @@ pub enum RetargetLookup {
     Target,
 }
 
+/// Moves the edges reaching `from` out of `kind` nodes onto `to`, with their values.
+pub fn retarget_inbound(
+    db: &mut impl DbAccess,
+    kind: &str,
+    from: DbId,
+    to: DbId,
+) -> anyhow::Result<()> {
+    let mut moved = Vec::new();
+    for edge in db
+        .exec(
+            QueryBuilder::select()
+                .search()
+                .to(from)
+                .where_()
+                .edge()
+                .and()
+                .distance(CountComparison::Equal(1))
+                .query(),
+        )?
+        .elements
+    {
+        if edge.to == from && is_kind(db, edge.from, kind)? {
+            moved.push(edge);
+        }
+    }
+    if moved.is_empty() {
+        return Ok(());
+    }
+    db.exec_mut(
+        QueryBuilder::remove()
+            .ids(moved.iter().map(|edge| edge.id).collect::<Vec<_>>())
+            .query(),
+    )?;
+    db.exec_mut(
+        QueryBuilder::insert()
+            .edges()
+            .from(moved.iter().map(|edge| edge.from).collect::<Vec<_>>())
+            .to(vec![to; moved.len()])
+            .values(
+                moved
+                    .into_iter()
+                    .map(|edge| edge.values)
+                    .collect::<Vec<_>>(),
+            )
+            .query(),
+    )?;
+    Ok(())
+}
+
 pub fn ensure_owned_edge(db: &mut impl DbAccess, from: DbId, to: DbId) -> anyhow::Result<bool> {
     if edge_exists(db, from, to)? {
         return Ok(false);
