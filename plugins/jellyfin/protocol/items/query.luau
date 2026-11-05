@@ -355,7 +355,7 @@ function module.tracks(options: ItemsQueryOptions, scope: Scope): TrackQuery?
 		return nil
 	end
 
-	local query: TrackQuery = {}
+	local query: TrackQuery = { available = true }
 	local genre_ids = filters.genre_ids
 	local scope_id = scope.id
 	if scope_id ~= nil then
@@ -404,7 +404,7 @@ end
 -- The tracks among `ids` under `scope`, as upstream's ancestors: their library, their release, or
 -- an artist credited on them or their release; nil when `scope` holds no tracks that way.
 function module.tracks_under(ids: { string }, scope: Scope): TrackQuery?
-	local query: TrackQuery = { ids = ids }
+	local query: TrackQuery = { ids = ids, available = true }
 	if scope.entity_type == "Library" then
 		query.library_id = scope.id
 	elseif scope.entity_type == "Release" then
@@ -430,7 +430,7 @@ function module.releases(options: ItemsQueryOptions, scope: Scope): ReleaseQuery
 		return nil
 	end
 
-	local query: ReleaseQuery = {}
+	local query: ReleaseQuery = { available = true }
 	local genre_ids = filters.genre_ids
 	local scope_id = scope.id
 	if scope_id ~= nil then
@@ -495,7 +495,7 @@ function module.artists(options: ItemsQueryOptions, scope: Scope, role: CreditRo
 		return nil
 	end
 
-	local query: ArtistQuery = {}
+	local query: ArtistQuery = { available = true }
 	local genre_ids = filters.genre_ids
 	local scope_id = scope.id
 	if scope_id ~= nil then
@@ -649,7 +649,7 @@ function module.genres(options: ItemsQueryOptions, scope: Scope): GenreQuery?
 		return nil
 	end
 
-	local query: GenreQuery = {}
+	local query: GenreQuery = { available = true }
 	local scope_id = scope.id
 	if scope_id ~= nil then
 		if scope.entity_type == "Library" then

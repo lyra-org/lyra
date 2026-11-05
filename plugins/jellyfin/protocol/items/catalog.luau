@@ -1121,7 +1121,9 @@ function helpers.to_library_view_item(lib: LibraryInfo?, include_child_count: bo
 		LockData = false,
 		PlayAccess = "Full",
 		SpecialFeatureCount = 0,
-		ChildCount = if include_child_count then releases.query({ library_id = lib.id, limit = 0 }).total else nil,
+		ChildCount = if include_child_count
+			then releases.query({ library_id = lib.id, available = true, limit = 0 }).total
+			else nil,
 	} :: ItemInfo
 end
 
@@ -1867,6 +1869,9 @@ function helpers.prefetch_release_tracks(context: ItemContext, seed: Realization
 	end
 
 	local release_tracks_map = tracks.by_release(seed.release_ids)
+	for release_id, release_tracks in release_tracks_map do
+		release_tracks_map[release_id] = lookups.playable(release_tracks)
+	end
 	helpers.merge_relation_map(context.release_tracks_by_release_id, release_tracks_map)
 	context.has_release_tracks_prefetch = helpers.relation_map_has_entries(release_tracks_map)
 end

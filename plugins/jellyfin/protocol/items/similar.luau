@@ -79,6 +79,7 @@ function module.list_similar_items(
 				genre_ids = genre_ids,
 				exclude_ids = exclude_ids,
 				exclude_artist_ids = exclude_artist_ids,
+				available = true,
 				sort = RANDOM :: any,
 				seed = seed,
 				limit = limit,
@@ -93,6 +94,7 @@ function module.list_similar_items(
 				genre_ids = genre_ids,
 				exclude_ids = exclude_ids,
 				exclude_artist_ids = exclude_artist_ids,
+				available = true,
 				sort = RANDOM :: any,
 				seed = seed,
 				limit = limit,
@@ -107,6 +109,7 @@ function module.list_similar_items(
 			local page = artists.query({
 				genre_ids = genre_ids,
 				exclude_ids = exclude_ids,
+				available = true,
 				sort = RANDOM :: any,
 				seed = seed,
 				limit = limit,

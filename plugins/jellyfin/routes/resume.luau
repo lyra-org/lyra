@@ -71,7 +71,7 @@ local function bookmarked_in(libraries: { catalog.ItemInfo }): { string }
 	for _, library in libraries do
 		local library_id = item_ids.decode_jellyfin_item_id(library.Id)
 		if library_id then
-			for _, track in tracks.query({ library_id = library_id, bookmarked = true }).items do
+			for _, track in tracks.query({ library_id = library_id, bookmarked = true, available = true }).items do
 				table.insert(track_ids, track.id)
 			end
 		end

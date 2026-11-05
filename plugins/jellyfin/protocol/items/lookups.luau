@@ -51,11 +51,22 @@ function module.scope(item_id: string?): Scope
 	return { id = id, entity_type = module.scope_entity_type(id) }
 end
 
+-- The tracks among `track_list` that can play, in order: clients can't show the others.
+function module.playable(track_list: { Track }): { Track }
+	local kept: { Track } = {}
+	for _, track in track_list do
+		if track.available then
+			table.insert(kept, track)
+		end
+	end
+	return kept
+end
+
 function module.tracks_of_release(release_id: string?): { Track }
 	if release_id == nil then
 		return {}
 	end
-	return tracks.by_release({ release_id })[release_id] or {}
+	return module.playable(tracks.by_release({ release_id })[release_id] or {})
 end
 
 function module.releases_of_track(track_id: string?): { Release }

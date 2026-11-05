@@ -1253,6 +1253,8 @@ function module.build_playback_info(
 	}, nil
 end
 
+-- The track `item_id` names for playing it: nil when it is hidden or missing, or none of its
+-- files is there, which clients can't play either.
 local function lookup_track(lookup: ({ string }) -> { [string]: Track }, item_id: string?): Track?
 	if not item_id then
 		return nil
@@ -1263,7 +1265,8 @@ local function lookup_track(lookup: ({ string }) -> { [string]: Track }, item_id
 	if not ok or type(result) ~= "table" then
 		return nil
 	end
-	return (result :: { [string]: Track })[item_id]
+	local track = (result :: { [string]: Track })[item_id]
+	return if track and track.available then track else nil
 end
 
 function module.resolve_track_for_playback(item_id: string?): Track?

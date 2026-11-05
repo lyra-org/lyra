@@ -962,7 +962,7 @@ function module.list_playlist_track_items(
 	local entries: { tracks.Track } = {}
 	for _, track_ref in track_refs do
 		local track = tracks_by_id[track_ref.track_id]
-		if track then
+		if track and track.available then
 			table.insert(entries, track)
 		end
 	end
