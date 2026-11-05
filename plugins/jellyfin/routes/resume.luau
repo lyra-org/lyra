@@ -132,11 +132,9 @@ function module.handle_resume(ctx: ApiContext): ApiResponse
 	end
 	options.exclude_item_ids = exclude_ids
 
-	return api.response.stream(200, function(writer)
-		catalog.write_item_query_result(writer, function(emit)
-			return listing.each_item_batch(options, emit)
-		end)
-	end, { ["content-type"] = "application/json" })
+	return catalog.item_query_response(function(emit)
+		return listing.each_item_batch(options, emit)
+	end)
 end
 
 function module.register()

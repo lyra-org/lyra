@@ -35,19 +35,12 @@ type Playlist = playlists.Playlist
 -- Upstream's default page for `/Items/Latest`.
 local LATEST_DEFAULT_LIMIT = 20
 
--- Items fetched and realized at a time, so a listing of any size streams in bounded memory.
-local BATCH_SIZE = 250
-
 -- One item type of a listing: its stubs for a page, and how many it has in all.
 type Source = (offset: number, limit: number?) -> ({ ItemInfo }, number)
 -- Takes a listing's stubs, a batch at a time, in order.
 type Emit = ({ ItemInfo }) -> ()
 
 local module = {}
-
-local function empty(options: ItemsQueryOptions): ({ ItemInfo }, number, number)
-	return {}, 0, options.start_index
-end
 
 local function track_source(options: ItemsQueryOptions, scope: Scope): Source?
 	local built = query.tracks(options, scope)
@@ -274,7 +267,7 @@ local function page_sources(
 			break
 		end
 		local offset = skip
-		local wanted = if remaining ~= nil then math.min(BATCH_SIZE, remaining) else BATCH_SIZE
+		local wanted = if remaining ~= nil then math.min(results.BATCH_SIZE, remaining) else results.BATCH_SIZE
 		local items, count = source(offset, wanted)
 		total += count
 		while true do
@@ -288,7 +281,7 @@ local function page_sources(
 			if #items < wanted or remaining == 0 or offset >= count then
 				break
 			end
-			wanted = if remaining ~= nil then math.min(BATCH_SIZE, remaining) else BATCH_SIZE
+			wanted = if remaining ~= nil then math.min(results.BATCH_SIZE, remaining) else results.BATCH_SIZE
 			items = (source(offset, wanted))
 		end
 		skip = math.max(0, skip - count)
@@ -296,10 +289,23 @@ local function page_sources(
 	return total
 end
 
--- Hands `emit` the stubs a batch at a time.
-local function emit_in_batches(stubs: { ItemInfo }, emit: Emit)
-	for start = 1, #stubs, BATCH_SIZE do
-		emit(table.move(stubs, start, math.min(start + BATCH_SIZE - 1, #stubs), 1, {}))
+-- The items a listing that takes `emit` hands over, collected whole, with its total and start.
+local function collected(each: (emit: Emit) -> (number, number)): ({ ItemInfo }, number, number)
+	local items: { ItemInfo } = {}
+	local total, start_index = each(function(batch)
+		table.move(batch, 1, #batch, #items + 1, items)
+	end)
+	return items, total, start_index
+end
+
+-- Realizes the stubs of a source's pages a batch at a time, handing `emit` each batch it keeps.
+local function realizing(options: ItemsQueryOptions, emit: Emit): Emit
+	return function(stubs)
+		local items = catalog.realize(stubs, options)
+		stubs = nil :: any
+		if #items > 0 then
+			emit(items)
+		end
 	end
 end
 
@@ -494,7 +500,7 @@ local function list(
 	if #options.ids > 0 and (if playlist_order then not sorted(options) else #options.sort_by == 0) then
 		local stubs
 		stubs, total = in_request_order(sources, options, extras)
-		emit_in_batches(stubs, emit)
+		results.in_batches(stubs, emit)
 	else
 		-- Named genres and libraries follow the catalog items, in request order.
 		if #extras > 0 then
@@ -593,11 +599,9 @@ function module.each_item_batch(options: ItemsQueryOptions, emit: ({ ItemInfo })
 end
 
 function module.list_items(options: ItemsQueryOptions): ({ ItemInfo }, number, number)
-	local items: { ItemInfo } = {}
-	local total, start_index = module.each_item_batch(options, function(batch)
-		table.move(batch, 1, #batch, #items + 1, items)
+	return collected(function(emit)
+		return module.each_item_batch(options, emit)
 	end)
-	return items, total, start_index
 end
 
 -- The caller's libraries it keeps in and excludes from its latest media (`LatestItemsExcludes`),
@@ -674,29 +678,44 @@ local function by_name_total(options: ItemsQueryOptions, total: number): number
 end
 
 -- `/Artists` lists artists credited in any role; `/Artists/AlbumArtists` passes the release role.
-function module.list_artist_items(options: ItemsQueryOptions, role: CreditRole?): ({ ItemInfo }, number, number)
+-- Hands `emit` the realized artists a batch at a time, in order; returns the total and the start.
+function module.each_artist_batch(options: ItemsQueryOptions, role: CreditRole?, emit: Emit): (number, number)
 	local source = artist_source(options, lookups.scope(options.parent_id), role)
 	if not source then
-		return empty(options)
+		return 0, options.start_index
 	end
-	local stubs, total = source(options.start_index, options.limit)
-	return catalog.realize(stubs, options), by_name_total(options, total), options.start_index
+	local total = page_sources({ source }, options.start_index, options.limit, true, realizing(options, emit))
+	return by_name_total(options, total), options.start_index
 end
 
-function module.list_person_items(options: ItemsQueryOptions): ({ ItemInfo }, number, number)
+function module.list_artist_items(options: ItemsQueryOptions, role: CreditRole?): ({ ItemInfo }, number, number)
+	return collected(function(emit)
+		return module.each_artist_batch(options, role, emit)
+	end)
+end
+
+-- Hands `emit` the realized people a batch at a time, in order; returns the total and the start.
+function module.each_person_batch(options: ItemsQueryOptions, emit: Emit): (number, number)
 	local appears_in = if options.appears_in_item_id then lookups.scope(options.appears_in_item_id) else nil
 	local source = person_source(options, lookups.scope(options.parent_id), appears_in)
 	if not source then
-		return empty(options)
+		return 0, options.start_index
 	end
-	local stubs, total = source(options.start_index, options.limit)
-	return catalog.realize(stubs, options), total, options.start_index
+	local total = page_sources({ source }, options.start_index, options.limit, true, realizing(options, emit))
+	return total, options.start_index
 end
 
-function module.list_genre_items(options: ItemsQueryOptions): ({ ItemInfo }, number, number)
+function module.list_person_items(options: ItemsQueryOptions): ({ ItemInfo }, number, number)
+	return collected(function(emit)
+		return module.each_person_batch(options, emit)
+	end)
+end
+
+-- Hands `emit` the genres a batch at a time, in order; returns the total and the start.
+function module.each_genre_batch(options: ItemsQueryOptions, emit: Emit): (number, number)
 	local built = query.genres(options, lookups.scope(options.parent_id))
 	if not built then
-		return empty(options)
+		return 0, options.start_index
 	end
 	local page = genres.query(built)
 
@@ -720,7 +739,14 @@ function module.list_genre_items(options: ItemsQueryOptions): ({ ItemInfo }, num
 			table.insert(items, item)
 		end
 	end
-	return items, by_name_total(options, page.total), page.offset
+	results.in_batches(items, emit)
+	return by_name_total(options, page.total), page.offset
+end
+
+function module.list_genre_items(options: ItemsQueryOptions): ({ ItemInfo }, number, number)
+	return collected(function(emit)
+		return module.each_genre_batch(options, emit)
+	end)
 end
 
 -- Library views answer searches by name. As upstream, the playlists view shows only while the
@@ -943,13 +969,11 @@ function module.ancestors_chain(item_id: string, user_id: string): ({ ItemInfo }
 	return chain, true
 end
 
--- Playlist order, as upstream, which honours only `StartIndex` and `Limit` here.
-function module.list_playlist_track_items(
-	playlist: Playlist?,
-	options: ItemsQueryOptions
-): ({ ItemInfo }, number, number)
+-- Playlist order, as upstream, which honours only `StartIndex` and `Limit` here. Hands `emit` the
+-- realized entries a batch at a time; returns the total and the start.
+function module.each_playlist_track_batch(playlist: Playlist?, options: ItemsQueryOptions, emit: Emit): (number, number)
 	if not playlist then
-		return {}, 0, options.start_index
+		return 0, options.start_index
 	end
 
 	local track_refs = playlist_access.track_refs(playlist)
@@ -969,11 +993,25 @@ function module.list_playlist_track_items(
 
 	-- As upstream, an entry's `PlaylistItemId` is its track's id.
 	local page, total_count, start_index = results.paginate_items(entries, options.start_index, options.limit)
-	local items = catalog.realize(catalog.track_stubs(page), options)
-	for _, item in items do
-		item.PlaylistItemId = item.Id
-	end
-	return items, total_count, start_index
+	results.in_batches(page, function(batch)
+		local items = catalog.realize(catalog.track_stubs(batch), options)
+		for _, item in items do
+			item.PlaylistItemId = item.Id
+		end
+		if #items > 0 then
+			emit(items)
+		end
+	end)
+	return total_count, start_index
+end
+
+function module.list_playlist_track_items(
+	playlist: Playlist?,
+	options: ItemsQueryOptions
+): ({ ItemInfo }, number, number)
+	return collected(function(emit)
+		return module.each_playlist_track_batch(playlist, options, emit)
+	end)
 end
 
 return module

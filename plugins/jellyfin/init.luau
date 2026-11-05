@@ -73,6 +73,7 @@ local item_ids = require("@self/protocol/items/identifiers")
 local item_refresh = require("@self/routes/item_refresh")
 local items_options = require("@self/protocol/items/options")
 local listing = require("@self/protocol/items/listing")
+local listing_routes = require("@self/routes/listings")
 local playback = require("@self/protocol/items/playback")
 local playlist_access = require("@self/protocol/playlist_access")
 local preferences = require("@self/protocol/preferences")
@@ -81,7 +82,6 @@ local responses = require("@self/protocol/items/responses")
 local resume_routes = require("@self/routes/resume")
 local scheduled_tasks = require("@self/routes/scheduled_tasks")
 local session = require("@self/protocol/session")
-local similar = require("@self/protocol/items/similar")
 local statics = require("@self/protocol/statics")
 local syncplay = require("@self/routes/syncplay")
 local user_data = require("@self/protocol/items/user_data")
@@ -797,11 +797,9 @@ local function respond_with_items_listing(ctx: ApiContext, principal: session.Pr
 		return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
 	end
 
-	return api.response.stream(200, function(writer)
-		catalog.write_item_query_result(writer, function(emit)
-			return listing.each_item_batch(options, emit)
-		end)
-	end, { ["content-type"] = "application/json" })
+	return catalog.item_query_response(function(emit)
+		return listing.each_item_batch(options, emit)
+	end)
 end
 
 api.get(P .. "/Users/{userId}/Items", function(ctx: ApiContext)
@@ -828,40 +826,9 @@ api.get(P .. "/Items", function(ctx: ApiContext)
 
 	return respond_with_items_listing(ctx, principal)
 end, { auth = "public", case_insensitive = true })
-local function handle_similar_items_route(ctx: ApiContext): ApiResponse
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-
-	if not session.require_matching_user_scope(ctx, principal) then
-		return session.unauthorized()
-	end
-
-	local params = if ctx then ctx.params else nil
-	local raw_item_id = if params then params.itemId else nil
-	if not raw_item_id then
-		return responses.bad_request("missing item id")
-	end
-
-	local item_id = item_ids.decode_jellyfin_item_id(raw_item_id)
-	if not item_id then
-		return responses.not_found("item not found")
-	end
-
-	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = items_options.for_user(items_options.parse(query), principal.user_id)
-	local items, total_count, start_index, found = similar.list_similar_items(item_id, options)
-	if not found then
-		return responses.not_found("item not found")
-	end
-
-	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
-end
-
-api.get(P .. "/Artists/{itemId}/Similar", handle_similar_items_route, { auth = "public", case_insensitive = true })
-api.get(P .. "/Items/{itemId}/Similar", handle_similar_items_route, { auth = "public", case_insensitive = true })
-api.get(P .. "/Albums/{itemId}/Similar", handle_similar_items_route, { auth = "public", case_insensitive = true })
+api.get(P .. "/Artists/{itemId}/Similar", listing_routes.handle_similar, { auth = "public", case_insensitive = true })
+api.get(P .. "/Items/{itemId}/Similar", listing_routes.handle_similar, { auth = "public", case_insensitive = true })
+api.get(P .. "/Albums/{itemId}/Similar", listing_routes.handle_similar, { auth = "public", case_insensitive = true })
 local function respond_with_instant_mix(ctx: ApiContext, raw_item_id: string?): ApiResponse
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -940,25 +907,7 @@ api.get(
 )
 api.get(P .. "/Artists/InstantMix", handle_instant_mix_query_route, { auth = "public", case_insensitive = true })
 api.get(P .. "/MusicGenres/InstantMix", handle_instant_mix_query_route, { auth = "public", case_insensitive = true })
-local function respond_with_latest_items(ctx: ApiContext, principal: session.Principal): ApiResponse
-	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = items_options.for_user(items_options.parse(query), principal.user_id)
-	local items = listing.list_latest_items(options)
-	return api.response.json(200, catalog.items_to_json(items))
-end
-
-api.get(P .. "/Users/{userId}/Items/Latest", function(ctx: ApiContext)
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-
-	if not session.require_matching_user_scope(ctx, principal) then
-		return session.unauthorized()
-	end
-
-	return respond_with_latest_items(ctx, principal)
-end, { auth = "public", case_insensitive = true })
+api.get(P .. "/Users/{userId}/Items/Latest", listing_routes.handle_latest, { auth = "public", case_insensitive = true })
 api.get(P .. "/Users/{userId}/Items/{itemId}", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -1016,31 +965,11 @@ end, { auth = "public", case_insensitive = true })
 
 user_data_routes.register()
 resume_routes.register()
-api.get(P .. "/Playlists/{playlistId}/Items", function(ctx: ApiContext)
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-
-	if not session.require_matching_user_scope(ctx, principal) then
-		return session.unauthorized()
-	end
-
-	local playlist, playlist_err = session.resolve_playlist_for_route(ctx)
-	if not playlist then
-		return playlist_err or responses.bad_request("playlist not found")
-	end
-
-	local can_view, view_err = session.ensure_playlist_visible(playlist, principal)
-	if not can_view then
-		return view_err or responses.bad_request("playlist not accessible")
-	end
-
-	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = items_options.for_user(items_options.parse(query), principal.user_id)
-	local items, total_count, start_index = listing.list_playlist_track_items(playlist, options)
-	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
-end, { auth = "public", case_insensitive = true })
+api.get(
+	P .. "/Playlists/{playlistId}/Items",
+	listing_routes.handle_playlist_items,
+	{ auth = "public", case_insensitive = true }
+)
 api.post(P .. "/Playlists", session.handle_create_playlist_route, { auth = "public", case_insensitive = true })
 api.delete(P .. "/Items/{id}", session.handle_delete_item_route, { auth = "public", case_insensitive = true })
 api.post(
@@ -1193,61 +1122,9 @@ api.get(P .. "/Playlists/{playlistId}/Users", function(ctx: ApiContext)
 
 	return api.response.json(200, session.playlist_users_to_json(users))
 end, { auth = "public", case_insensitive = true })
-api.get(P .. "/Artists", function(ctx: ApiContext)
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-
-	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = items_options.for_user(items_options.parse(query), principal.user_id)
-	if items_options.has_conflicting_filters(options) then
-		return responses.bad_request("Conflicting filters")
-	end
-	local items, total_count, start_index = listing.list_artist_items(options, nil)
-	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
-end, { auth = "public", case_insensitive = true })
-api.get(P .. "/Persons", function(ctx: ApiContext)
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-
-	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = items_options.for_user(items_options.parse(query), principal.user_id)
-	local items, total_count, start_index = listing.list_person_items(options)
-	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
-end, { auth = "public", case_insensitive = true })
-api.get(P .. "/Artists/AlbumArtists", function(ctx: ApiContext)
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-
-	if not session.require_matching_user_scope(ctx, principal) then
-		return session.unauthorized()
-	end
-
-	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = items_options.for_user(items_options.parse(query), principal.user_id)
-	if items_options.has_conflicting_filters(options) then
-		return responses.bad_request("Conflicting filters")
-	end
-	local items, total_count, start_index = listing.list_artist_items(options, "release")
-	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
-end, { auth = "public", case_insensitive = true })
-local function handle_genres_route(ctx: ApiContext): ApiResponse
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-
-	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = items_options.for_user(items_options.parse(query), principal.user_id)
-	local items, total_count, start_index = listing.list_genre_items(options)
-	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
-end
-
+api.get(P .. "/Artists", listing_routes.handle_artists, { auth = "public", case_insensitive = true })
+api.get(P .. "/Persons", listing_routes.handle_persons, { auth = "public", case_insensitive = true })
+api.get(P .. "/Artists/AlbumArtists", listing_routes.handle_album_artists, { auth = "public", case_insensitive = true })
 local function handle_studios_route(ctx: ApiContext): ApiResponse
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -1260,12 +1137,8 @@ local function handle_studios_route(ctx: ApiContext): ApiResponse
 	return api.response.json(200, catalog.build_item_query_result(empty_items, 0, options.start_index))
 end
 
-api.get(P .. "/Genres", function(ctx: ApiContext)
-	return handle_genres_route(ctx)
-end, { auth = "public", case_insensitive = true })
-api.get(P .. "/MusicGenres", function(ctx: ApiContext)
-	return handle_genres_route(ctx)
-end, { auth = "public", case_insensitive = true })
+api.get(P .. "/Genres", listing_routes.handle_genres, { auth = "public", case_insensitive = true })
+api.get(P .. "/MusicGenres", listing_routes.handle_genres, { auth = "public", case_insensitive = true })
 api.get(P .. "/Studios", function(ctx: ApiContext)
 	return handle_studios_route(ctx)
 end, { auth = "public", case_insensitive = true })
@@ -1841,16 +1714,7 @@ api.post(P .. "/Items/{id}/PlaybackInfo", function(ctx: ApiContext)
 	return api.response.json(200, response)
 end, { auth = "public", case_insensitive = true })
 
-api.get(P .. "/Items/Latest", function(ctx: ApiContext)
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-	if not session.require_matching_user_scope(ctx, principal) then
-		return session.unauthorized()
-	end
-	return respond_with_latest_items(ctx, principal)
-end, { auth = "public", case_insensitive = true })
+api.get(P .. "/Items/Latest", listing_routes.handle_latest, { auth = "public", case_insensitive = true })
 api.get(P .. "/Shows/NextUp", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then

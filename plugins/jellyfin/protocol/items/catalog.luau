@@ -236,6 +236,29 @@ function module.write_item_query_result(
 	writer:write(encoder:finish())
 end
 
+-- A response streaming the query result `write_item_query_result` writes.
+function module.item_query_response(each_batch: (emit: ({ ItemInfo }) -> ()) -> (number, number)): api.ApiResponse
+	return api.response.stream(200, function(writer)
+		module.write_item_query_result(writer, each_batch)
+	end, { ["content-type"] = "application/json" })
+end
+
+-- A response streaming the list `items_to_json` builds, for the items `each_batch` hands over a
+-- batch at a time, so the list never exists whole.
+function module.items_response(each_batch: (emit: ({ ItemInfo }) -> ()) -> ()): api.ApiResponse
+	return api.response.stream(200, function(writer)
+		local encoder = serde.json.encoder()
+		encoder:begin_array()
+		each_batch(function(items)
+			encoder:items(module.items_to_json(items))
+			items = nil :: any
+			writer:write(encoder:flush())
+		end)
+		encoder:end_array()
+		writer:write(encoder:finish())
+	end, { ["content-type"] = "application/json" })
+end
+
 function helpers.resolve_cover_info(release_id: string?, context: ItemContext?): artwork.ResolvedCoverInfo?
 	if release_id == nil then
 		return nil

@@ -16,6 +16,17 @@ function module.build_query_result<T>(items: { T }, total_count: number, start_i
 	}
 end
 
+-- Items a streamed listing realizes and writes at a time, so a listing of any size streams in
+-- bounded memory.
+module.BATCH_SIZE = 250
+
+-- Hands `emit` the items a batch at a time, in order.
+function module.in_batches<T>(items: { T }, emit: ({ T }) -> ())
+	for start = 1, #items, module.BATCH_SIZE do
+		emit(table.move(items, start, math.min(start + module.BATCH_SIZE - 1, #items), 1, {}))
+	end
+end
+
 function module.paginate_items<T>(items: { T }, start_index: number?, limit: number?): ({ T }, number, number)
 	local total = #items
 	local safe_start = start_index or 0
