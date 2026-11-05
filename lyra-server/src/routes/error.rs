@@ -293,6 +293,18 @@ impl From<crate::services::covers::CoverSyncOptionsError> for AppError {
     }
 }
 
+impl From<crate::services::covers::CoverTransformError> for AppError {
+    fn from(err: crate::services::covers::CoverTransformError) -> Self {
+        use crate::services::covers::CoverTransformError;
+        match err {
+            CoverTransformError::Busy => {
+                Self::service_unavailable_for(err.to_string(), Duration::from_secs(1))
+            }
+            CoverTransformError::Failed(err) => err.into(),
+        }
+    }
+}
+
 impl From<ProviderServiceError> for AppError {
     fn from(err: ProviderServiceError) -> Self {
         match err {

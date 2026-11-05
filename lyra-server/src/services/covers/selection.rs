@@ -28,6 +28,7 @@ use super::{
         CoverFilter,
         playlists::generated_cover_for_playlist,
     },
+    image::MAX_COVER_BYTES,
     providers::{
         EntityType,
         search_artist_cover_candidates,
@@ -40,7 +41,6 @@ use super::{
         configured_covers_root,
     },
     sync::{
-        MAX_COVER_BYTES,
         PreparedCover,
         discard_cover_file,
         download_cover,

@@ -100,6 +100,23 @@ pub(crate) struct TransformedCoverImage {
     pub(crate) mime_type: &'static str,
 }
 
+pub(crate) enum CoverRendition {
+    /// The file is served as it is: the options would change nothing, or the image would not
+    /// transform.
+    Original {
+        mime_type: &'static str,
+    },
+    Transformed(TransformedCoverImage),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum CoverTransformError {
+    #[error("cover transforms are busy")]
+    Busy,
+    #[error(transparent)]
+    Failed(#[from] anyhow::Error),
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct CoverImageCandidate {
     pub(crate) url: String,
@@ -127,9 +144,10 @@ impl ProviderCoverSearchResult {
 
 // Re-exports for convenient access from the rest of the crate.
 pub(crate) use image::{
+    MAX_COVER_BYTES,
     cover_mime_from_path,
     parse_cover_image_format,
-    transform_cover_image,
+    render_cover,
 };
 pub(crate) use providers::{
     clear_cover_search_cache,
@@ -138,7 +156,6 @@ pub(crate) use providers::{
 };
 pub(crate) use resolve::configured_covers_root;
 pub(crate) use sync::{
-    MAX_COVER_BYTES,
     artist_cover_wanted,
     discard_cover_file,
     discard_unreferenced_cover_files,

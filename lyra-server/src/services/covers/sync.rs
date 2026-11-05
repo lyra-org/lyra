@@ -47,6 +47,7 @@ use super::{
     CoverSyncOptions,
     CoverUpdate,
     image::{
+        MAX_COVER_BYTES,
         cover_blurhash,
         cover_hash,
         cover_mime_from_path,
@@ -71,8 +72,6 @@ use super::{
     },
     stale::StaleCover,
 };
-
-pub(crate) const MAX_COVER_BYTES: usize = 20 * 1024 * 1024;
 
 /// Downloads the cover at `url` that the provider's cover handler for
 /// `entity_type` returned, on behalf of the plugin that still owns that

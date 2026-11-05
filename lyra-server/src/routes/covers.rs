@@ -267,23 +267,20 @@ async fn serve_public_cover_response(
     transform_options: Option<covers::CoverTransformOptions>,
     request_headers: &HeaderMap,
 ) -> Result<Response<Body>, AppError> {
-    if let Some(options) = transform_options {
-        let cover_path = path.to_path_buf();
-        let transformed = tokio::task::spawn_blocking(move || {
-            covers::transform_cover_image(&cover_path, &options)
-        })
-        .await
-        .map_err(|err| AppError::from(anyhow::anyhow!("cover transform task failed: {err}")))??;
-
-        return Response::builder()
-            .header(header::CONTENT_TYPE, transformed.mime_type)
-            .header(header::CONTENT_LENGTH, transformed.bytes.len().to_string())
-            .header(header::CACHE_CONTROL, PUBLIC_COVER_CACHE_CONTROL)
-            .body(Body::from(transformed.bytes))
-            .map_err(AppError::from);
-    }
-
-    let content_type = covers::cover_mime_from_path(path);
+    let content_type = match transform_options {
+        None => covers::cover_mime_from_path(path),
+        Some(options) => match covers::render_cover(path, options).await? {
+            covers::CoverRendition::Original { mime_type } => mime_type,
+            covers::CoverRendition::Transformed(transformed) => {
+                return Response::builder()
+                    .header(header::CONTENT_TYPE, transformed.mime_type)
+                    .header(header::CONTENT_LENGTH, transformed.bytes.len().to_string())
+                    .header(header::CACHE_CONTROL, PUBLIC_COVER_CACHE_CONTROL)
+                    .body(Body::from(transformed.bytes))
+                    .map_err(AppError::from);
+            }
+        },
+    };
     file_response_with_cache_control(
         path,
         content_type,
