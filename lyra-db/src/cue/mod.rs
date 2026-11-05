@@ -9,6 +9,8 @@ pub mod tracks;
 pub use sheets::CueSheet;
 pub use tracks::CueTrack;
 
+use std::collections::HashMap;
+
 use agdb::DbId;
 
 use super::DbAccess;
@@ -40,4 +42,35 @@ pub fn linked_entries(db: &impl DbAccess, entry_id: DbId) -> anyhow::Result<Vec<
         }
     }
     Ok(linked)
+}
+
+/// The audio entry each stored track of these cue entries' sheets plays, by cue entry and track
+/// number.
+pub fn audio_links(
+    db: &impl DbAccess,
+    cue_entry_ids: &[DbId],
+) -> anyhow::Result<HashMap<DbId, HashMap<u32, DbId>>> {
+    use super::graph::{
+        inbound_neighbor_ids,
+        neighbor_ids,
+    };
+
+    let mut links = HashMap::new();
+    for &cue_entry_id in cue_entry_ids {
+        let mut tracks = HashMap::new();
+        for sheet in inbound_neighbor_ids(db, cue_entry_id, "CueSheet")? {
+            for cue_track_id in neighbor_ids(db, sheet, "CueTrack")? {
+                let Some(cue_track) = tracks::get_by_id(db, cue_track_id)? else {
+                    continue;
+                };
+                if let Some(audio) = neighbor_ids(db, cue_track_id, "Entry")?.into_iter().next() {
+                    tracks.insert(cue_track.track_no, audio);
+                }
+            }
+        }
+        if !tracks.is_empty() {
+            links.insert(cue_entry_id, tracks);
+        }
+    }
+    Ok(links)
 }

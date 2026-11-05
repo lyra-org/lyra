@@ -77,7 +77,7 @@ use lyra_db::{
     Library,
     entries::{
         EntryKind,
-        prune_missing_entries,
+        mark_missing,
         sync_entry_group,
     },
 };
@@ -277,48 +277,41 @@ async fn report_unlistable(
     }
 }
 
-async fn prune_missing_entries_for_scan(
+async fn mark_missing_entries_for_scan(
     db: &DbAsync,
     library: &Library,
     observation: &ScanObservation,
     progress: Option<SyncRunProgress>,
-) -> anyhow::Result<usize> {
+) -> anyhow::Result<()> {
     let run_id = trace_run_id(progress.as_ref());
     let library_db_id = library
         .db_id
         .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
-    let prune_started = Instant::now();
+    let started = Instant::now();
+    let details = SyncWorkDetails::new("mark_missing_entries");
     let work_id = if let Some(progress) = &progress {
         progress
-            .start_work(
-                SyncStageKey::Cleanup,
-                SyncWorkDetails::new("prune_missing_entries"),
-            )
+            .start_work(SyncStageKey::Cleanup, details.clone())
             .await
     } else {
         0
     };
-    let prune_write_result = {
+    let result = {
         let mut db_write = db.write().await;
-        prune_missing_entries(
+        mark_missing(
             &mut db_write,
             library,
             &observation.observed_paths,
             &observation.protected_paths,
-            |removed, surviving| albums_left_by(&library.path, removed, surviving),
+            |missing, present| albums_left_by(&library.path, missing, present),
         )
     };
-    let prune_result = match prune_write_result {
+    let result = match result {
         Ok(result) => result,
         Err(err) => {
             if let Some(progress) = &progress {
                 progress
-                    .fail_work(
-                        work_id,
-                        SyncStageKey::Cleanup,
-                        SyncWorkDetails::new("prune_missing_entries"),
-                        format!("{err:#}"),
-                    )
+                    .fail_work(work_id, SyncStageKey::Cleanup, details, format!("{err:#}"))
                     .await;
             }
             return Err(err);
@@ -330,12 +323,14 @@ async fn prune_missing_entries_for_scan(
     tracing::info!(
         library_db_id = library_db_id.0,
         run_id = %run_id,
-        deleted_entries = prune_result.deleted,
-        elapsed_ms = prune_started.elapsed().as_millis() as u64,
+        marked_missing = result.marked,
+        revived = result.revived,
+        removed_dirs = result.removed_dirs,
+        elapsed_ms = started.elapsed().as_millis() as u64,
         stage = "cleanup",
-        "scan missing entries pruned"
+        "scan missing entries marked"
     );
-    Ok(prune_result.deleted)
+    Ok(())
 }
 
 async fn cleanup_metadata_orphans(
@@ -402,7 +397,7 @@ pub(crate) async fn sync_library_pipeline(
         progress.check_cancelled().await?;
     }
     let observation = sync_entries_incremental(db, library, progress.clone()).await?;
-    prune_missing_entries_for_scan(db, library, &observation, progress.clone()).await?;
+    mark_missing_entries_for_scan(db, library, &observation, progress.clone()).await?;
     if let Some(progress) = &progress {
         progress.check_cancelled().await?;
     }
@@ -680,7 +675,7 @@ async fn fail_metadata_work(
 }
 
 fn is_unsynced_file(entry: &Entry) -> bool {
-    entry.kind == EntryKind::File && entry.synced_at_ms.is_none()
+    entry.kind == EntryKind::File && entry.synced_at_ms.is_none() && !entry.is_missing()
 }
 
 /// Reads the metadata groups holding unsynced files and applies the batches those files are in.
@@ -700,7 +695,10 @@ async fn process_pending_metadata(
     let entries = {
         let db_read = db.read().await;
         lyra_db::entries::get(&db_read, library_db_id)?
-    };
+    }
+    .into_iter()
+    .filter(|entry| !entry.is_missing())
+    .collect::<Vec<_>>();
     if !entries.iter().any(is_unsynced_file) {
         return Ok(Vec::new());
     }
@@ -761,7 +759,17 @@ async fn process_pending_metadata(
                 group_unsynced.insert(entry.full_path.clone(), entry_db_id);
             }
         }
-        let parse_output = match parse_metadata(&mapping_config, group.entries).await {
+        let cue_links = {
+            let cue_entry_ids = group
+                .entries
+                .iter()
+                .filter(|entry| entry.file_kind.as_deref() == Some("cue"))
+                .filter_map(|entry| entry.db_id)
+                .collect::<Vec<_>>();
+            let db_read = db.read().await;
+            lyra_db::cue::audio_links(&*db_read, &cue_entry_ids)?
+        };
+        let parse_output = match parse_metadata(&mapping_config, group.entries, &cue_links).await {
             Ok(output) => output,
             Err(err) => {
                 fail_metadata_work(
@@ -2266,7 +2274,7 @@ FILE "album.flac" WAVE
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn deleting_a_cue_sheet_reads_its_audio_again() -> anyhow::Result<()> {
+    async fn a_missing_cue_sheet_keeps_its_segments_unavailable() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         crate::services::testing::init_default_test_state()?;
         let (root, library) = empty_library("cue-delete").await?;
@@ -2278,17 +2286,114 @@ FILE "album.flac" WAVE
         sync(&library).await?;
         assert_eq!(snapshot(&library).await?[&audio_named].1.len(), 2);
 
+        let segments = snapshot(&library).await?[&audio_named].1.clone();
+
         std::fs::remove_file(&cue)?;
         sync(&library).await?;
 
+        // The segments stay, unavailable, beside the whole file read again on its own.
         let tracks = snapshot(&library).await?;
-        assert!(!tracks.contains_key(&cue));
-        assert_eq!(
-            tracks[&audio_named].1.len(),
-            1,
-            "the cue's tracks outlived it"
+        assert!(
+            tracks.contains_key(&cue),
+            "the missing cue's entry was removed"
         );
+        assert_eq!(tracks[&audio_named].1.len(), 3);
         assert!(synced(&library, &audio_named).await?);
+        let available = |db: &agdb::DbAny, id: &str| -> anyhow::Result<bool> {
+            let track_db_id = lyra_db::lookup::find_node_id_by_id(db, id)?.expect("track");
+            lyra_db::track_sources::track_available(db, track_db_id)
+        };
+        {
+            let db = STATE.db.read().await;
+            for segment in &segments {
+                assert!(
+                    !available(&db, segment)?,
+                    "a segment of a missing cue plays"
+                );
+            }
+        }
+
+        // The cue sheet back, its segments play again and the whole file goes.
+        std::fs::write(&cue, CUE_SHEET)?;
+        sync(&library).await?;
+        let tracks = snapshot(&library).await?;
+        assert_eq!(tracks[&audio_named].1, segments);
+        let db = STATE.db.read().await;
+        for segment in &segments {
+            assert!(available(&db, segment)?, "a revived segment can't play");
+        }
+        drop(db);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_unreadable_cue_sheet_keeps_its_segments_when_its_audio_changes()
+    -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cue-unreadable").await?;
+        let audio = album_track(&root.join("Album"), "Album")?;
+        let audio_named = root.join("Album/album.flac");
+        std::fs::rename(&audio, &audio_named)?;
+        let cue = root.join("Album/album.cue");
+        std::fs::write(&cue, CUE_SHEET)?;
+        sync(&library).await?;
+        let segments = snapshot(&library).await?[&audio_named].1.clone();
+        assert_eq!(segments.len(), 2);
+
+        std::fs::set_permissions(&cue, std::fs::Permissions::from_mode(0o000))?;
+        if std::fs::read(&cue).is_ok() {
+            // Running with privileges that ignore permissions.
+            let _ = std::fs::remove_dir_all(root);
+            return Ok(());
+        }
+        shift_mtime(&audio_named, 5)?;
+        let result = sync(&library).await;
+        std::fs::set_permissions(&cue, std::fs::Permissions::from_mode(0o644))?;
+        result?;
+
+        assert_eq!(
+            snapshot(&library).await?[&audio_named].1,
+            segments,
+            "the audio replaced its segments while its cue sheet couldn't be read"
+        );
+        assert!(!synced(&library, &audio_named).await?);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_cue_sheet_in_a_legacy_encoding_keeps_its_segments() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cue-latin1").await?;
+        let audio = album_track(&root.join("Album"), "Album")?;
+        let audio_named = root.join("Album/album.flac");
+        std::fs::rename(&audio, &audio_named)?;
+        let cue = root.join("Album/album.cue");
+        std::fs::write(&cue, CUE_SHEET)?;
+        sync(&library).await?;
+        let segments = snapshot(&library).await?[&audio_named].1.clone();
+        assert_eq!(segments.len(), 2);
+
+        // Rewritten by a tool that saves Latin-1: no longer valid UTF-8.
+        let mut latin1 = CUE_SHEET.replace("Cue Track 1", "Caf\u{e9}").into_bytes();
+        let accent = latin1
+            .windows(2)
+            .position(|pair| pair == [0xc3, 0xa9])
+            .expect("accent");
+        latin1.splice(accent..accent + 2, [0xe9]);
+        std::fs::write(&cue, latin1)?;
+        shift_mtime(&audio_named, 5)?;
+        sync(&library).await?;
+        assert_eq!(
+            snapshot(&library).await?[&audio_named].1,
+            segments,
+            "the audio replaced its segments when its cue sheet failed to decode"
+        );
         let _ = std::fs::remove_dir_all(root);
         Ok(())
     }

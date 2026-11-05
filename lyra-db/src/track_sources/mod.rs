@@ -120,6 +120,75 @@ pub fn get_entry_id(db: &DbAny, source_id: DbId) -> anyhow::Result<Option<DbId>>
     Ok(entries.into_iter().find_map(|e| e.db_id))
 }
 
+/// The cue sheet entry a cue source's segment comes from, or `None` for a source of its own file.
+pub fn cue_entry_id(db: &impl DbAccess, source_id: DbId) -> anyhow::Result<Option<DbId>> {
+    use super::graph::{
+        inbound_neighbor_ids,
+        neighbor_ids,
+    };
+
+    for cue_track in neighbor_ids(db, source_id, "CueTrack")? {
+        for sheet in inbound_neighbor_ids(db, cue_track, "CueSheet")? {
+            if let Some(entry) = neighbor_ids(db, sheet, "Entry")?.into_iter().next() {
+                return Ok(Some(entry));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// The sources depending on `entry_id`: those playing it, and, for a cue sheet entry, its
+/// segments.
+pub fn depending_on(db: &impl DbAccess, entry_id: DbId) -> anyhow::Result<Vec<DbId>> {
+    use super::graph::{
+        inbound_neighbor_ids,
+        neighbor_ids,
+    };
+
+    let mut sources = inbound_neighbor_ids(db, entry_id, "TrackSource")?;
+    for sheet in inbound_neighbor_ids(db, entry_id, "CueSheet")? {
+        for cue_track in neighbor_ids(db, sheet, "CueTrack")? {
+            sources.extend(inbound_neighbor_ids(db, cue_track, "TrackSource")?);
+        }
+    }
+    Ok(sources)
+}
+
+/// Whether the source can play: its audio entry is there, and so is the cue sheet entry its
+/// segment comes from, if any. A track is available when any of its sources is.
+pub fn is_available(db: &impl DbAccess, source_id: DbId) -> anyhow::Result<bool> {
+    let present = |entry_id: DbId| -> anyhow::Result<bool> {
+        Ok(super::entries::get_by_id(db, entry_id)?.is_some_and(|entry| !entry.is_missing()))
+    };
+    let Some(entry_id) = super::graph::neighbor_ids(db, source_id, "Entry")?
+        .into_iter()
+        .next()
+    else {
+        return Ok(false);
+    };
+    if !present(entry_id)? {
+        return Ok(false);
+    }
+    match cue_entry_id(db, source_id)? {
+        Some(cue_entry_id) => present(cue_entry_id),
+        None => Ok(true),
+    }
+}
+
+/// Whether the track can play: any of its sources can, or it has none at all.
+pub fn track_available(db: &impl DbAccess, track_id: DbId) -> anyhow::Result<bool> {
+    let sources = super::graph::neighbor_ids(db, track_id, "TrackSource")?;
+    if sources.is_empty() {
+        return Ok(true);
+    }
+    for source in sources {
+        if is_available(db, source)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 pub fn get_track_id_by_source_key(db: &DbAny, source_key: &str) -> anyhow::Result<Option<DbId>> {
     let Some(source_id) = find_source_id_by_identity(db, source_key)? else {
         return Ok(None);
@@ -384,6 +453,7 @@ mod tests {
             file_modified_at_ms: 1,
             file_created_at_ms: 1,
             synced_at_ms: None,
+            missing_at_ms: None,
         };
         let qr = db.exec_mut(QueryBuilder::insert().element(&entry).query())?;
         qr.ids()

@@ -2898,6 +2898,7 @@ fn streamable_bindings_serve_anonymous_public_routes() -> Result<()> {
         file_modified_at_ms: 1,
         file_created_at_ms: 1,
         synced_at_ms: None,
+        missing_at_ms: None,
     };
     let entry_id = database
         .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
@@ -3055,6 +3056,7 @@ fn track_source_bindings_hide_inaccessible_tracks() -> Result<()> {
             file_modified_at_ms: 1,
             file_created_at_ms: 1,
             synced_at_ms: None,
+            missing_at_ms: None,
         };
         let entry_id = fixture
             .db

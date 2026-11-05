@@ -95,6 +95,52 @@ pub struct Entry {
     /// When a file's metadata and release artifacts last finished; absent until they do after it
     /// changes.
     pub synced_at_ms: Option<u64>,
+    /// When a sync first failed to find the entry; absent while it is there.
+    pub missing_at_ms: Option<u64>,
+}
+
+impl Entry {
+    pub fn is_missing(&self) -> bool {
+        self.missing_at_ms.is_some()
+    }
+}
+
+/// Marks `entry_ids` missing since `at_ms`, each once: the time on the entry and its membership
+/// of the missing root go together.
+pub fn set_missing(
+    db: &mut impl super::DbAccess,
+    entry_ids: &[DbId],
+    at_ms: u64,
+) -> anyhow::Result<()> {
+    if entry_ids.is_empty() {
+        return Ok(());
+    }
+    db.exec_mut(
+        QueryBuilder::insert()
+            .values_uniform([("missing_at_ms", at_ms).into()])
+            .ids(entry_ids)
+            .query(),
+    )?;
+    crate::roots::link_all(db, crate::roots::Root::MissingEntries, entry_ids)
+}
+
+/// Ends the missing state of `entry_ids`, missing ones, in one pass over the missing root.
+pub fn clear_missing(db: &mut impl super::DbAccess, entry_ids: &[DbId]) -> anyhow::Result<()> {
+    if entry_ids.is_empty() {
+        return Ok(());
+    }
+    db.exec_mut(
+        QueryBuilder::remove()
+            .values(["missing_at_ms"])
+            .ids(entry_ids)
+            .query(),
+    )?;
+    crate::roots::unlink(db, crate::roots::Root::MissingEntries, entry_ids)
+}
+
+/// Every missing entry, in any library.
+pub fn missing_ids(db: &impl super::DbAccess) -> anyhow::Result<Vec<DbId>> {
+    crate::roots::member_ids(db, crate::roots::Root::MissingEntries)
 }
 
 pub(crate) const SUPPORTED_AUDIO_EXTENSIONS: &[&str] = lofty::file::EXTENSIONS;
@@ -191,7 +237,6 @@ pub fn load_existing(db: &DbAny, library_root: DbId) -> anyhow::Result<Vec<Entry
 pub struct EntrySyncResult {
     pub added: usize,
     pub updated: usize,
-    pub deleted: usize,
 }
 
 pub fn sync_entry_group(
@@ -217,6 +262,7 @@ pub fn sync_entry_group(
 
         let entry = Entry {
             synced_at_ms: None,
+            missing_at_ms: None,
             ..entry
         };
         let Some(existing) = db_by_path.get(&entry.full_path) else {
@@ -307,7 +353,6 @@ pub fn sync_entry_group(
         Ok(EntrySyncResult {
             added: added_count,
             updated: updated_count,
-            deleted: 0,
         })
     })
 }
@@ -333,61 +378,94 @@ pub fn is_protected(path: &Path, protected: &[PathBuf]) -> bool {
         .any(|protected| path.starts_with(protected) || protected.starts_with(path))
 }
 
-/// Removes the entries missing from `observed_paths`, except where `protected` paths leave the
-/// scan without evidence. The surviving entries `left_behind` picks from the removed and
-/// surviving ones, and those a removed one shared a cue sheet with, lose their sync so the next
-/// one reads them again.
-pub fn prune_missing_entries(
+/// The album policy [`mark_missing`] defers to: given the entries a sync no longer finds where
+/// they were and those it does find, picks the found ones that shared an album with the former,
+/// which lose their sync so the next one regroups them. The cue sheet rule needs no policy and
+/// stays in [`crate::cue::linked_entries`].
+pub trait LeftBehind: FnOnce(&[Entry], &[Entry]) -> Vec<DbId> {}
+
+impl<F: FnOnce(&[Entry], &[Entry]) -> Vec<DbId>> LeftBehind for F {}
+
+/// What [`mark_missing`] changed.
+#[derive(Debug, Default)]
+pub struct MarkResult {
+    pub marked: usize,
+    pub revived: usize,
+    pub removed_dirs: usize,
+}
+
+/// Marks the entries missing from `observed_paths` as missing, except where `protected` paths
+/// leave the scan without evidence, and revives the missing entries it observed. Missing
+/// directories with no file left beneath them are removed. The present entries `left_behind`
+/// picks, given the newly missing ones, lose their sync so the next one reads them again, as do
+/// those a newly missing or revived one shares a cue sheet with.
+pub fn mark_missing(
     db: &mut DbAny,
     library: &Library,
     observed_paths: &HashSet<PathBuf>,
     protected: &[PathBuf],
-    left_behind: impl FnOnce(&[Entry], &[Entry]) -> Vec<DbId>,
-) -> anyhow::Result<EntrySyncResult> {
+    left_behind: impl LeftBehind,
+) -> anyhow::Result<MarkResult> {
     let library_db_id = library
         .db_id
         .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
-    let (to_delete, surviving): (Vec<_>, Vec<_>) = load_existing(db, library_db_id)?
-        .into_iter()
-        .partition(|entry| {
-            !observed_paths.contains(&entry.full_path) && !is_protected(&entry.full_path, protected)
-        });
-
-    let mut dir_deletes: Vec<Entry> = to_delete
-        .iter()
-        .filter(|entry| entry.kind == EntryKind::Dir)
-        .cloned()
-        .collect();
-    dir_deletes.sort_by_key(|entry| entry.full_path.components().count());
-    let mut top_level_dirs = Vec::new();
-    for entry in dir_deletes {
-        if top_level_dirs
-            .iter()
-            .any(|parent: &Entry| entry.full_path.starts_with(&parent.full_path))
-        {
-            continue;
+    let existing = load_existing(db, library_db_id)?;
+    let mut newly_missing = Vec::new();
+    let mut revived = Vec::new();
+    let mut present = Vec::new();
+    for entry in &existing {
+        if observed_paths.contains(&entry.full_path) {
+            if entry.is_missing() {
+                revived.push(entry.clone());
+            }
+            present.push(entry.clone());
+        } else if !entry.is_missing() && !is_protected(&entry.full_path, protected) {
+            newly_missing.push(entry.clone());
         }
-        top_level_dirs.push(entry);
     }
+    let missing_after = |entry: &Entry| {
+        !observed_paths.contains(&entry.full_path)
+            && (entry.is_missing() || !is_protected(&entry.full_path, protected))
+    };
+    let removed_dirs = existing
+        .iter()
+        .filter(|dir| dir.kind == EntryKind::Dir && missing_after(dir))
+        .filter(|dir| {
+            !existing.iter().any(|entry| {
+                entry.kind == EntryKind::File && entry.full_path.starts_with(&dir.full_path)
+            })
+        })
+        .filter_map(|dir| dir.db_id)
+        .collect::<Vec<_>>();
 
-    let mut unsynced = left_behind(&to_delete, &surviving)
+    let mut unsynced = left_behind(&newly_missing, &present)
         .into_iter()
         .collect::<HashSet<_>>();
-
-    let deleted_count = to_delete.len();
-    db.transaction_mut(|t| -> anyhow::Result<EntrySyncResult> {
-        let ids = to_delete
+    let ids = |entries: &[Entry]| {
+        entries
             .iter()
             .map(|entry| {
                 entry
                     .db_id
-                    .ok_or_else(|| anyhow::anyhow!("entry missing db_id during delete"))
+                    .ok_or_else(|| anyhow::anyhow!("entry missing db_id"))
             })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        for &entry_id in &ids {
+            .collect::<anyhow::Result<Vec<_>>>()
+    };
+    let missing_ids = ids(&newly_missing)?
+        .into_iter()
+        .filter(|entry_id| !removed_dirs.contains(entry_id))
+        .collect::<Vec<_>>();
+    let revived_ids = ids(&revived)?;
+    let now = super::users::now_ms().unsigned_abs();
+
+    db.transaction_mut(|t| -> anyhow::Result<MarkResult> {
+        for &entry_id in missing_ids.iter().chain(&revived_ids) {
             unsynced.extend(crate::cue::linked_entries(t, entry_id)?);
         }
-        for entry_id in &ids {
+        for entry_id in &missing_ids {
+            unsynced.remove(entry_id);
+        }
+        for entry_id in &removed_dirs {
             unsynced.remove(entry_id);
         }
         if !unsynced.is_empty() {
@@ -399,21 +477,15 @@ pub fn prune_missing_entries(
                     .query(),
             )?;
         }
-
-        for entry in &top_level_dirs {
-            let dir_id = entry
-                .db_id
-                .ok_or_else(|| anyhow::anyhow!("directory entry missing db_id"))?;
-            t.exec_mut(QueryBuilder::remove().search().from(dir_id).query())?;
+        set_missing(t, &missing_ids, now)?;
+        clear_missing(t, &revived_ids)?;
+        if !removed_dirs.is_empty() {
+            t.exec_mut(QueryBuilder::remove().ids(&removed_dirs).query())?;
         }
-        if !ids.is_empty() {
-            t.exec_mut(QueryBuilder::remove().ids(&ids).query())?;
-        }
-
-        Ok(EntrySyncResult {
-            added: 0,
-            updated: 0,
-            deleted: deleted_count,
+        Ok(MarkResult {
+            marked: missing_ids.len(),
+            revived: revived_ids.len(),
+            removed_dirs: removed_dirs.len(),
         })
     })
 }
@@ -470,6 +542,7 @@ mod tests {
             file_modified_at_ms: 1,
             file_created_at_ms: 1,
             synced_at_ms: None,
+            missing_at_ms: None,
         };
         let entry_id = db
             .exec_mut(QueryBuilder::insert().element(&entry).query())?
@@ -510,6 +583,7 @@ mod tests {
             file_modified_at_ms: 1,
             file_created_at_ms: 1,
             synced_at_ms: None,
+            missing_at_ms: None,
         }
     }
 
@@ -586,7 +660,7 @@ mod tests {
     }
 
     #[test]
-    fn pruning_a_file_unsyncs_its_album_and_cue_linked_entries() -> anyhow::Result<()> {
+    fn marking_a_file_missing_unsyncs_its_album_and_cue_linked_entries() -> anyhow::Result<()> {
         let mut db = TestDb::initialized()?.into_inner();
         let library_db_id = crate::test_db::insert_library(&mut db, "Music", "/music")?;
         let library = crate::libraries::get_by_id(&db, library_db_id)?.expect("library");
@@ -628,7 +702,7 @@ mod tests {
             .chain(std::iter::once(paths[4]))
             .map(PathBuf::from)
             .collect::<HashSet<_>>();
-        prune_missing_entries(&mut db, &library, &observed, &[], |removed, surviving| {
+        mark_missing(&mut db, &library, &observed, &[], |removed, surviving| {
             surviving
                 .iter()
                 .filter(|entry| {
@@ -640,15 +714,139 @@ mod tests {
                 .collect()
         })?;
 
-        let synced = |path: &str| -> anyhow::Result<bool> {
-            Ok(get_by_id(&db, id_of(&db, path)?)?
+        let synced = |db: &DbAny, path: &str| -> anyhow::Result<bool> {
+            Ok(get_by_id(db, id_of(db, path)?)?
                 .expect("entry")
                 .synced_at_ms
                 .is_some())
         };
-        assert!(!synced(paths[1])?, "the album a file left kept its sync");
-        assert!(synced(paths[2])?, "another album lost its sync");
-        assert!(!synced(paths[4])?, "the removed cue's audio kept its sync");
+        let missing = |db: &DbAny, path: &str| -> anyhow::Result<bool> {
+            Ok(get_by_id(db, id_of(db, path)?)?
+                .expect("entry")
+                .is_missing())
+        };
+        assert!(
+            !synced(&db, paths[1])?,
+            "the album a file left kept its sync"
+        );
+        assert!(synced(&db, paths[2])?, "another album lost its sync");
+        assert!(
+            !synced(&db, paths[4])?,
+            "the missing cue's audio kept its sync"
+        );
+        assert!(missing(&db, paths[0])? && missing(&db, paths[3])?);
+        assert!(!missing(&db, paths[1])? && !missing(&db, paths[4])?);
+        assert_eq!(missing_ids(&db)?.len(), 2);
+
+        mark_synced(&mut db, &ids)?;
+        let observed = paths.iter().map(PathBuf::from).collect::<HashSet<_>>();
+        let result = mark_missing(&mut db, &library, &observed, &[], |_, _| Vec::new())?;
+        assert_eq!(result.revived, 2);
+        assert!(!missing(&db, paths[0])? && !missing(&db, paths[3])?);
+        assert!(
+            missing_ids(&db)?.is_empty(),
+            "revived entries left the missing root"
+        );
+        assert!(
+            !synced(&db, paths[4])?,
+            "the revived cue's audio kept its sync"
+        );
+        Ok(())
+    }
+
+    /// The missing root holds exactly the entries with a missing time.
+    fn assert_missing_root_matches(db: &DbAny, library_db_id: DbId) -> anyhow::Result<()> {
+        let mut timed = get(db, library_db_id)?
+            .into_iter()
+            .filter(Entry::is_missing)
+            .filter_map(|entry| entry.db_id)
+            .collect::<Vec<_>>();
+        let mut rooted = missing_ids(db)?;
+        timed.sort_unstable();
+        rooted.sort_unstable();
+        assert_eq!(rooted, timed);
+        Ok(())
+    }
+
+    #[test]
+    fn the_missing_root_follows_marking_and_reviving() -> anyhow::Result<()> {
+        let mut db = TestDb::initialized()?.into_inner();
+        let library_db_id = crate::test_db::insert_library(&mut db, "Music", "/music")?;
+        let library = crate::libraries::get_by_id(&db, library_db_id)?.expect("library");
+        let paths = [
+            "/music/A",
+            "/music/A/1.flac",
+            "/music/A/2.flac",
+            "/music/B/1.flac",
+        ];
+        sync_entry_group(
+            &mut db,
+            &library,
+            vec![
+                scanned(paths[0], EntryKind::Dir),
+                scanned(paths[1], EntryKind::File),
+                scanned(paths[2], EntryKind::File),
+                scanned("/music/B", EntryKind::Dir),
+                scanned(paths[3], EntryKind::File),
+            ],
+        )?;
+        let seen = |kept: &[&str]| kept.iter().map(PathBuf::from).collect::<HashSet<_>>();
+        let all = ["/music/A", paths[1], paths[2], "/music/B", paths[3]];
+
+        mark_missing(&mut db, &library, &seen(&all[3..]), &[], |_, _| Vec::new())?;
+        assert_missing_root_matches(&db, library_db_id)?;
+        mark_missing(
+            &mut db,
+            &library,
+            &seen(&["/music/A", paths[1], "/music/B"]),
+            &[],
+            |_, _| Vec::new(),
+        )?;
+        assert_missing_root_matches(&db, library_db_id)?;
+        mark_missing(&mut db, &library, &seen(&[]), &[], |_, _| Vec::new())?;
+        assert_missing_root_matches(&db, library_db_id)?;
+        mark_missing(&mut db, &library, &seen(&all), &[], |_, _| Vec::new())?;
+        assert_missing_root_matches(&db, library_db_id)?;
+        assert!(missing_ids(&db)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn marking_keeps_protected_entries_and_removes_emptied_missing_dirs() -> anyhow::Result<()> {
+        let mut db = TestDb::initialized()?.into_inner();
+        let library_db_id = crate::test_db::insert_library(&mut db, "Music", "/music")?;
+        let library = crate::libraries::get_by_id(&db, library_db_id)?.expect("library");
+        sync_entry_group(
+            &mut db,
+            &library,
+            vec![
+                scanned("/music/Locked", EntryKind::Dir),
+                scanned("/music/Locked/01.flac", EntryKind::File),
+                scanned("/music/Gone", EntryKind::Dir),
+                scanned("/music/Gone/01.flac", EntryKind::File),
+                scanned("/music/Empty", EntryKind::Dir),
+            ],
+        )?;
+        let observed = HashSet::new();
+        let result = mark_missing(
+            &mut db,
+            &library,
+            &observed,
+            &[PathBuf::from("/music/Locked")],
+            |_, _| Vec::new(),
+        )?;
+        assert_eq!((result.marked, result.removed_dirs), (2, 1));
+        let entries = get(&db, library_db_id)?;
+        let state = |path: &str| {
+            entries
+                .iter()
+                .find(|entry| entry.full_path == Path::new(path))
+                .map(Entry::is_missing)
+        };
+        assert_eq!(state("/music/Locked/01.flac"), Some(false));
+        assert_eq!(state("/music/Gone"), Some(true));
+        assert_eq!(state("/music/Gone/01.flac"), Some(true));
+        assert_eq!(state("/music/Empty"), None);
         Ok(())
     }
 
@@ -690,6 +888,7 @@ mod tests {
             file_modified_at_ms: 1,
             file_created_at_ms: 1,
             synced_at_ms: None,
+            missing_at_ms: None,
         };
         let entry_db_id = db
             .exec_mut(QueryBuilder::insert().element(&entry).query())?

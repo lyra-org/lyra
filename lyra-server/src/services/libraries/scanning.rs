@@ -146,6 +146,7 @@ pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<ScanResult> {
             file_modified_at_ms,
             file_created_at_ms,
             synced_at_ms: None,
+            missing_at_ms: None,
         });
     }
 
@@ -303,7 +304,7 @@ mod tests {
     use lyra_db::entries::{
         EntryKind,
         load_existing,
-        prune_missing_entries,
+        mark_missing,
         sync_entry_group,
     };
     use lyra_db::test_db::TestDb;
@@ -322,7 +323,7 @@ mod tests {
     }
 
     fn new_db() -> anyhow::Result<DbAny> {
-        Ok(TestDb::new()?.into_inner())
+        Ok(TestDb::initialized()?.into_inner())
     }
 
     fn new_library(db: &mut DbAny, root: &Path) -> anyhow::Result<Library> {
@@ -339,7 +340,7 @@ mod tests {
         for group in plan.groups {
             sync_entry_group(db, library, hash_entry_group(group.entries))?;
         }
-        prune_missing_entries(
+        mark_missing(
             db,
             library,
             &plan.observed_paths,
@@ -356,7 +357,7 @@ mod tests {
     }
 
     #[test]
-    fn full_sync_removes_deleted_directory_subtree() -> anyhow::Result<()> {
+    fn full_sync_marks_a_deleted_directory_subtree_missing() -> anyhow::Result<()> {
         let root = temp_path("dir-delete");
         let album_dir = root.join("album");
         let disc_dir = album_dir.join("disc1");
@@ -376,20 +377,28 @@ mod tests {
         fs::remove_dir_all(&album_dir)?;
         full_sync(&mut db, &library)?;
         let remaining = load_existing(&db, library.db_id.unwrap())?;
-        assert_eq!(
-            remaining
-                .into_iter()
-                .map(|entry| entry.full_path)
-                .collect::<Vec<_>>(),
-            vec![kept]
-        );
+        assert_eq!(remaining.len(), 5);
+        let present = remaining
+            .iter()
+            .filter(|entry| !entry.is_missing())
+            .map(|entry| entry.full_path.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(present, vec![kept]);
+
+        fs::create_dir_all(&disc_dir)?;
+        fs::write(album_dir.join("track1.mp3"), b"track1")?;
+        fs::write(disc_dir.join("track2.mp3"), b"track2")?;
+        full_sync(&mut db, &library)?;
+        let revived = load_existing(&db, library.db_id.unwrap())?;
+        assert_eq!(revived.len(), 5);
+        assert!(revived.iter().all(|entry| !entry.is_missing()));
 
         let _ = fs::remove_dir_all(&root);
         Ok(())
     }
 
     #[test]
-    fn full_sync_removes_only_missing_file() -> anyhow::Result<()> {
+    fn full_sync_marks_only_the_missing_file() -> anyhow::Result<()> {
         let root = temp_path("file-delete");
         let album_dir = root.join("album");
         fs::create_dir_all(&album_dir)?;
@@ -405,7 +414,10 @@ mod tests {
         fs::remove_file(&track1)?;
         full_sync(&mut db, &library)?;
 
-        let remaining = load_existing(&db, library.db_id.unwrap())?;
+        let remaining = load_existing(&db, library.db_id.unwrap())?
+            .into_iter()
+            .filter(|entry| !entry.is_missing())
+            .collect::<Vec<_>>();
         let paths: HashSet<PathBuf> = remaining
             .iter()
             .map(|entry| entry.full_path.clone())
@@ -502,7 +514,7 @@ mod tests {
     }
 
     #[test]
-    fn sync_entry_group_defers_missing_entry_prune() -> anyhow::Result<()> {
+    fn sync_entry_group_defers_missing_entry_marking() -> anyhow::Result<()> {
         let root = temp_path("group-prune");
         let album_a = root.join("album-a");
         let album_b = root.join("album-b");
@@ -538,7 +550,7 @@ mod tests {
             "group sync should not delete entries missing from other groups"
         );
 
-        prune_missing_entries(
+        mark_missing(
             &mut db,
             &library,
             &observed_paths,
@@ -552,7 +564,11 @@ mod tests {
             },
         )?;
         let after_prune = load_existing(&db, library.db_id.unwrap())?;
-        assert!(!after_prune.iter().any(|entry| entry.full_path == track_a));
+        assert!(
+            after_prune
+                .iter()
+                .any(|entry| entry.full_path == track_a && entry.is_missing())
+        );
         assert!(after_prune.iter().any(|entry| entry.full_path == track_b));
 
         let _ = fs::remove_dir_all(&root);
@@ -625,14 +641,14 @@ mod tests {
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o755))?;
         result?;
 
-        let paths = load_existing(&db, library.db_id.unwrap())?
+        let missing = load_existing(&db, library.db_id.unwrap())?
             .into_iter()
-            .map(|entry| entry.full_path)
-            .collect::<HashSet<_>>();
-        assert!(paths.contains(&locked));
-        assert!(paths.contains(&locked.join("a.mp3")));
-        assert!(paths.contains(&open.join("b.mp3")));
-        assert!(!paths.contains(&open.join("c.mp3")));
+            .map(|entry| (entry.full_path.clone(), entry.is_missing()))
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(missing.get(&locked), Some(&false));
+        assert_eq!(missing.get(&locked.join("a.mp3")), Some(&false));
+        assert_eq!(missing.get(&open.join("b.mp3")), Some(&false));
+        assert_eq!(missing.get(&open.join("c.mp3")), Some(&true));
 
         let _ = fs::remove_dir_all(&root);
         Ok(())

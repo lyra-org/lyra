@@ -90,6 +90,7 @@ pub const ROOT_COLLECTION_ALIASES: &[&str] = &[
     "track_sources",
     "cue_sheets",
     "cue_tracks",
+    "missing_entries",
     "artists",
     "datastore",
     "providers",

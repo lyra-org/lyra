@@ -226,6 +226,9 @@ pub(crate) enum SkipReason {
     /// Audio entries were claimed by an earlier cue in the batch.
     CueAlreadyClaimed,
     CueParseFailed(ReadError),
+    /// The audio's cue sheet couldn't be read or parsed, so its segments can't be told apart from
+    /// it.
+    CueUnreadable,
 }
 
 impl SkipReason {
@@ -233,7 +236,7 @@ impl SkipReason {
     pub(crate) fn is_transient(&self) -> bool {
         match self {
             Self::ReadFailed(error) | Self::CueParseFailed(error) => error.transient,
-            Self::TaskFailed(_) => true,
+            Self::TaskFailed(_) | Self::CueUnreadable => true,
             Self::RequiredFieldEmpty(_) | Self::CueAlreadyClaimed => false,
         }
     }
@@ -314,6 +317,7 @@ pub(crate) fn skip_reason_summary(reason: &SkipReason) -> String {
         }
         SkipReason::CueAlreadyClaimed => "cue_already_claimed".to_string(),
         SkipReason::CueParseFailed(error) => format!("cue_parse_failed: {error}"),
+        SkipReason::CueUnreadable => "cue_unreadable".to_string(),
     }
 }
 
@@ -330,9 +334,17 @@ pub(crate) async fn load_mapping_config(
     mapping::ensure_config(&mut db_write)
 }
 
+/// The audio entry each stored cue track plays, by cue entry and track number, as
+/// `lyra_db::cue::audio_links` reads them.
+pub(crate) type CueLinks = HashMap<DbId, HashMap<u32, DbId>>;
+
+/// Reads the metadata of `entries`. An audio file whose cue sheet, as `cue_links` remembers it,
+/// fails to read or parse is skipped as unreadable too, so its segments aren't replaced by the
+/// whole file.
 pub(crate) async fn parse_metadata(
     mapping_config: &MetadataMappingConfig,
     entries: Vec<Entry>,
+    cue_links: &CueLinks,
 ) -> anyhow::Result<ParseMetadataOutput> {
     let mut audio_entries = Vec::new();
     let mut cue_entries = Vec::new();
@@ -354,6 +366,7 @@ pub(crate) async fn parse_metadata(
     let mut skipped: Vec<SkipRecord> = Vec::new();
     let mut cue_metadata = Vec::new();
     let mut cue_claimed_audio_entries = HashSet::new();
+    let mut held_audio_entries = HashSet::new();
     for cue_entry in &cue_entries {
         match parse_cue_metadata_for_entry(
             cue_entry,
@@ -387,9 +400,15 @@ pub(crate) async fn parse_metadata(
                     path = %cue_entry.full_path.display(),
                     "skipping cue metadata for file"
                 );
+                // Whether the sheet is gone for now or for good, as one in a legacy encoding is,
+                // the audio it was read with keeps its segments rather than being read whole.
+                if let Some(links) = cue_entry.db_id.and_then(|id| cue_links.get(&id)) {
+                    held_audio_entries.extend(links.values().copied());
+                }
+                let reason = ReadError::from(&err);
                 skipped.push(SkipRecord {
                     path: cue_entry.full_path.clone(),
-                    reason: SkipReason::CueParseFailed((&err).into()),
+                    reason: SkipReason::CueParseFailed(reason),
                 });
             }
         }
@@ -403,6 +422,13 @@ pub(crate) async fn parse_metadata(
         let Some(entry_db_id) = entry.db_id else {
             continue;
         };
+        if held_audio_entries.contains(&entry_db_id) {
+            skipped.push(SkipRecord {
+                path: entry.full_path.clone(),
+                reason: SkipReason::CueUnreadable,
+            });
+            continue;
+        }
 
         let path = entry.full_path.clone();
         let path_for_task = path.clone();
@@ -673,6 +699,7 @@ mod tests {
             file_modified_at_ms: 0,
             file_created_at_ms: 0,
             synced_at_ms: None,
+            missing_at_ms: None,
         }
     }
 
@@ -695,7 +722,12 @@ mod tests {
         let path = dir.path().join("Folder Album/01 - Path Title.flac");
         fixture_with_comments(&path, "integration_track.flac", &["TITLE"], &[])?;
 
-        let output = parse_metadata(&mapping::default_config(), vec![file_entry(1, &path)]).await?;
+        let output = parse_metadata(
+            &mapping::default_config(),
+            vec![file_entry(1, &path)],
+            &CueLinks::default(),
+        )
+        .await?;
 
         assert!(output.skipped.is_empty());
         assert_eq!(output.metadata.len(), 1);
@@ -720,6 +752,7 @@ mod tests {
         let output = parse_metadata(
             &mapping::default_config(),
             vec![file_entry(1, &paths[0]), file_entry(2, &paths[1])],
+            &CueLinks::default(),
         )
         .await?;
 
@@ -745,6 +778,7 @@ mod tests {
         let output = parse_metadata(
             &mapping::default_config(),
             vec![file_entry(1, &tagged), file_entry(2, &untagged)],
+            &CueLinks::default(),
         )
         .await?;
 
@@ -771,6 +805,7 @@ mod tests {
         let output = parse_metadata(
             &mapping::default_config(),
             vec![file_entry(1, &audio_path), file_entry(2, &cue_path)],
+            &CueLinks::default(),
         )
         .await?;
 
@@ -818,6 +853,7 @@ mod tests {
                 file_entry(3, &album.join("titled.cue")),
                 file_entry(4, &album.join("untitled.cue")),
             ],
+            &CueLinks::default(),
         )
         .await?;
 
@@ -855,6 +891,7 @@ mod tests {
                 file_entry(1, &audio_path),
                 file_entry(2, &dir.path().join("Folder Album/album.cue")),
             ],
+            &CueLinks::default(),
         )
         .await?;
 
@@ -896,6 +933,7 @@ mod tests {
                 file_entry(2, &song),
                 file_entry(3, &album.join("image.cue")),
             ],
+            &CueLinks::default(),
         )
         .await?;
 
@@ -924,6 +962,7 @@ mod tests {
         let output = parse_metadata(
             &mapping::default_config(),
             vec![file_entry(1, &audio_path), file_entry(2, &cue_path)],
+            &CueLinks::default(),
         )
         .await?;
 
@@ -957,6 +996,7 @@ mod tests {
         let mut output = parse_metadata(
             &mapping::default_config(),
             vec![file_entry(1, &audio_path), file_entry(2, &cue_path)],
+            &CueLinks::default(),
         )
         .await?;
 
@@ -1018,6 +1058,7 @@ mod tests {
         let output = parse_metadata(
             &mapping::default_config(),
             vec![file_entry(1, &audio_path), file_entry(2, &cue_path)],
+            &CueLinks::default(),
         )
         .await?;
 
@@ -1062,10 +1103,14 @@ mod tests {
             &[],
             &[("DATE", date), ("GENRE", genre)],
         )?;
-        let tagged = parse_metadata(&mapping::default_config(), vec![file_entry(1, &path)])
-            .await?
-            .metadata
-            .remove(0);
+        let tagged = parse_metadata(
+            &mapping::default_config(),
+            vec![file_entry(1, &path)],
+            &CueLinks::default(),
+        )
+        .await?
+        .metadata
+        .remove(0);
 
         let cued = cue_track_with(
             "Album",
@@ -1105,7 +1150,8 @@ mod tests {
             ]);
         }
 
-        let output = parse_metadata(&mapping::default_config(), entries).await?;
+        let output =
+            parse_metadata(&mapping::default_config(), entries, &CueLinks::default()).await?;
         assert!(output.skipped.is_empty());
         let groups = output
             .metadata
@@ -1150,6 +1196,7 @@ mod tests {
         let output = parse_metadata(
             &mapping::default_config(),
             vec![file_entry(1, &audio), file_entry(2, &cue)],
+            &CueLinks::default(),
         )
         .await?;
 
@@ -1185,6 +1232,7 @@ mod tests {
                 file_entry(2, &corrupt),
                 file_entry(3, &cue),
             ],
+            &CueLinks::default(),
         )
         .await?;
 
@@ -1214,7 +1262,12 @@ mod tests {
             &[("TITLE", " ")],
         )?;
 
-        let output = parse_metadata(&mapping::default_config(), vec![file_entry(1, &path)]).await?;
+        let output = parse_metadata(
+            &mapping::default_config(),
+            vec![file_entry(1, &path)],
+            &CueLinks::default(),
+        )
+        .await?;
 
         assert!(output.skipped.is_empty());
         assert_eq!(output.metadata[0].title.as_deref(), Some("Path Title"));
@@ -1227,7 +1280,12 @@ mod tests {
         let path = dir.path().join("Folder Album/01.flac");
         fixture_with_comments(&path, "integration_track.flac", &["TITLE"], &[])?;
 
-        let output = parse_metadata(&mapping::default_config(), vec![file_entry(1, &path)]).await?;
+        let output = parse_metadata(
+            &mapping::default_config(),
+            vec![file_entry(1, &path)],
+            &CueLinks::default(),
+        )
+        .await?;
 
         assert!(output.metadata.is_empty());
         assert_eq!(

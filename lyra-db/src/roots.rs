@@ -35,18 +35,22 @@ pub enum Root {
     CueTracks,
     Genres,
     Labels,
+    /// The entries a sync last failed to find, so availability reads them without walking every
+    /// entry.
+    MissingEntries,
     Releases,
     Tracks,
     TrackSources,
 }
 
 impl Root {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Artists,
         Self::CueSheets,
         Self::CueTracks,
         Self::Genres,
         Self::Labels,
+        Self::MissingEntries,
         Self::Releases,
         Self::Tracks,
         Self::TrackSources,
@@ -60,6 +64,7 @@ impl Root {
             Self::CueTracks => "cue_tracks",
             Self::Genres => "genres",
             Self::Labels => "labels",
+            Self::MissingEntries => "missing_entries",
             Self::Releases => "releases",
             Self::Tracks => "tracks",
             Self::TrackSources => "track_sources",
@@ -77,6 +82,58 @@ pub fn link(db: &mut impl DbAccess, root: Root, id: DbId) -> anyhow::Result<()> 
             .query(),
     )?;
     Ok(())
+}
+
+/// Makes `ids` members of `root`.
+pub fn link_all(db: &mut impl DbAccess, root: Root, ids: &[DbId]) -> anyhow::Result<()> {
+    if !ids.is_empty() {
+        db.exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from(root.alias())
+                .to(ids)
+                .query(),
+        )?;
+    }
+    Ok(())
+}
+
+/// Ends the membership of `ids` in `root`, leaving the nodes.
+pub fn unlink(db: &mut impl DbAccess, root: Root, ids: &[DbId]) -> anyhow::Result<()> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let ids = ids
+        .iter()
+        .copied()
+        .collect::<std::collections::HashSet<_>>();
+    let edges = member_edge_ids(db, root)?
+        .into_iter()
+        .filter(|(_, to)| ids.contains(to))
+        .map(|(edge, _)| edge)
+        .collect::<Vec<_>>();
+    if !edges.is_empty() {
+        db.exec_mut(QueryBuilder::remove().ids(edges).query())?;
+    }
+    Ok(())
+}
+
+/// The root's edges to its members, as `(edge, member)`, newest first.
+fn member_edge_ids(db: &impl DbAccess, root: Root) -> anyhow::Result<Vec<(DbId, DbId)>> {
+    Ok(db
+        .exec(
+            QueryBuilder::search()
+                .from(root.alias())
+                .where_()
+                .edge()
+                .and()
+                .distance(CountComparison::Equal(1))
+                .query(),
+        )?
+        .elements
+        .into_iter()
+        .map(|edge| (edge.id, edge.to))
+        .collect())
 }
 
 /// The members of `root`, in no particular order.

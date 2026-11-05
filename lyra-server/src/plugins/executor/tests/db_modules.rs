@@ -96,6 +96,7 @@ fn plugin_executor_exposes_db_backed_lyra_chromaprint_module() -> Result<()> {
         file_modified_at_ms: 1,
         file_created_at_ms: 1,
         synced_at_ms: None,
+        missing_at_ms: None,
     };
     db.exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?;
     let db = lyra_db::DbAsync::new(db);
@@ -624,6 +625,7 @@ fn plugin_executor_exposes_db_backed_lyra_track_sources_module() -> Result<()> {
         file_modified_at_ms: 1,
         file_created_at_ms: 1,
         synced_at_ms: None,
+        missing_at_ms: None,
     };
     let entry_db_id = db
         .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
@@ -701,6 +703,7 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
         file_modified_at_ms: 321,
         file_created_at_ms: 654,
         synced_at_ms: None,
+        missing_at_ms: None,
     };
     let entry_db_id = db
         .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?

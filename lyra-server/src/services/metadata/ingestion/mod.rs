@@ -223,6 +223,7 @@ mod tests {
             file_modified_at_ms: 0,
             file_created_at_ms: 0,
             synced_at_ms: None,
+            missing_at_ms: None,
         };
         let qr = db.exec_mut(QueryBuilder::insert().element(&entry).query())?;
         Ok(qr.elements[0].id)
@@ -497,7 +498,8 @@ mod tests {
                 .filter_map(|entry| Some((entry.db_id?, group.candidate_dir(&entry.full_path))))
                 .collect();
             let (source_dir, entries) = (group.source_dir, group.entries);
-            let parse_output = parse_metadata(&mapping_config, entries).await?;
+            let parse_output =
+                parse_metadata(&mapping_config, entries, &Default::default()).await?;
             if !parse_output.skipped.is_empty() {
                 crate::services::metadata::log_skip_summary(&parse_output.skipped);
             }

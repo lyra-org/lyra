@@ -121,7 +121,10 @@ pub(crate) async fn dry_run_config(
             .filter(|entry| classify_entry_file_kind(entry).as_deref() == Some("audio"))
             .count();
 
-        for record in parse_metadata(candidate, entries).await?.skipped {
+        for record in parse_metadata(candidate, entries, &Default::default())
+            .await?
+            .skipped
+        {
             let path = record.path.to_string_lossy().to_string();
             match record.reason {
                 SkipReason::RequiredFieldEmpty(missing) => report.push_rejected(path, missing),
@@ -129,7 +132,9 @@ pub(crate) async fn dry_run_config(
                 SkipReason::TaskFailed(error) => {
                     report.push_read_failure(path, format!("task failed: {error}"));
                 }
-                SkipReason::CueAlreadyClaimed | SkipReason::CueParseFailed(_) => {}
+                SkipReason::CueAlreadyClaimed
+                | SkipReason::CueParseFailed(_)
+                | SkipReason::CueUnreadable => {}
             }
         }
     }

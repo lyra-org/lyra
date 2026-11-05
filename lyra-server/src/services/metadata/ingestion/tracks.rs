@@ -37,7 +37,9 @@ fn prune_stale_track_sources(db: &mut DbAny, metadata: &[TrackMetadata]) -> anyh
                 let Some(source_db_id) = source.db_id else {
                     continue;
                 };
-                if expected_source_keys.contains(&source.source_key) {
+                if expected_source_keys.contains(&source.source_key)
+                    || cue_sheet_missing(db, source_db_id)?
+                {
                     continue;
                 }
 
@@ -53,6 +55,15 @@ fn prune_stale_track_sources(db: &mut DbAny, metadata: &[TrackMetadata]) -> anyh
     }
 
     Ok(())
+}
+
+/// Whether `source_id` is a cue sheet's segment whose cue sheet is missing: the entry no longer
+/// yields it only because the sheet can't be read, so the segment's track stays, unavailable.
+fn cue_sheet_missing(db: &DbAny, source_id: DbId) -> anyhow::Result<bool> {
+    let Some(cue_entry_id) = lyra_db::track_sources::cue_entry_id(db, source_id)? else {
+        return Ok(false);
+    };
+    Ok(lyra_db::entries::get_by_id(db, cue_entry_id)?.is_some_and(|entry| entry.is_missing()))
 }
 
 pub(crate) fn build_existing_track_map(
