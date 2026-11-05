@@ -4,6 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 use agdb::DbId;
+use anyhow::Context;
 use futures::StreamExt;
 use std::{
     collections::{
@@ -131,7 +132,19 @@ async fn sync_entries_incremental(
         let db_read = db.read().await;
         lyra_db::entries::get(&db_read, library_db_id)?
     };
-    let scan_plan = prepare_entry_scan_plan(library, existing)?;
+    let scan = {
+        let library = library.clone();
+        tokio::task::spawn_blocking(move || prepare_entry_scan_plan(&library, existing))
+    };
+    // A cancelled run leaves the scan to finish on its own; it only reads.
+    let scan_plan = match &progress {
+        Some(progress) => tokio::select! {
+            plan = scan => plan,
+            err = until_cancelled(progress) => return Err(err.into()),
+        },
+        None => scan.await,
+    }
+    .context("library scan task panicked")??;
     report_unlistable(&scan_plan.unlistable, progress.as_ref()).await;
     let protected_paths = scan_plan.protected_paths();
     let entry_group_count = scan_plan.groups.len();
