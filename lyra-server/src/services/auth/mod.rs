@@ -586,11 +586,12 @@ pub(crate) async fn resolve_auth_from_bearer(
         return Ok(None);
     };
 
-    if let Some(session_auth) = resolve_auth_from_session_token(bearer).await? {
-        return Ok(Some(session_auth));
-    }
-
-    resolve_auth_from_api_key(bearer).await
+    let auth = match resolve_auth_from_session_token(bearer).await? {
+        Some(session_auth) => Some(session_auth),
+        None => resolve_auth_from_api_key(bearer).await?,
+    };
+    // Sessions and keys the default user got while authentication was disabled must not outlive it.
+    Ok(auth.filter(|auth| auth.principal.username != DEFAULT_USERNAME))
 }
 
 async fn resolve_default_principal() -> AuthResult<Principal> {
@@ -668,7 +669,9 @@ pub(crate) async fn login_with_password(
         return create_login_result(principal, metadata).await.map(Some);
     }
 
-    let maybe_user = {
+    let maybe_user = if username.eq_ignore_ascii_case(DEFAULT_USERNAME) {
+        None
+    } else {
         let db = STATE.db.read().await;
         lyra_db::users::get_by_username(&db, username).map_err(AuthError::from)?
     };
@@ -1093,6 +1096,62 @@ mod tests {
         crate::services::testing::publish_config(config);
 
         assert!(resolve_auth_from_bearer(Some(bearer)).await?.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn default_user_credentials_stop_resolving_once_auth_is_enabled() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        initialize_auth_test_runtime().await?;
+
+        let mut config = STATE.config().as_ref().clone();
+        config.auth.enabled = false;
+        crate::services::testing::publish_config(config);
+        ensure_default_user(&STATE.config()).await?;
+
+        let default_principal = resolve_default_principal().await?;
+        let default_db_id = default_principal.require(&*STATE.db.read().await)?;
+        let session =
+            crate::services::testing::create_session(default_db_id, Default::default()).await?;
+        let api_key = api_keys::create_api_key(&default_principal, "left behind").await?;
+        for bearer in [&session.token, &api_key.key] {
+            let auth = resolve_auth_from_bearer(Some(bearer))
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("default credential should resolve"))?;
+            assert_ne!(auth.credential, AuthCredential::Default);
+        }
+
+        let password = "known-default-password";
+        {
+            let salt = SaltString::generate(&mut OsRng);
+            let hash = Argon2::default()
+                .hash_password(password.as_bytes(), &salt)
+                .map_err(|error| anyhow::anyhow!("{error}"))?
+                .to_string();
+            let mut db = STATE.db.write().await;
+            db.transaction_mut(|t| lyra_db::users::update_user_password(t, default_db_id, &hash))?;
+        }
+
+        let mut config = STATE.config().as_ref().clone();
+        config.auth.enabled = true;
+        crate::services::testing::publish_config(config);
+
+        for bearer in [&session.token, &api_key.key] {
+            assert!(resolve_auth_from_bearer(Some(bearer)).await?.is_none());
+            assert!(matches!(
+                require_auth(Some(bearer)).await,
+                Err(AuthError::InvalidBearerCredential)
+            ));
+        }
+        let login = login_with_password(
+            DEFAULT_USERNAME,
+            password,
+            Default::default(),
+            caller::ClientAddress::new(std::net::IpAddr::from([192, 0, 2, 41])),
+        )
+        .await?;
+        assert!(login.is_none());
 
         Ok(())
     }
