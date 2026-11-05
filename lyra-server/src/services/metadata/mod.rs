@@ -368,14 +368,8 @@ pub(crate) async fn parse_metadata(
     let mut cue_claimed_audio_entries = HashSet::new();
     let mut held_audio_entries = HashSet::new();
     for cue_entry in &cue_entries {
-        match parse_cue_metadata_for_entry(
-            cue_entry,
-            &audio_lookup.by_path,
-            &audio_lookup.by_name,
-            &audio_lookup.by_stem,
-        )
-        .await
-        {
+        let links = cue_entry.db_id.and_then(|id| cue_links.get(&id));
+        match parse_cue_metadata_for_entry(cue_entry, &audio_lookup, links).await {
             Ok((metadata, claimed_entries)) => {
                 if claimed_entries
                     .iter()
@@ -402,7 +396,7 @@ pub(crate) async fn parse_metadata(
                 );
                 // Whether the sheet is gone for now or for good, as one in a legacy encoding is,
                 // the audio it was read with keeps its segments rather than being read whole.
-                if let Some(links) = cue_entry.db_id.and_then(|id| cue_links.get(&id)) {
+                if let Some(links) = links {
                     held_audio_entries.extend(links.values().copied());
                 }
                 let reason = ReadError::from(&err);

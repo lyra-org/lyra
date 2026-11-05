@@ -113,6 +113,8 @@ fn trace_run_id(progress: Option<&SyncRunProgress>) -> String {
 struct ScanObservation {
     observed_paths: HashSet<std::path::PathBuf>,
     protected_paths: Vec<std::path::PathBuf>,
+    /// The entries that moved, as they were before.
+    moved_from: Vec<Entry>,
 }
 
 async fn sync_entries_incremental(
@@ -221,6 +223,7 @@ async fn sync_entries_incremental(
                     entry_count,
                     added = result.added,
                     updated = result.updated,
+                    moved = result.moved,
                     elapsed_ms = started.elapsed().as_millis() as u64,
                     stage = "entry_sync",
                     "scan entry group synced"
@@ -244,6 +247,7 @@ async fn sync_entries_incremental(
     Ok(ScanObservation {
         observed_paths: scan_plan.observed_paths,
         protected_paths,
+        moved_from: scan_plan.moved_from,
     })
 }
 
@@ -303,6 +307,7 @@ async fn mark_missing_entries_for_scan(
             library,
             &observation.observed_paths,
             &observation.protected_paths,
+            &observation.moved_from,
             |missing, present| albums_left_by(&library.path, missing, present),
         )
     };
@@ -702,12 +707,21 @@ async fn process_pending_metadata(
     if !entries.iter().any(is_unsynced_file) {
         return Ok(Vec::new());
     }
+    let cue_links = {
+        let cue_entry_ids = entries
+            .iter()
+            .filter(|entry| entry.file_kind.as_deref() == Some("cue"))
+            .filter_map(|entry| entry.db_id)
+            .collect::<Vec<_>>();
+        let db_read = db.read().await;
+        lyra_db::cue::audio_links(&*db_read, &cue_entry_ids)?
+    };
     let groups = match &progress {
         Some(progress) => tokio::select! {
-            groups = metadata_groups(&library.path, entries) => groups,
+            groups = metadata_groups(&library.path, entries, &cue_links) => groups,
             err = until_cancelled(progress) => return Err(err.into()),
         },
-        None => metadata_groups(&library.path, entries).await,
+        None => metadata_groups(&library.path, entries, &cue_links).await,
     };
     let groups = groups
         .into_iter()
@@ -759,16 +773,6 @@ async fn process_pending_metadata(
                 group_unsynced.insert(entry.full_path.clone(), entry_db_id);
             }
         }
-        let cue_links = {
-            let cue_entry_ids = group
-                .entries
-                .iter()
-                .filter(|entry| entry.file_kind.as_deref() == Some("cue"))
-                .filter_map(|entry| entry.db_id)
-                .collect::<Vec<_>>();
-            let db_read = db.read().await;
-            lyra_db::cue::audio_links(&*db_read, &cue_entry_ids)?
-        };
         let parse_output = match parse_metadata(&mapping_config, group.entries, &cue_links).await {
             Ok(output) => output,
             Err(err) => {
@@ -2361,6 +2365,161 @@ FILE "album.flac" WAVE
             "the audio replaced its segments while its cue sheet couldn't be read"
         );
         assert!(!synced(&library, &audio_named).await?);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_moved_file_keeps_its_entry_and_track() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("move").await?;
+        let audio = album_track(&root.join("Album"), "Album")?;
+        sync(&library).await?;
+        let before = snapshot(&library).await?[&audio].clone();
+        assert_eq!(before.1.len(), 1);
+
+        let moved = root.join("Elsewhere/Deeper/renamed.flac");
+        std::fs::create_dir_all(moved.parent().expect("parent"))?;
+        std::fs::rename(&audio, &moved)?;
+        std::fs::remove_dir(root.join("Album"))?;
+        sync(&library).await?;
+
+        let after = snapshot(&library).await?;
+        assert_eq!(
+            after[&moved], before,
+            "the moved file kept neither its entry nor its track"
+        );
+        assert!(!after.contains_key(&audio));
+        assert!(
+            !after.contains_key(&root.join("Album")),
+            "the emptied folder stayed as a tombstone"
+        );
+        let db = STATE.db.read().await;
+        let entry = lyra_db::lookup::find_node_id_by_id(&*db, &after[&moved].0)?.expect("entry");
+        let parent = lyra_db::entries::parent_id(&*db, entry)?.expect("parent");
+        assert_eq!(
+            lyra_db::entries::get_by_id(&*db, parent)?.map(|entry| entry.full_path),
+            Some(root.join("Elsewhere/Deeper")),
+            "the moved entry sits under its new folder"
+        );
+        drop(db);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_file_found_elsewhere_after_going_missing_is_revived() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("move-later").await?;
+        let audio = album_track(&root.join("Album"), "Album")?;
+        let kept = album_track(&root.join("Kept"), "Kept")?;
+        sync(&library).await?;
+        let before = snapshot(&library).await?[&audio].clone();
+
+        let parked = root.with_extension("parked.flac");
+        std::fs::rename(&audio, &parked)?;
+        sync(&library).await?;
+        assert!(entry_for(&library, &audio).await?.is_missing());
+
+        let moved = root.join("Later/track.flac");
+        std::fs::create_dir_all(root.join("Later"))?;
+        std::fs::rename(&parked, &moved)?;
+        sync(&library).await?;
+        let after = snapshot(&library).await?;
+        assert_eq!(after[&moved], before);
+        assert!(!entry_for(&library, &moved).await?.is_missing());
+        assert!(after.contains_key(&kept));
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn identical_copies_take_over_no_entry() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("move-ambiguous").await?;
+        let audio = album_track(&root.join("Album"), "Album")?;
+        sync(&library).await?;
+        let before = snapshot(&library).await?[&audio].clone();
+
+        let copies = [root.join("One/track.flac"), root.join("Two/track.flac")];
+        for copy in &copies {
+            std::fs::create_dir_all(copy.parent().expect("parent"))?;
+            std::fs::copy(&audio, copy)?;
+        }
+        std::fs::remove_file(&audio)?;
+        sync(&library).await?;
+
+        let after = snapshot(&library).await?;
+        assert_eq!(after[&audio], before, "the original stays, missing");
+        assert!(entry_for(&library, &audio).await?.is_missing());
+        for copy in &copies {
+            assert_ne!(
+                after[copy].0, before.0,
+                "an ambiguous copy took over the entry"
+            );
+        }
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_cue_sheet_moved_with_its_audio_keeps_its_segments() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("move-cue").await?;
+        let audio = album_track(&root.join("Album"), "Album")?;
+        let audio_named = root.join("Album/album.flac");
+        std::fs::rename(&audio, &audio_named)?;
+        std::fs::write(root.join("Album/album.cue"), CUE_SHEET)?;
+        sync(&library).await?;
+        let segments = snapshot(&library).await?[&audio_named].1.clone();
+        assert_eq!(segments.len(), 2);
+
+        std::fs::rename(root.join("Album"), root.join("Moved"))?;
+        sync(&library).await?;
+        assert_eq!(
+            snapshot(&library).await?[&root.join("Moved/album.flac")].1,
+            segments
+        );
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn audio_moved_away_from_its_cue_sheet_keeps_its_segments() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("move-cue-audio").await?;
+        let audio = album_track(&root.join("Album"), "Album")?;
+        let audio_named = root.join("Album/album.flac");
+        std::fs::rename(&audio, &audio_named)?;
+        std::fs::write(root.join("Album/album.cue"), CUE_SHEET)?;
+        sync(&library).await?;
+        let segments = snapshot(&library).await?[&audio_named].1.clone();
+        assert_eq!(segments.len(), 2);
+
+        let moved = root.join("Audio/renamed.flac");
+        std::fs::create_dir_all(root.join("Audio"))?;
+        std::fs::rename(&audio_named, &moved)?;
+        sync(&library).await?;
+        assert_eq!(
+            snapshot(&library).await?[&moved].1,
+            segments,
+            "the cue sheet's segments didn't follow their audio"
+        );
+        let db = STATE.db.read().await;
+        let availability = crate::services::catalog::Availability::of(&db)?;
+        for segment in &segments {
+            let id = lyra_db::lookup::find_node_id_by_id(&*db, segment)?.expect("segment");
+            assert!(
+                availability.track(id),
+                "a segment of the moved audio can't play"
+            );
+        }
+        drop(db);
         let _ = std::fs::remove_dir_all(root);
         Ok(())
     }

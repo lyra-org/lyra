@@ -109,7 +109,7 @@ pub(crate) async fn dry_run_config(
 
     let mut groups = Vec::new();
     for (library_root, entries) in libraries {
-        groups.extend(metadata_groups(&library_root, entries).await);
+        groups.extend(metadata_groups(&library_root, entries, &Default::default()).await);
     }
 
     let mut report = DryRunReport::default();

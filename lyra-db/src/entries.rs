@@ -237,8 +237,12 @@ pub fn load_existing(db: &DbAny, library_root: DbId) -> anyhow::Result<Vec<Entry
 pub struct EntrySyncResult {
     pub added: usize,
     pub updated: usize,
+    pub moved: usize,
 }
 
+/// Applies the scan of one group of entries: adds the new ones, updates the changed ones, and
+/// moves under their new parent those whose stored id the scan matched at another path. A changed
+/// or moved entry loses its sync.
 pub fn sync_entry_group(
     db: &mut DbAny,
     library: &Library,
@@ -249,12 +253,17 @@ pub fn sync_entry_group(
         .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
     let existing = load_existing(db, library_db_id)?;
     let mut db_by_path = HashMap::new();
+    let mut paths_by_id = HashMap::new();
     for entry in existing {
+        if let Some(db_id) = entry.db_id {
+            paths_by_id.insert(db_id, entry.full_path.clone());
+        }
         db_by_path.insert(entry.full_path.clone(), entry);
     }
 
     let mut to_add = Vec::new();
     let mut to_update = Vec::new();
+    let mut to_move = Vec::new();
     for entry in entries {
         if entry.full_path == library.path {
             continue;
@@ -262,9 +271,14 @@ pub fn sync_entry_group(
 
         let entry = Entry {
             synced_at_ms: None,
-            missing_at_ms: None,
             ..entry
         };
+        if let Some(stored_path) = entry.db_id.and_then(|db_id| paths_by_id.get(&db_id))
+            && *stored_path != entry.full_path
+        {
+            to_move.push(entry);
+            continue;
+        }
         let Some(existing) = db_by_path.get(&entry.full_path) else {
             to_add.push(entry);
             continue;
@@ -284,27 +298,37 @@ pub fn sync_entry_group(
         }
     }
 
-    let added_count = to_add.len();
-    let updated_count = to_update.len();
+    let result = EntrySyncResult {
+        added: to_add.len(),
+        updated: to_update.len(),
+        moved: to_move.len(),
+    };
 
     db.transaction_mut(|t| -> anyhow::Result<EntrySyncResult> {
-        if !to_update.is_empty() {
-            t.exec_mut(QueryBuilder::insert().elements(&to_update).query())?;
-            let updated = to_update
-                .iter()
-                .filter_map(|entry| entry.db_id)
-                .collect::<Vec<_>>();
+        let changed = to_update
+            .iter()
+            .chain(&to_move)
+            .filter_map(|entry| entry.db_id)
+            .collect::<Vec<_>>();
+        for entries in [&to_update, &to_move] {
+            if !entries.is_empty() {
+                t.exec_mut(QueryBuilder::insert().elements(entries).query())?;
+            }
+        }
+        if !changed.is_empty() {
             t.exec_mut(
                 QueryBuilder::remove()
                     .values(["synced_at_ms"])
-                    .ids(&updated)
+                    .ids(&changed)
                     .query(),
             )?;
         }
 
+        let mut path_to_id = HashMap::new();
+        let mut inserted: Vec<Entry> = Vec::new();
         if !to_add.is_empty() {
             let qr_ids = t.exec_mut(QueryBuilder::insert().elements(&to_add).query())?;
-            let inserted: Vec<Entry> = t
+            inserted = t
                 .exec(
                     QueryBuilder::select()
                         .elements::<Entry>()
@@ -312,49 +336,59 @@ pub fn sync_entry_group(
                         .query(),
                 )?
                 .try_into()?;
-            let mut path_to_id = HashMap::new();
             for entry in &inserted {
                 let entry_id = entry
                     .db_id
                     .ok_or_else(|| anyhow::anyhow!("newly inserted entry missing db_id"))?;
                 path_to_id.insert(entry.full_path.clone(), entry_id);
             }
-            for entry in &inserted {
-                let entry_id = entry
-                    .db_id
-                    .ok_or_else(|| anyhow::anyhow!("entry missing db_id during edge insert"))?;
-
-                let parent = entry
-                    .full_path
-                    .parent()
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                let parent_id = path_to_id
-                    .get(&PathBuf::from(&parent))
-                    .copied()
-                    .or_else(|| {
-                        db_by_path
-                            .get(&PathBuf::from(&parent))
-                            .and_then(|entry| entry.db_id)
-                    })
-                    .unwrap_or(library_db_id);
-
-                t.exec_mut(
-                    QueryBuilder::insert()
-                        .edges()
-                        .from(parent_id)
-                        .to(entry_id)
-                        .values_uniform([("owned", 1).into()])
-                        .query(),
-                )?;
+        }
+        let parent_of = |path: &Path| {
+            let parent = path.parent().map(Path::to_path_buf).unwrap_or_default();
+            path_to_id
+                .get(&parent)
+                .copied()
+                .or_else(|| db_by_path.get(&parent).and_then(|entry| entry.db_id))
+                .unwrap_or(library_db_id)
+        };
+        for entry in &inserted {
+            let entry_id = entry
+                .db_id
+                .ok_or_else(|| anyhow::anyhow!("entry missing db_id during edge insert"))?;
+            insert_owned_edge(t, parent_of(&entry.full_path), entry_id)?;
+        }
+        for entry in &to_move {
+            let entry_id = entry
+                .db_id
+                .ok_or_else(|| anyhow::anyhow!("moved entry missing db_id"))?;
+            let new_parent = parent_of(&entry.full_path);
+            if let Some(old_parent) = parent_id(t, entry_id)? {
+                if old_parent == new_parent {
+                    continue;
+                }
+                super::graph::remove_edges_between(t, old_parent, entry_id)?;
             }
+            insert_owned_edge(t, new_parent, entry_id)?;
         }
 
-        Ok(EntrySyncResult {
-            added: added_count,
-            updated: updated_count,
-        })
+        Ok(result)
     })
+}
+
+fn insert_owned_edge(
+    db: &mut impl super::DbAccess,
+    parent: DbId,
+    entry: DbId,
+) -> anyhow::Result<()> {
+    db.exec_mut(
+        QueryBuilder::insert()
+            .edges()
+            .from(parent)
+            .to(entry)
+            .values_uniform([("owned", 1).into()])
+            .query(),
+    )?;
+    Ok(())
 }
 
 pub fn mark_synced(db: &mut DbAny, entry_ids: &[DbId]) -> anyhow::Result<()> {
@@ -397,13 +431,15 @@ pub struct MarkResult {
 /// Marks the entries missing from `observed_paths` as missing, except where `protected` paths
 /// leave the scan without evidence, and revives the missing entries it observed. Missing
 /// directories with no file left beneath them are removed. The present entries `left_behind`
-/// picks, given the newly missing ones, lose their sync so the next one reads them again, as do
-/// those a newly missing or revived one shares a cue sheet with.
+/// picks, given the newly missing ones and `moved_from`, the moved entries at their old paths,
+/// lose their sync so the next one reads them again, as do those a newly missing, revived or
+/// moved one shares a cue sheet with.
 pub fn mark_missing(
     db: &mut DbAny,
     library: &Library,
     observed_paths: &HashSet<PathBuf>,
     protected: &[PathBuf],
+    moved_from: &[Entry],
     left_behind: impl LeftBehind,
 ) -> anyhow::Result<MarkResult> {
     let library_db_id = library
@@ -438,7 +474,12 @@ pub fn mark_missing(
         .filter_map(|dir| dir.db_id)
         .collect::<Vec<_>>();
 
-    let mut unsynced = left_behind(&newly_missing, &present)
+    let gone = newly_missing
+        .iter()
+        .chain(moved_from)
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut unsynced = left_behind(&gone, &present)
         .into_iter()
         .collect::<HashSet<_>>();
     let ids = |entries: &[Entry]| {
@@ -456,10 +497,11 @@ pub fn mark_missing(
         .filter(|entry_id| !removed_dirs.contains(entry_id))
         .collect::<Vec<_>>();
     let revived_ids = ids(&revived)?;
+    let moved_ids = ids(moved_from)?;
     let now = super::users::now_ms().unsigned_abs();
 
     db.transaction_mut(|t| -> anyhow::Result<MarkResult> {
-        for &entry_id in missing_ids.iter().chain(&revived_ids) {
+        for &entry_id in missing_ids.iter().chain(&revived_ids).chain(&moved_ids) {
             unsynced.extend(crate::cue::linked_entries(t, entry_id)?);
         }
         for entry_id in &missing_ids {
@@ -702,17 +744,24 @@ mod tests {
             .chain(std::iter::once(paths[4]))
             .map(PathBuf::from)
             .collect::<HashSet<_>>();
-        mark_missing(&mut db, &library, &observed, &[], |removed, surviving| {
-            surviving
-                .iter()
-                .filter(|entry| {
-                    removed
-                        .iter()
-                        .any(|gone| gone.full_path.parent() == entry.full_path.parent())
-                })
-                .filter_map(|entry| entry.db_id)
-                .collect()
-        })?;
+        mark_missing(
+            &mut db,
+            &library,
+            &observed,
+            &[],
+            &[],
+            |removed, surviving| {
+                surviving
+                    .iter()
+                    .filter(|entry| {
+                        removed
+                            .iter()
+                            .any(|gone| gone.full_path.parent() == entry.full_path.parent())
+                    })
+                    .filter_map(|entry| entry.db_id)
+                    .collect()
+            },
+        )?;
 
         let synced = |db: &DbAny, path: &str| -> anyhow::Result<bool> {
             Ok(get_by_id(db, id_of(db, path)?)?
@@ -740,7 +789,7 @@ mod tests {
 
         mark_synced(&mut db, &ids)?;
         let observed = paths.iter().map(PathBuf::from).collect::<HashSet<_>>();
-        let result = mark_missing(&mut db, &library, &observed, &[], |_, _| Vec::new())?;
+        let result = mark_missing(&mut db, &library, &observed, &[], &[], |_, _| Vec::new())?;
         assert_eq!(result.revived, 2);
         assert!(!missing(&db, paths[0])? && !missing(&db, paths[3])?);
         assert!(
@@ -793,19 +842,22 @@ mod tests {
         let seen = |kept: &[&str]| kept.iter().map(PathBuf::from).collect::<HashSet<_>>();
         let all = ["/music/A", paths[1], paths[2], "/music/B", paths[3]];
 
-        mark_missing(&mut db, &library, &seen(&all[3..]), &[], |_, _| Vec::new())?;
+        mark_missing(&mut db, &library, &seen(&all[3..]), &[], &[], |_, _| {
+            Vec::new()
+        })?;
         assert_missing_root_matches(&db, library_db_id)?;
         mark_missing(
             &mut db,
             &library,
             &seen(&["/music/A", paths[1], "/music/B"]),
             &[],
+            &[],
             |_, _| Vec::new(),
         )?;
         assert_missing_root_matches(&db, library_db_id)?;
-        mark_missing(&mut db, &library, &seen(&[]), &[], |_, _| Vec::new())?;
+        mark_missing(&mut db, &library, &seen(&[]), &[], &[], |_, _| Vec::new())?;
         assert_missing_root_matches(&db, library_db_id)?;
-        mark_missing(&mut db, &library, &seen(&all), &[], |_, _| Vec::new())?;
+        mark_missing(&mut db, &library, &seen(&all), &[], &[], |_, _| Vec::new())?;
         assert_missing_root_matches(&db, library_db_id)?;
         assert!(missing_ids(&db)?.is_empty());
         Ok(())
@@ -833,6 +885,7 @@ mod tests {
             &library,
             &observed,
             &[PathBuf::from("/music/Locked")],
+            &[],
             |_, _| Vec::new(),
         )?;
         assert_eq!((result.marked, result.removed_dirs), (2, 1));

@@ -35,6 +35,7 @@ use lyra_db::{
     entries::{
         EntryKind,
         classify_file_kind,
+        is_protected,
     },
     is_supported_extension,
 };
@@ -43,6 +44,8 @@ use lyra_db::{
 pub(crate) struct EntryScanPlan {
     pub(crate) groups: Vec<SourceDirGroup>,
     pub(crate) observed_paths: HashSet<PathBuf>,
+    /// The entries that moved, as they were before.
+    pub(crate) moved_from: Vec<Entry>,
     /// The paths the scan couldn't read, with why. What lies under them is no evidence either way.
     pub(crate) unlistable: Vec<(PathBuf, String)>,
 }
@@ -181,36 +184,86 @@ pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<ScanResult> {
     })
 }
 
-pub(crate) fn diff_and_needs_hash(
+/// The scanned entries with what the library already knows of them: the stored ids of those at a
+/// known path, and the hash a file keeps while its size and modification time do. A file at a new
+/// path takes over the entry of a file the scan no longer sees, one outside `protected` paths,
+/// when exactly one such entry and exactly one new file share their content. Returns the entries
+/// and, as they were, those that moved.
+pub(crate) fn diff_and_match_moves(
     scanned: Vec<Entry>,
     existing: Vec<Entry>,
-) -> (Vec<Entry>, Vec<PathBuf>) {
+    protected: &[PathBuf],
+) -> (Vec<Entry>, Vec<Entry>) {
+    let scanned_paths = scanned
+        .iter()
+        .map(|entry| entry.full_path.clone())
+        .collect::<HashSet<_>>();
     let mut db_by_path = HashMap::new();
-    let mut db_by_sha1 = MultiMap::new();
+    let mut db_by_sha1: MultiMap<String, Entry> = MultiMap::new();
     for e in existing.into_iter() {
-        if let Some(ref h) = e.hash {
+        if e.kind == EntryKind::File
+            && !scanned_paths.contains(&e.full_path)
+            && !is_protected(&e.full_path, protected)
+            && let Some(ref h) = e.hash
+        {
             db_by_sha1.insert(h.clone(), e.clone());
         }
-        db_by_path.insert(e.full_path.clone(), e.clone());
+        db_by_path.insert(e.full_path.clone(), e);
     }
 
     let mut enriched = Vec::with_capacity(scanned.len());
-    let mut to_hash = Vec::new();
+    let mut new_files = Vec::new();
     for mut e in scanned.into_iter() {
-        if let Some(old) = db_by_path.get(&e.full_path) {
-            e.db_id = old.db_id;
-            e.id = old.id.clone();
-            if old.size == e.size && old.file_modified_at_ms == e.file_modified_at_ms {
-                e.hash = old.hash.clone();
+        match db_by_path.get(&e.full_path) {
+            Some(old) => {
+                e.db_id = old.db_id;
+                e.id = old.id.clone();
+                if old.size == e.size && old.file_modified_at_ms == e.file_modified_at_ms {
+                    e.hash = old.hash.clone();
+                }
             }
-        }
-        if e.kind == EntryKind::File && e.hash.is_none() {
-            to_hash.push(e.full_path.clone());
+            None if e.kind == EntryKind::File => new_files.push(enriched.len()),
+            None => {}
         }
         enriched.push(e);
     }
 
-    (enriched, to_hash)
+    let mut moved_from = Vec::new();
+    if db_by_sha1.is_empty() || new_files.is_empty() {
+        return (enriched, moved_from);
+    }
+    let hashes = compute_hashes(
+        new_files
+            .iter()
+            .map(|&index| enriched[index].full_path.clone())
+            .collect(),
+    );
+    let mut new_by_hash: MultiMap<String, usize> = MultiMap::new();
+    for &index in &new_files {
+        let entry = &mut enriched[index];
+        entry.hash = hashes
+            .get(entry.full_path.to_string_lossy().as_ref())
+            .cloned();
+        if let Some(hash) = &entry.hash {
+            new_by_hash.insert(hash.clone(), index);
+        }
+    }
+    for (hash, indices) in new_by_hash.iter_all() {
+        let ([index], Some([old])) = (
+            indices.as_slice(),
+            db_by_sha1.get_vec(hash).map(Vec::as_slice),
+        ) else {
+            continue;
+        };
+        let entry = &mut enriched[*index];
+        if entry.file_kind != old.file_kind {
+            continue;
+        }
+        entry.db_id = old.db_id;
+        entry.id = old.id.clone();
+        moved_from.push(old.clone());
+    }
+    (enriched, moved_from)
 }
 
 pub(crate) fn hash_entry_group(mut entries: Vec<Entry>) -> Vec<Entry> {
@@ -276,7 +329,11 @@ pub(crate) fn prepare_entry_scan_plan(
     if !existing.is_empty() && !scanned.iter().any(|entry| entry.kind == EntryKind::File) {
         return Err(ScanError::EmptyRoot.into());
     }
-    let (enriched, _) = diff_and_needs_hash(scanned, existing);
+    let protected = unlistable
+        .iter()
+        .map(|(path, _)| path.clone())
+        .collect::<Vec<_>>();
+    let (enriched, moved_from) = diff_and_match_moves(scanned, existing, &protected);
     let observed_paths = enriched
         .iter()
         .map(|entry| entry.full_path.clone())
@@ -285,6 +342,7 @@ pub(crate) fn prepare_entry_scan_plan(
     Ok(EntryScanPlan {
         groups,
         observed_paths,
+        moved_from,
         unlistable,
     })
 }
@@ -345,6 +403,7 @@ mod tests {
             library,
             &plan.observed_paths,
             &protected,
+            &plan.moved_from,
             |removed, surviving| {
                 crate::services::metadata::ingestion::albums_left_by(
                     &library.path,
@@ -497,8 +556,12 @@ mod tests {
         for disc in &discs {
             assert!(entries.iter().any(|entry| &entry.full_path == disc));
         }
-        let groups =
-            crate::services::metadata::ingestion::metadata_groups(&library.path, entries).await;
+        let groups = crate::services::metadata::ingestion::metadata_groups(
+            &library.path,
+            entries,
+            &Default::default(),
+        )
+        .await;
         assert_eq!(groups.len(), 1, "disc tracks must share one metadata group");
         assert_eq!(
             groups[0]
@@ -554,6 +617,7 @@ mod tests {
             &mut db,
             &library,
             &observed_paths,
+            &[],
             &[],
             |removed, surviving| {
                 crate::services::metadata::ingestion::albums_left_by(

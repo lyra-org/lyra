@@ -478,15 +478,19 @@ mod tests {
         let library_db_id = library
             .db_id
             .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
-        let groups = metadata_groups(&library.path, lyra_db::entries::get(db, library_db_id)?)
-            .await
-            .into_iter()
-            .filter(|group| {
-                group
-                    .entries
-                    .iter()
-                    .any(|entry| entry.db_id.is_some_and(|id| entries.contains(&id)))
-            });
+        let groups = metadata_groups(
+            &library.path,
+            lyra_db::entries::get(db, library_db_id)?,
+            &Default::default(),
+        )
+        .await
+        .into_iter()
+        .filter(|group| {
+            group
+                .entries
+                .iter()
+                .any(|entry| entry.db_id.is_some_and(|id| entries.contains(&id)))
+        });
         let mapping_config = ensure_config(db)?;
         let mut parsed_groups = Vec::new();
 

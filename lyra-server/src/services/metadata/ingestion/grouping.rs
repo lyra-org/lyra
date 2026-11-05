@@ -25,6 +25,7 @@ use lyra_db::{
 };
 
 use crate::services::metadata::{
+    CueLinks,
     classify_entry_file_kind,
     cue::{
         build_audio_lookup,
@@ -300,6 +301,7 @@ pub(crate) fn albums_left_by(
 pub(crate) async fn metadata_groups(
     library_root: &Path,
     entries: Vec<Entry>,
+    cue_links: &CueLinks,
 ) -> Vec<MetadataGroup> {
     let albums = album_groups(library_root, entries);
     let mut unions = Unions::new(albums.len());
@@ -324,8 +326,19 @@ pub(crate) async fn metadata_groups(
         .filter(|(_, entry)| classify_entry_file_kind(entry).as_deref() == Some("cue"))
         .map(|(index, entry)| (index, entry.clone()))
         .collect::<Vec<_>>();
+    // A cue sheet groups with the audio its tracks name and with the audio its stored tracks
+    // play, which a move of the audio alone leaves unnamed.
     for (index, cue) in cues {
-        for audio_id in cue_audio_entry_ids(&cue, &lookup).await {
+        let linked = cue
+            .db_id
+            .and_then(|id| cue_links.get(&id))
+            .into_iter()
+            .flat_map(|links| links.values().copied());
+        for audio_id in cue_audio_entry_ids(&cue, &lookup)
+            .await
+            .into_iter()
+            .chain(linked)
+        {
             if let Some(&audio_album) = album_of_entry.get(&audio_id) {
                 unions.join(index, audio_album);
             }
@@ -345,7 +358,7 @@ mod tests {
             .enumerate()
             .map(|(index, file)| file_entry(index as i64 + 1, &root.join(file)))
             .collect();
-        metadata_groups(root, entries)
+        metadata_groups(root, entries, &Default::default())
             .await
             .into_iter()
             .map(|group| {

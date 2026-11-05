@@ -72,6 +72,7 @@ pub(super) struct AudioLookup {
     pub(super) by_path: HashMap<String, AudioEntryRef>,
     pub(super) by_name: HashMap<String, AudioEntryRef>,
     pub(super) by_stem: HashMap<String, Vec<AudioEntryRef>>,
+    pub(super) by_id: HashMap<DbId, AudioEntryRef>,
 }
 
 #[derive(Debug, Clone)]
@@ -380,6 +381,7 @@ pub(super) fn build_audio_lookup(audio_entries: &[Entry]) -> AudioLookup {
     let mut by_path = HashMap::new();
     let mut by_name = HashMap::new();
     let mut by_stem = HashMap::new();
+    let mut by_id = HashMap::new();
 
     for entry in audio_entries {
         let Some(entry_id) = entry.db_id else {
@@ -395,6 +397,7 @@ pub(super) fn build_audio_lookup(audio_entries: &[Entry]) -> AudioLookup {
             normalize_path_for_lookup(&entry.full_path),
             audio_ref.clone(),
         );
+        by_id.insert(entry_id, audio_ref.clone());
 
         if let Some(name) = entry
             .full_path
@@ -422,6 +425,7 @@ pub(super) fn build_audio_lookup(audio_entries: &[Entry]) -> AudioLookup {
         by_path,
         by_name,
         by_stem,
+        by_id,
     }
 }
 
@@ -447,12 +451,17 @@ pub(super) async fn cue_audio_entry_ids(cue_entry: &Entry, lookup: &AudioLookup)
         .collect()
 }
 
+/// Reads a cue sheet's tracks against the audio entries of `lookup`. A track whose file
+/// reference names none of them plays the audio entry its stored cue track did, per `links`, when
+/// that entry is among them, as when the audio was moved or renamed on its own.
 pub(super) async fn parse_cue_metadata_for_entry(
     cue_entry: &Entry,
-    audio_by_path: &HashMap<String, AudioEntryRef>,
-    audio_by_name: &HashMap<String, AudioEntryRef>,
-    audio_by_stem: &HashMap<String, Vec<AudioEntryRef>>,
+    lookup: &AudioLookup,
+    links: Option<&HashMap<u32, DbId>>,
 ) -> anyhow::Result<(Vec<TrackMetadata>, HashSet<DbId>)> {
+    let audio_by_path = &lookup.by_path;
+    let audio_by_name = &lookup.by_name;
+    let audio_by_stem = &lookup.by_stem;
     let cue_entry_id = cue_entry
         .db_id
         .ok_or_else(|| anyhow!("cue entry missing db_id for {:?}", cue_entry.full_path))?;
@@ -494,9 +503,13 @@ pub(super) async fn parse_cue_metadata_for_entry(
             continue;
         };
 
+        let linked = links
+            .and_then(|links| links.get(&track.track_no))
+            .and_then(|audio_id| lookup.by_id.get(audio_id));
         let Some(audio_entry) = resolve_audio_entry_for_cue_track(
             &cue_entry.full_path,
             &track.file_ref,
+            linked,
             audio_by_path,
             audio_by_name,
             audio_by_stem,
@@ -675,9 +688,13 @@ fn cue_file_path(cue_path: &Path, file_ref: &str) -> PathBuf {
     resolved
 }
 
+/// The audio entry a cue track's file reference names: the one at its exact path, else the one
+/// its stored cue track played (`linked`), as after the audio moved, else one matching by name or
+/// stem.
 pub(super) fn resolve_audio_entry_for_cue_track(
     cue_path: &Path,
     file_ref: &str,
+    linked: Option<&AudioEntryRef>,
     audio_by_path: &HashMap<String, AudioEntryRef>,
     audio_by_name: &HashMap<String, AudioEntryRef>,
     audio_by_stem: &HashMap<String, Vec<AudioEntryRef>>,
@@ -690,6 +707,9 @@ pub(super) fn resolve_audio_entry_for_cue_track(
 
     let lookup_key = normalize_path_for_lookup(&resolved);
     if let Some(audio_entry) = audio_by_path.get(&lookup_key) {
+        return Some(audio_entry.clone());
+    }
+    if let Some(audio_entry) = linked {
         return Some(audio_entry.clone());
     }
 
@@ -852,6 +872,42 @@ mod tests {
             track_gain_db: None,
             album_gain_db: None,
         }
+    }
+
+    #[test]
+    fn a_stored_link_wins_over_a_stem_match_once_the_named_file_is_gone() {
+        let renamed = AudioEntryRef {
+            entry_id: DbId(1),
+            file_path: PathBuf::from("/music/Album/renamed.flac"),
+        };
+        let wav = AudioEntryRef {
+            entry_id: DbId(2),
+            file_path: PathBuf::from("/music/Album/first.wav"),
+        };
+        let mut by_path = HashMap::new();
+        by_path.insert(normalize_path_for_lookup(&wav.file_path), wav.clone());
+        let mut by_stem = HashMap::new();
+        by_stem.insert(normalize_lookup_key("first"), vec![wav.clone()]);
+        let cue = Path::new("/music/Album/album.cue");
+
+        let moved = resolve_audio_entry_for_cue_track(
+            cue,
+            "first.flac",
+            Some(&renamed),
+            &by_path,
+            &HashMap::new(),
+            &by_stem,
+        );
+        assert_eq!(moved.map(|audio| audio.entry_id), Some(DbId(1)));
+        let named = resolve_audio_entry_for_cue_track(
+            cue,
+            "first.wav",
+            Some(&renamed),
+            &by_path,
+            &HashMap::new(),
+            &by_stem,
+        );
+        assert_eq!(named.map(|audio| audio.entry_id), Some(DbId(2)));
     }
 
     #[test]
@@ -1076,6 +1132,7 @@ FILE "02 second.wav" WAVE
                 "/music/oshi-no-ko/Disc 1/TVアニメ「【推しの子】」オリジナルサウンドトラック Disc 1.cue",
             ),
             "11. Mystery (w/o Perc.).wav",
+            None,
             &HashMap::new(),
             &HashMap::new(),
             &by_stem,
@@ -1097,6 +1154,7 @@ FILE "02 second.wav" WAVE
         let resolved = resolve_audio_entry_for_cue_track(
             Path::new("/music/Persona 4 Dancing All Night/Disc 1.cue"),
             "01 Dance!.wav",
+            None,
             &HashMap::new(),
             &HashMap::new(),
             &by_stem,
@@ -1126,6 +1184,7 @@ FILE "02 second.wav" WAVE
         let resolved = resolve_audio_entry_for_cue_track(
             Path::new("/music/album.cue"),
             "01 Intro.wav",
+            None,
             &HashMap::new(),
             &HashMap::new(),
             &by_stem,
@@ -1172,13 +1231,8 @@ FILE "02 second.wav" WAVE
         )?;
 
         let lookup = build_audio_lookup(&[file_entry(1, &audio_path)]);
-        let (metadata, _) = parse_cue_metadata_for_entry(
-            &file_entry(2, &cue_path),
-            &lookup.by_path,
-            &lookup.by_name,
-            &lookup.by_stem,
-        )
-        .await?;
+        let (metadata, _) =
+            parse_cue_metadata_for_entry(&file_entry(2, &cue_path), &lookup, None).await?;
 
         let wav = SourceFormat {
             container: Some(lyra_db::track_sources::SourceContainer::Wav),
@@ -1201,13 +1255,8 @@ FILE "02 second.wav" WAVE
         std::fs::write(&cue_path, cue)?;
 
         let lookup = build_audio_lookup(&[file_entry(1, &audio_path)]);
-        let (metadata, _) = parse_cue_metadata_for_entry(
-            &file_entry(2, &cue_path),
-            &lookup.by_path,
-            &lookup.by_name,
-            &lookup.by_stem,
-        )
-        .await?;
+        let (metadata, _) =
+            parse_cue_metadata_for_entry(&file_entry(2, &cue_path), &lookup, None).await?;
         Ok(metadata)
     }
 
@@ -1283,13 +1332,8 @@ FILE "02 second.wav" WAVE
         std::fs::write(&cue_path, sheet)?;
 
         let lookup = build_audio_lookup(&[file_entry(1, &audio_path)]);
-        let (metadata, _) = parse_cue_metadata_for_entry(
-            &file_entry(2, &cue_path),
-            &lookup.by_path,
-            &lookup.by_name,
-            &lookup.by_stem,
-        )
-        .await?;
+        let (metadata, _) =
+            parse_cue_metadata_for_entry(&file_entry(2, &cue_path), &lookup, None).await?;
         Ok(metadata)
     }
 
@@ -1339,13 +1383,8 @@ FILE "02 second.wav" WAVE
         assert!(super::super::read_audio_tags(audio_path.clone()).is_err());
 
         let lookup = build_audio_lookup(&[file_entry(1, &audio_path)]);
-        let (metadata, _) = parse_cue_metadata_for_entry(
-            &file_entry(2, &cue_path),
-            &lookup.by_path,
-            &lookup.by_name,
-            &lookup.by_stem,
-        )
-        .await?;
+        let (metadata, _) =
+            parse_cue_metadata_for_entry(&file_entry(2, &cue_path), &lookup, None).await?;
 
         assert_eq!(metadata.len(), 2);
         assert_eq!(metadata[1].segment_end_ms, Some(2_000));
