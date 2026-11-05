@@ -590,9 +590,12 @@ impl HttpResponse {
         }
     }
 
-    fn from_reqwest_error(err: &reqwest::Error) -> Self {
+    fn from_reqwest_error(mut err: reqwest::Error) -> Self {
+        if let Some(url) = err.url_mut() {
+            strip_credentials(url);
+        }
         let status_code = err.status().map(|s| s.as_u16());
-        let (kind, message) = classify_reqwest_error(err);
+        let (kind, message) = classify_reqwest_error(&err);
         Self::error(kind, status_code, message)
     }
 
@@ -600,6 +603,25 @@ impl HttpResponse {
         self.retries = retries;
         self.rate_limited = rate_limited;
         self
+    }
+}
+
+/// Drops the parts of `url` that carry credentials, so it can be logged or
+/// shown to a plugin: userinfo, query and fragment.
+fn strip_credentials(url: &mut url::Url) {
+    let _ = url.set_username("");
+    let _ = url.set_password(None);
+    url.set_query(None);
+    url.set_fragment(None);
+}
+
+fn loggable_url(raw: &str) -> String {
+    match url::Url::parse(raw) {
+        Ok(mut url) => {
+            strip_credentials(&mut url);
+            url.into()
+        }
+        Err(_) => "<invalid url>".to_string(),
     }
 }
 
@@ -728,7 +750,7 @@ async fn execute_single_request(options: &HttpRequestOptions) -> HttpResponse {
 
     let resp = match req.send().await {
         Ok(r) => r,
-        Err(err) => return HttpResponse::from_reqwest_error(&err),
+        Err(err) => return HttpResponse::from_reqwest_error(err),
     };
 
     let status_code = resp.status().as_u16();
@@ -782,7 +804,7 @@ async fn read_body(
                 body.extend_from_slice(&chunk);
             }
             Ok(None) => return Ok(body),
-            Err(err) => return Err(HttpResponse::from_reqwest_error(&err)),
+            Err(err) => return Err(HttpResponse::from_reqwest_error(err)),
         }
     }
 }
@@ -938,7 +960,7 @@ fn jittered_backoff(cap: Duration) -> Duration {
 /// behalf, runs through here, attributed to `plugin`. Each hop of a redirect
 /// chain runs under the limits of the host it reaches.
 async fn execute_request(plugin: Option<&str>, options: HttpRequestOptions) -> HttpResponse {
-    let span = tracing::debug_span!("http_request", plugin, url = %options.url);
+    let span = tracing::debug_span!("http_request", plugin, url = loggable_url(&options.url));
     let request = cache::cached(plugin, options, |options| {
         run_request(options, |opts| async move {
             execute_single_request(&opts).await
@@ -2399,6 +2421,36 @@ mod tests {
                 .expect("a body within the cap is read");
             assert_eq!(response.body.len(), 64, "{path}");
         }
+    }
+
+    #[tokio::test]
+    async fn request_errors_omit_url_credentials() {
+        let port = serve(|_, _, _| Vec::new()).await;
+        let url = format!("http://user:hunter2@127.0.0.1:{port}/rest/ping?apiKey=secret#frag");
+
+        let error = super::request_as("test", super::Request::get(url))
+            .await
+            .expect_err("a connection closed without a response fails");
+        let message = error.to_string();
+        assert!(
+            message.contains(&format!("127.0.0.1:{port}/rest/ping")),
+            "{message}"
+        );
+        for secret in ["user", "hunter2", "apiKey", "secret", "frag"] {
+            assert!(!message.contains(secret), "{secret} in {message}");
+        }
+    }
+
+    #[test]
+    fn loggable_url_omits_credentials() {
+        assert_eq!(
+            super::loggable_url("https://user:pw@api.example/v1/song?api_key=secret#x"),
+            "https://api.example/v1/song"
+        );
+        assert_eq!(
+            super::loggable_url("not a url?api_key=secret"),
+            "<invalid url>"
+        );
     }
 
     fn options(method: super::HttpMethod, url: String) -> super::HttpRequestOptions {
