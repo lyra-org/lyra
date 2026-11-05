@@ -229,17 +229,18 @@ fn log_setting_overrides() {
 fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
     // Non-blocking: a plugin warn-loop can't stall the scheduler on sync stderr.
     let (non_blocking, guard) = tracing_appender::non_blocking(std::io::stderr());
+    let directives = std::env::var(tracing_subscriber::EnvFilter::DEFAULT_ENV)
+        .ok()
+        .filter(|directives| tracing_subscriber::EnvFilter::try_new(directives).is_ok())
+        .unwrap_or_else(|| {
+            format!(
+                "{}=info,tower_http=debug,harmony_core=info",
+                env!("CARGO_CRATE_NAME")
+            )
+        });
 
     tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-                format!(
-                    "{}=info,tower_http=debug,harmony_core=info",
-                    env!("CARGO_CRATE_NAME")
-                )
-                .into()
-            }),
-        )
+        .with(routes::trace::log_filter(&directives))
         .with(tracing_subscriber::fmt::layer().with_writer(non_blocking))
         .init();
 

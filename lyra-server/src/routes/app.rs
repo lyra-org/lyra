@@ -27,7 +27,6 @@ use tokio::{
     time::timeout,
 };
 use tokio_util::sync::CancellationToken;
-use tower_http::trace::TraceLayer;
 
 use crate::{
     plugins::api::RouteKey,
@@ -190,7 +189,7 @@ pub(crate) async fn serve_app(
     let app = super::rate_limit::apply(app, config);
     let app = app.layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT_BYTES));
     let app = super::cors::apply(app);
-    let app = app.layer(TraceLayer::new_for_http());
+    let app = super::trace::apply(app);
     let signal_token = shutdown_token.clone();
     let signal_handle = tokio::spawn(async move {
         shutdown_signal().await;

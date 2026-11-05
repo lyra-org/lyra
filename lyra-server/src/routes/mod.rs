@@ -39,6 +39,7 @@ mod sorting;
 mod sync;
 mod tags;
 mod targets;
+pub(crate) mod trace;
 mod tracks;
 mod users;
 mod websocket;

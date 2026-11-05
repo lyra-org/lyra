@@ -55,7 +55,7 @@ This clears all saved server settings. It does not remove values from `config.js
 | `LYRA_PORT` | `4746` | Listening port; overrides `port` from the file |
 | `LYRA_PLUGINS_DIR` | `./plugins` | Directory plugins are loaded from; created when serving |
 | `LYRA_STATIC_DIR` | searched | Directory for static web assets; must be a directory when set |
-| `RUST_LOG` | `lyra_server=info,tower_http=debug,harmony_core=info` | Log filter |
+| `RUST_LOG` | `lyra_server=info,tower_http=debug,harmony_core=info` | Log filter; request logs name query parameters without their values, which log at `lyra::http::query=trace` only when that target is named |
 
 Docker uses `/data` and `/plugins`; update their mounts if you change these paths. For a frontend override, see [custom web interface](installation.md#optional-use-a-custom-web-interface).
 
