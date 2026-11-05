@@ -224,13 +224,13 @@ async fn covers(
     listens: Listens,
     require_file: bool,
 ) -> luau::runtime::Result<luau::OwnedTable> {
-    let (table, stale_covers) = {
+    let (ids, found, owners, candidates) = {
         let (db, viewer) = db.read().await?;
         let ids = Resolved::of(&*db, ids.0.clone())?;
         let filter = CoverFilter::new(&viewer).listening(listens);
-        let mut found = lookup::resolve(&db, &filter, ids.db_ids())?;
-        let stale_covers = if require_file {
-            stale::keep_present(&*db, &mut found)?
+        let found = lookup::resolve(&db, &filter, ids.db_ids())?;
+        let candidates = if require_file {
+            stale::candidates_of(&*db, &found)?
         } else {
             Vec::new()
         };
@@ -239,15 +239,21 @@ async fn covers(
             .map(|cover| cover.owner_db_id)
             .collect::<Vec<_>>();
         let owners = crate::plugins::ids::public_ids(&*db, &owner_ids)?;
-        let mut covers = Vec::with_capacity(found.len());
-        for (id, cover) in found {
-            covers.push((
-                id,
-                harmony_luau::serializable_to_luau_owned(CoverInfo::new(cover, &owners)?)?,
-            ));
-        }
-        (ids.keyed(covers), stale_covers)
+        (ids, found, owners, candidates)
     };
+    let (found, stale_covers) = if require_file {
+        stale::keep_present(found, candidates).await?
+    } else {
+        (found, Vec::new())
+    };
+    let mut covers = Vec::with_capacity(found.len());
+    for (id, cover) in found {
+        covers.push((
+            id,
+            harmony_luau::serializable_to_luau_owned(CoverInfo::new(cover, &owners)?)?,
+        ));
+    }
+    let table = ids.keyed(covers);
     if !stale_covers.is_empty() {
         let handle = db.handle();
         let mut db = handle.write().await;

@@ -443,10 +443,6 @@ async fn render_cover_on(
     }
 }
 
-pub(crate) fn cover_hash(path: &Path) -> Option<String> {
-    read_cover_hash(path).ok()
-}
-
 pub(crate) fn read_cover_hash(path: &Path) -> anyhow::Result<String> {
     let bytes =
         std::fs::read(path).with_context(|| format!("failed to read cover {}", path.display()))?;

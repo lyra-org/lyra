@@ -916,11 +916,11 @@ async fn refresh_and_sync_artist_cover(
     if current_artist(listed).await?.is_none() {
         return Ok(None);
     }
+    if !artist_cover_wanted(&STATE.db.get(), listed.db_id, &listed.id, options).await? {
+        return Ok(Some(false));
+    }
     let context = {
         let db = STATE.db.read().await;
-        if !artist_cover_wanted(&db, listed.db_id, &listed.id, options)? {
-            return Ok(Some(false));
-        }
         build_entity_provider_context(&db, listed.db_id, None, schemes).map(|(_, context)| context)
     };
     match context {

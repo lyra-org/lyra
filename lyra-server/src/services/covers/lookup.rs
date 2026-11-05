@@ -176,9 +176,10 @@ mod tests {
 
     /// Serves the bytes of `item`'s cover as an image route does: a file confirmed gone serves
     /// nothing and its record is removed.
-    fn serve(db: &mut DbAny, filter: &CoverFilter<'_>, item: DbId) -> anyhow::Result<bool> {
-        let mut found = resolve(db, filter, &[item])?;
-        let stale_covers = stale::keep_present(&*db, &mut found)?;
+    async fn serve(db: &mut DbAny, filter: &CoverFilter<'_>, item: DbId) -> anyhow::Result<bool> {
+        let found = resolve(db, filter, &[item])?;
+        let candidates = stale::candidates_of(&*db, &found)?;
+        let (found, stale_covers) = stale::keep_present(found, candidates).await?;
         stale::remove_stale(db, &stale_covers)?;
         Ok(found.contains_key(&item))
     }
@@ -206,7 +207,7 @@ mod tests {
         remove_cover_file(&db, winner)?;
         let filter = CoverFilter::new(&Viewer::System).listening(Listens::Instance);
 
-        assert!(!serve(&mut db, &filter, genre_db_id)?);
+        assert!(!serve(&mut db, &filter, genre_db_id).await?);
         assert!(lyra_db::covers::get(&db, winner)?.is_none());
         let listed = resolve(&db, &filter, &[genre_db_id])?;
         assert_eq!(
@@ -214,12 +215,12 @@ mod tests {
             Some(candidates[1]),
             "the genre shows its next candidate at once"
         );
-        assert!(serve(&mut db, &filter, genre_db_id)?);
+        assert!(serve(&mut db, &filter, genre_db_id).await?);
         Ok(())
     }
 
-    #[test]
-    fn a_playlist_whose_winner_file_is_gone_moves_on_once_served() -> anyhow::Result<()> {
+    #[tokio::test]
+    async fn a_playlist_whose_winner_file_is_gone_moves_on_once_served() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
         let mut db = new_test_db()?;
         let releases = covered_releases(&mut db, dir.path())?;
@@ -247,11 +248,11 @@ mod tests {
 
         let listed = resolve(&db, &filter, &[playlist_db_id])?;
         assert_eq!(owner(&listed, playlist_db_id), Some(sources[0].1));
-        assert!(!serve(&mut db, &filter, playlist_db_id)?);
+        assert!(!serve(&mut db, &filter, playlist_db_id).await?);
 
         let listed = resolve(&db, &filter, &[playlist_db_id])?;
         assert_eq!(owner(&listed, playlist_db_id), Some(sources[1].1));
-        assert!(serve(&mut db, &filter, playlist_db_id)?);
+        assert!(serve(&mut db, &filter, playlist_db_id).await?);
         Ok(())
     }
 

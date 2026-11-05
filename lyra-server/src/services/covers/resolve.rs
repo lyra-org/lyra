@@ -19,6 +19,10 @@ use anyhow::{
     Context,
     Result,
 };
+use rayon::iter::{
+    IntoParallelIterator,
+    ParallelIterator,
+};
 
 use crate::services::STATE;
 use lyra_db::Track;
@@ -41,6 +45,28 @@ pub(crate) fn configured_cover_dir_for_playlist(covers_root: &Path, playlist_id:
     covers_root
         .join("playlists")
         .join(playlist_id.0.to_string())
+}
+
+/// The files of the owner's stored covers, for [`any_cover_file`] once the read is over.
+pub(crate) fn stored_cover_files(
+    db: &impl lyra_db::DbAccess,
+    owner_db_id: DbId,
+) -> Result<Vec<PathBuf>> {
+    Ok(lyra_db::covers::sources(db, owner_db_id)?
+        .into_iter()
+        .map(|sourced| PathBuf::from(sourced.cover.path))
+        .collect())
+}
+
+pub(crate) fn any_cover_file(files: &[PathBuf]) -> bool {
+    files.iter().any(|file| file.is_file())
+}
+
+/// [`any_cover_file`] off the async threads.
+pub(crate) async fn search_cover_files(files: Vec<PathBuf>) -> Result<bool> {
+    tokio::task::spawn_blocking(move || any_cover_file(&files))
+        .await
+        .context("cover file search task panicked")
 }
 
 /// Whether the owner has a stored cover from any source whose file is there.
@@ -166,19 +192,39 @@ pub(crate) fn cover_dirs_for_release(
     Ok(dirs)
 }
 
-/// The release's cover in its library: a `cover.*` image in a folder holding its tracks or the
-/// folder above.
-pub(crate) fn resolve_local_cover_for_release(
-    db: &DbAny,
-    tracks: &[Track],
-    library_root: Option<&Path>,
-) -> Result<Option<PathBuf>> {
-    for dir in cover_dirs_for_release(db, tracks, library_root)? {
-        if let Some(cover) = find_cover_in_directory(&dir)? {
+/// The release's cover in its library: a `cover.*` image in the first of `dirs` holding one, as
+/// [`cover_dirs_for_release`] lists the folders holding its tracks and the folders above.
+pub(crate) fn find_local_cover(dirs: &[PathBuf]) -> Result<Option<PathBuf>> {
+    for dir in dirs {
+        if let Some(cover) = find_cover_in_directory(dir)? {
             return Ok(Some(cover));
         }
     }
     Ok(None)
+}
+
+/// [`find_local_cover`] off the async threads.
+pub(crate) async fn search_local_cover(dirs: Vec<PathBuf>) -> Result<Option<PathBuf>> {
+    tokio::task::spawn_blocking(move || find_local_cover(&dirs))
+        .await
+        .context("local cover search task panicked")?
+}
+
+/// The local cover in each search's directories, or why looking failed, off the async threads.
+pub(crate) async fn search_local_covers<T: Send + 'static>(
+    searches: Vec<(T, Vec<PathBuf>)>,
+) -> Result<Vec<(T, Result<Option<PathBuf>>)>> {
+    tokio::task::spawn_blocking(move || {
+        searches
+            .into_par_iter()
+            .map(|(owner, dirs)| {
+                let found = find_local_cover(&dirs);
+                (owner, found)
+            })
+            .collect()
+    })
+    .await
+    .context("local cover search task panicked")
 }
 
 #[cfg(test)]

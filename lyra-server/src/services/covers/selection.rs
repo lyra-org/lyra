@@ -824,8 +824,9 @@ mod tests {
 
         let mut db = STATE.db.write().await;
         let filter = CoverFilter::new(&Viewer::System);
-        let mut served = super::super::lookup::resolve(&db, &filter, &[release_db_id])?;
-        let stale = super::super::stale::keep_present(&*db, &mut served)?;
+        let served = super::super::lookup::resolve(&db, &filter, &[release_db_id])?;
+        let stored = super::super::stale::candidates_of(&*db, &served)?;
+        let (served, stale) = super::super::stale::keep_present(served, stored).await?;
         assert!(served.is_empty(), "the image is not served");
         super::super::stale::remove_stale(&mut db, &stale)?;
         let found = super::super::lookup::resolve(&db, &filter, &[release_db_id])?;

@@ -19,6 +19,11 @@ use agdb::{
     DbAny,
     DbId,
 };
+use anyhow::Context;
+use rayon::iter::{
+    IntoParallelIterator,
+    ParallelIterator,
+};
 
 use super::ResolvedCover;
 use lyra_db::{
@@ -50,11 +55,10 @@ fn cover_gone(cover: &Cover) -> bool {
     confirmed_gone(Path::new(&cover.path))
 }
 
-/// An owner's cover from one source whose file was confirmed gone when read, identified so that
-/// it can be acted on after the read's guard is released: database ids can name another node by
-/// then, public ids can't.
+/// An owner's cover from one source, identified so that it can be acted on after the read's guard
+/// is released: database ids can name another node by then, public ids can't.
 #[derive(Clone, Debug)]
-pub(crate) struct StaleCover {
+pub(crate) struct StoredCover {
     owner_db_id: DbId,
     owner_id: String,
     source: CoverSource,
@@ -63,36 +67,22 @@ pub(crate) struct StaleCover {
     path: String,
 }
 
-impl StaleCover {
-    /// Each of the owner's covers whose file is confirmed gone.
-    pub(crate) fn read_all(db: &impl DbAccess, owner_db_id: DbId) -> anyhow::Result<Vec<Self>> {
-        let mut stale = Vec::new();
-        for sourced in lyra_db::covers::sources(db, owner_db_id)? {
-            stale.extend(Self::of(db, owner_db_id, sourced.source, &sourced.cover)?);
-        }
-        Ok(stale)
-    }
-
-    /// `cover`, the owner's cover from `source`, when its file is confirmed gone.
-    fn of(
-        db: &impl DbAccess,
-        owner_db_id: DbId,
-        source: CoverSource,
-        cover: &Cover,
-    ) -> anyhow::Result<Option<Self>> {
-        if !cover_gone(cover) {
-            return Ok(None);
-        }
+impl StoredCover {
+    /// Each of the owner's covers, for [`confirmed_stale`] to look at once the read is over.
+    pub(crate) fn candidates(db: &impl DbAccess, owner_db_id: DbId) -> anyhow::Result<Vec<Self>> {
         let Some(owner_id) = lyra_db::lookup::find_id_by_db_id(db, owner_db_id)? else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
-        Ok(Some(Self {
-            owner_db_id,
-            owner_id,
-            source,
-            cover_id: cover.id.clone(),
-            path: cover.path.clone(),
-        }))
+        Ok(lyra_db::covers::sources(db, owner_db_id)?
+            .into_iter()
+            .map(|sourced| Self {
+                owner_db_id,
+                owner_id: owner_id.clone(),
+                source: sourced.source,
+                cover_id: sourced.cover.id,
+                path: sourced.cover.path,
+            })
+            .collect())
     }
 
     pub(crate) fn owner_db_id(&self) -> DbId {
@@ -103,8 +93,8 @@ impl StaleCover {
         self.source
     }
 
-    /// The stale cover, when the owner read is still there and still holds it, at the same file,
-    /// from the source.
+    /// The cover, when the owner read is still there and still holds it, at the same file, from
+    /// the source.
     pub(crate) fn current(&self, db: &impl DbAccess) -> anyhow::Result<Option<Cover>> {
         if lyra_db::lookup::find_id_by_db_id(db, self.owner_db_id)?.as_deref()
             != Some(&self.owner_id)
@@ -118,37 +108,69 @@ impl StaleCover {
     }
 }
 
-/// Leaves out the covers whose file is not there, for callers about to serve the image, and
-/// returns those whose file is confirmed gone, for [`remove_stale`] once the read is over.
-pub(crate) fn keep_present<K>(
+/// The `candidates` whose file is confirmed gone, looked for off the async threads.
+pub(crate) async fn confirmed_stale(
+    candidates: Vec<StoredCover>,
+) -> anyhow::Result<Vec<StoredCover>> {
+    tokio::task::spawn_blocking(move || {
+        candidates
+            .into_par_iter()
+            .filter(|candidate| confirmed_gone(Path::new(&candidate.path)))
+            .collect()
+    })
+    .await
+    .context("cover file search task panicked")
+}
+
+/// The stored covers behind `covers`, for [`keep_present`] once the read is over.
+pub(crate) fn candidates_of<K>(
     db: &impl DbAccess,
-    covers: &mut HashMap<K, ResolvedCover>,
-) -> anyhow::Result<Vec<StaleCover>> {
-    let mut missing = Vec::new();
-    covers.retain(|_, resolved| {
-        let present = std::fs::metadata(&resolved.cover.path).is_ok_and(|meta| meta.is_file());
-        if !present {
-            missing.push((resolved.owner_db_id, resolved.cover.clone()));
-        }
-        present
-    });
-    let mut stale = Vec::new();
-    for (owner_db_id, cover) in missing {
-        let source = lyra_db::covers::sources(db, owner_db_id)?
-            .into_iter()
-            .find(|sourced| sourced.cover.id == cover.id)
-            .map(|sourced| sourced.source);
-        if let Some(source) = source {
-            stale.extend(StaleCover::of(db, owner_db_id, source, &cover)?);
-        }
+    covers: &HashMap<K, ResolvedCover>,
+) -> anyhow::Result<Vec<StoredCover>> {
+    let mut candidates = Vec::new();
+    for resolved in covers.values() {
+        candidates.extend(
+            StoredCover::candidates(db, resolved.owner_db_id)?
+                .into_iter()
+                .filter(|candidate| candidate.cover_id == resolved.cover.id),
+        );
     }
-    Ok(stale)
+    Ok(candidates)
+}
+
+/// Leaves out the covers whose file is not there, for callers about to serve the image, and
+/// returns those of `candidates` whose file is confirmed gone, for [`remove_stale`].
+pub(crate) async fn keep_present<K: Send + 'static>(
+    mut covers: HashMap<K, ResolvedCover>,
+    candidates: Vec<StoredCover>,
+) -> anyhow::Result<(HashMap<K, ResolvedCover>, Vec<StoredCover>)> {
+    let (covers, absent) = tokio::task::spawn_blocking(move || {
+        let mut absent = HashSet::new();
+        covers.retain(|_, resolved| {
+            let present = std::fs::metadata(&resolved.cover.path).is_ok_and(|meta| meta.is_file());
+            if !present {
+                absent.insert(resolved.cover.id.clone());
+            }
+            present
+        });
+        (covers, absent)
+    })
+    .await
+    .context("cover file search task panicked")?;
+    let stale = confirmed_stale(
+        candidates
+            .into_iter()
+            .filter(|candidate| absent.contains(&candidate.cover_id))
+            .collect(),
+    )
+    .await?;
+    Ok((covers, stale))
 }
 
 /// Removes the `stale` covers whose files are still confirmed gone, each in a transaction of its
 /// own, and returns how many it removed. A cover whose owner was removed, or which was removed or
 /// replaced, since it was read is passed over. A pin on a removed source goes with it.
-pub(crate) fn remove_stale(db: &mut DbAny, stale: &[StaleCover]) -> anyhow::Result<usize> {
+pub(crate) fn remove_stale(db: &mut DbAny, stale: &[StoredCover]) -> anyhow::Result<usize> {
     let mut seen = HashSet::new();
     let mut removed = 0;
     let mut orphaned = Vec::new();
@@ -160,6 +182,7 @@ pub(crate) fn remove_stale(db: &mut DbAny, stale: &[StaleCover]) -> anyhow::Resu
             let Some(cover) = stale.current(t)? else {
                 return Ok(false);
             };
+            // Under the write, since a file back by now keeps its record.
             if !cover_gone(&cover) {
                 return Ok(false);
             }
@@ -276,14 +299,14 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn a_cover_in_an_unmounted_directory_is_kept() -> anyhow::Result<()> {
+    #[tokio::test]
+    async fn a_cover_in_an_unmounted_directory_is_kept() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
         let mut db = new_test_db()?;
         let release = insert_release(&mut db, "Album")?;
         let unmounted = dir.path().join("unmounted/cover.png");
         let cover = stored_cover(&mut db, release, CoverSource::Local, &unmounted)?;
-        let mut found = HashMap::from([(
+        let found = HashMap::from([(
             release,
             ResolvedCover {
                 owner_db_id: release,
@@ -291,7 +314,8 @@ mod tests {
             },
         )]);
 
-        let stale = keep_present(&db, &mut found)?;
+        let candidates = candidates_of(&db, &found)?;
+        let (found, stale) = keep_present(found, candidates).await?;
         assert!(found.is_empty(), "nothing is served without its file");
         assert!(stale.is_empty(), "but nothing is confirmed gone");
         remove_stale_cover(&mut db, &cover.id)?;
@@ -299,8 +323,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn a_gone_manual_cover_gives_way_to_the_provider_cover() -> anyhow::Result<()> {
+    #[tokio::test]
+    async fn a_gone_manual_cover_gives_way_to_the_provider_cover() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
         let mut db = new_test_db()?;
         let release = insert_release(&mut db, "Album")?;
@@ -313,7 +337,7 @@ mod tests {
             CoverSource::Manual,
             &dir.path().join("manual.png"),
         )?;
-        let mut found = HashMap::from([(
+        let found = HashMap::from([(
             release,
             ResolvedCover {
                 owner_db_id: release,
@@ -321,7 +345,8 @@ mod tests {
             },
         )]);
 
-        let stale = keep_present(&db, &mut found)?;
+        let candidates = candidates_of(&db, &found)?;
+        let (_, stale) = keep_present(found, candidates).await?;
         assert_eq!(remove_stale(&mut db, &stale)?, 1);
         assert_eq!(shown_source(&db, release)?, Some(CoverSource::Provider));
         Ok(())
@@ -362,7 +387,7 @@ mod tests {
         let mut stale = Vec::new();
         for owner in [deleted, replaced, kept] {
             stored_cover(&mut db, owner, CoverSource::Local, &gone("old.png"))?;
-            stale.extend(StaleCover::read_all(&db, owner)?);
+            stale.extend(StoredCover::candidates(&db, owner)?);
         }
         assert_eq!(stale.len(), 3);
         lyra_db::covers::remove_all(&mut db, deleted)?;
@@ -392,7 +417,7 @@ mod tests {
             CoverSource::Local,
             &dir.path().join("gone.png"),
         )?;
-        let stale = StaleCover::read_all(&db, removed)?;
+        let stale = StoredCover::candidates(&db, removed)?;
         assert_eq!(stale.len(), 1);
         let other = insert_release(&mut db, "Other")?;
         // Another owner keeps the cover node alive while the first is deleted.
