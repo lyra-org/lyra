@@ -3,9 +3,12 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::sync::atomic::{
-    AtomicBool,
-    Ordering,
+use std::{
+    sync::atomic::{
+        AtomicBool,
+        Ordering,
+    },
+    time::Duration,
 };
 
 use anyhow::Context;
@@ -13,7 +16,11 @@ use anyhow::Context;
 use crate::{
     services::STATE,
     services::{
-        libraries::start_library_sync,
+        libraries::{
+            SyncRunStatus,
+            start_library_sync,
+            wait_for_sync_runs,
+        },
         metadata::{
             SkipReason,
             classify_entry_file_kind,
@@ -199,12 +206,49 @@ pub(crate) async fn commit_and_reingest(
         lyra_db::libraries::get(&db)?
     };
 
+    let shutdown = crate::services::shutdown::token();
+    let finished = tokio::select! {
+        summary = reingest_libraries(libraries) => Some(summary),
+        () = shutdown.cancelled() => None,
+    };
+    let Some(summary) = finished else {
+        restore_rules(&previous).await;
+        anyhow::bail!(
+            "server shut down before the reingest finished; rolled back the mapping rules"
+        );
+    };
+
+    if summary.libraries_failed.is_empty() {
+        Ok(summary)
+    } else {
+        restore_rules(&previous).await;
+        Err(anyhow::anyhow!(
+            "reingest completed with {} library failure(s); rolled back the mapping rules",
+            summary.libraries_failed.len(),
+        ))
+        .with_context(|| format!("reingested {} libraries", summary.libraries_reingested))
+    }
+}
+
+async fn restore_rules(previous: &MetadataMappingConfig) {
+    let rollback_result = {
+        let mut db = STATE.db.write().await;
+        update_config(&mut db, previous)
+    };
+    if let Err(rollback_err) = rollback_result {
+        tracing::error!(error = %rollback_err, "failed to roll back metadata mapping config");
+    }
+}
+
+/// Syncs every library and waits for each sync to end.
+async fn reingest_libraries(libraries: Vec<lyra_db::Library>) -> ReingestSummary {
     let mut summary = ReingestSummary::default();
     let db_async = STATE.db.get();
+    let mut started = Vec::new();
     for library in libraries {
         let name = library.name.clone();
-        match start_library_sync(db_async.clone(), library).await {
-            Ok(_) => summary.libraries_reingested += 1,
+        match start_reingest(db_async.clone(), library).await {
+            Ok(run_id) => started.push((name, run_id)),
             Err(err) => {
                 tracing::error!(library = %name, error = %err, "reingest kickoff failed");
                 summary.libraries_failed.push((name, err.to_string()));
@@ -212,24 +256,72 @@ pub(crate) async fn commit_and_reingest(
         }
     }
 
-    crate::services::wait_for_running_library_syncs().await;
-
-    if summary.libraries_failed.is_empty() {
-        Ok(summary)
-    } else {
-        let rollback_result = {
-            let mut db = STATE.db.write().await;
-            update_config(&mut db, &previous)
-        };
-        if let Err(rollback_err) = rollback_result {
-            tracing::error!(error = %rollback_err, "failed to roll back metadata mapping config");
+    let run_ids = started
+        .iter()
+        .map(|(_, run_id)| run_id.clone())
+        .collect::<Vec<_>>();
+    match wait_for_sync_runs(&run_ids).await {
+        Ok(ended) => {
+            for ((name, _), run) in started.into_iter().zip(ended) {
+                let status = run.run.status;
+                if status == SyncRunStatus::Succeeded {
+                    summary.libraries_reingested += 1;
+                    continue;
+                }
+                let reason = run.run.error.unwrap_or_else(|| {
+                    match status {
+                        SyncRunStatus::Cancelled => "sync run cancelled",
+                        _ => "sync run failed",
+                    }
+                    .to_string()
+                });
+                tracing::error!(library = %name, ?status, error = %reason, "reingest run did not succeed");
+                summary.libraries_failed.push((name, reason));
+            }
         }
-        Err(anyhow::anyhow!(
-            "reingest completed with {} library failure(s); rolled back the mapping rules",
-            summary.libraries_failed.len(),
-        ))
-        .with_context(|| format!("reingested {} libraries", summary.libraries_reingested))
+        Err(err) => {
+            tracing::error!(error = %format!("{err:#}"), "reingest runs could not be read");
+            for (name, _) in started {
+                summary.libraries_failed.push((name, format!("{err:#}")));
+            }
+        }
     }
+    summary
+}
+
+/// How long shutdown waits for a reingest to finish, or to restore the rules it replaced.
+const REINGEST_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Waits, up to [`REINGEST_SHUTDOWN_TIMEOUT`], for a running reingest to end. Once shutdown
+/// begins a reingest stops waiting for its runs and restores the rules it replaced.
+pub(crate) async fn wait_for_reingest() {
+    let ended = tokio::time::timeout(REINGEST_SHUTDOWN_TIMEOUT, async {
+        while REINGEST_ACTIVE.load(Ordering::Acquire) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    if ended.is_err() {
+        tracing::warn!("metadata mapping reingest still running at shutdown");
+    }
+}
+
+/// Starts a sync of `library` under the stored rules and returns its run id. A run already going
+/// there may have started under the earlier rules, so it is waited out and a sync started after it.
+async fn start_reingest(db: lyra_db::DbAsync, library: lyra_db::Library) -> anyhow::Result<String> {
+    let mut response = start_library_sync(db.clone(), library.clone()).await?;
+    if !response.started
+        && let Some(existing) = response.run.run.id.clone()
+    {
+        wait_for_sync_runs(&[existing]).await?;
+        response = start_library_sync(db, library).await?;
+    }
+    anyhow::ensure!(response.started, "another run kept the library busy");
+    response
+        .run
+        .run
+        .id
+        .ok_or_else(|| anyhow::anyhow!("started sync run has no id"))
 }
 
 #[cfg(test)]
@@ -242,6 +334,83 @@ mod tests {
             tests::fixture_with_comments,
         },
     };
+
+    #[tokio::test]
+    async fn a_failed_reingest_run_restores_the_previous_rules() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let dir = tempfile::tempdir()?;
+        let previous = {
+            let mut db = STATE.db.write().await;
+            lyra_db::test_db::insert_library(
+                &mut db,
+                "Gone",
+                dir.path().join("missing").to_str().expect("utf-8 path"),
+            )?;
+            ensure_config(&mut db)?
+        };
+        assert!(!previous.rules.is_empty());
+
+        let reingest = commit_and_reingest(
+            MetadataMappingConfig { rules: Vec::new() },
+            ReingestGuard::try_acquire().expect("no reingest running"),
+        );
+        let result = tokio::time::timeout(Duration::from_secs(10), reingest).await?;
+
+        assert!(result.is_err());
+        let restored = ensure_config(&mut *STATE.db.write().await)?;
+        assert_eq!(
+            serde_json::to_value(&restored)?,
+            serde_json::to_value(&previous)?
+        );
+        Ok(())
+    }
+
+    struct ShutdownResetGuard;
+
+    impl Drop for ShutdownResetGuard {
+        fn drop(&mut self) {
+            crate::services::shutdown::reset();
+        }
+    }
+
+    #[tokio::test]
+    async fn shutdown_restores_the_rules_of_an_unfinished_reingest() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        let _shutdown = ShutdownResetGuard;
+        crate::services::testing::init_default_test_state()?;
+        crate::services::shutdown::reset();
+        let (library, previous) = {
+            let mut db = STATE.db.write().await;
+            let library = lyra_db::test_db::insert_library(&mut db, "Busy", "/busy")?;
+            let library = lyra_db::libraries::get_by_id(&db, library)?.expect("library exists");
+            (library, ensure_config(&mut db)?)
+        };
+        // A run that never ends keeps the reingest waiting to start its own.
+        let running = crate::services::libraries::begin_test_run(&library).await;
+        let reingest = tokio::spawn(commit_and_reingest(
+            MetadataMappingConfig { rules: Vec::new() },
+            ReingestGuard::try_acquire().expect("no reingest running"),
+        ));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            ensure_config(&mut *STATE.db.write().await)?
+                .rules
+                .is_empty()
+        );
+
+        crate::services::shutdown::cancel();
+        tokio::time::timeout(Duration::from_secs(1), wait_for_reingest()).await?;
+
+        assert!(reingest.await?.is_err());
+        let restored = ensure_config(&mut *STATE.db.write().await)?;
+        assert_eq!(
+            serde_json::to_value(&restored)?,
+            serde_json::to_value(&previous)?
+        );
+        crate::services::libraries::end_test_run(&running).await;
+        Ok(())
+    }
 
     #[tokio::test]
     async fn dry_run_rejects_only_tracks_ingestion_skips() -> anyhow::Result<()> {

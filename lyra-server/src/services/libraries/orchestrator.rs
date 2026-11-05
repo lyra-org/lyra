@@ -1479,6 +1479,28 @@ pub(crate) async fn wait_for_running_library_syncs() {
     }
 }
 
+/// Waits for each of these runs to end and returns how each ended, in order.
+pub(crate) async fn wait_for_sync_runs(run_ids: &[String]) -> anyhow::Result<Vec<SyncRunSummary>> {
+    loop {
+        let live = {
+            let states = sync_run_states().read_owned().await;
+            run_ids.iter().any(|run_id| states.contains_key(run_id))
+        };
+        if !live {
+            break;
+        }
+        sleep(Duration::from_millis(250)).await;
+    }
+    let mut summaries = Vec::with_capacity(run_ids.len());
+    for run_id in run_ids {
+        let summary = get_sync_run(run_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("sync run {run_id} not found"))?;
+        summaries.push(summary);
+    }
+    Ok(summaries)
+}
+
 /// How long shutdown waits for cancelled library runs to end. A run still going after it is left
 /// active, and recorded as interrupted at the next start.
 const LIBRARY_RUN_DRAIN_TIMEOUT: Duration = Duration::from_secs(15);

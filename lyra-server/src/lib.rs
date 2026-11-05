@@ -198,6 +198,7 @@ async fn serve(capture: Option<CaptureArgs>, listener: TcpListener) -> Result<()
     }
     shutdown.notify_one();
     services::drain_library_syncs().await;
+    services::metadata::mapping_admin::wait_for_reingest().await;
     let _ = bg_handle.await;
     // A restart in progress ends before the plugins it would start are torn down.
     let _ = plugin_supervisor.await;

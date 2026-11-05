@@ -85,7 +85,6 @@ pub(crate) use libraries::{
     drain_library_syncs,
     start_library_sync,
     subscribe_sync_run_events,
-    wait_for_running_library_syncs,
 };
 pub(crate) use metadata::cleanup::deduplicate_artists_by_external_id;
 pub(crate) use providers::{

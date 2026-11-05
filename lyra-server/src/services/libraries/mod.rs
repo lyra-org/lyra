@@ -38,6 +38,7 @@ pub(crate) use orchestrator::{
     start_library_sync,
     subscribe_sync_run_events,
     wait_for_running_library_syncs,
+    wait_for_sync_runs,
 };
 #[cfg(test)]
 pub(crate) use orchestrator::{
