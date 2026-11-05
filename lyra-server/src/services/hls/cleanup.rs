@@ -428,7 +428,10 @@ pub(crate) async fn ensure_hls_cleanup_worker_started() {
 
     tokio::spawn(async {
         loop {
-            cleanup_stale_hls_sessions().await;
+            // Its own task, so a pass that panics leaves the next one to run.
+            if let Err(err) = tokio::spawn(cleanup_stale_hls_sessions()).await {
+                tracing::error!(error = %err, "HLS cleanup pass failed");
+            }
             sleep(HLS_CLEANUP_INTERVAL).await;
         }
     });

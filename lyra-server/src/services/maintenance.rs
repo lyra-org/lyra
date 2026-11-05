@@ -57,25 +57,40 @@ async fn run(db: DbAsync, shutdown: &Notify) {
         let Some(now_ms) = now_ms() else { continue };
 
         runs = runs.wrapping_add(1);
-        if runs.is_multiple_of(DATASTORE_SWEEP_EVERY) {
-            datastore_sweep
-                .run(
-                    &db,
-                    now_ms,
-                    DATASTORE_SWEEP_CHUNK,
-                    DATASTORE_SWEEP_MAX_PER_RUN,
-                )
-                .await;
+        let sweep_datastore = runs.is_multiple_of(DATASTORE_SWEEP_EVERY);
+        // Its own task, so a sweep that panics leaves the next one to run.
+        match tokio::spawn(sweep(db.clone(), now_ms, sweep_datastore, datastore_sweep)).await {
+            Ok(swept) => datastore_sweep = swept,
+            Err(err) => tracing::error!(error = %err, "maintenance sweep failed"),
         }
-        sweep_retained_playbacks(&db, now_ms).await;
-        sweep_stale_playback_sessions(&db, now_ms).await;
     }
+}
+
+async fn sweep(
+    db: DbAsync,
+    now_ms: u64,
+    sweep_datastore: bool,
+    mut datastore_sweep: DatastoreSweep,
+) -> DatastoreSweep {
+    if sweep_datastore {
+        datastore_sweep
+            .run(
+                &db,
+                now_ms,
+                DATASTORE_SWEEP_CHUNK,
+                DATASTORE_SWEEP_MAX_PER_RUN,
+            )
+            .await;
+    }
+    sweep_retained_playbacks(&db, now_ms).await;
+    sweep_stale_playback_sessions(&db, now_ms).await;
+    datastore_sweep
 }
 
 /// Reclaims expired datastore entries a chunk per store in turn, so a backlog
 /// in one store doesn't starve the others; each run starts one store further
 /// on than the last.
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 struct DatastoreSweep {
     next_store: usize,
 }

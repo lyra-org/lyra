@@ -186,7 +186,7 @@ async fn serve(capture: Option<CaptureArgs>, listener: TcpListener) -> Result<()
         }
 
         services::providers::run_provider_sync_loop(shutdown_bg).await;
-        let _ = update_checks.await;
+        log_task_failure("plugin update checks", update_checks.await);
     });
 
     routes::serve_app(app, config.as_ref(), listener, shutdown_token).await?;
@@ -199,9 +199,9 @@ async fn serve(capture: Option<CaptureArgs>, listener: TcpListener) -> Result<()
     shutdown.notify_one();
     services::drain_library_syncs().await;
     services::metadata::mapping_admin::wait_for_reingest().await;
-    let _ = bg_handle.await;
+    log_task_failure("background sync", bg_handle.await);
     // A restart in progress ends before the plugins it would start are torn down.
-    let _ = plugin_supervisor.await;
+    log_task_failure("plugin supervisor", plugin_supervisor.await);
 
     services::hls::state::teardown_all_hls_jobs().await;
     plugin_bootstrap::teardown_loaded_plugins().await;
@@ -210,6 +210,12 @@ async fn serve(capture: Option<CaptureArgs>, listener: TcpListener) -> Result<()
         anyhow::bail!("server stopped after a fatal error: {reason}");
     }
     Ok(())
+}
+
+fn log_task_failure(task: &'static str, result: Result<(), tokio::task::JoinError>) {
+    if let Err(err) = result {
+        tracing::error!(task, error = %err, "server task failed");
+    }
 }
 
 /// One line per setting that differs from its default, so an operator can
