@@ -224,4 +224,10 @@ int harmony_luau_gateway_sandboxthread(lua_State* L)
     return protect(L, [&](lua_State* L) { luaL_sandboxthread(L); });
 }
 
+// Never raises; it needs no protected call.
+const void* harmony_luau_gateway_topointer(lua_State* L, int idx)
+{
+    return lua_topointer(L, idx);
+}
+
 } // extern "C"

@@ -16,6 +16,7 @@ use std::{
     future::Future,
     marker::PhantomData,
     mem,
+    ops::ControlFlow,
     panic::{
         AssertUnwindSafe,
         catch_unwind,
@@ -1034,34 +1035,49 @@ impl Vm {
     }
 
     fn read_value_from(&self, state: NonNull<sys::lua_State>, index: StackIndex) -> Result<Value> {
+        self.read_value_ref_from(state, index)
+            .map(ValueRef::into_value)
+    }
+
+    fn read_value_ref<'a>(&self, index: StackIndex) -> Result<ValueRef<'a>> {
+        self.read_value_ref_from(self.inner.state, index)
+    }
+
+    /// Reads the value at `index`, borrowing a string's or buffer's bytes from the VM. The bytes
+    /// live while the value stays where it is on the stack.
+    fn read_value_ref_from<'a>(
+        &self,
+        state: NonNull<sys::lua_State>,
+        index: StackIndex,
+    ) -> Result<ValueRef<'a>> {
         let state_ptr = state.as_ptr();
         let raw_index = index.raw();
         let value = unsafe {
             match sys::lua_type(state_ptr, raw_index) {
-                sys::LUA_TNIL | sys::LUA_TNONE => Value::Nil,
-                sys::LUA_TBOOLEAN => Value::Boolean(sys::lua_toboolean(state_ptr, raw_index) != 0),
+                sys::LUA_TNIL | sys::LUA_TNONE => ValueRef::Nil,
+                sys::LUA_TBOOLEAN => {
+                    ValueRef::Boolean(sys::lua_toboolean(state_ptr, raw_index) != 0)
+                }
                 sys::LUA_TINTEGER => {
                     let mut is_integer = 0;
-                    Value::Integer(sys::lua_tointeger64(state_ptr, raw_index, &mut is_integer))
+                    ValueRef::Integer(sys::lua_tointeger64(state_ptr, raw_index, &mut is_integer))
                 }
                 sys::LUA_TNUMBER => {
                     let mut is_number = 0;
-                    Value::Number(sys::lua_tonumberx(state_ptr, raw_index, &mut is_number))
+                    ValueRef::Number(sys::lua_tonumberx(state_ptr, raw_index, &mut is_number))
                 }
-                sys::LUA_TSTRING => Value::String(
-                    gateway::string_bytes(state_ptr, raw_index)
-                        .expect("string value has bytes")
-                        .to_vec(),
+                sys::LUA_TSTRING => ValueRef::String(
+                    gateway::string_bytes(state_ptr, raw_index).expect("string value has bytes"),
                 ),
                 sys::LUA_TBUFFER => {
                     let mut len = 0usize;
                     let ptr = sys::lua_tobuffer(state_ptr, raw_index, &mut len);
-                    Value::Buffer(std::slice::from_raw_parts(ptr.cast(), len).to_vec())
+                    ValueRef::Buffer(std::slice::from_raw_parts(ptr.cast(), len))
                 }
-                sys::LUA_TTABLE => Value::Table(Table {
+                sys::LUA_TTABLE => ValueRef::Table(Table {
                     reference: self.ref_value_from(state, index)?,
                 }),
-                sys::LUA_TFUNCTION => Value::Function(Function {
+                sys::LUA_TFUNCTION => ValueRef::Function(Function {
                     reference: self.ref_value_from(state, index)?,
                     origin: ChunkOrigin::default(),
                 }),
@@ -1072,7 +1088,7 @@ impl Vm {
                     let reference = self.ref_value_from(state, index)?;
                     let status = sys::lua_status(thread_state.as_ptr());
                     let top = sys::lua_gettop(thread_state.as_ptr());
-                    Value::Thread(Thread::new(
+                    ValueRef::Thread(Thread::new(
                         Some(reference),
                         thread_state,
                         self.inner.id,
@@ -1081,11 +1097,11 @@ impl Vm {
                         status == sys::LUA_OK && top == 0,
                     ))
                 }
-                sys::LUA_TUSERDATA => Value::UserData(UserData {
+                sys::LUA_TUSERDATA => ValueRef::UserData(UserData {
                     reference: self.ref_value_from(state, index)?,
                     tag: UserDataTag(sys::lua_userdatatag(state_ptr, raw_index)),
                 }),
-                _ => Value::Nil,
+                _ => ValueRef::Nil,
             }
         };
         Ok(value)
@@ -1644,22 +1660,39 @@ impl Table {
 
     /// The values at `1, 2, ...` up to the first nil.
     pub fn array_values(&self) -> Result<Vec<Value>> {
+        let mut values = Vec::new();
+        self.for_each_array_value(|value| {
+            values.push(value.into_value());
+            Ok(ControlFlow::Continue(()))
+        })?;
+        Ok(values)
+    }
+
+    /// Visits the values at `1, 2, ...` up to the first nil, or until `visit` breaks, reading each
+    /// in place.
+    pub fn for_each_array_value(
+        &self,
+        mut visit: impl FnMut(ValueRef<'_>) -> Result<ControlFlow<()>>,
+    ) -> Result<()> {
         let vm = self.vm();
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
 
         let state = self.state();
-        let mut values = Vec::new();
+        let table = unsafe { sys::lua_absindex(state, -1) };
         for index in 1..=i32::MAX {
-            unsafe { gateway::raw_get_index(state, -1, index)? };
-            let value = vm.read_value(StackIndex::TOP)?;
+            unsafe { gateway::raw_get_index(state, table, index)? };
+            let value = vm.read_value_ref(StackIndex::TOP)?;
+            if matches!(value, ValueRef::Nil) {
+                return Ok(());
+            }
+            let flow = visit(value)?;
             unsafe {
                 sys::lua_pop(state, 1);
             }
-            if value == Value::Nil {
-                return Ok(values);
+            if flow.is_break() {
+                return Ok(());
             }
-            values.push(value);
         }
 
         Err(Error::Runtime(
@@ -1668,21 +1701,46 @@ impl Table {
     }
 
     pub fn pairs(&self) -> Result<Vec<(Value, Value)>> {
+        let mut pairs = Vec::new();
+        self.for_each_pair(|key, value| {
+            pairs.push((key.into_value(), value.into_value()));
+            Ok(ControlFlow::Continue(()))
+        })?;
+        Ok(pairs)
+    }
+
+    /// Visits each key and value as `next` finds them, or until `visit` breaks, reading each in
+    /// place.
+    pub fn for_each_pair(
+        &self,
+        mut visit: impl FnMut(ValueRef<'_>, ValueRef<'_>) -> Result<ControlFlow<()>>,
+    ) -> Result<()> {
         let vm = self.vm();
         let _guard = vm.stack_guard();
-        let mut pairs = Vec::new();
         vm.push_registry(&self.reference)?;
         let state = self.state();
+        let table = unsafe { sys::lua_absindex(state, -1) };
         unsafe {
             gateway::push_nil(state)?;
-            while gateway::next(state, -2)? {
-                let key = vm.read_value(StackIndex::relative(-2))?;
-                let value = vm.read_value(StackIndex::TOP)?;
-                pairs.push((key, value));
+            while gateway::next(state, table)? {
+                let key = vm.read_value_ref(StackIndex::relative(-2))?;
+                let value = vm.read_value_ref(StackIndex::TOP)?;
+                if visit(key, value)?.is_break() {
+                    return Ok(());
+                }
                 sys::lua_pop(state, 1);
             }
         }
-        Ok(pairs)
+        Ok(())
+    }
+
+    /// What tells this table apart from every other live one: two handles to the same table
+    /// share it.
+    pub fn identity(&self) -> Result<usize> {
+        let vm = self.vm();
+        let _guard = vm.stack_guard();
+        vm.push_registry(&self.reference)?;
+        Ok(unsafe { gateway::to_pointer(self.state(), -1) })
     }
 
     pub fn set_metatable(&self, metatable: Option<&Table>) -> Result<()> {
@@ -2486,6 +2544,54 @@ impl Value {
             Self::Buffer(_) => "buffer",
             Self::TableData(_) => "table",
             Self::NativeFunction(_) => "function",
+            Self::Table(_) => "table",
+            Self::Function(_) => "function",
+            Self::Thread(_) => "thread",
+            Self::UserData(_) => "userdata",
+        }
+    }
+}
+
+/// A value read in place: a string's or buffer's bytes are the VM's own, borrowed for as long as
+/// whatever read the value keeps it.
+#[derive(Debug)]
+pub enum ValueRef<'a> {
+    Nil,
+    Boolean(bool),
+    Integer(i64),
+    Number(f64),
+    String(&'a [u8]),
+    Buffer(&'a [u8]),
+    Table(Table),
+    Function(Function),
+    Thread(Thread),
+    UserData(UserData),
+}
+
+impl ValueRef<'_> {
+    /// The value, with its bytes copied.
+    pub fn into_value(self) -> Value {
+        match self {
+            Self::Nil => Value::Nil,
+            Self::Boolean(value) => Value::Boolean(value),
+            Self::Integer(value) => Value::Integer(value),
+            Self::Number(value) => Value::Number(value),
+            Self::String(bytes) => Value::String(bytes.to_vec()),
+            Self::Buffer(bytes) => Value::Buffer(bytes.to_vec()),
+            Self::Table(table) => Value::Table(table),
+            Self::Function(function) => Value::Function(function),
+            Self::Thread(thread) => Value::Thread(thread),
+            Self::UserData(userdata) => Value::UserData(userdata),
+        }
+    }
+
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            Self::Nil => "nil",
+            Self::Boolean(_) => "boolean",
+            Self::Integer(_) | Self::Number(_) => "number",
+            Self::String(_) => "string",
+            Self::Buffer(_) => "buffer",
             Self::Table(_) => "table",
             Self::Function(_) => "function",
             Self::Thread(_) => "thread",
@@ -3868,6 +3974,68 @@ mod tests {
         assert!(matches!(bad_runtime, Err(Error::Runtime(_))));
         assert_eq!(stack_top(&vm), 0);
 
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn table_visits_leave_the_stack_and_table_as_they_found_them() -> Result<()> {
+        let vm = Vm::new()?;
+        let table = vm.create_table()?;
+        for index in 1..=4 {
+            table.set_integer(index, Value::String(format!("v{index}").into_bytes()))?;
+        }
+        table.set("name", "lyra")?;
+        let nested = vm.create_table()?;
+        nested.set("inner", true)?;
+        table.set("nested", Value::Table(nested))?;
+
+        let mut seen = 0;
+        let failed = table.for_each_pair(|_, value| {
+            seen += 1;
+            if let ValueRef::Table(nested) = value {
+                nested.for_each_pair(|_, _| Ok(ControlFlow::Continue(())))?;
+            }
+            if seen == 3 {
+                return Err(Error::Runtime("stop".into()));
+            }
+            Ok(ControlFlow::Continue(()))
+        });
+        assert!(matches!(failed, Err(Error::Runtime(message)) if message == "stop"));
+        assert_eq!(stack_top(&vm), 0);
+
+        let mut visited = 0;
+        table.for_each_pair(|_, _| {
+            visited += 1;
+            Ok(if visited == 2 {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            })
+        })?;
+        assert_eq!(visited, 2);
+        assert_eq!(stack_top(&vm), 0);
+
+        let failed = table.for_each_array_value(|value| match value {
+            ValueRef::String(b"v2") => Err(Error::Runtime("stop".into())),
+            _ => Ok(ControlFlow::Continue(())),
+        });
+        assert!(failed.is_err());
+        assert_eq!(stack_top(&vm), 0);
+
+        let mut first = Vec::new();
+        table.for_each_array_value(|value| {
+            first.push(value.into_value());
+            Ok(ControlFlow::Break(()))
+        })?;
+        assert_eq!(first, vec![Value::String(b"v1".to_vec())]);
+        assert_eq!(stack_top(&vm), 0);
+
+        assert_eq!(table.pairs()?.len(), 6);
+        assert_eq!(table.array_values()?.len(), 4);
+        table.set("after", 1.0)?;
+        assert_eq!(table.get("after")?, Value::Number(1.0));
+        assert_eq!(stack_top(&vm), 0);
         Ok(())
     }
 

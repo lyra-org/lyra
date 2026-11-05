@@ -65,6 +65,7 @@ pub use runtime::{
     UserDataRef,
     UserDataTag,
     Value,
+    ValueRef,
     Variadic,
     Vm,
     VmData,

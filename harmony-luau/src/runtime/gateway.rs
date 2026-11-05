@@ -83,6 +83,7 @@ unsafe extern "C-unwind" {
     fn harmony_luau_gateway_setreadonly(L: *mut lua_State, idx: c_int, enabled: c_int) -> c_int;
     fn harmony_luau_gateway_next(L: *mut lua_State, idx: c_int, more: *mut c_int) -> c_int;
     fn harmony_luau_gateway_xmove(L: *mut lua_State, to: *mut lua_State, n: c_int) -> c_int;
+    fn harmony_luau_gateway_topointer(L: *mut lua_State, idx: c_int) -> *const c_void;
     fn harmony_luau_gateway_tolstring(
         L: *mut lua_State,
         idx: c_int,
@@ -366,6 +367,11 @@ pub(super) unsafe fn next(state: *mut lua_State, index: c_int) -> Result<bool> {
     let mut more = 0;
     unsafe { check(state, harmony_luau_gateway_next(state, index, &mut more))? };
     Ok(more != 0)
+}
+
+/// The address of the object at `index`, which identifies it while it lives; never raises.
+pub(super) unsafe fn to_pointer(state: *mut lua_State, index: c_int) -> usize {
+    unsafe { harmony_luau_gateway_topointer(state, index) as usize }
 }
 
 pub(super) unsafe fn xmove(from: *mut lua_State, to: *mut lua_State, count: c_int) -> Result<()> {
