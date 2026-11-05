@@ -480,7 +480,7 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
         let groups = metadata_groups(
             &library.path,
-            lyra_db::entries::get(db, library_db_id)?,
+            lyra_db::entries::load_existing(db, library_db_id)?,
             &Default::default(),
         )
         .await

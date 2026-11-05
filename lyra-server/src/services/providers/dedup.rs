@@ -238,14 +238,25 @@ pub(super) fn deduplicate_releases_by_external_id(
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use serde_json::json;
 
     use super::*;
+    use crate::services::{
+        STATE,
+        libraries::sync::sync_library,
+    };
     use lyra_db::fixtures::{
         insert_artist,
         insert_release,
     };
     use lyra_db::test_db::new_test_db;
+    use lyra_db::{
+        Entry,
+        Library,
+        entries::EntryKind,
+    };
 
     #[test]
     fn release_merge_combines_manual_layers() -> anyhow::Result<()> {
@@ -450,6 +461,289 @@ mod tests {
             select_release_merge_winner(&db, &[also_older, older])?,
             older
         );
+        Ok(())
+    }
+
+    fn tagged_file(path: &Path, album: &str, track: u32) -> anyhow::Result<()> {
+        use lofty::{
+            config::WriteOptions,
+            prelude::*,
+        };
+
+        std::fs::create_dir_all(path.parent().expect("parent"))?;
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/assets/metadata/integration_track.flac");
+        std::fs::copy(fixture, path)?;
+        let mut tagged = lofty::read_from_path(path)?;
+        let tag = tagged
+            .primary_tag_mut()
+            .ok_or_else(|| anyhow::anyhow!("fixture has no primary tag"))?;
+        tag.set_album(album.to_string());
+        tag.set_track(track);
+        tag.save_to_path(path, WriteOptions::default())?;
+        Ok(())
+    }
+
+    async fn synced_library(name: &str, path: &Path) -> anyhow::Result<Library> {
+        let library = STATE.db.write().await.transaction_mut(|t| {
+            lyra_db::libraries::create_system(
+                t,
+                lyra_db::libraries::LibraryInsert {
+                    id: nanoid::nanoid!(),
+                    name: name.to_string(),
+                    path: path.to_path_buf(),
+                    path_key: lyra_db::libraries::path_key_for(path),
+                    language: None,
+                    country: None,
+                },
+            )
+        })?;
+        sync(&library).await?;
+        Ok(library)
+    }
+
+    async fn sync(library: &Library) -> anyhow::Result<()> {
+        sync_library(&STATE.db.get(), library).await
+    }
+
+    /// The library's stored file at `path`.
+    async fn file_of(library: &Library, path: &Path) -> anyhow::Result<Entry> {
+        lyra_db::entries::load_existing(&*STATE.db.read().await, library.db_id.expect("library"))?
+            .into_iter()
+            .find(|entry| entry.full_path == path)
+            .ok_or_else(|| anyhow::anyhow!("{} has no entry", path.display()))
+    }
+
+    async fn track_of(entry: &Entry) -> anyhow::Result<DbId> {
+        let db = STATE.db.read().await;
+        let tracks = lyra_db::tracks::get_by_entry(&db, entry.db_id.expect("entry"))?;
+        anyhow::ensure!(tracks.len() == 1, "{} tracks", tracks.len());
+        Ok(tracks[0].db_id.clone().expect("track").into())
+    }
+
+    /// Merges the release of `loser`'s track into that of `winner`'s, as a provider's id does.
+    async fn merge_releases_of(winner: &Entry, loser: &Entry) -> anyhow::Result<DbId> {
+        let (winner, loser) = (track_of(winner).await?, track_of(loser).await?);
+        let mut db = STATE.db.write().await;
+        let release_of = |db: &DbAny, track| -> anyhow::Result<DbId> {
+            Ok(lyra_db::releases::get_by_track(db, track)?[0]
+                .db_id
+                .clone()
+                .expect("release")
+                .into())
+        };
+        let (winner, loser) = (release_of(&db, winner)?, release_of(&db, loser)?);
+        merge_release_into(&mut db, winner, loser)?;
+        Ok(winner)
+    }
+
+    /// Two libraries with roots apart, each with a file of a release merged between them.
+    async fn libraries_sharing_a_release(
+        root: &Path,
+    ) -> anyhow::Result<(Library, Entry, Library, Entry)> {
+        let (a, b) = (root.join("a"), root.join("b"));
+        tagged_file(&a.join("Album/01.flac"), "Album", 1)?;
+        tagged_file(&b.join("Album/02.flac"), "Album", 2)?;
+        tagged_file(&b.join("Kept/03.flac"), "Kept", 3)?;
+        let library_a = synced_library("A", &a).await?;
+        let library_b = synced_library("B", &b).await?;
+        let file_a = file_of(&library_a, &a.join("Album/01.flac")).await?;
+        let file_b = file_of(&library_b, &b.join("Album/02.flac")).await?;
+        merge_releases_of(&file_a, &file_b).await?;
+        Ok((library_a, file_a, library_b, file_b))
+    }
+
+    async fn is_missing(library: &Library, file: &Entry) -> anyhow::Result<bool> {
+        Ok(file_of(library, &file.full_path).await?.is_missing())
+    }
+
+    async fn age_missing_entries() -> anyhow::Result<()> {
+        let three_days_ago = lyra_db::users::now_ms().unsigned_abs() - 3 * 86_400_000;
+        let mut db = STATE.db.write().await;
+        let missing = lyra_db::entries::missing_ids(&*db)?;
+        db.exec_mut(
+            agdb::QueryBuilder::insert()
+                .values_uniform([("missing_at_ms", three_days_ago).into()])
+                .ids(&missing)
+                .query(),
+        )?;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_merged_release_leaves_each_library_its_own_files() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let root = tempfile::tempdir()?;
+        let (a, file_a, b, file_b) = libraries_sharing_a_release(root.path()).await?;
+
+        for library in [&a, &b, &a] {
+            sync(library).await?;
+            assert!(!is_missing(&a, &file_a).await?, "A's file went missing");
+            assert!(!is_missing(&b, &file_b).await?, "B's file went missing");
+        }
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_librarys_purge_leaves_the_present_files_of_a_shared_release() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let root = tempfile::tempdir()?;
+        let (mut a, _, b, file_b) = libraries_sharing_a_release(root.path()).await?;
+        let track_b = track_of(&file_b).await?;
+        a.purge_missing_after_days = Some(1);
+
+        sync(&a).await?;
+        age_missing_entries().await?;
+        sync(&a).await?;
+
+        assert!(!is_missing(&b, &file_b).await?);
+        assert_eq!(track_of(&file_b).await?, track_b);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn only_their_own_library_purges_files_gone_from_a_shared_release() -> anyhow::Result<()>
+    {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let root = tempfile::tempdir()?;
+        let (mut a, _, mut b, file_b) = libraries_sharing_a_release(root.path()).await?;
+        std::fs::remove_file(&file_b.full_path)?;
+        sync(&b).await?;
+        assert!(is_missing(&b, &file_b).await?);
+        age_missing_entries().await?;
+        a.purge_missing_after_days = Some(1);
+
+        sync(&a).await?;
+        assert!(
+            is_missing(&b, &file_b).await?,
+            "A's sync purged B's missing file"
+        );
+
+        b.purge_missing_after_days = Some(1);
+        sync(&b).await?;
+        assert!(file_of(&b, &file_b.full_path).await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_chosen_purge_refuses_the_tracks_of_another_library() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let root = tempfile::tempdir()?;
+        let (a, _, b, file_b) = libraries_sharing_a_release(root.path()).await?;
+        let track_b = track_of(&file_b).await?;
+        std::fs::remove_file(&file_b.full_path)?;
+        sync(&b).await?;
+
+        let scope = lyra_db::entries::PurgeScope::Tracks(vec![track_b]);
+        let db = STATE.db.read().await;
+        assert!(matches!(
+            lyra_db::entries::missing_purge_plan(&db, &a, &scope),
+            Err(lyra_db::entries::PurgePlanError::NotMissing(_))
+        ));
+        let plan = lyra_db::entries::missing_purge_plan(&db, &b, &scope)?;
+        assert_eq!(plan.entries, vec![file_b.db_id.expect("entry")]);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_chosen_purge_refuses_a_track_another_library_also_holds() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let root = tempfile::tempdir()?;
+        let (a, file_a, _, file_b) = libraries_sharing_a_release(root.path()).await?;
+        let track_a = track_of(&file_a).await?;
+        let (entry_a, entry_b) = (file_a.db_id.expect("entry"), file_b.db_id.expect("entry"));
+
+        let mut db = STATE.db.write().await;
+        db.transaction_mut(|t| {
+            lyra_db::track_sources::upsert(
+                t,
+                track_a,
+                entry_b,
+                lyra_db::track_sources::TrackSourceUpsert {
+                    source_kind: "embedded_tags".into(),
+                    source_key: "held-by-b".into(),
+                    is_primary: false,
+                    start_ms: None,
+                    end_ms: None,
+                    format: Default::default(),
+                },
+                None,
+            )
+        })?;
+        lyra_db::entries::set_missing(&mut db, &[entry_a, entry_b], 1)?;
+
+        assert!(matches!(
+            lyra_db::entries::missing_purge_plan(
+                &db,
+                &a,
+                &lyra_db::entries::PurgeScope::Tracks(vec![track_a]),
+            ),
+            Err(lyra_db::entries::PurgePlanError::NotMissing(_))
+        ));
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn nested_libraries_keep_one_release_with_a_track_of_each_file_each() -> anyhow::Result<()>
+    {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let root = tempfile::tempdir()?;
+        let first = root.path().join("Artist/Album/01.flac");
+        let second = root.path().join("Artist/Album/02.flac");
+        tagged_file(&first, "Album", 1)?;
+        let outer = synced_library("Outer", root.path()).await?;
+        let inner = synced_library("Inner", &root.path().join("Artist")).await?;
+        let release = merge_releases_of(
+            &file_of(&outer, &first).await?,
+            &file_of(&inner, &first).await?,
+        )
+        .await?;
+
+        tagged_file(&second, "Album", 2)?;
+        let state = || async {
+            let db = STATE.db.read().await;
+            let mut tracks = Vec::new();
+            for library in [&outer, &inner] {
+                let library = library.db_id.expect("library");
+                let releases = lyra_db::releases::get(&db, library)?;
+                assert_eq!(releases.len(), 1, "the merge came undone");
+                assert_eq!(DbId::from(releases[0].db_id.clone().expect("id")), release);
+                let entries = lyra_db::entries::load_existing(&*db, library)?;
+                for entry in entries.iter().filter(|entry| entry.kind == EntryKind::File) {
+                    assert!(!entry.is_missing());
+                    let held = lyra_db::tracks::get_by_entry(&db, entry.db_id.expect("entry"))?;
+                    assert_eq!(held.len(), 1, "{} tracks", held.len());
+                    let track = held[0].db_id.clone().expect("track").into();
+                    assert!(lyra_db::track_sources::track_available(&*db, track)?);
+                    tracks.push(track);
+                }
+            }
+            tracks.sort_unstable();
+            anyhow::Ok(tracks)
+        };
+
+        sync(&inner).await?;
+        sync(&outer).await?;
+        let settled = state().await?;
+        assert_eq!(
+            settled.len(),
+            4,
+            "a track for each library's copy of each file"
+        );
+        assert_eq!(
+            lyra_db::tracks::get_direct(&*STATE.db.read().await, release)?.len(),
+            4
+        );
+
+        sync(&inner).await?;
+        sync(&outer).await?;
+        assert_eq!(state().await?, settled, "a second sync changed nothing");
         Ok(())
     }
 }

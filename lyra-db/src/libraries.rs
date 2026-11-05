@@ -423,28 +423,10 @@ pub fn update(
 }
 
 fn library_entry_ids(db: &impl super::DbAccess, library_id: DbId) -> anyhow::Result<HashSet<DbId>> {
-    let mut entries = HashSet::new();
-    let mut pending = vec![library_id];
-    while let Some(parent) = pending.pop() {
-        let children: Vec<super::Entry> = db
-            .exec(
-                QueryBuilder::select()
-                    .elements::<super::Entry>()
-                    .search()
-                    .from(parent)
-                    .where_()
-                    .neighbor()
-                    .end_where()
-                    .query(),
-            )?
-            .try_into()?;
-        for id in children.into_iter().filter_map(|entry| entry.db_id) {
-            if entries.insert(id) {
-                pending.push(id);
-            }
-        }
-    }
-    Ok(entries)
+    Ok(super::entries::load_existing(db, library_id)?
+        .into_iter()
+        .filter_map(|entry| entry.db_id)
+        .collect())
 }
 
 /// What deleting a library removed.

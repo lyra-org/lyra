@@ -285,12 +285,16 @@ pub(crate) fn by_track(
 
 /// Every entry in the libraries the viewer can see.
 fn all_visible(db: &DbAny, viewer: &Viewer) -> anyhow::Result<Vec<Entry>> {
-    let Some(libraries) = viewer.visible_libraries(db)? else {
-        return lyra_db::entries::get(db, "libraries");
+    let libraries = match viewer.visible_libraries(db)? {
+        Some(libraries) => libraries,
+        None => lyra_db::libraries::get(db)?
+            .into_iter()
+            .filter_map(|library| library.db_id)
+            .collect(),
     };
     let mut entries = Vec::new();
     for library in libraries {
-        entries.extend(lyra_db::entries::get(db, library)?);
+        entries.extend(lyra_db::entries::load_existing(db, library)?);
     }
     Ok(entries)
 }
@@ -375,6 +379,37 @@ mod tests {
 
     fn names(entries: &[Entry]) -> HashSet<String> {
         entries.iter().map(|entry| entry.name.clone()).collect()
+    }
+
+    #[test]
+    fn a_shared_track_shows_no_listing_the_entries_of_another_library() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = lyra_db::users::create(&mut db, &test_user("listener")?)?;
+        let shown_db_id = insert_library(&mut db, "Shown", "/music/shown")?;
+        let hidden_db_id = insert_library(&mut db, "Hidden", "/music/hidden")?;
+        let shown_public_id = lyra_db::libraries::get_by_id(&db, shown_db_id)?.unwrap().id;
+        insert_entry(&mut db, shown_db_id, "shown.flac", EntryKind::File)?;
+        let hidden_entry = insert_entry(&mut db, hidden_db_id, "hidden.flac", EntryKind::File)?;
+        let shared_track = insert_track(&mut db, "Shared")?;
+        connect(&mut db, shown_db_id, shared_track)?;
+        connect(&mut db, hidden_db_id, shared_track)?;
+        connect(&mut db, shared_track, hidden_entry)?;
+
+        let listener = Viewer::user(
+            &db,
+            Principal::for_user(&db, user_db_id, vec![], HashSet::from([shown_public_id])),
+        )?;
+        let includes = EntryIncludes {
+            tracks: false,
+            releases: false,
+            artists: false,
+        };
+        let listed = list_details(&db, &listener, includes)?
+            .into_iter()
+            .map(|details| details.entry)
+            .collect::<Vec<_>>();
+        assert_eq!(names(&listed), HashSet::from(["shown.flac".to_string()]));
+        Ok(())
     }
 
     #[test]

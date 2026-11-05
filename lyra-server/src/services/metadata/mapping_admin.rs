@@ -108,7 +108,7 @@ pub(crate) async fn dry_run_config(
             };
             all.push((
                 library.path.clone(),
-                lyra_db::entries::get(&db, library_db_id)?,
+                lyra_db::entries::load_existing(&*db, library_db_id)?,
             ));
         }
         all

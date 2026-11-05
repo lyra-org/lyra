@@ -136,7 +136,7 @@ pub(crate) async fn sync_entries_incremental(
 
     let existing = {
         let db_read = db.read().await;
-        lyra_db::entries::get(&db_read, library_db_id)?
+        lyra_db::entries::load_existing(&*db_read, library_db_id)?
     };
     let scan = {
         let library = library.clone();
@@ -783,7 +783,7 @@ async fn process_pending_metadata(
 
     let entries = {
         let db_read = db.read().await;
-        lyra_db::entries::get(&db_read, library_db_id)?
+        lyra_db::entries::load_existing(&*db_read, library_db_id)?
     }
     .into_iter()
     .filter(|entry| !entry.is_missing())
@@ -1560,7 +1560,7 @@ FILE "album.flac" WAVE
     ) -> anyhow::Result<BTreeMap<PathBuf, (String, Vec<String>)>> {
         let db = STATE.db.read().await;
         let mut out = BTreeMap::new();
-        for entry in lyra_db::entries::get(&db, library.db_id.expect("library db_id"))? {
+        for entry in lyra_db::entries::load_existing(&*db, library.db_id.expect("library db_id"))? {
             let Some(entry_db_id) = entry.db_id else {
                 continue;
             };
@@ -1707,7 +1707,7 @@ FILE "album.flac" WAVE
 
     async fn entry_for(library: &Library, path: &Path) -> anyhow::Result<lyra_db::Entry> {
         let db = STATE.db.read().await;
-        lyra_db::entries::get(&db, library.db_id.expect("library db_id"))?
+        lyra_db::entries::load_existing(&*db, library.db_id.expect("library db_id"))?
             .into_iter()
             .find(|entry| entry.full_path == path)
             .ok_or_else(|| anyhow::anyhow!("no entry for {}", path.display()))
@@ -2498,7 +2498,7 @@ FILE "album.flac" WAVE
 
         let db_read = db.read().await;
         let library_db_id = library.db_id.expect("library db_id");
-        let entries = lyra_db::entries::get(&db_read, library_db_id)?;
+        let entries = lyra_db::entries::load_existing(&*db_read, library_db_id)?;
         assert_eq!(entries.len(), 2 * artists.len());
         assert_eq!(
             lyra_db::entries::children(&*db_read, library_db_id)?.len(),
@@ -2738,7 +2738,7 @@ FILE "album.flac" WAVE
         assert!(track_exists(kept).await?);
         let db = STATE.db.read().await;
         assert!(lyra_db::releases::get_by_id(&*db, gone_release)?.is_none());
-        let entries = lyra_db::entries::get(&db, library.db_id.expect("library db_id"))?;
+        let entries = lyra_db::entries::load_existing(&*db, library.db_id.expect("library db_id"))?;
         assert!(entries.iter().all(|entry| !entry.is_missing()));
         assert!(lyra_db::entries::missing_ids(&*db)?.is_empty());
         drop(db);

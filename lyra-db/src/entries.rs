@@ -16,6 +16,7 @@ use std::{
 };
 
 use agdb::{
+    CountComparison,
     DbAny,
     DbElement,
     DbError,
@@ -23,10 +24,7 @@ use agdb::{
     DbTypeMarker,
     DbValue,
     QueryBuilder,
-    QueryId,
 };
-
-use anyhow::Context;
 
 use crate::Library;
 
@@ -159,20 +157,6 @@ pub fn classify_file_kind(path: &Path) -> Option<&'static str> {
     None
 }
 
-pub fn get(db: &DbAny, from: impl Into<QueryId>) -> anyhow::Result<Vec<Entry>> {
-    let entries: Vec<Entry> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<Entry>()
-                .search()
-                .from(from)
-                .query(),
-        )?
-        .try_into()?;
-
-    Ok(entries)
-}
-
 pub fn get_by_id(db: &impl super::DbAccess, entry_db_id: DbId) -> anyhow::Result<Option<Entry>> {
     super::graph::fetch_typed_by_id(db, entry_db_id, "Entry")
 }
@@ -224,20 +208,35 @@ pub fn get_by_track(db: &DbAny, track_db_id: DbId) -> anyhow::Result<Vec<Entry>>
     Ok(entries)
 }
 
-pub fn load_existing(db: &DbAny, library_root: DbId) -> anyhow::Result<Vec<Entry>> {
+/// The library's own entries: the tree of directories and files under it. The walk goes through
+/// entries alone, as other edges lead to releases, whose tracks can play another library's files
+/// once a release is shared.
+pub fn load_existing(db: &impl super::DbAccess, library_root: DbId) -> anyhow::Result<Vec<Entry>> {
     let qr = db.exec(
         QueryBuilder::select()
             .elements::<Entry>()
             .search()
             .from(library_root)
+            .where_()
+            .not_beyond()
+            .where_()
+            .node()
+            .and()
+            .distance(CountComparison::GreaterThan(0))
+            .and()
+            .not()
+            .key("db_element_id")
+            .value("Entry")
+            .end_where()
             .query(),
     )?;
     Ok(qr.try_into()?)
 }
 
 /// A library's entries as read before a scan, which each group of the scan compares against and
-/// finds its parents in, so a group costs its own size and not the library's. Two entries can share
-/// a path when libraries overlap; a path then gives the last one read.
+/// finds its parents in, so a group costs its own size and not the library's. The ids stay good
+/// for the sync: only a run of the library removes its entries, and one runs at a time, so any
+/// other writer must keep to that or check them, since agdb reuses a removed id at once.
 #[derive(Debug)]
 pub struct StoredEntries {
     library_path: PathBuf,
@@ -331,58 +330,17 @@ impl StoredEntries {
         changes
     }
 
-    /// Fails unless the entries `changes` writes to or places under still are what was read. A
-    /// sync works from what it read before its scan, and agdb reuses a removed id at once, so
-    /// writing to one blindly would overwrite whichever node took it.
-    fn ensure_current(
-        &self,
-        db: &impl super::DbAccess,
-        changes: &EntryChanges,
-    ) -> anyhow::Result<()> {
-        let written = changes
-            .to_update
-            .iter()
-            .chain(&changes.to_move)
-            .filter_map(|entry| Some((entry.db_id?, entry.id.as_str())));
-        let parents = changes
-            .to_add
-            .iter()
-            .chain(&changes.to_move)
-            .filter_map(|entry| self.at_path(entry.full_path.parent()?))
-            .filter_map(|entry| Some((entry.db_id?, entry.id.as_str())));
-        let expected = written.chain(parents).collect::<HashMap<_, _>>();
-        if expected.is_empty() {
-            return Ok(());
-        }
-        let ids = expected.keys().copied().collect::<Vec<_>>();
-        let current: Vec<Entry> = db
-            .exec(QueryBuilder::select().elements::<Entry>().ids(&ids).query())
-            .map_err(anyhow::Error::from)
-            .and_then(|found| Ok(found.try_into()?))
-            .context("an entry changed since the scan read it")?;
-        for entry in &current {
-            let read = entry.db_id.and_then(|db_id| expected.get(&db_id));
-            anyhow::ensure!(
-                read == Some(&entry.id.as_str()),
-                "entry {} changed since the scan read it",
-                entry.id
-            );
-        }
-        Ok(())
-    }
-
     /// Adds the new entries, updates the changed ones, and moves under their new parent those whose
     /// stored id the scan matched at another path. A changed or moved entry loses its sync. Each
     /// parent is the library, a stored entry, or an entry of `changes`; one that is none of them
-    /// fails, as does a stored entry removed since the read. Either fails the whole sync after the
-    /// groups it attempted, so nothing is marked missing until the next sync reads the library anew.
+    /// fails, which fails the whole sync after the groups it attempted, so nothing is marked
+    /// missing until the next sync reads the library anew.
     pub fn apply_entry_changes(
         &self,
         db: &mut DbAny,
         changes: EntryChanges,
     ) -> anyhow::Result<EntrySyncResult> {
         db.transaction_mut(|t| -> anyhow::Result<EntrySyncResult> {
-            self.ensure_current(t, &changes)?;
             let EntryChanges {
                 to_add,
                 to_update,
@@ -547,10 +505,9 @@ pub fn missing_purge_plan(
     let library_db_id = library
         .db_id
         .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
-    let missing = load_existing(db, library_db_id)?
+    let (missing, present): (Vec<_>, Vec<_>) = load_existing(db, library_db_id)?
         .into_iter()
-        .filter(Entry::is_missing)
-        .collect::<Vec<_>>();
+        .partition(Entry::is_missing);
     let ids_of = |entries: &mut dyn Iterator<Item = &Entry>| -> HashSet<DbId> {
         entries.filter_map(|entry| entry.db_id).collect()
     };
@@ -568,9 +525,13 @@ pub fn missing_purge_plan(
                     && !is_protected(&entry.full_path, protected)
             })),
         )?),
-        PurgeScope::Tracks(tracks) => {
-            tracks_plan(db, library_db_id, tracks, &ids_of(&mut missing.iter()))
-        }
+        PurgeScope::Tracks(tracks) => tracks_plan(
+            db,
+            library_db_id,
+            tracks,
+            &ids_of(&mut missing.iter()),
+            &ids_of(&mut present.iter()),
+        ),
     }
 }
 
@@ -607,6 +568,7 @@ fn tracks_plan(
     library_db_id: DbId,
     tracks: &[DbId],
     missing: &HashSet<DbId>,
+    present: &HashSet<DbId>,
 ) -> Result<PurgePlan, PurgePlanError> {
     use super::graph::{
         inbound_neighbor_ids,
@@ -620,17 +582,28 @@ fn tracks_plan(
         for release in inbound_neighbor_ids(db, track, "Release")? {
             in_library |= inbound_neighbor_ids(db, release, "Library")?.contains(&library_db_id);
         }
-        if !in_library || crate::track_sources::track_available(db, track)? {
+        let mut held = Vec::new();
+        let mut foreign = false;
+        for source in neighbor_ids(db, track, "TrackSource")? {
+            for entry in crate::track_sources::depended_entries(db, source)? {
+                if missing.contains(&entry) {
+                    held.push(entry);
+                } else {
+                    foreign |= !present.contains(&entry);
+                }
+            }
+        }
+        // A track of a shared release whose missing files are another library's is that one's, and
+        // one held in another library too would leave that library's file without a track.
+        if !in_library
+            || held.is_empty()
+            || foreign
+            || crate::track_sources::track_available(db, track)?
+        {
             let public_id = crate::lookup::find_id_by_db_id(db, track)?.unwrap_or_default();
             return Err(PurgePlanError::NotMissing(public_id));
         }
-        for source in neighbor_ids(db, track, "TrackSource")? {
-            candidates.extend(
-                crate::track_sources::depended_entries(db, source)?
-                    .into_iter()
-                    .filter(|entry| missing.contains(entry)),
-            );
-        }
+        candidates.extend(held);
     }
     let mut entries = Vec::new();
     'entries: for entry in candidates {
@@ -1016,7 +989,7 @@ mod tests {
                 scanned("/music/B", EntryKind::Dir),
             ],
         )?;
-        let album = get(&db, library_db_id)?
+        let album = load_existing(&db, library_db_id)?
             .into_iter()
             .find(|entry| entry.name == "A")
             .expect("directory");
@@ -1041,7 +1014,7 @@ mod tests {
         let library_db_id = crate::test_db::insert_library(&mut db, "Music", "/music")?;
         let library = crate::libraries::get_by_id(&db, library_db_id)?.expect("library");
         sync_scanned(&mut db, &library, vec![scanned("/music/A", EntryKind::Dir)])?;
-        let dir = get(&db, library_db_id)?.remove(0);
+        let dir = load_existing(&db, library_db_id)?.remove(0);
         let (old, new) = (Path::new("/music/A"), Path::new("/music/B"));
         let mut stored = StoredEntries::new(&library, vec![dir.clone()])?;
 
@@ -1056,33 +1029,42 @@ mod tests {
     }
 
     #[test]
-    fn a_shared_path_stays_with_the_entry_read_last() -> anyhow::Result<()> {
+    fn a_library_reads_its_own_tree_and_not_what_shared_media_reaches() -> anyhow::Result<()> {
         let mut db = TestDb::initialized()?.into_inner();
-        let library_db_id = crate::test_db::insert_library(&mut db, "Music", "/music")?;
-        let library = crate::libraries::get_by_id(&db, library_db_id)?.expect("library");
-        let entry = |db_id: i64| Entry {
-            db_id: Some(DbId(db_id)),
-            ..scanned("/music/1.flac", EntryKind::File)
-        };
-        let (first, second) = (entry(1), entry(2));
-        let mut stored = StoredEntries::new(&library, vec![first.clone(), second.clone()])?;
-        assert_eq!(
-            stored.entries().count(),
-            2,
-            "both stay candidates for a move"
-        );
+        let own_id = crate::test_db::insert_library(&mut db, "Own", "/own")?;
+        let other_id = crate::test_db::insert_library(&mut db, "Other", "/other")?;
+        let own = crate::libraries::get_by_id(&db, own_id)?.expect("library");
+        let other = crate::libraries::get_by_id(&db, other_id)?.expect("library");
+        for (library, root) in [(&own, "/own"), (&other, "/other")] {
+            sync_scanned(
+                &mut db,
+                library,
+                vec![
+                    scanned(&format!("{root}/Album"), EntryKind::Dir),
+                    scanned(&format!("{root}/Album/Disc"), EntryKind::Dir),
+                    scanned(&format!("{root}/Album/Disc/1.flac"), EntryKind::File),
+                    scanned(&format!("{root}/2.flac"), EntryKind::File),
+                ],
+            )?;
+        }
+        let file = load_existing(&db, other_id)?
+            .into_iter()
+            .find(|entry| entry.name == "2.flac")
+            .and_then(|entry| entry.db_id)
+            .expect("entry");
+        let release = crate::fixtures::insert_release(&mut db, "Shared")?;
+        let track = crate::fixtures::insert_track(&mut db, "Shared")?;
+        crate::graph::ensure_owned_edge(&mut db, own_id, release)?;
+        crate::graph::ensure_owned_edge(&mut db, other_id, release)?;
+        crate::fixtures::connect(&mut db, release, track)?;
+        crate::fixtures::connect(&mut db, track, file)?;
 
-        stored.record(vec![Entry {
-            full_path: PathBuf::from("/music/2.flac"),
-            ..first
-        }]);
-
-        assert_eq!(
-            stored
-                .at_path(Path::new("/music/1.flac"))
-                .map(|entry| &entry.id),
-            Some(&second.id),
-            "the other entry keeps the path"
+        let entries = load_existing(&db, own_id)?;
+        assert_eq!(entries.len(), 4);
+        assert!(
+            entries
+                .iter()
+                .all(|entry| entry.full_path.starts_with("/own"))
         );
         Ok(())
     }
@@ -1100,7 +1082,7 @@ mod tests {
                 scanned("/music/A/1.flac", EntryKind::File),
             ],
         )?;
-        let entries = get(&db, library_db_id)?;
+        let entries = load_existing(&db, library_db_id)?;
         let stored = StoredEntries::new(&library, entries.clone())?;
         let dir = entries
             .iter()
@@ -1129,111 +1111,6 @@ mod tests {
         Ok(())
     }
 
-    /// A library's directory and file, read, with the file then removed and its id handed to an
-    /// unrelated node.
-    fn entry_id_reused_after_the_read(
-        db: &mut DbAny,
-        library: &Library,
-        removed_path: &str,
-    ) -> anyhow::Result<(StoredEntries, Entry, DbId)> {
-        sync_scanned(
-            db,
-            library,
-            vec![
-                scanned("/music/A", EntryKind::Dir),
-                scanned("/music/A/1.flac", EntryKind::File),
-            ],
-        )?;
-        let entries = get(db, library.db_id.expect("library"))?;
-        let removed = entries
-            .iter()
-            .find(|entry| entry.full_path == Path::new(removed_path))
-            .cloned()
-            .expect("entry");
-        let removed_id = removed.db_id.expect("entry db_id");
-        db.exec_mut(QueryBuilder::remove().ids(removed_id).query())?;
-        let other = db
-            .exec_mut(
-                QueryBuilder::insert()
-                    .nodes()
-                    .values([[("db_element_id", "Other").into(), ("name", "kept").into()]])
-                    .query(),
-            )?
-            .ids()[0];
-        assert_eq!(
-            other, removed_id,
-            "agdb hands the freed id to the next node"
-        );
-        Ok((StoredEntries::new(library, entries)?, removed, other))
-    }
-
-    fn assert_left_alone(db: &DbAny, other: DbId) -> anyhow::Result<()> {
-        let element = db
-            .exec(QueryBuilder::select().ids(other).query())?
-            .elements
-            .into_iter()
-            .next()
-            .expect("the node");
-        assert_eq!(element_value(&element, "name"), Some(DbValue::from("kept")));
-        assert_eq!(element_value(&element, "full_path"), None);
-        assert!(super::super::graph::inbound_neighbor_ids(db, other, "Entry")?.is_empty());
-        Ok(())
-    }
-
-    #[test]
-    fn an_entry_removed_since_the_read_fails_and_leaves_its_reused_id_alone() -> anyhow::Result<()>
-    {
-        let mut db = TestDb::initialized()?.into_inner();
-        let library_db_id = crate::test_db::insert_library(&mut db, "Music", "/music")?;
-        let library = crate::libraries::get_by_id(&db, library_db_id)?.expect("library");
-        let (stored, removed, other) =
-            entry_id_reused_after_the_read(&mut db, &library, "/music/A/1.flac")?;
-
-        let changed = Entry {
-            size: 2,
-            ..removed.clone()
-        };
-        let changes = stored.changes(vec![changed.clone()]);
-        stored
-            .apply_entry_changes(&mut db, changes)
-            .expect_err("the update found no such entry");
-        assert_left_alone(&db, other)?;
-
-        let moved = Entry {
-            full_path: PathBuf::from("/music/A/2.flac"),
-            ..removed
-        };
-        let changes = stored.changes(vec![moved]);
-        stored
-            .apply_entry_changes(&mut db, changes)
-            .expect_err("the move found no such entry");
-        assert_left_alone(&db, other)?;
-
-        db.exec_mut(QueryBuilder::remove().ids(other).query())?;
-        let changes = stored.changes(vec![changed]);
-        stored
-            .apply_entry_changes(&mut db, changes)
-            .expect_err("nothing holds the id now");
-        Ok(())
-    }
-
-    #[test]
-    fn a_parent_removed_since_the_read_fails_and_gains_no_child() -> anyhow::Result<()> {
-        let mut db = TestDb::initialized()?.into_inner();
-        let library_db_id = crate::test_db::insert_library(&mut db, "Music", "/music")?;
-        let library = crate::libraries::get_by_id(&db, library_db_id)?.expect("library");
-        let (stored, _, other) = entry_id_reused_after_the_read(&mut db, &library, "/music/A")?;
-
-        let before = get(&db, library_db_id)?.len();
-        let changes = stored.changes(vec![scanned("/music/A/2.flac", EntryKind::File)]);
-        stored
-            .apply_entry_changes(&mut db, changes)
-            .expect_err("the directory is gone");
-        assert_eq!(get(&db, library_db_id)?.len(), before);
-        assert!(children(&db, other)?.is_empty());
-        Ok(())
-    }
-
     #[test]
     fn changed_entries_wait_for_their_sync_to_finish() -> anyhow::Result<()> {
         let mut db = TestDb::initialized()?.into_inner();
@@ -1244,7 +1121,9 @@ mod tests {
             ..scanned("/music/01.flac", EntryKind::File)
         };
         sync_scanned(&mut db, &library, vec![track(1)])?;
-        let entry_id = get(&db, library_db_id)?[0].db_id.expect("entry db_id");
+        let entry_id = load_existing(&db, library_db_id)?[0]
+            .db_id
+            .expect("entry db_id");
         let synced = |db: &DbAny| -> anyhow::Result<bool> {
             Ok(get_by_id(db, entry_id)?
                 .expect("entry")
@@ -1285,7 +1164,7 @@ mod tests {
                 .collect(),
         )?;
         let id_of = |db: &DbAny, path: &str| -> anyhow::Result<DbId> {
-            Ok(get(db, library_db_id)?
+            Ok(load_existing(db, library_db_id)?
                 .into_iter()
                 .find(|entry| entry.full_path == Path::new(path))
                 .and_then(|entry| entry.db_id)
@@ -1373,7 +1252,7 @@ mod tests {
 
     /// The missing root holds exactly the entries with a missing time.
     fn assert_missing_root_matches(db: &DbAny, library_db_id: DbId) -> anyhow::Result<()> {
-        let mut timed = get(db, library_db_id)?
+        let mut timed = load_existing(db, library_db_id)?
             .into_iter()
             .filter(Entry::is_missing)
             .filter_map(|entry| entry.db_id)
@@ -1423,7 +1302,7 @@ mod tests {
             |_, _| Vec::new(),
         )?;
         assert_missing_root_matches(&db, library_db_id)?;
-        let gone = get(&db, library_db_id)?
+        let gone = load_existing(&db, library_db_id)?
             .into_iter()
             .filter(|entry| entry.is_missing())
             .filter_map(|entry| entry.db_id)
@@ -1464,7 +1343,7 @@ mod tests {
             |_, _| Vec::new(),
         )?;
         assert_eq!((result.marked, result.removed_dirs), (2, 1));
-        let entries = get(&db, library_db_id)?;
+        let entries = load_existing(&db, library_db_id)?;
         let state = |path: &str| {
             entries
                 .iter()
