@@ -28,7 +28,13 @@ use std::path::{
     Path,
     PathBuf,
 };
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{
+        AtomicBool,
+        Ordering,
+    },
+};
 use std::time::Duration;
 
 use anyhow::Context;
@@ -1370,6 +1376,7 @@ where
             plugins: Arc::from(execution_order(self.plugins.iter().cloned())?),
             tokio_runtime: TokioRuntimeContext::new()?,
             run_end_hooks: self.run_end_hooks,
+            entrypoints_cancelled: Arc::default(),
         })
     }
 }
@@ -1380,6 +1387,7 @@ pub struct Runtime {
     pub plugins: Arc<[LoadedPlugin]>,
     pub tokio_runtime: TokioRuntimeContext,
     run_end_hooks: Vec<RunEndHook>,
+    entrypoints_cancelled: Arc<AtomicBool>,
 }
 
 impl Runtime {
@@ -1493,11 +1501,23 @@ impl Runtime {
         result
     }
 
+    /// Once set, from any thread, every entrypoint run fails as cancelled:
+    /// the running one at its next yield and later ones before they start.
+    /// One-way, for a runtime about to shut down, so a long entrypoint can't
+    /// hold up its shutdown.
+    pub fn entrypoint_cancellation(&self) -> Arc<AtomicBool> {
+        self.entrypoints_cancelled.clone()
+    }
+
     fn run_entrypoint(&self, plugin: &LoadedPlugin) -> anyhow::Result<()> {
         let Some(entrypoint) = plugin.manifest.entrypoint.as_deref() else {
             return Ok(());
         };
         let plugin_id = plugin.manifest.id.as_str();
+        anyhow::ensure!(
+            !self.entrypoints_cancelled.load(Ordering::Acquire),
+            "plugin '{plugin_id}' entrypoint was cancelled"
+        );
         let specifier = format!("@{plugin_id}/{entrypoint}");
         let require = self.vm.data().get::<RequireRuntime>()?;
         // Loads through the require source cache so a later
@@ -1529,7 +1549,10 @@ impl Runtime {
                     &self.tokio_runtime,
                     &scheduler,
                     &thread,
-                    ThreadDriveOptions::default(),
+                    ThreadDriveOptions {
+                        cancellation: Some(self.entrypoints_cancelled.clone()),
+                        ..ThreadDriveOptions::default()
+                    },
                 )
             })
             .map_err(anyhow::Error::new)
@@ -2494,6 +2517,43 @@ mod tests {
             ["lib", "app"],
             "stopping lib cancels the task its entrypoint spawned"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn cancelled_entrypoints_end_the_running_one_and_skip_the_rest() -> anyhow::Result<()> {
+        let recorded = Arc::new(Mutex::new(Vec::new()));
+        let runtime = task_test_runtime_with(
+            recorded.clone(),
+            &[
+                (
+                    "a",
+                    &[],
+                    r#"
+                        local tasks = require('@test/tasks')
+                        tasks.record("a")
+                        tasks.forever()
+                    "#,
+                ),
+                ("b", &["a"], "require('@test/tasks').record('b')"),
+            ],
+            &[],
+        )?;
+        let cancellation = runtime.entrypoint_cancellation();
+        let reached = recorded.clone();
+        // Cancels once `a` has started, whether or not it has yielded yet.
+        let cancel = std::thread::spawn(move || {
+            while reached.lock().expect("recorded mutex poisoned").is_empty() {
+                std::thread::yield_now();
+            }
+            cancellation.store(true, std::sync::atomic::Ordering::Release);
+        });
+
+        let started = std::time::Instant::now();
+        assert_eq!(runtime.exec_all(), ["a", "b"]);
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+        assert_eq!(*recorded.lock().expect("recorded mutex poisoned"), ["a"]);
+        cancel.join().expect("cancelling thread");
         Ok(())
     }
 
