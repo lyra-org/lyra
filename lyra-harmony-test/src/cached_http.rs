@@ -280,6 +280,14 @@ fn init_luau_http_module(
     table.set(
         "MAX_CACHE_TTL_MS",
         luau::Value::Number(harmony_http::MAX_CACHE_TTL_MS as f64),
+    )?;
+    table.set(
+        "DEFAULT_MAX_BODY_BYTES",
+        luau::Value::Number(harmony_http::DEFAULT_MAX_BODY_BYTES as f64),
+    )?;
+    table.set(
+        "MAX_BODY_BYTES",
+        luau::Value::Number(harmony_http::MAX_BODY_BYTES as f64),
     )
 }
 
@@ -372,6 +380,11 @@ struct LiveResponse {
     body: String,
 }
 
+enum LiveOutcome {
+    Response(LiveResponse),
+    TooLarge { status_code: u16 },
+}
+
 static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     let _ = rustls::crypto::ring::default_provider().install_default();
     reqwest::Client::builder()
@@ -396,6 +409,7 @@ struct RequestOptions {
     method: CachedHttpMethod,
     body: Option<Vec<u8>>,
     headers: HashMap<String, String>,
+    max_body_bytes: usize,
     _cache_ttl_ms: Option<u64>,
 }
 
@@ -427,6 +441,12 @@ fn request_callback(
         };
 
         if let Some(cached) = cached {
+            if cached.body.len() > options.max_body_bytes {
+                return Ok(body_too_large_value(
+                    cached.status_code,
+                    options.max_body_bytes,
+                ));
+            }
             record_trace_entry(
                 &state.request_trace,
                 &cache_key,
@@ -474,9 +494,15 @@ fn request_callback(
             .unwrap_or(Duration::from_secs(1));
 
         loop {
-            let response = execute_single_request(&options)
+            let response = match execute_single_request(&options)
                 .await
-                .map_err(runtime_anyhow_error)?;
+                .map_err(runtime_anyhow_error)?
+            {
+                LiveOutcome::Response(response) => response,
+                LiveOutcome::TooLarge { status_code } => {
+                    return Ok(body_too_large_value(status_code, options.max_body_bytes));
+                }
+            };
             let write_cache_dir = state
                 .overlay_cache_dir
                 .as_ref()
@@ -568,7 +594,7 @@ fn encode_uri_component_callback(mut frame: luau::CallFrame<'_>) -> luau::runtim
     Ok(())
 }
 
-async fn execute_single_request(options: &RequestOptions) -> anyhow::Result<LiveResponse> {
+async fn execute_single_request(options: &RequestOptions) -> anyhow::Result<LiveOutcome> {
     let client = &*HTTP_CLIENT;
 
     let mut req = match options.method {
@@ -595,11 +621,44 @@ async fn execute_single_request(options: &RequestOptions) -> anyhow::Result<Live
         req = req.body(body.clone());
     }
 
-    let resp = req.send().await?;
-    Ok(LiveResponse {
-        status_code: resp.status().as_u16(),
-        body: resp.text().await?,
-    })
+    let mut resp = req.send().await?;
+    let status_code = resp.status().as_u16();
+    let limit = options.max_body_bytes;
+    if resp
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Ok(LiveOutcome::TooLarge { status_code });
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = resp.chunk().await? {
+        if body.len() + chunk.len() > limit {
+            return Ok(LiveOutcome::TooLarge { status_code });
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(LiveOutcome::Response(LiveResponse {
+        status_code,
+        body: String::from_utf8_lossy(&body).into_owned(),
+    }))
+}
+
+/// The response `harmony/http` gives a body past the request's cap.
+fn body_too_large_value(status_code: u16, limit: usize) -> luau::Value {
+    let mut table = luau::OwnedTable::with_capacity(0, 9);
+    table.set_field("success", false);
+    table.set_field("status_code", luau::Value::Number(f64::from(status_code)));
+    table.set_field(
+        "status_message",
+        luau::Value::String(format!("response body exceeds {limit} bytes").into_bytes()),
+    );
+    table.set_field("headers", luau::OwnedTable::with_capacity(0, 0));
+    table.set_field("cookies", luau::OwnedTable::with_capacity(0, 0));
+    table.set_field("body", luau::Value::String(Vec::new()));
+    table.set_field("error_kind", luau::Value::String(b"body".to_vec()));
+    table.set_field("retries", luau::Value::Number(0.0));
+    table.set_field("rate_limited", false);
+    luau::Value::TableData(table)
 }
 
 fn request_options_from_luau(table: &luau::Table) -> luau::runtime::Result<RequestOptions> {
@@ -608,6 +667,7 @@ fn request_options_from_luau(table: &luau::Table) -> luau::runtime::Result<Reque
         method: optional_method_field(table, "method")?.unwrap_or(CachedHttpMethod::Get),
         body: optional_binary_field(table, "body")?,
         headers: optional_string_map_field(table, "headers")?.unwrap_or_default(),
+        max_body_bytes: harmony_http::luau_max_body_bytes(table)?,
         // Checked as the server checks it; stored traces answer every request.
         _cache_ttl_ms: optional_u64_field(table, "cache_ttl_ms")?,
     })
@@ -1266,4 +1326,69 @@ fn remove_empty_response_dirs(root: &Path) -> std::io::Result<bool> {
     }
 
     Ok(std::fs::read_dir(root)?.next().is_none())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::io::{
+        Read,
+        Write,
+    };
+
+    use super::{
+        CachedHttpMethod,
+        LiveOutcome,
+        RequestOptions,
+        execute_single_request,
+    };
+
+    /// Serves `body` to every connection, declaring its length only when `declared`.
+    fn serve(body: &'static [u8], declared: bool) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("address").port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let _ = stream.read(&mut [0; 4096]);
+                let head = if declared {
+                    format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len())
+                } else {
+                    "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".to_string()
+                };
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(body);
+            }
+        });
+        format!("http://127.0.0.1:{port}/")
+    }
+
+    fn options(url: &str, max_body_bytes: usize) -> RequestOptions {
+        RequestOptions {
+            url: url.to_string(),
+            method: CachedHttpMethod::Get,
+            body: None,
+            headers: HashMap::new(),
+            max_body_bytes,
+            _cache_ttl_ms: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn live_requests_stop_past_their_body_cap() -> anyhow::Result<()> {
+        for declared in [true, false] {
+            let url = serve(&[b'x'; 64], declared);
+            assert!(matches!(
+                execute_single_request(&options(&url, 63)).await?,
+                LiveOutcome::TooLarge { status_code: 200 }
+            ));
+            let LiveOutcome::Response(response) =
+                execute_single_request(&options(&url, 64)).await?
+            else {
+                panic!("a body at the cap is read");
+            };
+            assert_eq!(response.body.len(), 64);
+        }
+        Ok(())
+    }
 }
