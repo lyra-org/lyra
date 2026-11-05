@@ -14,17 +14,6 @@ use agdb::{
     DbId,
     QueryBuilder,
 };
-use argon2::{
-    Argon2,
-    password_hash::{
-        PasswordHasher,
-        SaltString,
-        rand_core::{
-            OsRng,
-            RngCore,
-        },
-    },
-};
 use nanoid::nanoid;
 
 pub fn insert_track(db: &mut DbAny, title: &str) -> anyhow::Result<DbId> {
@@ -116,12 +105,15 @@ pub fn insert_listen(
     db.transaction_mut(|t| super::listens::insert(t, &listen, track_db_id, user_db_id))
 }
 
+/// A valid argon2 hash that no test password matches.
+pub const UNUSABLE_PASSWORD_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$bHlyYWZpeHR1cmVzYWx0MDE$vcPx0NcnfcSiooHKqtJm/SsMVaSrfBboPZLCEwgKyaA";
+
 pub fn test_user(username: &str) -> anyhow::Result<super::users::User> {
     Ok(super::users::User {
         db_id: None,
         id: nanoid!(),
         username: username.to_string(),
-        password: hash_random_secret()?,
+        password: UNUSABLE_PASSWORD_HASH.to_string(),
     })
 }
 
@@ -150,13 +142,4 @@ pub fn connect_credit(
         },
     )?;
     Ok(())
-}
-
-fn hash_random_secret() -> anyhow::Result<String> {
-    let mut secret = [0_u8; 32];
-    OsRng.fill_bytes(&mut secret);
-    let salt = SaltString::generate(&mut OsRng);
-    let argon2 = Argon2::default();
-    let hash = argon2.hash_password(&secret, &salt)?.to_string();
-    Ok(hash)
 }

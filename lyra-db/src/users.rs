@@ -10,17 +10,6 @@ use agdb::{
     DbId,
     QueryBuilder,
 };
-use argon2::{
-    Argon2,
-    password_hash::{
-        PasswordHasher,
-        SaltString,
-        rand_core::{
-            OsRng,
-            RngCore,
-        },
-    },
-};
 use nanoid::nanoid;
 use serde::Serialize;
 
@@ -154,16 +143,8 @@ pub fn session_owner(db: &impl super::DbAccess, session_id: DbId) -> anyhow::Res
     Ok(users.pop())
 }
 
-fn hash_random_secret() -> anyhow::Result<String> {
-    let mut secret = [0_u8; 32];
-    OsRng.fill_bytes(&mut secret);
-    let salt = SaltString::generate(&mut OsRng);
-    let argon2 = Argon2::default();
-    let hash = argon2.hash_password(&secret, &salt)?.to_string();
-    Ok(hash)
-}
-
-pub fn ensure_default_user(db: &mut DbAny) -> anyhow::Result<DbId> {
+/// Creates the default user with `password_hash` unless it exists.
+pub fn ensure_default_user(db: &mut DbAny, password_hash: &str) -> anyhow::Result<DbId> {
     if let Some(user) = get_by_username(db, DEFAULT_USERNAME)?
         && let Some(db_id) = user.db_id
     {
@@ -176,7 +157,7 @@ pub fn ensure_default_user(db: &mut DbAny) -> anyhow::Result<DbId> {
             db_id: None,
             id: nanoid!(),
             username: DEFAULT_USERNAME.to_string(),
-            password: hash_random_secret()?,
+            password: password_hash.to_string(),
         },
     )
 }
@@ -398,18 +379,18 @@ pub fn update_user_password(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fixtures::UNUSABLE_PASSWORD_HASH;
     use crate::fixtures::test_user;
     use crate::test_db::new_test_db;
     use crate::test_db::test_session;
     use anyhow::anyhow;
-    use argon2::password_hash::PasswordHash;
 
     #[test]
     fn ensure_default_user_is_idempotent() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
 
-        let first = ensure_default_user(&mut db)?;
-        let second = ensure_default_user(&mut db)?;
+        let first = ensure_default_user(&mut db, UNUSABLE_PASSWORD_HASH)?;
+        let second = ensure_default_user(&mut db, UNUSABLE_PASSWORD_HASH)?;
         assert_eq!(first, second);
 
         let user = get_by_username(&db, "default")?;
@@ -538,18 +519,6 @@ mod tests {
         let session = find_session_by_id(&db, session_id)?
             .ok_or_else(|| anyhow!("session must exist after touch"))?;
         assert_eq!(session.last_seen_at_ms, 1_234_567);
-        Ok(())
-    }
-
-    #[test]
-    fn default_user_has_valid_hash() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        let user_db_id = ensure_default_user(&mut db)?;
-        let user =
-            get_by_id(&db, user_db_id)?.ok_or_else(|| anyhow!("default user should exist"))?;
-
-        PasswordHash::new(&user.password)?;
-
         Ok(())
     }
 

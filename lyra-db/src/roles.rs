@@ -508,7 +508,8 @@ mod tests {
         ensure_user_has_role(&mut db, bob, "admin")?;
         assert_eq!(count_admins(&db)?, 2);
 
-        let default_id = users::ensure_default_user(&mut db)?;
+        let default_id =
+            users::ensure_default_user(&mut db, crate::fixtures::UNUSABLE_PASSWORD_HASH)?;
         ensure_user_has_role(&mut db, default_id, "admin")?;
         assert_eq!(count_admins(&db)?, 2);
 
@@ -520,7 +521,8 @@ mod tests {
         let mut db = new_test_db()?;
         ensure_builtin_roles(&mut db)?;
 
-        let default_id = users::ensure_default_user(&mut db)?;
+        let default_id =
+            users::ensure_default_user(&mut db, crate::fixtures::UNUSABLE_PASSWORD_HASH)?;
         ensure_user_has_role(&mut db, default_id, "admin")?;
         assert!(!has_non_default_admin(&db)?);
 
@@ -591,7 +593,8 @@ mod tests {
         let mut db = new_test_db()?;
         ensure_builtin_roles(&mut db)?;
 
-        let default_id = users::ensure_default_user(&mut db)?;
+        let default_id =
+            users::ensure_default_user(&mut db, crate::fixtures::UNUSABLE_PASSWORD_HASH)?;
         ensure_user_has_role(&mut db, default_id, "admin")?;
 
         let custom_admin_role = Role {

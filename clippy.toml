@@ -1,6 +1,16 @@
-# Luau API calls that can raise an error, which longjmps over Rust frames or aborts. Only
-# harmony-luau's gateway (harmony-luau/src/runtime/gateway.rs) calls them, under a protected call.
 disallowed-methods = [
+	# Argon2 work runs only through lyra-server's services::auth::passwords, which keeps it off the
+	# async workers and caps how much runs at once.
+	{ path = "argon2::PasswordHasher::hash_password", reason = "use lyra-server's services::auth::passwords" },
+	{ path = "argon2::PasswordHasher::hash_password_customized", reason = "use lyra-server's services::auth::passwords" },
+	{ path = "argon2::PasswordVerifier::verify_password", reason = "use lyra-server's services::auth::passwords" },
+	{ path = "argon2::Argon2::hash_password_into", reason = "use lyra-server's services::auth::passwords" },
+	{ path = "argon2::Argon2::hash_password_into_with_memory", reason = "use lyra-server's services::auth::passwords" },
+	{ path = "argon2::Argon2::fill_memory", reason = "use lyra-server's services::auth::passwords" },
+	{ path = "argon2::PasswordHash::generate", reason = "use lyra-server's services::auth::passwords" },
+	{ path = "argon2::PasswordHash::verify_password", reason = "use lyra-server's services::auth::passwords" },
+	# Luau API calls that can raise an error, which longjmps over Rust frames or aborts. Only
+	# harmony-luau's gateway (harmony-luau/src/runtime/gateway.rs) calls them, under a protected call.
 	{ path = "harmony_luau_sys::vm::lua_newthread", reason = "can raise; use the harmony-luau gateway" },
 	{ path = "harmony_luau_sys::vm::lua_rawcheckstack", reason = "can raise; use lua_checkstack" },
 	{ path = "harmony_luau_sys::vm::lua_settop", reason = "can raise; use the harmony-luau gateway" },

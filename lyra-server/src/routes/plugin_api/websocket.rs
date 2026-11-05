@@ -433,7 +433,10 @@ mod tests {
         crate::plugins::testing::init_default_test_state()?;
         {
             let mut db = STATE.db.write().await;
-            lyra_db::users::ensure_default_user(&mut db)?;
+            lyra_db::users::ensure_default_user(
+                &mut db,
+                lyra_db::fixtures::UNUSABLE_PASSWORD_HASH,
+            )?;
         }
         let (_, token) = session_user("socket-collapsed").await?;
         let mut reauth = socket_reauth(&token).await?;

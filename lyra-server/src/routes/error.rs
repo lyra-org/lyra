@@ -32,6 +32,7 @@ use crate::services::{
         AuthError,
         access::AccessError,
         api_keys::ApiKeyServiceError,
+        passwords::InvalidPassword,
     },
     catalog::{
         CatalogError,
@@ -210,6 +211,12 @@ impl From<AuthError> for AppError {
             AuthError::RateLimited(retry_after) => Self::too_many_requests(retry_after),
             AuthError::Internal(err) => err.into(),
         }
+    }
+}
+
+impl From<InvalidPassword> for AppError {
+    fn from(err: InvalidPassword) -> Self {
+        Self::bad_request(err.to_string())
     }
 }
 
@@ -428,7 +435,6 @@ macro_rules! internal_app_error_from {
 
 internal_app_error_from!(
     agdb::DbError,
-    argon2::password_hash::Error,
     axum::http::Error,
     lyra_ffmpeg::Error,
     serde_json::Error,

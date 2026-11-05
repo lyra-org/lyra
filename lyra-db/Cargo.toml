@@ -14,7 +14,6 @@ testing = []
 [dependencies]
 agdb = { version = "0.15.0", features = ["serde"] }
 anyhow = { workspace = true }
-argon2 = { version = "0.5", features = ["std", "password-hash"] }
 blake3 = { workspace = true }
 lofty = "=0.25.4"
 lyra-metadata = { path = "../lyra-metadata" }

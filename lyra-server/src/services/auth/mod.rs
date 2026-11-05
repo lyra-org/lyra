@@ -6,23 +6,12 @@
 use std::{
     collections::HashSet,
     fmt::Write,
-    num::NonZeroUsize,
-    sync::LazyLock,
 };
 
 use agdb::DbId;
-use argon2::{
-    Argon2,
-    PasswordHash,
-    PasswordHasher,
-    PasswordVerifier,
-    password_hash::{
-        SaltString,
-        rand_core::{
-            OsRng,
-            RngCore,
-        },
-    },
+use argon2::password_hash::rand_core::{
+    OsRng,
+    RngCore,
 };
 
 use crate::{
@@ -34,46 +23,12 @@ use lyra_db::{
     users::DEFAULT_USERNAME,
 };
 
-// Defeat user-enumeration via response timing: the miss branch of login_with_password
-// verifies against this pre-computed hash so both hit and miss pay the same argon2 cost.
-static DUMMY_PASSWORD_HASH: LazyLock<String> = LazyLock::new(|| {
-    let salt = SaltString::generate(&mut OsRng);
-    Argon2::default()
-        .hash_password(b"lyra-timing-oracle-dummy-password", &salt)
-        .expect("dummy password hash must hash successfully")
-        .to_string()
-});
-
-/// Password checks are deliberately expensive, so only this many run at once across the server,
-/// whatever number of addresses the logins come from; the rest wait their turn.
-static PASSWORD_CHECKS: LazyLock<tokio::sync::Semaphore> = LazyLock::new(|| {
-    let cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
-    tokio::sync::Semaphore::new((cores / 2).max(1))
-});
-
-/// Checks `password` against a stored hash off the async workers.
-pub(crate) async fn password_matches(password: &str, hash: String) -> AuthResult<bool> {
-    let _permit = PASSWORD_CHECKS
-        .acquire()
-        .await
-        .expect("the password check semaphore is never closed");
-    let password = password.to_owned();
-    tokio::task::spawn_blocking(move || -> anyhow::Result<bool> {
-        let parsed = PasswordHash::new(&hash)?;
-        Ok(Argon2::default()
-            .verify_password(password.as_bytes(), &parsed)
-            .is_ok())
-    })
-    .await
-    .map_err(anyhow::Error::from)?
-    .map_err(AuthError::from)
-}
-
 pub(crate) mod access;
 pub(crate) mod api_keys;
 pub(crate) mod caller;
 pub(crate) mod media_tokens;
 pub(crate) mod owners;
+pub(crate) mod passwords;
 pub(crate) mod sessions;
 pub(crate) mod socket_tickets;
 
@@ -676,10 +631,10 @@ pub(crate) async fn login_with_password(
         lyra_db::users::get_by_username(&db, username).map_err(AuthError::from)?
     };
     let Some(user) = maybe_user else {
-        password_matches(password, DUMMY_PASSWORD_HASH.clone()).await?;
+        passwords::match_nothing(password).await?;
         return Ok(None);
     };
-    if !password_matches(password, user.password.clone()).await? {
+    if !passwords::matches(password, user.password.clone()).await? {
         return Ok(None);
     }
 
@@ -737,9 +692,11 @@ pub(crate) async fn resolve_optional_auth(
 /// The default user is intentionally promoted to admin on every boot. When
 /// authentication is disabled, every request resolves to this principal.
 pub(crate) async fn ensure_default_user(config: &Config) -> anyhow::Result<()> {
+    let unusable_password = passwords::unusable().await?;
+    passwords::prepare().await?;
     {
         let mut db_write = STATE.db.write().await;
-        let user_db_id = lyra_db::users::ensure_default_user(&mut db_write)?;
+        let user_db_id = lyra_db::users::ensure_default_user(&mut db_write, &unusable_password)?;
         lyra_db::roles::ensure_builtin_roles(&mut db_write)?;
         lyra_db::roles::ensure_user_has_role(
             &mut db_write,
@@ -747,7 +704,6 @@ pub(crate) async fn ensure_default_user(config: &Config) -> anyhow::Result<()> {
             lyra_db::roles::BUILTIN_ADMIN_ROLE,
         )?;
     }
-    let _ = &*DUMMY_PASSWORD_HASH;
     if !config.auth.enabled {
         tracing::warn!(
             default_user = DEFAULT_USERNAME,
@@ -1124,11 +1080,7 @@ mod tests {
 
         let password = "known-default-password";
         {
-            let salt = SaltString::generate(&mut OsRng);
-            let hash = Argon2::default()
-                .hash_password(password.as_bytes(), &salt)
-                .map_err(|error| anyhow::anyhow!("{error}"))?
-                .to_string();
+            let hash = passwords::hash(password).await?;
             let mut db = STATE.db.write().await;
             db.transaction_mut(|t| lyra_db::users::update_user_password(t, default_db_id, &hash))?;
         }

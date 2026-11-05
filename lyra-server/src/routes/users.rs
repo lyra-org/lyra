@@ -10,15 +10,6 @@ use std::ops::{
 
 #[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
-use argon2::{
-    Argon2,
-    password_hash::{
-        PasswordHasher,
-        SaltString,
-        rand_core::OsRng,
-    },
-};
-
 use axum::Json;
 use axum::extract::{
     Extension,
@@ -64,7 +55,7 @@ use crate::{
             api_keys,
             login_with_password,
             logout_with_token,
-            password_matches,
+            passwords,
             require_grantable_permissions,
             require_manage_roles,
             require_manage_users,
@@ -279,29 +270,6 @@ fn validate_username(username: &str) -> Result<String, AppError> {
     Ok(username.to_lowercase())
 }
 
-fn validate_password(password: &str) -> Result<(), AppError> {
-    if password.is_empty() {
-        return Err(AppError::bad_request("password cannot be empty"));
-    }
-    if password.len() < 8 {
-        return Err(AppError::bad_request(
-            "password must be at least 8 characters long",
-        ));
-    }
-    if !password.is_ascii() {
-        return Err(AppError::bad_request("password must be ASCII"));
-    }
-    Ok(())
-}
-
-fn hash_password(password: &str) -> Result<String, AppError> {
-    let salt = SaltString::generate(&mut OsRng);
-    let argon2 = Argon2::default();
-    Ok(argon2
-        .hash_password(password.as_bytes(), &salt)?
-        .to_string())
-}
-
 fn parse_me_includes(inc: Option<Vec<String>>) -> Result<bool, AppError> {
     let values = super::parse_inc_values(inc, &["permissions"])?;
     Ok(values.iter().any(|value| value == "permissions"))
@@ -319,8 +287,8 @@ async fn create_user(
         )));
     }
 
-    validate_password(&user.password)?;
-    let password_hash = hash_password(&user.password)?;
+    passwords::validate(&user.password)?;
+    let password_hash = passwords::hash(&user.password).await?;
 
     let principal = match require_principal(bearer_credential(&headers)).await {
         Ok(p) => Some(p),
@@ -435,8 +403,8 @@ async fn update_password(
 ) -> Result<StatusCode, AppError> {
     let principal = require_manage_users(bearer_credential(&headers)).await?;
 
-    validate_password(&body.password)?;
-    let password_hash = hash_password(&body.password)?;
+    passwords::validate(&body.password)?;
+    let password_hash = passwords::hash(&body.password).await?;
 
     let mut db = STATE.db.write().await;
     let user = lyra_db::users::get_by_public_id(&db, &user_id)?
@@ -541,9 +509,9 @@ async fn update_me(
             AppError::bad_request("current_password is required to change password")
         })?;
 
-        validate_password(new_password)?;
+        passwords::validate(new_password)?;
 
-        let new_hash = hash_password(new_password)?;
+        let new_hash = passwords::hash(new_password).await?;
 
         let checked_hash = {
             let db = STATE.db.read().await;
@@ -552,7 +520,7 @@ async fn update_me(
                 .ok_or_else(|| AppError::not_found("user not found"))?
                 .password
         };
-        if !password_matches(current_password, checked_hash.clone()).await? {
+        if !passwords::matches(current_password, checked_hash.clone()).await? {
             return Err(AppError::unauthorized("incorrect current password"));
         }
 
@@ -980,8 +948,7 @@ mod tests {
                     db_id: None,
                     id: nanoid!(),
                     username: format!("caller-{}", nanoid!()),
-                    password: hash_password("caller-password")
-                        .map_err(|err| anyhow::anyhow!("hash_password failed: {err:?}"))?,
+                    password: crate::services::auth::passwords::hash("caller-password").await?,
                 },
             )?;
             lyra_db::roles::ensure_user_has_role(
@@ -1392,8 +1359,8 @@ mod tests {
         let _guard = runtime_test_lock().await;
         let test_dir = initialize_test_runtime().await?;
 
-        let initial_password_hash = hash_password("initial-password-abc")
-            .map_err(|err| anyhow::anyhow!("hash_password failed: {err:?}"))?;
+        let initial_password_hash =
+            crate::services::auth::passwords::hash("initial-password-abc").await?;
         let user_db_id = {
             let mut db = STATE.db.write().await;
             lyra_db::roles::ensure_builtin_roles(&mut db)?;
@@ -1456,8 +1423,7 @@ mod tests {
                 db_id: None,
                 id: target_user_id.clone(),
                 username: "target-user".to_string(),
-                password: hash_password("original-password-abc")
-                    .map_err(|err| anyhow::anyhow!("hash_password failed: {err:?}"))?,
+                password: crate::services::auth::passwords::hash("original-password-abc").await?,
             };
             lyra_db::users::create(&mut db, &target)?
         };
@@ -1641,8 +1607,7 @@ mod tests {
                 db_id: None,
                 id: nanoid!(),
                 username: "session-meta".to_string(),
-                password: hash_password(password)
-                    .map_err(|err| anyhow::anyhow!("hash_password failed: {err:?}"))?,
+                password: crate::services::auth::passwords::hash(password).await?,
             };
             let user_db_id = lyra_db::users::create(&mut db, &user)?;
             lyra_db::roles::ensure_user_has_role(
@@ -1700,8 +1665,7 @@ mod tests {
                 db_id: None,
                 id: nanoid!(),
                 username: "bad-client-name".to_string(),
-                password: hash_password(password)
-                    .map_err(|err| anyhow::anyhow!("hash_password failed: {err:?}"))?,
+                password: crate::services::auth::passwords::hash(password).await?,
             };
             let user_db_id = lyra_db::users::create(&mut db, &user)?;
             lyra_db::roles::ensure_user_has_role(

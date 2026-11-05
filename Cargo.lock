@@ -1460,7 +1460,6 @@ version = "0.0.1-dev.4"
 dependencies = [
  "agdb",
  "anyhow",
- "argon2",
  "blake3",
  "lofty",
  "lyra-metadata",
