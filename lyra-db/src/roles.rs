@@ -298,14 +298,17 @@ fn get_admin_users(db: &DbAny) -> anyhow::Result<Vec<super::User>> {
     Ok(admin_users)
 }
 
+/// Counts admins other than the default user, which cannot sign in and so cannot keep the
+/// server administered.
 pub fn count_admins(db: &DbAny) -> anyhow::Result<usize> {
-    Ok(get_admin_users(db)?.len())
+    Ok(get_admin_users(db)?
+        .iter()
+        .filter(|user| user.username != DEFAULT_USERNAME)
+        .count())
 }
 
 pub fn has_non_default_admin(db: &DbAny) -> anyhow::Result<bool> {
-    Ok(get_admin_users(db)?
-        .iter()
-        .any(|user| user.username != DEFAULT_USERNAME))
+    Ok(count_admins(db)? > 0)
 }
 
 pub fn ensure_builtin_roles(db: &mut DbAny) -> anyhow::Result<()> {
@@ -503,6 +506,10 @@ mod tests {
 
         let bob = users::create(&mut db, &test_user("bob")?)?;
         ensure_user_has_role(&mut db, bob, "admin")?;
+        assert_eq!(count_admins(&db)?, 2);
+
+        let default_id = users::ensure_default_user(&mut db)?;
+        ensure_user_has_role(&mut db, default_id, "admin")?;
         assert_eq!(count_admins(&db)?, 2);
 
         Ok(())

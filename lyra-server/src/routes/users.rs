@@ -487,6 +487,12 @@ async fn update_role(
     let target_has_admin = target_role.permissions.contains(&Permission::Admin);
     let current_is_admin = lyra_db::roles::has_admin_role(&db, user_db_id)?;
 
+    if current_is_admin
+        && !lyra_db::roles::has_permission(&principal.permissions, Permission::Admin)
+    {
+        return Err(AppError::forbidden("cannot change an admin user's role"));
+    }
+
     if current_is_admin && !target_has_admin {
         if user.username == DEFAULT_USERNAME {
             return Err(AppError::bad_request("cannot demote the default user"));
@@ -728,7 +734,7 @@ fn update_role_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Update user role")
         .description(
             "Assigns a role to a user. Requires ManageRoles permission. Assigning admin-capable \
-             roles also requires Admin permission.",
+             roles or changing an admin user's role also requires Admin permission.",
         )
         .response::<204, ()>()
 }
@@ -1194,6 +1200,82 @@ mod tests {
         .into_response()
         .status();
         assert_eq!(status, StatusCode::FORBIDDEN);
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn manage_roles_without_admin_cannot_demote_admin() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let headers = create_headers_with_role("role-manager", "role-manager").await?;
+        let (admin_user_id, admin_db_id) = create_user("owner").await?;
+        {
+            let mut db = STATE.db.write().await;
+            lyra_db::roles::ensure_user_has_role(
+                &mut db,
+                admin_db_id,
+                lyra_db::roles::BUILTIN_ADMIN_ROLE,
+            )?;
+        }
+
+        let status = status_of(
+            update_role(
+                headers,
+                Path(admin_user_id),
+                Json(UpdateRoleRequest {
+                    role: lyra_db::roles::BUILTIN_USER_ROLE.to_string(),
+                }),
+            )
+            .await,
+        );
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        let db = STATE.db.read().await;
+        assert!(lyra_db::roles::has_admin_role(&db, admin_db_id)?);
+        assert!(lyra_db::roles::has_non_default_admin(&db)?);
+        drop(db);
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn default_user_cannot_demote_last_signed_in_admin() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let (admin_user_id, admin_db_id) = create_user("owner").await?;
+        {
+            let mut db = STATE.db.write().await;
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
+            lyra_db::roles::ensure_user_has_role(
+                &mut db,
+                admin_db_id,
+                lyra_db::roles::BUILTIN_ADMIN_ROLE,
+            )?;
+        }
+        let mut config = STATE.config().as_ref().clone();
+        config.auth.enabled = false;
+        crate::services::testing::publish_config(config);
+        crate::services::auth::ensure_default_user(&STATE.config()).await?;
+        let headers = HeaderMap::new();
+
+        let status = status_of(
+            update_role(
+                headers,
+                Path(admin_user_id),
+                Json(UpdateRoleRequest {
+                    role: lyra_db::roles::BUILTIN_USER_ROLE.to_string(),
+                }),
+            )
+            .await,
+        );
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let db = STATE.db.read().await;
+        assert!(lyra_db::roles::has_admin_role(&db, admin_db_id)?);
+        drop(db);
 
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())
