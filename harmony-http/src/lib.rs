@@ -111,6 +111,11 @@ static DEFAULT_USER_AGENT: LazyLock<StdRwLock<Option<String>>> =
 /// Redirect hops a request follows before it fails.
 const MAX_REDIRECTS: usize = 5;
 
+/// The response body cap a Luau request gets when it sets no `max_body_bytes`.
+pub const DEFAULT_MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+/// The largest `max_body_bytes` a Luau request may set.
+pub const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
+
 fn is_http_scheme(url: &url::Url) -> bool {
     matches!(url.scheme(), "http" | "https")
 }
@@ -1237,7 +1242,12 @@ fn install_fields(spec: harmony_core::ModuleSpec) -> harmony_core::ModuleSpec {
         root.set(
             "MAX_CACHE_TTL_MS",
             luau::Value::Number(cache::MAX_CACHE_TTL_MS as f64),
-        )
+        )?;
+        root.set(
+            "DEFAULT_MAX_BODY_BYTES",
+            luau::Value::Number(DEFAULT_MAX_BODY_BYTES as f64),
+        )?;
+        root.set("MAX_BODY_BYTES", luau::Value::Number(MAX_BODY_BYTES as f64))
     })
 }
 
@@ -1245,6 +1255,16 @@ fn describe_fields(descriptor: &mut harmony_luau::ModuleDescriptor) {
     descriptor.fields.push(harmony_luau::ModuleFieldDescriptor {
         path: vec!["MAX_CACHE_TTL_MS"],
         description: Some("The longest a request's `cache_ttl_ms` keeps its response."),
+        ty: u64::luau_type(),
+    });
+    descriptor.fields.push(harmony_luau::ModuleFieldDescriptor {
+        path: vec!["DEFAULT_MAX_BODY_BYTES"],
+        description: Some("The response body cap of a request that sets no `max_body_bytes`."),
+        ty: u64::luau_type(),
+    });
+    descriptor.fields.push(harmony_luau::ModuleFieldDescriptor {
+        path: vec!["MAX_BODY_BYTES"],
+        description: Some("The largest `max_body_bytes` a request may set."),
         ty: u64::luau_type(),
     });
 }
@@ -1332,7 +1352,7 @@ fn request_options_from_luau(
         body: optional_binary_field(table, "body")?,
         headers: optional_header_map_field(table, "headers")?,
         cookies: optional_header_map_field(table, "cookies")?,
-        max_body_bytes: None,
+        max_body_bytes: Some(luau_max_body_bytes(table)?),
         timeout_ms: optional_u64_field(table, "timeout_ms")?,
         cache_ttl_ms: optional_u64_field(table, "cache_ttl_ms")?,
     })
@@ -1357,6 +1377,29 @@ fn concurrency_options_from_luau(
         host: table.required_string_field("host")?,
         max_in_flight: required_u32_field(table, "max_in_flight")?,
     })
+}
+
+/// The response body cap a Luau request's options table asks for, validated
+/// against [`MAX_BODY_BYTES`] and defaulting to [`DEFAULT_MAX_BODY_BYTES`].
+pub fn luau_max_body_bytes(table: &luau::Table) -> luau::runtime::Result<usize> {
+    let value = match table.get("max_body_bytes")? {
+        luau::Value::Nil => return Ok(DEFAULT_MAX_BODY_BYTES),
+        luau::Value::Integer(value) => value,
+        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 => value as i64,
+        other => {
+            return Err(luau_field_type_error(
+                "max_body_bytes",
+                "integer",
+                other.type_name(),
+            ));
+        }
+    };
+    match usize::try_from(value) {
+        Ok(bytes) if (1..=MAX_BODY_BYTES).contains(&bytes) => Ok(bytes),
+        _ => Err(luau::Error::Runtime(format!(
+            "max_body_bytes must be between 1 and MAX_BODY_BYTES ({MAX_BODY_BYTES}), got {value}"
+        ))),
+    }
 }
 
 fn optional_f64_field(
@@ -1650,6 +1693,13 @@ impl DescribeInterface for HttpRequestOptions {
                 name: "cookies",
                 ty: Option::<HttpHeaderMap>::luau_type(),
                 description: None,
+            },
+            FieldDescriptor {
+                name: "max_body_bytes",
+                ty: Option::<u64>::luau_type(),
+                description: Some(
+                    "Caps the response body, between `1` and `MAX_BODY_BYTES`; a larger body fails the response with `error_kind` `body`. Default `DEFAULT_MAX_BODY_BYTES`.",
+                ),
             },
             FieldDescriptor {
                 name: "timeout_ms",
@@ -2471,6 +2521,86 @@ mod tests {
                 .expect("a body within the cap is read");
             assert_eq!(response.body.len(), 64, "{path}");
         }
+    }
+
+    /// The options `http.request` reads from the Luau table `fields` builds.
+    fn luau_request_options(
+        fields: &str,
+    ) -> harmony_luau::runtime::Result<super::HttpRequestOptions> {
+        let vm = harmony_luau::Vm::new()?;
+        let spec = HttpModule::module_spec();
+        let table =
+            harmony_core::luau::install_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;
+        vm.set_global_table("http", &table)?;
+        let source = format!(
+            "return {{ url = \"http://a.example/\", method = http.HttpMethod.Get, {fields} }}"
+        );
+        let values = vm.eval(
+            std::sync::Arc::<[u8]>::from(source.as_bytes()),
+            harmony_luau::ChunkOrigin::default(),
+        )?;
+        let Some(harmony_luau::Value::Table(options)) = values.into_iter().next() else {
+            panic!("the chunk returns a table");
+        };
+        super::request_options_from_luau(&vm, &options)
+    }
+
+    #[test]
+    fn luau_requests_cap_the_body_by_default() -> harmony_luau::runtime::Result<()> {
+        assert_eq!(
+            luau_request_options("")?.max_body_bytes,
+            Some(super::DEFAULT_MAX_BODY_BYTES)
+        );
+        assert_eq!(
+            luau_request_options("max_body_bytes = 1")?.max_body_bytes,
+            Some(1)
+        );
+        assert_eq!(
+            luau_request_options("max_body_bytes = http.MAX_BODY_BYTES")?.max_body_bytes,
+            Some(super::MAX_BODY_BYTES)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn luau_requests_refuse_body_caps_out_of_range() {
+        for value in ["0", "-1", "http.MAX_BODY_BYTES + 1", "2 ^ 70", "-2 ^ 70"] {
+            let error = luau_request_options(&format!("max_body_bytes = {value}"))
+                .expect_err("an out-of-range cap is refused");
+            assert!(
+                error
+                    .to_string()
+                    .contains("max_body_bytes must be between 1 and MAX_BODY_BYTES"),
+                "{value}: {error}"
+            );
+        }
+        for value in ["1.5", "0 / 0", "1 / 0", "-1 / 0", "\"16\"", "true"] {
+            let error = luau_request_options(&format!("max_body_bytes = {value}"))
+                .expect_err("a value that is not an integer is refused");
+            assert!(
+                error.to_string().contains("'max_body_bytes'"),
+                "{value}: {error}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn luau_requests_fail_past_their_body_cap() -> harmony_luau::runtime::Result<()> {
+        let port = serve(|_, _, _| ok(&[0; 64])).await;
+        let url = format!("http://127.0.0.1:{port}/");
+
+        let mut options = luau_request_options("max_body_bytes = 63")?;
+        options.url = url.clone();
+        let response = super::execute_request(None, options).await;
+        assert!(!response.success);
+        assert_eq!(response.error_kind.as_deref(), Some("body"));
+
+        let mut options = luau_request_options("max_body_bytes = 64")?;
+        options.url = url;
+        let response = super::execute_request(None, options).await;
+        assert!(response.success, "{:?}", response.error_kind);
+        assert_eq!(response.body.0.len(), 64);
+        Ok(())
     }
 
     #[tokio::test]
