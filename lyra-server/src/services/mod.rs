@@ -82,6 +82,7 @@ pub(crate) use libraries::{
     SyncRunStartResponse,
     SyncRunSummary,
     cancel_sync_run,
+    drain_library_syncs,
     start_library_sync,
     subscribe_sync_run_events,
     wait_for_running_library_syncs,

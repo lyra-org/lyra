@@ -197,13 +197,13 @@ async fn serve(capture: Option<CaptureArgs>, listener: TcpListener) -> Result<()
         maintenance_shutdown.notify_one();
     }
     shutdown.notify_one();
+    services::drain_library_syncs().await;
     let _ = bg_handle.await;
     // A restart in progress ends before the plugins it would start are torn down.
     let _ = plugin_supervisor.await;
 
     services::hls::state::teardown_all_hls_jobs().await;
     plugin_bootstrap::teardown_loaded_plugins().await;
-    services::wait_for_running_library_syncs().await;
 
     if let Some(reason) = services::shutdown::failure() {
         anyhow::bail!("server stopped after a fatal error: {reason}");

@@ -180,6 +180,8 @@ pub(crate) enum ProviderServiceError {
     NoRefreshHandler(String),
     #[error("{0}")]
     InvalidOption(String),
+    #[error("server is shutting down")]
+    ShuttingDown,
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }

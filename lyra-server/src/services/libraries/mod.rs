@@ -31,6 +31,7 @@ pub(crate) use orchestrator::{
     SyncTotalState,
     SyncWorkDetails,
     cancel_sync_run,
+    drain_library_syncs,
     library_has_active_run,
     library_mutation_guard,
     running_library_sync_count,

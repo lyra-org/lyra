@@ -74,6 +74,8 @@ assert(again ~= nil)
 if not again.started then
 	assert(again.run.id == first.run.id, "the running sync is returned")
 end
+-- The first sync may have ended before the second was asked for.
+local last_sync = again.run.id
 local synced = ended()
 assert(synced.finished_at_ms ~= nil and synced.finished_at_ms >= (synced.started_at_ms :: number))
 assert(synced.stage == nil, "a finished run has no stage")
@@ -105,7 +107,7 @@ local latest = libraries.cancel_sync(shown)
 assert(latest ~= nil and latest.id == refresh.run.id and not running(latest))
 
 -- The options narrow the runs a status reports.
-assert(libraries.sync_status({ shown }, { kind = "library_sync" })[shown].id == first.run.id)
+assert(libraries.sync_status({ shown }, { kind = "library_sync" })[shown].id == last_sync)
 assert(libraries.sync_status({ shown }, { kind = "library_refresh", finished = true })[shown].id == refresh.run.id)
 assert(libraries.sync_status({ shown }, { finished = true })[shown].id == refresh.run.id)
 local never = libraries.sync_status({ shown, hidden }, { kind = "library_sync", finished = false })

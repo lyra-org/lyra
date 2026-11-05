@@ -4,10 +4,12 @@
 // www.meshiplaw.com/lyra.
 
 use std::{
+    any::Any,
     collections::{
         BTreeMap,
         HashMap,
     },
+    future::Future,
     sync::{
         Arc,
         LazyLock,
@@ -33,6 +35,10 @@ use tokio::sync::{
 use tokio::time::{
     Duration,
     sleep,
+};
+use tokio_util::{
+    sync::CancellationToken,
+    task::TaskTracker,
 };
 
 use crate::{
@@ -430,6 +436,8 @@ struct SyncRunState {
     cancellation_requested: bool,
     sequence: u64,
     next_work_id: u64,
+    /// Cancelled with the run, and with the server's shutdown.
+    cancel: CancellationToken,
 }
 
 impl SyncRunState {
@@ -452,6 +460,7 @@ impl SyncRunState {
             cancellation_requested: false,
             sequence,
             next_work_id: 1,
+            cancel: crate::services::shutdown::token().child_token(),
         }
     }
 
@@ -474,6 +483,7 @@ impl SyncRunState {
             cancellation_requested: false,
             sequence: 0,
             next_work_id: 1,
+            cancel: CancellationToken::new(),
         }
     }
 
@@ -613,11 +623,16 @@ pub(crate) struct SyncRunStartResponse {
 pub(crate) struct SyncRunProgress {
     db: DbAsync,
     run_id: String,
+    cancel: CancellationToken,
 }
 
 impl SyncRunProgress {
-    fn new(db: DbAsync, run_id: String) -> Self {
-        Self { db, run_id }
+    fn new(db: DbAsync, state: &SyncRunState) -> Self {
+        Self {
+            db,
+            run_id: state.run_id.clone(),
+            cancel: state.cancel.clone(),
+        }
     }
 
     pub(crate) fn run_id(&self) -> &str {
@@ -797,11 +812,7 @@ impl SyncRunProgress {
     }
 
     pub(crate) async fn check_cancelled(&self) -> Result<(), SyncRunControlError> {
-        let states = sync_run_states().read_owned().await;
-        let Some(state) = states.get(&self.run_id) else {
-            return Ok(());
-        };
-        if state.cancellation_requested || state.status == SyncRunStatus::Cancelling {
+        if self.cancel.is_cancelled() {
             Err(SyncRunControlError::Cancelled)
         } else {
             Ok(())
@@ -859,6 +870,8 @@ static SYNC_START_LOCK: LazyLock<Arc<Mutex<()>>> = LazyLock::new(|| Arc::new(Mut
 pub(crate) struct LibrarySyncRegistries {
     run_states: Arc<RwLock<HashMap<String, SyncRunState>>>,
     event_tx: broadcast::Sender<SyncRunSummary>,
+    /// The task of each run that ends it, once its work returns, panics or is aborted.
+    supervisors: TaskTracker,
 }
 
 impl Default for LibrarySyncRegistries {
@@ -866,6 +879,7 @@ impl Default for LibrarySyncRegistries {
         Self {
             run_states: Arc::default(),
             event_tx: broadcast::channel(SYNC_EVENT_BROADCAST_CAPACITY).0,
+            supervisors: TaskTracker::new(),
         }
     }
 }
@@ -875,6 +889,14 @@ fn sync_run_states() -> Arc<RwLock<HashMap<String, SyncRunState>>> {
         .generation()
         .library_sync
         .run_states
+        .clone()
+}
+
+fn run_supervisors() -> TaskTracker {
+    crate::services::STATE
+        .generation()
+        .library_sync
+        .supervisors
         .clone()
 }
 
@@ -928,12 +950,12 @@ pub(crate) async fn begin_test_run(library: &Library) -> SyncRunProgress {
         now_unix_ms(),
         sequence,
     );
-    let run_id = state.run_id.clone();
+    let progress = SyncRunProgress::new(STATE.db.get(), &state);
     sync_run_states()
         .write_owned()
         .await
-        .insert(run_id.clone(), state);
-    SyncRunProgress::new(STATE.db.get(), run_id)
+        .insert(progress.run_id.clone(), state);
+    progress
 }
 
 pub(crate) async fn cancel_sync_run(run_id: &str) -> anyhow::Result<Option<SyncRunSummary>> {
@@ -947,6 +969,7 @@ pub(crate) async fn cancel_sync_run(run_id: &str) -> anyhow::Result<Option<SyncR
         if state.status.is_active() {
             state.status = SyncRunStatus::Cancelling;
             state.cancellation_requested = true;
+            state.cancel.cancel();
             state.updated_at_ms = now_unix_ms();
             state.sequence = state.sequence.saturating_add(1);
         }
@@ -1028,6 +1051,8 @@ async fn start_locked(
     library: Library,
     run: LibraryRun,
 ) -> anyhow::Result<SyncRunStartResponse> {
+    let shutdown = crate::services::shutdown::token();
+    anyhow::ensure!(!shutdown.is_cancelled(), "server is shutting down");
     reconcile_interrupted_runs(&db).await?;
     let library_id = library.id.clone();
     if let Some(existing) = active_run_for_library(&db, &library_id).await? {
@@ -1037,36 +1062,52 @@ async fn start_locked(
         });
     }
 
-    let kind = match run {
-        LibraryRun::Sync(_) => SyncRunKind::LibrarySync,
-        LibraryRun::Refresh(_) => SyncRunKind::LibraryRefresh,
-        LibraryRun::Purge(_) => SyncRunKind::LibraryPurge,
+    let (kind, label) = match run {
+        LibraryRun::Sync(_) => (SyncRunKind::LibrarySync, "library sync"),
+        LibraryRun::Refresh(_) => (SyncRunKind::LibraryRefresh, "library refresh"),
+        LibraryRun::Purge(_) => (SyncRunKind::LibraryPurge, "library purge"),
     };
     let now_ms = now_unix_ms();
     let sequence = next_run_sequence(&db, &library_id).await?;
     let state = SyncRunState::new(kind, library_id, now_ms, sequence);
-    let run_id = state.run_id.clone();
     let summary = state.summary();
     let record = state.record(None)?;
-    {
-        let mut states = sync_run_states().write_owned().await;
-        states.insert(run_id.clone(), state);
-    }
-    persist_record(&db, record).await;
-    publish_event(summary.clone());
+    let progress = SyncRunProgress::new(db.clone(), &state);
+    let run_id = progress.run_id.clone();
+    let (registered_tx, registered) = tokio::sync::oneshot::channel();
+    let supervisor = {
+        let summary = summary.clone();
+        async move {
+            persist_record(&db, record).await;
+            publish_event(summary);
+            let _ = registered_tx.send(());
+            let work_progress = progress.clone();
+            // Boxed: the work futures nest too deep for the compiler to prove them `Send`.
+            let work: futures::future::BoxFuture<'static, anyhow::Result<()>> = match run {
+                LibraryRun::Sync(options) => {
+                    Box::pin(run_library_sync(db, library, work_progress, options))
+                }
+                LibraryRun::Refresh(covers) => {
+                    Box::pin(run_library_refresh(library, work_progress, covers))
+                }
+                LibraryRun::Purge(selection) => {
+                    Box::pin(run_library_purge(db, library, work_progress, selection))
+                }
+            };
+            supervise_run(progress, label, work).await;
+        }
+    };
 
-    let progress = SyncRunProgress::new(db.clone(), run_id.clone());
-    match run {
-        LibraryRun::Sync(options) => {
-            tokio::spawn(run_library_sync(db, library, progress, options));
-        }
-        LibraryRun::Refresh(covers) => {
-            tokio::spawn(run_library_refresh(library, progress, covers));
-        }
-        LibraryRun::Purge(selection) => {
-            tokio::spawn(run_library_purge(db, library, progress, selection));
-        }
-    }
+    // The supervisor is spawned as the state is registered, so no run is left active without
+    // one, whenever the caller stops waiting.
+    let mut states = sync_run_states().write_owned().await;
+    crate::services::shutdown::unless_cancelled(&shutdown, || {
+        states.insert(run_id, state);
+        run_supervisors().spawn(supervisor);
+    })
+    .ok_or_else(|| anyhow::anyhow!("server is shutting down"))?;
+    drop(states);
+    let _ = registered.await;
 
     Ok(SyncRunStartResponse {
         started: true,
@@ -1074,13 +1115,38 @@ async fn start_locked(
     })
 }
 
+/// Runs `work` to its end and records how the run ended: cancelled when it stopped for a
+/// cancellation, failed when it erred, panicked or was aborted, and succeeded otherwise.
+async fn supervise_run(
+    progress: SyncRunProgress,
+    label: &'static str,
+    work: impl Future<Output = anyhow::Result<()>> + Send + 'static,
+) {
+    let started = Instant::now();
+    let result = match tokio::spawn(work).await {
+        Ok(result) => result,
+        Err(err) => Err(match err.try_into_panic() {
+            Ok(payload) => anyhow::anyhow!("{label} panicked: {}", panic_message(&*payload)),
+            Err(err) => anyhow::anyhow!("{label} ended early: {err}"),
+        }),
+    };
+    finish_run(progress, result, started, label).await;
+}
+
+fn panic_message(payload: &(dyn Any + Send)) -> &str {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("unknown panic")
+}
+
 async fn run_library_sync(
     db: DbAsync,
     library: Library,
     progress: SyncRunProgress,
     options: LibrarySyncOptions,
-) {
-    let started = Instant::now();
+) -> anyhow::Result<()> {
     tracing::info!(
         run_id = progress.run_id(),
         library_public_id = %library.id,
@@ -1089,12 +1155,8 @@ async fn run_library_sync(
         "library sync started"
     );
     progress.set_status(SyncRunStatus::Planning).await;
-    let result = async {
-        sync_library_pipeline(&db, &library, options, Some(progress.clone())).await?;
-        Ok::<(), anyhow::Error>(())
-    }
-    .await;
-    finish_run(progress, result, started, "library sync").await;
+    sync_library_pipeline(&db, &library, options, Some(progress)).await?;
+    Ok(())
 }
 
 async fn run_library_purge(
@@ -1102,36 +1164,25 @@ async fn run_library_purge(
     library: Library,
     progress: SyncRunProgress,
     selection: PurgeScope,
-) {
-    let started = Instant::now();
+) -> anyhow::Result<()> {
     tracing::info!(
         run_id = progress.run_id(),
         library_public_id = %library.id,
         "library purge started"
     );
     progress.set_status(SyncRunStatus::Running).await;
-    let result = super::purge::purge(&db, &library, &selection, Some(&progress))
-        .await
-        .map(|_| ());
-    finish_run(progress, result, started, "library purge").await;
+    super::purge::purge(&db, &library, &selection, Some(&progress)).await?;
+    Ok(())
 }
 
 async fn run_library_refresh(
     library: Library,
     progress: SyncRunProgress,
     covers: CoverSyncOptions,
-) {
-    let started = Instant::now();
-    let Some(library_db_id) = library.db_id else {
-        finish_run(
-            progress,
-            Err(anyhow::anyhow!("library missing db_id")),
-            started,
-            "library refresh",
-        )
-        .await;
-        return;
-    };
+) -> anyhow::Result<()> {
+    let library_db_id = library
+        .db_id
+        .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
     tracing::info!(
         run_id = progress.run_id(),
         library_public_id = %library.id,
@@ -1144,15 +1195,14 @@ async fn run_library_refresh(
         apply_sync_filters: false,
         provider_id: None,
     };
-    let result = crate::services::providers::refresh_library_metadata_with_progress(
+    crate::services::providers::refresh_library_metadata_with_progress(
         library_db_id,
         &refresh_options,
-        Some(progress.clone()),
+        Some(progress),
     )
     .await
-    .map(|_| ())
-    .map_err(crate::services::providers::ProviderServiceError::into_anyhow);
-    finish_run(progress, result, started, "library refresh").await;
+    .map_err(crate::services::providers::ProviderServiceError::into_anyhow)?;
+    Ok(())
 }
 
 async fn finish_run(
@@ -1429,6 +1479,36 @@ pub(crate) async fn wait_for_running_library_syncs() {
     }
 }
 
+/// How long shutdown waits for cancelled library runs to end. A run still going after it is left
+/// active, and recorded as interrupted at the next start.
+const LIBRARY_RUN_DRAIN_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Cancels every library run and waits, up to [`LIBRARY_RUN_DRAIN_TIMEOUT`], for each to record
+/// how it ended.
+pub(crate) async fn drain_library_syncs() {
+    drain_within(LIBRARY_RUN_DRAIN_TIMEOUT).await;
+}
+
+async fn drain_within(timeout: Duration) {
+    for state in sync_run_states().read_owned().await.values() {
+        state.cancel.cancel();
+    }
+    let supervisors = run_supervisors();
+    supervisors.close();
+    if tokio::time::timeout(timeout, supervisors.wait())
+        .await
+        .is_err()
+    {
+        let run_ids = sync_run_states()
+            .read_owned()
+            .await
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        tracing::warn!(?run_ids, "library runs still running at shutdown");
+    }
+}
+
 async fn reconcile_interrupted_runs(db: &DbAsync) -> anyhow::Result<()> {
     let live_run_ids = {
         let states = sync_run_states().read_owned().await;
@@ -1535,17 +1615,34 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::services::{
+        catalog::index::snapshot,
+        testing::{
+            init_default_test_state,
+            runtime_test_lock,
+        },
+    };
+
+    struct ShutdownResetGuard;
+
+    impl Drop for ShutdownResetGuard {
+        fn drop(&mut self) {
+            crate::services::shutdown::reset();
+        }
+    }
+
+    async fn test_library() -> anyhow::Result<Library> {
+        let mut db = STATE.db.write().await;
+        let library = lyra_db::test_db::insert_library(&mut db, "Music", "/runs")?;
+        Ok(lyra_db::libraries::get_by_id(&db, library)?.expect("library exists"))
+    }
+
+    async fn stored_status(run_id: &str) -> anyhow::Result<SyncRunInfo> {
+        Ok(get_sync_run(run_id).await?.expect("run stored").run)
+    }
 
     #[tokio::test]
     async fn persisting_run_records_keeps_the_catalog_index() -> anyhow::Result<()> {
-        use crate::services::{
-            STATE,
-            catalog::index::snapshot,
-            testing::{
-                init_default_test_state,
-                runtime_test_lock,
-            },
-        };
         let _guard = runtime_test_lock().await;
         init_default_test_state()?;
         let library_id = {
@@ -1575,6 +1672,176 @@ mod tests {
             &before,
             &snapshot(&*STATE.db.read().await)?
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_run_ends_as_its_work_did() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let library = test_library().await?;
+
+        let outcomes: [(anyhow::Result<()>, SyncRunStatus); 3] = [
+            (Ok(()), SyncRunStatus::Succeeded),
+            (
+                Err(SyncRunControlError::Cancelled.into()),
+                SyncRunStatus::Cancelled,
+            ),
+            (Err(anyhow::anyhow!("broke")), SyncRunStatus::Failed),
+        ];
+        for (outcome, status) in outcomes {
+            let progress = begin_test_run(&library).await;
+            let run_id = progress.run_id().to_string();
+            supervise_run(progress, "library sync", async move { outcome }).await;
+            assert_eq!(stored_status(&run_id).await?.status, status);
+        }
+        assert!(sync_run_states().read_owned().await.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_panicking_run_ends_failed_and_frees_the_library() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let library = test_library().await?;
+        let progress = begin_test_run(&library).await;
+        let run_id = progress.run_id().to_string();
+
+        supervise_run(progress, "library sync", async { panic!("pipeline broke") }).await;
+
+        let run = stored_status(&run_id).await?;
+        assert_eq!(run.status, SyncRunStatus::Failed);
+        assert_eq!(
+            run.error.as_deref(),
+            Some("library sync panicked: pipeline broke")
+        );
+        assert!(sync_run_states().read_owned().await.is_empty());
+        tokio::time::timeout(Duration::from_secs(1), wait_for_running_library_syncs()).await?;
+        assert!(!library_has_active_run(&library.id).await?);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_run_ends_when_its_start_is_dropped() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let library = test_library().await?;
+        let db = STATE.db.get();
+
+        let mut start = Box::pin(start_library_run(
+            db.clone(),
+            LibraryRun::Purge(PurgeScope::All),
+            {
+                let library = library.clone();
+                |db| still_exists(db, library)
+            },
+        ));
+        loop {
+            assert!(futures::poll!(&mut start).is_pending());
+            if running_library_sync_count().await > 0 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        // Holds back the run's first record until its start is gone.
+        let held = db.write_outside_catalog().await;
+        drop(start);
+        drop(held);
+
+        tokio::time::timeout(Duration::from_secs(5), wait_for_running_library_syncs()).await?;
+        let latest = lyra_db::sync_runs::latest_for_library(&*db.read().await, &library.id)?
+            .expect("run stored");
+        assert_eq!(latest.status, "succeeded");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn no_run_starts_once_shutdown_began() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let _shutdown = ShutdownResetGuard;
+        init_default_test_state()?;
+        crate::services::shutdown::reset();
+        let library = test_library().await?;
+        let running = begin_test_run(&library).await;
+
+        crate::services::shutdown::cancel();
+
+        assert!(running.check_cancelled().await.is_err());
+        end_test_run(&running).await;
+        let started = start_library_run(STATE.db.get(), LibraryRun::Purge(PurgeScope::All), |db| {
+            still_exists(db, library.clone())
+        })
+        .await;
+        assert!(started.is_err());
+        assert!(sync_run_states().read_owned().await.is_empty());
+        assert!(lyra_db::sync_runs::list(&*STATE.db.read().await)?.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_run_reaches_its_work() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let library = test_library().await?;
+        let progress = begin_test_run(&library).await;
+
+        cancel_sync_run(progress.run_id()).await?;
+
+        assert!(progress.cancel.is_cancelled());
+        assert!(progress.check_cancelled().await.is_err());
+        end_test_run(&progress).await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn draining_cancels_runs_and_waits_for_them_to_end() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let library = test_library().await?;
+        let progress = begin_test_run(&library).await;
+        let run_id = progress.run_id().to_string();
+        let work = {
+            let progress = progress.clone();
+            async move {
+                loop {
+                    progress.check_cancelled().await?;
+                    sleep(Duration::from_millis(5)).await;
+                }
+            }
+        };
+        run_supervisors().spawn(supervise_run(progress, "library sync", work));
+
+        drain_within(Duration::from_secs(5)).await;
+
+        assert!(sync_run_states().read_owned().await.is_empty());
+        assert_eq!(
+            stored_status(&run_id).await?.status,
+            SyncRunStatus::Cancelled
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn draining_leaves_active_a_run_that_outlasts_it() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let library = test_library().await?;
+        let progress = begin_test_run(&library).await;
+        let run_id = progress.run_id().to_string();
+        run_supervisors().spawn(supervise_run(
+            progress,
+            "library sync",
+            std::future::pending(),
+        ));
+
+        drain_within(Duration::from_millis(50)).await;
+
+        let states = sync_run_states().read_owned().await;
+        assert!(
+            states
+                .get(&run_id)
+                .is_some_and(|state| state.status.is_active())
+        );
         Ok(())
     }
 
