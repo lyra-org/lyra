@@ -24,6 +24,7 @@ use lyra_db::{
 };
 
 pub(crate) mod access;
+pub(crate) mod accounts;
 pub(crate) mod api_keys;
 pub(crate) mod caller;
 pub(crate) mod media_tokens;

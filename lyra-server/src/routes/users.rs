@@ -3,11 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::ops::{
-    Deref,
-    DerefMut,
-};
-
 #[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::Json;
@@ -33,7 +28,6 @@ use axum::{
         put,
     },
 };
-use nanoid::nanoid;
 use serde::{
     Deserialize,
     Serialize,
@@ -51,15 +45,13 @@ use crate::{
     services::{
         auth::{
             AuthCredential,
-            AuthError,
+            accounts,
             api_keys,
             login_with_password,
             logout_with_token,
-            passwords,
             require_grantable_permissions,
             require_manage_roles,
             require_manage_users,
-            require_permission,
             require_principal,
             sessions::SessionMetadata,
         },
@@ -71,7 +63,6 @@ use crate::{
 };
 use lyra_db::{
     Permission,
-    User,
     users::DEFAULT_USERNAME,
 };
 
@@ -252,24 +243,6 @@ impl From<api_keys::CreatedApiKey> for CreatedApiKeyResponse {
     }
 }
 
-fn validate_username(username: &str) -> Result<String, AppError> {
-    if username.trim().is_empty() {
-        return Err(AppError::bad_request("username cannot be empty"));
-    }
-    if username.len() < 3 {
-        return Err(AppError::bad_request(
-            "username must be at least 3 characters long",
-        ));
-    }
-    if !username.is_ascii() {
-        return Err(AppError::bad_request("username must be ASCII"));
-    }
-    if username.contains(' ') {
-        return Err(AppError::bad_request("username cannot contain any spaces"));
-    }
-    Ok(username.to_lowercase())
-}
-
 fn parse_me_includes(inc: Option<Vec<String>>) -> Result<bool, AppError> {
     let values = super::parse_inc_values(inc, &["permissions"])?;
     Ok(values.iter().any(|value| value == "permissions"))
@@ -279,60 +252,16 @@ async fn create_user(
     headers: HeaderMap,
     Json(user): Json<UserRequest>,
 ) -> Result<(StatusCode, Json<PublicUser>), AppError> {
-    let normalized_username = validate_username(&user.username)?;
-    if normalized_username == DEFAULT_USERNAME {
-        return Err(AppError::bad_request(format!(
-            "username '{}' is reserved",
-            DEFAULT_USERNAME
-        )));
-    }
-
-    passwords::validate(&user.password)?;
-    let password_hash = passwords::hash(&user.password).await?;
-
-    let principal = match require_principal(bearer_credential(&headers)).await {
-        Ok(p) => Some(p),
-        Err(AuthError::MissingBearerCredential) => None,
-        Err(e) => return Err(e.into()),
-    };
-
-    let mut db = STATE.db.write().await;
-
-    let has_admin = lyra_db::roles::has_non_default_admin(&db)?;
-
-    let role_name = if has_admin {
-        let principal =
-            principal.ok_or_else(|| AppError::unauthorized("missing bearer credential"))?;
-        require_permission(&principal, Permission::ManageUsers)?;
-        lyra_db::roles::BUILTIN_USER_ROLE
-    } else {
-        lyra_db::roles::BUILTIN_ADMIN_ROLE
-    };
-
-    if lyra_db::users::get_by_username(db.deref(), &normalized_username)?.is_some() {
-        return Err(AppError::bad_request(format!(
-            "user {} already exists",
-            user.username,
-        )));
-    }
-
-    let user = User {
-        db_id: None,
-        id: nanoid!(),
-        username: normalized_username,
-        password: password_hash,
-    };
-    let response = PublicUser {
-        id: user.id.clone(),
-        username: user.username.clone(),
-        role: Some(role_name.to_string()),
-    };
-
-    let user_db_id = lyra_db::users::create(db.deref_mut(), &user)?;
-
-    lyra_db::roles::ensure_user_has_role(&mut db, user_db_id, role_name)?;
-
-    Ok((StatusCode::CREATED, Json(response)))
+    let created =
+        accounts::create_user(bearer_credential(&headers), &user.username, &user.password).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(PublicUser {
+            id: created.id,
+            username: created.username,
+            role: Some(created.role.to_string()),
+        }),
+    ))
 }
 
 async fn list_users(headers: HeaderMap) -> Result<Json<Vec<PublicUser>>, AppError> {
@@ -402,31 +331,7 @@ async fn update_password(
     Json(body): Json<UpdatePasswordRequest>,
 ) -> Result<StatusCode, AppError> {
     let principal = require_manage_users(bearer_credential(&headers)).await?;
-
-    passwords::validate(&body.password)?;
-    let password_hash = passwords::hash(&body.password).await?;
-
-    let mut db = STATE.db.write().await;
-    let user = lyra_db::users::get_by_public_id(&db, &user_id)?
-        .ok_or_else(|| AppError::not_found(format!("user not found: {user_id}")))?;
-    let user_db_id = user
-        .db_id
-        .ok_or_else(|| AppError::not_found(format!("user has no db_id: {user_id}")))?;
-
-    if lyra_db::roles::has_admin_role(&db, user_db_id)?
-        && !lyra_db::roles::has_permission(&principal.permissions, Permission::Admin)
-    {
-        return Err(AppError::forbidden("cannot set an admin user's password"));
-    }
-
-    let revoked_api_key_ids = db.transaction_mut(|t| -> anyhow::Result<Vec<agdb::DbId>> {
-        lyra_db::users::update_user_password(t, user_db_id, &password_hash)?;
-        lyra_db::users::revoke_all_sessions_for_user(t, user_db_id)?;
-        let revoked = lyra_db::api_keys::delete_all_for_user(t, user_db_id)?;
-        Ok(revoked)
-    })?;
-    drop(db);
-    api_keys::forget_last_used_many(revoked_api_key_ids);
+    accounts::set_password(&principal, &user_id, &body.password).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -477,14 +382,6 @@ async fn update_role(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[derive(Debug, thiserror::Error)]
-enum PasswordRotationError {
-    #[error("incorrect current password")]
-    IncorrectCurrentPassword,
-    #[error("user not found")]
-    UserNotFound,
-}
-
 async fn update_me(
     headers: HeaderMap,
     Json(body): Json<UpdateMeRequest>,
@@ -509,53 +406,16 @@ async fn update_me(
             AppError::bad_request("current_password is required to change password")
         })?;
 
-        passwords::validate(new_password)?;
-
-        let new_hash = passwords::hash(new_password).await?;
-
-        let checked_hash = {
-            let db = STATE.db.read().await;
-            let user_db_id = principal.require(&db)?;
-            lyra_db::users::get_by_id(&db, user_db_id)?
-                .ok_or_else(|| AppError::not_found("user not found"))?
-                .password
-        };
-        if !passwords::matches(current_password, checked_hash.clone()).await? {
-            return Err(AppError::unauthorized("incorrect current password"));
-        }
-
-        let mut db = STATE.db.write().await;
-        let user_db_id = principal.require(&db)?;
-        let revoked_api_key_ids = db
-            .transaction_mut(|t| -> anyhow::Result<Vec<agdb::DbId>> {
-                let user = lyra_db::users::get_by_id(t, user_db_id)?
-                    .ok_or(PasswordRotationError::UserNotFound)?;
-                // The current password was checked without the lock, against this hash.
-                if user.password != checked_hash {
-                    return Err(PasswordRotationError::IncorrectCurrentPassword.into());
-                }
-
-                lyra_db::users::update_user_password(t, user_db_id, &new_hash)?;
-                lyra_db::users::revoke_sessions_for_user_except(t, user_db_id, &session_public_id)?;
-                let revoked = lyra_db::api_keys::delete_all_for_user(t, user_db_id)?;
-                Ok(revoked)
-            })
-            .map_err(map_password_rotation_error)?;
-        drop(db);
-        api_keys::forget_last_used_many(revoked_api_key_ids);
+        accounts::change_own_password(
+            &principal,
+            &session_public_id,
+            current_password,
+            new_password,
+        )
+        .await?;
     }
 
     Ok(StatusCode::NO_CONTENT)
-}
-
-fn map_password_rotation_error(err: anyhow::Error) -> AppError {
-    match err.downcast_ref::<PasswordRotationError>() {
-        Some(PasswordRotationError::IncorrectCurrentPassword) => {
-            AppError::unauthorized("incorrect current password")
-        }
-        Some(PasswordRotationError::UserNotFound) => AppError::not_found("user not found"),
-        None => err.into(),
-    }
 }
 
 async fn get_me(
@@ -838,6 +698,8 @@ mod tests {
         },
         response::IntoResponse,
     };
+    use lyra_db::User;
+    use nanoid::nanoid;
     use std::{
         path::PathBuf,
         time::{

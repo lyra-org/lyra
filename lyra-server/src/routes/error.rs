@@ -31,6 +31,7 @@ use crate::services::{
     auth::{
         AuthError,
         access::AccessError,
+        accounts::AccountError,
         api_keys::ApiKeyServiceError,
         passwords::InvalidPassword,
     },
@@ -210,6 +211,20 @@ impl From<AuthError> for AppError {
             AuthError::NotFound(msg) => Self::not_found(msg),
             AuthError::RateLimited(retry_after) => Self::too_many_requests(retry_after),
             AuthError::Internal(err) => err.into(),
+        }
+    }
+}
+
+impl From<AccountError> for AppError {
+    fn from(err: AccountError) -> Self {
+        match err {
+            AccountError::InvalidRequest(message) => Self::bad_request(message),
+            AccountError::InvalidPassword(err) => err.into(),
+            AccountError::IncorrectCurrentPassword => {
+                Self::unauthorized("incorrect current password")
+            }
+            AccountError::Auth(err) => err.into(),
+            AccountError::Internal(err) => err.into(),
         }
     }
 }

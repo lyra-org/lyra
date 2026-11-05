@@ -31,10 +31,12 @@ use tokio::sync::{
 
 const MIN_LENGTH: usize = 8;
 
-static PASSWORD_WORK: LazyLock<Semaphore> = LazyLock::new(|| {
+static PASSWORD_WORK: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(slot_count()));
+
+fn slot_count() -> usize {
     let cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
-    Semaphore::new((cores / 2).max(1))
-});
+    (cores / 2).max(1)
+}
 
 /// Checked when no user matches, so a miss costs as much as a wrong password.
 static NO_MATCH_HASH: OnceCell<String> = OnceCell::const_new();
@@ -131,6 +133,16 @@ async fn run_on<T: Send + 'static>(
         work()
     })
     .await?
+}
+
+/// Takes every slot, so any hash or check waits until the permit drops.
+#[cfg(test)]
+pub(crate) async fn hold_all_slots() -> tokio::sync::SemaphorePermit<'static> {
+    let slots = u32::try_from(slot_count()).expect("slot count fits u32");
+    PASSWORD_WORK
+        .acquire_many(slots)
+        .await
+        .expect("the password work semaphore is never closed")
 }
 
 #[cfg(test)]
