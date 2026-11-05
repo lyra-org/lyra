@@ -32,6 +32,7 @@ use crate::{
     services::STATE,
     services::{
         auth::{
+            Principal,
             require_manage_plugins,
             require_manage_server,
             require_permission,
@@ -311,9 +312,19 @@ fn settings_response() -> Result<ServerSettingsResponse, AppError> {
 
 /// Writes need an interactive session holding `manage_server`; an API key
 /// alone must not be able to disable authentication.
-async fn require_manage_server_session(headers: &HeaderMap) -> Result<(), AppError> {
+async fn require_manage_server_session(headers: &HeaderMap) -> Result<Principal, AppError> {
     let auth = forbid_api_key_credential(headers).await?;
     require_permission(&auth.principal, Permission::ManageServer)?;
+    Ok(auth.principal)
+}
+
+fn require_permissions(
+    principal: &Principal,
+    permissions: impl IntoIterator<Item = Permission>,
+) -> Result<(), AppError> {
+    for permission in permissions {
+        require_permission(principal, permission)?;
+    }
     Ok(())
 }
 
@@ -361,13 +372,19 @@ async fn update_server_settings(
     headers: HeaderMap,
     Json(request): Json<UpdateServerSettingsRequest>,
 ) -> Result<Json<ServerSettingsResponse>, AppError> {
-    require_manage_server_session(&headers).await?;
+    let principal = require_manage_server_session(&headers).await?;
     {
         let mut db = STATE.db.write().await;
         // Read under the write lock so lock flags reflect the latest republish.
         let current = STATE.settings.get();
         let changes = server_settings::validate_updates(&current, &request.values)
             .map_err(map_update_error)?;
+        require_permissions(
+            &principal,
+            changes
+                .iter()
+                .filter_map(|change| server_settings::permission(change.key())),
+        )?;
         server_settings::apply_updates(&mut db, &changes)?;
         server_settings::republish(&mut db)?;
     }
@@ -378,9 +395,10 @@ async fn update_server_settings(
 async fn delete_server_settings(
     headers: HeaderMap,
 ) -> Result<Json<ServerSettingsResponse>, AppError> {
-    require_manage_server_session(&headers).await?;
+    let principal = require_manage_server_session(&headers).await?;
     {
         let mut db = STATE.db.write().await;
+        require_permissions(&principal, server_settings::stored_permissions(&mut db)?)?;
         server_settings::reset_stored(&mut db)?;
         server_settings::republish(&mut db)?;
     }
@@ -414,14 +432,14 @@ fn get_server_settings_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn update_server_settings_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Update server settings").description(
-        "Stores the given values (`null` clears one back to its default) and returns the updated settings. Requires a session credential. Undeclared keys and invalid values are rejected with 400. A request touching any key set in `config.json` is rejected with 409 listing the locked keys, and nothing is written.",
+        "Stores the given values (`null` clears one back to its default) and returns the updated settings. Requires a session credential, and Admin for any `auth.*` key. Undeclared keys and invalid values are rejected with 400. A request touching any key set in `config.json` is rejected with 409 listing the locked keys, and nothing is written.",
     )
 }
 
 #[cfg(feature = "docgen")]
 fn delete_server_settings_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Reset server settings").description(
-        "Clears every stored server setting so file values and defaults apply again, and returns the updated settings. Requires a session credential.",
+        "Clears every stored server setting so file values and defaults apply again, and returns the updated settings. Requires a session credential, and Admin when an `auth.*` value is stored.",
     )
 }
 
@@ -865,7 +883,7 @@ mod tests {
     async fn integers_round_trip_exactly() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         initialize_test_state(&[]).await?;
-        let headers = manage_server_headers().await?;
+        let headers = headers_with(vec![Permission::Admin]).await?;
 
         let first = body(
             update_server_settings(
@@ -975,6 +993,46 @@ mod tests {
             field(&body, "transcoding.max_concurrent")["source"],
             json!("default")
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn auth_settings_require_admin() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        initialize_test_state(&[]).await?;
+        let manager = manage_server_headers().await?;
+        let admin = headers_with(vec![Permission::Admin]).await?;
+
+        let (status, message) = error(
+            update_server_settings(
+                manager.clone(),
+                request(&[
+                    ("auth.enabled", json!(false)),
+                    ("sync.interval_secs", json!(5)),
+                ]),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(message.contains("Admin"), "{message}");
+        assert!(STATE.config().auth.enabled);
+        assert!(stored_keys().await?.is_empty());
+
+        body(
+            update_server_settings(
+                admin.clone(),
+                request(&[("auth.session_ttl_seconds", json!(60))]),
+            )
+            .await,
+        );
+        let (status, _) = error(delete_server_settings(manager.clone()).await).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(stored_keys().await?, vec!["auth.session_ttl_seconds"]);
+
+        body(delete_server_settings(admin).await);
+        assert!(stored_keys().await?.is_empty());
+        body(update_server_settings(manager, request(&[("sync.interval_secs", json!(5))])).await);
         Ok(())
     }
 

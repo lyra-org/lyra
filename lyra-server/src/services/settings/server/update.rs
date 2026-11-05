@@ -32,6 +32,14 @@ pub(crate) enum Change {
     Remove { key: &'static str },
 }
 
+impl Change {
+    pub(crate) fn key(&self) -> &'static str {
+        match self {
+            Self::Upsert { key, .. } | Self::Remove { key } => key,
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum UpdateError {
     #[error("unknown server setting: {0}")]

@@ -3,6 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use lyra_db::Permission;
+
 use super::{
     ApplyMode::{
         self,
@@ -17,34 +19,42 @@ use super::{
 const SERVER: SettingGroup = SettingGroup {
     id: "server",
     label: "Server",
+    permission: Permission::ManageServer,
 };
 const AUTH: SettingGroup = SettingGroup {
     id: "auth",
     label: "Authentication",
+    permission: Permission::Admin,
 };
 const CORS: SettingGroup = SettingGroup {
     id: "cors",
     label: "CORS",
+    permission: Permission::ManageServer,
 };
 const RATE_LIMIT: SettingGroup = SettingGroup {
     id: "rate_limit",
     label: "Rate limiting",
+    permission: Permission::ManageServer,
 };
 const SYNC: SettingGroup = SettingGroup {
     id: "sync",
     label: "Sync",
+    permission: Permission::ManageServer,
 };
 const HLS: SettingGroup = SettingGroup {
     id: "hls",
     label: "HLS",
+    permission: Permission::ManageServer,
 };
 const TRANSCODING: SettingGroup = SettingGroup {
     id: "transcoding",
     label: "Transcoding",
+    permission: Permission::ManageServer,
 };
 const PLUGINS: SettingGroup = SettingGroup {
     id: "plugins",
     label: "Plugins",
+    permission: Permission::ManageServer,
 };
 
 const fn setting(

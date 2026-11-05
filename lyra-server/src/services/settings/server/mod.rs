@@ -59,6 +59,9 @@ pub(crate) enum ApplyMode {
 pub(crate) struct SettingGroup {
     pub(crate) id: &'static str,
     pub(crate) label: &'static str,
+    /// The permission changing a setting in this group takes, on top of the `ManageServer` that
+    /// every settings write takes.
+    pub(crate) permission: lyra_db::Permission,
 }
 
 #[derive(Debug)]
@@ -98,6 +101,22 @@ impl Registry {
             .iter()
             .find(|definition| definition.key == key)
     }
+}
+
+/// The permission changing `key` takes, or `None` when no setting declares it.
+pub(crate) fn permission(key: &str) -> Option<lyra_db::Permission> {
+    registry()
+        .definition(key)
+        .map(|definition| definition.group.permission)
+}
+
+/// The permissions resetting the stored settings takes: each stored setting's.
+pub(crate) fn stored_permissions(db: &mut agdb::DbAny) -> Result<Vec<lyra_db::Permission>> {
+    lyra_db::settings::server::ensure(db)?;
+    Ok(lyra_db::settings::server::get_all_with(db)?
+        .iter()
+        .filter_map(|entry| permission(&entry.key))
+        .collect())
 }
 
 pub(crate) fn registry() -> &'static Registry {
