@@ -156,37 +156,31 @@ local function starred(
 ): ApiResponse
 	local params = req.params
 	local library_id = folders.library_id(params)
-	local starred_artists = artist_list(artists.query({
-		favorite = true,
-		library_id = library_id,
-		available = true,
-		sort = { { key = "favorited_at", order = "descending" } },
-	}).items)
-	local starred_albums = album_list(releases.query({
-		favorite = true,
-		library_id = library_id,
-		available = true,
-		sort = { { key = "favorited_at", order = "descending" } },
-	}).items)
-	local starred_songs = songs.list(tracks.query({
-		favorite = true,
-		library_id = library_id,
-		available = true,
-		sort = { { key = "favorited_at", order = "descending" } },
-	}).items)
+	local function query(offset: number, limit: number): any
+		return {
+			favorite = true,
+			library_id = library_id,
+			available = true,
+			sort = { { key = "favorited_at", order = "descending" } },
+			offset = offset,
+			limit = limit,
+		}
+	end
 
-	local result: JsonObject = {}
-	if #starred_artists > 0 then
-		result.artist = starred_artists
-	end
-	if #starred_albums > 0 then
-		result.album = starred_albums
-	end
-	if #starred_songs > 0 then
-		result.song = starred_songs
-	end
-	local found: any = if next(result) then result else response.EMPTY_OBJECT
-	return response.ok(params, { [container] = found })
+	-- In name order, as the lists of a whole document encode.
+	return response.ok_stream(params, container, {
+		response.paged("album", math.huge, 0, function(offset, limit)
+			return releases.query(query(offset, limit)).items
+		end, album_list),
+		response.paged("artist", math.huge, 0, function(offset, limit)
+			return artists.query(query(offset, limit)).items
+		end, artist_list),
+		response.paged("song", math.huge, 0, function(offset, limit)
+			return tracks.query(query(offset, limit)).items
+		end, function(items)
+			return songs.list(items)
+		end),
+	})
 end
 
 module.methods = {

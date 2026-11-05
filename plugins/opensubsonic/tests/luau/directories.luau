@@ -123,7 +123,7 @@ local in_extra = call.ok("getStarred", key, { musicFolderId = folder_of("extra")
 call.same(call.ids(in_extra.artist), { ids.amy }, "starred artists in Extra")
 assert(in_extra.album == nil and in_extra.song == nil, "nothing else starred in Extra")
 assert(call.error_code("getStarred", key, { musicFolderId = folder_of("hidden") }) == 70, "a hidden folder")
-local starred_xml = call.raw("getStarred", { apiKey = key }).body
+local starred_xml = call.body(call.raw("getStarred", { apiKey = key }))
 assert(string.find(starred_xml, "<starred><", 1, true), starred_xml)
 
 -- `getStarred2` lists the same items.

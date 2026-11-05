@@ -144,6 +144,37 @@ export type StreamedList = {
 	each_batch: (emit: ({ JsonObject }) -> ()) -> (),
 }
 
+-- Items fetched and encoded at a time, so a page of any size streams in bounded memory.
+local BATCH_SIZE = 500
+
+-- The list `name` of up to `count` items from `offset` on, which `fetch` finds and `build` turns
+-- into list items, a batch at a time.
+function module.paged<T>(
+	name: string,
+	count: number,
+	offset: number,
+	fetch: (offset: number, limit: number) -> { T },
+	build: ({ T }) -> { JsonObject }
+): StreamedList
+	return {
+		name = name,
+		each_batch = function(emit)
+			local done = 0
+			while done < count do
+				local limit = math.min(BATCH_SIZE, count - done)
+				local found = fetch(offset + done, limit)
+				if #found > 0 then
+					emit(build(found))
+				end
+				if #found < limit then
+					break
+				end
+				done += #found
+			end
+		end,
+	}
+end
+
 -- An `ok` response whose `container` holds `lists`, in order, each sent as its batches are written,
 -- so a long list never exists whole. The document is as `ok` would answer with the same lists; a
 -- failure while producing aborts it.

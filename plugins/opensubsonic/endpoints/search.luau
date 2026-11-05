@@ -45,37 +45,6 @@ local function page(params: ApiQueryParams, kind: string): (number, number)
 	return request.count(params, `{kind}Count`, DEFAULT_COUNT), request.count(params, `{kind}Offset`, 0)
 end
 
--- Items fetched and encoded at a time, so a page of any size streams in bounded memory.
-local BATCH_SIZE = 500
-
--- The list `name` of up to `count` items from `offset` on, which `fetch` finds and `build` turns
--- into list items, a batch at a time.
-local function paged<T>(
-	name: string,
-	count: number,
-	offset: number,
-	fetch: (offset: number, limit: number) -> { T },
-	build: ({ T }) -> { JsonObject }
-): response.StreamedList
-	return {
-		name = name,
-		each_batch = function(emit)
-			local done = 0
-			while done < count do
-				local limit = math.min(BATCH_SIZE, count - done)
-				local found = fetch(offset + done, limit)
-				if #found > 0 then
-					emit(build(found))
-				end
-				if #found < limit then
-					break
-				end
-				done += #found
-			end
-		end,
-	}
-end
-
 -- What the query finds, as `container` with each kind paged by its count and offset and built into
 -- list items by `artist_list` and `album_list`; a count of 0 leaves the kind out.
 local function search(
@@ -96,13 +65,13 @@ local function search(
 
 	-- In name order, as the lists of a whole document encode.
 	return response.ok_stream(params, container, {
-		paged("album", album_count, album_offset, function(offset, limit)
+		response.paged("album", album_count, album_offset, function(offset, limit)
 			return releases.query(query(offset, limit)).items
 		end, album_list),
-		paged("artist", artist_count, artist_offset, function(offset, limit)
+		response.paged("artist", artist_count, artist_offset, function(offset, limit)
 			return artists.query(query(offset, limit)).items
 		end, artist_list),
-		paged("song", song_count, song_offset, function(offset, limit)
+		response.paged("song", song_count, song_offset, function(offset, limit)
 			return tracks.query(query(offset, limit)).items
 		end, function(items)
 			return songs.list(items)
