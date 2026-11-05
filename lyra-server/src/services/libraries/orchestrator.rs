@@ -1532,12 +1532,15 @@ async fn drain_within(timeout: Duration) {
 }
 
 async fn reconcile_interrupted_runs(db: &DbAsync) -> anyhow::Result<()> {
+    // Updates sync run records only.
+    let mut db_write = db.write_outside_catalog().await;
+    // Read under the write lock: a run is registered before its first record is written, which
+    // takes the lock, so every stored run that is live is seen live. The run states are never
+    // locked while waiting for the database.
     let live_run_ids = {
         let states = sync_run_states().read_owned().await;
         states.keys().cloned().collect::<Vec<_>>()
     };
-    // Updates sync run records only.
-    let mut db_write = db.write_outside_catalog().await;
     let records = lyra_db::sync_runs::list(&db_write)?;
     for mut record in records {
         if live_run_ids.iter().any(|id| id == &record.id) {
@@ -1573,6 +1576,13 @@ async fn persist_record(db: &DbAsync, mut record: lyra_db::sync_runs::SyncRunRec
             return Ok(());
         }
         let existing = lyra_db::sync_runs::get_by_id(&db_write, &run_id)?;
+        // A write that lost the race to the lock leaves the newer record in place.
+        if existing
+            .as_ref()
+            .is_some_and(|stored| stored.sequence >= record.sequence)
+        {
+            return Ok(());
+        }
         record.db_id = existing.as_ref().and_then(|run| run.db_id);
         if existing.is_some() {
             lyra_db::sync_runs::update(&mut db_write, &record)?;
@@ -1681,6 +1691,7 @@ mod tests {
         let mut state = SyncRunState::new(SyncRunKind::LibrarySync, library_id, 10_000, 0);
         persist_record(&db, state.record(None)?).await;
         state.status = SyncRunStatus::Running;
+        state.sequence += 1;
         persist_record(&db, state.record(None)?).await;
         reconcile_interrupted_runs(&db).await?;
         assert_eq!(lyra_db::sync_runs::list(&*db.read().await)?.len(), 1);
@@ -1694,6 +1705,60 @@ mod tests {
             &before,
             &snapshot(&*STATE.db.read().await)?
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_run_registered_while_reconciling_is_not_interrupted() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let library = test_library().await?;
+        let db = STATE.db.get();
+
+        let mut held = db.write_outside_catalog().await;
+        let reconcile = tokio::spawn({
+            let db = db.clone();
+            async move { reconcile_interrupted_runs(&db).await }
+        });
+        // Lets the reconcile run until it waits for the database.
+        tokio::task::yield_now().await;
+        let state = SyncRunState::new(SyncRunKind::LibrarySync, library.id, now_unix_ms(), 1);
+        let run_id = state.run_id.clone();
+        let record = state.record(None)?;
+        sync_run_states()
+            .write_owned()
+            .await
+            .insert(run_id.clone(), state);
+        lyra_db::sync_runs::create(&mut held, &record)?;
+        drop(held);
+        reconcile.await??;
+
+        let stored =
+            lyra_db::sync_runs::get_by_id(&*db.read().await, &run_id)?.expect("run stored");
+        assert_eq!(stored.status, "queued");
+        sync_run_states().write_owned().await.remove(&run_id);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_late_run_record_never_replaces_a_newer_one() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let library = test_library().await?;
+        let db = STATE.db.get();
+        let mut state = SyncRunState::new(SyncRunKind::LibrarySync, library.id, 10_000, 1);
+        state.status = SyncRunStatus::Running;
+        let late = state.record(None)?;
+        state.status = SyncRunStatus::Succeeded;
+        state.sequence = 2;
+        persist_record(&db, state.record(None)?).await;
+
+        persist_record(&db, late).await;
+
+        let stored =
+            lyra_db::sync_runs::get_by_id(&*db.read().await, &state.run_id)?.expect("run stored");
+        assert_eq!(stored.status, "succeeded");
+        assert_eq!(stored.sequence, 2);
         Ok(())
     }
 
