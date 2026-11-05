@@ -843,12 +843,12 @@ fn binary_input_from_luau(
 }
 
 fn validate_timeout(secs: f64) -> luau::runtime::Result<Duration> {
-    if secs <= 0.0 || secs.is_nan() || secs.is_infinite() {
-        return Err(luau_runtime_error(
-            "timeout must be a finite number greater than 0",
-        ));
+    match Duration::try_from_secs_f64(secs) {
+        Ok(timeout) if !timeout.is_zero() => Ok(timeout),
+        _ => Err(luau_runtime_error(
+            "timeout must be a finite number greater than 0 that fits a duration",
+        )),
     }
-    Ok(Duration::from_secs_f64(secs))
 }
 
 fn effective_timeout(
@@ -1026,6 +1026,18 @@ pub fn render_luau_definition() -> Result<String, std::fmt::Error> {
 #[cfg(test)]
 mod tests {
     use super::NetModule;
+
+    #[test]
+    fn timeout_past_duration_range_is_rejected() {
+        assert!(super::validate_timeout(1e300).is_err());
+        assert!(super::validate_timeout(-1.0).is_err());
+        assert!(super::validate_timeout(0.0).is_err());
+        assert!(super::validate_timeout(f64::NAN).is_err());
+        assert_eq!(
+            super::validate_timeout(0.5).ok(),
+            Some(std::time::Duration::from_millis(500))
+        );
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn luau_udp_socket_round_trips_datagram() -> harmony_luau::runtime::Result<()> {
