@@ -56,7 +56,8 @@ pub fn drive_thread(
     thread: &luau::Thread,
     options: ThreadDriveOptions,
 ) -> Result<Vec<luau::Value>> {
-    let deadline = Instant::now() + options.timeout;
+    // A timeout too long to add to now has no deadline to reach.
+    let deadline = Instant::now().checked_add(options.timeout);
     loop {
         if options
             .cancellation
@@ -107,7 +108,9 @@ pub fn drive_thread(
             return Ok(Vec::new());
         }
 
-        let remaining = deadline.saturating_duration_since(Instant::now());
+        let remaining = deadline.map_or(Duration::MAX, |deadline| {
+            deadline.saturating_duration_since(Instant::now())
+        });
         if remaining.is_zero() {
             break;
         }
@@ -187,6 +190,24 @@ mod tests {
             ]
         );
         assert!(scheduler.snapshot(handle.id()).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn timeout_past_instant_range_drives_without_a_deadline() -> Result<()> {
+        let tokio_runtime = runtime()?;
+        let vm = luau::Vm::new()?;
+        let scheduler = LocalScheduler::new();
+        let function = vm.load_chunk(&luau::Chunk::new(
+            Arc::<[u8]>::from(&b"return 1"[..]),
+            luau::ChunkOrigin::default(),
+        ))?;
+        let thread = vm.create_thread(&function)?;
+        scheduler.spawn_luau_thread(CallContext::default(), vm, thread.clone(), Vec::new());
+
+        let values = drive_thread(&tokio_runtime, &scheduler, &thread, options(Duration::MAX))?;
+
+        assert_eq!(values, vec![luau::Value::Number(1.0)]);
         Ok(())
     }
 
