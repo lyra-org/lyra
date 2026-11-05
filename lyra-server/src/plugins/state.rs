@@ -13,6 +13,7 @@ use crate::{
         bootstrap::PluginRuntime,
         lifecycle::PluginRegistries,
         settings::SettingsRegistries,
+        supervisor::RuntimeCrashes,
     },
     services::{
         self,
@@ -35,6 +36,7 @@ pub(crate) struct GenerationState {
     pub(crate) registries: PluginRegistries,
     pub(crate) settings: SettingsRegistries,
     pub(crate) api: ApiRouteRegistries,
+    pub(crate) crashes: RuntimeCrashes,
 }
 
 /// The plugin layer's view of the application state.
@@ -51,14 +53,13 @@ impl PluginState {
     /// Publishes `runtime` to the plugin layer and, as the dispatcher for the
     /// handlers plugins register, to services: the only writer of both slots.
     /// Both go into one generation, the concrete runtime first, so a caller
-    /// that sees the dispatcher also sees the runtime.
+    /// that sees the dispatcher also sees the runtime. From now on a crash of
+    /// its thread is reported to the generation's supervisor.
     pub(crate) fn publish_runtime(&self, runtime: PluginRuntime) {
         let generation = services::STATE.generation();
-        generation
-            .layers
-            .get::<GenerationState>()
-            .runtime
-            .replace(Some(runtime.clone()));
+        let layer = generation.layers.get::<GenerationState>();
+        layer.crashes.observe(&runtime);
+        layer.runtime.replace(Some(runtime.clone()));
         generation.plugin_dispatch.replace(Some(Arc::new(runtime)));
     }
 

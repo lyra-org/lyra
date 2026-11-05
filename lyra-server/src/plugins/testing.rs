@@ -47,6 +47,56 @@ pub(crate) async fn start_runtime() -> anyhow::Result<()> {
     services::testing::start_runtime().await
 }
 
+/// The runtime published to the current generation.
+#[cfg(test)]
+pub(crate) fn published_runtime() -> anyhow::Result<plugins::bootstrap::PluginRuntime> {
+    use anyhow::Context;
+    plugins::STATE
+        .generation()
+        .runtime
+        .get()
+        .context("published plugin runtime")
+}
+
+/// Writes a plugin `id` with `scopes` whose entrypoint is `init` into `directory`.
+#[cfg(test)]
+pub(crate) fn write_plugin(
+    directory: &std::path::Path,
+    id: &str,
+    scopes: &[&str],
+    init: &str,
+) -> anyhow::Result<()> {
+    std::fs::create_dir_all(directory)?;
+    std::fs::write(
+        directory.join("plugin.json"),
+        serde_json::json!({
+            "schema_version": 1,
+            "id": id,
+            "name": id,
+            "version": "1.0.0",
+            "lyra": HOST_REQUIREMENT,
+            "description": "",
+            "entrypoint": "init.luau",
+            "scopes": scopes,
+        })
+        .to_string(),
+    )?;
+    std::fs::write(directory.join("init.luau"), init)?;
+    Ok(())
+}
+
+/// Makes reloads discover the plugins in `plugins_dir`.
+#[cfg(test)]
+pub(crate) fn use_plugins_dir(plugins_dir: &std::path::Path) {
+    let boot = services::STATE.boot.get();
+    services::STATE
+        .boot
+        .replace(std::sync::Arc::new(services::boot::Boot {
+            plugins_dir: plugins_dir.to_path_buf(),
+            ..(*boot).clone()
+        }));
+}
+
 #[cfg(test)]
 mod test_state {
     use std::path::PathBuf;

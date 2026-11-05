@@ -44,6 +44,7 @@ pub(crate) mod scopes;
 pub(crate) mod server;
 pub(crate) mod settings;
 pub(crate) mod state;
+pub(crate) mod supervisor;
 #[cfg(feature = "docgen")]
 mod surfaces;
 pub(crate) mod tags;

@@ -464,3 +464,28 @@ async fn stopping_the_plugin_aborts_its_streams() -> Result<()> {
     assert!(!rest.ends_with(TERMINATING_CHUNK), "{rest}");
     Ok(())
 }
+
+#[tokio::test]
+async fn a_crash_aborts_the_streams_of_its_runtime() -> Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    let server = serve().await?;
+    let mut stream = server
+        .connect("GET /stream/endless HTTP/1.1\r\nhost: test\r\n\r\n")
+        .await?;
+    read_until(&mut stream, "xxxx").await?;
+
+    server
+        .handle
+        .inject_panic()
+        .await
+        .expect_err("a panicking executor drops the reply");
+    let mut rest = Vec::new();
+    tokio::time::timeout(Duration::from_secs(10), stream.read_to_end(&mut rest))
+        .await
+        .context("the crashed runtime's stream never ended")??;
+    assert!(
+        !String::from_utf8_lossy(&rest).ends_with(TERMINATING_CHUNK),
+        "a crash aborts the body"
+    );
+    Ok(())
+}

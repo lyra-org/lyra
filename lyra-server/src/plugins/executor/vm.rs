@@ -228,6 +228,25 @@ impl PluginExecutor {
         stopped.and(released)
     }
 
+    /// Releases what [`Self::shutdown`] would, without running more of the
+    /// Luau of a runtime whose thread panicked: closes its websockets, fails
+    /// its streams and breaks the cycles through the VM's data. Each step
+    /// runs even if one before it panicked.
+    pub(super) fn release_after_panic(self) {
+        release_step("close websockets", || {
+            for state in self.websocket_tasks.borrow().values() {
+                state.request_close();
+            }
+        });
+        release_step("fail streams", || super::stream::fail_streams(&self.vm));
+        release_step("release VM data", || {
+            if let Err(error) = self.vm.data().clear() {
+                tracing::warn!(error = %error, "crashed plugin runtime kept its VM data");
+            }
+        });
+        release_step("drop runtime", move || drop(self));
+    }
+
     #[cfg(test)]
     pub(crate) fn run_plugin_source(
         &self,
@@ -290,6 +309,12 @@ impl PluginExecutor {
         context: CallContext,
     ) -> Result<Vec<luau::Value>> {
         self.runtime.eval_source_with_context(source, context)
+    }
+}
+
+fn release_step(step: &str, run: impl FnOnce()) {
+    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)).is_err() {
+        tracing::error!(step, "releasing a crashed plugin runtime panicked");
     }
 }
 

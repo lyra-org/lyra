@@ -7,6 +7,10 @@ use std::{
     path::PathBuf,
     sync::{
         Arc,
+        atomic::{
+            AtomicU64,
+            Ordering,
+        },
         mpsc,
     },
     thread,
@@ -119,11 +123,73 @@ impl QueuedPluginExecutorCommand {
     }
 }
 
+/// One executor thread, unique for the life of the process.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ExecutorId(u64);
+
+impl ExecutorId {
+    fn next() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
+impl std::fmt::Display for ExecutorId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// How an executor thread ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ExecutorExitKind {
+    /// It shut down, or every handle to it was dropped.
+    Stopped,
+    /// It panicked, leaving its runtime state unknown.
+    Crashed,
+}
+
+/// Watches one executor thread for its end, without keeping it alive.
+#[derive(Clone)]
+pub(crate) struct ExecutorExit {
+    id: ExecutorId,
+    crashed: tokio::sync::watch::Receiver<bool>,
+}
+
+impl ExecutorExit {
+    pub(crate) fn id(&self) -> ExecutorId {
+        self.id
+    }
+
+    pub(crate) async fn wait(mut self) -> ExecutorExitKind {
+        match self.crashed.wait_for(|crashed| *crashed).await {
+            Ok(_) => ExecutorExitKind::Crashed,
+            Err(_) => ExecutorExitKind::Stopped,
+        }
+    }
+}
+
+/// The executor thread reports a crash on the sender; dropping it unsent
+/// reports a stop.
+fn exit_channel() -> (tokio::sync::watch::Sender<bool>, ExecutorExit) {
+    let (crashed_tx, crashed) = tokio::sync::watch::channel(false);
+    (
+        crashed_tx,
+        ExecutorExit {
+            id: ExecutorId::next(),
+            crashed,
+        },
+    )
+}
+
 #[derive(Clone)]
 pub(crate) struct PluginExecutorHandle {
     tx: PluginExecutorSender,
     /// Interrupts the streams of a run that is asked to end, before the executor reads the ask.
     streams: Arc<super::stream::StreamStops>,
+    /// Ends the entrypoint runs of a runtime asked to shut down, which hold its thread.
+    entrypoints: Arc<std::sync::atomic::AtomicBool>,
+    exit: ExecutorExit,
 }
 
 impl PluginExecutorHandle {
@@ -155,19 +221,21 @@ impl PluginExecutorHandle {
     ) -> Result<(Self, Vec<PluginLoadError>)> {
         let (tx, rx) = plugin_executor_channel(EXECUTOR_QUEUE_CAPACITY);
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+        let (crashed, exit) = exit_channel();
 
         thread::Builder::new()
             .name("lyra-plugin-executor".to_string())
             .spawn(move || {
                 match build().and_then(|(runtime, errors)| {
                     let streams = super::stream::stream_stops(&runtime.vm)?;
-                    Ok((runtime, errors, streams))
+                    let entrypoints = runtime.entrypoint_cancellation();
+                    Ok((runtime, errors, streams, entrypoints))
                 }) {
-                    Ok((runtime, errors, streams)) => {
-                        if ready_tx.send(Ok((errors, streams))).is_err() {
+                    Ok((runtime, errors, streams, entrypoints)) => {
+                        if ready_tx.send(Ok((errors, streams, entrypoints))).is_err() {
                             return;
                         }
-                        run_plugin_executor_thread(runtime, rx);
+                        run_plugin_executor_thread(runtime, rx, crashed);
                     }
                     Err(error) => {
                         let _ = ready_tx.send(Err(error));
@@ -176,10 +244,26 @@ impl PluginExecutorHandle {
             })
             .context("spawn plugin executor thread")?;
 
-        let (errors, streams) = ready_rx
+        let (errors, streams, entrypoints) = ready_rx
             .recv()
             .context("plugin executor thread exited during startup")??;
-        Ok((Self { tx, streams }, errors))
+        Ok((
+            Self {
+                tx,
+                streams,
+                entrypoints,
+                exit,
+            },
+            errors,
+        ))
+    }
+
+    pub(crate) fn id(&self) -> ExecutorId {
+        self.exit.id
+    }
+
+    pub(crate) fn exit(&self) -> ExecutorExit {
+        self.exit.clone()
     }
 
     pub(crate) async fn plugin_manifests(&self) -> Result<Vec<PluginManifest>> {
@@ -202,6 +286,12 @@ impl PluginExecutorHandle {
             reply,
         })
         .await
+    }
+
+    /// Panics the executor thread outside any plugin call. Fails once it has.
+    #[cfg(test)]
+    pub(crate) async fn inject_panic(&self) -> Result<()> {
+        self.request_control(PluginExecutorCommand::Panic).await
     }
 
     pub(crate) async fn verify_plugin_manifest(&self, plugin_id: &str) -> Result<()> {
@@ -238,8 +328,16 @@ impl PluginExecutorHandle {
     /// Cancels every plugin's tasks and stops the executor thread. Replies once
     /// the runtime is dropped; later requests through any clone fail.
     pub(crate) async fn shutdown(&self) -> Result<()> {
-        self.streams.stop(None);
+        self.cancel_entrypoints();
         self.request_control(PluginExecutorCommand::Shutdown).await
+    }
+
+    /// Fails the entrypoints running and yet to run, and stops every stream,
+    /// so a runtime that is to shut down soon frees its thread for the ask.
+    pub(crate) fn cancel_entrypoints(&self) {
+        self.entrypoints
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.streams.stop(None);
     }
 
     pub(crate) async fn dispatch_api_handler(
@@ -345,11 +443,54 @@ fn plugin_executor_channel(
     )
 }
 
+/// Serves commands until a shutdown, or until they panic. A panicked runtime's
+/// state is unknown, so it serves no more: it is released and reported as
+/// crashed for a fresh one to replace. A panic while shutting down reports a
+/// stop, as the runtime was ending anyway.
 fn run_plugin_executor_thread(
     runtime: PluginExecutor,
     rx: mpsc::Receiver<QueuedPluginExecutorCommand>,
+    crashed: tokio::sync::watch::Sender<bool>,
 ) {
-    let shutdown_reply = loop {
+    let served = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        serve_plugin_executor_commands(&runtime, &rx)
+    }));
+    match served {
+        Ok(shutdown_reply) => {
+            drop(crashed);
+            let result = runtime.shutdown();
+            drop(rx);
+            if let Some(reply) = shutdown_reply {
+                let _ = reply.send(result);
+            }
+        }
+        Err(panic) => {
+            tracing::error!(
+                panic = panic_message(&*panic),
+                "plugin executor thread panicked"
+            );
+            // Fails the requests still queued.
+            drop(rx);
+            runtime.release_after_panic();
+            crashed.send_replace(true);
+        }
+    }
+}
+
+fn panic_message(panic: &(dyn std::any::Any + Send)) -> &str {
+    panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("non-string panic payload")
+}
+
+/// The reply to the shutdown that ended the loop, if one did.
+fn serve_plugin_executor_commands(
+    runtime: &PluginExecutor,
+    rx: &mpsc::Receiver<QueuedPluginExecutorCommand>,
+) -> Option<tokio::sync::oneshot::Sender<Result<()>>> {
+    loop {
         runtime.poll_background_tasks();
         let wait = runtime
             .next_scheduler_delay()
@@ -361,16 +502,11 @@ fn run_plugin_executor_thread(
                 ..
             }) => break Some(reply),
             Ok(QueuedPluginExecutorCommand { command, _permit }) => {
-                handle_plugin_executor_command(&runtime, command, _permit)
+                handle_plugin_executor_command(runtime, command, _permit)
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break None,
         }
-    };
-    let result = runtime.shutdown();
-    drop(rx);
-    if let Some(reply) = shutdown_reply {
-        let _ = reply.send(result);
     }
 }
 
@@ -389,6 +525,10 @@ fn handle_plugin_executor_command(
         #[cfg(test)]
         PluginExecutorCommand::ExecPlugin { plugin_id, reply } => {
             reply_if_open(reply, || runtime.exec_plugin(&plugin_id));
+        }
+        #[cfg(test)]
+        PluginExecutorCommand::Panic(_reply) => {
+            panic!("injected plugin executor panic");
         }
         PluginExecutorCommand::VerifyPluginManifest { plugin_id, reply } => {
             reply_if_open(reply, || runtime.verify_plugin_manifest(&plugin_id));
@@ -472,6 +612,8 @@ mod tests {
             PluginExecutorHandle {
                 tx,
                 streams: Default::default(),
+                entrypoints: Default::default(),
+                exit: exit_channel().1,
             },
             rx,
         )

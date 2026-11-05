@@ -39,6 +39,7 @@ fn test_executor() -> Result<TestExecutor> {
     ));
     let (tx, rx) = plugin_executor_channel(4);
     let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+    let (crashed, exit) = exit_channel();
     let (started_tx, started) = async_mpsc::unbounded_channel();
     let (dropped_tx, dropped) = async_mpsc::unbounded_channel();
     let release = Arc::new(Notify::new());
@@ -116,7 +117,7 @@ fn test_executor() -> Result<TestExecutor> {
         match setup {
             Ok((runtime, slow, fast, api)) => {
                 if ready_tx.send(Ok((slow, fast, api))).is_ok() {
-                    run_plugin_executor_thread(runtime, rx);
+                    run_plugin_executor_thread(runtime, rx, crashed);
                 }
             }
             Err(error) => {
@@ -129,6 +130,8 @@ fn test_executor() -> Result<TestExecutor> {
         handle: PluginExecutorHandle {
             tx,
             streams: Default::default(),
+            entrypoints: Default::default(),
+            exit,
         },
         slow,
         fast,
@@ -308,5 +311,45 @@ async fn waiting_api_callback_does_not_delay_metadata_deadlines() -> Result<()> 
     let response = tokio::time::timeout(Duration::from_secs(2), api).await???;
     assert_eq!(response.status, 200);
     signal(&mut executor.dropped).await?;
+    Ok(())
+}
+
+/// An executor running no plugins.
+fn empty_executor() -> Result<PluginExecutorHandle> {
+    let (handle, _) = PluginExecutorHandle::spawn(|| {
+        Ok((PluginExecutor::with_manifests(Arc::from([]))?, Vec::new()))
+    })?;
+    Ok(handle)
+}
+
+#[tokio::test]
+async fn a_panic_ends_the_executor_as_a_crash_and_fails_its_callers() -> Result<()> {
+    let handle = empty_executor()?;
+    let exit = handle.exit();
+
+    handle
+        .inject_panic()
+        .await
+        .expect_err("a panicking executor drops the reply");
+    assert_eq!(exit.wait().await, ExecutorExitKind::Crashed);
+    let error = handle
+        .has_plugin("demo")
+        .await
+        .expect_err("a crashed executor serves no requests");
+    assert!(format!("{error:#}").contains("unavailable"), "{error:#}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn shutdown_and_dropped_handles_end_the_executor_as_a_stop() -> Result<()> {
+    let shut_down = empty_executor()?;
+    let exit = shut_down.exit();
+    shut_down.shutdown().await?;
+    assert_eq!(exit.wait().await, ExecutorExitKind::Stopped);
+
+    let dropped = empty_executor()?;
+    let exit = dropped.exit();
+    drop(dropped);
+    assert_eq!(exit.wait().await, ExecutorExitKind::Stopped);
     Ok(())
 }

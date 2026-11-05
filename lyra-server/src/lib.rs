@@ -148,6 +148,8 @@ async fn serve(capture: Option<CaptureArgs>, listener: TcpListener) -> Result<()
         return services::providers::run_capture(library_db_id, &capture.output_path).await;
     }
 
+    // Capture runs end with the process, so only a serving server restarts a crashed runtime.
+    let plugin_supervisor = plugins::supervisor::spawn(services::shutdown::token())?;
     services::catalog::index::warm();
     let core_api = routes::build_core_api()?;
     crate::plugins::settings::initialize_registry().await;
@@ -159,21 +161,20 @@ async fn serve(capture: Option<CaptureArgs>, listener: TcpListener) -> Result<()
     let shutdown_bg = shutdown.clone();
     let config_for_bg = config.clone();
     let bg_handle = tokio::spawn(async move {
-        // Publishing must precede finalize_startup (activates plugin routes) and the
-        // library sync (dispatches handlers through the published runtime).
-        if let Err(err) = crate::plugins::STATE
+        // Starting plugins publishes the runtime and activates plugin routes,
+        // which the library sync needs: it dispatches through the runtime.
+        match crate::plugins::STATE
             .generation()
             .registries
-            .start_plugins(plugin_runtime)
+            .start_plugins(plugin_runtime, services::shutdown::token())
             .await
         {
-            tracing::error!(error = %err, "plugin initialization failed");
-            return;
-        }
-
-        if let Err(err) = plugin_bootstrap::finalize_startup().await {
-            tracing::error!(error = %err, "failed to finalize plugin startup");
-            return;
+            Ok(plugins::lifecycle::PublishOutcome::ShuttingDown) => return,
+            Ok(_) => {}
+            Err(err) => {
+                tracing::error!(error = %format!("{err:#}"), "plugin initialization failed");
+                return;
+            }
         }
         let update_checks = tokio::spawn(plugins::repositories::run_update_checks(
             services::shutdown::token(),
@@ -196,6 +197,8 @@ async fn serve(capture: Option<CaptureArgs>, listener: TcpListener) -> Result<()
     }
     shutdown.notify_one();
     let _ = bg_handle.await;
+    // A restart in progress ends before the plugins it would start are torn down.
+    let _ = plugin_supervisor.await;
 
     services::hls::state::teardown_all_hls_jobs().await;
     plugin_bootstrap::teardown_loaded_plugins().await;

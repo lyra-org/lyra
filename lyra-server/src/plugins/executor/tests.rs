@@ -3163,3 +3163,40 @@ fn api_responses_take_only_body_fallbacks_on_served_bodies() -> Result<()> {
     assert!(error.to_string().contains("take no fallback"), "{error}");
     Ok(())
 }
+
+#[tokio::test]
+async fn a_crash_closes_the_websockets_of_its_runtime() -> Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    init_api_test_state()?;
+    let (handle, _) = PluginExecutorHandle::spawn(|| {
+        let runtime = runtime_with_scopes(&["lyra.api"])?;
+        runtime.run_plugin_source(
+            "demo",
+            "init.luau",
+            &br#"
+                local api = require("@lyra/api")
+
+                api.websocket("/socket", function(reader)
+                    while reader:recv() do
+                    end
+                end, { auth = "public" })
+            "#[..],
+        )?;
+        Ok((runtime, Vec::new()))
+    })?;
+    let handler = crate::plugins::api::tests::registered_handler("GET", "/socket")
+        .await
+        .context("registered websocket handler")?;
+    let (request, _inbound_tx, _outbound_rx) = websocket_request(handler, "/socket");
+    let state = request.state.clone();
+    handle.start_websocket(request).await?;
+
+    handle
+        .inject_panic()
+        .await
+        .expect_err("a panicking executor drops the reply");
+    tokio::time::timeout(Duration::from_secs(5), state.closed())
+        .await
+        .context("the crashed runtime's websocket was never closed")?;
+    Ok(())
+}

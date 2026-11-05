@@ -85,6 +85,9 @@ pub(super) enum PluginExecutorCommand {
         plugin_id: String,
         reply: tokio::sync::oneshot::Sender<Result<()>>,
     },
+    /// Panics on the executor thread, outside any plugin call.
+    #[cfg(test)]
+    Panic(tokio::sync::oneshot::Sender<Result<()>>),
     VerifyPluginManifest {
         plugin_id: String,
         reply: tokio::sync::oneshot::Sender<Result<()>>,

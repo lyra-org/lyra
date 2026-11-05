@@ -15,7 +15,11 @@ mod stream;
 mod updates;
 mod vm;
 mod websocket;
-pub(crate) use self::actor::PluginExecutorHandle;
+pub(crate) use self::actor::{
+    ExecutorExitKind,
+    ExecutorId,
+    PluginExecutorHandle,
+};
 use self::messages::TaskIdKey;
 pub(crate) use self::messages::{
     ApiFallbackResponse,
