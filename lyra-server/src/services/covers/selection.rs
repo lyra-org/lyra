@@ -485,6 +485,7 @@ mod tests {
         super::super::sync::upsert_local_cover_metadata(
             &STATE.db.get(),
             release_db_id,
+            &public_id,
             &library_cover,
         )
         .await?;
