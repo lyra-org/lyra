@@ -300,12 +300,7 @@ impl RateLimiter {
     /// request past its `timeout_ms` does, holds back no later request.
     fn acquire(&mut self, domain: &str) -> Option<Duration> {
         let state = self.domains.get_mut(domain)?;
-        let requests_per_second = state.config()?.requests_per_second;
-        if !requests_per_second.is_finite() || requests_per_second <= 0.0 {
-            return None;
-        }
-
-        let static_interval = Duration::from_secs_f64(1.0 / requests_per_second);
+        let static_interval = request_interval(state.config()?.requests_per_second)?;
         let now = Instant::now();
 
         let interval = match (state.server_remaining, state.server_reset_at) {
@@ -321,12 +316,23 @@ impl RateLimiter {
         };
 
         if now < state.next_allowed {
-            Some(state.next_allowed - now)
-        } else {
-            state.next_allowed = now + interval;
-            None
+            return Some(state.next_allowed - now);
         }
+        let Some(next_allowed) = now.checked_add(interval) else {
+            return Some(interval);
+        };
+        state.next_allowed = next_allowed;
+        None
     }
+}
+
+/// The spacing `requests_per_second` asks for, if it is a positive rate whose
+/// interval fits a [`Duration`].
+fn request_interval(requests_per_second: f64) -> Option<Duration> {
+    if !requests_per_second.is_finite() || requests_per_second <= 0.0 {
+        return None;
+    }
+    Duration::try_from_secs_f64(1.0 / requests_per_second).ok()
 }
 
 struct ConcurrencyEntry {
@@ -432,8 +438,8 @@ fn parse_rate_limit_headers(headers: &HttpHeaderMap) -> Option<ServerRateLimitIn
     // Distinguish absolute Unix timestamps from relative deltas.
     // Values below year-2000 epoch are treated as seconds-from-now.
     const EPOCH_2000: u64 = 946_684_800;
-    let reset_at = if reset_value < EPOCH_2000 {
-        Instant::now() + Duration::from_secs(reset_value)
+    let until_reset = if reset_value < EPOCH_2000 {
+        reset_value
     } else {
         let now_unix = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -442,8 +448,9 @@ fn parse_rate_limit_headers(headers: &HttpHeaderMap) -> Option<ServerRateLimitIn
         if reset_value <= now_unix {
             return None;
         }
-        Instant::now() + Duration::from_secs(reset_value - now_unix)
+        reset_value - now_unix
     };
+    let reset_at = Instant::now().checked_add(Duration::from_secs(until_reset))?;
 
     Some(ServerRateLimitInfo {
         remaining,
@@ -1188,8 +1195,10 @@ async fn configure_rate_limit(
     options: HttpRateLimitOptions,
 ) -> anyhow::Result<()> {
     let requests_per_second = options.requests_per_second.unwrap_or(1.0);
-    if !requests_per_second.is_finite() || requests_per_second <= 0.0 {
-        anyhow::bail!("requests_per_second must be a positive number");
+    if request_interval(requests_per_second).is_none() {
+        anyhow::bail!(
+            "requests_per_second must be a positive number whose request interval fits a duration"
+        );
     }
 
     let domain = host_key(&options.domain);
@@ -2025,6 +2034,47 @@ mod tests {
             Some(5.0),
             "the live plugin's limit remains once the stale one is swept",
         );
+    }
+
+    #[test]
+    fn rate_limit_reset_past_instant_range_is_ignored() {
+        let headers = super::HttpHeaderMap(std::collections::BTreeMap::from([
+            ("x-ratelimit-remaining".to_string(), "0".to_string()),
+            ("x-ratelimit-reset".to_string(), u64::MAX.to_string()),
+        ]));
+        assert!(super::parse_rate_limit_headers(&headers).is_none());
+    }
+
+    #[tokio::test]
+    async fn rate_too_small_for_an_interval_is_rejected() {
+        let options = super::HttpRateLimitOptions {
+            domain: "tiny-rate.example".to_string(),
+            requests_per_second: Some(1e-300),
+            retry_on: None,
+            max_retries: None,
+            backoff_ms: None,
+        };
+        let error = super::configure_rate_limit(None, options)
+            .await
+            .expect_err("an interval past Duration::MAX is refused");
+        assert!(error.to_string().contains("requests_per_second"), "{error}");
+        assert!(
+            super::rate_limiter()
+                .get_config("tiny-rate.example")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn interval_past_instant_range_waits_instead_of_panicking() {
+        let mut limiter = super::RateLimiter::new();
+        let domain = "slow.example";
+        limiter.set_config(
+            domain.to_string(),
+            rate_limit_config(1.0 / 1.8e19),
+            Some("demo".into()),
+        );
+        assert!(limiter.acquire(domain).is_some());
     }
 
     #[test]
