@@ -75,9 +75,9 @@ fn parse_range_header(value: &HeaderValue, size: u64) -> RangeParse {
         let Ok(end) = end_str.parse::<u64>() else {
             return RangeParse::Invalid;
         };
-        end
+        end.min(size - 1)
     };
-    if start > end || end >= size {
+    if start > end {
         return RangeParse::Invalid;
     }
     RangeParse::Valid { start, end }
@@ -215,6 +215,26 @@ mod tests {
         fn drop(&mut self) {
             crate::services::shutdown::reset();
         }
+    }
+
+    fn parse(range: &'static str, size: u64) -> Option<(u64, u64)> {
+        match parse_range_header(&HeaderValue::from_static(range), size) {
+            RangeParse::Valid { start, end } => Some((start, end)),
+            RangeParse::Invalid => None,
+        }
+    }
+
+    #[test]
+    fn range_end_past_size_is_clamped() {
+        assert_eq!(parse("bytes=0-99999999999", 1000), Some((0, 999)));
+        assert_eq!(parse("bytes=500-1000", 1000), Some((500, 999)));
+        assert_eq!(parse("bytes=999-999999", 1000), Some((999, 999)));
+    }
+
+    #[test]
+    fn range_start_at_or_past_size_is_unsatisfiable() {
+        assert_eq!(parse("bytes=1000-", 1000), None);
+        assert_eq!(parse("bytes=1000-2000", 1000), None);
     }
 
     #[tokio::test(flavor = "multi_thread")]
