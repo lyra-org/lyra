@@ -34,6 +34,7 @@ use lyra_db::{
     Library,
     entries::{
         EntryKind,
+        StoredEntries,
         classify_file_kind,
         is_protected,
     },
@@ -42,7 +43,12 @@ use lyra_db::{
 
 #[derive(Debug)]
 pub(crate) struct EntryScanPlan {
+    /// The directories scanned, shallowest first, each after the ones holding it.
+    pub(crate) dirs: Vec<Entry>,
+    /// The files scanned, by source directory.
     pub(crate) groups: Vec<SourceDirGroup>,
+    /// What the scan was compared against.
+    pub(crate) stored: StoredEntries,
     pub(crate) observed_paths: HashSet<PathBuf>,
     /// The entries that moved, as they were before.
     pub(crate) moved_from: Vec<Entry>,
@@ -76,7 +82,8 @@ pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<ScanResult> {
     let mut entries = Vec::new();
     let mut unlistable = Vec::new();
 
-    for entry in WalkDir::new(root).into_iter() {
+    let mut walker = WalkDir::new(root).into_iter();
+    while let Some(entry) = walker.next() {
         let de = match entry {
             Ok(de) => de,
             Err(err) => {
@@ -89,6 +96,18 @@ pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<ScanResult> {
             }
         };
 
+        // A stored path is text, so one that isn't would never match itself again.
+        if de.path().to_str().is_none() {
+            unlistable.push((
+                de.path().to_path_buf(),
+                "the path is not valid UTF-8".to_string(),
+            ));
+            if de.file_type().is_dir() {
+                walker.skip_current_dir();
+            }
+            continue;
+        }
+
         let md = match de.metadata() {
             Ok(md) => md,
             Err(err) => {
@@ -96,6 +115,9 @@ pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<ScanResult> {
                     return Err(ScanError::UnlistableRoot(err.to_string()).into());
                 }
                 unlistable.push((de.path().to_path_buf(), err.to_string()));
+                if de.file_type().is_dir() {
+                    walker.skip_current_dir();
+                }
                 continue;
             }
         };
@@ -122,6 +144,10 @@ pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<ScanResult> {
                     de.path().to_path_buf(),
                     "failed to read the modification time".to_string(),
                 ));
+                // Entries under a folder that has none would have no parent to go under.
+                if md.is_dir() && de.path() != root {
+                    walker.skip_current_dir();
+                }
                 continue;
             }
         };
@@ -191,30 +217,28 @@ pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<ScanResult> {
 /// and, as they were, those that moved.
 pub(crate) fn diff_and_match_moves(
     scanned: Vec<Entry>,
-    existing: Vec<Entry>,
+    stored: &StoredEntries,
     protected: &[PathBuf],
 ) -> (Vec<Entry>, Vec<Entry>) {
     let scanned_paths = scanned
         .iter()
         .map(|entry| entry.full_path.clone())
         .collect::<HashSet<_>>();
-    let mut db_by_path = HashMap::new();
-    let mut db_by_sha1: MultiMap<String, Entry> = MultiMap::new();
-    for e in existing.into_iter() {
+    let mut db_by_sha1: MultiMap<String, &Entry> = MultiMap::new();
+    for e in stored.entries() {
         if e.kind == EntryKind::File
             && !scanned_paths.contains(&e.full_path)
             && !is_protected(&e.full_path, protected)
             && let Some(ref h) = e.hash
         {
-            db_by_sha1.insert(h.clone(), e.clone());
+            db_by_sha1.insert(h.clone(), e);
         }
-        db_by_path.insert(e.full_path.clone(), e);
     }
 
     let mut enriched = Vec::with_capacity(scanned.len());
     let mut new_files = Vec::new();
     for mut e in scanned.into_iter() {
-        match db_by_path.get(&e.full_path) {
+        match stored.at_path(&e.full_path) {
             Some(old) => {
                 e.db_id = old.db_id;
                 e.id = old.id.clone();
@@ -261,7 +285,7 @@ pub(crate) fn diff_and_match_moves(
         }
         entry.db_id = old.db_id;
         entry.id = old.id.clone();
-        moved_from.push(old.clone());
+        moved_from.push((*old).clone());
     }
     (enriched, moved_from)
 }
@@ -326,21 +350,27 @@ pub(crate) fn prepare_entry_scan_plan(
         entries: scanned,
         unlistable,
     } = scan_fs(&library.path)?;
-    if !existing.is_empty() && !scanned.iter().any(|entry| entry.kind == EntryKind::File) {
+    let stored = StoredEntries::new(library, existing)?;
+    if !stored.is_empty() && !scanned.iter().any(|entry| entry.kind == EntryKind::File) {
         return Err(ScanError::EmptyRoot.into());
     }
     let protected = unlistable
         .iter()
         .map(|(path, _)| path.clone())
         .collect::<Vec<_>>();
-    let (enriched, moved_from) = diff_and_match_moves(scanned, existing, &protected);
+    let (enriched, moved_from) = diff_and_match_moves(scanned, &stored, &protected);
     let observed_paths = enriched
         .iter()
         .map(|entry| entry.full_path.clone())
         .collect::<HashSet<_>>();
-    let groups = group_by_source_dir(&library.path, enriched);
+    let (mut dirs, files): (Vec<_>, Vec<_>) = enriched
+        .into_iter()
+        .partition(|entry| entry.kind == EntryKind::Dir);
+    dirs.sort_by_key(|dir| dir.full_path.components().count());
     Ok(EntryScanPlan {
-        groups,
+        dirs,
+        groups: group_by_source_dir(&library.path, files),
+        stored,
         observed_paths,
         moved_from,
         unlistable,
@@ -356,14 +386,16 @@ mod tests {
         UNIX_EPOCH,
     };
 
-    use agdb::DbAny;
-
     use super::*;
+    use crate::services::libraries::sync::{
+        mark_missing_entries_for_scan,
+        sync_entries_incremental,
+        sync_entry_dirs,
+    };
+    use lyra_db::DbAsync;
     use lyra_db::entries::{
         EntryKind,
-        load_existing,
         mark_missing,
-        sync_entry_group,
     };
     use lyra_db::test_db::TestDb;
 
@@ -380,43 +412,29 @@ mod tests {
         ))
     }
 
-    fn new_db() -> anyhow::Result<DbAny> {
-        Ok(TestDb::initialized()?.into_inner())
+    fn new_db() -> anyhow::Result<DbAsync> {
+        Ok(DbAsync::new(TestDb::initialized()?.into_inner()))
     }
 
-    fn new_library(db: &mut DbAny, root: &Path) -> anyhow::Result<Library> {
-        lyra_db::test_db::insert_test_library_node(db, "Test", root.to_path_buf())
+    async fn new_library(db: &DbAsync, root: &Path) -> anyhow::Result<Library> {
+        lyra_db::test_db::insert_test_library_node(
+            &mut *db.write().await,
+            "Test",
+            root.to_path_buf(),
+        )
     }
 
-    fn full_sync(db: &mut DbAny, library: &Library) -> anyhow::Result<()> {
-        let library_db_id = library
-            .db_id
-            .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
-        let existing = load_existing(db, library_db_id)?;
-        let plan = prepare_entry_scan_plan(library, existing)?;
-        let protected = plan.protected_paths();
-        for group in plan.groups {
-            sync_entry_group(db, library, hash_entry_group(group.entries))?;
-        }
-        mark_missing(
-            db,
-            library,
-            &plan.observed_paths,
-            &protected,
-            &plan.moved_from,
-            |removed, surviving| {
-                crate::services::metadata::ingestion::albums_left_by(
-                    &library.path,
-                    removed,
-                    surviving,
-                )
-            },
-        )?;
-        Ok(())
+    async fn load_existing(db: &DbAsync, library: &Library) -> anyhow::Result<Vec<Entry>> {
+        lyra_db::entries::load_existing(&*db.read().await, library.db_id.unwrap())
     }
 
-    #[test]
-    fn full_sync_marks_a_deleted_directory_subtree_missing() -> anyhow::Result<()> {
+    async fn full_sync(db: &DbAsync, library: &Library) -> anyhow::Result<()> {
+        let observation = sync_entries_incremental(db, library, None).await?;
+        mark_missing_entries_for_scan(db, library, &observation, None).await
+    }
+
+    #[tokio::test]
+    async fn full_sync_marks_a_deleted_directory_subtree_missing() -> anyhow::Result<()> {
         let root = temp_path("dir-delete");
         let album_dir = root.join("album");
         let disc_dir = album_dir.join("disc1");
@@ -426,16 +444,16 @@ mod tests {
         let kept = root.join("kept.mp3");
         fs::write(&kept, b"kept")?;
 
-        let mut db = new_db()?;
-        let library = new_library(&mut db, &root)?;
+        let db = new_db()?;
+        let library = new_library(&db, &root).await?;
 
-        full_sync(&mut db, &library)?;
-        let existing = load_existing(&db, library.db_id.unwrap())?;
+        full_sync(&db, &library).await?;
+        let existing = load_existing(&db, &library).await?;
         assert_eq!(existing.len(), 5);
 
         fs::remove_dir_all(&album_dir)?;
-        full_sync(&mut db, &library)?;
-        let remaining = load_existing(&db, library.db_id.unwrap())?;
+        full_sync(&db, &library).await?;
+        let remaining = load_existing(&db, &library).await?;
         assert_eq!(remaining.len(), 5);
         let present = remaining
             .iter()
@@ -447,8 +465,8 @@ mod tests {
         fs::create_dir_all(&disc_dir)?;
         fs::write(album_dir.join("track1.mp3"), b"track1")?;
         fs::write(disc_dir.join("track2.mp3"), b"track2")?;
-        full_sync(&mut db, &library)?;
-        let revived = load_existing(&db, library.db_id.unwrap())?;
+        full_sync(&db, &library).await?;
+        let revived = load_existing(&db, &library).await?;
         assert_eq!(revived.len(), 5);
         assert!(revived.iter().all(|entry| !entry.is_missing()));
 
@@ -456,8 +474,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn full_sync_marks_only_the_missing_file() -> anyhow::Result<()> {
+    #[tokio::test]
+    async fn full_sync_marks_only_the_missing_file() -> anyhow::Result<()> {
         let root = temp_path("file-delete");
         let album_dir = root.join("album");
         fs::create_dir_all(&album_dir)?;
@@ -466,14 +484,15 @@ mod tests {
         fs::write(&track1, b"track1")?;
         fs::write(&track2, b"track2")?;
 
-        let mut db = new_db()?;
-        let library = new_library(&mut db, &root)?;
+        let db = new_db()?;
+        let library = new_library(&db, &root).await?;
 
-        full_sync(&mut db, &library)?;
+        full_sync(&db, &library).await?;
         fs::remove_file(&track1)?;
-        full_sync(&mut db, &library)?;
+        full_sync(&db, &library).await?;
 
-        let remaining = load_existing(&db, library.db_id.unwrap())?
+        let remaining = load_existing(&db, &library)
+            .await?
             .into_iter()
             .filter(|entry| !entry.is_missing())
             .collect::<Vec<_>>();
@@ -491,19 +510,19 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn full_sync_updates_modified_file() -> anyhow::Result<()> {
+    #[tokio::test]
+    async fn full_sync_updates_modified_file() -> anyhow::Result<()> {
         let root = temp_path("file-update");
         let album_dir = root.join("album");
         fs::create_dir_all(&album_dir)?;
         let track = album_dir.join("track1.mp3");
         fs::write(&track, b"track1")?;
 
-        let mut db = new_db()?;
-        let library = new_library(&mut db, &root)?;
+        let db = new_db()?;
+        let library = new_library(&db, &root).await?;
 
-        full_sync(&mut db, &library)?;
-        let existing = load_existing(&db, library.db_id.unwrap())?;
+        full_sync(&db, &library).await?;
+        let existing = load_existing(&db, &library).await?;
         let entry = existing
             .iter()
             .find(|entry| entry.full_path == track)
@@ -513,8 +532,8 @@ mod tests {
 
         fs::write(&track, b"track1-updated")?;
 
-        full_sync(&mut db, &library)?;
-        let updated = load_existing(&db, library.db_id.unwrap())?;
+        full_sync(&db, &library).await?;
+        let updated = load_existing(&db, &library).await?;
         let updated_entry = updated
             .iter()
             .find(|entry| entry.full_path == track)
@@ -533,8 +552,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sync_entry_group_preserves_disc_directories_for_metadata_grouping()
-    -> anyhow::Result<()> {
+    async fn a_scan_preserves_disc_directories_for_metadata_grouping() -> anyhow::Result<()> {
         let root = temp_path("disc-group");
         let album = root.join("album");
         let discs = [album.join("Disc 1"), album.join("Disc 2")];
@@ -544,15 +562,13 @@ mod tests {
             fs::write(disc.join("02.mp3"), b"track-two")?;
         }
 
-        let mut db = new_db()?;
-        let library = new_library(&mut db, &root)?;
+        let db = new_db()?;
+        let library = new_library(&db, &root).await?;
         let plan = prepare_entry_scan_plan(&library, Vec::new())?;
         assert_eq!(plan.groups.len(), 1);
-        for group in plan.groups {
-            sync_entry_group(&mut db, &library, group.entries)?;
-        }
+        full_sync(&db, &library).await?;
 
-        let entries = load_existing(&db, library.db_id.unwrap())?;
+        let entries = load_existing(&db, &library).await?;
         for disc in &discs {
             assert!(entries.iter().any(|entry| &entry.full_path == disc));
         }
@@ -576,8 +592,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn sync_entry_group_defers_missing_entry_marking() -> anyhow::Result<()> {
+    #[tokio::test]
+    async fn applying_a_group_defers_missing_entry_marking() -> anyhow::Result<()> {
         let root = temp_path("group-prune");
         let album_a = root.join("album-a");
         let album_b = root.join("album-b");
@@ -588,35 +604,27 @@ mod tests {
         fs::write(&track_a, b"track-a")?;
         fs::write(&track_b, b"track-b")?;
 
-        let mut db = new_db()?;
-        let library = new_library(&mut db, &root)?;
+        let db = new_db()?;
+        let library = new_library(&db, &root).await?;
 
-        let first_plan = prepare_entry_scan_plan(&library, Vec::new())?;
-        for group in first_plan.groups {
-            sync_entry_group(&mut db, &library, hash_entry_group(group.entries))?;
-        }
-        let first_entries = load_existing(&db, library.db_id.unwrap())?;
+        sync_entries_incremental(&db, &library, None).await?;
+        let first_entries = load_existing(&db, &library).await?;
         assert!(first_entries.iter().any(|entry| entry.full_path == track_a));
         assert!(first_entries.iter().any(|entry| entry.full_path == track_b));
 
         fs::remove_dir_all(&album_a)?;
-        let existing = load_existing(&db, library.db_id.unwrap())?;
-        let second_plan = prepare_entry_scan_plan(&library, existing)?;
-        let observed_paths = second_plan.observed_paths.clone();
-        for group in second_plan.groups {
-            sync_entry_group(&mut db, &library, hash_entry_group(group.entries))?;
-        }
+        let observation = sync_entries_incremental(&db, &library, None).await?;
 
-        let before_prune = load_existing(&db, library.db_id.unwrap())?;
+        let before_prune = load_existing(&db, &library).await?;
         assert!(
             before_prune.iter().any(|entry| entry.full_path == track_a),
             "group sync should not delete entries missing from other groups"
         );
 
         mark_missing(
-            &mut db,
+            &mut *db.write().await,
             &library,
-            &observed_paths,
+            &observation.observed_paths,
             &[],
             &[],
             |removed, surviving| {
@@ -627,7 +635,7 @@ mod tests {
                 )
             },
         )?;
-        let after_prune = load_existing(&db, library.db_id.unwrap())?;
+        let after_prune = load_existing(&db, &library).await?;
         assert!(
             after_prune
                 .iter()
@@ -639,43 +647,231 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn an_emptied_root_fails_closed() -> anyhow::Result<()> {
+    #[tokio::test]
+    async fn siblings_share_one_new_ancestor_and_files_go_under_their_folders() -> anyhow::Result<()>
+    {
+        let root = temp_path("shared-ancestor");
+        let artist = root.join("artist");
+        let albums = [artist.join("one"), artist.join("two")];
+        for album in &albums {
+            fs::create_dir_all(album)?;
+            fs::write(album.join("track.mp3"), album.to_string_lossy().as_bytes())?;
+        }
+
+        let db = new_db()?;
+        let library = new_library(&db, &root).await?;
+        let plan = prepare_entry_scan_plan(&library, Vec::new())?;
+        assert_eq!(plan.groups.len(), 2);
+        assert!(
+            plan.groups
+                .iter()
+                .flat_map(|group| &group.entries)
+                .all(|entry| entry.kind == EntryKind::File),
+            "directories go ahead of the groups"
+        );
+        assert_eq!(plan.dirs.first().map(|dir| &dir.full_path), Some(&root));
+        assert_eq!(plan.dirs[1].full_path, artist);
+
+        full_sync(&db, &library).await?;
+        let entries = load_existing(&db, &library).await?;
+        let id_of = |path: &Path| {
+            let found = entries
+                .iter()
+                .filter(|entry| entry.full_path == path)
+                .collect::<Vec<_>>();
+            assert_eq!(found.len(), 1, "{} stored once", path.display());
+            found[0].db_id.expect("entry db_id")
+        };
+        assert_eq!(entries.len(), 5);
+        let db_read = db.read().await;
+        let parent_of = |entry| lyra_db::entries::parent_id(&*db_read, entry);
+        assert_eq!(parent_of(id_of(&artist))?, library.db_id);
+        for album in &albums {
+            assert_eq!(parent_of(id_of(album))?, Some(id_of(&artist)));
+            assert_eq!(
+                parent_of(id_of(&album.join("track.mp3")))?,
+                Some(id_of(album))
+            );
+        }
+        drop(db_read);
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_new_directory_kept_without_its_files_is_the_next_syncs() -> anyhow::Result<()> {
+        let root = temp_path("dirs-only");
+        let kept = root.join("kept");
+        let gone = root.join("gone");
+        for album in [&kept, &gone] {
+            fs::create_dir_all(album)?;
+            fs::write(album.join("track.mp3"), album.to_string_lossy().as_bytes())?;
+        }
+
+        let db = new_db()?;
+        let library = new_library(&db, &root).await?;
+        let EntryScanPlan {
+            dirs, mut stored, ..
+        } = prepare_entry_scan_plan(&library, Vec::new())?;
+        sync_entry_dirs(&db, &mut stored, dirs).await?;
+        assert_eq!(load_existing(&db, &library).await?.len(), 2);
+
+        fs::remove_dir_all(&gone)?;
+        full_sync(&db, &library).await?;
+
+        let entries = load_existing(&db, &library).await?;
+        let paths = entries
+            .iter()
+            .map(|entry| entry.full_path.clone())
+            .collect::<HashSet<_>>();
+        assert_eq!(
+            paths,
+            HashSet::from([kept.clone(), kept.join("track.mp3")]),
+            "the kept folder got its file, and the gone one went without a trace"
+        );
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().all(|entry| !entry.is_missing()));
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// Gives `dir` a modification time before the epoch, or returns false when this filesystem
+    /// keeps none.
+    fn age_past_the_epoch(dir: &Path) -> anyhow::Result<bool> {
+        let before_epoch = UNIX_EPOCH - std::time::Duration::from_secs(86_400);
+        fs::File::open(dir)?.set_modified(before_epoch)?;
+        Ok(fs::metadata(dir)?.modified()? < UNIX_EPOCH)
+    }
+
+    #[tokio::test]
+    async fn a_folder_without_an_entry_keeps_the_scan_out_and_its_entries() -> anyhow::Result<()> {
+        let root = temp_path("no-mtime");
+        let old = root.join("old");
+        let open = root.join("open");
+        fs::create_dir_all(old.join("nested"))?;
+        fs::create_dir_all(&open)?;
+        fs::write(old.join("nested/a.mp3"), b"a")?;
+        fs::write(open.join("b.mp3"), b"b")?;
+
+        let db = new_db()?;
+        let library = new_library(&db, &root).await?;
+        full_sync(&db, &library).await?;
+        if !age_past_the_epoch(&old)? {
+            let _ = fs::remove_dir_all(&root);
+            return Ok(());
+        }
+        let late = old.join("nested/late.mp3");
+        fs::write(&late, b"late")?;
+
+        let plan = prepare_entry_scan_plan(&library, load_existing(&db, &library).await?)?;
+        assert_eq!(plan.protected_paths(), vec![old.clone()]);
+        full_sync(&db, &library).await?;
+
+        let entries = load_existing(&db, &library).await?;
+        assert_eq!(entries.len(), 5, "nothing new came from under the folder");
+        assert!(entries.iter().all(|entry| !entry.is_missing()));
+
+        let fresh = temp_path("no-mtime-fresh");
+        fs::create_dir_all(fresh.join("old"))?;
+        fs::create_dir_all(fresh.join("open"))?;
+        fs::write(fresh.join("old/a.mp3"), b"a")?;
+        fs::write(fresh.join("open/b.mp3"), b"b")?;
+        age_past_the_epoch(&fresh.join("old"))?;
+        let library = lyra_db::test_db::insert_test_library_node(
+            &mut *db.write().await,
+            "Fresh",
+            fresh.clone(),
+        )?;
+        full_sync(&db, &library).await?;
+        let paths = load_existing(&db, &library)
+            .await?
+            .into_iter()
+            .map(|entry| entry.full_path)
+            .collect::<HashSet<_>>();
+        assert_eq!(
+            paths,
+            HashSet::from([fresh.join("open"), fresh.join("open/b.mp3")]),
+            "a first scan with such a folder still finishes"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&fresh);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_path_that_is_not_text_is_reported_and_left_out() -> anyhow::Result<()> {
+        use std::{
+            ffi::OsStr,
+            os::unix::ffi::OsStrExt,
+        };
+
+        let root = temp_path("not-text");
+        let folder = root.join(OsStr::from_bytes(b"folder\xff"));
+        let file = root.join(OsStr::from_bytes(b"file\xfe.mp3"));
+        fs::create_dir_all(&folder)?;
+        fs::write(folder.join("inside.mp3"), b"inside")?;
+        fs::write(&file, b"file")?;
+        let plain = root.join("plain.mp3");
+        fs::write(&plain, b"plain")?;
+
+        let db = new_db()?;
+        let library = new_library(&db, &root).await?;
+        for _ in 0..2 {
+            full_sync(&db, &library).await?;
+            let entries = load_existing(&db, &library).await?;
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].full_path, plain);
+        }
+        let plan = prepare_entry_scan_plan(&library, Vec::new())?;
+        let unlistable = plan.protected_paths().into_iter().collect::<HashSet<_>>();
+        assert_eq!(unlistable, HashSet::from([folder, file]));
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_emptied_root_fails_closed() -> anyhow::Result<()> {
         let root = temp_path("empty-root");
         let album_dir = root.join("album");
         fs::create_dir_all(&album_dir)?;
         fs::write(album_dir.join("track1.mp3"), b"track1")?;
 
-        let mut db = new_db()?;
-        let library = new_library(&mut db, &root)?;
-        full_sync(&mut db, &library)?;
+        let db = new_db()?;
+        let library = new_library(&db, &root).await?;
+        full_sync(&db, &library).await?;
 
         fs::remove_dir_all(&album_dir)?;
-        let err = full_sync(&mut db, &library).expect_err("an emptied root syncs nothing");
+        let err = full_sync(&db, &library)
+            .await
+            .expect_err("an emptied root syncs nothing");
         assert!(matches!(
             err.downcast_ref::<ScanError>(),
             Some(ScanError::EmptyRoot)
         ));
-        assert_eq!(load_existing(&db, library.db_id.unwrap())?.len(), 2);
+        assert_eq!(load_existing(&db, &library).await?.len(), 2);
 
         let _ = fs::remove_dir_all(&root);
         Ok(())
     }
 
-    #[test]
-    fn an_empty_new_library_scans() -> anyhow::Result<()> {
+    #[tokio::test]
+    async fn an_empty_new_library_scans() -> anyhow::Result<()> {
         let root = temp_path("empty-new");
         fs::create_dir_all(&root)?;
-        let mut db = new_db()?;
-        let library = new_library(&mut db, &root)?;
-        full_sync(&mut db, &library)?;
-        assert!(load_existing(&db, library.db_id.unwrap())?.is_empty());
+        let db = new_db()?;
+        let library = new_library(&db, &root).await?;
+        full_sync(&db, &library).await?;
+        assert!(load_existing(&db, &library).await?.is_empty());
         let _ = fs::remove_dir_all(&root);
         Ok(())
     }
 
-    #[test]
-    fn an_unlistable_folder_keeps_its_entries() -> anyhow::Result<()> {
+    #[tokio::test]
+    async fn an_unlistable_folder_keeps_its_entries() -> anyhow::Result<()> {
         use std::os::unix::fs::PermissionsExt;
 
         let root = temp_path("unlistable");
@@ -687,9 +883,9 @@ mod tests {
         fs::write(open.join("b.mp3"), b"b")?;
         fs::write(open.join("c.mp3"), b"c")?;
 
-        let mut db = new_db()?;
-        let library = new_library(&mut db, &root)?;
-        full_sync(&mut db, &library)?;
+        let db = new_db()?;
+        let library = new_library(&db, &root).await?;
+        full_sync(&db, &library).await?;
 
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o000))?;
         if fs::read_dir(&locked).is_ok() {
@@ -699,13 +895,14 @@ mod tests {
             return Ok(());
         }
         fs::remove_file(open.join("c.mp3"))?;
-        let plan = prepare_entry_scan_plan(&library, load_existing(&db, library.db_id.unwrap())?)?;
+        let plan = prepare_entry_scan_plan(&library, load_existing(&db, &library).await?)?;
         assert_eq!(plan.protected_paths(), vec![locked.clone()]);
-        let result = full_sync(&mut db, &library);
+        let result = full_sync(&db, &library).await;
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o755))?;
         result?;
 
-        let missing = load_existing(&db, library.db_id.unwrap())?
+        let missing = load_existing(&db, &library)
+            .await?
             .into_iter()
             .map(|entry| (entry.full_path.clone(), entry.is_missing()))
             .collect::<std::collections::HashMap<_, _>>();

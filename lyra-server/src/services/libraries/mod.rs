@@ -9,7 +9,7 @@ mod orchestrator;
 pub(crate) mod purge;
 mod roots;
 pub(crate) mod scanning;
-mod sync;
+pub(crate) mod sync;
 
 pub(crate) use configured::{
     LibraryConfig,

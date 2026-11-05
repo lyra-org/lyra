@@ -29,6 +29,7 @@ use super::{
         SyncWorkDetails,
     },
     scanning::{
+        EntryScanPlan,
         hash_entry_group,
         prepare_entry_scan_plan,
     },
@@ -78,12 +79,17 @@ use lyra_db::{
     Library,
     entries::{
         EntryKind,
+        EntrySyncResult,
+        StoredEntries,
         mark_missing,
-        sync_entry_group,
     },
 };
 
 pub(crate) const MAX_CONCURRENT_ALBUM_PIPELINE: usize = 4;
+
+/// How many directories one write applies, so a first scan of a large library doesn't hold the
+/// write lock for all of them at once.
+const DIR_BATCH: usize = 1024;
 
 /// Which releases a library sync asks the providers about.
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -111,14 +117,14 @@ fn trace_run_id(progress: Option<&SyncRunProgress>) -> String {
 }
 
 /// What the scan saw: the paths it observed and those it couldn't read.
-struct ScanObservation {
-    observed_paths: HashSet<std::path::PathBuf>,
+pub(crate) struct ScanObservation {
+    pub(super) observed_paths: HashSet<std::path::PathBuf>,
     protected_paths: Vec<std::path::PathBuf>,
     /// The entries that moved, as they were before.
     moved_from: Vec<Entry>,
 }
 
-async fn sync_entries_incremental(
+pub(crate) async fn sync_entries_incremental(
     db: &DbAsync,
     library: &Library,
     progress: Option<SyncRunProgress>,
@@ -147,7 +153,15 @@ async fn sync_entries_incremental(
     .context("library scan task panicked")??;
     report_unlistable(&scan_plan.unlistable, progress.as_ref()).await;
     let protected_paths = scan_plan.protected_paths();
-    let entry_group_count = scan_plan.groups.len();
+    let EntryScanPlan {
+        dirs,
+        groups,
+        mut stored,
+        observed_paths,
+        moved_from,
+        ..
+    } = scan_plan;
+    let entry_group_count = groups.len();
     if let Some(progress) = &progress {
         progress
             .add_stage_total(
@@ -162,15 +176,17 @@ async fn sync_entries_incremental(
         library_db_id = library_db_id.0,
         run_id,
         entry_group_count,
-        observed_entry_count = scan_plan.observed_paths.len(),
+        observed_entry_count = observed_paths.len(),
         stage = "entry_sync",
         "scan entry groups discovered"
     );
 
-    let group_results = futures::stream::iter(scan_plan.groups.into_iter().enumerate())
+    sync_entry_dirs(db, &mut stored, dirs).await?;
+
+    let stored = &stored;
+    let group_results = futures::stream::iter(groups.into_iter().enumerate())
         .map(|(entry_group_id, group)| {
             let db = db.clone();
-            let library = library.clone();
             let progress = progress.clone();
             let run_id = run_id.clone();
             async move {
@@ -197,18 +213,7 @@ async fn sync_entries_incremental(
                     stage = "entry_sync",
                     "scan entry group stage started"
                 );
-                let result = async {
-                    let entries =
-                        tokio::task::spawn_blocking(move || hash_entry_group(group.entries))
-                            .await
-                            .map_err(anyhow::Error::from)?;
-                    let result = {
-                        let mut db_write = db.write().await;
-                        sync_entry_group(&mut db_write, &library, entries)?
-                    };
-                    Ok::<_, anyhow::Error>(result)
-                }
-                .await;
+                let result = apply_entry_group(&db, stored, group.entries).await;
 
                 let result = match result {
                     Ok(result) => result,
@@ -234,7 +239,7 @@ async fn sync_entries_incremental(
                     entry_group_id,
                     source_dir = %source_dir.display(),
                     entry_count,
-                    added = result.added,
+                    added = result.added.len(),
                     updated = result.updated,
                     moved = result.moved,
                     elapsed_ms = started.elapsed().as_millis() as u64,
@@ -258,10 +263,49 @@ async fn sync_entries_incremental(
     }
 
     Ok(ScanObservation {
-        observed_paths: scan_plan.observed_paths,
+        observed_paths,
         protected_paths,
-        moved_from: scan_plan.moved_from,
+        moved_from,
     })
+}
+
+/// Hashes the group's files and applies what changed. A group with no changes takes no write lock,
+/// and so counts as no catalog change.
+async fn apply_entry_group(
+    db: &DbAsync,
+    stored: &StoredEntries,
+    entries: Vec<Entry>,
+) -> anyhow::Result<EntrySyncResult> {
+    let entries = tokio::task::spawn_blocking(move || hash_entry_group(entries)).await?;
+    let changes = stored.changes(entries);
+    if changes.is_empty() {
+        return Ok(EntrySyncResult::default());
+    }
+    let mut db_write = db.write().await;
+    stored.apply_entry_changes(&mut db_write, changes)
+}
+
+/// Applies the scanned directories, the ones holding others first, a batch per write, recording
+/// the new ones so the files under them find them. A failure stops the sync, since the files would
+/// have no parent to go under. Directories left without their files by that are the next sync's:
+/// it applies the files, or removes the directories once they are gone.
+pub(super) async fn sync_entry_dirs(
+    db: &DbAsync,
+    stored: &mut StoredEntries,
+    dirs: Vec<Entry>,
+) -> anyhow::Result<()> {
+    for batch in dirs.chunks(DIR_BATCH) {
+        let changes = stored.changes(batch.to_vec());
+        if changes.is_empty() {
+            continue;
+        }
+        let result = {
+            let mut db_write = db.write().await;
+            stored.apply_entry_changes(&mut db_write, changes)?
+        };
+        stored.record(result.added);
+    }
+    Ok(())
 }
 
 /// Reports each path the scan couldn't read as a failed unit, so the run shows it.
@@ -294,7 +338,7 @@ async fn report_unlistable(
     }
 }
 
-async fn mark_missing_entries_for_scan(
+pub(super) async fn mark_missing_entries_for_scan(
     db: &DbAsync,
     library: &Library,
     observation: &ScanObservation,
@@ -2405,6 +2449,78 @@ FILE "album.flac" WAVE
             "the audio replaced its segments while its cue sheet couldn't be read"
         );
         assert!(!synced(&library, &audio_named).await?);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn directories_in_later_batches_find_their_parents() -> anyhow::Result<()> {
+        let db = DbAsync::new(lyra_db::test_db::new_test_db()?);
+        let library = {
+            let mut db_write = db.write().await;
+            lyra_db::test_db::insert_test_library_node(
+                &mut db_write,
+                "Batches",
+                PathBuf::from("/music"),
+            )?
+        };
+        let dir = |path: PathBuf| Entry {
+            db_id: None,
+            id: nanoid::nanoid!(),
+            name: path
+                .file_name()
+                .expect("name")
+                .to_string_lossy()
+                .into_owned(),
+            full_path: path,
+            kind: EntryKind::Dir,
+            file_kind: None,
+            hash: None,
+            size: 0,
+            file_modified_at_ms: 1,
+            file_created_at_ms: 1,
+            synced_at_ms: None,
+            missing_at_ms: None,
+        };
+        let artists = (0..DIR_BATCH + 1)
+            .map(|index| PathBuf::from(format!("/music/{index}")))
+            .collect::<Vec<_>>();
+        let albums = artists.iter().map(|artist| artist.join("album"));
+        let dirs = artists
+            .iter()
+            .cloned()
+            .chain(albums)
+            .map(dir)
+            .collect::<Vec<_>>();
+
+        let mut stored = StoredEntries::new(&library, Vec::new())?;
+        sync_entry_dirs(&db, &mut stored, dirs).await?;
+
+        let db_read = db.read().await;
+        let library_db_id = library.db_id.expect("library db_id");
+        let entries = lyra_db::entries::get(&db_read, library_db_id)?;
+        assert_eq!(entries.len(), 2 * artists.len());
+        assert_eq!(
+            lyra_db::entries::children(&*db_read, library_db_id)?.len(),
+            artists.len()
+        );
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_scan_finding_nothing_changed_writes_nothing() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("nothing-changed").await?;
+        album_track(&root.join("Artist/One"), "One")?;
+        album_track(&root.join("Artist/Two"), "Two")?;
+        let db = STATE.db.get();
+        sync_entries_incremental(&db, &library, None).await?;
+        let stamp = db.stamp();
+
+        sync_entries_incremental(&db, &library, None).await?;
+
+        assert_eq!(db.stamp(), stamp);
         let _ = std::fs::remove_dir_all(root);
         Ok(())
     }

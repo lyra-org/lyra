@@ -327,12 +327,9 @@ async fn start_reingest(db: lyra_db::DbAsync, library: lyra_db::Library) -> anyh
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::{
-        libraries::scanning::prepare_entry_scan_plan,
-        metadata::{
-            mapping::default_config,
-            tests::fixture_with_comments,
-        },
+    use crate::services::metadata::{
+        mapping::default_config,
+        tests::fixture_with_comments,
     };
 
     #[tokio::test]
@@ -436,9 +433,13 @@ mod tests {
                     },
                 )
             })?;
-            for group in prepare_entry_scan_plan(&library, Vec::new())?.groups {
-                lyra_db::entries::sync_entry_group(&mut db, &library, group.entries)?;
-            }
+            drop(db);
+            crate::services::libraries::sync::sync_entries_incremental(
+                &STATE.db.get(),
+                &library,
+                None,
+            )
+            .await?;
         }
 
         let report = dry_run_config(&default_config()).await?;
