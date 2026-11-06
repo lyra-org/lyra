@@ -24,7 +24,7 @@ local server_info = server.info()
 constants.configure_settings(config)
 constants.configure_server_id(server_info.id)
 
-local ROOT_ID_STORE_NAME = "jellyfin:identity"
+local ROOT_ID_STORE_NAME = "identity"
 local ROOT_ITEM_ID_KEY = "root_item_id"
 
 local function generate_root_item_id(): string

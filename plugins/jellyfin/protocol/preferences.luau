@@ -19,9 +19,9 @@ type DataStore = datastore.DataStore
 type StoredValue = datastore.JsonValue
 type StoredObject = { [string]: StoredValue }
 
-local DISPLAY_PREFS_STORE_NAME = "jellyfin:display_prefs"
-local DEVICE_OPTIONS_STORE_NAME = "jellyfin:device_options"
-local USER_CONFIGURATION_STORE_NAME = "jellyfin:user_configuration"
+local DISPLAY_PREFS_STORE_NAME = "display_prefs"
+local DEVICE_OPTIONS_STORE_NAME = "device_options"
+local USER_CONFIGURATION_STORE_NAME = "user_configuration"
 local MAX_BLOB_BYTES = 64 * 1024
 local MAX_CLIENT_SEGMENT_LENGTH = 128
 local MAX_PREFS_ID_LENGTH = 128
