@@ -76,6 +76,7 @@ use crate::{
             },
             stale,
         },
+        libraries::MediaRoots,
     },
 };
 use lyra_db::covers::CoverSource;
@@ -267,10 +268,10 @@ pub(crate) fn map_provider_cover_search_results(
 
 async fn serve_public_cover_response(
     cover: &lyra_db::Cover,
+    path: &FsPath,
     transform_options: Option<covers::CoverTransformOptions>,
     request_headers: &HeaderMap,
 ) -> Result<Response<Body>, AppError> {
-    let path = FsPath::new(&cover.path);
     let content_type = match transform_options {
         None => covers::cover_mime_from_path(path),
         Some(options) => match covers::render_cover(path, &cover.hash, options).await? {
@@ -305,10 +306,11 @@ async fn get_public_cover(
     Query(query): Query<CoverQuery>,
 ) -> Result<Response<Body>, AppError> {
     let transform_options = parse_cover_transform_options(&query)?;
-    let cover = {
+    let (cover, roots) = {
         let db = STATE.db.read().await;
-        lyra_db::covers::get_by_public_id(&*db, &id)?
-            .ok_or_else(|| AppError::not_found(format!("Cover not found: {id}")))?
+        let cover = lyra_db::covers::get_by_public_id(&*db, &id)?
+            .ok_or_else(|| AppError::not_found(format!("Cover not found: {id}")))?;
+        (cover, MediaRoots::for_principal(&*db, None)?)
     };
     let path = PathBuf::from(&cover.path);
     if !path.is_file() {
@@ -318,7 +320,13 @@ async fn get_public_cover(
         return Err(AppError::not_found(format!("Cover not found: {id}")));
     }
 
-    serve_public_cover_response(&cover, transform_options, &headers).await
+    let target = roots
+        .and_covers(covers::configured_covers_root())
+        .for_covers()
+        .resolve_off_thread(path)
+        .await
+        .map_err(|_| AppError::not_found(format!("Cover not found: {id}")))?;
+    serve_public_cover_response(&cover, &target, transform_options, &headers).await
 }
 
 #[cfg(feature = "docgen")]
@@ -949,6 +957,11 @@ mod tests {
         let hash = "0123456789abcdef0123456789abcdef";
         let cover_id = {
             let mut db = STATE.db.write().await;
+            lyra_db::test_db::insert_library(
+                &mut db,
+                "Covers",
+                dir.path().to_str().expect("UTF-8 temp path"),
+            )?;
             let release = lyra_db::fixtures::insert_release(&mut db, "Release")?;
             db.transaction_mut(|t| {
                 lyra_db::covers::upsert(
@@ -995,6 +1008,132 @@ mod tests {
         let gone = get_public_cover(HeaderMap::new(), Path(cover_id), Query(query())).await;
         assert!(gone.is_err());
         assert!(!cached.exists(), "a removed cover's transforms go with it");
+        Ok(())
+    }
+
+    /// A stored local cover at `path` in a library at `root`, returning the cover's public id.
+    async fn stored_library_cover(
+        root: &FsPath,
+        path: &FsPath,
+        follow_links: bool,
+    ) -> anyhow::Result<String> {
+        let mut db = STATE.db.write().await;
+        let library = lyra_db::test_db::insert_library(
+            &mut db,
+            "Covers",
+            root.to_str().expect("UTF-8 temp path"),
+        )?;
+        let release = lyra_db::fixtures::insert_release(&mut db, "Release")?;
+        db.transaction_mut(|t| {
+            let library =
+                lyra_db::libraries::get_by_id(t, library)?.expect("library was just created");
+            lyra_db::libraries::update(
+                t,
+                &lyra_db::Library {
+                    follow_links: Some(follow_links),
+                    ..library
+                },
+            )?;
+            let upserted = lyra_db::covers::upsert(
+                t,
+                release,
+                CoverSource::Local,
+                lyra_db::Cover {
+                    db_id: None,
+                    id: nanoid::nanoid!(),
+                    path: path.to_string_lossy().into_owned(),
+                    mime_type: "image/png".to_string(),
+                    hash: "0123456789abcdef0123456789abcdef".to_string(),
+                    blurhash: None,
+                    provider_id: None,
+                },
+            )?;
+            Ok(upserted.cover.id)
+        })
+    }
+
+    #[tokio::test]
+    async fn a_stored_cover_retargeted_out_of_the_library_is_not_served() -> anyhow::Result<()> {
+        use axum::response::IntoResponse;
+
+        for follow_links in [false, true] {
+            let _guard = crate::services::testing::runtime_test_lock().await;
+            crate::services::testing::init_default_test_state()?;
+            let (library, outside) = (tempfile::tempdir()?, tempfile::tempdir()?);
+            let cover = library.path().join("cover.png");
+            image::DynamicImage::new_rgb8(4, 4).save(&cover)?;
+            let cover_id = stored_library_cover(library.path(), &cover, follow_links).await?;
+            let serve = |query| get_public_cover(HeaderMap::new(), Path(cover_id.clone()), query);
+
+            let response = serve(Query(CoverQuery::default()))
+                .await
+                .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+            assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+            let config = outside.path().join("config.json");
+            std::fs::write(&config, "secret")?;
+            std::fs::remove_file(&cover)?;
+            std::os::unix::fs::symlink(&config, &cover)?;
+
+            for query in [
+                CoverQuery::default(),
+                CoverQuery {
+                    max_width: Some(64),
+                    ..CoverQuery::default()
+                },
+            ] {
+                let refused = serve(Query(query))
+                    .await
+                    .map(|_| ())
+                    .expect_err("a link to config.json is refused")
+                    .into_response();
+                assert_eq!(refused.status(), axum::http::StatusCode::NOT_FOUND);
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_cover_link_to_audio_outside_every_library_is_not_served() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (library, outside) = (tempfile::tempdir()?, tempfile::tempdir()?);
+        let target = outside.path().join("private.flac");
+        std::fs::write(&target, "audio")?;
+        let cover = library.path().join("cover.jpg");
+        std::os::unix::fs::symlink(&target, &cover)?;
+        let cover_id = stored_library_cover(library.path(), &cover, true).await?;
+
+        let served = get_public_cover(
+            HeaderMap::new(),
+            Path(cover_id),
+            Query(CoverQuery::default()),
+        )
+        .await;
+        assert!(served.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_cover_link_out_of_the_library_needs_the_setting() -> anyhow::Result<()> {
+        for follow_links in [false, true] {
+            let _guard = crate::services::testing::runtime_test_lock().await;
+            crate::services::testing::init_default_test_state()?;
+            let (library, outside) = (tempfile::tempdir()?, tempfile::tempdir()?);
+            let target = outside.path().join("cover.png");
+            image::DynamicImage::new_rgb8(4, 4).save(&target)?;
+            let cover = library.path().join("cover.png");
+            std::os::unix::fs::symlink(&target, &cover)?;
+            let cover_id = stored_library_cover(library.path(), &cover, follow_links).await?;
+
+            let served = get_public_cover(
+                HeaderMap::new(),
+                Path(cover_id),
+                Query(CoverQuery::default()),
+            )
+            .await;
+            assert_eq!(served.is_ok(), follow_links);
+        }
         Ok(())
     }
 }

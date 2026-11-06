@@ -762,6 +762,18 @@ mod tests {
             "symlinks escaping a library root must be rejected"
         );
 
+        let climbing = library_dir
+            .join("..")
+            .join("..")
+            .join(outside_dir.file_name().context("outside dir has a name")?)
+            .join("secret.txt");
+        let climbed =
+            plugin_api_response_to_axum(file_response(&climbing), &Method::GET, &headers).await;
+        assert!(
+            climbed.is_err_and(|err| err.to_string().contains("outside library")),
+            "`..` must not leave a library root"
+        );
+
         let hidden = hidden_dir.join("cover.jpg");
         std::fs::write(&hidden, b"hidden")?;
         let as_principal = |path: &std::path::Path| ApiHandlerResponse {

@@ -24,7 +24,10 @@ use rayon::iter::{
     ParallelIterator,
 };
 
-use crate::services::STATE;
+use crate::services::{
+    STATE,
+    libraries::MediaRoots,
+};
 use lyra_db::Track;
 
 use super::image::COVER_EXTENSIONS;
@@ -90,8 +93,24 @@ pub(crate) fn covers_locked(db: &impl lyra_db::DbAccess, owner_db_id: DbId) -> R
     Ok(locked.unwrap_or(false))
 }
 
-/// The directory's cover image; none when the directory doesn't exist.
-fn find_cover_in_directory(dir: &Path) -> Result<Option<PathBuf>> {
+/// Where the file's name ranks among cover images, if it names one: stem `cover`, any case, and
+/// one of [`COVER_EXTENSIONS`].
+fn cover_file_priority(path: &Path) -> Option<usize> {
+    let stem = path.file_stem()?.to_str()?;
+    if !stem.eq_ignore_ascii_case("cover") {
+        return None;
+    }
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    COVER_EXTENSIONS.iter().position(|value| *value == ext)
+}
+
+/// Whether the file's name is that of a cover image.
+pub(crate) fn is_cover_file(path: &Path) -> bool {
+    cover_file_priority(path).is_some()
+}
+
+/// The directory's cover image `roots` allow; none when the directory doesn't exist.
+fn find_cover_in_directory(dir: &Path, roots: &MediaRoots) -> Result<Option<PathBuf>> {
     let mut candidates: Vec<(usize, PathBuf)> = Vec::new();
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -106,24 +125,12 @@ fn find_cover_in_directory(dir: &Path) -> Result<Option<PathBuf>> {
         let path = entry
             .with_context(|| format!("failed to list covers in {}", dir.display()))?
             .path();
-        if !path.is_file() {
+        let Some(priority) = cover_file_priority(&path) else {
+            continue;
+        };
+        if roots.admits_file(&path).is_none() {
             continue;
         }
-
-        let Some(stem) = path.file_stem().and_then(|value| value.to_str()) else {
-            continue;
-        };
-        if !stem.eq_ignore_ascii_case("cover") {
-            continue;
-        }
-
-        let Some(ext) = path.extension().and_then(|value| value.to_str()) else {
-            continue;
-        };
-        let ext = ext.to_ascii_lowercase();
-        let Some(priority) = COVER_EXTENSIONS.iter().position(|value| *value == ext) else {
-            continue;
-        };
 
         candidates.push((priority, path));
     }
@@ -194,9 +201,9 @@ pub(crate) fn cover_dirs_for_release(
 
 /// The release's cover in its library: a `cover.*` image in the first of `dirs` holding one, as
 /// [`cover_dirs_for_release`] lists the folders holding its tracks and the folders above.
-pub(crate) fn find_local_cover(dirs: &[PathBuf]) -> Result<Option<PathBuf>> {
+pub(crate) fn find_local_cover(dirs: &[PathBuf], roots: &MediaRoots) -> Result<Option<PathBuf>> {
     for dir in dirs {
-        if let Some(cover) = find_cover_in_directory(dir)? {
+        if let Some(cover) = find_cover_in_directory(dir, roots)? {
             return Ok(Some(cover));
         }
     }
@@ -204,8 +211,11 @@ pub(crate) fn find_local_cover(dirs: &[PathBuf]) -> Result<Option<PathBuf>> {
 }
 
 /// [`find_local_cover`] off the async threads.
-pub(crate) async fn search_local_cover(dirs: Vec<PathBuf>) -> Result<Option<PathBuf>> {
-    tokio::task::spawn_blocking(move || find_local_cover(&dirs))
+pub(crate) async fn search_local_cover(
+    dirs: Vec<PathBuf>,
+    roots: MediaRoots,
+) -> Result<Option<PathBuf>> {
+    tokio::task::spawn_blocking(move || find_local_cover(&dirs, &roots))
         .await
         .context("local cover search task panicked")?
 }
@@ -213,12 +223,13 @@ pub(crate) async fn search_local_cover(dirs: Vec<PathBuf>) -> Result<Option<Path
 /// The local cover in each search's directories, or why looking failed, off the async threads.
 pub(crate) async fn search_local_covers<T: Send + 'static>(
     searches: Vec<(T, Vec<PathBuf>)>,
+    roots: MediaRoots,
 ) -> Result<Vec<(T, Result<Option<PathBuf>>)>> {
     tokio::task::spawn_blocking(move || {
         searches
             .into_par_iter()
             .map(|(owner, dirs)| {
-                let found = find_local_cover(&dirs);
+                let found = find_local_cover(&dirs, &roots);
                 (owner, found)
             })
             .collect()
@@ -245,6 +256,29 @@ mod tests {
 
     fn new_test_db() -> anyhow::Result<DbAny> {
         Ok(TestDb::new()?.into_inner())
+    }
+
+    #[test]
+    fn a_cover_link_to_something_else_is_passed_over() -> anyhow::Result<()> {
+        let (library, outside) = (tempfile::tempdir()?, tempfile::tempdir()?);
+        let config = outside.path().join("config.json");
+        std::fs::write(&config, "secret")?;
+        std::os::unix::fs::symlink(&config, library.path().join("cover.jpg"))?;
+        let mut db = TestDb::initialized()?.into_inner();
+        lyra_db::test_db::insert_library(
+            &mut db,
+            "Library",
+            library.path().to_str().expect("UTF-8 temp path"),
+        )?;
+        let dirs = [library.path().to_path_buf()];
+        let roots = || Ok::<_, anyhow::Error>(MediaRoots::for_principal(&db, None)?.for_covers());
+
+        assert_eq!(find_local_cover(&dirs, &roots()?)?, None);
+
+        let png = library.path().join("cover.png");
+        std::fs::write(&png, "image")?;
+        assert_eq!(find_local_cover(&dirs, &roots()?)?, Some(png));
+        Ok(())
     }
 
     #[test]

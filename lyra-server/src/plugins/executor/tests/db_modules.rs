@@ -83,6 +83,11 @@ fn plugin_executor_exposes_db_backed_lyra_entities_module() -> Result<()> {
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_chromaprint_module() -> Result<()> {
     let mut db = lyra_db::test_db::new_test_db()?;
+    lyra_db::test_db::insert_library(
+        &mut db,
+        "Assets",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/tests/assets/metadata"),
+    )?;
     let entry = lyra_db::entries::Entry {
         db_id: None,
         id: nanoid::nanoid!(),
@@ -686,10 +691,8 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
     let user_public_id = user.id.clone();
     let user_db_id = lyra_db::users::create(&mut db, &user)?;
     let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Playback Source Track")?;
-    let entry_path = std::env::temp_dir().join(format!(
-        "lyra-raw-playback-source-{}.flac",
-        nanoid::nanoid!()
-    ));
+    let directory = tempfile::tempdir()?;
+    let entry_path = directory.path().join("source.flac");
     std::fs::write(&entry_path, b"plugin playback source")?;
     let entry = lyra_db::entries::Entry {
         db_id: None,
@@ -708,7 +711,11 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
     let entry_db_id = db
         .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
         .ids()[0];
-    let library_db_id = lyra_db::test_db::insert_library(&mut db, "Music", "/music")?;
+    let library_db_id = lyra_db::test_db::insert_library(
+        &mut db,
+        "Music",
+        directory.path().to_str().expect("UTF-8 temp path"),
+    )?;
     lyra_db::graph::ensure_owned_edge(&mut db, library_db_id, entry_db_id)?;
     let source_key = format!("entry:{}:embedded", entry_db_id.0);
     let source_id = db.transaction_mut(|t| {

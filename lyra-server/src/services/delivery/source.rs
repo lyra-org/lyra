@@ -17,8 +17,10 @@ use super::{
 };
 use crate::services::{
     STATE,
+    libraries::MediaRoots,
     playback_sources::{
         self as playback_source_service,
+        PlaybackSource,
         SourceVersion,
     },
 };
@@ -84,15 +86,24 @@ pub(crate) fn apply_request_start_offset(
     Ok(source)
 }
 
-/// Resolves the track's playable source, checking `access` under the same guard.
-pub(crate) async fn validate_and_get_track_source(
+/// What a track's source is looked up from once the database read is over.
+struct SourceLookup {
+    track: lyra_db::Track,
+    /// Whether the track has any source, available or not.
+    has_sources: bool,
+    candidates: Vec<PlaybackSource>,
+    roots: MediaRoots,
+}
+
+/// Reads the track's sources, checking `access` under the same guard.
+async fn read_source_lookup(
     track_id: &str,
     access: &TrackAccess,
-) -> Result<ValidatedTrackSource, DeliveryError> {
+) -> Result<SourceLookup, DeliveryError> {
     let db = &*STATE.db.read().await;
     let not_found = || DeliveryError::not_found(format!("Track not found: {track_id}"));
     let track_db_id = lyra_db::lookup::find_node_id_by_id(db, track_id)?.ok_or_else(not_found)?;
-    match access {
+    let principal = match access {
         TrackAccess::Principal(principal) => {
             principal.require(db)?;
             crate::services::auth::access::require_entity_accessible(
@@ -101,6 +112,7 @@ pub(crate) async fn validate_and_get_track_source(
                 track_db_id,
                 not_found,
             )?;
+            Some(principal.clone())
         }
         TrackAccess::MediaToken(token) => {
             let principal = token.holder.principal(db)?.ok_or_else(|| {
@@ -113,32 +125,72 @@ pub(crate) async fn validate_and_get_track_source(
                 track_db_id,
                 not_found,
             )?;
+            Some(principal)
         }
-        TrackAccess::PublicPluginRoute(_) => {}
-    }
+        TrackAccess::PublicPluginRoute(_) => None,
+    };
     let track = lyra_db::tracks::get_by_id(db, track_db_id)?.ok_or_else(not_found)?;
 
+    Ok(SourceLookup {
+        has_sources: !lyra_db::track_sources::get_by_track(db, track_db_id)?.is_empty(),
+        candidates: playback_source_service::candidates(db, &track, false)?,
+        roots: MediaRoots::for_principal(db, principal.as_ref())?,
+        track,
+    })
+}
+
+/// The first source `roots` allow and its version; off the async threads and the database guard,
+/// since either can wait on a slow disk. A primary file nothing else stood in for is resolved
+/// again to log its refusal.
+async fn pick_source(
+    candidates: Vec<PlaybackSource>,
+    roots: MediaRoots,
+) -> Result<Option<(PlaybackSource, std::io::Result<SourceVersion>)>, DeliveryError> {
+    let primary = candidates.first().map(|source| source.full_path.clone());
+    tokio::task::spawn_blocking(move || {
+        let Some(source) = playback_source_service::first_allowed(candidates, &roots) else {
+            if let Some(primary) = primary {
+                let _ = roots.resolve(&primary);
+            }
+            return None;
+        };
+        let version = SourceVersion::read(source.source_id.clone(), &source.full_path);
+        Some((source, version))
+    })
+    .await
+    .map_err(|err| anyhow::anyhow!("track source task panicked: {err}").into())
+}
+
+/// Resolves the track's playable source, checking `access` first.
+pub(crate) async fn validate_and_get_track_source(
+    track_id: &str,
+    access: &TrackAccess,
+) -> Result<ValidatedTrackSource, DeliveryError> {
+    let SourceLookup {
+        track,
+        has_sources,
+        candidates,
+        roots,
+    } = read_source_lookup(track_id, access).await?;
+
     let file_missing = || DeliveryError::gone(format!("the track's file is missing: {track_id}"));
-    let source = match playback_source_service::resolve(db, &track, false)? {
-        Some(source) => source,
-        None if lyra_db::track_sources::get_by_track(db, track_db_id)?.is_empty() => {
-            return Err(DeliveryError::not_found(format!(
-                "Playable source not found for track: {track_id}"
-            )));
-        }
-        None => return Err(file_missing()),
+    let Some((source, version)) = pick_source(candidates, roots).await? else {
+        return Err(if has_sources {
+            file_missing()
+        } else {
+            DeliveryError::not_found(format!("Playable source not found for track: {track_id}"))
+        });
     };
     let source_public_id = source.source_id;
-    let version =
-        SourceVersion::read(source_public_id.clone(), &source.full_path).map_err(|err| {
-            tracing::warn!(
-                track_id,
-                path = %source.full_path.display(),
-                error = %err,
-                "track source file is unreadable"
-            );
-            file_missing()
-        })?;
+    let version = version.map_err(|err| {
+        tracing::warn!(
+            track_id,
+            path = %source.full_path.display(),
+            error = %err,
+            "track source file is unreadable"
+        );
+        file_missing()
+    })?;
     if let TrackAccess::MediaToken(token) = access
         && token.source != version
     {

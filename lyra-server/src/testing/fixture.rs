@@ -557,18 +557,17 @@ struct Folders {
 
 impl Folders {
     /// The library holding files whose track belongs to none.
-    fn loose_library(&mut self, db: &mut DbAny) -> anyhow::Result<DbId> {
+    fn loose_library(&mut self, db: &mut DbAny, directory: &Path) -> anyhow::Result<DbId> {
         if let Some(library) = self.loose_library {
             return Ok(library);
         }
-        let path = PathBuf::from("/fixture-files");
         let created = lyra_db::libraries::create_system(
             db,
             lyra_db::libraries::LibraryInsert {
                 id: nanoid::nanoid!(),
                 name: "Fixture files".into(),
-                path_key: lyra_db::libraries::path_key_for(&path),
-                path,
+                path_key: "/fixture-files".into(),
+                path: directory.to_path_buf(),
                 language: None,
                 country: None,
                 follow_links: false,
@@ -805,14 +804,25 @@ impl Fixture {
 
         for library in &self.libraries {
             keys.claim(&library.key)?;
-            let path = PathBuf::from("/libraries").join(&library.key);
+            let key_path = PathBuf::from("/libraries").join(&library.key);
+            // The fixture keeps its files in one directory, which each library holding one has as
+            // its root under a key of its own.
+            let holds_files = self.tracks.iter().try_fold(false, |found, track| {
+                let held = track.file.is_some()
+                    && self.release_library(track)? == Some(library.key.as_str());
+                anyhow::Ok(found || held)
+            })?;
             let created = lyra_db::libraries::create_system(
                 db,
                 lyra_db::libraries::LibraryInsert {
                     id: nanoid::nanoid!(),
                     name: library.name.clone(),
-                    path_key: lyra_db::libraries::path_key_for(&path),
-                    path,
+                    path_key: key_path.to_string_lossy().into_owned(),
+                    path: if holds_files {
+                        self.directory.clone()
+                    } else {
+                        key_path
+                    },
                     language: library.language.clone(),
                     country: None,
                     follow_links: false,
@@ -999,7 +1009,7 @@ impl Fixture {
             if let Some(file) = &track.file {
                 let library_db_id = match self.release_library(track)? {
                     Some(library) => keys.library(library)?,
-                    None => folders.loose_library(db)?,
+                    None => folders.loose_library(db, &self.directory)?,
                 };
                 let parent = folders.place(db, library_db_id, track.folder.as_deref())?;
                 let path = self.directory.join(file);

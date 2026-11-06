@@ -2880,12 +2880,19 @@ fn streamable_bindings_serve_anonymous_public_routes() -> Result<()> {
     let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
     crate::plugins::testing::init_default_test_state()?;
     let mut database = lyra_db::test_db::TestDb::initialized()?.into_inner();
-    let library = lyra_db::test_db::insert_library(&mut database, "Library", "/music")?;
+    let directory = tempfile::tempdir()?;
+    let library = lyra_db::test_db::insert_library(
+        &mut database,
+        "Library",
+        directory.path().to_str().expect("UTF-8 temp path"),
+    )?;
     let release = lyra_db::fixtures::insert_release(&mut database, "Release")?;
     let track = lyra_db::fixtures::insert_track(&mut database, "Track")?;
     lyra_db::fixtures::connect(&mut database, library, release)?;
     lyra_db::fixtures::connect(&mut database, release, track)?;
-    let audio = tempfile::Builder::new().suffix(".flac").tempfile()?;
+    let audio = tempfile::Builder::new()
+        .suffix(".flac")
+        .tempfile_in(directory.path())?;
     let entry = lyra_db::Entry {
         db_id: None,
         id: nanoid::nanoid!(),

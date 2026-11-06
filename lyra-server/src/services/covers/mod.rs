@@ -154,7 +154,10 @@ pub(crate) use providers::{
     search_artist_cover_candidates,
     search_release_cover_candidates,
 };
-pub(crate) use resolve::configured_covers_root;
+pub(crate) use resolve::{
+    configured_covers_root,
+    is_cover_file,
+};
 pub(crate) use sync::{
     artist_cover_wanted,
     discard_cover,

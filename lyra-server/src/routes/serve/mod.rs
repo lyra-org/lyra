@@ -314,6 +314,7 @@ pub(crate) mod tests {
     };
     use axum::response::IntoResponse;
     use lyra_db::{
+        Library,
         Permission,
         User,
         roles::Role,
@@ -1181,6 +1182,69 @@ pub(crate) mod tests {
 
         let (status, _, _) = send(Method::GET, format!("/{track_id}?{query}")).await?;
         assert_eq!(status, StatusCode::GONE);
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_track_file_replaced_by_a_link_out_of_the_library_is_not_served() -> anyhow::Result<()>
+    {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let headers = create_user_with_permissions("link-listener", vec![]).await?;
+        let query = playback_url_query(&track_id, &headers, "stream_url", "").await?;
+
+        let outside = tempfile::tempdir()?;
+        let config = outside.path().join("config.json");
+        std::fs::write(&config, "secret")?;
+        let path = test_dir.join("integration_track.flac");
+        std::fs::remove_file(&path)?;
+        std::os::unix::fs::symlink(&config, &path)?;
+
+        let (status, _, body) = send(Method::GET, format!("/{track_id}?{query}")).await?;
+        assert_eq!(status, StatusCode::GONE);
+        assert!(!body.windows(6).any(|window| window == b"secret"));
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_followed_link_serves_its_target_under_a_media_token() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let outside = tempfile::tempdir()?;
+        let target = outside.path().join("elsewhere.flac");
+        let path = test_dir.join("integration_track.flac");
+        std::fs::copy(&path, &target)?;
+        std::fs::remove_file(&path)?;
+        std::os::unix::fs::symlink(&target, &path)?;
+        {
+            let mut db = STATE.db.write().await;
+            let library = lyra_db::libraries::get(&*db)?
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("library missing"))?;
+            db.transaction_mut(|t| {
+                lyra_db::libraries::update(
+                    t,
+                    &Library {
+                        follow_links: Some(true),
+                        ..library
+                    },
+                )
+                .map_err(anyhow::Error::from)
+            })?;
+        }
+        let headers = create_user_with_permissions("followed-listener", vec![]).await?;
+        let query = playback_url_query(&track_id, &headers, "stream_url", "").await?;
+
+        let (status, _, body) = send(Method::GET, format!("/{track_id}?{query}")).await?;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, std::fs::read(&target)?);
 
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())

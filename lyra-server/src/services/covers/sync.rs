@@ -29,6 +29,7 @@ use tokio::{
     task::JoinSet,
 };
 
+use crate::services::libraries::MediaRoots;
 use crate::services::providers::{
     active_providers,
     id_schemes,
@@ -402,14 +403,16 @@ pub(crate) async fn sync_release_cover_for_tracks(
     };
 
     let schemes = id_schemes().await;
-    let (dirs, files) = {
+    let (dirs, files, roots) = {
         let db_read = db.read().await;
         (
             cover_dirs_for_release(&db_read, tracks, paths.library_root)?,
             stored_cover_files(&*db_read, release_id)?,
+            MediaRoots::for_principal(&*db_read, None)?.for_covers(),
         )
     };
-    let has_cover = search_local_cover(dirs).await?.is_some() || search_cover_files(files).await?;
+    let has_cover =
+        search_local_cover(dirs, roots).await?.is_some() || search_cover_files(files).await?;
     let (basis, provider_contexts) = {
         let db_read = db.read().await;
         let sorted_providers = active_providers(&db_read)?;
@@ -680,7 +683,7 @@ async fn resolve_local_covers_for_library(
     paths: CoverPaths<'_>,
 ) -> Result<ResolvedCovers> {
     let (mut searches, mut failed) = (Vec::new(), Vec::new());
-    {
+    let roots = {
         let db_read = db.read().await;
         for release in &lyra_db::releases::get(&db_read, library_id)? {
             let Some(release_id) = release.db_id.clone().map(Into::<DbId>::into) else {
@@ -695,9 +698,10 @@ async fn resolve_local_covers_for_library(
                 Err(err) => failed.push(err),
             }
         }
-    }
+        MediaRoots::for_principal(&*db_read, None)?.for_covers()
+    };
     let mut resolved = Vec::new();
-    for ((owner_id, owner_public_id), found) in search_local_covers(searches).await? {
+    for ((owner_id, owner_public_id), found) in search_local_covers(searches, roots).await? {
         match found {
             Ok(Some(path)) => resolved.push(FoundCover {
                 owner_id,
@@ -719,7 +723,7 @@ pub(crate) async fn sync_release_covers_for_library(
     provider_filter: Option<&str>,
 ) -> Result<usize> {
     let schemes = id_schemes().await;
-    let (sorted_providers, searches) = {
+    let (sorted_providers, searches, roots) = {
         let db_read = db.read().await;
         let sorted_providers = active_providers(&db_read)?.only(provider_filter);
         if sorted_providers.is_empty() {
@@ -741,9 +745,10 @@ pub(crate) async fn sync_release_covers_for_library(
             searches.push(((release_id, release.id, files), dirs));
         }
 
-        (sorted_providers, searches)
+        let roots = MediaRoots::for_principal(&*db_read, None)?.for_covers();
+        (sorted_providers, searches, roots)
     };
-    let searched = search_local_covers(searches).await?;
+    let searched = search_local_covers(searches, roots).await?;
     let searched = tokio::task::spawn_blocking(move || {
         searched
             .into_par_iter()
@@ -935,7 +940,7 @@ pub(crate) async fn record_local_release_cover(
     release_id: DbId,
     library_root: Option<&Path>,
 ) -> Result<Option<(PathBuf, bool)>> {
-    let (public_id, dirs) = {
+    let (public_id, dirs, roots) = {
         let db_read = db.read().await;
         let Some(release) = lyra_db::releases::get_by_id(&db_read, release_id)? else {
             return Ok(None);
@@ -945,9 +950,10 @@ pub(crate) async fn record_local_release_cover(
         }
         let tracks = lyra_db::tracks::get_direct(&db_read, release_id)?;
         let dirs = cover_dirs_for_release(&db_read, &tracks, library_root)?;
-        (release.id, dirs)
+        let roots = MediaRoots::for_principal(&*db_read, None)?.for_covers();
+        (release.id, dirs, roots)
     };
-    let recorded = match search_local_cover(dirs).await? {
+    let recorded = match search_local_cover(dirs, roots).await? {
         Some(cover_path) => {
             let changed =
                 upsert_local_cover_metadata(db, release_id, &public_id, &cover_path).await?;
@@ -1035,7 +1041,7 @@ async fn find_gone_covers(
     gone.removed.extend(other);
 
     let mut searches = Vec::new();
-    {
+    let roots = {
         let db_read = db.read().await;
         for stale in local {
             if stale.current(&*db_read)?.is_none() {
@@ -1047,8 +1053,9 @@ async fn find_gone_covers(
                 Err(err) => gone.failed.push(err),
             }
         }
-    }
-    for (stale, found) in search_local_covers(searches).await? {
+        MediaRoots::for_principal(&*db_read, None)?.for_covers()
+    };
+    for (stale, found) in search_local_covers(searches, roots).await? {
         match found {
             Ok(Some(path)) => gone.replaced.push((stale, path)),
             Ok(None) => gone.removed.push(stale),

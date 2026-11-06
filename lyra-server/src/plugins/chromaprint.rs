@@ -16,9 +16,12 @@ use harmony_luau::{
     LuauTypeInfo,
 };
 
-use crate::plugins::{
-    db::ViewerDb,
-    ids,
+use crate::{
+    plugins::{
+        db::ViewerDb,
+        ids,
+    },
+    services::libraries::MediaRoots,
 };
 
 const DECODE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -37,14 +40,18 @@ impl ChromaprintModule {
         #[context] context: luau::CallContext,
     ) -> luau::runtime::Result<luau::OwnedTable> {
         let db = ViewerDb::from_call_frame(&vm, &context)?;
-        let path = {
+        let (path, roots) = {
             let (db, viewer) = db.read().await?;
             let not_found = || crate::plugins::runtime_error("entry not found");
             let entry_id =
                 ids::visible_db_id_of(&db, &viewer, &entry_id, "Entry")?.ok_or_else(not_found)?;
             let entry = lyra_db::entries::get_by_id(&db, entry_id)?.ok_or_else(not_found)?;
-            entry.full_path
+            (entry.full_path, MediaRoots::libraries(&*db, &viewer)?)
         };
+        let path = roots
+            .resolve_off_thread(path)
+            .await
+            .map_err(crate::plugins::runtime_error)?;
         let fingerprint =
             lyra_chromaprint::compute_fingerprint_from_file(&path, None, Some(DECODE_TIMEOUT))
                 .map_err(crate::plugins::runtime_error)?;

@@ -46,7 +46,10 @@ pub(crate) use orchestrator::{
     end_test_run,
     get_sync_run,
 };
-pub(crate) use roots::confine_to_media_roots;
+pub(crate) use roots::{
+    MediaRoots,
+    confine_to_media_roots,
+};
 pub(crate) use sync::system_context;
 pub(crate) use sync::{
     LibrarySyncOptions,

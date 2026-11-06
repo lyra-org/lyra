@@ -38,6 +38,7 @@ use crate::{
             self,
             DeliveryError,
         },
+        libraries::MediaRoots,
         playback_sources as playback_source_service,
     },
 };
@@ -87,7 +88,8 @@ impl PlaybackSourcesModule {
             },
             None => roots::members(&*db, Root::Tracks)?,
         };
-        let mut sources = Vec::new();
+        let roots = MediaRoots::for_principal(&*db, Some(&principal))?;
+        let mut candidates = Vec::new();
         for track in tracks {
             let Some(track_id) = track.db_id.clone().map(DbId::from) else {
                 continue;
@@ -95,15 +97,16 @@ impl PlaybackSourcesModule {
             if !crate::services::auth::access::entity_accessible(&db, &principal, track_id)? {
                 continue;
             }
-            sources.extend(playback_source_service::resolve(
-                &db,
-                &track,
-                include_entry,
-            )?);
+            candidates.push((
+                track_id,
+                playback_source_service::candidates(&db, &track, include_entry)?,
+            ));
         }
-        let parents = entry_parents(&db, &sources)?;
+        let parents = entry_parents(&db, candidates.iter().flat_map(|(_, sources)| sources))?;
+        drop(db);
+        let sources = allowed_sources(candidates, roots).await?;
         let mut rows = luau::OwnedTable::new();
-        for source in sources {
+        for (_, source) in sources {
             rows.push_array(luau::Value::TableData(source_to_table(
                 source,
                 &parents,
@@ -131,10 +134,16 @@ impl PlaybackSourcesModule {
         let Some(track) = lyra_db::tracks::get_by_id(&db, track_id)? else {
             return Ok(luau::Value::Nil);
         };
-        let Some(source) = playback_source_service::resolve(&db, &track, include_entry)? else {
+        let roots = MediaRoots::for_principal(&*db, None)?;
+        let candidates = playback_source_service::candidates(&db, &track, include_entry)?;
+        let parents = entry_parents(&db, &candidates)?;
+        drop(db);
+        let Some((_, source)) = allowed_sources(vec![(track_id, candidates)], roots)
+            .await?
+            .pop()
+        else {
             return Ok(luau::Value::Nil);
         };
-        let parents = entry_parents(&db, std::slice::from_ref(&source))?;
         Ok(luau::Value::TableData(source_to_table(
             source,
             &parents,
@@ -192,7 +201,8 @@ impl PlaybackSourcesModule {
             lyra_db::Permission::ManageLibraries,
         );
         let found = lyra_db::tracks::get_existing_by_ids(&*db, tracks.db_ids())?;
-        let mut sources = Vec::with_capacity(found.len());
+        let roots = MediaRoots::for_principal(&*db, Some(&principal))?;
+        let mut candidates = Vec::with_capacity(found.len());
         for &track_id in tracks.db_ids() {
             let Some(track) = found.get(&track_id) else {
                 continue;
@@ -200,11 +210,14 @@ impl PlaybackSourcesModule {
             if !crate::services::auth::access::entity_accessible(&db, &principal, track_id)? {
                 continue;
             }
-            if let Some(source) = playback_source_service::resolve(&db, track, include_entry)? {
-                sources.push((track_id, source));
-            }
+            candidates.push((
+                track_id,
+                playback_source_service::candidates(&db, track, include_entry)?,
+            ));
         }
-        let parents = entry_parents(&db, sources.iter().map(|(_, source)| source))?;
+        let parents = entry_parents(&db, candidates.iter().flat_map(|(_, sources)| sources))?;
+        drop(db);
+        let sources = allowed_sources(candidates, roots).await?;
         let mut rows = Vec::with_capacity(sources.len());
         for (track_id, source) in sources {
             rows.push((
@@ -214,6 +227,27 @@ impl PlaybackSourcesModule {
         }
         Ok(tracks.keyed(rows))
     }
+}
+
+/// The source each track plays from among its candidates, leaving out those with none, off the
+/// async threads.
+async fn allowed_sources(
+    candidates: Vec<(DbId, Vec<playback_source_service::PlaybackSource>)>,
+    roots: MediaRoots,
+) -> anyhow::Result<Vec<(DbId, playback_source_service::PlaybackSource)>> {
+    tokio::task::spawn_blocking(move || {
+        candidates
+            .into_iter()
+            .filter_map(|(track_id, sources)| {
+                Some((
+                    track_id,
+                    playback_source_service::first_allowed(sources, &roots)?,
+                ))
+            })
+            .collect()
+    })
+    .await
+    .map_err(|err| anyhow::anyhow!("playback source task panicked: {err}"))
 }
 
 fn delivery_runtime_error(error: DeliveryError) -> luau::Error {

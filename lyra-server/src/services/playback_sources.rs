@@ -19,7 +19,10 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-use crate::services::entries::PlacedEntry;
+use crate::services::{
+    entries::PlacedEntry,
+    libraries::MediaRoots,
+};
 use lyra_db::Track;
 use lyra_db::track_sources::{
     SourceCodec,
@@ -34,7 +37,10 @@ pub(crate) struct PlaybackSource {
     pub(crate) source_kind: String,
     pub(crate) source_key: String,
     pub(crate) is_primary: bool,
+    /// The file to open: as stored among [`candidates`], and as the roots found it from
+    /// [`first_allowed`] on.
     pub(crate) input_path: String,
+    /// [`Self::input_path`] as a path.
     pub(crate) full_path: PathBuf,
     pub(crate) format: SourceFormat,
     pub(crate) start_ms: Option<u64>,
@@ -42,15 +48,15 @@ pub(crate) struct PlaybackSource {
     pub(crate) entry: Option<PlacedEntry>,
 }
 
-/// The source `track` plays from: its primary source when it is available and its file is
-/// there, else the first other audio file of it that is.
-pub(crate) fn resolve(
+/// The sources `track` can play from, its primary one first. This only reads the database, for
+/// [`first_allowed`] to look at the disk once the read is over.
+pub(crate) fn candidates(
     db: &DbAny,
     track: &Track,
     include_entry: bool,
-) -> anyhow::Result<Option<PlaybackSource>> {
+) -> anyhow::Result<Vec<PlaybackSource>> {
     let Some(track_db_id) = track.db_id.clone().map(DbId::from) else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
 
     let primary_source_id = lyra_db::track_sources::get_primary_by_track(db, track_db_id)?
@@ -62,6 +68,7 @@ pub(crate) fn resolve(
         sources.sort_by_key(|source| !source.is_primary);
     }
 
+    let mut candidates = Vec::new();
     for source in sources {
         let Some(source_id) = source.db_id else {
             continue;
@@ -80,9 +87,6 @@ pub(crate) fn resolve(
         {
             continue;
         }
-        if !entry.full_path.is_file() {
-            continue;
-        }
 
         let input_path = entry.full_path.to_string_lossy().into_owned();
         let full_path = entry.full_path.clone();
@@ -91,7 +95,7 @@ pub(crate) fn resolve(
             .transpose()?;
 
         let format = source.format();
-        return Ok(Some(PlaybackSource {
+        candidates.push(PlaybackSource {
             track_id: track.id.clone(),
             source_db_id: source_id,
             source_id: source.id,
@@ -104,10 +108,22 @@ pub(crate) fn resolve(
             start_ms: source.start_ms,
             end_ms: source.end_ms,
             entry,
-        }));
+        });
     }
 
-    Ok(None)
+    Ok(candidates)
+}
+
+/// The first of `candidates` whose file `roots` allow, pointed at that file. Blocks on the disk.
+pub(crate) fn first_allowed(
+    candidates: Vec<PlaybackSource>,
+    roots: &MediaRoots,
+) -> Option<PlaybackSource> {
+    candidates.into_iter().find_map(|mut source| {
+        source.full_path = roots.admits_file(&source.full_path)?;
+        source.input_path = source.full_path.to_string_lossy().into_owned();
+        Some(source)
+    })
 }
 
 /// The exact file content a playback source resolved to. Anything derived from a source, such as

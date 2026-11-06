@@ -2312,6 +2312,84 @@ FILE "album.flac" WAVE
         Ok(())
     }
 
+    async fn follow_links(library: &Library) -> anyhow::Result<Library> {
+        let followed = Library {
+            follow_links: Some(true),
+            ..library.clone()
+        };
+        STATE
+            .db
+            .write()
+            .await
+            .transaction_mut(|t| lyra_db::libraries::update(t, &followed))
+            .map_err(anyhow::Error::from)
+    }
+
+    async fn local_cover_of(library: &Library, audio: &Path) -> anyhow::Result<Option<String>> {
+        let release = release_of(
+            entry_for(library, audio)
+                .await?
+                .db_id
+                .expect("stored entry has an id"),
+        )
+        .await?;
+        let db = STATE.db.read().await;
+        Ok(
+            lyra_db::covers::get_source(&*db, release, lyra_db::covers::CoverSource::Local)?
+                .map(|cover| cover.path),
+        )
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_cover_link_to_something_else_is_not_registered() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cover-link").await?;
+        let library = follow_links(&library).await?;
+        let audio = album_track(&root.join("Album"), "Album")?;
+        let outside = tempfile::tempdir()?;
+        let link = root.join("Album/cover.jpg");
+        let unchanged = root.join("Album/unchanged.flac");
+        for name in ["config.json", "private.flac"] {
+            let target = outside.path().join(name);
+            std::fs::write(&target, "secret")?;
+            let _ = std::fs::remove_file(&link);
+            std::os::unix::fs::symlink(&target, &link)?;
+            std::fs::copy(&audio, &unchanged)?;
+
+            sync(&library).await?;
+
+            assert_eq!(local_cover_of(&library, &audio).await?, None, "{name}");
+        }
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_followed_folder_gives_its_tracks_and_cover_lexical_paths() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("followed-folder").await?;
+        let outside = tempfile::tempdir()?;
+        album_track(outside.path(), "Elsewhere")?;
+        std::fs::write(outside.path().join("cover.png"), PNG_1X1)?;
+        let linked = root.join("Linked");
+        std::os::unix::fs::symlink(outside.path(), &linked)?;
+        let audio = linked.join("track.flac");
+
+        sync(&library).await?;
+        assert!(entry_for(&library, &audio).await.is_err(), "off by default");
+
+        let library = follow_links(&library).await?;
+        sync(&library).await?;
+
+        assert!(!entry_for(&library, &audio).await?.is_missing());
+        assert_eq!(
+            local_cover_of(&library, &audio).await?,
+            Some(linked.join("cover.png").to_string_lossy().into_owned())
+        );
+        Ok(())
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn unlistable_cover_folder_keeps_the_other_covers() -> anyhow::Result<()> {
         use std::os::unix::fs::PermissionsExt;

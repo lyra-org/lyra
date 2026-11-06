@@ -85,6 +85,7 @@ key = "music"
 name = "Music"
 users = ["manager"]  # users granted the library; admins see every library
 language = "jpn"     # optional ISO 639 language
+                     # a library holding a track's `file` has the fixture's directory as its root
 
 [[artists]]
 key = "amy"
