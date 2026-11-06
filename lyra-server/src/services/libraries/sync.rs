@@ -16,6 +16,7 @@ use std::{
         Path,
         PathBuf,
     },
+    sync::Arc,
     time::Instant,
 };
 
@@ -821,21 +822,24 @@ async fn process_pending_metadata(
     if !entries.iter().any(is_unsynced_file) {
         return Ok(Vec::new());
     }
-    let cue_links = {
+    let (cue_links, roots) = {
         let cue_entry_ids = entries
             .iter()
             .filter(|entry| entry.file_kind.as_deref() == Some("cue"))
             .filter_map(|entry| entry.db_id)
             .collect::<Vec<_>>();
         let db_read = db.read().await;
-        lyra_db::cue::audio_links(&*db_read, &cue_entry_ids)?
+        (
+            lyra_db::cue::audio_links(&*db_read, &cue_entry_ids)?,
+            Arc::new(MediaRoots::for_principal(&*db_read, None)?),
+        )
     };
     let groups = match &progress {
         Some(progress) => tokio::select! {
-            groups = metadata_groups(&library.path, entries, &cue_links) => groups,
+            groups = metadata_groups(&library.path, entries, &cue_links, &roots) => groups,
             err = until_cancelled(progress) => return Err(err.into()),
         },
-        None => metadata_groups(&library.path, entries, &cue_links).await,
+        None => metadata_groups(&library.path, entries, &cue_links, &roots).await,
     };
     let groups = groups
         .into_iter()
@@ -887,20 +891,21 @@ async fn process_pending_metadata(
                 group_unsynced.insert(entry.full_path.clone(), entry_db_id);
             }
         }
-        let parse_output = match parse_metadata(&mapping_config, group.entries, &cue_links).await {
-            Ok(output) => output,
-            Err(err) => {
-                fail_metadata_work(
-                    progress.as_ref(),
-                    work_id,
-                    SyncStageKey::MetadataParse,
-                    details,
-                    &err,
-                )
-                .await;
-                continue;
-            }
-        };
+        let parse_output =
+            match parse_metadata(&mapping_config, group.entries, &cue_links, &roots).await {
+                Ok(output) => output,
+                Err(err) => {
+                    fail_metadata_work(
+                        progress.as_ref(),
+                        work_id,
+                        SyncStageKey::MetadataParse,
+                        details,
+                        &err,
+                    )
+                    .await;
+                    continue;
+                }
+            };
         if !parse_output.skipped.is_empty() {
             log_skip_summary(&parse_output.skipped);
         }

@@ -478,10 +478,14 @@ mod tests {
         let library_db_id = library
             .db_id
             .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
+        let roots = std::sync::Arc::new(crate::services::libraries::MediaRoots::around([library
+            .path
+            .clone()]));
         let groups = metadata_groups(
             &library.path,
             lyra_db::entries::load_existing(db, library_db_id)?,
             &Default::default(),
+            &roots,
         )
         .await
         .into_iter()
@@ -503,7 +507,7 @@ mod tests {
                 .collect();
             let (source_dir, entries) = (group.source_dir, group.entries);
             let parse_output =
-                parse_metadata(&mapping_config, entries, &Default::default()).await?;
+                parse_metadata(&mapping_config, entries, &Default::default(), &roots).await?;
             if !parse_output.skipped.is_empty() {
                 crate::services::metadata::log_skip_summary(&parse_output.skipped);
             }

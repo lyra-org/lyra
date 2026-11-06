@@ -4,9 +4,12 @@
 // www.meshiplaw.com/lyra.
 
 use std::{
-    sync::atomic::{
-        AtomicBool,
-        Ordering,
+    sync::{
+        Arc,
+        atomic::{
+            AtomicBool,
+            Ordering,
+        },
     },
     time::Duration,
 };
@@ -16,6 +19,7 @@ use anyhow::Context;
 use crate::{
     services::STATE,
     services::{
+        libraries::MediaRoots,
         libraries::{
             SyncRunStatus,
             start_library_sync,
@@ -98,8 +102,9 @@ fn missing_name(m: MissingRequiredField) -> &'static str {
 pub(crate) async fn dry_run_config(
     candidate: &MetadataMappingConfig,
 ) -> anyhow::Result<DryRunReport> {
-    let libraries = {
+    let (libraries, roots) = {
         let db = STATE.db.read().await;
+        let roots = Arc::new(MediaRoots::for_principal(&*db, None)?);
         let libraries = lyra_db::libraries::get(&db)?;
         let mut all = Vec::new();
         for library in libraries {
@@ -111,12 +116,12 @@ pub(crate) async fn dry_run_config(
                 lyra_db::entries::load_existing(&*db, library_db_id)?,
             ));
         }
-        all
+        (all, roots)
     };
 
     let mut groups = Vec::new();
     for (library_root, entries) in libraries {
-        groups.extend(metadata_groups(&library_root, entries, &Default::default()).await);
+        groups.extend(metadata_groups(&library_root, entries, &Default::default(), &roots).await);
     }
 
     let mut report = DryRunReport::default();
@@ -128,7 +133,7 @@ pub(crate) async fn dry_run_config(
             .filter(|entry| classify_entry_file_kind(entry).as_deref() == Some("audio"))
             .count();
 
-        for record in parse_metadata(candidate, entries, &Default::default())
+        for record in parse_metadata(candidate, entries, &Default::default(), &roots)
             .await?
             .skipped
         {
@@ -359,6 +364,65 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&restored)?,
             serde_json::to_value(&previous)?
+        );
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_dry_run_opens_no_stored_link_retargeted_at_a_fifo() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, outside) = (tempfile::tempdir()?, tempfile::tempdir()?);
+        let audio = root.path().join("album.flac");
+        let cue = root.path().join("album.cue");
+        fixture_with_comments(&audio, "integration_track.flac", &[], &[])?;
+        std::fs::write(
+            &cue,
+            "FILE \"album.flac\" WAVE\n  TRACK 01 AUDIO\n    TITLE \"One\"\n    INDEX 01 00:00:00\n",
+        )?;
+        let library =
+            crate::services::libraries::prepare_capture_library(root.path().into()).await?;
+        let followed = lyra_db::Library {
+            follow_links: Some(true),
+            ..library
+        };
+        STATE
+            .db
+            .write()
+            .await
+            .transaction_mut(|t| lyra_db::libraries::update(t, &followed))?;
+        let fifo = outside.path().join("fifo.flac");
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()?
+                .success()
+        );
+        for path in [&audio, &cue] {
+            std::fs::remove_file(path)?;
+            std::os::unix::fs::symlink(&fifo, path)?;
+        }
+
+        let report =
+            tokio::time::timeout(Duration::from_secs(10), dry_run_config(&default_config())).await;
+        if report.is_err() {
+            // Whatever is blocked in `open` has a writer come and go, so the test can end.
+            drop(
+                std::fs::File::options()
+                    .read(true)
+                    .write(true)
+                    .open(&fifo)?,
+            );
+        }
+
+        let report = report.expect("the dry run finishes")?;
+        assert_eq!(report.read_failures, 1, "{report:?}");
+        assert!(
+            report
+                .read_failure_samples
+                .iter()
+                .all(|sample| sample.error.contains("not a regular file")),
+            "{report:?}"
         );
         Ok(())
     }

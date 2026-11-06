@@ -22,7 +22,9 @@ use std::collections::{
     HashSet,
     VecDeque,
 };
+use std::sync::Arc;
 
+use crate::services::libraries::MediaRoots;
 use agdb::DbId;
 use anyhow::{
     Context,
@@ -346,6 +348,7 @@ pub(crate) async fn parse_metadata(
     mapping_config: &MetadataMappingConfig,
     entries: Vec<Entry>,
     cue_links: &CueLinks,
+    roots: &Arc<MediaRoots>,
 ) -> anyhow::Result<ParseMetadataOutput> {
     let mut audio_entries = Vec::new();
     let mut cue_entries = Vec::new();
@@ -370,7 +373,7 @@ pub(crate) async fn parse_metadata(
     let mut held_audio_entries = HashSet::new();
     for cue_entry in &cue_entries {
         let links = cue_entry.db_id.and_then(|id| cue_links.get(&id));
-        match parse_cue_metadata_for_entry(cue_entry, &audio_lookup, links).await {
+        match parse_cue_metadata_for_entry(cue_entry, &audio_lookup, links, roots).await {
             Ok((metadata, claimed_entries)) => {
                 if claimed_entries
                     .iter()
@@ -426,8 +429,10 @@ pub(crate) async fn parse_metadata(
         }
 
         let path = entry.full_path.clone();
-        let path_for_task = path.clone();
-        let task_result = tokio::task::spawn_blocking(move || read_audio_tags(path_for_task)).await;
+        let (path_for_task, roots) = (path.clone(), Arc::clone(roots));
+        let task_result =
+            tokio::task::spawn_blocking(move || read_audio_tags(roots.resolve(&path_for_task)?))
+                .await;
         let (tag, properties, format) = match task_result {
             Ok(Ok(result)) => result,
             Ok(Err(err)) => {
@@ -645,6 +650,18 @@ mod tests {
 
     use super::*;
 
+    /// [`parse_metadata`] with a library at each file's folder.
+    async fn parse_beside(
+        mapping_config: &MetadataMappingConfig,
+        entries: Vec<Entry>,
+        cue_links: &CueLinks,
+    ) -> anyhow::Result<ParseMetadataOutput> {
+        let roots = Arc::new(MediaRoots::around(entries.iter().filter_map(|entry| {
+            entry.full_path.parent().map(std::path::Path::to_path_buf)
+        })));
+        parse_metadata(mapping_config, entries, cue_links, &roots).await
+    }
+
     /// Copies `fixture` to `path`, dropping the vorbis comments in `removed` and adding `added`.
     pub(super) fn fixture_with_comments(
         path: &std::path::Path,
@@ -717,7 +734,7 @@ mod tests {
         let path = dir.path().join("Folder Album/01 - Path Title.flac");
         fixture_with_comments(&path, "integration_track.flac", &["TITLE"], &[])?;
 
-        let output = parse_metadata(
+        let output = parse_beside(
             &mapping::default_config(),
             vec![file_entry(1, &path)],
             &CueLinks::default(),
@@ -744,7 +761,7 @@ mod tests {
             fixture_with_comments(path, "integration_track.flac", &["ALBUM"], &[])?;
         }
 
-        let output = parse_metadata(
+        let output = parse_beside(
             &mapping::default_config(),
             vec![file_entry(1, &paths[0]), file_entry(2, &paths[1])],
             &CueLinks::default(),
@@ -770,7 +787,7 @@ mod tests {
         fixture_with_comments(&tagged, "integration_track.flac", &[], &[])?;
         fixture_with_comments(&untagged, "integration_track.flac", &["ARTIST"], &[])?;
 
-        let output = parse_metadata(
+        let output = parse_beside(
             &mapping::default_config(),
             vec![file_entry(1, &tagged), file_entry(2, &untagged)],
             &CueLinks::default(),
@@ -797,7 +814,7 @@ mod tests {
             "TITLE \"Cue Album\"\nPERFORMER \"Cue Artist\"\nFILE \"album.flac\" WAVE\n  TRACK 01 AUDIO\n    TITLE \"One\"\n    INDEX 01 00:00:00\n",
         )?;
 
-        let output = parse_metadata(
+        let output = parse_beside(
             &mapping::default_config(),
             vec![file_entry(1, &audio_path), file_entry(2, &cue_path)],
             &CueLinks::default(),
@@ -840,7 +857,7 @@ mod tests {
             )?;
         }
 
-        let output = parse_metadata(
+        let output = parse_beside(
             &mapping::default_config(),
             vec![
                 file_entry(1, &titled),
@@ -880,7 +897,7 @@ mod tests {
             "PERFORMER \"Container\"\nFILE \"Container (feat. Guest).flac\" WAVE\n  TRACK 01 AUDIO\n    TITLE \"One\"\n    INDEX 01 00:00:00\n",
         )?;
 
-        let output = parse_metadata(
+        let output = parse_beside(
             &mapping::default_config(),
             vec![
                 file_entry(1, &audio_path),
@@ -921,7 +938,7 @@ mod tests {
             "FILE \"image.flac\" WAVE\n  TRACK 01 AUDIO\n    TITLE \"One\"\n    INDEX 01 00:00:00\n",
         )?;
 
-        let output = parse_metadata(
+        let output = parse_beside(
             &mapping::default_config(),
             vec![
                 file_entry(1, &image),
@@ -954,7 +971,7 @@ mod tests {
             "FILE \"album.flac\" WAVE\n  TRACK 01 AUDIO\n    TITLE \"One\"\n    INDEX 01 00:00:00\n  TRACK 02 AUDIO\n    TITLE \"Two\"\n    INDEX 01 00:00:50\n",
         )?;
 
-        let output = parse_metadata(
+        let output = parse_beside(
             &mapping::default_config(),
             vec![file_entry(1, &audio_path), file_entry(2, &cue_path)],
             &CueLinks::default(),
@@ -988,7 +1005,7 @@ mod tests {
             ),
         )?;
 
-        let mut output = parse_metadata(
+        let mut output = parse_beside(
             &mapping::default_config(),
             vec![file_entry(1, &audio_path), file_entry(2, &cue_path)],
             &CueLinks::default(),
@@ -1050,7 +1067,7 @@ mod tests {
             "FILE \"album.flac\" WAVE\n  TRACK 01 AUDIO\n    TITLE \"One\"\n    REM DATE 1994\n    INDEX 01 00:00:00\n  TRACK 02 AUDIO\n    TITLE \"Two\"\n    INDEX 01 00:00:50\n",
         )?;
 
-        let output = parse_metadata(
+        let output = parse_beside(
             &mapping::default_config(),
             vec![file_entry(1, &audio_path), file_entry(2, &cue_path)],
             &CueLinks::default(),
@@ -1112,7 +1129,7 @@ mod tests {
             &cue_path,
             "REM GENRE \"Drum & Bass\"\nFILE \"album.flac\" WAVE\n  TRACK 01 AUDIO\n    TITLE \"One\"\n    REM GENRE \" \"\n    INDEX 01 00:00:00\n",
         )?;
-        let output = parse_metadata(
+        let output = parse_beside(
             &mapping::default_config(),
             vec![file_entry(1, &audio_path), file_entry(2, &cue_path)],
             &CueLinks::default(),
@@ -1141,7 +1158,7 @@ mod tests {
                 ("GENRE", "J-pop"),
             ],
         )?;
-        let output = parse_metadata(
+        let output = parse_beside(
             &mapping::default_config(),
             vec![file_entry(1, &path)],
             &CueLinks::default(),
@@ -1169,7 +1186,7 @@ mod tests {
             &[],
             &[("DATE", date), ("GENRE", genre)],
         )?;
-        let tagged = parse_metadata(
+        let tagged = parse_beside(
             &mapping::default_config(),
             vec![file_entry(1, &path)],
             &CueLinks::default(),
@@ -1217,7 +1234,7 @@ mod tests {
         }
 
         let output =
-            parse_metadata(&mapping::default_config(), entries, &CueLinks::default()).await?;
+            parse_beside(&mapping::default_config(), entries, &CueLinks::default()).await?;
         assert!(output.skipped.is_empty());
         let groups = output
             .metadata
@@ -1259,7 +1276,7 @@ mod tests {
             "FILE \"album.flac\" WAVE\n  TRACK 01 AUDIO\n    INDEX 01 00:00:00\n",
         )?;
 
-        let output = parse_metadata(
+        let output = parse_beside(
             &mapping::default_config(),
             vec![file_entry(1, &audio), file_entry(2, &cue)],
             &CueLinks::default(),
@@ -1291,7 +1308,7 @@ mod tests {
         std::fs::set_permissions(&audio, std::fs::Permissions::from_mode(0o000))?;
         let readable_anyway = std::fs::read(&audio).is_ok();
 
-        let output = parse_metadata(
+        let output = parse_beside(
             &mapping::default_config(),
             vec![
                 file_entry(1, &audio),
@@ -1328,7 +1345,7 @@ mod tests {
             &[("TITLE", " ")],
         )?;
 
-        let output = parse_metadata(
+        let output = parse_beside(
             &mapping::default_config(),
             vec![file_entry(1, &path)],
             &CueLinks::default(),
@@ -1346,7 +1363,7 @@ mod tests {
         let path = dir.path().join("Folder Album/01.flac");
         fixture_with_comments(&path, "integration_track.flac", &["TITLE"], &[])?;
 
-        let output = parse_metadata(
+        let output = parse_beside(
             &mapping::default_config(),
             vec![file_entry(1, &path)],
             &CueLinks::default(),

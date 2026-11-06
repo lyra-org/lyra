@@ -12,6 +12,7 @@ use std::{
         Path,
         PathBuf,
     },
+    sync::Arc,
 };
 
 use agdb::DbId;
@@ -30,6 +31,7 @@ use lyra_metadata::{
 };
 
 use super::model::TrackMetadata;
+use crate::services::libraries::MediaRoots;
 use lyra_db::Entry;
 use lyra_db::track_sources::SourceFormat;
 
@@ -429,10 +431,23 @@ pub(super) fn build_audio_lookup(audio_entries: &[Entry]) -> AudioLookup {
     }
 }
 
+/// The text of the cue sheet, from the file `roots` allow it to lead to.
+async fn read_cue_text(cue_entry: &Entry, roots: &Arc<MediaRoots>) -> anyhow::Result<String> {
+    let (path, roots) = (cue_entry.full_path.clone(), Arc::clone(roots));
+    let target = tokio::task::spawn_blocking(move || roots.resolve(&path))
+        .await
+        .context("cue path resolution task panicked")??;
+    tokio::fs::read_to_string(target).await.map_err(Into::into)
+}
+
 /// The audio entries `lookup` holds at the paths a cue sheet's tracks name; none when the sheet
 /// can't be read, as parsing it reports.
-pub(super) async fn cue_audio_entry_ids(cue_entry: &Entry, lookup: &AudioLookup) -> Vec<DbId> {
-    let Ok(text) = tokio::fs::read_to_string(&cue_entry.full_path).await else {
+pub(super) async fn cue_audio_entry_ids(
+    cue_entry: &Entry,
+    lookup: &AudioLookup,
+    roots: &Arc<MediaRoots>,
+) -> Vec<DbId> {
+    let Ok(text) = read_cue_text(cue_entry, roots).await else {
         return Vec::new();
     };
     parse_cue_sheet(&text)
@@ -458,6 +473,7 @@ pub(super) async fn parse_cue_metadata_for_entry(
     cue_entry: &Entry,
     lookup: &AudioLookup,
     links: Option<&HashMap<u32, DbId>>,
+    roots: &Arc<MediaRoots>,
 ) -> anyhow::Result<(Vec<TrackMetadata>, HashSet<DbId>)> {
     let audio_by_path = &lookup.by_path;
     let audio_by_name = &lookup.by_name;
@@ -465,7 +481,7 @@ pub(super) async fn parse_cue_metadata_for_entry(
     let cue_entry_id = cue_entry
         .db_id
         .ok_or_else(|| anyhow!("cue entry missing db_id for {:?}", cue_entry.full_path))?;
-    let cue_text = tokio::fs::read_to_string(&cue_entry.full_path)
+    let cue_text = read_cue_text(cue_entry, roots)
         .await
         .with_context(|| format!("failed to read cue file: {}", cue_entry.full_path.display()))?;
 
@@ -568,9 +584,10 @@ pub(super) async fn parse_cue_metadata_for_entry(
             if !probed.insert(track.audio_entry.entry_id) {
                 continue;
             }
-            let path = track.audio_entry.file_path.clone();
+            let (path, roots) = (track.audio_entry.file_path.clone(), Arc::clone(roots));
             if let Ok(Some((duration, format))) =
-                tokio::task::spawn_blocking(move || probe_audio_file(&path)).await
+                tokio::task::spawn_blocking(move || probe_audio_file(&roots.admits_file(&path)?))
+                    .await
             {
                 audio_duration_ms.insert(track.audio_entry.entry_id, duration);
                 audio_format.insert(track.audio_entry.entry_id, format);
@@ -834,6 +851,10 @@ pub(crate) fn sort_track_metadata(metadata: &mut [TrackMetadata]) {
 mod tests {
     use super::*;
     use crate::services::metadata::tests::file_entry;
+
+    fn around(root: &Path) -> Arc<MediaRoots> {
+        Arc::new(MediaRoots::around([root.to_path_buf()]))
+    }
 
     fn test_track(entry_id: i64) -> super::TrackMetadata {
         super::TrackMetadata {
@@ -1228,8 +1249,13 @@ FILE "02 second.wav" WAVE
         )?;
 
         let lookup = build_audio_lookup(&[file_entry(1, &audio_path)]);
-        let (metadata, _) =
-            parse_cue_metadata_for_entry(&file_entry(2, &cue_path), &lookup, None).await?;
+        let (metadata, _) = parse_cue_metadata_for_entry(
+            &file_entry(2, &cue_path),
+            &lookup,
+            None,
+            &around(dir.path()),
+        )
+        .await?;
 
         let wav = SourceFormat {
             container: Some(lyra_db::track_sources::SourceContainer::Wav),
@@ -1252,8 +1278,13 @@ FILE "02 second.wav" WAVE
         std::fs::write(&cue_path, cue)?;
 
         let lookup = build_audio_lookup(&[file_entry(1, &audio_path)]);
-        let (metadata, _) =
-            parse_cue_metadata_for_entry(&file_entry(2, &cue_path), &lookup, None).await?;
+        let (metadata, _) = parse_cue_metadata_for_entry(
+            &file_entry(2, &cue_path),
+            &lookup,
+            None,
+            &around(dir.path()),
+        )
+        .await?;
         Ok(metadata)
     }
 
@@ -1330,7 +1361,8 @@ FILE "02 second.wav" WAVE
 
         let lookup = build_audio_lookup(&[file_entry(1, &audio_path)]);
         let (metadata, _) =
-            parse_cue_metadata_for_entry(&file_entry(2, &cue_path), &lookup, None).await?;
+            parse_cue_metadata_for_entry(&file_entry(2, &cue_path), &lookup, None, &around(dir))
+                .await?;
         Ok(metadata)
     }
 
@@ -1380,8 +1412,13 @@ FILE "02 second.wav" WAVE
         assert!(super::super::read_audio_tags(audio_path.clone()).is_err());
 
         let lookup = build_audio_lookup(&[file_entry(1, &audio_path)]);
-        let (metadata, _) =
-            parse_cue_metadata_for_entry(&file_entry(2, &cue_path), &lookup, None).await?;
+        let (metadata, _) = parse_cue_metadata_for_entry(
+            &file_entry(2, &cue_path),
+            &lookup,
+            None,
+            &around(dir.path()),
+        )
+        .await?;
 
         assert_eq!(metadata.len(), 2);
         assert_eq!(metadata[1].segment_end_ms, Some(2_000));

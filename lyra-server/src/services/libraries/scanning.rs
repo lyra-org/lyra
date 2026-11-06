@@ -686,6 +686,9 @@ mod tests {
             &library.path,
             entries,
             &Default::default(),
+            &std::sync::Arc::new(crate::services::libraries::MediaRoots::around([library
+                .path
+                .clone()])),
         )
         .await;
         assert_eq!(groups.len(), 1, "disc tracks must share one metadata group");

@@ -16,6 +16,7 @@ use std::{
         Path,
         PathBuf,
     },
+    sync::Arc,
 };
 
 use agdb::DbId;
@@ -24,6 +25,7 @@ use lyra_db::{
     entries::EntryKind,
 };
 
+use crate::services::libraries::MediaRoots;
 use crate::services::metadata::{
     CueLinks,
     classify_entry_file_kind,
@@ -302,6 +304,7 @@ pub(crate) async fn metadata_groups(
     library_root: &Path,
     entries: Vec<Entry>,
     cue_links: &CueLinks,
+    roots: &Arc<MediaRoots>,
 ) -> Vec<MetadataGroup> {
     let albums = album_groups(library_root, entries);
     let mut unions = Unions::new(albums.len());
@@ -334,7 +337,7 @@ pub(crate) async fn metadata_groups(
             .and_then(|id| cue_links.get(&id))
             .into_iter()
             .flat_map(|links| links.values().copied());
-        for audio_id in cue_audio_entry_ids(&cue, &lookup)
+        for audio_id in cue_audio_entry_ids(&cue, &lookup, roots)
             .await
             .into_iter()
             .chain(linked)
@@ -358,7 +361,8 @@ mod tests {
             .enumerate()
             .map(|(index, file)| file_entry(index as i64 + 1, &root.join(file)))
             .collect();
-        metadata_groups(root, entries, &Default::default())
+        let roots = Arc::new(MediaRoots::around([root.to_path_buf()]));
+        metadata_groups(root, entries, &Default::default(), &roots)
             .await
             .into_iter()
             .map(|group| {
