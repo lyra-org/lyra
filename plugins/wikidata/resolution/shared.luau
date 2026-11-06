@@ -14,7 +14,7 @@ export type JsonObject = { [string]: JsonValue }
 export type JsonArray = { JsonValue }
 
 local WIKIDATA_API = "https://www.wikidata.org/w/api.php"
-local CACHE_STORE_NAME = "wikidata-cache"
+local CACHE_STORE_NAME = "cache"
 
 local module = {}
 

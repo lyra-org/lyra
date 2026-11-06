@@ -10,7 +10,7 @@ shared.cache_set("release:kept", { qid = "Q1", genres = 2 }, shared.HIT_CACHE_TT
 local kept = shared.cache_get("release:kept")
 assert(kept ~= nil and kept.qid == "Q1" and kept.genres == 2, "a cached hit reads back")
 
-local stored = datastore.get_or_create("wikidata-cache"):get("release:kept") :: { [string]: any }
+local stored = datastore.get_or_create("cache"):get("release:kept") :: { [string]: any }
 assert(stored.qid == "Q1" and stored.data == nil and stored.expires_at_ms == nil, "no wrapper is stored")
 
 -- An expired entry reads as a miss.
