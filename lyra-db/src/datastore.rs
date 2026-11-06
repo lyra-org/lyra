@@ -25,6 +25,7 @@ pub struct DataStore {
     #[serde(skip)]
     pub db_id: Option<NodeId>,
     pub(crate) id: String,
+    pub(crate) plugin_id: String,
     pub(crate) name: String,
 }
 
@@ -238,8 +239,9 @@ pub fn remove_expired_entries(
     })
 }
 
-pub fn find_by_name(db: &DbAny, name: &str) -> anyhow::Result<Option<DataStore>> {
-    let datastore: Vec<DataStore> = db
+/// The store `plugin_id` holds under `name`.
+pub fn find(db: &DbAny, plugin_id: &str, name: &str) -> anyhow::Result<Option<DataStore>> {
+    let mut datastore: Vec<DataStore> = db
         .exec(
             QueryBuilder::select()
                 .elements::<DataStore>()
@@ -247,6 +249,9 @@ pub fn find_by_name(db: &DbAny, name: &str) -> anyhow::Result<Option<DataStore>>
                 .from("datastore")
                 .where_()
                 .distance(MEMBERS)
+                .and()
+                .key("plugin_id")
+                .value(plugin_id)
                 .and()
                 .key("name")
                 .value(name)
@@ -254,53 +259,44 @@ pub fn find_by_name(db: &DbAny, name: &str) -> anyhow::Result<Option<DataStore>>
                 .query(),
         )?
         .try_into()?;
-    Ok(datastore.into_iter().next())
+    match datastore.len() {
+        0 | 1 => Ok(datastore.pop()),
+        _ => Err(anyhow!(
+            "multiple datastores named '{name}' found for plugin_id '{plugin_id}'"
+        )),
+    }
 }
 
-pub fn get_or_create(db: &mut DbAny, name: String) -> anyhow::Result<DataStore> {
-    let datastore: Vec<DataStore> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<DataStore>()
-                .search()
-                .from("datastore")
-                .where_()
-                .distance(MEMBERS)
-                .and()
-                .key("name")
-                .value(&name)
-                .end_where()
-                .query(),
-        )?
-        .try_into()?;
-
-    if datastore.is_empty() {
-        return db.transaction_mut(|t| -> anyhow::Result<DataStore> {
-            let datastore_id = nanoid!();
-            let datastore = DataStore {
-                db_id: None,
-                id: datastore_id.clone(),
-                name: name.clone(),
-            };
-            let result = t.exec_mut(QueryBuilder::insert().element(&datastore).query())?;
-            let result_id = result.ids()[0];
-            t.exec_mut(
-                QueryBuilder::insert()
-                    .edges()
-                    .from("datastore")
-                    .to(result_id)
-                    .query(),
-            )?;
-
-            Ok(DataStore {
-                db_id: Some(result_id.into()),
-                id: datastore_id,
-                name,
-            })
-        });
+pub fn get_or_create(db: &mut DbAny, plugin_id: &str, name: String) -> anyhow::Result<DataStore> {
+    if let Some(datastore) = find(db, plugin_id, &name)? {
+        return Ok(datastore);
     }
 
-    Ok(datastore[0].clone())
+    db.transaction_mut(|t| -> anyhow::Result<DataStore> {
+        let datastore_id = nanoid!();
+        let datastore = DataStore {
+            db_id: None,
+            id: datastore_id.clone(),
+            plugin_id: plugin_id.to_string(),
+            name: name.clone(),
+        };
+        let result = t.exec_mut(QueryBuilder::insert().element(&datastore).query())?;
+        let result_id = result.ids()[0];
+        t.exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from("datastore")
+                .to(result_id)
+                .query(),
+        )?;
+
+        Ok(DataStore {
+            db_id: Some(result_id.into()),
+            id: datastore_id,
+            plugin_id: plugin_id.to_string(),
+            name,
+        })
+    })
 }
 
 #[cfg(test)]
@@ -312,11 +308,49 @@ mod tests {
     fn get_or_create_returns_the_persisted_id() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
 
-        let created = get_or_create(&mut db, "cover-cache".to_string())?;
-        let fetched = get_or_create(&mut db, "cover-cache".to_string())?;
+        let created = get_or_create(&mut db, "demo", "cover-cache".to_string())?;
+        let fetched = get_or_create(&mut db, "demo", "cover-cache".to_string())?;
 
         assert_eq!(created.db_id.map(DbId::from), fetched.db_id.map(DbId::from));
         assert_eq!(created.id, fetched.id);
+        Ok(())
+    }
+
+    #[test]
+    fn plugins_sharing_a_name_hold_separate_stores() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+
+        let own = store_id(&get_or_create(&mut db, "demo", "cache".to_string())?);
+        let other = store_id(&get_or_create(&mut db, "other", "cache".to_string())?);
+        upsert_entry(&mut db, own, write("k", "1", None))?;
+
+        assert_ne!(own, other);
+        assert!(get_entry(&db, other, "k", 0)?.is_none());
+        assert!(find(&db, "absent", "cache")?.is_none());
+        assert_eq!(list_ids(&db)?.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn find_refuses_a_name_held_twice_by_one_plugin() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let store = get_or_create(&mut db, "demo", "cache".to_string())?;
+        let duplicate = DataStore {
+            db_id: None,
+            id: nanoid!(),
+            ..store
+        };
+        let inserted = db.exec_mut(QueryBuilder::insert().element(&duplicate).query())?;
+        db.exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from("datastore")
+                .to(inserted.ids()[0])
+                .query(),
+        )?;
+
+        assert!(find(&db, "demo", "cache").is_err());
+        assert!(find(&db, "other", "cache")?.is_none());
         Ok(())
     }
 
@@ -337,7 +371,7 @@ mod tests {
     }
 
     fn new_store(db: &mut DbAny, name: &str) -> anyhow::Result<DbId> {
-        Ok(store_id(&get_or_create(db, name.to_string())?))
+        Ok(store_id(&get_or_create(db, "demo", name.to_string())?))
     }
 
     #[test]

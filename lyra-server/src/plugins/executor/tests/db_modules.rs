@@ -1375,7 +1375,7 @@ fn plugin_executor_exposes_db_backed_lyra_tags_module() -> Result<()> {
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_datastore_module() -> Result<()> {
     let mut db = lyra_db::test_db::new_test_db()?;
-    let store = lyra_db::datastore::get_or_create(&mut db, "raw-store".to_string())?;
+    let store = lyra_db::datastore::get_or_create(&mut db, "demo", "raw-store".to_string())?;
     lyra_db::datastore::upsert_entry(
         &mut db,
         store.db_id.map(agdb::DbId::from).expect("persisted"),
@@ -1436,6 +1436,66 @@ fn plugin_executor_exposes_db_backed_lyra_datastore_module() -> Result<()> {
             luau::Value::Number(2.0),
         ]
     );
+    Ok(())
+}
+
+#[test]
+fn datastore_refuses_code_outside_any_plugin() -> Result<()> {
+    let db = lyra_db::DbAsync::new(lyra_db::test_db::new_test_db()?);
+    let runtime =
+        PluginExecutor::with_database(Arc::from(vec![]), default_server_info(), db.clone())?;
+    let module = harmony_core::luau::install_module(
+        &runtime.vm,
+        &luau::ChunkOrigin::default(),
+        &crate::plugins::datastore::DataStoreModule::module_spec(),
+    )?;
+
+    let values = runtime.runtime.eval_source_with_args(
+        &br#"
+            local datastore = ...
+            return (pcall(datastore.get_or_create, "orphan"))
+        "#[..],
+        CallContext::default(),
+        vec![luau::Value::Table(module)],
+    )?;
+
+    assert_eq!(values, vec![luau::Value::Boolean(false)]);
+    assert!(lyra_db::datastore::list_ids(&*futures::executor::block_on(db.read()))?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn datastore_refuses_code_from_an_ended_run() -> Result<()> {
+    let db = lyra_db::DbAsync::new(lyra_db::test_db::new_test_db()?);
+    let runtime = PluginExecutor::with_database(
+        Arc::from(vec![manifest("demo", &["lyra.datastore"])]),
+        default_server_info(),
+        db.clone(),
+    )?;
+    runtime.run_plugin_source(
+        "demo",
+        "init.luau",
+        &br#"datastore = require("@lyra/datastore")"#[..],
+    )?;
+
+    let values = runtime.eval_plugin_source_with_call_context(
+        &br#"return (pcall(datastore.get_or_create, "ended"))"#[..],
+        CallContext {
+            origin: plugin_origin("demo", "ended.luau"),
+            task_group: harmony_core::TaskGroupId(u64::MAX),
+            ..CallContext::default()
+        },
+    )?;
+
+    assert_eq!(values, vec![luau::Value::Boolean(false)]);
+    assert!(lyra_db::datastore::list_ids(&*futures::executor::block_on(db.read()))?.is_empty());
+
+    let values = runtime.eval_plugin_source(
+        "demo",
+        "current.luau",
+        &br#"return (pcall(datastore.get_or_create, "current"))"#[..],
+    )?;
+    assert_eq!(values, vec![luau::Value::Boolean(true)]);
     Ok(())
 }
 

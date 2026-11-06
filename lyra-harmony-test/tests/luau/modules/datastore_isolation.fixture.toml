@@ -1,0 +1,4 @@
+[[plugins]]
+id = "notes"
+source = "_datastore_isolation_notes.luau"
+scopes = ["lyra.datastore", "harmony.task"]

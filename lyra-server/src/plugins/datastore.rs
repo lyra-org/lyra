@@ -34,7 +34,10 @@ use lyra_db::datastore::EntryWrite;
 
 pub(crate) struct DataStoreModule;
 
-#[harmony_macros::userdata(name = "DataStore", description = "A named persistent JSON store.")]
+#[harmony_macros::userdata(
+    name = "DataStore",
+    description = "A named persistent JSON store belonging to one plugin."
+)]
 #[derive(Clone)]
 struct DataStoreHandle {
     db: DbAsync,
@@ -114,19 +117,23 @@ impl DataStoreHandle {
 )]
 impl DataStoreModule {
     #[harmony(
-        description = "Returns a named data store, creating it if needed.",
+        description = "Returns this plugin's data store of that name, creating it if needed. Another plugin's store of the same name is a different store.",
         returns(DataStoreHandle)
     )]
     async fn get_or_create(
         name: String,
         #[context] db: Db,
         #[context] vm: luau::Vm,
-        #[context] origin: luau::ChunkOrigin,
+        #[context] context: luau::CallContext,
     ) -> luau::runtime::Result<luau::UserData> {
+        let plugin_id = crate::plugins::current_plugin(&vm, &context, "datastore.get_or_create")?;
         let db = db.clone();
-        let datastore_id = get_or_create(&db, name).await?;
-        let userdata =
-            DataStoreHandle::class().create(&vm, &origin, DataStoreHandle { db, datastore_id })?;
+        let datastore_id = get_or_create(&db, plugin_id.as_str(), name).await?;
+        let userdata = DataStoreHandle::class().create(
+            &vm,
+            &context.origin,
+            DataStoreHandle { db, datastore_id },
+        )?;
         Ok(userdata)
     }
 }
@@ -189,17 +196,21 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-async fn get_or_create(db: &DbAsync, name: String) -> luau::runtime::Result<agdb::DbId> {
+async fn get_or_create(
+    db: &DbAsync,
+    plugin_id: &str,
+    name: String,
+) -> luau::runtime::Result<agdb::DbId> {
     {
         let db = db.read().await;
-        if let Some(existing) = lyra_db::datastore::find_by_name(&db, &name)? {
+        if let Some(existing) = lyra_db::datastore::find(&db, plugin_id, &name)? {
             return datastore_db_id(existing);
         }
     }
 
     // Writes the plugin's datastore and its entries only.
     let mut db = db.write_outside_catalog().await;
-    let datastore = lyra_db::datastore::get_or_create(&mut db, name)?;
+    let datastore = lyra_db::datastore::get_or_create(&mut db, plugin_id, name)?;
     datastore_db_id(datastore)
 }
 
@@ -397,7 +408,7 @@ mod tests {
         let before = snapshot(&*STATE.db.read().await)?;
 
         let db = STATE.db.get();
-        let store = get_or_create(&db, "plugin".to_string()).await?;
+        let store = get_or_create(&db, "demo", "plugin".to_string()).await?;
         write_values(
             &db,
             store,
@@ -416,7 +427,7 @@ mod tests {
     #[tokio::test]
     async fn a_write_waiting_for_the_lock_keeps_its_whole_ttl() -> anyhow::Result<()> {
         let db = DbAsync::new(lyra_db::test_db::new_test_db()?);
-        let store = get_or_create(&db, "contended".to_string()).await?;
+        let store = get_or_create(&db, "demo", "contended".to_string()).await?;
 
         let held = db.write().await;
         let writer = tokio::spawn({

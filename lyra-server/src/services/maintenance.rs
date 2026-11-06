@@ -249,7 +249,7 @@ mod tests {
     async fn the_datastore_sweep_removes_expired_entries_of_every_store() -> anyhow::Result<()> {
         use lyra_db::datastore::{
             EntryWrite,
-            find_by_name,
+            find,
             get_entry,
             get_or_create,
             upsert_many,
@@ -265,8 +265,8 @@ mod tests {
         let store_ids = {
             let mut db = STATE.db.write().await;
             let mut ids = Vec::new();
-            for name in ["first", "second"] {
-                let store = get_or_create(&mut db, name.to_string())?;
+            for plugin_id in ["first", "second"] {
+                let store = get_or_create(&mut db, plugin_id, "cache".to_string())?;
                 let id = store.db_id.map(agdb::DbId::from).expect("persisted");
                 upsert_many(
                     &mut db,
@@ -287,7 +287,7 @@ mod tests {
             assert!(get_entry(&*db, id, "expired", 0)?.is_none());
             assert!(get_entry(&*db, id, "kept", 0)?.is_some());
         }
-        assert!(find_by_name(&db, "first")?.is_some());
+        assert!(find(&db, "first", "cache")?.is_some());
         Ok(())
     }
 
@@ -303,7 +303,7 @@ mod tests {
 
         let mut db = lyra_db::test_db::new_test_db()?;
         for index in 0..expired.len() {
-            get_or_create(&mut db, format!("store-{index}"))?;
+            get_or_create(&mut db, "demo", format!("store-{index}"))?;
         }
         let ids = list_ids(&db)?;
         for (id, count) in ids.iter().zip(expired) {
