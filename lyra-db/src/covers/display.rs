@@ -980,6 +980,18 @@ pub(crate) fn remove_playlist_cover_profile(
     Ok(())
 }
 
+/// Remove every display-cover profile of a genre before deleting the genre node.
+pub(crate) fn remove_genre_cover_profiles(
+    db: &mut impl DbAccess,
+    genre_db_id: DbId,
+) -> anyhow::Result<()> {
+    let profiles = graph::neighbor_ids(db, genre_db_id, "DisplayCoverProfile")?;
+    if !profiles.is_empty() {
+        db.exec_mut(QueryBuilder::remove().ids(profiles).query())?;
+    }
+    Ok(())
+}
+
 /// Offer a single release to a playlist's display cover.
 ///
 /// The winner is the minimum deterministic score over the playlist's covered

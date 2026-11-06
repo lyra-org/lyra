@@ -3,7 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashSet;
+use std::collections::{
+    HashMap,
+    HashSet,
+};
 
 use agdb::{
     CountComparison,
@@ -530,6 +533,88 @@ pub fn retarget_artist(db: &mut impl DbAccess, winner: DbId, loser: DbId) -> any
     )
 }
 
+/// Points every layer edge referencing genre `loser` at `winner` instead, keeping its place. A
+/// layer holding both keeps its edge for `winner` where it is.
+pub fn retarget_genre(db: &mut impl DbAccess, winner: DbId, loser: DbId) -> anyhow::Result<()> {
+    if winner == loser {
+        return Ok(());
+    }
+    let winner_layers: HashSet<DbId> = of_target::<LayerGenre>(db, winner)?
+        .into_iter()
+        .map(|link| link.layer_id)
+        .collect();
+    for link in of_target::<LayerGenre>(db, loser)? {
+        if !winner_layers.contains(&link.layer_id) {
+            insert(db, link.layer_id, winner, &link.edge)?;
+        }
+        remove(db, vec![link.edge_id])?;
+    }
+    Ok(())
+}
+
+/// Points every layer edge referencing label `loser` at `winner` instead, keeping its place and
+/// catalog number. A layer holding both keeps its edge for `winner` where it is, which takes
+/// `loser`'s catalog number only when it has none.
+pub fn retarget_label(db: &mut impl DbAccess, winner: DbId, loser: DbId) -> anyhow::Result<()> {
+    if winner == loser {
+        return Ok(());
+    }
+    let winner_links: HashMap<DbId, LayerLink<LayerLabel>> = of_target::<LayerLabel>(db, winner)?
+        .into_iter()
+        .map(|link| (link.layer_id, link))
+        .collect();
+    for link in of_target::<LayerLabel>(db, loser)? {
+        match winner_links.get(&link.layer_id) {
+            None => insert(db, link.layer_id, winner, &link.edge)?,
+            Some(kept) if kept.edge.catalog_number.is_none() => {
+                remove(db, vec![kept.edge_id])?;
+                insert(
+                    db,
+                    link.layer_id,
+                    winner,
+                    &LayerLabel {
+                        label_order: kept.edge.label_order,
+                        catalog_number: link.edge.catalog_number.clone(),
+                    },
+                )?;
+            }
+            Some(_) => {}
+        }
+        remove(db, vec![link.edge_id])?;
+    }
+    Ok(())
+}
+
+/// The entities owning a layer that references `target_id`.
+pub fn referencing_owners(db: &impl DbAccess, target_id: DbId) -> anyhow::Result<Vec<DbId>> {
+    let layer_ids = of_target::<LayerCredit>(db, target_id)?
+        .into_iter()
+        .map(|link| link.layer_id)
+        .chain(
+            of_target::<LayerRelation>(db, target_id)?
+                .into_iter()
+                .map(|link| link.layer_id),
+        )
+        .chain(
+            of_target::<LayerGenre>(db, target_id)?
+                .into_iter()
+                .map(|link| link.layer_id),
+        )
+        .chain(
+            of_target::<LayerLabel>(db, target_id)?
+                .into_iter()
+                .map(|link| link.layer_id),
+        )
+        .collect::<HashSet<_>>();
+    let mut owners = HashSet::new();
+    for layer_id in layer_ids {
+        owners.extend(super::owner_id(db, layer_id)?);
+    }
+    let mut owners: Vec<DbId> = owners.into_iter().collect();
+    owners.sort_by_key(|id| id.0);
+    Ok(owners)
+}
+
 /// Replaces `to_layer`'s relationship edges with copies of `from_layer`'s.
 pub(crate) fn copy_all(
     db: &mut impl DbAccess,
@@ -1046,6 +1131,99 @@ mod tests {
         );
         assert_eq!(genres(&db, to_layer)?[0].target_id, jazz);
         assert!(!is_referenced(&db, stale_artist)?);
+        Ok(())
+    }
+
+    fn genre_ids(db: &DbAny, layer: DbId) -> anyhow::Result<Vec<DbId>> {
+        Ok(genres(db, layer)?
+            .into_iter()
+            .map(|link| link.target_id)
+            .collect())
+    }
+
+    #[test]
+    fn retargeting_a_genre_keeps_order_on_every_layer() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release = insert_release(&mut db, "Release")?;
+        let winner = crate::genres::resolve_by_name(&mut db, "Winner")?;
+        let loser = crate::genres::resolve_by_name(&mut db, "Loser")?;
+        let other = crate::genres::resolve_by_name(&mut db, "Other")?;
+        let only_loser = layer_of(&mut db, release, "one")?;
+        let both = layer_of(&mut db, release, "two")?;
+        db.transaction_mut(|t| {
+            replace_genres(t, only_loser, &[other, loser])?;
+            replace_genres(t, both, &[loser, other, winner])
+        })?;
+
+        retarget_genre(&mut db, winner, loser)?;
+
+        assert_eq!(genre_ids(&db, only_loser)?, [other, winner]);
+        assert_eq!(genre_ids(&db, both)?, [other, winner]);
+        assert!(!is_referenced(&db, loser)?);
+        Ok(())
+    }
+
+    #[test]
+    fn retargeting_a_label_keeps_a_catalog_number_only_where_the_winner_has_none()
+    -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release = insert_release(&mut db, "Release")?;
+        let winner = label(&mut db, "Winner")?;
+        let loser = label(&mut db, "Loser")?;
+        let other = label(&mut db, "Other")?;
+        let input = |label_id, catalog_number: Option<&str>| LabelLinkInput {
+            label_id,
+            catalog_number: catalog_number.map(str::to_string),
+        };
+        let moved = layer_of(&mut db, release, "moved")?;
+        let filled = layer_of(&mut db, release, "filled")?;
+        let kept = layer_of(&mut db, release, "kept")?;
+        db.transaction_mut(|t| {
+            replace_labels(t, moved, &[input(other, None), input(loser, Some("L-1"))])?;
+            replace_labels(t, filled, &[input(winner, None), input(loser, Some("L-2"))])?;
+            replace_labels(
+                t,
+                kept,
+                &[input(winner, Some("W-1")), input(loser, Some("L-3"))],
+            )
+        })?;
+
+        retarget_label(&mut db, winner, loser)?;
+
+        let read = |db: &DbAny, layer| -> anyhow::Result<Vec<(DbId, Option<String>)>> {
+            Ok(labels(db, layer)?
+                .into_iter()
+                .map(|link| (link.target_id, link.edge.catalog_number))
+                .collect())
+        };
+        assert_eq!(
+            read(&db, moved)?,
+            [(other, None), (winner, Some("L-1".to_string()))]
+        );
+        assert_eq!(read(&db, filled)?, [(winner, Some("L-2".to_string()))]);
+        assert_eq!(read(&db, kept)?, [(winner, Some("W-1".to_string()))]);
+        Ok(())
+    }
+
+    #[test]
+    fn referencing_owners_names_each_layers_entity_once() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release = insert_release(&mut db, "Release")?;
+        let other = insert_release(&mut db, "Other")?;
+        let genre = crate::genres::resolve_by_name(&mut db, "Genre")?;
+        let first = layer_of(&mut db, release, "one")?;
+        let second = layer_of(&mut db, release, "two")?;
+        let third = layer_of(&mut db, other, "one")?;
+        db.transaction_mut(|t| {
+            for layer in [first, second, third] {
+                replace_genres(t, layer, &[genre])?;
+            }
+            Ok::<_, anyhow::Error>(())
+        })?;
+
+        let mut expected = vec![release, other];
+        expected.sort_by_key(|id| id.0);
+        assert_eq!(referencing_owners(&db, genre)?, expected);
         Ok(())
     }
 }

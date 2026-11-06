@@ -16,30 +16,6 @@ use agdb::{
 
 use self::custom_fields::ProviderCustomFields;
 use super::DbAccess;
-use super::providers::external_ids::ExternalId;
-
-pub(crate) fn collect_external_id_ids(
-    db: &impl DbAccess,
-    track_db_id: DbId,
-) -> anyhow::Result<Vec<DbId>> {
-    let ids: Vec<ExternalId> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<ExternalId>()
-                .search()
-                .from(track_db_id)
-                .where_()
-                .neighbor()
-                .end_where()
-                .query(),
-        )?
-        .try_into()?;
-
-    Ok(ids
-        .into_iter()
-        .filter_map(|id| id.db_id.map(Into::into))
-        .collect())
-}
 
 pub fn collect_layer_ids(db: &impl DbAccess, track_db_id: DbId) -> anyhow::Result<Vec<DbId>> {
     layers::ids_for_entity(db, track_db_id)
@@ -114,9 +90,7 @@ fn cascade_remove_entities_pre_favorites(
         for custom_field_id in collect_custom_field_ids(db, id)? {
             db.exec_mut(QueryBuilder::remove().ids(custom_field_id).query())?;
         }
-        for ext_id in collect_external_id_ids(db, id)? {
-            db.exec_mut(QueryBuilder::remove().ids(ext_id).query())?;
-        }
+        super::external_ids::remove_all_for_owner(db, id)?;
         // agdb cascades the Release's label edges, but a Label left without
         // releases must be collected.
         super::labels::unlink_release(db, id)?;

@@ -27,6 +27,43 @@ fn string_field_value<'a>(element: &'a DbElement, field_name: &str) -> Option<&'
     })
 }
 
+/// How a kind of entity keeps the names it also goes by: nodes of `alias` hanging off nodes of
+/// `owner`, both holding their normalized name under `index`.
+pub(crate) struct NameAliases {
+    pub(crate) index: &'static str,
+    pub(crate) owner: &'static str,
+    pub(crate) alias: &'static str,
+}
+
+impl NameAliases {
+    /// The owners holding `scan` as an alias.
+    pub(crate) fn holders(&self, db: &impl DbAccess, scan: &str) -> anyhow::Result<Vec<DbId>> {
+        let mut holders = Vec::new();
+        for node in super::indexes::node_ids(db, self.index, scan)? {
+            if super::graph::is_kind(db, node, self.alias)? {
+                holders.extend(super::graph::inbound_neighbor_ids(db, node, self.owner)?);
+            }
+        }
+        Ok(holders)
+    }
+
+    /// Whether an owner other than those in `except` holds `scan` as its name or an alias.
+    pub(crate) fn held_by_another(
+        &self,
+        db: &impl DbAccess,
+        scan: &str,
+        except: &[DbId],
+    ) -> anyhow::Result<bool> {
+        let mut holders = self.holders(db, scan)?;
+        for node in super::indexes::node_ids(db, self.index, scan)? {
+            if super::graph::is_kind(db, node, self.owner)? {
+                holders.push(node);
+            }
+        }
+        Ok(holders.into_iter().any(|id| !except.contains(&id)))
+    }
+}
+
 pub fn find_node_id_by_id(db: &impl DbAccess, id: &str) -> anyhow::Result<Option<DbId>> {
     Ok(super::indexes::node_ids(db, "id", id)?.into_iter().next())
 }

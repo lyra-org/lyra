@@ -22,7 +22,14 @@ use nanoid::nanoid;
 
 use super::DbAccess;
 use super::NodeId;
+use super::lookup::NameAliases;
 use super::providers::external_ids;
+
+const NAME_ALIASES: NameAliases = NameAliases {
+    index: "label_scan_name",
+    owner: "Label",
+    alias: "LabelAlias",
+};
 
 #[derive(DbElement, Clone, Debug)]
 pub struct Label {
@@ -31,6 +38,14 @@ pub struct Label {
     pub name: String,
     pub(crate) label_scan_name: String,
     pub(crate) created_at_ms: Option<u64>,
+}
+
+/// A name a merged duplicate went by, kept so that it still finds the label it was merged into.
+#[derive(DbElement, Clone, Debug)]
+pub(crate) struct LabelAlias {
+    pub(crate) db_id: Option<NodeId>,
+    pub(crate) name: String,
+    pub(crate) label_scan_name: String,
 }
 
 /// Values on a `release → label` edge.
@@ -142,6 +157,86 @@ pub fn find_by_external_id(
     external_ids::get_owner(db, provider_id, id_type, id_value, Some("Label"))
 }
 
+fn find_by_alias(db: &impl DbAccess, name: &str) -> anyhow::Result<Option<DbId>> {
+    Ok(NAME_ALIASES
+        .holders(db, &normalize_label_name(name))?
+        .into_iter()
+        .next())
+}
+
+fn get_aliases(db: &impl DbAccess, label_id: DbId) -> anyhow::Result<Vec<LabelAlias>> {
+    Ok(db
+        .exec(
+            QueryBuilder::select()
+                .elements::<LabelAlias>()
+                .search()
+                .from(label_id)
+                .where_()
+                .neighbor()
+                .end_where()
+                .query(),
+        )?
+        .try_into()?)
+}
+
+fn remove_aliases(db: &mut impl DbAccess, label_id: DbId) -> anyhow::Result<()> {
+    let aliases: Vec<DbId> = get_aliases(db, label_id)?
+        .into_iter()
+        .filter_map(|alias| alias.db_id.map(DbId::from))
+        .collect();
+    if !aliases.is_empty() {
+        db.exec_mut(QueryBuilder::remove().ids(aliases).query())?;
+    }
+    Ok(())
+}
+
+/// Adds `loser`'s name and aliases to `winner`'s aliases, skipping blank names, `winner`'s own
+/// and names another label goes by.
+pub fn absorb_aliases(db: &mut impl DbAccess, winner: DbId, loser: DbId) -> anyhow::Result<()> {
+    let winner_label = get_by_id(db, winner)?
+        .ok_or_else(|| anyhow::anyhow!("merge winner {} missing", winner.0))?;
+    let loser_label =
+        get_by_id(db, loser)?.ok_or_else(|| anyhow::anyhow!("merge loser {} missing", loser.0))?;
+    let mut held: HashSet<String> = get_aliases(db, winner)?
+        .into_iter()
+        .map(|alias| alias.label_scan_name)
+        .collect();
+    held.insert(winner_label.label_scan_name);
+
+    let names = std::iter::once(loser_label.name)
+        .chain(get_aliases(db, loser)?.into_iter().map(|alias| alias.name));
+    for name in names {
+        let name = name.trim();
+        let scan = normalize_label_name(name);
+        if name.is_empty() || held.contains(&scan) {
+            continue;
+        }
+        if NAME_ALIASES.held_by_another(db, &scan, &[winner, loser])? {
+            continue;
+        }
+        let alias = LabelAlias {
+            db_id: None,
+            name: name.to_string(),
+            label_scan_name: scan.clone(),
+        };
+        let alias_id = db
+            .exec_mut(QueryBuilder::insert().element(&alias).query())?
+            .ids()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("label alias insert returned no id"))?;
+        db.exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from(winner)
+                .to(alias_id)
+                .query(),
+        )?;
+        held.insert(scan);
+    }
+    Ok(())
+}
+
 fn insert_label(db: &mut impl DbAccess, name: &str) -> anyhow::Result<DbId> {
     let label = Label {
         db_id: None,
@@ -160,7 +255,7 @@ fn insert_label(db: &mut impl DbAccess, name: &str) -> anyhow::Result<DbId> {
     Ok(label_id)
 }
 
-/// Resolve by external ID, then name, else insert.
+/// Resolve by external ID, then name, then alias, else insert.
 ///
 /// On external_id miss we insert-new instead of matching by name. "Universal",
 /// "Columbia" and friends share surface strings across distinct corporate
@@ -185,17 +280,30 @@ pub(crate) fn resolve_inside_tx(
                 // if that Label has no external_ids yet. Once any provider
                 // has claimed it, a later ext_id miss on the same surface
                 // name is more likely a separate entity than the same one —
-                // fail-closed to insert-new rather than cross-merge.
-                if let Some(by_name) = find_by_name(db, request.name)?
-                    && external_ids::get_for_entity_inside_tx(db, by_name)?.is_empty()
+                // fail-closed to insert-new rather than cross-merge. An
+                // alias goes by the same rule.
+                let mut unclaimed = None;
+                for candidate in [
+                    find_by_name(db, request.name)?,
+                    find_by_alias(db, request.name)?,
+                ]
+                .into_iter()
+                .flatten()
                 {
-                    by_name
-                } else {
-                    insert_label(db, request.name)?
+                    if external_ids::get_for_entity_inside_tx(db, candidate)?.is_empty() {
+                        unclaimed = Some(candidate);
+                        break;
+                    }
+                }
+                match unclaimed {
+                    Some(id) => id,
+                    None => insert_label(db, request.name)?,
                 }
             }
         }
     } else if let Some(id) = find_by_name(db, request.name)? {
+        id
+    } else if let Some(id) = find_by_alias(db, request.name)? {
         id
     } else {
         insert_label(db, request.name)?
@@ -338,10 +446,7 @@ fn remove_release_label(db: &mut impl DbAccess, link: &ReleaseLabelLink) -> anyh
 }
 
 /// Removes each of `label_ids` that no release and no metadata layer references.
-pub(crate) fn collect_unreferenced(
-    db: &mut impl DbAccess,
-    label_ids: &[DbId],
-) -> anyhow::Result<()> {
+pub fn collect_unreferenced(db: &mut impl DbAccess, label_ids: &[DbId]) -> anyhow::Result<()> {
     for &label_id in label_ids {
         if get_by_id(db, label_id)?.is_none()
             || label_has_releases(db, label_id)?
@@ -350,9 +455,32 @@ pub(crate) fn collect_unreferenced(
             continue;
         }
         external_ids::remove_all_for_owner(db, label_id)?;
+        remove_aliases(db, label_id)?;
         db.exec_mut(QueryBuilder::remove().ids(label_id).query())?;
     }
     Ok(())
+}
+
+/// Moves a release's stored link from `loser` to `winner`, as a lock keeps it through an apply.
+/// A link to `winner` keeps its catalog number and takes `loser`'s only when it has none.
+pub fn move_release_link(
+    db: &mut impl DbAccess,
+    release_id: DbId,
+    winner: DbId,
+    loser: DbId,
+) -> anyhow::Result<()> {
+    let links = links_for_release(db, release_id)?;
+    let Some(moved) = links.iter().find(|link| link.label_id == loser) else {
+        return Ok(());
+    };
+    match links.iter().find(|link| link.label_id == winner) {
+        None => insert_release_label(db, release_id, winner, moved.catalog_number.as_deref())?,
+        Some(kept) if kept.catalog_number.is_none() => {
+            update_release_label(db, kept.edge_id, moved.catalog_number.as_deref())?;
+        }
+        Some(_) => {}
+    }
+    remove_release_label(db, moved)
 }
 
 /// Copy the loser's `(label, catalog_number)` pairings onto the winner during
@@ -1273,6 +1401,158 @@ mod tests {
 
         assert_ne!(artist_id, label_id);
         assert_eq!(find_by_name(&db, "EMI")?, Some(label_id));
+        Ok(())
+    }
+
+    fn resolve_with_id(db: &mut DbAny, name: &str, id_value: &str) -> anyhow::Result<DbId> {
+        resolve(
+            db,
+            &ResolveLabel {
+                name,
+                external_id: Some(ResolveExternalId {
+                    provider_id: "provider",
+                    id_type: "label_id",
+                    id_value,
+                }),
+            },
+        )
+    }
+
+    fn alias_names(db: &DbAny, label_id: DbId) -> anyhow::Result<Vec<String>> {
+        let mut names: Vec<String> = get_aliases(db, label_id)?
+            .into_iter()
+            .map(|alias| alias.name)
+            .collect();
+        names.sort();
+        Ok(names)
+    }
+
+    /// Merges the loser's names into `winner` and drops the loser, as a merge's end does.
+    fn absorb_and_remove(db: &mut DbAny, winner: DbId, loser: DbId) -> anyhow::Result<()> {
+        absorb_aliases(db, winner, loser)?;
+        collect_unreferenced(db, &[loser])
+    }
+
+    #[test]
+    fn a_name_only_resolve_lands_on_the_alias_holder() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let winner = resolve_simple(&mut db, "Blue Note")?;
+        let loser = resolve_simple(&mut db, "Blue Note Records")?;
+
+        absorb_and_remove(&mut db, winner, loser)?;
+
+        assert_eq!(resolve_simple(&mut db, "blue note records")?, winner);
+        assert_eq!(get_all(&db)?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn a_new_id_lands_on_the_alias_holder_only_while_it_has_none() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let winner = resolve_simple(&mut db, "Blue Note")?;
+        let loser = resolve_simple(&mut db, "Blue Note Records")?;
+        absorb_and_remove(&mut db, winner, loser)?;
+
+        assert_eq!(
+            resolve_with_id(&mut db, "Blue Note Records", "first")?,
+            winner
+        );
+        let other = resolve_with_id(&mut db, "Blue Note Records", "second")?;
+
+        assert_ne!(other, winner, "a claimed label stays closed");
+        Ok(())
+    }
+
+    #[test]
+    fn absorbing_skips_names_another_label_holds() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let winner = resolve_simple(&mut db, "Winner")?;
+        let loser = resolve_simple(&mut db, "Loser")?;
+        let other = resolve_with_id(&mut db, "Other", "other")?;
+        absorb_and_remove(&mut db, other, loser)?;
+        let loser = resolve_with_id(&mut db, "Loser", "id")?;
+        assert_ne!(loser, other);
+
+        absorb_aliases(&mut db, winner, loser)?;
+
+        assert!(alias_names(&db, winner)?.is_empty());
+        assert_eq!(alias_names(&db, other)?, ["Loser"]);
+        Ok(())
+    }
+
+    #[test]
+    fn chained_merges_carry_label_aliases_and_collection_takes_them() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let first = resolve_simple(&mut db, "First")?;
+        let second = resolve_simple(&mut db, "Second")?;
+        let third = resolve_simple(&mut db, "Third")?;
+
+        absorb_and_remove(&mut db, second, third)?;
+        absorb_and_remove(&mut db, first, second)?;
+
+        assert_eq!(alias_names(&db, first)?, ["Second", "Third"]);
+        let aliases = |db: &DbAny| -> anyhow::Result<usize> {
+            Ok(db
+                .exec(
+                    QueryBuilder::search()
+                        .elements()
+                        .where_()
+                        .key("db_element_id")
+                        .value("LabelAlias")
+                        .query(),
+                )?
+                .elements
+                .len())
+        };
+        assert_eq!(
+            aliases(&db)?,
+            2,
+            "the losers' own alias nodes went with them"
+        );
+
+        collect_unreferenced(&mut db, &[first])?;
+
+        assert_eq!(aliases(&db)?, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn moving_a_release_link_keeps_the_winners_catalog_number() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release = insert_release(&mut db, "Release")?;
+        let winner = resolve_simple(&mut db, "Winner")?;
+        let loser = resolve_simple(&mut db, "Loser")?;
+        let other = insert_release(&mut db, "Other")?;
+        let catalog = |db: &DbAny, release| -> anyhow::Result<Vec<(String, Option<String>)>> {
+            Ok(get_for_release(db, release)?
+                .into_iter()
+                .map(|entry| (entry.label.name, entry.catalog_number))
+                .collect())
+        };
+        db.transaction_mut(|t| {
+            sync_release_label_links_inside_tx(t, other, &[link(winner, "KEEP")])?;
+            sync_release_label_links_inside_tx(t, release, &[link(loser, "L-1")])
+        })?;
+
+        move_release_link(&mut db, release, winner, loser)?;
+        assert_eq!(
+            catalog(&db, release)?,
+            [("Winner".to_string(), Some("L-1".to_string()))]
+        );
+
+        let loser = resolve_simple(&mut db, "Loser")?;
+        db.transaction_mut(|t| {
+            sync_release_label_links_inside_tx(
+                t,
+                release,
+                &[link(winner, "KEEP"), link(loser, "L-2")],
+            )
+        })?;
+        move_release_link(&mut db, release, winner, loser)?;
+        assert_eq!(
+            catalog(&db, release)?,
+            [("Winner".to_string(), Some("KEEP".to_string()))]
+        );
         Ok(())
     }
 }
