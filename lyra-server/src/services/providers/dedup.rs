@@ -140,7 +140,7 @@ pub(crate) fn merge_release_into_inside_tx(
 }
 
 pub(crate) fn collect_track_unique_ids(
-    db: &DbAny,
+    db: &impl lyra_db::DbAccess,
     release_db_id: DbId,
     unique_track_id_pairs: &HashSet<(String, String)>,
 ) -> anyhow::Result<HashSet<String>> {

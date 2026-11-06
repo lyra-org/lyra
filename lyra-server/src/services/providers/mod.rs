@@ -95,12 +95,9 @@ pub(crate) use admin::{
     EntityExternalIdRecord,
     ProviderAdminError,
     ProviderUpdate,
-    SetEntityExternalIdRequest,
-    inherit_entity_external_id,
     list_entity_external_ids,
     list_provider_configs,
     refresh_entity,
-    set_entity_external_id,
     set_entity_locked,
     update_provider,
 };

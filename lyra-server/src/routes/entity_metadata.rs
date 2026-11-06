@@ -10,10 +10,7 @@ use axum::{
     Router,
     extract::Path,
     http::HeaderMap,
-    routing::{
-        get,
-        post,
-    },
+    routing::get,
 };
 
 use crate::routes::request::bearer_credential;
@@ -22,57 +19,16 @@ use crate::{
     services::STATE,
     services::{
         auth::{
-            Principal,
             access,
             require_manage_metadata,
         },
         metadata::editing::{
             self,
             MetadataEditingError,
-            model::{
-                MetadataApplyRequest,
-                MetadataFieldDiff,
-                MetadataPreviewRequest,
-                MetadataSnapshot,
-            },
+            model::MetadataSnapshot,
         },
     },
 };
-
-fn require_entity_access(
-    db: &impl lyra_db::DbAccess,
-    principal: &Principal,
-    public_id: &str,
-) -> Result<agdb::DbId, AppError> {
-    let entity_id = lyra_db::lookup::find_node_id_by_id(db, public_id)?
-        .ok_or_else(|| AppError::not_found(format!("Entity not found: {public_id}")))?;
-    let accessible = if lyra_db::artists::get_by_id(db, entity_id)?.is_some() {
-        access::artist_accessible(db, principal, entity_id)?
-    } else {
-        access::entity_accessible(db, principal, entity_id)?
-    };
-    if !accessible {
-        return Err(AppError::not_found(format!(
-            "Entity not found: {public_id}"
-        )));
-    }
-    Ok(entity_id)
-}
-
-fn editing_error(error: MetadataEditingError) -> AppError {
-    match error {
-        MetadataEditingError::BadRequest(message) => AppError::bad_request(message),
-        MetadataEditingError::EntityNotFound(id) => {
-            AppError::not_found(format!("Entity not found: {id}"))
-        }
-        MetadataEditingError::Conflict(current) => AppError::json_conflict(serde_json::json!({
-            "code": "metadata_edit_conflict",
-            "message": "metadata changed after preview",
-            "current": current,
-        })),
-        MetadataEditingError::Internal(error) => AppError::from(error),
-    }
-}
 
 async fn get_entity_metadata(
     headers: HeaderMap,
@@ -80,36 +36,16 @@ async fn get_entity_metadata(
 ) -> Result<Json<MetadataSnapshot>, AppError> {
     let principal = require_manage_metadata(bearer_credential(&headers)).await?;
     let db = STATE.db.read().await;
-    let entity_id = require_entity_access(&*db, &principal, &id)?;
+    let entity_id = access::metadata_entity(&*db, &principal, &id)?
+        .ok_or_else(|| AppError::not_found(format!("Entity not found: {id}")))?;
     editing::get_snapshot(&db, entity_id)
         .map(Json)
-        .map_err(editing_error)
-}
-
-async fn preview_entity_metadata(
-    headers: HeaderMap,
-    Path(id): Path<String>,
-    Json(request): Json<MetadataPreviewRequest>,
-) -> Result<Json<Vec<MetadataFieldDiff>>, AppError> {
-    let principal = require_manage_metadata(bearer_credential(&headers)).await?;
-    let db = STATE.db.read().await;
-    let entity_id = require_entity_access(&*db, &principal, &id)?;
-    editing::preview(&db, entity_id, &request)
-        .map(Json)
-        .map_err(editing_error)
-}
-
-async fn apply_entity_metadata(
-    headers: HeaderMap,
-    Path(id): Path<String>,
-    Json(request): Json<MetadataApplyRequest>,
-) -> Result<Json<MetadataSnapshot>, AppError> {
-    let principal = require_manage_metadata(bearer_credential(&headers)).await?;
-    let mut db = STATE.db.write().await;
-    let entity_id = require_entity_access(&*db, &principal, &id)?;
-    editing::apply(&mut db, entity_id, &request)
-        .map(Json)
-        .map_err(editing_error)
+        .map_err(|error| match error {
+            MetadataEditingError::EntityNotFound(id) => {
+                AppError::not_found(format!("Entity not found: {id}"))
+            }
+            other => AppError::from(anyhow::Error::new(other)),
+        })
 }
 
 #[cfg(feature = "docgen")]
@@ -119,46 +55,18 @@ fn get_entity_metadata_docs(op: TransformOperation) -> TransformOperation {
     )
 }
 
-#[cfg(feature = "docgen")]
-fn preview_entity_metadata_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Preview an entity metadata edit").description(
-        "Validates and normalizes a proposed edit without modifying metadata and returns the resulting field diff: one entry per field whose value or source would change, each with its `before` and `after` state. Edits with no effect, invalid values, and references that do not resolve are rejected with 400. Requires ManageMetadata.",
-    )
-}
-
-#[cfg(feature = "docgen")]
-fn apply_entity_metadata_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Apply a previewed entity metadata edit").description(
-        "Atomically applies a release, track, or artist metadata edit. The body carries the `changes` and the `expected` diff returned by preview. The diff is recomputed against current metadata; on a match the edit is applied and the fresh snapshot is returned. Responds 400 for anything preview rejects or an `expected` entry whose field is not in `changes`, and 409 with `current` (the recomputed diff, possibly empty) when it differs from `expected`. Requires ManageMetadata.",
-    )
-}
-
 pub(crate) fn entity_metadata_routes() -> Router {
-    Router::new()
-        .route(
-            "/{id}/metadata",
-            get(get_entity_metadata).patch(apply_entity_metadata),
-        )
-        .route("/{id}/metadata/preview", post(preview_entity_metadata))
+    Router::new().route("/{id}/metadata", get(get_entity_metadata))
 }
 
 #[cfg(feature = "docgen")]
 pub(crate) fn entity_metadata_openapi_routes() -> aide::axum::ApiRouter {
-    use aide::axum::routing::{
-        get_with,
-        post_with,
-    };
+    use aide::axum::routing::get_with;
 
-    aide::axum::ApiRouter::new()
-        .api_route(
-            "/{id}/metadata",
-            get_with(get_entity_metadata, get_entity_metadata_docs)
-                .patch_with(apply_entity_metadata, apply_entity_metadata_docs),
-        )
-        .api_route(
-            "/{id}/metadata/preview",
-            post_with(preview_entity_metadata, preview_entity_metadata_docs),
-        )
+    aide::axum::ApiRouter::new().api_route(
+        "/{id}/metadata",
+        get_with(get_entity_metadata, get_entity_metadata_docs),
+    )
 }
 
 #[cfg(test)]
@@ -183,6 +91,7 @@ mod tests {
     use super::*;
     use crate::{
         plugins::testing::init_library_test_state,
+        routes::metadata_changes::metadata_change_routes,
         services::testing::runtime_test_lock,
     };
     use lyra_db::fixtures::{
@@ -217,8 +126,12 @@ mod tests {
         Ok((status, serde_json::from_slice(&body).unwrap_or_default()))
     }
 
-    fn set(field: &str, value: serde_json::Value) -> serde_json::Value {
-        serde_json::json!({"changes": [{"field": field, "operation": "set", "value": value}]})
+    fn set(id: &str, field: &str, value: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({"changes": [{
+            "action": "edit_metadata",
+            "entity_id": id,
+            "edits": [{"field": field, "operation": "set", "value": value}],
+        }]})
     }
 
     #[tokio::test]
@@ -313,7 +226,7 @@ mod tests {
             <[String; 6]>::try_from(ids).expect("six ids");
         let session = crate::services::testing::create_session(user_id, Default::default()).await?;
         let authorization = format!("Bearer {}", session.token);
-        let routes = entity_metadata_routes();
+        let routes = entity_metadata_routes().merge(metadata_change_routes());
 
         // A character's full cast, including a voice actor no release credits.
         let (status, snapshot) = send(
@@ -332,25 +245,26 @@ mod tests {
 
         // An artist credited only in another library can be credited here.
         let credit = set(
+            &release,
             "credits",
             serde_json::json!([{"artist_id": outsider, "type": "artist", "detail": null}]),
         );
-        let (status, expected) = send(
+        let (status, preview) = send(
             &routes,
             &authorization,
             "POST",
-            format!("/{release}/metadata/preview"),
+            "/changes/preview".to_string(),
             Some(credit.clone()),
         )
         .await?;
-        assert_eq!(status, StatusCode::OK, "{expected}");
+        assert_eq!(status, StatusCode::OK, "{preview}");
         let mut apply_body = credit;
-        apply_body["expected"] = expected;
+        apply_body["changes"][0]["expected"] = preview["results"][0]["diff"].clone();
         let (status, body) = send(
             &routes,
             &authorization,
-            "PATCH",
-            format!("/{release}/metadata"),
+            "POST",
+            "/changes".to_string(),
             Some(apply_body),
         )
         .await?;
@@ -369,8 +283,9 @@ mod tests {
             &routes,
             &authorization,
             "POST",
-            format!("/{release}/metadata/preview"),
+            "/changes/preview".to_string(),
             Some(set(
+                &release,
                 "labels",
                 serde_json::json!([{"id": label, "catalog_number": null}]),
             )),
@@ -381,14 +296,17 @@ mod tests {
         // References that name no artist or label are still rejected.
         for change in [
             set(
+                &release,
                 "credits",
                 serde_json::json!([{"artist_id": "missing", "type": "artist", "detail": null}]),
             ),
             set(
+                &release,
                 "credits",
                 serde_json::json!([{"artist_id": other_release, "type": "artist", "detail": null}]),
             ),
             set(
+                &release,
                 "labels",
                 serde_json::json!([{"id": "missing", "catalog_number": null}]),
             ),
@@ -397,7 +315,7 @@ mod tests {
                 &routes,
                 &authorization,
                 "POST",
-                format!("/{release}/metadata/preview"),
+                "/changes/preview".to_string(),
                 Some(change),
             )
             .await?;
@@ -418,8 +336,12 @@ mod tests {
             &routes,
             &authorization,
             "POST",
-            format!("/{other_release}/metadata/preview"),
-            Some(set("release_title", serde_json::json!("Renamed"))),
+            "/changes/preview".to_string(),
+            Some(set(
+                &other_release,
+                "release_title",
+                serde_json::json!("Renamed"),
+            )),
         )
         .await?;
         assert_eq!(status, StatusCode::NOT_FOUND);

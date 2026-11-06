@@ -4,7 +4,6 @@
 // www.meshiplaw.com/lyra.
 
 use agdb::{
-    DbAny,
     DbAnyTransactionMut,
     DbId,
 };
@@ -147,7 +146,7 @@ fn released_keys(diff: &[MetadataFieldDiff]) -> LayerKeys {
     keys
 }
 
-fn apply_inside_tx(
+pub(super) fn apply_inside_tx(
     db: &mut DbAnyTransactionMut<'_>,
     state: &EntityState,
     diff: &[MetadataFieldDiff],
@@ -161,12 +160,4 @@ fn apply_inside_tx(
     lyra_db::metadata::layers::replace_inside_tx(db, state.db_id, &layer)?;
     // An edit applies even to a locked entity.
     merging::apply_through_lock(db, state.db_id, &released_keys(diff))
-}
-
-pub(super) fn apply_diff(
-    db: &mut DbAny,
-    state: &EntityState,
-    diff: &[MetadataFieldDiff],
-) -> anyhow::Result<()> {
-    db.transaction_mut(|transaction| apply_inside_tx(transaction, state, diff))
 }

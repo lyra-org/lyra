@@ -17,7 +17,6 @@ use agdb::{
     DbId,
 };
 use lyra_db::{
-    IdSource,
     Permission,
     ProviderConfig,
 };
@@ -36,10 +35,6 @@ pub(crate) enum ProviderAdminError {
     ProviderNotFound(String),
     #[error("Entity not found: {0}")]
     EntityNotFound(String),
-    #[error("No manual external ID: {0}")]
-    ManualIdNotFound(String),
-    #[error("External ID value is blank: {0}")]
-    BlankIdValue(String),
     #[error("{0}")]
     Forbidden(String),
     #[error(transparent)]
@@ -86,13 +81,6 @@ impl From<lyra_db::external_ids::ExternalIdAlias> for EntityExternalIdRecord {
             resolved_value: None,
         }
     }
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct SetEntityExternalIdRequest {
-    pub(crate) provider_id: String,
-    pub(crate) id_type: String,
-    pub(crate) id_value: String,
 }
 
 pub(crate) async fn list_provider_configs() -> Result<Vec<ProviderConfig>, ProviderAdminError> {
@@ -146,14 +134,10 @@ fn managed_entity(
     principal: &Principal,
     entity_id: &str,
 ) -> Result<DbId, ProviderAdminError> {
-    let not_found = || ProviderAdminError::EntityNotFound(entity_id.to_string());
     let current = principal.current_with(db, Permission::ManageMetadata)?;
-    let entity = lyra_db::lookup::find_node_id_by_id(db, entity_id)?.ok_or_else(not_found)?;
-    let libraries = access::affected_libraries(db, entity)?;
-    if !access::any_library_accessible(&current, &libraries) {
-        return Err(not_found());
-    }
-    Ok(entity)
+    access::reachable_entity(db, &current, entity_id)?
+        .map(|(entity, _)| entity)
+        .ok_or_else(|| ProviderAdminError::EntityNotFound(entity_id.to_string()))
 }
 
 pub(crate) async fn list_entity_external_ids(
@@ -170,58 +154,6 @@ pub(crate) async fn list_entity_external_ids(
         .map(Into::into)
         .chain(aliases.into_iter().map(Into::into))
         .collect())
-}
-
-pub(crate) async fn set_entity_external_id(
-    principal: &Principal,
-    entity_id: &str,
-    request: SetEntityExternalIdRequest,
-) -> Result<EntityExternalIdRecord, ProviderAdminError> {
-    if request.id_value.trim().is_empty() {
-        return Err(ProviderAdminError::BlankIdValue(format!(
-            "{}/{}",
-            request.provider_id, request.id_type
-        )));
-    }
-    let mut db = STATE.db.write().await;
-    let entity_db_id = managed_entity(&db, principal, entity_id)?;
-    if !lyra_db::entities::exists(&db, entity_db_id)? {
-        return Err(ProviderAdminError::EntityNotFound(entity_id.to_string()));
-    }
-
-    lyra_db::external_ids::upsert(
-        &mut db,
-        entity_db_id,
-        &request.provider_id,
-        &request.id_type,
-        &request.id_value,
-        IdSource::Manual,
-    )?;
-
-    lyra_db::external_ids::get(&db, entity_db_id, &request.provider_id, &request.id_type)?
-        .map(Into::into)
-        .ok_or_else(|| anyhow::anyhow!("external id missing after it was set").into())
-}
-
-pub(crate) async fn inherit_entity_external_id(
-    principal: &Principal,
-    entity_id: &str,
-    provider_id: &str,
-    id_type: &str,
-) -> Result<(), ProviderAdminError> {
-    let mut db = STATE.db.write().await;
-    let entity_db_id = managed_entity(&db, principal, entity_id)?;
-
-    let removed = db.transaction_mut(|t| {
-        lyra_db::external_ids::remove_manual_inside_tx(t, entity_db_id, provider_id, id_type)
-    })?;
-    if !removed {
-        return Err(ProviderAdminError::ManualIdNotFound(format!(
-            "{provider_id}/{id_type}"
-        )));
-    }
-
-    Ok(())
 }
 
 pub(crate) async fn set_entity_locked(
@@ -304,33 +236,6 @@ mod tests {
             user
         };
         crate::services::testing::user_principal(user).await
-    }
-
-    #[tokio::test]
-    async fn a_blank_manual_external_id_is_rejected() -> anyhow::Result<()> {
-        let _guard = crate::services::testing::runtime_test_lock().await;
-        crate::services::testing::init_default_test_state()?;
-
-        let track_id = {
-            let mut db = STATE.db.write().await;
-            let track_db_id = insert_track(&mut db, "Track")?;
-            lyra_db::tracks::get_by_id(&db, track_db_id)?
-                .ok_or_else(|| anyhow::anyhow!("track missing"))?
-                .id
-        };
-
-        let result = set_entity_external_id(
-            &admin().await?,
-            &track_id,
-            SetEntityExternalIdRequest {
-                provider_id: "musicbrainz".to_string(),
-                id_type: "recording_id".to_string(),
-                id_value: " ".to_string(),
-            },
-        )
-        .await;
-        assert!(matches!(result, Err(ProviderAdminError::BlankIdValue(_))));
-        Ok(())
     }
 
     #[tokio::test]

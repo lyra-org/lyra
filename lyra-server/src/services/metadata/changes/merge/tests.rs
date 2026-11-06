@@ -6,6 +6,8 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use agdb::DbAny;
+
 use lyra_db::{
     CreditType,
     IdSource,
@@ -38,8 +40,18 @@ use serde_json::{
 
 use super::*;
 use crate::services::{
+    STATE,
+    auth::Principal,
     libraries::sync::sync_library,
     metadata::{
+        changes::{
+            ChangeSetError,
+            model::{
+                ChangePreview,
+                ChangeResult,
+                MetadataChange,
+            },
+        },
         cleanup::deduplicate_artists_by_external_id,
         id_links::DeclaredIds,
         layers::{
@@ -78,11 +90,92 @@ fn public_ids(db: &DbAny, ids: &[DbId]) -> Vec<String> {
     ids.iter().map(|&id| public_id(db, id)).collect()
 }
 
+fn operation_error(error: ChangeSetError) -> ChangeError {
+    match error {
+        ChangeSetError::Failed { error, .. } => error,
+        other => panic!("not an operation's failure: {other:?}"),
+    }
+}
+
+fn merge_change(
+    winner_id: &str,
+    loser_ids: &[String],
+    expected: Option<Vec<ManualFill>>,
+) -> MetadataChange {
+    MetadataChange::Merge {
+        winner_id: winner_id.to_string(),
+        loser_ids: loser_ids.to_vec(),
+        expected,
+    }
+}
+
+async fn preview(
+    principal: &Principal,
+    winner_id: &str,
+    loser_ids: &[String],
+) -> Result<MergePreview, ChangeError> {
+    let change = merge_change(winner_id, loser_ids, None);
+    let mut results = super::super::preview(principal, &[change])
+        .await
+        .map_err(operation_error)?;
+    match results.remove(0) {
+        ChangePreview::Merge(preview) => Ok(preview),
+        other => panic!("not a merge's preview: {other:?}"),
+    }
+}
+
+async fn apply_merge(
+    principal: &Principal,
+    winner_id: &str,
+    loser_ids: &[String],
+    expected: Vec<ManualFill>,
+) -> Result<MergeOutcome, ChangeError> {
+    let change = merge_change(winner_id, loser_ids, Some(expected));
+    let mut results = super::super::apply(principal, &[change])
+        .await
+        .map_err(operation_error)?;
+    match results.remove(0) {
+        ChangeResult::Merge(outcome) => Ok(outcome),
+        other => panic!("not a merge's result: {other:?}"),
+    }
+}
+
+/// Merges as a client does: with what a preview reported.
+async fn merge(
+    principal: &Principal,
+    winner_id: &str,
+    loser_ids: &[String],
+) -> Result<MergeOutcome, ChangeError> {
+    let expected = preview(principal, winner_id, loser_ids).await?.manual_fills;
+    apply_merge(principal, winner_id, loser_ids, expected).await
+}
+
+async fn rename_genre(principal: &Principal, id: &str, name: &str) -> Result<String, ChangeError> {
+    let change = |expected| MetadataChange::RenameGenre {
+        genre_id: id.to_string(),
+        name: name.to_string(),
+        expected,
+    };
+    let previewed = super::super::preview(principal, &[change(None)])
+        .await
+        .map_err(operation_error)?;
+    let [ChangePreview::RenameGenre { current_name, .. }] = previewed.as_slice() else {
+        panic!("not a rename's preview: {previewed:?}");
+    };
+    let applied = super::super::apply(principal, &[change(Some(current_name.clone()))])
+        .await
+        .map_err(operation_error)?;
+    let [ChangeResult::RenameGenre { name, .. }] = applied.as_slice() else {
+        panic!("not a rename's result: {applied:?}");
+    };
+    Ok(name.clone())
+}
+
 async fn merge_ids(
     principal: &Principal,
     winner: DbId,
     losers: &[DbId],
-) -> Result<MergeOutcome, EntityMergeError> {
+) -> Result<MergeOutcome, ChangeError> {
     let (winner_id, loser_ids) = {
         let db = STATE.db.read().await;
         (public_id(&db, winner), public_ids(&db, losers))
@@ -460,7 +553,7 @@ async fn a_blank_winner_is_refused_and_a_blank_loser_leaves_no_alias() -> anyhow
 
     assert!(matches!(
         merge_ids(&admin, blank, &[named]).await,
-        Err(EntityMergeError::Invalid(_))
+        Err(ChangeError::Invalid(_))
     ));
 
     merge_ids(&admin, named, &[blank]).await?;
@@ -493,13 +586,13 @@ async fn renames_follow_the_name_rules() -> anyhow::Result<()> {
     for blank in ["", "   "] {
         assert!(matches!(
             rename_genre(&admin, &id, blank).await,
-            Err(EntityMergeError::Invalid(_))
+            Err(ChangeError::Invalid(_))
         ));
     }
     for taken in ["pop", "POPULAR"] {
         assert!(matches!(
             rename_genre(&admin, &id, taken).await,
-            Err(EntityMergeError::Conflict(_))
+            Err(ChangeError::Conflict(_))
         ));
     }
     assert_eq!(rename_genre(&admin, &id, "ROCK").await?, "ROCK");
@@ -770,7 +863,13 @@ async fn a_locked_winner_takes_loser_manual_values_for_its_empty_keys() -> anyho
 
     let preview = preview(&admin, &winner_id, std::slice::from_ref(&loser_id)).await?;
     assert_eq!(preview.locked_ids, std::slice::from_ref(&winner_id));
-    assert_eq!(preview.manual_fills, ["description"]);
+    assert_eq!(
+        preview.manual_fills,
+        [ManualFill {
+            key: "description".to_string(),
+            value: json!("From the loser"),
+        }]
+    );
 
     merge(&admin, &winner_id, &[loser_id]).await?;
 
@@ -836,7 +935,10 @@ async fn releases_merge_in_one_library_and_preview_reports_shared_numbers() -> a
     };
 
     let preview = preview(&admin, &winner_id, std::slice::from_ref(&loser_id)).await?;
-    assert_eq!(preview.track_collisions, [(1, 1)]);
+    assert_eq!(
+        preview.track_collisions,
+        [TrackCollision { disc: 1, track: 1 }]
+    );
     assert_eq!(preview.outcome.counts.tracks, 2);
     assert_eq!(preview.kept_external_ids.len(), 1);
     assert_eq!(preview.kept_external_ids[0].id_value, "b");
@@ -911,7 +1013,7 @@ async fn releases_in_different_libraries_or_with_the_same_track_stay_apart() -> 
     for loser in [elsewhere, both] {
         assert!(matches!(
             merge_ids(&admin, winner, &[loser]).await,
-            Err(EntityMergeError::Conflict(_))
+            Err(ChangeError::Conflict(_))
         ));
     }
 
@@ -919,7 +1021,7 @@ async fn releases_in_different_libraries_or_with_the_same_track_stay_apart() -> 
     let pairs = HashSet::from([("provider".to_string(), "recording_id".to_string())]);
     assert!(matches!(
         check_releases(&db, winner, &[same_track], &pairs),
-        Err(EntityMergeError::Conflict(_))
+        Err(ChangeError::Conflict(_))
     ));
     check_releases(&db, winner, &[same_track], &HashSet::new())?;
     Ok(())
@@ -1088,21 +1190,17 @@ async fn the_request_is_checked_before_anything_else() -> anyhow::Result<()> {
             public_id(&db, track),
         )
     };
-    let invalid = |result: Result<MergeOutcome, EntityMergeError>| {
-        assert!(
-            matches!(result, Err(EntityMergeError::Invalid(_))),
-            "{result:?}"
-        );
+    let invalid = |result: Result<MergeOutcome, ChangeError>| {
+        assert!(matches!(result, Err(ChangeError::Invalid(_))), "{result:?}");
     };
 
     invalid(merge(&admin, &genre, &[]).await);
-    invalid(merge(&admin, &genre, &vec!["x".to_string(); MAX_LOSERS + 1]).await);
     invalid(merge(&admin, &genre, std::slice::from_ref(&genre)).await);
     invalid(merge(&admin, &genre, std::slice::from_ref(&artist)).await);
     invalid(merge(&admin, &track, std::slice::from_ref(&genre)).await);
     assert!(matches!(
         merge(&admin, &genre, &["missing".to_string()]).await,
-        Err(EntityMergeError::NotFound(_))
+        Err(ChangeError::NotFound(_))
     ));
     Ok(())
 }
@@ -1145,7 +1243,8 @@ async fn a_library_the_entities_reach_after_the_run_check_is_a_conflict() -> any
     };
     let losers = [loser.clone()];
 
-    let (reached, result) = run_with_recycle_at(Some(0), merge(&admin, &winner, &losers), |db| {
+    let merge = apply_merge(&admin, &winner, &losers, Vec::new());
+    let (reached, result) = run_with_recycle_at(Some(0), merge, |db| {
         let genre = lyra_db::lookup::find_node_id_by_id(&*db, &loser)
             .expect("lookup")
             .expect("loser");
@@ -1155,7 +1254,7 @@ async fn a_library_the_entities_reach_after_the_run_check_is_a_conflict() -> any
 
     assert!(reached);
     assert!(
-        matches!(result, Err(EntityMergeError::Conflict(_))),
+        matches!(result, Err(ChangeError::Conflict(_))),
         "{result:?}"
     );
     let db = STATE.db.read().await;

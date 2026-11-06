@@ -56,19 +56,27 @@ fn inherit(field: MetadataField) -> MetadataChangeRequest {
     }
 }
 
+#[derive(Debug)]
+struct MetadataApplyRequest {
+    changes: Vec<MetadataChangeRequest>,
+    expected: Vec<MetadataFieldDiff>,
+}
+
 fn preview_edit(
     db: &DbAny,
     entity_id: DbId,
     changes: Vec<MetadataChangeRequest>,
 ) -> Result<MetadataApplyRequest, MetadataEditingError> {
-    let expected = preview(
-        db,
-        entity_id,
-        &MetadataPreviewRequest {
-            changes: changes.clone(),
-        },
-    )?;
+    let expected = preview(db, entity_id, &changes)?;
     Ok(MetadataApplyRequest { changes, expected })
+}
+
+fn apply(
+    db: &mut DbAny,
+    entity_id: DbId,
+    edit: &MetadataApplyRequest,
+) -> Result<MetadataSnapshot, MetadataEditingError> {
+    db.transaction_mut(|t| super::apply(t, entity_id, &edit.changes, &edit.expected))
 }
 
 #[test]
@@ -76,33 +84,14 @@ fn requests_deny_unknown_fields() {
     let change = json!({"field": "track_title", "operation": "set", "value": "Title"});
     let field_state = json!({"value": "Title", "source": "manual"});
     let diff = json!({"field": "track_title", "before": field_state, "after": field_state});
-    assert!(serde_json::from_value::<MetadataPreviewRequest>(json!({"changes": [change]})).is_ok());
-    assert!(
-        serde_json::from_value::<MetadataApplyRequest>(json!({
-            "changes": [change],
-            "expected": [diff]
-        }))
-        .is_ok()
-    );
+    assert!(serde_json::from_value::<MetadataChangeRequest>(change.clone()).is_ok());
+    assert!(serde_json::from_value::<MetadataFieldDiff>(diff.clone()).is_ok());
 
     let with_unexpected = |value: &Value| {
         let mut value = value.clone();
         value["unexpected"] = json!(true);
         value
     };
-    assert!(
-        serde_json::from_value::<MetadataPreviewRequest>(with_unexpected(
-            &json!({"changes": [change]})
-        ))
-        .is_err()
-    );
-    assert!(
-        serde_json::from_value::<MetadataApplyRequest>(with_unexpected(&json!({
-            "changes": [change],
-            "expected": [diff]
-        })))
-        .is_err()
-    );
     assert!(serde_json::from_value::<MetadataChangeRequest>(with_unexpected(&change)).is_err());
     assert!(serde_json::from_value::<MetadataFieldDiff>(with_unexpected(&diff)).is_err());
     assert!(serde_json::from_value::<FieldState>(with_unexpected(&field_state)).is_err());
@@ -206,13 +195,7 @@ fn apply_requires_expected_to_cover_only_requested_changes() -> anyhow::Result<(
     let mut db = new_test_db()?;
     let track_id = insert_track(&mut db, "First")?;
     let changes = vec![set(MetadataField::TrackTitle, json!("Second"))];
-    let diff = preview(
-        &db,
-        track_id,
-        &MetadataPreviewRequest {
-            changes: changes.clone(),
-        },
-    )?;
+    let diff = preview(&db, track_id, &changes)?;
 
     let error = apply(
         &mut db,
@@ -259,6 +242,31 @@ fn apply_requires_expected_to_cover_only_requested_changes() -> anyhow::Result<(
 }
 
 #[test]
+fn an_inherit_someone_else_finished_reads_as_a_conflict() -> anyhow::Result<()> {
+    let mut db = new_test_db()?;
+    let track_id = insert_track(&mut db, "Track")?;
+    let manual = preview_edit(
+        &db,
+        track_id,
+        vec![set(MetadataField::SortTitle, json!("Sorted"))],
+    )?;
+    apply(&mut db, track_id, &manual)?;
+    let inherited = preview_edit(&db, track_id, vec![inherit(MetadataField::SortTitle)])?;
+    apply(&mut db, track_id, &inherited)?;
+
+    let error = apply(&mut db, track_id, &inherited).expect_err("the field already inherits");
+
+    assert!(
+        matches!(&error, MetadataEditingError::Conflict(current) if current.is_empty()),
+        "{error:?}"
+    );
+    let unowned = preview(&db, track_id, &[inherit(MetadataField::SortTitle)])
+        .expect_err("a preview turns it down");
+    assert!(matches!(unowned, MetadataEditingError::BadRequest(_)));
+    Ok(())
+}
+
+#[test]
 fn apply_accepts_the_preview_diff_as_expected() -> anyhow::Result<()> {
     let mut db = new_test_db()?;
     let track_id = insert_track(&mut db, "First")?;
@@ -266,13 +274,7 @@ fn apply_accepts_the_preview_diff_as_expected() -> anyhow::Result<()> {
         set(MetadataField::TrackTitle, json!("Second")),
         set(MetadataField::Year, json!(2001)),
     ];
-    let diff = preview(
-        &db,
-        track_id,
-        &MetadataPreviewRequest {
-            changes: changes.clone(),
-        },
-    )?;
+    let diff = preview(&db, track_id, &changes)?;
     let expected: Vec<MetadataFieldDiff> = serde_json::from_value(serde_json::to_value(&diff)?)?;
 
     let result = apply(

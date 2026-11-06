@@ -277,6 +277,7 @@ pub fn metadata_routes() -> Router {
             get(get_metadata_mapping).put(put_metadata_mapping),
         )
         .route("/mapping/preview", post(preview_metadata_mapping))
+        .merge(super::metadata_changes::metadata_change_routes())
 }
 
 #[cfg(feature = "docgen")]
@@ -296,4 +297,5 @@ pub(crate) fn metadata_openapi_routes() -> aide::axum::ApiRouter {
             "/mapping/preview",
             post_with(preview_metadata_mapping, preview_metadata_mapping_docs),
         )
+        .merge(super::metadata_changes::metadata_change_openapi_routes())
 }

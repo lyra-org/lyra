@@ -170,7 +170,7 @@ fn track_fields(
 }
 
 fn artist_fields(
-    db: &agdb::DbAny,
+    db: &impl DbAccess,
     artist: lyra_db::Artist,
     artist_id: DbId,
 ) -> anyhow::Result<BTreeMap<MetadataField, Value>> {
@@ -205,7 +205,7 @@ fn artist_fields(
 }
 
 pub(super) fn load_entity_state(
-    db: &agdb::DbAny,
+    db: &impl DbAccess,
     db_id: DbId,
 ) -> Result<EntityState, MetadataEditingError> {
     let (public_id, entity_type, fields) =

@@ -14,10 +14,7 @@ use axum::{
         Path,
         Query,
     },
-    http::{
-        HeaderMap,
-        StatusCode,
-    },
+    http::HeaderMap,
 };
 use serde::{
     Deserialize,
@@ -54,12 +51,9 @@ use crate::{
         providers::{
             EntityExternalIdRecord,
             ProviderUpdate,
-            SetEntityExternalIdRequest as ProviderSetEntityExternalIdRequest,
-            inherit_entity_external_id as inherit_entity_external_id_service,
             list_entity_external_ids as list_entity_external_ids_service,
             list_provider_configs,
             refresh_entity as refresh_entity_service,
-            set_entity_external_id as set_entity_external_id_service,
             set_entity_locked,
             update_provider as update_provider_service,
         },
@@ -341,13 +335,6 @@ pub struct UpdateProviderRequest {
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Deserialize)]
-#[non_exhaustive]
-pub struct SetExternalIdRequest {
-    pub id_value: String,
-}
-
-#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
 #[non_exhaustive]
 pub struct ExternalIdResponse {
@@ -579,37 +566,6 @@ async fn get_entity_external_ids(
     Ok(Json(response))
 }
 
-async fn set_entity_external_id(
-    headers: HeaderMap,
-    Path((entity_id, provider_id, id_type)): Path<(String, String, String)>,
-    Json(request): Json<SetExternalIdRequest>,
-) -> Result<Json<ExternalIdResponse>, AppError> {
-    let principal = require_manage_metadata(bearer_credential(&headers)).await?;
-
-    let record = set_entity_external_id_service(
-        &principal,
-        &entity_id,
-        ProviderSetEntityExternalIdRequest {
-            provider_id,
-            id_type,
-            id_value: request.id_value,
-        },
-    )
-    .await?;
-
-    Ok(Json(record.into()))
-}
-
-async fn inherit_entity_external_id(
-    headers: HeaderMap,
-    Path((entity_id, provider_id, id_type)): Path<(String, String, String)>,
-) -> Result<StatusCode, AppError> {
-    let principal = require_manage_metadata(bearer_credential(&headers)).await?;
-    inherit_entity_external_id_service(&principal, &entity_id, &provider_id, &id_type).await?;
-
-    Ok(StatusCode::NO_CONTENT)
-}
-
 async fn lock_entity(
     headers: HeaderMap,
     Path(entity_id): Path<String>,
@@ -723,20 +679,6 @@ fn get_external_ids_docs(op: TransformOperation) -> TransformOperation {
 }
 
 #[cfg(feature = "docgen")]
-fn set_external_id_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Set entity external ID").description(
-        "Sets the manual value of one external ID on an entity, keyed by `provider_id` and `id_type` in the path. It takes effect over the resolved value, which is kept and returns when the ID is inherited again. Returns 400 when the value is blank. Responds 404 when the caller reaches the entity through no library. Requires ManageMetadata permission.",
-    )
-}
-
-#[cfg(feature = "docgen")]
-fn inherit_external_id_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Inherit entity external ID").description(
-        "Removes the manual value of one external ID on an entity, so the resolved value takes effect again. Returns 404 when the ID has no manual value. Responds 404 when the caller reaches the entity through no library. Requires ManageMetadata permission.",
-    )
-}
-
-#[cfg(feature = "docgen")]
 fn lock_entity_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Lock entity")
         .description("Locks an entity so scans and providers no longer change its editable metadata; manual edits still apply. Responds 404 when the caller reaches the entity through no library. Requires ManageMetadata permission.")
@@ -836,10 +778,6 @@ pub fn entity_routes() -> Router {
 
     Router::new()
         .route("/{id}/external-ids", get(get_entity_external_ids))
-        .route(
-            "/{id}/external-ids/{provider_id}/{id_type}",
-            put(set_entity_external_id).delete(inherit_entity_external_id),
-        )
         .route("/{id}/lock", put(lock_entity))
         .route("/{id}/lock", delete(unlock_entity))
         .route("/{id}/refresh", post(refresh_entity))
@@ -858,11 +796,6 @@ pub(crate) fn entity_openapi_routes() -> aide::axum::ApiRouter {
         .api_route(
             "/{id}/external-ids",
             get_with(get_entity_external_ids, get_external_ids_docs),
-        )
-        .api_route(
-            "/{id}/external-ids/{provider_id}/{id_type}",
-            put_with(set_entity_external_id, set_external_id_docs)
-                .delete_with(inherit_entity_external_id, inherit_external_id_docs),
         )
         .api_route("/{id}/lock", put_with(lock_entity, lock_entity_docs))
         .api_route("/{id}/lock", delete_with(unlock_entity, unlock_entity_docs))
@@ -883,6 +816,7 @@ mod tests {
         QueryBuilder,
     };
     use anyhow::anyhow;
+    use axum::http::StatusCode;
     use lyra_db::roots::{
         self,
         Root,

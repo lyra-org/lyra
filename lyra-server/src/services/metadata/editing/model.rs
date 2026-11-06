@@ -33,13 +33,6 @@ pub(crate) struct MetadataChangeRequest {
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct MetadataPreviewRequest {
-    pub(crate) changes: Vec<MetadataChangeRequest>,
-}
-
-#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum MetadataValueSource {
@@ -53,14 +46,6 @@ pub(crate) enum MetadataValueSource {
 pub(crate) struct FieldState {
     pub(crate) value: Value,
     pub(crate) source: MetadataValueSource,
-}
-
-#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct MetadataApplyRequest {
-    pub(crate) changes: Vec<MetadataChangeRequest>,
-    pub(crate) expected: Vec<MetadataFieldDiff>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]

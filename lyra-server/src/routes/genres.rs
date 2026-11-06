@@ -37,10 +37,7 @@ use crate::{
     },
     services::STATE,
     services::{
-        auth::{
-            require_authenticated,
-            require_manage_metadata,
-        },
+        auth::require_authenticated,
         catalog::{
             self,
             genres::{
@@ -53,7 +50,6 @@ use crate::{
             display::CoverFilter,
             shown::CoverTarget,
         },
-        metadata::entity_merge,
         pagination::SnapshotKey,
     },
 };
@@ -82,12 +78,6 @@ struct GenreResponse {
 #[derive(Serialize)]
 struct GenreSummary {
     id: String,
-    name: String,
-}
-
-#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Deserialize)]
-struct GenreRenameRequest {
     name: String,
 }
 
@@ -367,23 +357,6 @@ fn list_genres_docs(op: TransformOperation) -> TransformOperation {
     )
 }
 
-async fn rename_genre(
-    headers: HeaderMap,
-    Path(id): Path<String>,
-    Json(request): Json<GenreRenameRequest>,
-) -> Result<Json<GenreSummary>, AppError> {
-    let principal = require_manage_metadata(bearer_credential(&headers)).await?;
-    let name = entity_merge::rename_genre(&principal, &id, &request.name).await?;
-    Ok(Json(GenreSummary { id, name }))
-}
-
-#[cfg(feature = "docgen")]
-fn rename_genre_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Rename a genre").description(
-        "Renames a genre, trimming the name; a blank name is 400. A change beyond letter case keeps the old name as an alias, so tags and providers using it still land on this genre, and drops an alias of this genre holding the new name. Responds 409 when another genre has the name or an alias of it, as that calls for a merge, or when a sync, refresh or purge is running on a library the genre reaches. Requires ManageMetadata and access to every library the genre reaches: 404 when the caller reaches it through none, 403 when through only some.",
-    )
-}
-
 #[cfg(feature = "docgen")]
 fn get_genre_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get genre by ID")
@@ -393,7 +366,7 @@ fn get_genre_docs(op: TransformOperation) -> TransformOperation {
 pub fn genre_routes() -> Router {
     Router::new()
         .route("/", get(list_genres))
-        .route("/{id}", get(get_genre).patch(rename_genre))
+        .route("/{id}", get(get_genre))
 }
 
 #[cfg(feature = "docgen")]
@@ -402,10 +375,7 @@ pub(crate) fn genre_openapi_routes() -> aide::axum::ApiRouter {
 
     aide::axum::ApiRouter::new()
         .api_route("/", get_with(list_genres, list_genres_docs))
-        .api_route(
-            "/{id}",
-            get_with(get_genre, get_genre_docs).patch_with(rename_genre, rename_genre_docs),
-        )
+        .api_route("/{id}", get_with(get_genre, get_genre_docs))
 }
 
 #[cfg(test)]

@@ -65,9 +65,7 @@ pub(crate) fn build_core_api() -> Result<CoreApi> {
         .nest("/api/mixers", super::mixer_routes())
         .nest(
             "/api/entities",
-            super::entity_routes()
-                .merge(super::entity_metadata_routes())
-                .merge(super::entity_merge_routes()),
+            super::entity_routes().merge(super::entity_metadata_routes()),
         )
         .nest("/api/plugins", super::plugin_routes())
         .nest("/api/sync", super::sync_routes())
@@ -119,8 +117,7 @@ pub(crate) fn build_openapi_spec() -> OpenApi {
         .nest(
             "/api/entities",
             super::providers::entity_openapi_routes()
-                .merge(super::entity_metadata::entity_metadata_openapi_routes())
-                .merge(super::entity_merge::entity_merge_openapi_routes()),
+                .merge(super::entity_metadata::entity_metadata_openapi_routes()),
         )
         .nest("/api/plugins", super::plugins::plugin_openapi_routes())
         .nest("/api/sync", super::sync::sync_openapi_routes())
@@ -436,12 +433,13 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("GET", "/api/entries/{id}"),
     ("GET", "/api/genres/"),
     ("GET", "/api/genres/{id}"),
-    ("PATCH", "/api/genres/{id}"),
     ("GET", "/api/labels/"),
     ("GET", "/api/labels/{id}"),
     ("GET", "/api/metadata/mapping"),
     ("PUT", "/api/metadata/mapping"),
     ("POST", "/api/metadata/mapping/preview"),
+    ("POST", "/api/metadata/changes"),
+    ("POST", "/api/metadata/changes/preview"),
     ("GET", "/api/tracks/"),
     ("GET", "/api/tracks/{id}"),
     ("POST", "/api/tracks/{id}/playback-url"),
@@ -479,22 +477,10 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("GET", "/api/mixers/"),
     ("PATCH", "/api/mixers/{mixer_id}"),
     ("GET", "/api/entities/{id}/external-ids"),
-    (
-        "PUT",
-        "/api/entities/{id}/external-ids/{provider_id}/{id_type}",
-    ),
     ("PUT", "/api/entities/{id}/lock"),
     ("DELETE", "/api/entities/{id}/lock"),
     ("POST", "/api/entities/{id}/refresh"),
     ("GET", "/api/entities/{id}/metadata"),
-    ("PATCH", "/api/entities/{id}/metadata"),
-    ("POST", "/api/entities/{id}/metadata/preview"),
-    ("POST", "/api/entities/{id}/merge"),
-    ("POST", "/api/entities/{id}/merge/preview"),
-    (
-        "DELETE",
-        "/api/entities/{id}/external-ids/{provider_id}/{id_type}/aliases/{value}",
-    ),
     ("GET", "/api/plugins/"),
     ("GET", "/api/plugins/settings"),
     ("POST", "/api/plugins/{plugin_id}/restart"),

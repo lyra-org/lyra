@@ -106,13 +106,17 @@ impl AppError {
         Self::with_status(StatusCode::CONFLICT, message.into())
     }
 
-    pub fn json_conflict(body: serde_json::Value) -> Self {
+    pub fn json(status_code: StatusCode, body: serde_json::Value) -> Self {
         Self {
-            error: anyhow::anyhow!("conflict"),
-            status_code: StatusCode::CONFLICT,
+            error: anyhow::anyhow!("{status_code}"),
+            status_code,
             retry_after: None,
             json_body: Some(body),
         }
+    }
+
+    pub fn json_conflict(body: serde_json::Value) -> Self {
+        Self::json(StatusCode::CONFLICT, body)
     }
 
     pub fn gone(message: impl Into<String>) -> Self {
@@ -406,8 +410,6 @@ impl From<ProviderAdminError> for AppError {
         match err {
             ProviderAdminError::ProviderNotFound(message) => Self::not_found(message),
             ProviderAdminError::EntityNotFound(message) => Self::not_found(message),
-            ProviderAdminError::ManualIdNotFound(message) => Self::not_found(message),
-            ProviderAdminError::BlankIdValue(message) => Self::bad_request(message),
             ProviderAdminError::Forbidden(message) => Self::forbidden(message),
             ProviderAdminError::Internal(err) => err.into(),
         }

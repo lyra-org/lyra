@@ -9,7 +9,6 @@ mod bookmarks;
 mod connections;
 mod cors;
 mod covers;
-mod entity_merge;
 mod entity_metadata;
 mod entries;
 mod error;
@@ -19,6 +18,7 @@ mod labels;
 mod libraries;
 mod listens;
 mod metadata;
+mod metadata_changes;
 mod mix;
 mod mixers;
 mod pagination;
@@ -71,7 +71,6 @@ pub(crate) use app::{
 };
 pub use artists::artist_routes;
 pub use covers::cover_routes;
-pub(crate) use entity_merge::entity_merge_routes;
 pub(crate) use entity_metadata::entity_metadata_routes;
 pub use entries::entry_routes;
 pub(crate) use error::{

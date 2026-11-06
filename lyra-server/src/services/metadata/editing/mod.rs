@@ -11,19 +11,22 @@ mod state;
 
 use agdb::{
     DbAny,
+    DbAnyTransactionMut,
+    DbError,
     DbId,
 };
+use lyra_db::DbAccess;
 
-use apply::apply_diff;
+use apply::apply_inside_tx;
 use model::{
-    MetadataApplyRequest,
+    MetadataChangeRequest,
     MetadataFieldDiff,
-    MetadataPreviewRequest,
     MetadataSnapshot,
 };
 use plan::{
     build_diff,
     check_expected,
+    check_inherits_manual,
 };
 use state::load_entity_state;
 
@@ -45,6 +48,12 @@ impl From<serde_json::Error> for MetadataEditingError {
     }
 }
 
+impl From<DbError> for MetadataEditingError {
+    fn from(error: DbError) -> Self {
+        Self::Internal(error.into())
+    }
+}
+
 pub(crate) fn get_snapshot(
     db: &DbAny,
     db_id: DbId,
@@ -53,12 +62,13 @@ pub(crate) fn get_snapshot(
 }
 
 pub(crate) fn preview(
-    db: &DbAny,
+    db: &impl DbAccess,
     db_id: DbId,
-    request: &MetadataPreviewRequest,
+    changes: &[MetadataChangeRequest],
 ) -> Result<Vec<MetadataFieldDiff>, MetadataEditingError> {
     let state = load_entity_state(db, db_id)?;
-    let diff = build_diff(db, &state, &request.changes)?;
+    let diff = build_diff(db, &state, changes)?;
+    check_inherits_manual(&state, changes)?;
     if diff.is_empty() {
         return Err(MetadataEditingError::BadRequest(
             "metadata edit has no effect".to_string(),
@@ -68,15 +78,17 @@ pub(crate) fn preview(
 }
 
 pub(crate) fn apply(
-    db: &mut DbAny,
+    t: &mut DbAnyTransactionMut<'_>,
     db_id: DbId,
-    request: &MetadataApplyRequest,
+    changes: &[MetadataChangeRequest],
+    expected: &[MetadataFieldDiff],
 ) -> Result<MetadataSnapshot, MetadataEditingError> {
-    let state = load_entity_state(db, db_id)?;
-    let diff = build_diff(db, &state, &request.changes)?;
-    check_expected(&request.changes, &request.expected, &diff)?;
-    apply_diff(db, &state, &diff)?;
-    Ok(load_entity_state(db, db_id)?.response())
+    let state = load_entity_state(t, db_id)?;
+    let diff = build_diff(t, &state, changes)?;
+    check_expected(changes, expected, &diff)?;
+    check_inherits_manual(&state, changes)?;
+    apply_inside_tx(t, &state, &diff)?;
+    Ok(load_entity_state(t, db_id)?.response())
 }
 
 #[cfg(test)]

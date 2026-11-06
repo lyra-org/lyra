@@ -126,13 +126,12 @@ pub(super) fn build_diff(
                 normalized_set_value(db, state, change.field, value)?,
                 MetadataValueSource::Manual,
             ),
+            // The field already inherits; `check_inherits_manual` turns that down, once a change
+            // to it can read as stale.
+            MetadataEditOperation::Inherit if before.source != MetadataValueSource::Manual => {
+                (before.value.clone(), MetadataValueSource::Resolved)
+            }
             MetadataEditOperation::Inherit => {
-                if before.source != MetadataValueSource::Manual {
-                    return Err(MetadataEditingError::BadRequest(format!(
-                        "field '{}' is not manually owned",
-                        change.field.as_str(),
-                    )));
-                }
                 let target = inherited_value(db, state, change.field)?;
                 (target, MetadataValueSource::Resolved)
             }
@@ -152,6 +151,23 @@ pub(super) fn build_diff(
         .collect();
     validate_target(state, &diff)?;
     Ok(diff)
+}
+
+pub(super) fn check_inherits_manual(
+    state: &EntityState,
+    changes: &[MetadataChangeRequest],
+) -> Result<(), MetadataEditingError> {
+    for change in changes {
+        if matches!(change.edit, MetadataEditOperation::Inherit)
+            && state.field_state(change.field)?.source != MetadataValueSource::Manual
+        {
+            return Err(MetadataEditingError::BadRequest(format!(
+                "field '{}' is not manually owned",
+                change.field.as_str(),
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn check_expected(

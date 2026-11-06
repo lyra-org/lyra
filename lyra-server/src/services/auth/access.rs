@@ -142,6 +142,23 @@ pub(crate) fn artist_accessible(
     Ok(false)
 }
 
+/// The entity `public_id` names, when the principal can see its editable metadata.
+pub(crate) fn metadata_entity(
+    db: &impl lyra_db::DbAccess,
+    principal: &Principal,
+    public_id: &str,
+) -> anyhow::Result<Option<DbId>> {
+    let Some(entity_id) = lyra_db::lookup::find_node_id_by_id(db, public_id)? else {
+        return Ok(None);
+    };
+    let accessible = if lyra_db::artists::get_by_id(db, entity_id)?.is_some() {
+        artist_accessible(db, principal, entity_id)?
+    } else {
+        entity_accessible(db, principal, entity_id)?
+    };
+    Ok(accessible.then_some(entity_id))
+}
+
 /// The libraries a change to the artist, release, genre or label reaches: those of what is linked
 /// to it, and those of every entity a layer of which references it. An artist owning such a layer
 /// counts through its own releases and tracks. Genres and labels hang under no library, so
@@ -217,6 +234,20 @@ fn add_owner_libraries(
         _ => {}
     }
     Ok(())
+}
+
+/// The entity `public_id` names and the libraries a change to it reaches, when `principal`, as
+/// the caller's guard has it, reaches it through at least one. Hidden entities read as missing.
+pub(crate) fn reachable_entity(
+    db: &impl lyra_db::DbAccess,
+    principal: &Principal,
+    public_id: &str,
+) -> anyhow::Result<Option<(DbId, Vec<Library>)>> {
+    let Some(entity_id) = lyra_db::lookup::find_node_id_by_id(db, public_id)? else {
+        return Ok(None);
+    };
+    let libraries = affected_libraries(db, entity_id)?;
+    Ok(any_library_accessible(principal, &libraries).then_some((entity_id, libraries)))
 }
 
 /// Whether `principal` is an admin or can see any of `libraries`.

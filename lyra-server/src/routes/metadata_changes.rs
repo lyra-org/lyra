@@ -8,261 +8,185 @@ use aide::transform::TransformOperation;
 use axum::{
     Json,
     Router,
-    extract::Path,
     http::{
         HeaderMap,
         StatusCode,
     },
-    routing::{
-        delete,
-        post,
-    },
+    routing::post,
 };
 use serde::{
     Deserialize,
     Serialize,
+};
+use serde_json::{
+    Value,
+    json,
 };
 
 use crate::routes::AppError;
 use crate::routes::request::bearer_credential;
 use crate::services::{
     auth::require_manage_metadata,
-    metadata::entity_merge::{
+    metadata::changes::{
         self,
-        EntityMergeError,
-        MergeCounts,
-        MergeOutcome,
-        MergePreview,
+        ChangeError,
+        ChangeSetError,
+        model::{
+            ChangePreview,
+            ChangeResult,
+            MetadataChange,
+        },
     },
 };
 
-impl From<EntityMergeError> for AppError {
-    fn from(error: EntityMergeError) -> Self {
+impl From<ChangeSetError> for AppError {
+    fn from(error: ChangeSetError) -> Self {
         match error {
-            EntityMergeError::Invalid(message) => Self::bad_request(message),
-            EntityMergeError::NotFound(id) => Self::not_found(format!("Entity not found: {id}")),
-            EntityMergeError::Forbidden(message) => Self::forbidden(message),
-            EntityMergeError::Conflict(message) => Self::conflict(message),
-            EntityMergeError::Internal(error) => Self::from(error),
+            ChangeSetError::Invalid(message) => Self::bad_request(message),
+            ChangeSetError::Forbidden(message) => Self::forbidden(message),
+            ChangeSetError::Internal(error) => Self::from(error),
+            ChangeSetError::Failed { index, error } => failed_change(index, error),
         }
     }
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct ChangeFailureResponse {
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "The 0-based position in the set of the operation that failed.")
+    )]
+    index: usize,
+    message: String,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "`metadata_change_stale` when `expected` no longer holds.")
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<&'static str>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "With `code`, what a new preview would report for `expected`.")
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current: Option<Value>,
+}
+
+fn failed_change(index: usize, error: ChangeError) -> AppError {
+    let message = error.to_string();
+    let (status, code, current) = match error {
+        ChangeError::Invalid(_) => (StatusCode::BAD_REQUEST, None, None),
+        ChangeError::NotFound(_) => (StatusCode::NOT_FOUND, None, None),
+        ChangeError::Forbidden(_) => (StatusCode::FORBIDDEN, None, None),
+        ChangeError::Conflict(_) => (StatusCode::CONFLICT, None, None),
+        ChangeError::Stale { current, .. } => (
+            StatusCode::CONFLICT,
+            Some("metadata_change_stale"),
+            Some(current),
+        ),
+        ChangeError::Internal(error) => return AppError::from(error),
+    };
+    AppError::json(
+        status,
+        json!(ChangeFailureResponse {
+            index,
+            message,
+            code,
+            current,
+        }),
+    )
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
-struct MergeRequest {
+#[serde(deny_unknown_fields)]
+struct ChangeSetRequest {
     #[cfg_attr(
         feature = "docgen",
-        schemars(description = "The entities to merge into this one, at most 50, of its kind.")
+        schemars(description = "The operations in the order they apply, at most 50.")
     )]
-    loser_ids: Vec<String>,
+    changes: Vec<MetadataChange>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
-struct MergeCountsResponse {
-    losers: usize,
+struct ChangeSetPreviewResponse {
     #[cfg_attr(
         feature = "docgen",
-        schemars(description = "Releases credited to or linked with the losers.")
+        schemars(description = "One report per operation, in the set's order.")
     )]
-    releases: usize,
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(description = "Tracks credited to the losers, or on the losing releases.")
-    )]
-    tracks: usize,
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(description = "Parent and child genres of the losers.")
-    )]
-    relatives: usize,
-}
-
-impl From<MergeCounts> for MergeCountsResponse {
-    fn from(counts: MergeCounts) -> Self {
-        Self {
-            losers: counts.losers,
-            releases: counts.releases,
-            tracks: counts.tracks,
-            relatives: counts.relatives,
-        }
-    }
+    results: Vec<ChangePreview>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
-struct MergeResponse {
-    winner_id: String,
+struct ChangeSetResponse {
     #[cfg_attr(
         feature = "docgen",
-        schemars(description = "artist, release, genre or label.")
+        schemars(description = "One result per operation, in the set's order.")
     )]
-    kind: &'static str,
-    counts: MergeCountsResponse,
+    results: Vec<ChangeResult>,
 }
 
-impl From<MergeOutcome> for MergeResponse {
-    fn from(outcome: MergeOutcome) -> Self {
-        Self {
-            winner_id: outcome.winner_id,
-            kind: outcome.kind.as_str(),
-            counts: outcome.counts.into(),
-        }
-    }
-}
-
-#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Serialize)]
-struct KeptExternalIdResponse {
-    provider_id: String,
-    id_type: String,
-    id_value: String,
-}
-
-#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Serialize)]
-struct TrackCollisionResponse {
-    disc: u32,
-    track: u32,
-}
-
-#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Serialize)]
-struct MergePreviewResponse {
-    #[serde(flatten)]
-    outcome: MergeResponse,
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(description = "Differing external IDs the winner would keep as aliases.")
-    )]
-    kept_external_ids: Vec<KeptExternalIdResponse>,
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(
-            description = "Disc and track numbers more than one of the releases hold. They don't block the merge, as split discs share them."
-        )
-    )]
-    track_collisions: Vec<TrackCollisionResponse>,
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(
-            description = "The locked entities among the winner and losers. A merge overrides a loser's lock."
-        )
-    )]
-    locked_ids: Vec<String>,
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(
-            description = "The manual keys the winner has empty and would take from a loser. They take effect on a locked winner too."
-        )
-    )]
-    manual_fills: Vec<String>,
-}
-
-impl From<MergePreview> for MergePreviewResponse {
-    fn from(preview: MergePreview) -> Self {
-        Self {
-            outcome: preview.outcome.into(),
-            kept_external_ids: preview
-                .kept_external_ids
-                .into_iter()
-                .map(|alias| KeptExternalIdResponse {
-                    provider_id: alias.provider_id,
-                    id_type: alias.id_type,
-                    id_value: alias.id_value,
-                })
-                .collect(),
-            track_collisions: preview
-                .track_collisions
-                .into_iter()
-                .map(|(disc, track)| TrackCollisionResponse { disc, track })
-                .collect(),
-            locked_ids: preview.locked_ids,
-            manual_fills: preview.manual_fills,
-        }
-    }
-}
-
-async fn merge_entities(
+async fn preview_metadata_changes(
     headers: HeaderMap,
-    Path(id): Path<String>,
-    Json(request): Json<MergeRequest>,
-) -> Result<Json<MergeResponse>, AppError> {
+    Json(request): Json<ChangeSetRequest>,
+) -> Result<Json<ChangeSetPreviewResponse>, AppError> {
     let principal = require_manage_metadata(bearer_credential(&headers)).await?;
-    let outcome = entity_merge::merge(&principal, &id, &request.loser_ids).await?;
-    Ok(Json(outcome.into()))
+    let results = changes::preview(&principal, &request.changes).await?;
+    Ok(Json(ChangeSetPreviewResponse { results }))
 }
 
-async fn preview_entity_merge(
+async fn apply_metadata_changes(
     headers: HeaderMap,
-    Path(id): Path<String>,
-    Json(request): Json<MergeRequest>,
-) -> Result<Json<MergePreviewResponse>, AppError> {
+    Json(request): Json<ChangeSetRequest>,
+) -> Result<Json<ChangeSetResponse>, AppError> {
     let principal = require_manage_metadata(bearer_credential(&headers)).await?;
-    let preview = entity_merge::preview(&principal, &id, &request.loser_ids).await?;
-    Ok(Json(preview.into()))
-}
-
-async fn remove_external_id_alias(
-    headers: HeaderMap,
-    Path((id, provider_id, id_type, value)): Path<(String, String, String, String)>,
-) -> Result<StatusCode, AppError> {
-    let principal = require_manage_metadata(bearer_credential(&headers)).await?;
-    entity_merge::remove_external_id_alias(&principal, &id, &provider_id, &id_type, &value).await?;
-    Ok(StatusCode::NO_CONTENT)
+    let results = changes::apply(&principal, &request.changes).await?;
+    Ok(Json(ChangeSetResponse { results }))
 }
 
 #[cfg(feature = "docgen")]
-fn merge_entities_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Merge duplicate entities").description(
-        "Merges `loser_ids` into this artist, release, genre or label in one transaction, which can't be undone. What is attached to the losers moves here, and they are deleted: their public IDs stop resolving, while their names and differing external IDs keep finding this entity, so later scans and provider refreshes don't bring them back. Responds 400 for an empty list, more than 50 losers, this entity among them, or a loser of another kind; 404 when the caller reaches an entity through no library; 403 when through only some of the libraries the merge reaches; and 409 while a sync, refresh or purge runs on one of them, for releases in different libraries, or for releases holding the same track by a unique ID. Requires ManageMetadata and access to every library the merge reaches.",
+fn preview_metadata_changes_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Preview a metadata change set").description(
+        "Takes the body of `POST /api/metadata/changes`, ignoring every `expected`, changes nothing and reports each operation in `results`: `edit_metadata` its field `diff`, `set_external_id` and `inherit_external_id` the `current` record, `merge` its counts and warnings with the `manual_fills` it would take, and `rename_genre` the `current_name`. Each operation is reported against the data as it stands: a preview does not model the earlier operations of the set, so an operation that relies on one, or that an earlier one would invalidate, reads differently here than when it applies. It binds nothing, as applying checks everything again. An operation that would have no effect fails the set. The first failing operation answers for the set with its own status, as in `POST /api/metadata/changes`: 400, 403, 404 or 409, and a JSON body with its `index` and `message`. An empty set, more than 50 operations, or more than 50 losers across the set is a plain 400. Requires ManageMetadata.",
     )
+    .response::<400, Json<ChangeFailureResponse>>()
+    .response::<403, Json<ChangeFailureResponse>>()
+    .response::<404, Json<ChangeFailureResponse>>()
+    .response::<409, Json<ChangeFailureResponse>>()
 }
 
 #[cfg(feature = "docgen")]
-fn preview_entity_merge_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Preview an entity merge").description(
-        "Runs every check a merge runs and reports what it would do, changing nothing: the merge returns these counts, and checks again when it runs.",
+fn apply_metadata_changes_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Apply a metadata change set").description(
+        "Applies `changes` in order in one transaction, or none of them, and returns one entry per operation in `results`, as things stood right after that operation. Merges can't be undone. Each operation resolves what it names and is checked against what the operations before it staged, so one naming an entity an earlier one merged away reads 404, and a rename to a name an earlier one took reads 409.\n\nEach operation but `remove_external_id_alias` requires `expected`, what preview reported for it: for `edit_metadata` the `diff`, for `set_external_id` and `inherit_external_id` the `current` record (`null` for none), for `merge` the `manual_fills`, and for `rename_genre` the `current_name`. It is compared with the staged state just before the operation runs, ahead of any check of what the operation itself would do, so an operation that an earlier one changes the state of needs that state as its `expected`, not the preview's. A mismatch is a 409 with `code` `metadata_change_stale` and `current`, what a new preview would report in place of `expected`.\n\nThe first failing operation rolls the set back and answers with its own status and a JSON body with its `index` and `message`: 400 for a missing `expected`, an invalid value, an operation with no effect, a merge of an entity into itself or with one of another kind; 403 when the caller reaches only some of the libraries a `merge`, `rename_genre` or `remove_external_id_alias` affects; 404 when the caller reaches an entity through no library, as for an entity that does not exist, or for a missing manual ID or alias; 409 for a stale `expected`, a name another genre goes by, releases in different libraries or holding the same track by a unique ID, or a sync, refresh or purge running on an affected library. Only a set holding a `merge` or `rename_genre` looks at runs, and then for every operation in it; other sets apply during a run. An empty set, more than 50 operations, or more than 50 losers across the set is a plain 400. Requires ManageMetadata, and access to one library of what `edit_metadata`, `set_external_id` and `inherit_external_id` change, or to every library a `merge`, `rename_genre` or `remove_external_id_alias` affects. For `edit_metadata` an artist reached only through another entity's layer doesn't count.",
     )
+    .response::<400, Json<ChangeFailureResponse>>()
+    .response::<403, Json<ChangeFailureResponse>>()
+    .response::<404, Json<ChangeFailureResponse>>()
+    .response::<409, Json<ChangeFailureResponse>>()
 }
 
-#[cfg(feature = "docgen")]
-fn remove_external_id_alias_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Remove a kept external ID").description(
-        "Removes a value kept from a merged duplicate, so that it stops finding this entity. Responds 404 when the entity holds no such alias. Requires ManageMetadata and access to every library the entity reaches.",
-    )
-}
-
-pub(crate) fn entity_merge_routes() -> Router {
+pub(crate) fn metadata_change_routes() -> Router {
     Router::new()
-        .route("/{id}/merge", post(merge_entities))
-        .route("/{id}/merge/preview", post(preview_entity_merge))
-        .route(
-            "/{id}/external-ids/{provider_id}/{id_type}/aliases/{value}",
-            delete(remove_external_id_alias),
-        )
+        .route("/changes", post(apply_metadata_changes))
+        .route("/changes/preview", post(preview_metadata_changes))
 }
 
 #[cfg(feature = "docgen")]
-pub(crate) fn entity_merge_openapi_routes() -> aide::axum::ApiRouter {
-    use aide::axum::routing::{
-        delete_with,
-        post_with,
-    };
+pub(crate) fn metadata_change_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::post_with;
 
     aide::axum::ApiRouter::new()
         .api_route(
-            "/{id}/merge",
-            post_with(merge_entities, merge_entities_docs),
+            "/changes",
+            post_with(apply_metadata_changes, apply_metadata_changes_docs),
         )
         .api_route(
-            "/{id}/merge/preview",
-            post_with(preview_entity_merge, preview_entity_merge_docs),
-        )
-        .api_route(
-            "/{id}/external-ids/{provider_id}/{id_type}/aliases/{value}",
-            delete_with(remove_external_id_alias, remove_external_id_alias_docs),
+            "/changes/preview",
+            post_with(preview_metadata_changes, preview_metadata_changes_docs),
         )
 }
 
@@ -294,19 +218,12 @@ mod tests {
     };
     use lyra_db::test_db::insert_library;
     use nanoid::nanoid;
-    use serde_json::{
-        Value,
-        json,
-    };
     use tower::ServiceExt;
 
     use super::*;
     use crate::{
         plugins::testing::init_library_test_state,
-        routes::{
-            entity_routes,
-            genre_routes,
-        },
+        routes::entity_routes,
         services::{
             STATE,
             metadata::{
@@ -322,8 +239,8 @@ mod tests {
 
     fn routes() -> Router {
         Router::new()
-            .nest("/entities", entity_routes().merge(entity_merge_routes()))
-            .nest("/genres", genre_routes())
+            .nest("/entities", entity_routes())
+            .nest("/metadata", metadata_change_routes())
     }
 
     async fn send(
@@ -348,18 +265,97 @@ mod tests {
         Ok((status, String::from_utf8(body.to_vec())?))
     }
 
+    async fn post_changes(
+        authorization: &str,
+        path: &str,
+        changes: Vec<Value>,
+    ) -> anyhow::Result<(StatusCode, String)> {
+        send(
+            authorization,
+            "POST",
+            path.to_string(),
+            Some(json!({ "changes": changes })),
+        )
+        .await
+    }
+
+    async fn preview_one(
+        authorization: &str,
+        change: Value,
+    ) -> anyhow::Result<(StatusCode, String)> {
+        post_changes(authorization, "/metadata/changes/preview", vec![change]).await
+    }
+
+    /// What a preview reported, as `expected` of the operation it reported on.
+    fn expected_of(report: &Value) -> Option<&Value> {
+        match report["action"].as_str() {
+            Some("edit_metadata") => report.get("diff"),
+            Some("set_external_id" | "inherit_external_id") => report.get("current"),
+            Some("merge") => report.get("manual_fills"),
+            Some("rename_genre") => report.get("current_name"),
+            _ => None,
+        }
+    }
+
+    /// Previews one operation and, if that passes, applies it with what the preview reported.
+    async fn apply_one(
+        authorization: &str,
+        mut change: Value,
+    ) -> anyhow::Result<(StatusCode, String)> {
+        let (status, body) = preview_one(authorization, change.clone()).await?;
+        if status != StatusCode::OK {
+            return Ok((status, body));
+        }
+        let preview: Value = serde_json::from_str(&body)?;
+        if let Some(expected) = expected_of(&preview["results"][0]) {
+            change["expected"] = expected.clone();
+        }
+        post_changes(authorization, "/metadata/changes", vec![change]).await
+    }
+
+    fn merge(winner: &str, losers: &[&str]) -> Value {
+        json!({"action": "merge", "winner_id": winner, "loser_ids": losers})
+    }
+
+    fn rename(genre: &str, name: &str) -> Value {
+        json!({"action": "rename_genre", "genre_id": genre, "name": name})
+    }
+
+    fn set_id(entity: &str) -> Value {
+        json!({
+            "action": "set_external_id",
+            "entity_id": entity,
+            "provider_id": "provider",
+            "id_type": "release_id",
+            "id_value": "x",
+        })
+    }
+
+    fn inherit_id(entity: &str) -> Value {
+        json!({
+            "action": "inherit_external_id",
+            "entity_id": entity,
+            "provider_id": "provider",
+            "id_type": "release_id",
+        })
+    }
+
+    fn remove_alias(entity: &str, id_type: &str, value: &str) -> Value {
+        json!({
+            "action": "remove_external_id_alias",
+            "entity_id": entity,
+            "provider_id": "provider",
+            "id_type": id_type,
+            "id_value": value,
+        })
+    }
+
     async fn merge_status(
         authorization: &str,
         winner: &str,
         losers: &[&str],
     ) -> anyhow::Result<(StatusCode, String)> {
-        send(
-            authorization,
-            "POST",
-            format!("/entities/{winner}/merge"),
-            Some(json!({ "loser_ids": losers })),
-        )
-        .await
+        apply_one(authorization, merge(winner, losers)).await
     }
 
     fn public_id(db: &DbAny, id: DbId) -> String {
@@ -545,6 +541,8 @@ mod tests {
             merge_status(&scene.admin, &scene.no_release, &[&scene.hidden]).await?;
         assert_eq!(status, StatusCode::OK, "{body}");
         let outcome: Value = serde_json::from_str(&body)?;
+        let outcome = &outcome["results"][0];
+        assert_eq!(outcome["action"], "merge");
         assert_eq!(outcome["kind"], "genre");
         assert_eq!(outcome["winner_id"], json!(scene.no_release));
         assert_eq!(outcome["counts"]["losers"], 1);
@@ -625,16 +623,15 @@ mod tests {
         };
         let listener = bearer(listener).await?;
 
-        let (status, _) = merge_status(&listener, &scene.visible, &[&scene.both]).await?;
-        assert_eq!(status, StatusCode::FORBIDDEN);
-        let (status, _) = send(
-            &listener,
-            "PATCH",
-            format!("/genres/{}", scene.visible),
-            Some(json!({"name": "New"})),
-        )
-        .await?;
-        assert_eq!(status, StatusCode::FORBIDDEN);
+        for path in ["/metadata/changes/preview", "/metadata/changes"] {
+            for change in [
+                merge(&scene.visible, &[&scene.both]),
+                rename(&scene.visible, "New"),
+            ] {
+                let (status, _) = post_changes(&listener, path, vec![change]).await?;
+                assert_eq!(status, StatusCode::FORBIDDEN);
+            }
+        }
         Ok(())
     }
 
@@ -677,19 +674,17 @@ mod tests {
 
         let (status, body) = merge_status(&scene.admin, &scene.visible, &[&scene.both]).await?;
         assert_eq!(status, StatusCode::CONFLICT, "{body}");
-        let (status, body) = send(
-            &scene.admin,
-            "POST",
-            format!("/entities/{}/merge/preview", scene.visible),
-            Some(json!({"loser_ids": [scene.both]})),
-        )
-        .await?;
+        let (status, body) =
+            preview_one(&scene.admin, merge(&scene.visible, &[&scene.both])).await?;
         assert_eq!(status, StatusCode::CONFLICT, "{body}");
-        let (status, body) = send(
+        let (status, body) = post_changes(
             &scene.admin,
-            "PATCH",
-            format!("/genres/{}", scene.both),
-            Some(json!({"name": "New"})),
+            "/metadata/changes",
+            vec![{
+                let mut change = rename(&scene.both, "New");
+                change["expected"] = json!("Both");
+                change
+            }],
         )
         .await?;
         assert_eq!(status, StatusCode::CONFLICT, "{body}");
@@ -784,16 +779,12 @@ mod tests {
         init_library_test_state(std::path::PathBuf::from(".")).await?;
         let scene = scene().await?;
 
-        let (status, body) = send(
-            &scene.admin,
-            "POST",
-            format!("/entities/{}/merge/preview", scene.visible),
-            Some(json!({"loser_ids": [scene.hidden]})),
-        )
-        .await?;
+        let (status, body) =
+            preview_one(&scene.admin, merge(&scene.visible, &[&scene.hidden])).await?;
 
         assert_eq!(status, StatusCode::OK, "{body}");
         let preview: Value = serde_json::from_str(&body)?;
+        let preview = &preview["results"][0];
         assert_eq!(preview["kind"], "genre");
         assert_eq!(preview["counts"]["releases"], 2);
         assert_eq!(preview["kept_external_ids"], json!([]));
@@ -846,10 +837,10 @@ mod tests {
             ])
         );
 
-        let uri = format!("/entities/{winner}/external-ids/provider/artist_id/aliases/b%2Fc");
-        let (status, body) = send(&admin, "DELETE", uri.clone(), None).await?;
-        assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
-        let (status, _) = send(&admin, "DELETE", uri, None).await?;
+        let removal = remove_alias(&winner, "artist_id", "b/c");
+        let (status, body) = apply_one(&admin, removal.clone()).await?;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, _) = apply_one(&admin, removal).await?;
         assert_eq!(status, StatusCode::NOT_FOUND);
         let db = STATE.db.read().await;
         assert_eq!(
@@ -868,12 +859,11 @@ mod tests {
         let _guard = runtime_test_lock().await;
         init_library_test_state(std::path::PathBuf::from(".")).await?;
         let scene = scene().await?;
-        let path =
-            |genre: &str| format!("/entities/{genre}/external-ids/provider/genre_id/aliases/x");
-
-        let (status, _) = send(&scene.manager, "DELETE", path(&scene.hidden), None).await?;
+        let (status, _) =
+            apply_one(&scene.manager, remove_alias(&scene.hidden, "genre_id", "x")).await?;
         assert_eq!(status, StatusCode::NOT_FOUND);
-        let (status, _) = send(&scene.manager, "DELETE", path(&scene.both), None).await?;
+        let (status, _) =
+            apply_one(&scene.manager, remove_alias(&scene.both, "genre_id", "x")).await?;
         assert_eq!(status, StatusCode::FORBIDDEN);
         Ok(())
     }
@@ -901,35 +891,36 @@ mod tests {
             (public_id(&db, shared), public_id(&db, hidden))
         };
         let ids = |id: &str| format!("/entities/{id}/external-ids");
-        let id_value = |id: &str| format!("/entities/{id}/external-ids/provider/release_id");
         let lock = |id: &str| format!("/entities/{id}/lock");
-        let value = || Some(json!({"id_value": "x"}));
 
-        for (method, uri, body) in [
-            ("GET", ids(&hidden), None),
-            ("GET", ids(&scene.hidden), None),
-            ("PUT", id_value(&hidden), value()),
-            ("DELETE", id_value(&hidden), None),
-            ("PUT", lock(&hidden), None),
-            ("DELETE", lock(&hidden), None),
+        for (method, uri) in [
+            ("GET", ids(&hidden)),
+            ("GET", ids(&scene.hidden)),
+            ("PUT", lock(&hidden)),
+            ("DELETE", lock(&hidden)),
         ] {
-            let (status, _) = send(&scene.manager, method, uri.clone(), body).await?;
+            let (status, _) = send(&scene.manager, method, uri.clone(), None).await?;
             assert_eq!(status, StatusCode::NOT_FOUND, "{method} {uri}");
         }
-
-        for (method, uri, body, expected) in [
-            ("PUT", id_value(&shared), value(), StatusCode::OK),
-            ("GET", ids(&shared), None, StatusCode::OK),
-            ("GET", ids(&scene.both), None, StatusCode::OK),
-            ("DELETE", id_value(&shared), None, StatusCode::NO_CONTENT),
-            ("PUT", lock(&shared), None, StatusCode::OK),
-            ("DELETE", lock(&shared), None, StatusCode::OK),
-        ] {
-            let (status, body) = send(&scene.manager, method, uri.clone(), body).await?;
-            assert_eq!(status, expected, "{method} {uri}: {body}");
+        for change in [set_id(&hidden), inherit_id(&hidden)] {
+            let (status, _) = apply_one(&scene.manager, change.clone()).await?;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{change}");
         }
 
-        let (status, body) = send(&scene.admin, "PUT", id_value(&hidden), value()).await?;
+        let (status, body) = apply_one(&scene.manager, set_id(&shared)).await?;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        for (method, uri) in [("GET", ids(&shared)), ("GET", ids(&scene.both))] {
+            let (status, body) = send(&scene.manager, method, uri.clone(), None).await?;
+            assert_eq!(status, StatusCode::OK, "{method} {uri}: {body}");
+        }
+        let (status, body) = apply_one(&scene.manager, inherit_id(&shared)).await?;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        for (method, uri) in [("PUT", lock(&shared)), ("DELETE", lock(&shared))] {
+            let (status, body) = send(&scene.manager, method, uri.clone(), None).await?;
+            assert_eq!(status, StatusCode::OK, "{method} {uri}: {body}");
+        }
+
+        let (status, body) = apply_one(&scene.admin, set_id(&hidden)).await?;
         assert_eq!(status, StatusCode::OK, "{body}");
         Ok(())
     }
@@ -939,16 +930,6 @@ mod tests {
         let _guard = runtime_test_lock().await;
         init_library_test_state(std::path::PathBuf::from(".")).await?;
         let scene = scene().await?;
-        let rename = |authorization: String, id: String, name: &'static str| async move {
-            send(
-                &authorization,
-                "PATCH",
-                format!("/genres/{id}"),
-                Some(json!({ "name": name })),
-            )
-            .await
-        };
-
         for (who, id, name, expected) in [
             (
                 &scene.manager,
@@ -977,14 +958,159 @@ mod tests {
                 StatusCode::NOT_FOUND,
             ),
         ] {
-            let (status, body) = rename(who.clone(), id.clone(), name).await?;
+            let (status, body) = apply_one(who, rename(id, name)).await?;
             assert_eq!(status, expected, "{id} {name}: {body}");
         }
 
-        let (status, body) = rename(scene.manager.clone(), scene.visible.clone(), " Seen ").await?;
+        let (status, body) = apply_one(&scene.manager, rename(&scene.visible, " Seen ")).await?;
         assert_eq!(status, StatusCode::OK, "{body}");
-        let genre: Value = serde_json::from_str(&body)?;
-        assert_eq!(genre, json!({"id": scene.visible, "name": "Seen"}));
+        let results: Value = serde_json::from_str(&body)?;
+        assert_eq!(
+            results,
+            json!({"results": [
+                {"action": "rename_genre", "genre_id": scene.visible, "name": "Seen"},
+            ]})
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_failing_operation_answers_with_its_index_status_and_message() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_library_test_state(std::path::PathBuf::from(".")).await?;
+        let scene = scene().await?;
+        let named = |name: &str, change: Value| {
+            let mut change = change;
+            change["expected"] = json!(name);
+            change
+        };
+        let fine = named("Visible", rename(&scene.visible, "Seen"));
+
+        for (failing, status, message) in [
+            (
+                named("No Release", rename(&scene.no_release, "  ")),
+                StatusCode::BAD_REQUEST,
+                "a genre's name can't be blank",
+            ),
+            (
+                named("Both", rename(&scene.both, "New")),
+                StatusCode::FORBIDDEN,
+                "this change reaches a library you can't access",
+            ),
+            (
+                named("Hidden", rename(&scene.hidden, "New")),
+                StatusCode::NOT_FOUND,
+                "Entity not found",
+            ),
+            (
+                named("Visible Label", rename(&scene.visible_label, "New")),
+                StatusCode::NOT_FOUND,
+                "Entity not found",
+            ),
+        ] {
+            let (got, body) = post_changes(
+                &scene.manager,
+                "/metadata/changes",
+                vec![fine.clone(), failing.clone()],
+            )
+            .await?;
+            assert_eq!(got, status, "{failing}: {body}");
+            let failure: Value = serde_json::from_str(&body)?;
+            assert_eq!(failure["index"], 1, "{body}");
+            assert!(
+                failure["message"]
+                    .as_str()
+                    .is_some_and(|m| m.contains(message)),
+                "{body}"
+            );
+        }
+        let genre = lyra_db::genres::find_by_name(&*STATE.db.read().await, "Visible")?;
+        assert!(genre.is_some(), "the first rename rolled back");
+
+        let (status, body) = post_changes(
+            &scene.manager,
+            "/metadata/changes",
+            vec![named("Other", rename(&scene.visible, "Seen"))],
+        )
+        .await?;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        let failure: Value = serde_json::from_str(&body)?;
+        assert_eq!(failure["index"], 0);
+        assert_eq!(failure["code"], "metadata_change_stale");
+        assert_eq!(failure["current"], "Visible");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_set_applies_on_a_partly_reachable_entity_only_what_one_library_allows()
+    -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_library_test_state(std::path::PathBuf::from(".")).await?;
+        let scene = scene().await?;
+        let (shared, duplicate) = {
+            let mut db = STATE.db.write().await;
+            let genre = lyra_db::lookup::find_node_id_by_id(&*db, &scene.visible)?
+                .ok_or_else(|| anyhow::anyhow!("genre missing"))?;
+            let shared = lyra_db::genres::get_releases(&*db, genre)?[0];
+            let hidden_library = lyra_db::lookup::find_node_id_by_id(&*db, &scene.hidden_library)?
+                .ok_or_else(|| anyhow::anyhow!("library missing"))?;
+            lyra_db::graph::ensure_owned_edge(&mut *db, hidden_library, shared)?;
+            let duplicate = insert_release(&mut db, "Duplicate")?;
+            lyra_db::graph::ensure_owned_edge(&mut *db, hidden_library, duplicate)?;
+            (public_id(&db, shared), public_id(&db, duplicate))
+        };
+        let title = |id: &str| {
+            json!({
+                "action": "edit_metadata",
+                "entity_id": id,
+                "edits": [{"field": "release_title", "operation": "set", "value": "Edited"}],
+            })
+        };
+
+        let (status, body) = apply_one(&scene.manager, title(&shared)).await?;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = apply_one(&scene.manager, set_id(&shared)).await?;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, _) = apply_one(&scene.manager, title(&duplicate)).await?;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) =
+            apply_one(&scene.manager, remove_alias(&shared, "release_id", "kept")).await?;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, _) = merge_status(&scene.manager, &shared, &[&duplicate]).await?;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn the_set_itself_is_checked_first() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_library_test_state(std::path::PathBuf::from(".")).await?;
+        let scene = scene().await?;
+
+        for path in ["/metadata/changes/preview", "/metadata/changes"] {
+            let (status, _) = post_changes(&scene.admin, path, Vec::new()).await?;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            let too_many = vec![rename(&scene.visible, "New"); 51];
+            let (status, _) = post_changes(&scene.admin, path, too_many).await?;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+        }
+        let (status, _) = send(
+            &scene.admin,
+            "POST",
+            "/metadata/changes".to_string(),
+            Some(json!({"changes": [rename(&scene.visible, "New")], "extra": true})),
+        )
+        .await?;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+        let (status, body) = post_changes(
+            &scene.admin,
+            "/metadata/changes",
+            vec![rename(&scene.visible, "New")],
+        )
+        .await?;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "applying needs expected");
+        assert_eq!(serde_json::from_str::<Value>(&body)?["index"], 0);
         Ok(())
     }
 }
