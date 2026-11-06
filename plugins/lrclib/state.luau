@@ -11,7 +11,7 @@ type JsonValue = serde.JsonValue
 type DataStore = datastore.DataStore
 type DataStoreRecord = datastore.DataStoreRecord
 
-local STATE_STORE_NAME = "lrclib_state"
+local STATE_STORE_NAME = "state"
 local ATTEMPT_KEY_PREFIX = "attempt:"
 local CACHE_KEY_PREFIX = "cache:v2:id:"
 local CACHE_HIT_TTL_MS = 30 * 24 * 60 * 60 * 1000

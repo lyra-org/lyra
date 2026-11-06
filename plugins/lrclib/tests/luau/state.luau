@@ -32,5 +32,5 @@ assert(reloaded.prev_attempt ~= nil and reloaded.prev_attempt.status == "hit")
 assert(state.miss_backoff_ms(reloaded.prev_attempt) == HOUR_MS, "a miss after a hit starts over")
 
 -- Cached ids from before stored expiry live under another prefix and are never read.
-datastore.get_or_create("lrclib_state"):set("cache:id:Old|Artist||", { lrclib_id = "7", expires_at_ms = 0 })
+datastore.get_or_create("state"):set("cache:id:Old|Artist||", { lrclib_id = "7", expires_at_ms = 0 })
 assert(state.load("track-3", "Old|Artist||").cached_id == nil)
