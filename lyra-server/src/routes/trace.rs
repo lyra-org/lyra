@@ -112,6 +112,7 @@ mod tests {
             .with_env_filter(log_filter(filter))
             .with_writer(captured.clone())
             .with_ansi(false)
+            .without_time()
             .finish();
         tracing::subscriber::with_default(subscriber, || {
             let request = Request::get(uri).body(Body::empty()).unwrap();
