@@ -254,6 +254,9 @@ pub(crate) fn deduplicate_artists_by_external_id(
         for ext_id in lyra_db::external_ids::get_for_entity(db, artist_db_id)? {
             linked.add_external_id(artist_db_id, &ext_id, declared, true);
         }
+        for alias in lyra_db::external_ids::get_aliases_for_entity(db, artist_db_id)? {
+            linked.add_alias(artist_db_id, &alias, declared, true);
+        }
     }
 
     let ranks = provider_ranks(db)?;
@@ -269,6 +272,7 @@ pub(crate) fn deduplicate_artists_by_external_id(
             );
             db.transaction_mut(|t| {
                 migrate_metadata(t, winner, loser)?;
+                lyra_db::external_ids::absorb_inside_tx(t, winner, loser)?;
                 merge_artist_into(t, winner, loser)
             })?;
             merged_count += 1;
@@ -333,7 +337,7 @@ fn select_merge_winner(
     Ok(winner)
 }
 
-fn merge_artist_into(
+pub(super) fn merge_artist_into(
     db: &mut DbAnyTransactionMut<'_>,
     winner: DbId,
     loser: DbId,
@@ -467,10 +471,6 @@ pub(super) fn migrate_metadata(
         let mut merged = winner_layer.clone().with_relations(relations);
         merged.updated_at_ms = merged.updated_at_ms.max(layer.updated_at_ms);
         lyra_db::metadata::layers::upsert_inside_tx(db, winner, &merged)?;
-    }
-
-    for ext_id in lyra_db::external_ids::get_for_entity_inside_tx(db, loser)? {
-        lyra_db::external_ids::merge_inside_tx(db, winner, &ext_id)?;
     }
 
     lyra_db::metadata::custom_fields::copy_between_entities(db, loser, winner)?;

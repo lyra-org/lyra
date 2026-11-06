@@ -239,7 +239,10 @@ pub(crate) struct EntityRefreshOptions {
 
 #[cfg(test)]
 mod tests {
-    use super::dedup::deduplicate_releases_by_external_id;
+    use super::dedup::{
+        deduplicate_releases_by_external_id,
+        merge_release_into_inside_tx,
+    };
     use super::refresh::resolve_library_id_for_entity;
     use crate::services::metadata::id_links::DeclaredIds;
     use agdb::{
@@ -686,6 +689,139 @@ mod tests {
         assert_eq!(release_ids_for_library(&db, library_a)?.len(), 1);
         assert_eq!(release_ids_for_library(&db, library_b)?.len(), 1);
 
+        Ok(())
+    }
+
+    #[test]
+    fn deduplicate_releases_skips_a_pair_in_different_sets_of_libraries() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let library_a = insert_library(&mut db, "A", "/a")?;
+        let library_b = insert_library(&mut db, "B", "/b")?;
+        let in_both = insert_release(&mut db, "In Both")?;
+        let in_one = insert_release(&mut db, "In One")?;
+        connect(&mut db, library_a, in_both)?;
+        connect(&mut db, library_b, in_both)?;
+        connect(&mut db, library_a, in_one)?;
+        for release in [in_both, in_one] {
+            external_ids::upsert(
+                &mut db,
+                release,
+                "provider",
+                "release_id",
+                "shared-release",
+                IdSource::Resolved,
+            )?;
+        }
+
+        for library in [library_a, library_b] {
+            assert_eq!(
+                deduplicate_releases_by_external_id(
+                    &mut db,
+                    library,
+                    &DeclaredIds::unique([("provider", "release_id")]),
+                    &HashSet::new(),
+                    None,
+                )?,
+                0
+            );
+        }
+
+        assert_eq!(release_ids_for_library(&db, library_a)?.len(), 2);
+        assert_eq!(release_ids_for_library(&db, library_b)?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn releases_of_one_library_set_merge_past_a_release_in_more_libraries() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let library_x = insert_library(&mut db, "X", "/x")?;
+        let library_y = insert_library(&mut db, "Y", "/y")?;
+        let in_both = insert_release(&mut db, "In Both")?;
+        let first = insert_release(&mut db, "First")?;
+        let second = insert_release(&mut db, "Second")?;
+        connect(&mut db, library_x, in_both)?;
+        connect(&mut db, library_y, in_both)?;
+        connect(&mut db, library_x, first)?;
+        connect(&mut db, library_x, second)?;
+        // The most tracks win, so one component of all three would pick this release.
+        for title in ["One", "Two"] {
+            let track = insert_track(&mut db, title)?;
+            releases::link_track(&mut db, in_both, track)?;
+        }
+        for release in [in_both, first, second] {
+            external_ids::upsert(
+                &mut db,
+                release,
+                "provider",
+                "release_id",
+                "shared-release",
+                IdSource::Resolved,
+            )?;
+        }
+        let unique = DeclaredIds::unique([("provider", "release_id")]);
+        assert_eq!(
+            super::dedup::select_release_merge_winner(&db, &[in_both, first, second])?,
+            in_both
+        );
+
+        assert_eq!(
+            deduplicate_releases_by_external_id(
+                &mut db,
+                library_x,
+                &unique,
+                &HashSet::new(),
+                None,
+            )?,
+            1
+        );
+        assert_eq!(
+            deduplicate_releases_by_external_id(
+                &mut db,
+                library_y,
+                &unique,
+                &HashSet::new(),
+                None,
+            )?,
+            0
+        );
+
+        assert_eq!(release_ids_for_library(&db, library_x)?.len(), 2);
+        assert_eq!(release_ids_for_library(&db, library_y)?, [in_both]);
+        Ok(())
+    }
+
+    #[test]
+    fn a_new_release_holding_a_kept_id_links_to_its_holder() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let library = insert_library(&mut db, "Music", "/music")?;
+        let holder = insert_release(&mut db, "Holder")?;
+        let merged = insert_release(&mut db, "Merged")?;
+        let newcomer = insert_release(&mut db, "Newcomer")?;
+        for (release, value) in [(holder, "a"), (merged, "b"), (newcomer, "b")] {
+            connect(&mut db, library, release)?;
+            external_ids::upsert(
+                &mut db,
+                release,
+                "provider",
+                "release_id",
+                value,
+                IdSource::Resolved,
+            )?;
+        }
+        db.transaction_mut(|t| merge_release_into_inside_tx(t, holder, merged))?;
+
+        assert_eq!(
+            deduplicate_releases_by_external_id(
+                &mut db,
+                library,
+                &DeclaredIds::unique([("provider", "release_id")]),
+                &HashSet::new(),
+                None,
+            )?,
+            1
+        );
+
+        assert_eq!(release_ids_for_library(&db, library)?.len(), 1);
         Ok(())
     }
 

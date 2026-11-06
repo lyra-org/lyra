@@ -6,6 +6,8 @@
 use std::{
     cmp::Ordering,
     collections::{
+        BTreeMap,
+        BTreeSet,
         HashMap,
         HashSet,
     },
@@ -72,7 +74,7 @@ fn merge_release_into(db: &mut DbAny, winner: DbId, loser: DbId) -> anyhow::Resu
     db.transaction_mut(|transaction| merge_release_into_inside_tx(transaction, winner, loser))
 }
 
-fn merge_release_into_inside_tx(
+pub(crate) fn merge_release_into_inside_tx(
     db: &mut DbAnyTransactionMut<'_>,
     winner: DbId,
     loser: DbId,
@@ -98,9 +100,7 @@ fn merge_release_into_inside_tx(
         lyra_db::releases::unlink_track(db, loser, track_db_id)?;
     }
 
-    for external_id in lyra_db::external_ids::get_for_entity_inside_tx(db, loser)? {
-        lyra_db::external_ids::merge_inside_tx(db, winner, &external_id)?;
-    }
+    lyra_db::external_ids::absorb_inside_tx(db, winner, loser)?;
 
     let mut winner_layers_by_source = HashMap::new();
     for layer in lyra_db::metadata::layers::get_for_entity(db, winner)? {
@@ -139,7 +139,7 @@ fn merge_release_into_inside_tx(
     Ok(())
 }
 
-fn collect_track_unique_ids(
+pub(crate) fn collect_track_unique_ids(
     db: &DbAny,
     release_db_id: DbId,
     unique_track_id_pairs: &HashSet<(String, String)>,
@@ -162,6 +162,17 @@ fn collect_track_unique_ids(
     Ok(ids)
 }
 
+/// The libraries holding a release.
+pub(crate) fn release_library_ids(
+    db: &impl lyra_db::DbAccess,
+    release_db_id: DbId,
+) -> anyhow::Result<BTreeSet<String>> {
+    Ok(lyra_db::libraries::get_by_release(db, release_db_id)?
+        .into_iter()
+        .map(|library| library.id)
+        .collect())
+}
+
 pub(super) fn deduplicate_releases_by_external_id(
     db: &mut DbAny,
     library_db_id: DbId,
@@ -173,22 +184,38 @@ pub(super) fn deduplicate_releases_by_external_id(
         return Ok(0);
     }
 
+    // Releases merge only within identical sets of libraries, so each set links on its own.
     let releases = lyra_db::releases::get(db, library_db_id)?;
-    let mut linked = LinkedIds::default();
+    let mut linked_by_libraries: BTreeMap<BTreeSet<String>, LinkedIds> = BTreeMap::new();
     for release in releases {
         let Some(release_db_id) = release.db_id.map(Into::into) else {
             continue;
         };
-        for external_id in lyra_db::external_ids::get_for_entity(db, release_db_id)? {
+        let external_ids = lyra_db::external_ids::get_for_entity(db, release_db_id)?;
+        let aliases = lyra_db::external_ids::get_aliases_for_entity(db, release_db_id)?;
+        if external_ids.is_empty() && aliases.is_empty() {
+            continue;
+        }
+        let linked = linked_by_libraries
+            .entry(release_library_ids(db, release_db_id)?)
+            .or_default();
+        for external_id in external_ids {
             // Every provider's IDs keep conflicting releases apart, in scope or not.
             let in_scope =
                 provider_scope.is_none_or(|scope| scope.contains(&external_id.provider_id));
             linked.add_external_id(release_db_id, &external_id, declared, in_scope);
         }
+        for alias in aliases {
+            let in_scope = provider_scope.is_none_or(|scope| scope.contains(&alias.provider_id));
+            linked.add_alias(release_db_id, &alias, declared, in_scope);
+        }
     }
 
     let ranks = provider_ranks(db)?;
-    let components = linked.components(&ranks);
+    let components: Vec<_> = linked_by_libraries
+        .values()
+        .flat_map(|linked| linked.components(&ranks))
+        .collect();
     let mut track_ids_cache: HashMap<DbId, HashSet<String>> = HashMap::new();
     if !unique_track_id_pairs.is_empty() {
         for &release_db_id in components.iter().flat_map(|component| &component.ids) {

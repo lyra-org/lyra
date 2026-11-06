@@ -166,6 +166,9 @@ fn take_over(
         }
     }
     super::cleanup::migrate_metadata(t, missing, target)?;
+    for external_id in lyra_db::external_ids::get_for_entity_inside_tx(t, target)? {
+        lyra_db::external_ids::merge_inside_tx(t, missing, &external_id)?;
+    }
 
     // What users attached to the target.
     lyra_db::favorites::retarget(t, target, missing, RetargetLookup::Target)?;

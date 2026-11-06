@@ -18,7 +18,10 @@ use agdb::{
     DbId,
 };
 use lyra_db::IdSource;
-use lyra_db::external_ids::ExternalId;
+use lyra_db::external_ids::{
+    ExternalId,
+    ExternalIdAlias,
+};
 
 use crate::services::providers::active_providers;
 
@@ -193,6 +196,28 @@ impl LinkedIds {
             external_id.source,
             unique && links,
         );
+    }
+
+    /// Records a kept value as a resolved one of the pair it was kept for, when that pair names
+    /// exactly one entity, so its holder links with a new entity holding the value.
+    pub(crate) fn add_alias(
+        &mut self,
+        entity: DbId,
+        alias: &ExternalIdAlias,
+        declared: &DeclaredIds,
+        links: bool,
+    ) {
+        let pair = (alias.provider_id.clone(), alias.id_type.clone());
+        if declared.unique.contains(&pair) {
+            self.add(
+                entity,
+                &alias.provider_id,
+                &alias.id_type,
+                &alias.id_value,
+                IdSource::Resolved,
+                links,
+            );
+        }
     }
 
     /// Joins the entities that share an ID into components, so each component
