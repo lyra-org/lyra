@@ -161,7 +161,7 @@ fn preview_metadata_changes_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn apply_metadata_changes_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Apply a metadata change set").description(
-        "Applies `changes` in order in one transaction, or none of them, and returns one entry per operation in `results`, as things stood right after that operation. Merges can't be undone. Each operation resolves what it names and is checked against what the operations before it staged, so one naming an entity an earlier one merged away reads 404, and a rename to a name an earlier one took reads 409.\n\nEach operation but `remove_external_id_alias` requires `expected`, what preview reported for it: for `edit_metadata` the `diff`, for `set_external_id` and `inherit_external_id` the `current` record (`null` for none), for `merge` the `manual_fills`, and for `rename_genre` the `current_name`. It is compared with the staged state just before the operation runs, ahead of any check of what the operation itself would do, so an operation that an earlier one changes the state of needs that state as its `expected`, not the preview's. A mismatch is a 409 with `code` `metadata_change_stale` and `current`, what a new preview would report in place of `expected`.\n\nThe first failing operation rolls the set back and answers with its own status and a JSON body with its `index` and `message`: 400 for a missing `expected`, an invalid value, an operation with no effect, a merge of an entity into itself or with one of another kind; 403 when the caller reaches only some of the libraries a `merge`, `rename_genre` or `remove_external_id_alias` affects; 404 when the caller reaches an entity through no library, as for an entity that does not exist, or for a missing manual ID or alias; 409 for a stale `expected`, a name another genre goes by, releases in different libraries or holding the same track by a unique ID, or a sync, refresh or purge running on an affected library. Only a set holding a `merge` or `rename_genre` looks at runs, and then for every operation in it; other sets apply during a run. An empty set, more than 50 operations, or more than 50 losers across the set is a plain 400. Requires ManageMetadata, and access to one library of what `edit_metadata`, `set_external_id` and `inherit_external_id` change, or to every library a `merge`, `rename_genre` or `remove_external_id_alias` affects. For `edit_metadata` an artist reached only through another entity's layer doesn't count.",
+        "Applies `changes` in order in one transaction, or none of them, and returns one entry per operation in `results`, as things stood right after that operation. Merges can't be undone. Each operation resolves what it names and is checked against what the operations before it staged, so one naming an entity an earlier one merged away reads 404, and a rename to a name an earlier one took reads 409.\n\nEach operation but `remove_external_id_alias` requires `expected`, what preview reported for it: for `edit_metadata` the `diff`, for `set_external_id` and `inherit_external_id` the `current` record (`null` for none), for `merge` the `manual_fills`, and for `rename_genre` the `current_name`. It is compared with the staged state just before the operation runs, ahead of any check of what the operation itself would do, so an operation that an earlier one changes the state of needs that state as its `expected`, not the preview's. A mismatch is a 409 with `code` `metadata_change_stale` and `current`, what a new preview would report in place of `expected`.\n\nThe first failing operation rolls the set back and answers with its own status and a JSON body with its `index` and `message`: 400 for a missing `expected`, an invalid value, an operation with no effect, a merge of an entity into itself or with one of another kind; 403 when the caller reaches only some of the libraries a `merge`, `rename_genre` or `remove_external_id_alias` affects; 404 when the caller reaches an entity through no library, as for an entity that does not exist, or for a missing manual ID or alias; 409 for a stale `expected`, a name another genre goes by, releases in different libraries or holding the same track by a unique ID, or a sync, refresh or purge running on an affected library. Only a set holding a `merge` or `rename_genre` looks at runs, and then for every operation in it; other sets apply during a run. An empty set, more than 50 operations, or more than 50 losers across the set is a plain 400. Requires ManageMetadata, and access to one library of what `edit_metadata`, `set_external_id` and `inherit_external_id` change, or to every library a `merge`, `rename_genre` or `remove_external_id_alias` affects.",
     )
     .response::<400, Json<ChangeFailureResponse>>()
     .response::<403, Json<ChangeFailureResponse>>()
@@ -239,7 +239,10 @@ mod tests {
 
     fn routes() -> Router {
         Router::new()
-            .nest("/entities", entity_routes())
+            .nest(
+                "/entities",
+                entity_routes().merge(crate::routes::entity_metadata_routes()),
+            )
             .nest("/metadata", metadata_change_routes())
     }
 
@@ -1078,6 +1081,58 @@ mod tests {
         assert_eq!(status, StatusCode::FORBIDDEN);
         let (status, _) = merge_status(&scene.manager, &shared, &[&duplicate]).await?;
         assert_eq!(status, StatusCode::NOT_FOUND);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn metadata_reach_follows_layer_references_and_skips_genres() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_library_test_state(std::path::PathBuf::from(".")).await?;
+        let scene = scene().await?;
+        let (referenced, unreferenced) = {
+            let mut db = STATE.db.write().await;
+            let genre = lyra_db::lookup::find_node_id_by_id(&*db, &scene.visible)?
+                .ok_or_else(|| anyhow::anyhow!("genre missing"))?;
+            let release = lyra_db::genres::get_releases(&*db, genre)?[0];
+            let referenced = insert_artist(&mut db, "Referenced")?;
+            let unreferenced = insert_artist(&mut db, "Unreferenced")?;
+            // Left unapplied, so the layer is all that ties the artist to the release.
+            lyra_db::metadata::layers::upsert(
+                &mut db,
+                release,
+                &lyra_db::MetadataLayer::new("provider", Default::default(), 1).with_credits(
+                    BTreeMap::from([(
+                        lyra_db::CreditType::Artist,
+                        vec![lyra_db::metadata::layers::edges::LayerCreditInput {
+                            artist_id: referenced,
+                            detail: None,
+                        }],
+                    )]),
+                ),
+            )?;
+            (public_id(&db, referenced), public_id(&db, unreferenced))
+        };
+        let metadata = |id: &str| format!("/entities/{id}/metadata");
+        let edit = |id: &str| {
+            json!({
+                "action": "edit_metadata",
+                "entity_id": id,
+                "edits": [{"field": "artist_name", "operation": "set", "value": "Edited"}],
+            })
+        };
+
+        let (status, body) = send(&scene.manager, "GET", metadata(&referenced), None).await?;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = apply_one(&scene.manager, edit(&referenced)).await?;
+        assert_eq!(status, StatusCode::OK, "{body}");
+
+        let (status, _) = send(&scene.manager, "GET", metadata(&unreferenced), None).await?;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) = apply_one(&scene.manager, edit(&unreferenced)).await?;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, body) = send(&scene.manager, "GET", metadata(&scene.visible), None).await?;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(body.contains(&scene.visible), "{body}");
         Ok(())
     }
 
