@@ -38,6 +38,11 @@ title = "Early"
 release = "album"
 
 [[tracks]]
+key = "later"
+title = "Later"
+release = "album"
+
+[[tracks]]
 key = "hidden"
 title = "Hidden"
 
@@ -52,6 +57,12 @@ user = "listener"
 track = "early"
 position_ms = 5000
 at = 1000
+
+[[bookmarks]]
+user = "listener"
+track = "later"
+position_ms = 5000
+at = 2000
 
 [[bookmarks]]
 user = "listener"

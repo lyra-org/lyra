@@ -64,12 +64,7 @@ assert(changed.comment == nil, "an empty comment stores none")
 assert(changed.created_at_ms == 1000, `created {changed.created_at_ms}`)
 assert(changed.updated_at_ms > 1000, `updated {changed.updated_at_ms}`)
 
--- Filtering and sorting by the caller's bookmarks.
-same(
-	order(tracks.query({ bookmarked = true, sort = { { key = "bookmarked_at", order = "ascending" } } }).items),
-	{ ids.timed, ids.untimed, ids.early },
-	"bookmarked_at"
-)
+-- Filtering by the caller's bookmarks.
 same(order(tracks.query({ bookmarked = false }).items), {}, "not bookmarked")
 
 -- Removing.
@@ -80,3 +75,11 @@ same(order(tracks.query({ bookmarked = false }).items), { ids.timed }, "removed 
 assert(not bookmarks.remove(ids.hidden), "a hidden bookmark's removal answers as missing")
 assert(not bookmarks.remove(ids.album), "a release has no bookmark")
 assert(not bookmarks.remove("missing-target"), "a missing target has no bookmark")
+
+-- Sorting by when each bookmark was last set: changing `early` moved it past the seeded `later`.
+assert(bookmarks.remove(ids.untimed), "the other bookmark set just now can go")
+same(
+	order(tracks.query({ bookmarked = true, sort = { { key = "bookmarked_at", order = "ascending" } } }).items),
+	{ ids.later, ids.early },
+	"bookmarked_at"
+)
