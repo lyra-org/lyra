@@ -33,21 +33,17 @@ pub(crate) async fn apply(
     db: &DbAsync,
     library: &Library,
     plan: PurgePlan,
-    progress: Option<&SyncRunProgress>,
+    progress: &SyncRunProgress,
 ) -> anyhow::Result<usize> {
-    if let Some(progress) = progress {
-        progress
-            .add_stage_total(
-                SyncStageKey::Purge,
-                plan.tracks.len() as u64,
-                SyncTotalState::Final,
-            )
-            .await;
-    }
+    progress
+        .add_stage_total(
+            SyncStageKey::Purge,
+            plan.tracks.len() as u64,
+            SyncTotalState::Final,
+        )
+        .await;
     for batch in plan.tracks.chunks(BATCH) {
-        if let Some(progress) = progress {
-            progress.check_cancelled().await?;
-        }
+        progress.check_cancelled()?;
         let orphaned = {
             let mut db_write = db.write().await;
             let present = batch
@@ -60,13 +56,11 @@ pub(crate) async fn apply(
             lyra_db::metadata::cascade_remove_entities(&mut db_write, &present)?
         };
         crate::services::covers::discard_unreferenced_cover_files(orphaned);
-        if let Some(progress) = progress {
-            for _ in batch {
-                let work_id = progress
-                    .start_work(SyncStageKey::Purge, SyncWorkDetails::new("purge_track"))
-                    .await;
-                progress.complete_work(work_id, SyncStageKey::Purge).await;
-            }
+        for _ in batch {
+            let work_id = progress
+                .start_work(SyncStageKey::Purge, SyncWorkDetails::new("purge_track"))
+                .await;
+            progress.complete_work(work_id, SyncStageKey::Purge).await;
         }
     }
     let removed = {
@@ -88,7 +82,7 @@ pub(crate) async fn purge(
     db: &DbAsync,
     library: &Library,
     scope: &PurgeScope,
-    progress: Option<&SyncRunProgress>,
+    progress: &SyncRunProgress,
 ) -> anyhow::Result<usize> {
     let plan = {
         let db_read = db.read().await;

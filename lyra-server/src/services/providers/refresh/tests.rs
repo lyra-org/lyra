@@ -23,6 +23,7 @@ use super::{
     provider_registry,
 };
 use crate::services::covers::CoverSyncOptions;
+use crate::services::libraries::SyncRunProgress;
 use crate::services::testing::{
     FakePluginDispatch,
     FakeResponse,
@@ -112,7 +113,12 @@ async fn a_release_merged_away_between_providers_is_passed_over() -> anyhow::Res
             apply_sync_filters: false,
             provider_id: None,
         };
-        super::library::refresh_library_metadata(library, &options).await
+        super::library::refresh_library_metadata(
+            library,
+            &options,
+            SyncRunProgress::unreported_for_test(),
+        )
+        .await
     });
     // The first provider refreshes one release; it is merged away while the provider
     // refreshes the other.
@@ -155,10 +161,10 @@ async fn a_refresh_syncs_covers_even_when_no_provider_refreshed_a_release() -> a
         apply_sync_filters: false,
         provider_id: None,
     };
-    let refreshed = super::library::refresh_library_metadata_with_progress(
+    let refreshed = super::library::refresh_library_metadata(
         library.db_id.expect("db id"),
         &options,
-        Some(progress.clone()),
+        progress.clone(),
     )
     .await
     .map_err(|err| err.into_anyhow())?;
@@ -246,7 +252,7 @@ async fn the_artist_pass_skips_gone_or_replaced_artists_and_runs_on_past_a_failu
         super::cover_paths(&None, covers_root.path()),
         CoverSyncOptions::default(),
         None,
-        Some(&progress),
+        &progress,
     )
     .await?;
     let run = crate::services::libraries::get_sync_run(progress.run_id())
@@ -325,7 +331,7 @@ async fn the_pass_refreshes_the_artists_it_fetches_a_cover_for_with_their_cover_
         super::cover_paths(&None, covers_root.path()),
         CoverSyncOptions::default(),
         None,
-        None,
+        &SyncRunProgress::unreported_for_test(),
     )
     .await?;
 
@@ -380,7 +386,7 @@ async fn a_run_cancelled_during_an_artists_refresh_fetches_no_cover() -> anyhow:
                 super::cover_paths(&None, &covers_root),
                 CoverSyncOptions::default(),
                 None,
-                Some(&progress),
+                &progress,
             )
             .await
         }
@@ -434,7 +440,7 @@ async fn the_artist_pass_stops_when_the_run_is_cancelled() -> anyhow::Result<()>
         super::cover_paths(&None, covers_root.path()),
         CoverSyncOptions::default(),
         None,
-        Some(&progress),
+        &progress,
     )
     .await;
     crate::services::libraries::end_test_run(&progress).await;
@@ -483,7 +489,7 @@ async fn a_run_cancelled_during_the_last_artist_ends_cancelled() -> anyhow::Resu
                 super::cover_paths(&None, &covers_root),
                 CoverSyncOptions::default(),
                 None,
-                Some(&progress),
+                &progress,
             )
             .await
         }
@@ -541,10 +547,10 @@ async fn a_library_refresh_passes_its_track_only_artists() -> anyhow::Result<()>
         provider_id: None,
     };
 
-    super::library::refresh_library_metadata_with_progress(
+    super::library::refresh_library_metadata(
         library.db_id.expect("db id"),
         &options,
-        Some(progress.clone()),
+        progress.clone(),
     )
     .await
     .map_err(|err| err.into_anyhow())?;

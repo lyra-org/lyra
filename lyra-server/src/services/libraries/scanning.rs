@@ -539,8 +539,19 @@ mod tests {
     }
 
     async fn full_sync(db: &DbAsync, library: &Library) -> anyhow::Result<()> {
-        let observation = sync_entries_incremental(db, library, None).await?;
-        mark_missing_entries_for_scan(db, library, &observation, None).await
+        let observation = sync_entries_incremental(
+            db,
+            library,
+            crate::services::libraries::SyncRunProgress::unreported_for_test(),
+        )
+        .await?;
+        mark_missing_entries_for_scan(
+            db,
+            library,
+            &observation,
+            crate::services::libraries::SyncRunProgress::unreported_for_test(),
+        )
+        .await
     }
 
     #[tokio::test]
@@ -720,13 +731,23 @@ mod tests {
         let db = new_db()?;
         let library = new_library(&db, &root).await?;
 
-        sync_entries_incremental(&db, &library, None).await?;
+        sync_entries_incremental(
+            &db,
+            &library,
+            crate::services::libraries::SyncRunProgress::unreported_for_test(),
+        )
+        .await?;
         let first_entries = load_existing(&db, &library).await?;
         assert!(first_entries.iter().any(|entry| entry.full_path == track_a));
         assert!(first_entries.iter().any(|entry| entry.full_path == track_b));
 
         fs::remove_dir_all(&album_a)?;
-        let observation = sync_entries_incremental(&db, &library, None).await?;
+        let observation = sync_entries_incremental(
+            &db,
+            &library,
+            crate::services::libraries::SyncRunProgress::unreported_for_test(),
+        )
+        .await?;
 
         let before_prune = load_existing(&db, &library).await?;
         assert!(

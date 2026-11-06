@@ -183,7 +183,7 @@ async fn the_pass_refreshes_an_artist_before_fetching_its_cover() -> Result<()> 
         },
         crate::services::covers::CoverSyncOptions::default(),
         None,
-        None,
+        &crate::services::libraries::SyncRunProgress::unreported_for_test(),
     )
     .await?;
 

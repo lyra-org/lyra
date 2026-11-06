@@ -122,9 +122,9 @@ pub(crate) use refresh::{
     LibraryRefreshOptions,
     ListedArtist,
     refresh_entity_metadata,
+    refresh_library_metadata,
     refresh_library_metadata_after_others,
-    refresh_library_metadata_with_progress,
-    refresh_release_metadata_for_scan_with_progress,
+    refresh_release_metadata_for_scan,
     release_refresh_provider_ids,
     sync_artist_covers,
 };
@@ -187,6 +187,14 @@ pub(crate) enum ProviderServiceError {
 }
 
 impl ProviderServiceError {
+    /// Whether the work ended because it was cancelled, not because anything went wrong.
+    pub(crate) fn is_cancellation(&self) -> bool {
+        matches!(
+            self,
+            Self::Internal(err) if err.is::<super::libraries::SyncRunControlError>()
+        )
+    }
+
     /// The error as an [`anyhow::Error`], an internal one unwrapped so what it holds, such as a
     /// run's cancellation, can still be downcast to.
     pub(crate) fn into_anyhow(self) -> anyhow::Error {

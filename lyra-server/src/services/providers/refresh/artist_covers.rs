@@ -91,8 +91,8 @@ async fn artist_refreshers(provider_filter: Option<&str>) -> Vec<ArtistRefresher
             })
             .collect::<Vec<_>>()
     };
-    let handlers = refresh_callbacks_for(&providers, EntityType::Artist, false).await;
-    let options = match passed_provider_options(&handlers, &HashMap::new()).await {
+    let callbacks = refresh_callbacks_for(&providers, EntityType::Artist, false).await;
+    let options = match passed_provider_options(&callbacks, &HashMap::new()).await {
         Ok(options) => options,
         Err(err) => {
             tracing::warn!(
@@ -102,12 +102,12 @@ async fn artist_refreshers(provider_filter: Option<&str>) -> Vec<ArtistRefresher
             return Vec::new();
         }
     };
-    handlers
+    callbacks
         .into_iter()
         .zip(options)
-        .map(|((provider_id, handler, _), options)| ArtistRefresher {
-            provider_id,
-            handler,
+        .map(|(callback, options)| ArtistRefresher {
+            provider_id: callback.provider_id,
+            handler: callback.handler,
             options,
         })
         .collect()
@@ -130,14 +130,8 @@ async fn refresh_and_sync_artist_cover(
     paths: CoverPaths<'_>,
     options: CoverSyncOptions,
     provider_filter: Option<&str>,
-    progress: Option<&SyncRunProgress>,
+    progress: &SyncRunProgress,
 ) -> anyhow::Result<Option<bool>> {
-    let check_cancelled = || async {
-        match progress {
-            Some(progress) => progress.check_cancelled().await,
-            None => Ok(()),
-        }
-    };
     if current_artist(listed).await?.is_none() {
         return Ok(None);
     }
@@ -151,7 +145,7 @@ async fn refresh_and_sync_artist_cover(
     match context {
         Ok(context) => {
             for refresher in refreshers {
-                check_cancelled().await?;
+                progress.check_cancelled()?;
                 let context = context_with_options(context.clone(), refresher.options.clone());
                 if let Err(err) =
                     dispatch_refresh_callback(&refresher.provider_id, refresher.handler, context)
@@ -172,7 +166,7 @@ async fn refresh_and_sync_artist_cover(
             "artist context before its cover failed"
         ),
     }
-    check_cancelled().await?;
+    progress.check_cancelled()?;
     let Some(artist) = current_artist(listed).await? else {
         return Ok(None);
     };
@@ -191,37 +185,29 @@ pub(crate) async fn sync_artist_covers(
     paths: CoverPaths<'_>,
     options: CoverSyncOptions,
     provider_filter: Option<&str>,
-    progress: Option<&SyncRunProgress>,
+    progress: &SyncRunProgress,
 ) -> Result<usize, SyncRunControlError> {
-    if let Some(progress) = progress {
-        progress
-            .add_stage_total(
-                SyncStageKey::ProviderCover,
-                artists.len() as u64,
-                SyncTotalState::Final,
-            )
-            .await;
-        progress.set_determinate().await;
-    }
+    progress
+        .add_stage_total(
+            SyncStageKey::ProviderCover,
+            artists.len() as u64,
+            SyncTotalState::Final,
+        )
+        .await;
+    progress.set_determinate().await;
     let refreshers = artist_refreshers(provider_filter).await;
     let schemes = id_schemes().await;
     let mut synced = 0;
     for listed in artists {
-        if let Some(progress) = progress {
-            progress.check_cancelled().await?;
-        }
+        progress.check_cancelled()?;
         let details = SyncWorkDetails::artist(
             "artist_provider_cover",
             Some(listed.id.clone()),
             Some(listed.artist_name.clone()),
         );
-        let work_id = if let Some(progress) = progress {
-            progress
-                .start_work(SyncStageKey::ProviderCover, details.clone())
-                .await
-        } else {
-            0
-        };
+        let work_id = progress
+            .start_work(SyncStageKey::ProviderCover, details.clone())
+            .await;
         let result = refresh_and_sync_artist_cover(
             listed,
             &refreshers,
@@ -240,36 +226,23 @@ pub(crate) async fn sync_artist_covers(
         match result {
             Ok(Some(got_cover)) => {
                 synced += usize::from(got_cover);
-                if let Some(progress) = progress {
-                    progress
-                        .complete_work(work_id, SyncStageKey::ProviderCover)
-                        .await;
-                }
+                progress
+                    .complete_work(work_id, SyncStageKey::ProviderCover)
+                    .await;
             }
             Ok(None) => {
-                if let Some(progress) = progress {
-                    progress
-                        .skip_work(work_id, SyncStageKey::ProviderCover, "artist_gone")
-                        .await;
-                }
+                progress
+                    .skip_work(work_id, SyncStageKey::ProviderCover, "artist_gone")
+                    .await;
             }
             Err(err) => {
                 let error = format!("{err:#}");
-                tracing::warn!(
-                    artist_id = %listed.id,
-                    error = %error,
-                    "artist cover sync failed"
-                );
-                if let Some(progress) = progress {
-                    progress
-                        .fail_work(work_id, SyncStageKey::ProviderCover, details, error)
-                        .await;
-                }
+                progress
+                    .fail_work(work_id, SyncStageKey::ProviderCover, details, error)
+                    .await;
             }
         }
     }
-    if let Some(progress) = progress {
-        progress.check_cancelled().await?;
-    }
+    progress.check_cancelled()?;
     Ok(synced)
 }

@@ -73,7 +73,7 @@ use crate::services::{
         LibraryRefreshOptions,
         ListedArtist,
         refresh_library_metadata_after_others,
-        refresh_release_metadata_for_scan_with_progress,
+        refresh_release_metadata_for_scan,
         release_refresh_provider_ids,
         sync_artist_covers,
     },
@@ -115,12 +115,6 @@ pub(crate) struct LibrarySyncOptions {
     pub(crate) covers: CoverSyncOptions,
 }
 
-fn trace_run_id(progress: Option<&SyncRunProgress>) -> String {
-    progress
-        .map(|progress| progress.run_id().to_string())
-        .unwrap_or_default()
-}
-
 /// What the scan saw: the paths it observed and those it couldn't read.
 pub(crate) struct ScanObservation {
     pub(super) observed_paths: HashSet<std::path::PathBuf>,
@@ -132,9 +126,9 @@ pub(crate) struct ScanObservation {
 pub(crate) async fn sync_entries_incremental(
     db: &DbAsync,
     library: &Library,
-    progress: Option<SyncRunProgress>,
+    progress: SyncRunProgress,
 ) -> anyhow::Result<ScanObservation> {
-    let run_id = trace_run_id(progress.as_ref());
+    let run_id = progress.run_id().to_string();
     let library_db_id = library
         .db_id
         .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
@@ -158,24 +152,21 @@ pub(crate) async fn sync_entries_incremental(
         tokio::task::spawn_blocking(move || prepare_entry_scan_plan(&library, existing, followed))
     };
     // A cancelled run leaves the scan to finish on its own; it only reads.
-    let scan_plan = match &progress {
-        Some(progress) => tokio::select! {
-            plan = scan => plan,
-            err = until_cancelled(progress) => return Err(err.into()),
-        },
-        None => scan.await,
+    let scan_plan = tokio::select! {
+        plan = scan => plan,
+        err = progress.cancelled() => return Err(err.into()),
     }
     .context("library scan task panicked")?;
     let scan_plan = match scan_plan {
         Ok(plan) => plan,
         Err(err) => {
             if let Some(ScanError::EmptyRoot { gaps }) = err.downcast_ref() {
-                report_scan_gaps(gaps, progress.as_ref()).await;
+                report_scan_gaps(gaps, &progress).await;
             }
             return Err(err);
         }
     };
-    report_scan_gaps(&scan_plan.gaps, progress.as_ref()).await;
+    report_scan_gaps(&scan_plan.gaps, &progress).await;
     let protected_paths = scan_plan.gaps.protected_paths();
     let EntryScanPlan {
         dirs,
@@ -186,16 +177,14 @@ pub(crate) async fn sync_entries_incremental(
         ..
     } = scan_plan;
     let entry_group_count = groups.len();
-    if let Some(progress) = &progress {
-        progress
-            .add_stage_total(
-                SyncStageKey::EntrySync,
-                entry_group_count as u64,
-                SyncTotalState::Estimated,
-            )
-            .await;
-        progress.set_estimating().await;
-    }
+    progress
+        .add_stage_total(
+            SyncStageKey::EntrySync,
+            entry_group_count as u64,
+            SyncTotalState::Estimated,
+        )
+        .await;
+    progress.set_estimating().await;
     tracing::info!(
         library_db_id = library_db_id.0,
         run_id,
@@ -217,17 +206,13 @@ pub(crate) async fn sync_entries_incremental(
                 let started = Instant::now();
                 let source_dir = group.source_dir.clone();
                 let entry_count = group.entries.len();
-                let work_id = if let Some(progress) = &progress {
-                    progress
-                        .start_work(
-                            SyncStageKey::EntrySync,
-                            SyncWorkDetails::new("entry_group_sync")
-                                .source_dir(Some(source_dir.to_string_lossy().into_owned())),
-                        )
-                        .await
-                } else {
-                    0
-                };
+                let work_id = progress
+                    .start_work(
+                        SyncStageKey::EntrySync,
+                        SyncWorkDetails::new("entry_group_sync")
+                            .source_dir(Some(source_dir.to_string_lossy().into_owned())),
+                    )
+                    .await;
                 tracing::debug!(
                     library_db_id = library_db_id.0,
                     run_id = %run_id,
@@ -242,18 +227,15 @@ pub(crate) async fn sync_entries_incremental(
                 let result = match result {
                     Ok(result) => result,
                     Err(err) => {
-                        if let Some(progress) = &progress {
-                            progress
-                                .fail_work(
-                                    work_id,
-                                    SyncStageKey::EntrySync,
-                                    SyncWorkDetails::new("entry_group_sync").source_dir(Some(
-                                        source_dir.to_string_lossy().into_owned(),
-                                    )),
-                                    format!("{err:#}"),
-                                )
-                                .await;
-                        }
+                        progress
+                            .fail_work(
+                                work_id,
+                                SyncStageKey::EntrySync,
+                                SyncWorkDetails::new("entry_group_sync")
+                                    .source_dir(Some(source_dir.to_string_lossy().into_owned())),
+                                format!("{err:#}"),
+                            )
+                            .await;
                         return Err(err);
                     }
                 };
@@ -270,11 +252,9 @@ pub(crate) async fn sync_entries_incremental(
                     stage = "entry_sync",
                     "scan entry group synced"
                 );
-                if let Some(progress) = &progress {
-                    progress
-                        .complete_work(work_id, SyncStageKey::EntrySync)
-                        .await;
-                }
+                progress
+                    .complete_work(work_id, SyncStageKey::EntrySync)
+                    .await;
                 Ok::<_, anyhow::Error>(())
             }
         })
@@ -334,10 +314,7 @@ pub(super) async fn sync_entry_dirs(
 
 /// Reports each path the scan couldn't read as a failed unit and each link it left out as a
 /// skipped one, so the run shows them.
-async fn report_scan_gaps(gaps: &ScanGaps, progress: Option<&SyncRunProgress>) {
-    let Some(progress) = progress else {
-        return;
-    };
+async fn report_scan_gaps(gaps: &ScanGaps, progress: &SyncRunProgress) {
     let count = gaps.unlistable.len() + gaps.skipped_links.len();
     if count == 0 {
         return;
@@ -373,21 +350,17 @@ pub(super) async fn mark_missing_entries_for_scan(
     db: &DbAsync,
     library: &Library,
     observation: &ScanObservation,
-    progress: Option<SyncRunProgress>,
+    progress: SyncRunProgress,
 ) -> anyhow::Result<()> {
-    let run_id = trace_run_id(progress.as_ref());
+    let run_id = progress.run_id().to_string();
     let library_db_id = library
         .db_id
         .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
     let started = Instant::now();
     let details = SyncWorkDetails::new("mark_missing_entries");
-    let work_id = if let Some(progress) = &progress {
-        progress
-            .start_work(SyncStageKey::Cleanup, details.clone())
-            .await
-    } else {
-        0
-    };
+    let work_id = progress
+        .start_work(SyncStageKey::Cleanup, details.clone())
+        .await;
     let result = {
         let mut db_write = db.write().await;
         mark_missing(
@@ -402,17 +375,13 @@ pub(super) async fn mark_missing_entries_for_scan(
     let result = match result {
         Ok(result) => result,
         Err(err) => {
-            if let Some(progress) = &progress {
-                progress
-                    .fail_work(work_id, SyncStageKey::Cleanup, details, format!("{err:#}"))
-                    .await;
-            }
+            progress
+                .fail_work(work_id, SyncStageKey::Cleanup, details, format!("{err:#}"))
+                .await;
             return Err(err);
         }
     };
-    if let Some(progress) = &progress {
-        progress.complete_work(work_id, SyncStageKey::Cleanup).await;
-    }
+    progress.complete_work(work_id, SyncStageKey::Cleanup).await;
     tracing::info!(
         library_db_id = library_db_id.0,
         run_id = %run_id,
@@ -429,40 +398,32 @@ pub(super) async fn mark_missing_entries_for_scan(
 async fn cleanup_metadata_orphans(
     db: &DbAsync,
     library_db_id: DbId,
-    progress: Option<SyncRunProgress>,
+    progress: SyncRunProgress,
 ) -> anyhow::Result<()> {
-    let run_id = trace_run_id(progress.as_ref());
+    let run_id = progress.run_id().to_string();
     let started = Instant::now();
-    let work_id = if let Some(progress) = &progress {
-        progress
-            .start_work(
-                SyncStageKey::Cleanup,
-                SyncWorkDetails::new("cleanup_orphaned_metadata"),
-            )
-            .await
-    } else {
-        0
-    };
+    let work_id = progress
+        .start_work(
+            SyncStageKey::Cleanup,
+            SyncWorkDetails::new("cleanup_orphaned_metadata"),
+        )
+        .await;
     let result = {
         let mut db_write = db.write().await;
         cleanup_orphaned_metadata(&mut db_write)
     };
     if let Err(err) = result {
-        if let Some(progress) = &progress {
-            progress
-                .fail_work(
-                    work_id,
-                    SyncStageKey::Cleanup,
-                    SyncWorkDetails::new("cleanup_orphaned_metadata"),
-                    format!("{err:#}"),
-                )
-                .await;
-        }
+        progress
+            .fail_work(
+                work_id,
+                SyncStageKey::Cleanup,
+                SyncWorkDetails::new("cleanup_orphaned_metadata"),
+                format!("{err:#}"),
+            )
+            .await;
         return Err(err);
     }
-    if let Some(progress) = &progress {
-        progress.complete_work(work_id, SyncStageKey::Cleanup).await;
-    }
+    progress.complete_work(work_id, SyncStageKey::Cleanup).await;
     tracing::info!(
         library_db_id = library_db_id.0,
         run_id = %run_id,
@@ -480,64 +441,58 @@ pub(crate) async fn sync_library_pipeline(
     db: &DbAsync,
     library: &Library,
     options: LibrarySyncOptions,
-    progress: Option<SyncRunProgress>,
+    progress: SyncRunProgress,
 ) -> anyhow::Result<()> {
     let library_db_id = library
         .db_id
         .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
-    if let Some(progress) = &progress {
-        progress.set_status(SyncRunStatus::Running).await;
-        progress.check_cancelled().await?;
-    }
+    progress.set_status(SyncRunStatus::Running).await;
+    progress.check_cancelled()?;
     let observation = sync_entries_incremental(db, library, progress.clone()).await?;
     mark_missing_entries_for_scan(db, library, &observation, progress.clone()).await?;
-    if let Some(progress) = &progress {
-        progress.check_cancelled().await?;
-    }
+    progress.check_cancelled()?;
     let plans = process_pending_metadata(db, library, progress.clone()).await?;
     let stages = ReleaseArtifactStages::for_sync(options);
-    if let Some(progress) = &progress {
-        if stages.provider_refresh {
-            let provider_count = release_refresh_provider_ids(None, false).await?.len() as u64;
-            progress
-                .add_stage_total(
-                    SyncStageKey::ProviderRefresh,
-                    plans.len() as u64 * provider_count,
-                    SyncTotalState::Final,
-                )
-                .await;
-        }
+    if stages.provider_refresh {
+        let provider_count = release_refresh_provider_ids(None, false).await?.len() as u64;
         progress
             .add_stage_total(
-                SyncStageKey::LocalCoverMetadata,
+                SyncStageKey::ProviderRefresh,
+                plans.len() as u64 * provider_count,
+                SyncTotalState::Final,
+            )
+            .await;
+    }
+    progress
+        .add_stage_total(
+            SyncStageKey::LocalCoverMetadata,
+            plans.len() as u64,
+            SyncTotalState::Final,
+        )
+        .await;
+    progress
+        .add_stage_total(
+            SyncStageKey::Lyrics,
+            plans.iter().map(|plan| plan.track_ids.len() as u64).sum(),
+            SyncTotalState::Final,
+        )
+        .await;
+    if !stages.covers.skips() {
+        progress
+            .add_stage_total(
+                SyncStageKey::ProviderCover,
                 plans.len() as u64,
                 SyncTotalState::Final,
             )
             .await;
-        progress
-            .add_stage_total(
-                SyncStageKey::Lyrics,
-                plans.iter().map(|plan| plan.track_ids.len() as u64).sum(),
-                SyncTotalState::Final,
-            )
-            .await;
-        if !stages.covers.skips() {
-            progress
-                .add_stage_total(
-                    SyncStageKey::ProviderCover,
-                    plans.len() as u64,
-                    SyncTotalState::Final,
-                )
-                .await;
-        }
-        progress
-            .add_stage_total(SyncStageKey::Cleanup, 2, SyncTotalState::Final)
-            .await;
-        // A sync of every release finalises the totals once its refresh added its own, and the
-        // artist cover pass once it adds its own.
-        if stages.provider_refresh && stages.covers.skips() {
-            progress.set_determinate().await;
-        }
+    }
+    progress
+        .add_stage_total(SyncStageKey::Cleanup, 2, SyncTotalState::Final)
+        .await;
+    // A sync of every release finalises the totals once its refresh added its own, and the
+    // artist cover pass once it adds its own.
+    if stages.provider_refresh && stages.covers.skips() {
+        progress.set_determinate().await;
     }
     if options.releases == SyncReleases::All {
         refresh_every_release(library_db_id, options.covers, progress.clone()).await?;
@@ -569,15 +524,13 @@ pub(crate) async fn sync_library_pipeline(
             }
         })
         .await;
-    if let Some(progress) = &progress {
-        progress.check_cancelled().await?;
-    }
+    progress.check_cancelled()?;
     refresh_gone_covers(db, library, library_db_id).await;
     if !stages.covers.skips() {
         sync_changed_artist_covers(db, library, &changed_releases, stages.covers, &progress)
             .await?;
     }
-    purge_expired_missing(db, library, &observation, progress.as_ref()).await?;
+    purge_expired_missing(db, library, &observation, &progress).await?;
     cleanup_metadata_orphans(db, library_db_id, progress).await?;
     Ok(())
 }
@@ -588,7 +541,7 @@ async fn purge_expired_missing(
     db: &DbAsync,
     library: &Library,
     observation: &ScanObservation,
-    progress: Option<&SyncRunProgress>,
+    progress: &SyncRunProgress,
 ) -> anyhow::Result<()> {
     let Some(days) = library.purge_missing_after_days else {
         return Ok(());
@@ -615,7 +568,7 @@ async fn purge_expired_missing(
 async fn refresh_every_release(
     library_db_id: DbId,
     covers: CoverSyncOptions,
-    progress: Option<SyncRunProgress>,
+    progress: SyncRunProgress,
 ) -> anyhow::Result<()> {
     let options = LibraryRefreshOptions {
         covers,
@@ -627,33 +580,26 @@ async fn refresh_every_release(
     else {
         return Ok(());
     };
+    if err.is_cancellation() {
+        return Err(err.into_anyhow());
+    }
     let err = err.into_anyhow();
-    if err.downcast_ref::<SyncRunControlError>().is_some() {
-        return Err(err);
-    }
-    tracing::warn!(
-        library_db_id = library_db_id.0,
-        error = %format_args!("{err:#}"),
-        "sync of every release could not refresh the library"
-    );
-    if let Some(progress) = &progress {
-        progress
-            .add_stage_total(SyncStageKey::ProviderRefresh, 1, SyncTotalState::Final)
-            .await;
-        let details = SyncWorkDetails::new("library_provider_refresh");
-        let work_id = progress
-            .start_work(SyncStageKey::ProviderRefresh, details.clone())
-            .await;
-        progress
-            .fail_work(
-                work_id,
-                SyncStageKey::ProviderRefresh,
-                details,
-                format!("{err:#}"),
-            )
-            .await;
-        progress.set_determinate().await;
-    }
+    progress
+        .add_stage_total(SyncStageKey::ProviderRefresh, 1, SyncTotalState::Final)
+        .await;
+    let details = SyncWorkDetails::new("library_provider_refresh");
+    let work_id = progress
+        .start_work(SyncStageKey::ProviderRefresh, details.clone())
+        .await;
+    progress
+        .fail_work(
+            work_id,
+            SyncStageKey::ProviderRefresh,
+            details,
+            format!("{err:#}"),
+        )
+        .await;
+    progress.set_determinate().await;
     Ok(())
 }
 
@@ -689,7 +635,7 @@ async fn sync_changed_artist_covers(
     library: &Library,
     releases: &[(DbId, Option<String>)],
     options: CoverSyncOptions,
-    progress: &Option<SyncRunProgress>,
+    progress: &SyncRunProgress,
 ) -> Result<(), SyncRunControlError> {
     let artists = {
         let db_read = db.read().await;
@@ -720,7 +666,7 @@ async fn sync_changed_artist_covers(
         library_root: Some(&library.path),
         covers_root: &covers_root,
     };
-    sync_artist_covers(&artists, paths, options, None, progress.as_ref()).await?;
+    sync_artist_covers(&artists, paths, options, None, progress).await?;
     Ok(())
 }
 
@@ -756,44 +702,6 @@ async fn mark_entries_synced(db: &DbAsync, library_db_id: DbId, entry_ids: &[DbI
     }
 }
 
-async fn until_cancelled(progress: &SyncRunProgress) -> SyncRunControlError {
-    loop {
-        if let Err(err) = progress.check_cancelled().await {
-            return err;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-}
-
-async fn is_cancelled(progress: Option<&SyncRunProgress>) -> bool {
-    match progress {
-        Some(progress) => progress.check_cancelled().await.is_err(),
-        None => false,
-    }
-}
-
-async fn fail_metadata_work(
-    progress: Option<&SyncRunProgress>,
-    work_id: u64,
-    stage: SyncStageKey,
-    details: SyncWorkDetails,
-    err: &anyhow::Error,
-) {
-    match progress {
-        Some(progress) => {
-            progress
-                .fail_work(work_id, stage, details, format!("{err:#}"))
-                .await;
-        }
-        None => tracing::warn!(
-            stage = stage.as_str(),
-            source_dir = ?details.source_dir,
-            error = %format_args!("{err:#}"),
-            "sync work failed"
-        ),
-    }
-}
-
 fn is_unsynced_file(entry: &Entry) -> bool {
     entry.kind == EntryKind::File && entry.synced_at_ms.is_none() && !entry.is_missing()
 }
@@ -805,9 +713,9 @@ fn is_unsynced_file(entry: &Entry) -> bool {
 async fn process_pending_metadata(
     db: &DbAsync,
     library: &Library,
-    progress: Option<SyncRunProgress>,
+    progress: SyncRunProgress,
 ) -> anyhow::Result<Vec<ReleaseArtifactPlan>> {
-    let run_id = trace_run_id(progress.as_ref());
+    let run_id = progress.run_id().to_string();
     let library_db_id = library
         .db_id
         .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
@@ -834,26 +742,21 @@ async fn process_pending_metadata(
             Arc::new(MediaRoots::for_principal(&*db_read, None)?),
         )
     };
-    let groups = match &progress {
-        Some(progress) => tokio::select! {
-            groups = metadata_groups(&library.path, entries, &cue_links, &roots) => groups,
-            err = until_cancelled(progress) => return Err(err.into()),
-        },
-        None => metadata_groups(&library.path, entries, &cue_links, &roots).await,
+    let groups = tokio::select! {
+        groups = metadata_groups(&library.path, entries, &cue_links, &roots) => groups,
+        err = progress.cancelled() => return Err(err.into()),
     };
     let groups = groups
         .into_iter()
         .filter(|group| group.entries.iter().any(is_unsynced_file))
         .collect::<Vec<_>>();
-    if let Some(progress) = &progress {
-        progress
-            .add_stage_total(
-                SyncStageKey::MetadataParse,
-                groups.len() as u64,
-                SyncTotalState::Estimated,
-            )
-            .await;
-    }
+    progress
+        .add_stage_total(
+            SyncStageKey::MetadataParse,
+            groups.len() as u64,
+            SyncTotalState::Estimated,
+        )
+        .await;
 
     let mapping_config = load_mapping_config(db).await?;
 
@@ -862,19 +765,13 @@ async fn process_pending_metadata(
     let mut unreadable_entries = HashSet::new();
     let mut parsed_groups = Vec::new();
     for (coalesce_group_key, group) in groups.into_iter().enumerate() {
-        if let Some(progress) = &progress {
-            progress.check_cancelled().await?;
-        }
+        progress.check_cancelled()?;
         let source_dir = group.source_dir.clone();
         let details = SyncWorkDetails::new("metadata_parse_group")
             .source_dir(Some(source_dir.to_string_lossy().into_owned()));
-        let work_id = if let Some(progress) = &progress {
-            progress
-                .start_work(SyncStageKey::MetadataParse, details.clone())
-                .await
-        } else {
-            0
-        };
+        let work_id = progress
+            .start_work(SyncStageKey::MetadataParse, details.clone())
+            .await;
         let mut entry_source_dirs = BTreeMap::new();
         let mut group_unsynced = HashMap::new();
         for entry in &group.entries {
@@ -895,14 +792,14 @@ async fn process_pending_metadata(
             match parse_metadata(&mapping_config, group.entries, &cue_links, &roots).await {
                 Ok(output) => output,
                 Err(err) => {
-                    fail_metadata_work(
-                        progress.as_ref(),
-                        work_id,
-                        SyncStageKey::MetadataParse,
-                        details,
-                        &err,
-                    )
-                    .await;
+                    progress
+                        .fail_work(
+                            work_id,
+                            SyncStageKey::MetadataParse,
+                            details,
+                            format!("{err:#}"),
+                        )
+                        .await;
                     continue;
                 }
             };
@@ -955,21 +852,19 @@ async fn process_pending_metadata(
                     first.path.display(),
                     skip_reason_summary(&first.reason)
                 );
-                fail_metadata_work(
-                    progress.as_ref(),
-                    work_id,
-                    SyncStageKey::MetadataParse,
-                    details,
-                    &err,
-                )
-                .await;
+                progress
+                    .fail_work(
+                        work_id,
+                        SyncStageKey::MetadataParse,
+                        details,
+                        format!("{err:#}"),
+                    )
+                    .await;
             }
             None => {
-                if let Some(progress) = &progress {
-                    progress
-                        .complete_work(work_id, SyncStageKey::MetadataParse)
-                        .await;
-                }
+                progress
+                    .complete_work(work_id, SyncStageKey::MetadataParse)
+                    .await;
             }
         }
     }
@@ -981,15 +876,13 @@ async fn process_pending_metadata(
         })
         .collect::<Vec<_>>();
     let batch_count = batches.len();
-    if let Some(progress) = &progress {
-        progress
-            .add_stage_total(
-                SyncStageKey::MetadataApply,
-                batch_count as u64,
-                SyncTotalState::Estimated,
-            )
-            .await;
-    }
+    progress
+        .add_stage_total(
+            SyncStageKey::MetadataApply,
+            batch_count as u64,
+            SyncTotalState::Estimated,
+        )
+        .await;
     let apply_results = futures::stream::iter(batches.into_iter().enumerate())
         .map(|(group_id, metadata)| {
             let db = db.clone();
@@ -1059,25 +952,19 @@ async fn process_metadata_group(
     group_id: usize,
     source_dir: Option<PathBuf>,
     metadata: Vec<TrackMetadata>,
-    progress: Option<SyncRunProgress>,
+    progress: SyncRunProgress,
 ) -> anyhow::Result<MetadataApplyResult> {
-    let run_id = trace_run_id(progress.as_ref());
-    if let Some(progress) = &progress {
-        progress.check_cancelled().await?;
-    }
+    let run_id = progress.run_id().to_string();
+    progress.check_cancelled()?;
     let source_dir_text = source_dir
         .as_ref()
         .map(|path| path.to_string_lossy().into_owned());
-    let work_id = if let Some(progress) = &progress {
-        progress
-            .start_work(
-                SyncStageKey::MetadataApply,
-                SyncWorkDetails::new("metadata_apply_group").source_dir(source_dir_text.clone()),
-            )
-            .await
-    } else {
-        0
-    };
+    let work_id = progress
+        .start_work(
+            SyncStageKey::MetadataApply,
+            SyncWorkDetails::new("metadata_apply_group").source_dir(source_dir_text.clone()),
+        )
+        .await;
 
     let started = Instant::now();
     tracing::debug!(
@@ -1099,14 +986,14 @@ async fn process_metadata_group(
     let apply_result = match apply_write_result {
         Ok(result) => result,
         Err(err) => {
-            fail_metadata_work(
-                progress.as_ref(),
-                work_id,
-                SyncStageKey::MetadataApply,
-                SyncWorkDetails::new("metadata_apply_group").source_dir(source_dir_text),
-                &err,
-            )
-            .await;
+            progress
+                .fail_work(
+                    work_id,
+                    SyncStageKey::MetadataApply,
+                    SyncWorkDetails::new("metadata_apply_group").source_dir(source_dir_text),
+                    format!("{err:#}"),
+                )
+                .await;
             return Err(err);
         }
     };
@@ -1122,11 +1009,9 @@ async fn process_metadata_group(
         "scan group metadata persisted"
     );
 
-    if let Some(progress) = &progress {
-        progress
-            .complete_work(work_id, SyncStageKey::MetadataApply)
-            .await;
-    }
+    progress
+        .complete_work(work_id, SyncStageKey::MetadataApply)
+        .await;
 
     Ok(apply_result)
 }
@@ -1148,7 +1033,7 @@ struct ReleaseArtifactContext<'a> {
     release_public_id: Option<String>,
     release_title: Option<String>,
     run_id: String,
-    progress: Option<SyncRunProgress>,
+    progress: SyncRunProgress,
 }
 
 impl ReleaseArtifactContext<'_> {
@@ -1193,9 +1078,9 @@ async fn process_release_artifacts(
     library_path: &Path,
     plan: &ReleaseArtifactPlan,
     stages: ReleaseArtifactStages,
-    progress: Option<SyncRunProgress>,
+    progress: SyncRunProgress,
 ) -> bool {
-    let run_id = trace_run_id(progress.as_ref());
+    let run_id = progress.run_id().to_string();
     let release_id = plan.release_id;
     let release_public_id = plan.release_public_id.clone();
     let release_title = plan.release_title.clone();
@@ -1209,12 +1094,12 @@ async fn process_release_artifacts(
         run_id: run_id.clone(),
         progress: progress.clone(),
     };
-    if is_cancelled(progress.as_ref()).await {
+    if progress.is_cancelled() {
         return false;
     }
     if stages.provider_refresh {
         refresh_changed_release(&context).await;
-        if is_cancelled(progress.as_ref()).await {
+        if progress.is_cancelled() {
             return false;
         }
     }
@@ -1224,7 +1109,7 @@ async fn process_release_artifacts(
     if !stages.covers.skips() {
         sync_provider_release_cover(&context, stages.covers).await;
     }
-    local_cover.is_ok() && !is_cancelled(progress.as_ref()).await
+    local_cover.is_ok() && !progress.is_cancelled()
 }
 
 async fn refresh_changed_release(context: &ReleaseArtifactContext<'_>) {
@@ -1238,7 +1123,7 @@ async fn refresh_changed_release(context: &ReleaseArtifactContext<'_>) {
         stage = "provider_refresh",
         "scan release stage started"
     );
-    if let Err(err) = refresh_release_metadata_for_scan_with_progress(
+    if let Err(err) = refresh_release_metadata_for_scan(
         library_db_id,
         release_id,
         context.progress.clone(),
@@ -1264,24 +1149,20 @@ async fn sync_local_release_cover_metadata(
 ) -> anyhow::Result<()> {
     let started = Instant::now();
     let details = context.details("local_cover_metadata");
-    let work_id = if let Some(progress) = &context.progress {
-        progress
-            .start_work(SyncStageKey::LocalCoverMetadata, details.clone())
-            .await
-    } else {
-        0
-    };
+    let work_id = context
+        .progress
+        .start_work(SyncStageKey::LocalCoverMetadata, details.clone())
+        .await;
     let result =
         record_local_release_cover(context.db, context.release_id, Some(context.library_path))
             .await;
 
     match result {
         Ok(synced) => {
-            if let Some(progress) = &context.progress {
-                progress
-                    .complete_work(work_id, SyncStageKey::LocalCoverMetadata)
-                    .await;
-            }
+            context
+                .progress
+                .complete_work(work_id, SyncStageKey::LocalCoverMetadata)
+                .await;
             match synced {
                 Some((cover_path, changed)) => tracing::info!(
                     library_db_id = context.library_db_id.0,
@@ -1304,26 +1185,15 @@ async fn sync_local_release_cover_metadata(
             Ok(())
         }
         Err(err) => {
-            match &context.progress {
-                Some(progress) => {
-                    progress
-                        .fail_work(
-                            work_id,
-                            SyncStageKey::LocalCoverMetadata,
-                            details,
-                            format!("{err:#}"),
-                        )
-                        .await;
-                }
-                None => tracing::warn!(
-                    library_db_id = context.library_db_id.0,
-                    run_id = %context.run_id,
-                    release_db_id = context.release_id.0,
-                    stage = "local_cover_metadata",
-                    error = %format_args!("{err:#}"),
-                    "scan release local cover metadata sync failed"
-                ),
-            }
+            context
+                .progress
+                .fail_work(
+                    work_id,
+                    SyncStageKey::LocalCoverMetadata,
+                    details,
+                    format!("{err:#}"),
+                )
+                .await;
             Err(err)
         }
     }
@@ -1334,7 +1204,7 @@ async fn dispatch_release_lyrics(
     release_id: DbId,
     plan: &ReleaseArtifactPlan,
     run_id: String,
-    progress: Option<SyncRunProgress>,
+    progress: SyncRunProgress,
 ) {
     if plan.track_ids.is_empty() {
         return;
@@ -1344,45 +1214,23 @@ async fn dispatch_release_lyrics(
     futures::stream::iter(plan.track_ids.clone())
         .for_each_concurrent(MAX_CONCURRENT_DISPATCHES, |track_db_id| {
             let progress = progress.clone();
-            let run_id = run_id.clone();
             let details = SyncWorkDetails::release(
                 "lyrics_track",
                 plan.release_public_id.clone(),
                 plan.release_title.clone(),
             );
             async move {
-                let work_id = if let Some(progress) = &progress {
-                    progress
-                        .start_work(SyncStageKey::Lyrics, details.clone())
-                        .await
-                } else {
-                    0
-                };
+                let work_id = progress
+                    .start_work(SyncStageKey::Lyrics, details.clone())
+                    .await;
                 match dispatch_lyrics_for_track(track_db_id, false).await {
                     Ok(()) => {
-                        if let Some(progress) = &progress {
-                            progress.complete_work(work_id, SyncStageKey::Lyrics).await;
-                        }
+                        progress.complete_work(work_id, SyncStageKey::Lyrics).await;
                     }
                     Err(err) => {
-                        if let Some(progress) = &progress {
-                            progress
-                                .fail_work(
-                                    work_id,
-                                    SyncStageKey::Lyrics,
-                                    details,
-                                    format!("{err:#}"),
-                                )
-                                .await;
-                        }
-                        tracing::warn!(
-                            library_db_id = library_db_id.0,
-                            run_id = %run_id,
-                            release_db_id = release_id.0,
-                            track_db_id = track_db_id.0,
-                            error = %format_args!("{err:#}"),
-                            "lyrics dispatch failed for scanned track"
-                        );
+                        progress
+                            .fail_work(work_id, SyncStageKey::Lyrics, details, format!("{err:#}"))
+                            .await;
                     }
                 }
             }
@@ -1405,13 +1253,10 @@ async fn sync_provider_release_cover(
 ) {
     let started = Instant::now();
     let details = context.details("provider_cover");
-    let work_id = if let Some(progress) = &context.progress {
-        progress
-            .start_work(SyncStageKey::ProviderCover, details.clone())
-            .await
-    } else {
-        0
-    };
+    let work_id = context
+        .progress
+        .start_work(SyncStageKey::ProviderCover, details.clone())
+        .await;
     let covers_root = configured_covers_root();
     let cover_paths = CoverPaths {
         library_root: Some(context.library_path),
@@ -1434,37 +1279,27 @@ async fn sync_provider_release_cover(
     let (release, tracks, artists) = match release_bundle {
         Ok(Some(bundle)) => bundle,
         Ok(None) => {
-            if let Some(progress) = &context.progress {
-                progress
-                    .fail_work(
-                        work_id,
-                        SyncStageKey::ProviderCover,
-                        details,
-                        "release missing before provider cover sync",
-                    )
-                    .await;
-            }
+            context
+                .progress
+                .fail_work(
+                    work_id,
+                    SyncStageKey::ProviderCover,
+                    details,
+                    "release missing before provider cover sync",
+                )
+                .await;
             return;
         }
         Err(err) => {
-            if let Some(progress) = &context.progress {
-                progress
-                    .fail_work(
-                        work_id,
-                        SyncStageKey::ProviderCover,
-                        details,
-                        format!("{err:#}"),
-                    )
-                    .await;
-            }
-            tracing::warn!(
-                library_db_id = context.library_db_id.0,
-                run_id = %context.run_id,
-                release_db_id = context.release_id.0,
-                stage = "provider_cover",
-                error = %format_args!("{err:#}"),
-                "scan release load failed before provider cover sync"
-            );
+            context
+                .progress
+                .fail_work(
+                    work_id,
+                    SyncStageKey::ProviderCover,
+                    details,
+                    format!("{err:#}"),
+                )
+                .await;
             return;
         }
     };
@@ -1480,32 +1315,22 @@ async fn sync_provider_release_cover(
     .await
     {
         Ok(synced) => {
-            if let Some(progress) = &context.progress {
-                progress
-                    .complete_work(work_id, SyncStageKey::ProviderCover)
-                    .await;
-            }
+            context
+                .progress
+                .complete_work(work_id, SyncStageKey::ProviderCover)
+                .await;
             synced
         }
         Err(err) => {
-            if let Some(progress) = &context.progress {
-                progress
-                    .fail_work(
-                        work_id,
-                        SyncStageKey::ProviderCover,
-                        details.clone(),
-                        format!("{err:#}"),
-                    )
-                    .await;
-            }
-            tracing::warn!(
-                library_db_id = context.library_db_id.0,
-                run_id = %context.run_id,
-                release_db_id = context.release_id.0,
-                stage = "provider_cover",
-                error = %format_args!("{err:#}"),
-                "scan release provider cover sync failed"
-            );
+            context
+                .progress
+                .fail_work(
+                    work_id,
+                    SyncStageKey::ProviderCover,
+                    details.clone(),
+                    format!("{err:#}"),
+                )
+                .await;
             false
         }
     };
@@ -1522,7 +1347,8 @@ async fn sync_provider_release_cover(
 }
 
 pub(crate) async fn sync_library(db: &DbAsync, library: &Library) -> anyhow::Result<()> {
-    sync_library_pipeline(db, library, LibrarySyncOptions::default(), None).await
+    let progress = SyncRunProgress::unreported(crate::services::shutdown::token());
+    sync_library_pipeline(db, library, LibrarySyncOptions::default(), progress).await
 }
 
 #[cfg(test)]
@@ -1862,7 +1688,7 @@ FILE "album.flac" WAVE
     async fn sync_with(
         hooks: std::sync::Arc<Hooks>,
         library: &Library,
-        progress: Option<SyncRunProgress>,
+        progress: SyncRunProgress,
     ) -> anyhow::Result<()> {
         HOOKS
             .scope(
@@ -1901,7 +1727,7 @@ FILE "album.flac" WAVE
                 reject_album: Some("Bad Album"),
                 ..Hooks::default()
             };
-            sync_with(hooks.into(), &library, Some(progress.clone())).await?;
+            sync_with(hooks.into(), &library, progress.clone()).await?;
         }
         let run = super::super::orchestrator::get_sync_run(progress.run_id())
             .await?
@@ -1927,7 +1753,12 @@ FILE "album.flac" WAVE
         assert!(!synced(&library, &bad).await?);
 
         let hooks = std::sync::Arc::new(Hooks::default());
-        sync_with(hooks.clone(), &library, None).await?;
+        sync_with(
+            hooks.clone(),
+            &library,
+            SyncRunProgress::unreported_for_test(),
+        )
+        .await?;
 
         assert_eq!(*hooks.applied.lock().expect("applied"), ["Bad Album"]);
         assert_eq!(snapshot(&library).await?[&bad].1.len(), 1);
@@ -1960,7 +1791,12 @@ FILE "album.flac" WAVE
 
         shift_mtime(&two, 5)?;
         let hooks = std::sync::Arc::new(Hooks::default());
-        sync_with(hooks.clone(), &library, None).await?;
+        sync_with(
+            hooks.clone(),
+            &library,
+            SyncRunProgress::unreported_for_test(),
+        )
+        .await?;
 
         assert_eq!(*hooks.applied.lock().expect("applied"), ["Two"]);
         assert!(synced(&library, &one).await? && synced(&library, &two).await?);
@@ -2027,9 +1863,7 @@ FILE "album.flac" WAVE
         let every = tokio::spawn({
             let library = library.clone();
             let progress = progress.clone();
-            async move {
-                sync_library_pipeline(&STATE.db.get(), &library, options, Some(progress)).await
-            }
+            async move { sync_library_pipeline(&STATE.db.get(), &library, options, progress).await }
         });
         tokio::time::sleep(std::time::Duration::from_millis(400)).await;
         assert!(!every.is_finished(), "the sync waits for the other refresh");
@@ -2115,7 +1949,7 @@ FILE "album.flac" WAVE
             &STATE.db.get(),
             &library,
             LibrarySyncOptions::default(),
-            Some(progress.clone()),
+            progress.clone(),
         )
         .await?;
         let run = super::super::orchestrator::get_sync_run(progress.run_id())
@@ -2339,7 +2173,12 @@ FILE "album.flac" WAVE
 
         std::fs::remove_file(&bonus)?;
         let hooks = std::sync::Arc::new(Hooks::default());
-        sync_with(hooks.clone(), &library, None).await?;
+        sync_with(
+            hooks.clone(),
+            &library,
+            SyncRunProgress::unreported_for_test(),
+        )
+        .await?;
 
         assert_eq!(*hooks.applied.lock().expect("applied"), ["Album"]);
         assert!(synced(&library, &main).await?);
@@ -2441,7 +2280,7 @@ FILE "album.flac" WAVE
             &STATE.db.get(),
             &library,
             LibrarySyncOptions::default(),
-            Some(progress.clone()),
+            progress.clone(),
         )
         .await;
 
@@ -2471,7 +2310,7 @@ FILE "album.flac" WAVE
             &STATE.db.get(),
             &library,
             LibrarySyncOptions::default(),
-            Some(progress.clone()),
+            progress.clone(),
         )
         .await;
 
@@ -2693,10 +2532,10 @@ FILE "album.flac" WAVE
         album_track(&root.join("Artist/One"), "One")?;
         album_track(&root.join("Artist/Two"), "Two")?;
         let db = STATE.db.get();
-        sync_entries_incremental(&db, &library, None).await?;
+        sync_entries_incremental(&db, &library, SyncRunProgress::unreported_for_test()).await?;
         let stamp = db.stamp();
 
-        sync_entries_incremental(&db, &library, None).await?;
+        sync_entries_incremental(&db, &library, SyncRunProgress::unreported_for_test()).await?;
 
         assert_eq!(db.stamp(), stamp);
         let _ = std::fs::remove_dir_all(root);
@@ -2908,7 +2747,7 @@ FILE "album.flac" WAVE
             &STATE.db.get(),
             &library,
             &lyra_db::entries::PurgeScope::All,
-            None,
+            &SyncRunProgress::unreported_for_test(),
         )
         .await?;
         assert_eq!(purged, 1);
@@ -2945,7 +2784,7 @@ FILE "album.flac" WAVE
             &STATE.db.get(),
             &library,
             &lyra_db::entries::PurgeScope::Tracks(vec![gone]),
-            None,
+            &SyncRunProgress::unreported_for_test(),
         )
         .await?;
         assert!(!track_exists(gone).await?);
@@ -3210,7 +3049,7 @@ FILE "album.flac" WAVE
             &STATE.db.get(),
             &library,
             LibrarySyncOptions::default(),
-            Some(progress.clone()),
+            progress.clone(),
         )
         .await?;
         let run = super::super::orchestrator::get_sync_run(progress.run_id())
@@ -3351,7 +3190,7 @@ FILE "album.flac" WAVE
             before_artifacts: Some(gate),
             ..Hooks::default()
         };
-        let result = sync_with(hooks.into(), &library, Some(progress.clone())).await;
+        let result = sync_with(hooks.into(), &library, progress.clone()).await;
         super::super::orchestrator::end_test_run(&progress).await;
 
         let err = result.expect_err("the run finished despite its cancellation");

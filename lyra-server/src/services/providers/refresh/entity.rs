@@ -76,14 +76,13 @@ pub(crate) async fn refresh_entity_metadata(
     };
 
     let providers = read_active_providers().await?;
-    let handlers = refresh_callbacks_for(&providers, entity_type, false).await;
-    let provider_options = passed_provider_options(&handlers, &options.provider_options).await?;
+    let callbacks = refresh_callbacks_for(&providers, entity_type, false).await;
+    let provider_options = passed_provider_options(&callbacks, &options.provider_options).await?;
     let mut providers_called = Vec::new();
-    for ((provider_id, handler, _), provider_options) in handlers.into_iter().zip(provider_options)
-    {
+    for (callback, provider_options) in callbacks.into_iter().zip(provider_options) {
         let context = context_with_options(context.clone(), provider_options);
-        dispatch_refresh_callback(&provider_id, handler, context).await?;
-        providers_called.push(provider_id);
+        dispatch_refresh_callback(&callback.provider_id, callback.handler, context).await?;
+        providers_called.push(callback.provider_id);
     }
 
     if entity_type == EntityType::Release

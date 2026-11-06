@@ -51,8 +51,7 @@ pub(crate) use library::{
     LibraryRefreshOptions,
     refresh_library_metadata,
     refresh_library_metadata_after_others,
-    refresh_library_metadata_with_progress,
-    refresh_release_metadata_for_scan_with_progress,
+    refresh_release_metadata_for_scan,
     release_refresh_provider_ids,
 };
 
@@ -81,6 +80,13 @@ fn cover_paths<'a>(library_root: &'a Option<PathBuf>, covers_root: &'a Path) -> 
     }
 }
 
+/// A provider's refresh handler, with its sync filter when the refresh applies filters.
+struct RefreshCallback {
+    provider_id: String,
+    handler: PluginCallbackHandle,
+    filter: Option<PluginCallbackHandle>,
+}
+
 async fn read_active_providers() -> anyhow::Result<ActiveProviders> {
     let db = STATE.db.read().await;
     super::active_providers(&db)
@@ -90,7 +96,7 @@ async fn refresh_callbacks_for(
     providers: impl IntoIterator<Item = &ProviderConfig>,
     entity_type: EntityType,
     include_sync_filters: bool,
-) -> Vec<(String, PluginCallbackHandle, Option<PluginCallbackHandle>)> {
+) -> Vec<RefreshCallback> {
     let registry = provider_registry().read_owned().await;
     providers
         .into_iter()
@@ -103,23 +109,27 @@ async fn refresh_callbacks_for(
             } else {
                 None
             };
-            Some((provider.provider_id.clone(), handler, filter))
+            Some(RefreshCallback {
+                provider_id: provider.provider_id.clone(),
+                handler,
+                filter,
+            })
         })
         .collect()
 }
 
 /// Each handler's provider's options, checked for every provider before any of them runs.
 async fn passed_provider_options(
-    handlers: &[(String, PluginCallbackHandle, Option<PluginCallbackHandle>)],
+    callbacks: &[RefreshCallback],
     passed_options: &HashMap<String, String>,
 ) -> Result<Vec<serde_json::Map<String, serde_json::Value>>, ProviderServiceError> {
     let registry = provider_registry().read_owned().await;
-    handlers
+    callbacks
         .iter()
-        .map(|(provider_id, _, _)| {
+        .map(|callback| {
             provider_options(
-                provider_id,
-                registry.get_options(provider_id),
+                &callback.provider_id,
+                registry.get_options(&callback.provider_id),
                 passed_options,
             )
             .map_err(ProviderServiceError::InvalidOption)

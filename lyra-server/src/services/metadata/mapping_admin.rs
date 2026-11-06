@@ -502,7 +502,7 @@ mod tests {
             crate::services::libraries::sync::sync_entries_incremental(
                 &STATE.db.get(),
                 &library,
-                None,
+                crate::services::libraries::SyncRunProgress::unreported_for_test(),
             )
             .await?;
         }

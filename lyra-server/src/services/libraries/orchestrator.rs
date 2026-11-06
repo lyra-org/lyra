@@ -621,22 +621,41 @@ pub(crate) struct SyncRunStartResponse {
 
 #[derive(Clone, Debug)]
 pub(crate) struct SyncRunProgress {
+    /// The run reported to; work outside a run reports nothing.
+    run: Option<ReportedRun>,
+    cancel: CancellationToken,
+}
+
+#[derive(Clone, Debug)]
+struct ReportedRun {
     db: DbAsync,
     run_id: String,
-    cancel: CancellationToken,
 }
 
 impl SyncRunProgress {
     fn new(db: DbAsync, state: &SyncRunState) -> Self {
         Self {
-            db,
-            run_id: state.run_id.clone(),
+            run: Some(ReportedRun {
+                db,
+                run_id: state.run_id.clone(),
+            }),
             cancel: state.cancel.clone(),
         }
     }
 
+    /// For work outside a run: it reports to no run, but `cancel` still ends it.
+    pub(crate) fn unreported(cancel: CancellationToken) -> Self {
+        Self { run: None, cancel }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn unreported_for_test() -> Self {
+        Self::unreported(CancellationToken::new())
+    }
+
+    /// The run's id, empty for work outside a run.
     pub(crate) fn run_id(&self) -> &str {
-        &self.run_id
+        self.run.as_ref().map_or("", |run| &run.run_id)
     }
 
     pub(crate) async fn set_status(&self, status: SyncRunStatus) {
@@ -755,6 +774,12 @@ impl SyncRunProgress {
     }
 
     async fn finish_work(&self, work_id: u64, stage: SyncStageKey, outcome: WorkOutcome) {
+        if self.run.is_none() {
+            if let WorkOutcome::Fail(details, message) = outcome {
+                log_work_failure("", stage, &details, &message, None);
+            }
+            return;
+        }
         self.mutate(|state| {
             let removed = state
                 .active
@@ -782,19 +807,7 @@ impl SyncRunProgress {
                     let elapsed_ms = removed
                         .as_ref()
                         .map(|item| now_unix_ms().saturating_sub(item.started_at_ms));
-                    tracing::warn!(
-                        run_id = %state.run_id,
-                        stage = stage.as_str(),
-                        work_type = %details.work_type,
-                        provider_id = ?details.provider_id,
-                        entity_type = ?details.entity_type,
-                        entity_id = ?details.entity_id,
-                        entity_title = ?details.entity_title,
-                        source_dir = ?details.source_dir,
-                        elapsed_ms,
-                        error = %message,
-                        "sync work failed"
-                    );
+                    log_work_failure(&state.run_id, stage, &details, &message, elapsed_ms);
                 }
             }
             if stage_state.total_units > 0
@@ -811,21 +824,34 @@ impl SyncRunProgress {
         .await;
     }
 
-    pub(crate) async fn check_cancelled(&self) -> Result<(), SyncRunControlError> {
-        if self.cancel.is_cancelled() {
+    pub(crate) fn check_cancelled(&self) -> Result<(), SyncRunControlError> {
+        if self.is_cancelled() {
             Err(SyncRunControlError::Cancelled)
         } else {
             Ok(())
         }
     }
 
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.cancel.is_cancelled()
+    }
+
+    /// Ends once the work is cancelled, for racing what no check would interrupt.
+    pub(crate) async fn cancelled(&self) -> SyncRunControlError {
+        self.cancel.cancelled().await;
+        SyncRunControlError::Cancelled
+    }
+
     async fn mutate<F>(&self, update: F)
     where
         F: FnOnce(&mut SyncRunState),
     {
+        let Some(run) = &self.run else {
+            return;
+        };
         let Some((summary, record)) = ({
             let mut states = sync_run_states().write_owned().await;
-            let Some(state) = states.get_mut(&self.run_id) else {
+            let Some(state) = states.get_mut(&run.run_id) else {
                 return;
             };
             if !state.status.is_active() {
@@ -838,7 +864,7 @@ impl SyncRunProgress {
                 Ok(record) => Some((state.summary(), record)),
                 Err(err) => {
                     tracing::warn!(
-                        run_id = %self.run_id,
+                        run_id = %run.run_id,
                         error = %err,
                         "failed to build sync run record"
                     );
@@ -848,9 +874,31 @@ impl SyncRunProgress {
         }) else {
             return;
         };
-        persist_record(&self.db, record).await;
+        persist_record(&run.db, record).await;
         publish_event(summary);
     }
+}
+
+fn log_work_failure(
+    run_id: &str,
+    stage: SyncStageKey,
+    details: &SyncWorkDetails,
+    message: &str,
+    elapsed_ms: Option<u64>,
+) {
+    tracing::warn!(
+        run_id,
+        stage = stage.as_str(),
+        work_type = %details.work_type,
+        provider_id = ?details.provider_id,
+        entity_type = ?details.entity_type,
+        entity_id = ?details.entity_id,
+        entity_title = ?details.entity_title,
+        source_dir = ?details.source_dir,
+        elapsed_ms,
+        error = %message,
+        "sync work failed"
+    );
 }
 
 enum WorkOutcome {
@@ -954,7 +1002,7 @@ pub(crate) async fn begin_test_run(library: &Library) -> SyncRunProgress {
     sync_run_states()
         .write_owned()
         .await
-        .insert(progress.run_id.clone(), state);
+        .insert(progress.run_id().to_string(), state);
     progress
 }
 
@@ -1073,7 +1121,7 @@ async fn start_locked(
     let summary = state.summary();
     let record = state.record(None)?;
     let progress = SyncRunProgress::new(db.clone(), &state);
-    let run_id = progress.run_id.clone();
+    let run_id = progress.run_id().to_string();
     let (registered_tx, registered) = tokio::sync::oneshot::channel();
     let supervisor = {
         let summary = summary.clone();
@@ -1155,7 +1203,7 @@ async fn run_library_sync(
         "library sync started"
     );
     progress.set_status(SyncRunStatus::Planning).await;
-    sync_library_pipeline(&db, &library, options, Some(progress)).await?;
+    sync_library_pipeline(&db, &library, options, progress).await?;
     Ok(())
 }
 
@@ -1171,7 +1219,7 @@ async fn run_library_purge(
         "library purge started"
     );
     progress.set_status(SyncRunStatus::Running).await;
-    super::purge::purge(&db, &library, &selection, Some(&progress)).await?;
+    super::purge::purge(&db, &library, &selection, &progress).await?;
     Ok(())
 }
 
@@ -1195,13 +1243,9 @@ async fn run_library_refresh(
         apply_sync_filters: false,
         provider_id: None,
     };
-    crate::services::providers::refresh_library_metadata_with_progress(
-        library_db_id,
-        &refresh_options,
-        Some(progress),
-    )
-    .await
-    .map_err(crate::services::providers::ProviderServiceError::into_anyhow)?;
+    crate::services::providers::refresh_library_metadata(library_db_id, &refresh_options, progress)
+        .await
+        .map_err(crate::services::providers::ProviderServiceError::into_anyhow)?;
     Ok(())
 }
 
@@ -1211,15 +1255,13 @@ async fn finish_run(
     started: Instant,
     label: &'static str,
 ) {
+    let Some(ReportedRun { db, .. }) = &progress.run else {
+        return;
+    };
     match result {
         Ok(()) => {
-            let summary = mark_terminal(
-                &progress.db,
-                progress.run_id(),
-                SyncRunStatus::Succeeded,
-                None,
-            )
-            .await;
+            let summary =
+                mark_terminal(db, progress.run_id(), SyncRunStatus::Succeeded, None).await;
             if let Some(summary) = summary {
                 tracing::info!(
                     run_id = %progress.run_id(),
@@ -1234,13 +1276,8 @@ async fn finish_run(
             }
         }
         Err(err) if err.downcast_ref::<SyncRunControlError>().is_some() => {
-            let summary = mark_terminal(
-                &progress.db,
-                progress.run_id(),
-                SyncRunStatus::Cancelled,
-                None,
-            )
-            .await;
+            let summary =
+                mark_terminal(db, progress.run_id(), SyncRunStatus::Cancelled, None).await;
             if summary.is_some() {
                 tracing::info!(
                     run_id = %progress.run_id(),
@@ -1252,7 +1289,7 @@ async fn finish_run(
         Err(err) => {
             let error = format!("{err:#}");
             let summary = mark_terminal(
-                &progress.db,
+                db,
                 progress.run_id(),
                 SyncRunStatus::Failed,
                 Some(error.clone()),
@@ -1853,7 +1890,7 @@ mod tests {
 
         crate::services::shutdown::cancel();
 
-        assert!(running.check_cancelled().await.is_err());
+        assert!(running.check_cancelled().is_err());
         end_test_run(&running).await;
         let started = start_library_run(STATE.db.get(), LibraryRun::Purge(PurgeScope::All), |db| {
             still_exists(db, library.clone())
@@ -1875,7 +1912,7 @@ mod tests {
         cancel_sync_run(progress.run_id()).await?;
 
         assert!(progress.cancel.is_cancelled());
-        assert!(progress.check_cancelled().await.is_err());
+        assert!(progress.check_cancelled().is_err());
         end_test_run(&progress).await;
         Ok(())
     }
@@ -1891,7 +1928,7 @@ mod tests {
             let progress = progress.clone();
             async move {
                 loop {
-                    progress.check_cancelled().await?;
+                    progress.check_cancelled()?;
                     sleep(Duration::from_millis(5)).await;
                 }
             }

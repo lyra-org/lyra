@@ -40,6 +40,7 @@ use crate::services::{
 };
 
 use super::{
+    RefreshCallback,
     artist_covers::{
         ListedArtist,
         sync_artist_covers,
@@ -78,9 +79,11 @@ pub(crate) struct LibraryRefreshOptions<'a> {
     pub(crate) provider_id: Option<&'a str>,
 }
 
+/// Refreshes the library's releases, then their covers, unless another refresh of it is running.
 pub(crate) async fn refresh_library_metadata(
     library_db_id: DbId,
     options: &LibraryRefreshOptions<'_>,
+    progress: SyncRunProgress,
 ) -> Result<usize, ProviderServiceError> {
     {
         let mut locks = library_refresh_locks().lock_owned().await;
@@ -90,34 +93,18 @@ pub(crate) async fn refresh_library_metadata(
     }
 
     let _guard = LibraryRefreshGuard { library_db_id };
-    refresh_library_metadata_inner(library_db_id, options).await
-}
-
-pub(crate) async fn refresh_library_metadata_with_progress(
-    library_db_id: DbId,
-    options: &LibraryRefreshOptions<'_>,
-    progress: Option<SyncRunProgress>,
-) -> Result<usize, ProviderServiceError> {
-    {
-        let mut locks = library_refresh_locks().lock_owned().await;
-        if !locks.insert(library_db_id) {
-            return Err(ProviderServiceError::RefreshAlreadyRunning(library_db_id.0));
-        }
-    }
-
-    let _guard = LibraryRefreshGuard { library_db_id };
-    refresh_library_metadata_inner_with_progress(library_db_id, options, progress).await
+    refresh_locked_library(library_db_id, options, progress).await
 }
 
 /// How often a refresh waiting for another refresh of its library checks again.
 const LIBRARY_REFRESH_LOCK_POLL: Duration = Duration::from_millis(250);
 
-/// [`refresh_library_metadata_with_progress`], first waiting for another refresh of the library,
-/// such as a provider sync's, to end. The wait ends early when the run is cancelled.
+/// [`refresh_library_metadata`], first waiting for another refresh of the library,
+/// such as a provider sync's, to end. The wait ends early when the work is cancelled.
 pub(crate) async fn refresh_library_metadata_after_others(
     library_db_id: DbId,
     options: &LibraryRefreshOptions<'_>,
-    progress: Option<SyncRunProgress>,
+    progress: SyncRunProgress,
 ) -> Result<usize, ProviderServiceError> {
     loop {
         if library_refresh_locks()
@@ -127,16 +114,14 @@ pub(crate) async fn refresh_library_metadata_after_others(
         {
             break;
         }
-        if let Some(progress) = &progress
-            && let Err(err) = progress.check_cancelled().await
-        {
+        if let Err(err) = progress.check_cancelled() {
             return Err(ProviderServiceError::Internal(err.into()));
         }
         tokio::time::sleep(LIBRARY_REFRESH_LOCK_POLL).await;
     }
 
     let _guard = LibraryRefreshGuard { library_db_id };
-    refresh_library_metadata_inner_with_progress(library_db_id, options, progress).await
+    refresh_locked_library(library_db_id, options, progress).await
 }
 
 pub(crate) async fn release_refresh_provider_ids(
@@ -144,20 +129,20 @@ pub(crate) async fn release_refresh_provider_ids(
     include_sync_filters: bool,
 ) -> Result<Vec<String>, ProviderServiceError> {
     let providers = read_active_providers().await?.only(provider_filter);
-    let handlers =
+    let callbacks =
         refresh_callbacks_for(&providers, EntityType::Release, include_sync_filters).await;
-    Ok(handlers
+    Ok(callbacks
         .into_iter()
-        .map(|(provider_id, _, _)| provider_id)
+        .map(|callback| callback.provider_id)
         .collect())
 }
 
 /// Refreshes a release a scan found new or changed from every enabled provider, without sync
 /// filters.
-pub(crate) async fn refresh_release_metadata_for_scan_with_progress(
+pub(crate) async fn refresh_release_metadata_for_scan(
     library_db_id: DbId,
     release_id: DbId,
-    progress: Option<SyncRunProgress>,
+    progress: SyncRunProgress,
     release_public_id: Option<String>,
     release_title: Option<String>,
 ) -> Result<usize, ProviderServiceError> {
@@ -171,16 +156,15 @@ pub(crate) async fn refresh_release_metadata_for_scan_with_progress(
     }
 
     let providers = read_active_providers().await?;
-    let handlers = refresh_callbacks_for(&providers, EntityType::Release, false).await;
+    let callbacks = refresh_callbacks_for(&providers, EntityType::Release, false).await;
     let schemes = id_schemes().await;
     let mut providers_called = Vec::new();
     let mut context: Option<serde_json::Value> = None;
     let mut dirty = true;
 
-    for (provider_id, handler, filter) in &handlers {
-        if let Some(progress) = &progress
-            && let Err(err) = progress.check_cancelled().await
-        {
+    for callback in &callbacks {
+        let provider_id = &callback.provider_id;
+        if let Err(err) = progress.check_cancelled() {
             return Err(ProviderServiceError::Internal(err.into()));
         }
         if dirty || context.is_none() {
@@ -218,101 +202,30 @@ pub(crate) async fn refresh_release_metadata_for_scan_with_progress(
             release_title.clone(),
         )
         .provider(provider_id.clone());
-        let work_id = if let Some(progress) = &progress {
-            progress
-                .start_work(SyncStageKey::ProviderRefresh, details.clone())
-                .await
-        } else {
-            0
-        };
-        let context = context.clone();
-        let should_run = if let Some(filter) = filter {
-            match dispatch_sync_filter_callback(provider_id, *filter, context.clone()).await {
-                Ok(value) => value,
-                Err(err) => {
-                    tracing::warn!(
-                        provider_id,
-                        release_db_id = release_id.0,
-                        error = %format_args!("{err:#}"),
-                        "sync filter failed, skipping release for provider"
-                    );
-                    false
-                }
-            }
-        } else {
-            true
-        };
-        if !should_run {
-            if let Some(progress) = &progress {
-                progress
-                    .skip_work(work_id, SyncStageKey::ProviderRefresh, "sync_filter")
-                    .await;
-            }
+        let refreshed = refresh_release_with_provider(
+            callback,
+            context.clone(),
+            release_id,
+            &progress,
+            details,
+        )
+        .await;
+        if !refreshed {
             continue;
         }
+        providers_called.push(provider_id.clone());
+        dirty = true;
 
-        match dispatch_refresh_callback(provider_id, *handler, context).await {
-            Ok(()) => {
-                providers_called.push(provider_id.clone());
-                dirty = true;
-                if let Some(progress) = &progress {
-                    progress
-                        .complete_work(work_id, SyncStageKey::ProviderRefresh)
-                        .await;
-                }
-            }
-            Err(err) => {
-                if let Some(progress) = &progress {
-                    progress
-                        .fail_work(
-                            work_id,
-                            SyncStageKey::ProviderRefresh,
-                            details,
-                            format!("{err:#}"),
-                        )
-                        .await;
-                }
-                tracing::warn!(
-                    provider_id,
-                    release_db_id = release_id.0,
-                    error = %format_args!("{err:#}"),
-                    "provider refresh handler failed during scan release refresh"
-                );
-                continue;
-            }
-        }
-
-        let declared_artist_ids = declared_artist_ids().await;
-        let mut db_write = STATE.db.write().await;
-        if let Err(err) = deduplicate_artists_by_external_id(&mut db_write, &declared_artist_ids) {
-            tracing::warn!(
-                provider_id,
-                release_db_id = release_id.0,
-                error = %format_args!("{err:#}"),
-                "artist deduplication failed during scan release refresh"
-            );
-        }
-        deduplicate_release_scope_locked(
-            &mut db_write,
-            library_db_id,
-            &HashSet::from([provider_id.to_string()]),
-        );
+        deduplicate_after_provider(provider_id, library_db_id).await;
     }
 
     Ok(usize::from(!providers_called.is_empty()))
 }
 
-async fn refresh_library_metadata_inner(
+async fn refresh_locked_library(
     library_db_id: DbId,
     options: &LibraryRefreshOptions<'_>,
-) -> Result<usize, ProviderServiceError> {
-    refresh_library_metadata_inner_with_progress(library_db_id, options, None).await
-}
-
-async fn refresh_library_metadata_inner_with_progress(
-    library_db_id: DbId,
-    options: &LibraryRefreshOptions<'_>,
-    progress: Option<SyncRunProgress>,
+    progress: SyncRunProgress,
 ) -> Result<usize, ProviderServiceError> {
     let releases = {
         let db = STATE.db.read().await;
@@ -333,29 +246,27 @@ async fn refresh_library_metadata_inner_with_progress(
     };
 
     let providers = read_active_providers().await?.only(options.provider_id);
-    let handlers =
+    let callbacks =
         refresh_callbacks_for(&providers, EntityType::Release, options.apply_sync_filters).await;
     let schemes = id_schemes().await;
     let release_count = releases
         .iter()
         .filter(|release| release.db_id.is_some())
         .count() as u64;
-    if let Some(progress) = &progress {
+    progress
+        .add_stage_total(
+            SyncStageKey::ProviderRefresh,
+            release_count * callbacks.len() as u64,
+            SyncTotalState::Final,
+        )
+        .await;
+    if release_count > 0 && !options.covers.skips() {
+        // The artist cover pass finalises the totals once it adds its own.
         progress
-            .add_stage_total(
-                SyncStageKey::ProviderRefresh,
-                release_count * handlers.len() as u64,
-                SyncTotalState::Final,
-            )
+            .add_stage_total(SyncStageKey::ProviderCover, 1, SyncTotalState::Final)
             .await;
-        if release_count > 0 && !options.covers.skips() {
-            // The artist cover pass finalises the totals once it adds its own.
-            progress
-                .add_stage_total(SyncStageKey::ProviderCover, 1, SyncTotalState::Final)
-                .await;
-        } else {
-            progress.set_determinate().await;
-        }
+    } else {
+        progress.set_determinate().await;
     }
     let mut refreshed_releases = HashSet::new();
     let mut context_cache: HashMap<DbId, serde_json::Value> = HashMap::new();
@@ -368,15 +279,14 @@ async fn refresh_library_metadata_inner_with_progress(
     // Releases without a context: gone or merged away (`None`), or failing to build one.
     let mut unavailable: HashMap<DbId, Option<String>> = HashMap::new();
 
-    for (provider_id, handler, filter) in &handlers {
+    for callback in &callbacks {
+        let provider_id = &callback.provider_id;
         let mut pass_touched = HashSet::new();
         for release in &releases {
             let Some(node_id) = release.db_id.clone().map(Into::<DbId>::into) else {
                 continue;
             };
-            if let Some(progress) = &progress
-                && let Err(err) = progress.check_cancelled().await
-            {
+            if let Err(err) = progress.check_cancelled() {
                 return Err(ProviderServiceError::Internal(err.into()));
             }
 
@@ -409,94 +319,36 @@ async fn refresh_library_metadata_inner_with_progress(
                 Some(release.release_title.clone()),
             )
             .provider(provider_id.clone());
-            let work_id = if let Some(progress) = &progress {
-                progress
-                    .start_work(SyncStageKey::ProviderRefresh, details.clone())
-                    .await
-            } else {
-                0
-            };
             let Some(context) = context_cache.get(&node_id) else {
+                let work_id = progress
+                    .start_work(SyncStageKey::ProviderRefresh, details.clone())
+                    .await;
                 match unavailable.get(&node_id).cloned().flatten() {
                     Some(error) => {
-                        tracing::warn!(
-                            provider_id,
-                            release_db_id = node_id.0,
-                            error = %error,
-                            "release context failed during library refresh"
-                        );
-                        if let Some(progress) = &progress {
-                            progress
-                                .fail_work(work_id, SyncStageKey::ProviderRefresh, details, error)
-                                .await;
-                        }
+                        progress
+                            .fail_work(work_id, SyncStageKey::ProviderRefresh, details, error)
+                            .await;
                     }
                     None => {
-                        if let Some(progress) = &progress {
-                            progress
-                                .skip_work(work_id, SyncStageKey::ProviderRefresh, "release_gone")
-                                .await;
-                        }
+                        progress
+                            .skip_work(work_id, SyncStageKey::ProviderRefresh, "release_gone")
+                            .await;
                     }
                 }
                 continue;
             };
-            let context = context.clone();
-
-            let should_run = if let Some(filter) = filter {
-                match dispatch_sync_filter_callback(provider_id, *filter, context.clone()).await {
-                    Ok(value) => value,
-                    Err(err) => {
-                        tracing::warn!(
-                            provider_id,
-                            release_db_id = node_id.0,
-                            error = %format_args!("{err:#}"),
-                            "sync filter failed, skipping release for provider"
-                        );
-                        false
-                    }
-                }
-            } else {
-                true
-            };
-            if !should_run {
-                if let Some(progress) = &progress {
-                    progress
-                        .skip_work(work_id, SyncStageKey::ProviderRefresh, "sync_filter")
-                        .await;
-                }
-                continue;
-            }
-
-            match dispatch_refresh_callback(provider_id, *handler, context).await {
-                Ok(()) => {
-                    refreshed_releases.insert(node_id);
-                    dirty_releases.insert(node_id);
-                    pass_touched.insert(node_id);
-                    if let Some(progress) = &progress {
-                        progress
-                            .complete_work(work_id, SyncStageKey::ProviderRefresh)
-                            .await;
-                    }
-                }
-                Err(err) => {
-                    if let Some(progress) = &progress {
-                        progress
-                            .fail_work(
-                                work_id,
-                                SyncStageKey::ProviderRefresh,
-                                details,
-                                format!("{err:#}"),
-                            )
-                            .await;
-                    }
-                    tracing::warn!(
-                        provider_id,
-                        release_db_id = node_id.0,
-                        error = ?err,
-                        "provider refresh handler failed during library refresh"
-                    );
-                }
+            let refreshed = refresh_release_with_provider(
+                callback,
+                context.clone(),
+                node_id,
+                &progress,
+                details,
+            )
+            .await;
+            if refreshed {
+                refreshed_releases.insert(node_id);
+                dirty_releases.insert(node_id);
+                pass_touched.insert(node_id);
             }
         }
 
@@ -504,63 +356,35 @@ async fn refresh_library_metadata_inner_with_progress(
             continue;
         }
 
-        let declared_artist_ids = declared_artist_ids().await;
-        let mut db_write = STATE.db.write().await;
-        if let Err(err) = deduplicate_artists_by_external_id(&mut db_write, &declared_artist_ids) {
-            tracing::warn!(
-                provider_id,
-                error = %format_args!("{err:#}"),
-                "artist deduplication failed during library refresh"
-            );
-        }
-        deduplicate_release_scope_locked(
-            &mut db_write,
-            library_db_id,
-            &HashSet::from([provider_id.to_string()]),
-        );
+        deduplicate_after_provider(provider_id, library_db_id).await;
     }
 
-    if let Some(progress) = &progress
-        && let Err(err) = progress.check_cancelled().await
-    {
+    if let Err(err) = progress.check_cancelled() {
         return Err(ProviderServiceError::Internal(err.into()));
     }
     if release_count > 0 && !options.covers.skips() {
-        let work_id = if let Some(progress) = &progress {
-            progress
-                .start_work(
-                    SyncStageKey::ProviderCover,
-                    SyncWorkDetails::new("library_provider_cover_refresh"),
-                )
-                .await
-        } else {
-            0
-        };
+        let work_id = progress
+            .start_work(
+                SyncStageKey::ProviderCover,
+                SyncWorkDetails::new("library_provider_cover_refresh"),
+            )
+            .await;
         match sync_library_covers_after_refresh(library_db_id, options).await {
             Ok(_count) => {
-                if let Some(progress) = &progress {
-                    progress
-                        .complete_work(work_id, SyncStageKey::ProviderCover)
-                        .await;
-                }
+                progress
+                    .complete_work(work_id, SyncStageKey::ProviderCover)
+                    .await;
             }
             Err(err) => {
                 let error = format!("{:#}", err.into_anyhow());
-                tracing::warn!(
-                    library_db_id = library_db_id.0,
-                    error = %error,
-                    "library cover sync failed after metadata refresh"
-                );
-                if let Some(progress) = &progress {
-                    progress
-                        .fail_work(
-                            work_id,
-                            SyncStageKey::ProviderCover,
-                            SyncWorkDetails::new("library_provider_cover_refresh"),
-                            error,
-                        )
-                        .await;
-                }
+                progress
+                    .fail_work(
+                        work_id,
+                        SyncStageKey::ProviderCover,
+                        SyncWorkDetails::new("library_provider_cover_refresh"),
+                        error,
+                    )
+                    .await;
             }
         }
 
@@ -588,13 +412,86 @@ async fn refresh_library_metadata_inner_with_progress(
             },
             options.covers,
             options.provider_id,
-            progress.as_ref(),
+            &progress,
         )
         .await
         .map_err(|err| ProviderServiceError::Internal(err.into()))?;
     }
 
     Ok(refreshed_releases.len())
+}
+
+/// Merges what a provider's refreshes made duplicates of.
+async fn deduplicate_after_provider(provider_id: &str, library_db_id: DbId) {
+    let declared_artist_ids = declared_artist_ids().await;
+    let mut db_write = STATE.db.write().await;
+    if let Err(err) = deduplicate_artists_by_external_id(&mut db_write, &declared_artist_ids) {
+        tracing::warn!(
+            provider_id,
+            error = %format_args!("{err:#}"),
+            "artist deduplication failed during metadata refresh"
+        );
+    }
+    deduplicate_release_scope_locked(
+        &mut db_write,
+        library_db_id,
+        &HashSet::from([provider_id.to_string()]),
+    );
+}
+
+/// One unit of work: asks a provider about a release, unless its sync filter turns the release
+/// down. Returns whether the provider refreshed the release.
+async fn refresh_release_with_provider(
+    callback: &RefreshCallback,
+    context: serde_json::Value,
+    release_id: DbId,
+    progress: &SyncRunProgress,
+    details: SyncWorkDetails,
+) -> bool {
+    let provider_id = callback.provider_id.as_str();
+    let work_id = progress
+        .start_work(SyncStageKey::ProviderRefresh, details.clone())
+        .await;
+    let should_run = match callback.filter {
+        Some(filter) => dispatch_sync_filter_callback(provider_id, filter, context.clone())
+            .await
+            .unwrap_or_else(|err| {
+                tracing::warn!(
+                    provider_id,
+                    release_db_id = release_id.0,
+                    error = %format_args!("{err:#}"),
+                    "sync filter failed, skipping release for provider"
+                );
+                false
+            }),
+        None => true,
+    };
+    if !should_run {
+        progress
+            .skip_work(work_id, SyncStageKey::ProviderRefresh, "sync_filter")
+            .await;
+        return false;
+    }
+
+    match dispatch_refresh_callback(provider_id, callback.handler, context).await {
+        Ok(()) => {
+            progress
+                .complete_work(work_id, SyncStageKey::ProviderRefresh)
+                .await;
+            true
+        }
+        Err(err) => {
+            progress
+                .fail_work(
+                    work_id,
+                    SyncStageKey::ProviderRefresh,
+                    details,
+                    format!("{err:#}"),
+                )
+                .await;
+            false
+        }
+    }
 }
 
 /// The library's release covers, then its covers whose file is gone, so the artist pass after

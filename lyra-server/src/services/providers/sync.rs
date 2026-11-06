@@ -23,6 +23,7 @@ use crate::{
     services::EntityType,
     services::STATE,
     services::libraries::{
+        SyncRunProgress,
         running_library_sync_count,
         wait_for_running_library_syncs,
     },
@@ -116,6 +117,7 @@ async fn run_provider_sync_inner(provider_id: &str) -> Result<(), ProviderServic
                 permit.expect("library refresh semaphore closed")
             }
         };
+        let progress = SyncRunProgress::unreported(tokio_util::sync::CancellationToken::new());
         tasks.spawn(async move {
             let options = LibraryRefreshOptions {
                 covers: CoverSyncOptions::default(),
@@ -123,7 +125,7 @@ async fn run_provider_sync_inner(provider_id: &str) -> Result<(), ProviderServic
                 provider_id: Some(&provider_id),
             };
             if let Err(err) =
-                super::refresh::refresh_library_metadata(library_db_id, &options).await
+                super::refresh::refresh_library_metadata(library_db_id, &options, progress).await
             {
                 tracing::warn!(
                     library_db_id = library_db_id.0,
