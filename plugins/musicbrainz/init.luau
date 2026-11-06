@@ -28,7 +28,7 @@ http.set_rate_limit({
 local ET = metadata.EntityType
 local provider = metadata.Provider.new("musicbrainz", { display_name = "MusicBrainz" })
 local BASE_URL = musicbrainz_api.BASE_URL
-local COVER_CACHE_STORE_NAME = "musicbrainz-cover-releases"
+local COVER_CACHE_STORE_NAME = "cover_releases"
 local COVER_CACHE_KEY_PREFIX = "cover:release:"
 local COVER_CACHE_HIT_TTL_MS = 30 * 24 * 60 * 60 * 1000
 local COVER_CACHE_MISS_TTL_MS = 7 * 24 * 60 * 60 * 1000
