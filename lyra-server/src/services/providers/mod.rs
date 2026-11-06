@@ -105,6 +105,11 @@ pub(crate) use admin::{
     update_provider,
 };
 pub(crate) use capture::run_capture;
+pub(crate) use dedup::{
+    collect_track_unique_ids,
+    merge_release_into_inside_tx,
+    release_library_ids,
+};
 pub(crate) use links::{
     ID_LINK_BATCH_TIMEOUT,
     ID_LINK_CALL_BUDGET,

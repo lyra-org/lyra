@@ -354,7 +354,8 @@ pub struct ExternalIdResponse {
     pub provider_id: String,
     pub id_type: String,
     pub id_value: String,
-    /// `manual` when a user set the value, `resolved` when a provider did.
+    /// `manual` when a user set the value, `resolved` when a provider did, `alias` when a merged
+    /// duplicate held it and it still finds this entity.
     pub source: String,
     /// The provider's value beneath a manual one, which returns when the ID is
     /// inherited again.
@@ -715,7 +716,7 @@ fn update_provider_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn get_external_ids_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get entity external IDs").description(
-        "Returns all external IDs associated with an entity. Requires ManageMetadata permission.",
+        "Returns all external IDs associated with an entity, one entry per ID type, followed by the values kept from merged duplicates with `source` `alias`. Requires ManageMetadata permission.",
     )
 }
 

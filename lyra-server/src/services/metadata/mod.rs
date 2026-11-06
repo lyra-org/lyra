@@ -6,6 +6,7 @@
 pub(crate) mod cleanup;
 mod cue;
 pub(crate) mod editing;
+pub(crate) mod entity_merge;
 mod format;
 pub(crate) mod id_links;
 pub(crate) mod ingestion;

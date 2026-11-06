@@ -71,6 +71,18 @@ impl From<lyra_db::external_ids::ExternalId> for EntityExternalIdRecord {
     }
 }
 
+impl From<lyra_db::external_ids::ExternalIdAlias> for EntityExternalIdRecord {
+    fn from(alias: lyra_db::external_ids::ExternalIdAlias) -> Self {
+        Self {
+            provider_id: alias.provider_id,
+            id_type: alias.id_type,
+            id_value: alias.id_value,
+            source: "alias".to_string(),
+            resolved_value: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct SetEntityExternalIdRequest {
     pub(crate) provider_id: String,
@@ -129,8 +141,13 @@ pub(crate) async fn list_entity_external_ids(
     let entity_db_id = lyra_db::lookup::find_node_id_by_id(&db, entity_id)?
         .ok_or_else(|| ProviderAdminError::EntityNotFound(entity_id.to_string()))?;
     let ids = lyra_db::external_ids::get_for_entity(&db, entity_db_id)?;
+    let aliases = lyra_db::external_ids::get_aliases_for_entity(&*db, entity_db_id)?;
 
-    Ok(ids.into_iter().map(Into::into).collect())
+    Ok(ids
+        .into_iter()
+        .map(Into::into)
+        .chain(aliases.into_iter().map(Into::into))
+        .collect())
 }
 
 pub(crate) async fn set_entity_external_id(

@@ -3,7 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashSet;
+use std::collections::{
+    HashMap,
+    HashSet,
+};
 
 use agdb::DbId;
 
@@ -137,6 +140,99 @@ pub(crate) fn artist_accessible(
         }
     }
     Ok(false)
+}
+
+/// The libraries a change to the artist, release, genre or label reaches: those of what is linked
+/// to it, and those of every entity a layer of which references it. An artist owning such a layer
+/// counts through its own releases and tracks. Genres and labels hang under no library, so
+/// [`entity_accessible`] says nothing about them.
+pub(crate) fn affected_libraries(
+    db: &impl lyra_db::DbAccess,
+    entity_db_id: DbId,
+) -> anyhow::Result<Vec<Library>> {
+    let mut libraries = HashMap::new();
+    let linked_releases = match lyra_db::graph::element_kind(db, entity_db_id)?.as_deref() {
+        Some("Genre") => Some(lyra_db::genres::get_releases(db, entity_db_id)?),
+        Some("Label") => Some(lyra_db::labels::get_releases(db, entity_db_id)?),
+        _ => None,
+    };
+    match linked_releases {
+        Some(releases) => {
+            for release in releases {
+                add_release_libraries(db, release, &mut libraries)?;
+            }
+        }
+        None => add_owner_libraries(db, entity_db_id, &mut libraries)?,
+    }
+    for owner in lyra_db::metadata::layers::edges::referencing_owners(db, entity_db_id)? {
+        add_owner_libraries(db, owner, &mut libraries)?;
+    }
+    Ok(libraries.into_values().collect())
+}
+
+fn add_release_libraries(
+    db: &impl lyra_db::DbAccess,
+    release_db_id: DbId,
+    libraries: &mut HashMap<String, Library>,
+) -> anyhow::Result<()> {
+    for library in lyra_db::libraries::get_by_release(db, release_db_id)? {
+        libraries.insert(library.id.clone(), library);
+    }
+    Ok(())
+}
+
+fn add_track_libraries(
+    db: &impl lyra_db::DbAccess,
+    track_db_id: DbId,
+    libraries: &mut HashMap<String, Library>,
+) -> anyhow::Result<()> {
+    for release in lyra_db::releases::get_by_track(db, track_db_id)? {
+        if let Some(release_db_id) = release.db_id.map(DbId::from) {
+            add_release_libraries(db, release_db_id, libraries)?;
+        }
+    }
+    Ok(())
+}
+
+fn add_owner_libraries(
+    db: &impl lyra_db::DbAccess,
+    owner_db_id: DbId,
+    libraries: &mut HashMap<String, Library>,
+) -> anyhow::Result<()> {
+    match lyra_db::graph::element_kind(db, owner_db_id)?.as_deref() {
+        Some("Release") => add_release_libraries(db, owner_db_id, libraries)?,
+        Some("Track") => add_track_libraries(db, owner_db_id, libraries)?,
+        Some("Artist") => {
+            for release in lyra_db::releases::get_by_artist(db, owner_db_id)? {
+                if let Some(release_db_id) = release.db_id.map(DbId::from) {
+                    add_release_libraries(db, release_db_id, libraries)?;
+                }
+            }
+            for track in lyra_db::tracks::get_by_artist(db, owner_db_id)? {
+                if let Some(track_db_id) = track.db_id.map(DbId::from) {
+                    add_track_libraries(db, track_db_id, libraries)?;
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Whether `principal` is an admin or can see any of `libraries`.
+pub(crate) fn any_library_accessible(principal: &Principal, libraries: &[Library]) -> bool {
+    principal.permissions.contains(&lyra_db::Permission::Admin)
+        || libraries
+            .iter()
+            .any(|library| principal_can_access_library(principal, library))
+}
+
+/// Whether `principal` is an admin or can see all of `libraries`.
+pub(crate) fn every_library_accessible(principal: &Principal, libraries: &[Library]) -> bool {
+    principal.permissions.contains(&lyra_db::Permission::Admin)
+        || libraries
+            .iter()
+            .all(|library| principal_can_access_library(principal, library))
 }
 
 pub(crate) fn require_entity_accessible<E>(
