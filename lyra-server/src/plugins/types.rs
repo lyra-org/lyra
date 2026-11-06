@@ -244,7 +244,14 @@ mirror_string_enum!(
 mirror_string_enum!(
     LuauSyncRunKind for crate::services::libraries::SyncRunKind,
     "SyncRunKind",
-    [LibrarySync, LibraryRefresh, LibraryPurge]
+    [
+        #[harmony(rename = "library_sync")]
+        Sync,
+        #[harmony(rename = "library_refresh")]
+        Refresh,
+        #[harmony(rename = "library_purge")]
+        Purge,
+    ]
 );
 
 mirror_string_enum!(

@@ -63,25 +63,28 @@ use lyra_db::entries::PurgeScope;
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SyncRunKind {
-    LibrarySync,
-    LibraryRefresh,
-    LibraryPurge,
+    #[serde(rename = "library_sync")]
+    Sync,
+    #[serde(rename = "library_refresh")]
+    Refresh,
+    #[serde(rename = "library_purge")]
+    Purge,
 }
 
 impl SyncRunKind {
     fn as_str(self) -> &'static str {
         match self {
-            Self::LibrarySync => "library_sync",
-            Self::LibraryRefresh => "library_refresh",
-            Self::LibraryPurge => "library_purge",
+            Self::Sync => "library_sync",
+            Self::Refresh => "library_refresh",
+            Self::Purge => "library_purge",
         }
     }
 
     fn from_str(value: &str) -> anyhow::Result<Self> {
         match value {
-            "library_sync" => Ok(Self::LibrarySync),
-            "library_refresh" => Ok(Self::LibraryRefresh),
-            "library_purge" => Ok(Self::LibraryPurge),
+            "library_sync" => Ok(Self::Sync),
+            "library_refresh" => Ok(Self::Refresh),
+            "library_purge" => Ok(Self::Purge),
             _ => anyhow::bail!("unknown sync run kind: {value}"),
         }
     }
@@ -468,7 +471,7 @@ impl SyncRunState {
         let now_ms = now_unix_ms();
         Self {
             run_id: String::new(),
-            kind: SyncRunKind::LibrarySync,
+            kind: SyncRunKind::Sync,
             library_id,
             status: SyncRunStatus::Idle,
             progress_mode: SyncProgressMode::Indeterminate,
@@ -997,7 +1000,7 @@ pub(crate) async fn begin_test_run(library: &Library) -> SyncRunProgress {
         .await
         .expect("sync run sequence");
     let state = SyncRunState::new(
-        SyncRunKind::LibrarySync,
+        SyncRunKind::Sync,
         library.id.clone(),
         now_unix_ms(),
         sequence,
@@ -1115,9 +1118,9 @@ async fn start_locked(
     }
 
     let (kind, label) = match run {
-        LibraryRun::Sync(_) => (SyncRunKind::LibrarySync, "library sync"),
-        LibraryRun::Refresh(_) => (SyncRunKind::LibraryRefresh, "library refresh"),
-        LibraryRun::Purge(_) => (SyncRunKind::LibraryPurge, "library purge"),
+        LibraryRun::Sync(_) => (SyncRunKind::Sync, "library sync"),
+        LibraryRun::Refresh(_) => (SyncRunKind::Refresh, "library refresh"),
+        LibraryRun::Purge(_) => (SyncRunKind::Purge, "library purge"),
     };
     let now_ms = now_unix_ms();
     let sequence = next_run_sequence(&db, &library_id).await?;
@@ -1402,7 +1405,7 @@ pub(crate) async fn library_sync_statuses(
             .await?
             .unwrap_or_else(|| {
                 let mut idle = SyncRunState::idle(library.id.clone());
-                idle.kind = filter.kind.unwrap_or(SyncRunKind::LibrarySync);
+                idle.kind = filter.kind.unwrap_or(SyncRunKind::Sync);
                 idle.summary()
             });
         statuses.insert(library.id.clone(), summary);
@@ -1729,7 +1732,7 @@ mod tests {
         let before = snapshot(&*STATE.db.read().await)?;
 
         let db = STATE.db.get();
-        let mut state = SyncRunState::new(SyncRunKind::LibrarySync, library_id, 10_000, 0);
+        let mut state = SyncRunState::new(SyncRunKind::Sync, library_id, 10_000, 0);
         persist_record(&db, state.record(None)?).await;
         state.status = SyncRunStatus::Running;
         state.sequence += 1;
@@ -1763,7 +1766,7 @@ mod tests {
         });
         // Lets the reconcile run until it waits for the database.
         tokio::task::yield_now().await;
-        let state = SyncRunState::new(SyncRunKind::LibrarySync, library.id, now_unix_ms(), 1);
+        let state = SyncRunState::new(SyncRunKind::Sync, library.id, now_unix_ms(), 1);
         let run_id = state.run_id.clone();
         let record = state.record(None)?;
         sync_run_states()
@@ -1787,7 +1790,7 @@ mod tests {
         init_default_test_state()?;
         let library = test_library().await?;
         let db = STATE.db.get();
-        let mut state = SyncRunState::new(SyncRunKind::LibrarySync, library.id, 10_000, 1);
+        let mut state = SyncRunState::new(SyncRunKind::Sync, library.id, 10_000, 1);
         state.status = SyncRunStatus::Running;
         let late = state.record(None)?;
         state.status = SyncRunStatus::Succeeded;
@@ -1975,7 +1978,7 @@ mod tests {
 
     #[test]
     fn summary_exposes_compact_raw_counts() {
-        let mut state = SyncRunState::new(SyncRunKind::LibrarySync, "lib".to_string(), 10_000, 0);
+        let mut state = SyncRunState::new(SyncRunKind::Sync, "lib".to_string(), 10_000, 0);
         state.status = SyncRunStatus::Running;
         state.progress_mode = SyncProgressMode::Determinate;
         state.total_state = SyncTotalState::Final;
