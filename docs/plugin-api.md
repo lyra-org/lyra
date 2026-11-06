@@ -69,6 +69,20 @@ modules predate some of them.
   serves, documented as being for that alone, as `tracks.streamable` and `covers.artwork`
   are for public routes.
 
+## Plugin Data
+
+- A `@lyra/datastore` store belongs to the plugin whose code opens it. The host takes that plugin
+  from the code calling `get_or_create`, so plugins using the same name get separate stores, and a
+  store name needs no plugin prefix.
+- Code keeps its plugin wherever it runs: a dependency's module opens the dependency's stores when
+  another plugin calls it, and a callback opens its own plugin's stores when another plugin calls
+  it back.
+- No function opens another plugin's store. A plugin that needs another's data lists it under
+  `dependencies`, requires it and calls what it exports.
+- A plugin exports functions over its stores, never a `DataStore` handle. The host checks who opens
+  a store but not who calls a handle's methods, so a handle passed to another plugin gives it full
+  access to that store.
+
 ## Library Changes
 
 - A catalog module's scope only reads the library and carries no effects. Its functions
