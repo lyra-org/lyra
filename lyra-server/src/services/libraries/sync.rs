@@ -554,7 +554,7 @@ async fn purge_expired_missing(
     };
     let plan = {
         let db_read = db.read().await;
-        lyra_db::entries::missing_purge_plan(&*db_read, library, &selection)
+        lyra_db::entries::missing_purge_plan(&db_read, library, &selection)
             .map_err(anyhow::Error::from)?
     };
     super::purge::apply(db, library, plan, progress).await?;

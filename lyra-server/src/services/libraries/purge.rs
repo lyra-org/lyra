@@ -86,12 +86,10 @@ pub(crate) async fn purge(
 ) -> anyhow::Result<usize> {
     let plan = {
         let db_read = db.read().await;
-        lyra_db::entries::missing_purge_plan(&*db_read, library, scope).map_err(
-            |err| match err {
-                PurgePlanError::Db(err) => err,
-                other => anyhow::anyhow!(other),
-            },
-        )?
+        lyra_db::entries::missing_purge_plan(&db_read, library, scope).map_err(|err| match err {
+            PurgePlanError::Db(err) => err,
+            other => anyhow::anyhow!(other),
+        })?
     };
     let purged = apply(db, library, plan, progress).await?;
     let orphaned = {

@@ -772,7 +772,7 @@ async fn add_playlist_tracks(
                 .ok_or_else(|| AppError::not_found("playlist track target missing"))?,
         );
     }
-    let responses = TrackChains::responses(&*db, tracks)?;
+    let responses = TrackChains::responses(&db, tracks)?;
     let mut added = Vec::with_capacity(responses.len());
     for (playlist_track, track) in results.into_iter().zip(responses) {
         added.push(build_track_response(
@@ -826,7 +826,7 @@ async fn remove_playlist_entries(
             })?,
         );
     }
-    let responses = TrackChains::responses(&*db, tracks)?;
+    let responses = TrackChains::responses(&db, tracks)?;
     let mut removed = Vec::with_capacity(responses.len());
     for (playlist_track, track) in removed_tracks.into_iter().zip(responses) {
         removed.push(build_track_response(
