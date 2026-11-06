@@ -60,7 +60,7 @@ pub fn metadata_entity_type(
     Ok(classify_element(element))
 }
 
-pub fn exists(db: &DbAny, node_id: DbId) -> anyhow::Result<bool> {
+pub fn exists(db: &impl crate::DbAccess, node_id: DbId) -> anyhow::Result<bool> {
     Ok(metadata_entity_type(db, node_id)?.is_some())
 }
 

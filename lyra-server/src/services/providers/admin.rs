@@ -212,7 +212,10 @@ pub(crate) async fn inherit_entity_external_id(
     let mut db = STATE.db.write().await;
     let entity_db_id = managed_entity(&db, principal, entity_id)?;
 
-    if !lyra_db::external_ids::remove_manual(&mut db, entity_db_id, provider_id, id_type)? {
+    let removed = db.transaction_mut(|t| {
+        lyra_db::external_ids::remove_manual_inside_tx(t, entity_db_id, provider_id, id_type)
+    })?;
+    if !removed {
         return Err(ProviderAdminError::ManualIdNotFound(format!(
             "{provider_id}/{id_type}"
         )));

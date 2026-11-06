@@ -121,7 +121,10 @@ impl TryFrom<DbValue> for IdSource {
     }
 }
 
-pub fn get_for_album_tracks(db: &DbAny, release_db_id: DbId) -> anyhow::Result<Vec<ExternalId>> {
+pub fn get_for_album_tracks(
+    db: &impl DbAccess,
+    release_db_id: DbId,
+) -> anyhow::Result<Vec<ExternalId>> {
     let ext_ids: Vec<ExternalId> = db
         .exec(
             QueryBuilder::select()
@@ -360,7 +363,7 @@ pub fn upsert(
 /// write under a manual value updates only that kept value. A resolved write of one of the
 /// entity's aliases leaves a resolved value it already has: the lookup that led here found the
 /// entity through the alias, so the value names the same thing and the entity's ID stays stable.
-pub(crate) fn upsert_inside_tx(
+pub fn upsert_inside_tx(
     db: &mut impl DbAccess,
     node_id: DbId,
     provider_id: &str,
@@ -723,49 +726,47 @@ pub fn remove_alias(
 
 /// Removes the manual value, so the resolved one takes effect again. Returns
 /// false when there was no manual value.
-pub fn remove_manual(
-    db: &mut DbAny,
+pub fn remove_manual_inside_tx(
+    db: &mut impl DbAccess,
     node_id: DbId,
     provider_id: &str,
     id_type: &str,
 ) -> anyhow::Result<bool> {
-    db.transaction_mut(|t| -> anyhow::Result<bool> {
-        let Some(existing) = get_inside_tx(t, node_id, provider_id, id_type)? else {
-            return Ok(false);
-        };
-        if existing.source != IdSource::Manual {
-            return Ok(false);
+    let Some(existing) = get_inside_tx(db, node_id, provider_id, id_type)? else {
+        return Ok(false);
+    };
+    if existing.source != IdSource::Manual {
+        return Ok(false);
+    }
+    let db_id = existing
+        .db_id
+        .clone()
+        .map(DbId::from)
+        .ok_or_else(|| anyhow::anyhow!("external id row has no db id"))?;
+    match existing.resolved_value {
+        Some(resolved_value) => {
+            let restored = ExternalId {
+                db_id: Some(db_id.into()),
+                provider_id: provider_id.to_string(),
+                id_type: id_type.to_string(),
+                id_value: resolved_value,
+                source: IdSource::Resolved,
+                resolved_value: None,
+            };
+            db.exec_mut(QueryBuilder::insert().element(&restored).query())?;
+            // Inserting an element leaves the keys its `None` fields omit.
+            db.exec_mut(
+                QueryBuilder::remove()
+                    .values([DbValue::from("resolved_value")])
+                    .ids(db_id)
+                    .query(),
+            )?;
         }
-        let db_id = existing
-            .db_id
-            .clone()
-            .map(DbId::from)
-            .ok_or_else(|| anyhow::anyhow!("external id row has no db id"))?;
-        match existing.resolved_value {
-            Some(resolved_value) => {
-                let restored = ExternalId {
-                    db_id: Some(db_id.into()),
-                    provider_id: provider_id.to_string(),
-                    id_type: id_type.to_string(),
-                    id_value: resolved_value,
-                    source: IdSource::Resolved,
-                    resolved_value: None,
-                };
-                t.exec_mut(QueryBuilder::insert().element(&restored).query())?;
-                // Inserting an element leaves the keys its `None` fields omit.
-                t.exec_mut(
-                    QueryBuilder::remove()
-                        .values([DbValue::from("resolved_value")])
-                        .ids(db_id)
-                        .query(),
-                )?;
-            }
-            None => {
-                t.exec_mut(QueryBuilder::remove().ids(db_id).query())?;
-            }
+        None => {
+            db.exec_mut(QueryBuilder::remove().ids(db_id).query())?;
         }
-        Ok(true)
-    })
+    }
+    Ok(true)
 }
 
 /// Remove every `ExternalId` and `ExternalIdAlias` attached to an owner. Call before deleting the
@@ -1075,7 +1076,7 @@ mod tests {
             IdSource::Manual,
         )?;
 
-        assert!(remove_manual(
+        assert!(remove_manual_inside_tx(
             &mut db,
             node_id,
             "musicbrainz",
@@ -1094,7 +1095,7 @@ mod tests {
             .expect("external id element");
         assert_eq!(element_value(&element, "resolved_value"), None);
 
-        assert!(!remove_manual(
+        assert!(!remove_manual_inside_tx(
             &mut db,
             node_id,
             "musicbrainz",
@@ -1117,14 +1118,14 @@ mod tests {
             IdSource::Manual,
         )?;
 
-        assert!(remove_manual(
+        assert!(remove_manual_inside_tx(
             &mut db,
             node_id,
             "musicbrainz",
             "release_id"
         )?);
         assert!(get_for_entity(&db, node_id)?.is_empty());
-        assert!(!remove_manual(
+        assert!(!remove_manual_inside_tx(
             &mut db,
             node_id,
             "musicbrainz",
