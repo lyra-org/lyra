@@ -8,8 +8,13 @@ use crate::services::{
     auth::{
         Principal,
         Recheck,
+        access,
     },
     catalog::Viewer,
+};
+use agdb::{
+    DbAny,
+    DbId,
 };
 use lyra_db::{
     IdSource,
@@ -134,12 +139,29 @@ pub(crate) async fn update_provider(
     Ok(lyra_db::providers::get(&db)?)
 }
 
+/// The entity `entity_id` names, which `principal` must hold `ManageMetadata` for and reach
+/// through at least one library. A hidden entity reads as a missing one.
+fn managed_entity(
+    db: &DbAny,
+    principal: &Principal,
+    entity_id: &str,
+) -> Result<DbId, ProviderAdminError> {
+    let not_found = || ProviderAdminError::EntityNotFound(entity_id.to_string());
+    let current = principal.current_with(db, Permission::ManageMetadata)?;
+    let entity = lyra_db::lookup::find_node_id_by_id(db, entity_id)?.ok_or_else(not_found)?;
+    let libraries = access::affected_libraries(db, entity)?;
+    if !access::any_library_accessible(&current, &libraries) {
+        return Err(not_found());
+    }
+    Ok(entity)
+}
+
 pub(crate) async fn list_entity_external_ids(
+    principal: &Principal,
     entity_id: &str,
 ) -> Result<Vec<EntityExternalIdRecord>, ProviderAdminError> {
     let db = STATE.db.read().await;
-    let entity_db_id = lyra_db::lookup::find_node_id_by_id(&db, entity_id)?
-        .ok_or_else(|| ProviderAdminError::EntityNotFound(entity_id.to_string()))?;
+    let entity_db_id = managed_entity(&db, principal, entity_id)?;
     let ids = lyra_db::external_ids::get_for_entity(&db, entity_db_id)?;
     let aliases = lyra_db::external_ids::get_aliases_for_entity(&*db, entity_db_id)?;
 
@@ -151,6 +173,7 @@ pub(crate) async fn list_entity_external_ids(
 }
 
 pub(crate) async fn set_entity_external_id(
+    principal: &Principal,
     entity_id: &str,
     request: SetEntityExternalIdRequest,
 ) -> Result<EntityExternalIdRecord, ProviderAdminError> {
@@ -161,8 +184,7 @@ pub(crate) async fn set_entity_external_id(
         )));
     }
     let mut db = STATE.db.write().await;
-    let entity_db_id = lyra_db::lookup::find_node_id_by_id(&db, entity_id)?
-        .ok_or_else(|| ProviderAdminError::EntityNotFound(entity_id.to_string()))?;
+    let entity_db_id = managed_entity(&db, principal, entity_id)?;
     if !lyra_db::entities::exists(&db, entity_db_id)? {
         return Err(ProviderAdminError::EntityNotFound(entity_id.to_string()));
     }
@@ -182,13 +204,13 @@ pub(crate) async fn set_entity_external_id(
 }
 
 pub(crate) async fn inherit_entity_external_id(
+    principal: &Principal,
     entity_id: &str,
     provider_id: &str,
     id_type: &str,
 ) -> Result<(), ProviderAdminError> {
     let mut db = STATE.db.write().await;
-    let entity_db_id = lyra_db::lookup::find_node_id_by_id(&db, entity_id)?
-        .ok_or_else(|| ProviderAdminError::EntityNotFound(entity_id.to_string()))?;
+    let entity_db_id = managed_entity(&db, principal, entity_id)?;
 
     if !lyra_db::external_ids::remove_manual(&mut db, entity_db_id, provider_id, id_type)? {
         return Err(ProviderAdminError::ManualIdNotFound(format!(
@@ -200,12 +222,12 @@ pub(crate) async fn inherit_entity_external_id(
 }
 
 pub(crate) async fn set_entity_locked(
+    principal: &Principal,
     entity_id: &str,
     locked: bool,
 ) -> Result<(), ProviderAdminError> {
     let mut db = STATE.db.write().await;
-    let entity_db_id = lyra_db::lookup::find_node_id_by_id(&db, entity_id)?
-        .ok_or_else(|| ProviderAdminError::EntityNotFound(entity_id.to_string()))?;
+    let entity_db_id = managed_entity(&db, principal, entity_id)?;
     if !lyra_db::entities::set_locked(&mut db, entity_db_id, locked)? {
         return Err(ProviderAdminError::EntityNotFound(entity_id.to_string()));
     }
@@ -265,6 +287,22 @@ mod tests {
     use super::*;
     use lyra_db::fixtures::insert_track;
 
+    async fn admin() -> anyhow::Result<Principal> {
+        let user = {
+            let mut db = STATE.db.write().await;
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
+            let user =
+                lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("provider-admin")?)?;
+            lyra_db::roles::ensure_user_has_role(
+                &mut db,
+                user,
+                lyra_db::roles::BUILTIN_ADMIN_ROLE,
+            )?;
+            user
+        };
+        crate::services::testing::user_principal(user).await
+    }
+
     #[tokio::test]
     async fn a_blank_manual_external_id_is_rejected() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
@@ -279,6 +317,7 @@ mod tests {
         };
 
         let result = set_entity_external_id(
+            &admin().await?,
             &track_id,
             SetEntityExternalIdRequest {
                 provider_id: "musicbrainz".to_string(),
@@ -334,7 +373,7 @@ mod tests {
             track.id
         };
 
-        set_entity_locked(&track_id, false).await?;
+        set_entity_locked(&admin().await?, &track_id, false).await?;
 
         let db = STATE.db.read().await;
         let track_db_id = lyra_db::lookup::find_node_id_by_id(&db, &track_id)?

@@ -879,6 +879,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn external_ids_and_locks_need_one_reachable_library() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_library_test_state(std::path::PathBuf::from(".")).await?;
+        let scene = scene().await?;
+        let (shared, hidden) = {
+            let mut db = STATE.db.write().await;
+            let release_of = |db: &DbAny, genre: &str| -> anyhow::Result<DbId> {
+                let genre = lyra_db::lookup::find_node_id_by_id(db, genre)?
+                    .ok_or_else(|| anyhow::anyhow!("genre missing"))?;
+                lyra_db::genres::get_releases(db, genre)?
+                    .first()
+                    .copied()
+                    .ok_or_else(|| anyhow::anyhow!("release missing"))
+            };
+            let shared = release_of(&db, &scene.visible)?;
+            let hidden = release_of(&db, &scene.hidden)?;
+            let hidden_library = lyra_db::lookup::find_node_id_by_id(&*db, &scene.hidden_library)?
+                .ok_or_else(|| anyhow::anyhow!("library missing"))?;
+            lyra_db::graph::ensure_owned_edge(&mut *db, hidden_library, shared)?;
+            (public_id(&db, shared), public_id(&db, hidden))
+        };
+        let ids = |id: &str| format!("/entities/{id}/external-ids");
+        let id_value = |id: &str| format!("/entities/{id}/external-ids/provider/release_id");
+        let lock = |id: &str| format!("/entities/{id}/lock");
+        let value = || Some(json!({"id_value": "x"}));
+
+        for (method, uri, body) in [
+            ("GET", ids(&hidden), None),
+            ("GET", ids(&scene.hidden), None),
+            ("PUT", id_value(&hidden), value()),
+            ("DELETE", id_value(&hidden), None),
+            ("PUT", lock(&hidden), None),
+            ("DELETE", lock(&hidden), None),
+        ] {
+            let (status, _) = send(&scene.manager, method, uri.clone(), body).await?;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{method} {uri}");
+        }
+
+        for (method, uri, body, expected) in [
+            ("PUT", id_value(&shared), value(), StatusCode::OK),
+            ("GET", ids(&shared), None, StatusCode::OK),
+            ("GET", ids(&scene.both), None, StatusCode::OK),
+            ("DELETE", id_value(&shared), None, StatusCode::NO_CONTENT),
+            ("PUT", lock(&shared), None, StatusCode::OK),
+            ("DELETE", lock(&shared), None, StatusCode::OK),
+        ] {
+            let (status, body) = send(&scene.manager, method, uri.clone(), body).await?;
+            assert_eq!(status, expected, "{method} {uri}: {body}");
+        }
+
+        let (status, body) = send(&scene.admin, "PUT", id_value(&hidden), value()).await?;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn renaming_a_genre_answers_by_the_rules() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         init_library_test_state(std::path::PathBuf::from(".")).await?;

@@ -567,13 +567,14 @@ async fn get_entity_external_ids(
     headers: HeaderMap,
     Path(entity_id): Path<String>,
 ) -> Result<Json<Vec<ExternalIdResponse>>, AppError> {
-    let _principal = require_manage_metadata(bearer_credential(&headers)).await?;
+    let principal = require_manage_metadata(bearer_credential(&headers)).await?;
 
-    let response: Vec<ExternalIdResponse> = list_entity_external_ids_service(&entity_id)
-        .await?
-        .into_iter()
-        .map(Into::into)
-        .collect();
+    let response: Vec<ExternalIdResponse> =
+        list_entity_external_ids_service(&principal, &entity_id)
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect();
 
     Ok(Json(response))
 }
@@ -583,9 +584,10 @@ async fn set_entity_external_id(
     Path((entity_id, provider_id, id_type)): Path<(String, String, String)>,
     Json(request): Json<SetExternalIdRequest>,
 ) -> Result<Json<ExternalIdResponse>, AppError> {
-    let _principal = require_manage_metadata(bearer_credential(&headers)).await?;
+    let principal = require_manage_metadata(bearer_credential(&headers)).await?;
 
     let record = set_entity_external_id_service(
+        &principal,
         &entity_id,
         ProviderSetEntityExternalIdRequest {
             provider_id,
@@ -602,8 +604,8 @@ async fn inherit_entity_external_id(
     headers: HeaderMap,
     Path((entity_id, provider_id, id_type)): Path<(String, String, String)>,
 ) -> Result<StatusCode, AppError> {
-    let _principal = require_manage_metadata(bearer_credential(&headers)).await?;
-    inherit_entity_external_id_service(&entity_id, &provider_id, &id_type).await?;
+    let principal = require_manage_metadata(bearer_credential(&headers)).await?;
+    inherit_entity_external_id_service(&principal, &entity_id, &provider_id, &id_type).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -612,8 +614,8 @@ async fn lock_entity(
     headers: HeaderMap,
     Path(entity_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let _principal = require_manage_metadata(bearer_credential(&headers)).await?;
-    set_entity_locked(&entity_id, true).await?;
+    let principal = require_manage_metadata(bearer_credential(&headers)).await?;
+    set_entity_locked(&principal, &entity_id, true).await?;
 
     Ok(Json(serde_json::json!({ "locked": true })))
 }
@@ -622,8 +624,8 @@ async fn unlock_entity(
     headers: HeaderMap,
     Path(entity_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let _principal = require_manage_metadata(bearer_credential(&headers)).await?;
-    set_entity_locked(&entity_id, false).await?;
+    let principal = require_manage_metadata(bearer_credential(&headers)).await?;
+    set_entity_locked(&principal, &entity_id, false).await?;
 
     Ok(Json(serde_json::json!({ "locked": false })))
 }
@@ -716,34 +718,34 @@ fn update_provider_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn get_external_ids_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get entity external IDs").description(
-        "Returns all external IDs associated with an entity, one entry per ID type, followed by the values kept from merged duplicates with `source` `alias`. Requires ManageMetadata permission.",
+        "Returns all external IDs associated with an entity, one entry per ID type, followed by the values kept from merged duplicates with `source` `alias`. Responds 404 when the caller reaches the entity through no library. Requires ManageMetadata permission.",
     )
 }
 
 #[cfg(feature = "docgen")]
 fn set_external_id_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Set entity external ID").description(
-        "Sets the manual value of one external ID on an entity, keyed by `provider_id` and `id_type` in the path. It takes effect over the resolved value, which is kept and returns when the ID is inherited again. Returns 400 when the value is blank. Requires ManageMetadata permission.",
+        "Sets the manual value of one external ID on an entity, keyed by `provider_id` and `id_type` in the path. It takes effect over the resolved value, which is kept and returns when the ID is inherited again. Returns 400 when the value is blank. Responds 404 when the caller reaches the entity through no library. Requires ManageMetadata permission.",
     )
 }
 
 #[cfg(feature = "docgen")]
 fn inherit_external_id_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Inherit entity external ID").description(
-        "Removes the manual value of one external ID on an entity, so the resolved value takes effect again. Returns 404 when the ID has no manual value. Requires ManageMetadata permission.",
+        "Removes the manual value of one external ID on an entity, so the resolved value takes effect again. Returns 404 when the ID has no manual value. Responds 404 when the caller reaches the entity through no library. Requires ManageMetadata permission.",
     )
 }
 
 #[cfg(feature = "docgen")]
 fn lock_entity_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Lock entity")
-        .description("Locks an entity so scans and providers no longer change its editable metadata; manual edits still apply. Requires ManageMetadata permission.")
+        .description("Locks an entity so scans and providers no longer change its editable metadata; manual edits still apply. Responds 404 when the caller reaches the entity through no library. Requires ManageMetadata permission.")
 }
 
 #[cfg(feature = "docgen")]
 fn unlock_entity_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Unlock entity")
-        .description("Unlocks an entity so scans and providers update its editable metadata again. Requires ManageMetadata permission.")
+        .description("Unlocks an entity so scans and providers update its editable metadata again. Responds 404 when the caller reaches the entity through no library. Requires ManageMetadata permission.")
 }
 
 #[cfg(feature = "docgen")]
