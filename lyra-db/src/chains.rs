@@ -466,8 +466,8 @@ mod tests {
         let mut db = new_test_db()?;
         let old = release_with_tracks(&mut db, "Old", 3)?;
         let new = release_with_tracks(&mut db, "New", 2)?;
-        replace_for_release(&mut db, old.release, &[old.tracks.clone()])??;
-        replace_for_release(&mut db, new.release, &[new.tracks.clone()])??;
+        replace_for_release(&mut db, old.release, std::slice::from_ref(&old.tracks))??;
+        replace_for_release(&mut db, new.release, std::slice::from_ref(&new.tracks))??;
 
         db.transaction_mut(|tx| hand_over(tx, new.tracks[1], old.tracks[0]))?;
         assert_eq!(
