@@ -55,6 +55,11 @@ a scope another kept one narrows can't go:
 run_as = "owner"
 without_scopes = ["lyra.ratings"]
 
+[[plugins]]                  # a one-file library plugin the test's plugin depends on and requires
+id = "notes"
+source = "_notes.luau"       # relative to the fixture; its `init`, run on the first require, as it has no entrypoint
+scopes = ["lyra.datastore"]  # optional
+
 [[users]]
 key = "owner"
 admin = true

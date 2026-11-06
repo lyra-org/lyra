@@ -292,23 +292,14 @@ impl PluginUnderTest {
             .canonicalize()
             .with_context(|| format!("canonicalize {}", directory.display()))?;
         Ok(Self {
-            manifest: harmony_core::plugin::PluginManifest {
-                schema_version: harmony_core::plugin::PLUGIN_SCHEMA_VERSION,
-                id: "test".to_string(),
-                name: "Harness Module Tests".to_string(),
-                version: semver::Version::new(1, 0, 0),
-                host_requirement: semver::VersionReq::parse(concat!(
-                    "=",
-                    env!("CARGO_PKG_VERSION")
-                ))?,
-                description: "Luau tests for server-provided plugin modules".to_string(),
-                entrypoint: None,
-                scopes: crate::plugins::scopes::Scope::ALL
+            manifest: library_manifest(
+                "test",
+                "Harness Module Tests",
+                crate::plugins::scopes::Scope::ALL
                     .iter()
                     .map(|scope| scope.def().id.to_string())
                     .collect(),
-                dependencies: BTreeMap::new(),
-            },
+            )?,
             directory,
         })
     }
@@ -345,6 +336,25 @@ impl PluginUnderTest {
     pub fn directory(&self) -> &Path {
         &self.directory
     }
+}
+
+/// The manifest of a plugin that exists only for a test, with no entrypoint.
+fn library_manifest(
+    id: &str,
+    name: &str,
+    scopes: Vec<String>,
+) -> anyhow::Result<harmony_core::plugin::PluginManifest> {
+    Ok(harmony_core::plugin::PluginManifest {
+        schema_version: harmony_core::plugin::PLUGIN_SCHEMA_VERSION,
+        id: id.to_string(),
+        name: name.to_string(),
+        version: semver::Version::new(1, 0, 0),
+        host_requirement: semver::VersionReq::parse(concat!("=", env!("CARGO_PKG_VERSION")))?,
+        description: "Luau tests for server-provided plugin modules".to_string(),
+        entrypoint: None,
+        scopes,
+        dependencies: BTreeMap::new(),
+    })
 }
 
 /// Keep the returned directory alive so runtime callbacks can load plugin files.
@@ -456,11 +466,34 @@ pub async fn run_luau_plugin_test_file(
     let server_info = crate::plugins::server::load_server_info().await?;
     let auth_capabilities =
         crate::plugins::auth::AuthCapabilities::from_config(&STATE.config().auth);
-    let manifest = plugin.manifest_without(fixture.map_or(&[], Fixture::without_scopes))?;
+    let mut manifest = plugin.manifest_without(fixture.map_or(&[], Fixture::without_scopes))?;
     let plugin_id = manifest.id.clone();
     let db = STATE.db.get();
     let source_root = isolated.source_root();
     let plugins_dir = isolated.plugins_dir();
+    let mut other_plugins = Vec::new();
+    let mut other_manifests = Vec::new();
+    if let Some(fixture) = fixture {
+        for other in fixture.plugins() {
+            fixture.install_plugin(other, &plugins_dir)?;
+            manifest.dependencies.insert(
+                other.id.clone(),
+                harmony_core::plugin::Dependency {
+                    version: semver::VersionReq::STAR,
+                    optional: false,
+                },
+            );
+            other_plugins.push(other.id.clone());
+            other_manifests.push(library_manifest(
+                &other.id,
+                &other.id,
+                other.scopes.clone(),
+            )?);
+        }
+    }
+    let manifests = std::iter::once(manifest)
+        .chain(other_manifests)
+        .collect::<Vec<_>>();
     let source = std::fs::read(&test_path)
         .with_context(|| format!("read Luau test {}", test_path.display()))?;
 
@@ -468,7 +501,7 @@ pub async fn run_luau_plugin_test_file(
     // handlers it registers.
     let (runtime, _) = crate::plugins::executor::PluginExecutorHandle::spawn(move || {
         let runtime = crate::plugins::executor::PluginExecutor::with_filesystem_sources(
-            Arc::from(vec![manifest]),
+            Arc::from(manifests),
             server_info,
             auth_capabilities,
             db,
@@ -493,22 +526,37 @@ pub async fn run_luau_plugin_test_file(
         },
         None => None,
     };
-    let result = runtime
-        .run_source(crate::plugins::executor::PluginSourceRun {
-            plugin_id,
-            path: relative_path_text,
-            source: Arc::from(source),
-            args: Box::new(move |vm, origin| {
-                let fixture = seeded
-                    .map(harmony_luau::serializable_to_luau_owned)
-                    .transpose()?
-                    .unwrap_or(harmony_luau::Value::Nil);
-                Ok(vec![fixture, harness::value(vm, origin)?])
-            }),
-            principal,
-        })
-        .await
-        .with_context(|| format!("run Luau test {}", test_path.display()));
+    let result = async {
+        // A require never starts a plugin's run, so the test's own requires need these running.
+        for other in other_plugins {
+            runtime
+                .run_source(crate::plugins::executor::PluginSourceRun {
+                    plugin_id: other,
+                    path: "start.luau".to_string(),
+                    source: Arc::from(&b""[..]),
+                    args: Box::new(|_, _| Ok(Vec::new())),
+                    principal: principal.clone(),
+                })
+                .await?;
+        }
+        runtime
+            .run_source(crate::plugins::executor::PluginSourceRun {
+                plugin_id,
+                path: relative_path_text,
+                source: Arc::from(source),
+                args: Box::new(move |vm, origin| {
+                    let fixture = seeded
+                        .map(harmony_luau::serializable_to_luau_owned)
+                        .transpose()?
+                        .unwrap_or(harmony_luau::Value::Nil);
+                    Ok(vec![fixture, harness::value(vm, origin)?])
+                }),
+                principal,
+            })
+            .await
+    }
+    .await
+    .with_context(|| format!("run Luau test {}", test_path.display()));
     let shutdown = runtime.shutdown().await;
     if let Some(connections) = connections {
         connections.close().await;

@@ -34,6 +34,18 @@ use lyra_db::{
     fixtures,
 };
 
+/// A plugin of one Luau file, its `init` module, with no entrypoint: `init` runs on the first
+/// require.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Plugin {
+    pub(crate) id: String,
+    /// Relative to the fixture.
+    source: PathBuf,
+    #[serde(default)]
+    pub(crate) scopes: Vec<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Fixture {
@@ -43,6 +55,9 @@ pub struct Fixture {
     /// Scopes the test plugin declares that it goes without for the test.
     #[serde(default)]
     without_scopes: Vec<String>,
+    /// Library plugins the test's plugin depends on and can require.
+    #[serde(default)]
+    plugins: Vec<Plugin>,
     #[serde(default)]
     users: Vec<User>,
     #[serde(default)]
@@ -678,6 +693,20 @@ impl Fixture {
 
     pub(crate) fn without_scopes(&self) -> &[String] {
         &self.without_scopes
+    }
+
+    pub(crate) fn plugins(&self) -> &[Plugin] {
+        &self.plugins
+    }
+
+    /// Writes `plugin` under `plugins_dir`, where a require finds it.
+    pub(crate) fn install_plugin(&self, plugin: &Plugin, plugins_dir: &Path) -> anyhow::Result<()> {
+        let directory = plugins_dir.join(&plugin.id);
+        std::fs::create_dir_all(&directory)?;
+        let source = self.directory.join(&plugin.source);
+        std::fs::copy(&source, directory.join("init.luau"))
+            .with_context(|| format!("copy plugin source {}", source.display()))?;
+        Ok(())
     }
 
     /// The key of the library `track`'s release belongs to.
