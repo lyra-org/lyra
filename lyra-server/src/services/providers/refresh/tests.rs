@@ -567,3 +567,112 @@ async fn a_library_refresh_passes_its_track_only_artists() -> anyhow::Result<()>
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn a_cancelled_cover_pass_asks_no_provider_for_release_covers() -> anyhow::Result<()> {
+    let _guard = runtime_test_lock().await;
+    init_default_test_state()?;
+    let dispatch = FakePluginDispatch::install();
+    let handler = dispatch
+        .register_artist_cover_handler("covers", FakeResponse::Value(serde_json::Value::Null))
+        .await?;
+    provider_registry().write().await.set_cover_handler(
+        "covers",
+        EntityType::Release,
+        crate::services::providers::ProviderCoverSpec {
+            timeout: std::time::Duration::from_secs(5),
+            require: Default::default(),
+            handler,
+        },
+    );
+    let library = {
+        let mut db = STATE.db.write().await;
+        let library = insert_library(&mut db, "Covers", "/cancelled-covers")?;
+        let release = insert_release(&mut db, "Release")?;
+        connect(&mut db, library, release)?;
+        library
+    };
+    let covers_root = tempfile::tempdir()?;
+    let sync_covers = async |cancel: &tokio_util::sync::CancellationToken| {
+        crate::services::covers::sync_and_persist_release_covers_for_library(
+            &STATE.db.get(),
+            super::cover_paths(&None, covers_root.path()),
+            library,
+            CoverSyncOptions::default(),
+            None,
+            cancel,
+        )
+        .await
+    };
+
+    let cancelled = tokio_util::sync::CancellationToken::new();
+    cancelled.cancel();
+    sync_covers(&cancelled).await?;
+    assert!(dispatch.calls(handler).is_empty());
+
+    sync_covers(&tokio_util::sync::CancellationToken::new()).await?;
+    assert_eq!(dispatch.calls(handler).len(), 1);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_cancelled_during_its_release_covers_leaves_the_cover_unit_unsettled()
+-> anyhow::Result<()> {
+    let _guard = runtime_test_lock().await;
+    init_default_test_state()?;
+    let dispatch = FakePluginDispatch::install();
+    let gate = Arc::new(Semaphore::new(0));
+    let handler = dispatch
+        .register_artist_cover_handler(
+            "covers",
+            FakeResponse::Held(
+                gate.clone(),
+                Box::new(FakeResponse::Value(serde_json::Value::Null)),
+            ),
+        )
+        .await?;
+    provider_registry().write().await.set_cover_handler(
+        "covers",
+        EntityType::Release,
+        crate::services::providers::ProviderCoverSpec {
+            timeout: std::time::Duration::from_secs(5),
+            require: Default::default(),
+            handler,
+        },
+    );
+    let library = {
+        let mut db = STATE.db.write().await;
+        let library_id = insert_library(&mut db, "Covers", "/interrupted-covers")?;
+        let release = insert_release(&mut db, "Release")?;
+        connect(&mut db, library_id, release)?;
+        lyra_db::libraries::get_by_id(&db, library_id)?.expect("library")
+    };
+    let progress = crate::services::libraries::begin_test_run(&library).await;
+    let refresh = tokio::spawn({
+        let progress = progress.clone();
+        let library_id = library.db_id.expect("db id");
+        async move {
+            let options = LibraryRefreshOptions {
+                covers: CoverSyncOptions::default(),
+                apply_sync_filters: false,
+                provider_id: None,
+            };
+            super::library::refresh_library_metadata(library_id, &options, progress).await
+        }
+    });
+    wait_for_calls(&dispatch, handler, 1).await;
+    crate::services::libraries::cancel_sync_run(progress.run_id()).await?;
+    gate.add_permits(1);
+
+    let error = refresh
+        .await?
+        .expect_err("the cancelled refresh ends cancelled");
+    let run = crate::services::libraries::get_sync_run(progress.run_id())
+        .await?
+        .expect("run");
+    crate::services::libraries::end_test_run(&progress).await;
+
+    assert!(error.is_cancellation());
+    assert_eq!(run.progress.completed_units, 0);
+    Ok(())
+}

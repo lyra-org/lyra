@@ -29,6 +29,8 @@ use tokio::{
     task::JoinSet,
 };
 
+use tokio_util::sync::CancellationToken;
+
 use crate::services::libraries::MediaRoots;
 use crate::services::providers::{
     active_providers,
@@ -715,12 +717,14 @@ async fn resolve_local_covers_for_library(
     Ok((resolved, failed))
 }
 
+/// A cancelled pass stops early and returns what it did so far, leaving the caller to check.
 pub(crate) async fn sync_release_covers_for_library(
     db: &lyra_db::DbAsync,
     paths: CoverPaths<'_>,
     library_id: DbId,
     options: CoverSyncOptions,
     provider_filter: Option<&str>,
+    cancel: &CancellationToken,
 ) -> Result<usize> {
     let schemes = id_schemes().await;
     let (sorted_providers, searches, roots) = {
@@ -811,6 +815,9 @@ pub(crate) async fn sync_release_covers_for_library(
 
     let mut downloads = Vec::new();
     for ctx in resolve_contexts {
+        if cancel.is_cancelled() {
+            return Ok(0);
+        }
         for (provider_id, release_context) in &ctx.provider_contexts {
             let cover_url = match resolve_provider_release_cover_url(
                 provider_id,
@@ -851,11 +858,13 @@ pub(crate) async fn sync_release_covers_for_library(
     let mut tasks = JoinSet::new();
 
     for dl in downloads {
-        let permit = concurrency
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|_| anyhow!("download semaphore closed"))?;
+        let permit = tokio::select! {
+            biased;
+            () = cancel.cancelled() => break,
+            permit = concurrency.clone().acquire_owned() => {
+                permit.map_err(|_| anyhow!("download semaphore closed"))?
+            }
+        };
         let db = db.clone();
         tasks.spawn(async move {
             let result = execute_cover_download(db, dl).await;
@@ -1269,14 +1278,20 @@ async fn sync_local_cover_metadata_from_resolved(
 
 /// Fetches provider covers for the library's releases that may get one, then records the local
 /// covers found beside their audio files.
+/// A cancelled pass stops early and returns what it did so far, leaving the caller to check.
 pub(crate) async fn sync_and_persist_release_covers_for_library(
     db: &lyra_db::DbAsync,
     paths: CoverPaths<'_>,
     library_id: DbId,
     options: CoverSyncOptions,
     provider_filter: Option<&str>,
+    cancel: &CancellationToken,
 ) -> Result<usize> {
-    sync_release_covers_for_library(db, paths, library_id, options, provider_filter).await?;
+    sync_release_covers_for_library(db, paths, library_id, options, provider_filter, cancel)
+        .await?;
+    if cancel.is_cancelled() {
+        return Ok(0);
+    }
 
     let (resolved, unresolved) = resolve_local_covers_for_library(db, library_id, paths).await?;
     let persisted = if resolved.is_empty() {

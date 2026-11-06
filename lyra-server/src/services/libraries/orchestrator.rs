@@ -842,6 +842,10 @@ impl SyncRunProgress {
         SyncRunControlError::Cancelled
     }
 
+    pub(crate) fn cancellation(&self) -> &CancellationToken {
+        &self.cancel
+    }
+
     async fn mutate<F>(&self, update: F)
     where
         F: FnOnce(&mut SyncRunState),

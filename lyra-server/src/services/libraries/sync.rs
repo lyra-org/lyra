@@ -2357,6 +2357,7 @@ FILE "album.flac" WAVE
             library.db_id.expect("library db_id"),
             CoverSyncOptions::default(),
             None,
+            &tokio_util::sync::CancellationToken::new(),
         )
         .await;
         std::fs::set_permissions(&hidden, std::fs::Permissions::from_mode(0o755))?;

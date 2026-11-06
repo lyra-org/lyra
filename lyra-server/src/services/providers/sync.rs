@@ -104,20 +104,16 @@ async fn run_provider_sync_inner(provider_id: &str) -> Result<(), ProviderServic
     let concurrency = Arc::new(Semaphore::new(4));
     let shutdown = crate::services::shutdown::token();
     let mut tasks = JoinSet::new();
-    let mut interrupted = false;
     for library_db_id in library_db_ids {
         let provider_id = Arc::clone(&provider_id_owned);
         let permit = tokio::select! {
             biased;
-            () = shutdown.cancelled() => {
-                interrupted = true;
-                break;
-            }
+            () = shutdown.cancelled() => break,
             permit = concurrency.clone().acquire_owned() => {
                 permit.expect("library refresh semaphore closed")
             }
         };
-        let progress = SyncRunProgress::unreported(tokio_util::sync::CancellationToken::new());
+        let progress = SyncRunProgress::unreported(shutdown.clone());
         tasks.spawn(async move {
             let options = LibraryRefreshOptions {
                 covers: CoverSyncOptions::default(),
@@ -126,6 +122,7 @@ async fn run_provider_sync_inner(provider_id: &str) -> Result<(), ProviderServic
             };
             if let Err(err) =
                 super::refresh::refresh_library_metadata(library_db_id, &options, progress).await
+                && !err.is_cancellation()
             {
                 tracing::warn!(
                     library_db_id = library_db_id.0,
@@ -144,7 +141,7 @@ async fn run_provider_sync_inner(provider_id: &str) -> Result<(), ProviderServic
         }
     }
 
-    if interrupted {
+    if shutdown.is_cancelled() {
         return Err(ProviderServiceError::ShuttingDown);
     }
     Ok(())
@@ -269,15 +266,17 @@ mod tests {
         }
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_provider_sync_starts_no_library_refresh_once_shutdown_began() -> anyhow::Result<()> {
+    /// A provider named `held` whose release refreshes wait for the returned gate.
+    async fn install_held_provider() -> anyhow::Result<(
+        Arc<crate::services::testing::FakePluginDispatch>,
+        crate::services::plugin_dispatch::PluginCallbackHandle,
+        Arc<Semaphore>,
+    )> {
         use crate::services::testing::{
             FakePluginDispatch,
             FakeResponse,
         };
 
-        let _guard = crate::services::testing::runtime_test_lock().await;
-        let _shutdown = ShutdownResetGuard;
         crate::services::testing::init_default_test_state()?;
         crate::services::shutdown::reset();
         let dispatch = FakePluginDispatch::install();
@@ -287,16 +286,54 @@ mod tests {
             Box::new(FakeResponse::Value(serde_json::Value::Null)),
         ));
         lyra_db::providers::register(&mut *STATE.db.write().await, "held")?;
+        let registry = provider_registry();
+        let mut registry = registry.write().await;
+        registry.register(
+            crate::services::plugin_scope::PluginId::new("held_plugin")?,
+            "held".to_string(),
+            None,
+        )?;
+        registry.set_refresh_callback("held", EntityType::Release, handler);
+        Ok((dispatch, handler, gate))
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_running_library_refresh_stops_at_shutdown() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        let _shutdown = ShutdownResetGuard;
+        let (dispatch, handler, gate) = install_held_provider().await?;
         {
-            let registry = provider_registry();
-            let mut registry = registry.write().await;
-            registry.register(
-                crate::services::plugin_scope::PluginId::new("held_plugin")?,
-                "held".to_string(),
-                None,
-            )?;
-            registry.set_refresh_callback("held", EntityType::Release, handler);
+            let mut db = STATE.db.write().await;
+            let library = lyra_db::test_db::insert_library(&mut db, "Library", "/library")?;
+            for index in 0..3 {
+                let release =
+                    lyra_db::fixtures::insert_release(&mut db, &format!("Release {index}"))?;
+                lyra_db::fixtures::connect(&mut db, library, release)?;
+            }
         }
+
+        let sync = tokio::spawn(async { run_provider_sync("held").await });
+        for _ in 0..500 {
+            if !dispatch.calls(handler).is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(dispatch.calls(handler).len(), 1);
+        crate::services::shutdown::cancel();
+        gate.add_permits(16);
+        let result = tokio::time::timeout(Duration::from_secs(5), sync).await??;
+
+        assert!(matches!(result, Err(ProviderServiceError::ShuttingDown)));
+        assert_eq!(dispatch.calls(handler).len(), 1);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_provider_sync_starts_no_library_refresh_once_shutdown_began() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        let _shutdown = ShutdownResetGuard;
+        let (dispatch, handler, gate) = install_held_provider().await?;
         {
             let mut db = STATE.db.write().await;
             for index in 0..5 {

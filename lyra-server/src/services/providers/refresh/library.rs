@@ -369,12 +369,13 @@ async fn refresh_locked_library(
                 SyncWorkDetails::new("library_provider_cover_refresh"),
             )
             .await;
-        match sync_library_covers_after_refresh(library_db_id, options).await {
+        match sync_library_covers_after_refresh(library_db_id, options, &progress).await {
             Ok(_count) => {
                 progress
                     .complete_work(work_id, SyncStageKey::ProviderCover)
                     .await;
             }
+            Err(err) if err.is_cancellation() => return Err(err),
             Err(err) => {
                 let error = format!("{:#}", err.into_anyhow());
                 progress
@@ -499,6 +500,7 @@ async fn refresh_release_with_provider(
 async fn sync_library_covers_after_refresh(
     library_db_id: DbId,
     options: &LibraryRefreshOptions<'_>,
+    progress: &SyncRunProgress,
 ) -> Result<usize, ProviderServiceError> {
     let (library_root, covers_root) = cover_path_buffers_for_library(Some(library_db_id)).await?;
     let paths = cover_paths(&library_root, &covers_root);
@@ -508,9 +510,13 @@ async fn sync_library_covers_after_refresh(
         library_db_id,
         options.covers,
         options.provider_id,
+        progress.cancellation(),
     )
     .await
     .map_err(ProviderServiceError::Internal)?;
+    progress
+        .check_cancelled()
+        .map_err(|err| ProviderServiceError::Internal(err.into()))?;
     refresh_gone_covers_for_library(&STATE.db.get(), library_db_id, paths.library_root)
         .await
         .map_err(ProviderServiceError::Internal)?;
