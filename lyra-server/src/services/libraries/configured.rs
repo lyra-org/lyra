@@ -191,6 +191,7 @@ fn find_or_create_library_locked(
                     path_key: lookup_key,
                     language: config.language.clone(),
                     country: config.country.clone(),
+                    follow_links: false,
                 },
             )
         },

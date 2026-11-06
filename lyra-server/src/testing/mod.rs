@@ -117,6 +117,7 @@ pub async fn prepare_fixture(
                     path_key,
                     language: library.language.clone(),
                     country: library.country.clone(),
+                    follow_links: false,
                 },
             )
         },

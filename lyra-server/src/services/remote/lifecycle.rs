@@ -198,6 +198,7 @@ mod tests {
                 path,
                 language: None,
                 country: None,
+                follow_links: false,
             };
             db.transaction_mut(|t| -> anyhow::Result<String> {
                 Ok(lyra_db::libraries::create_with_creator(t, insert, user_db_id)?.id)

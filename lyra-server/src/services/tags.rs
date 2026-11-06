@@ -575,6 +575,7 @@ mod tests {
             path_key,
             language: None,
             country: None,
+            follow_links: false,
         }
     }
 

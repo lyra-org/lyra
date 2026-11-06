@@ -1272,6 +1272,7 @@ fn plugin_executor_exposes_db_backed_lyra_tags_module() -> Result<()> {
             path: library_path,
             language: None,
             country: None,
+            follow_links: false,
         },
         user_db_id,
     )?;

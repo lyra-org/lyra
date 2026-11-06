@@ -68,6 +68,9 @@ use lyra_db::{
     Permission,
 };
 
+#[cfg(feature = "docgen")]
+const FOLLOW_LINKS_DESCRIPTION: &str = "Whether syncs follow symbolic links, and files a link leads to outside every library can be served when they are audio, cue sheets or `cover` images. Off by default: syncs report links instead of following them. A change reaches the catalog with the next sync.";
+
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
 struct LibraryRequest {
@@ -91,6 +94,9 @@ struct LibraryRequest {
         schemars(description = "ISO 3166 country code (e.g. \"JP\", \"US\", \"Japan\").")
     )]
     country: Option<String>,
+    #[cfg_attr(feature = "docgen", schemars(description = FOLLOW_LINKS_DESCRIPTION))]
+    #[serde(default)]
+    follow_links: bool,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -112,11 +118,14 @@ struct LibraryResponse {
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     purge_missing_after_days: Option<u32>,
+    #[cfg_attr(feature = "docgen", schemars(description = FOLLOW_LINKS_DESCRIPTION))]
+    follow_links: bool,
 }
 
 impl LibraryResponse {
     fn from_library(lib: Library, include_directory: bool) -> Self {
         Self {
+            follow_links: lib.follows_links(),
             id: lib.id,
             name: lib.name,
             directory: include_directory.then_some(lib.path),
@@ -152,6 +161,8 @@ struct LibraryUpdateRequest {
     )]
     #[serde(default, deserialize_with = "double_option")]
     purge_missing_after_days: Option<Option<u32>>,
+    #[cfg_attr(feature = "docgen", schemars(description = FOLLOW_LINKS_DESCRIPTION))]
+    follow_links: Option<bool>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -313,6 +324,7 @@ async fn create_library(
                         path_key,
                         language,
                         country,
+                        follow_links: library.follow_links,
                     },
                     user_db_id,
                 )
@@ -358,6 +370,7 @@ async fn update_library(
         && update.language.is_none()
         && update.country.is_none()
         && update.purge_missing_after_days.is_none()
+        && update.follow_links.is_none()
     {
         return Err(AppError::bad_request("no library fields provided"));
     }
@@ -381,6 +394,10 @@ async fn update_library(
     let updated_purge = update
         .purge_missing_after_days
         .unwrap_or(library.purge_missing_after_days);
+    let updated_follow_links = update
+        .follow_links
+        .map(Some)
+        .unwrap_or(library.follow_links);
 
     if let Some(name) = update.name {
         updated_name = name;
@@ -412,6 +429,7 @@ async fn update_library(
         language: updated_language,
         country: updated_country,
         purge_missing_after_days: updated_purge,
+        follow_links: updated_follow_links,
     };
 
     let outcome = db.transaction_mut(
@@ -922,6 +940,7 @@ mod tests {
             path_key,
             language: None,
             country: None,
+            follow_links: false,
         }
     }
 
@@ -1077,6 +1096,60 @@ mod tests {
                 .status(),
             StatusCode::NOT_FOUND
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn follow_links_starts_off_and_changes_through_update() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        setup_route_test().await?;
+        let (manager, library) = {
+            let mut db = STATE.db.write().await;
+            let manager = create_user_with_permissions(
+                &mut db,
+                "follow-links",
+                vec![Permission::ManageLibraries],
+            )?;
+            let library = db.transaction_mut(|t| -> anyhow::Result<lyra_db::Library> {
+                Ok(lyra_db::libraries::create_with_creator(
+                    t,
+                    library_insert("Links", "follow-links"),
+                    manager,
+                )?)
+            })?;
+            (manager, library)
+        };
+        assert!(!library.follows_links());
+        let session = crate::services::testing::create_session(manager, Default::default()).await?;
+        let update = |follow_links| {
+            update_library(
+                bearer_headers(&session.token),
+                Path(library.id.clone()),
+                Json(LibraryUpdateRequest {
+                    name: None,
+                    language: None,
+                    country: None,
+                    purge_missing_after_days: None,
+                    follow_links: Some(follow_links),
+                }),
+            )
+        };
+
+        let Json(enabled) = update(true)
+            .await
+            .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert!(enabled.follow_links);
+        let stored = lyra_db::libraries::get_by_id(
+            &*STATE.db.read().await,
+            library.db_id.expect("created library has a db_id"),
+        )?
+        .expect("library stored");
+        assert!(stored.follows_links());
+
+        let Json(disabled) = update(false)
+            .await
+            .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert!(!disabled.follow_links);
         Ok(())
     }
 

@@ -972,6 +972,7 @@ mod tests {
             language: Some("jpn".to_string()),
             country: Some("JP".to_string()),
             purge_missing_after_days: None,
+            follow_links: None,
         };
         let external_ids = cover_external_ids(&db, release_id, &schemes)?;
 

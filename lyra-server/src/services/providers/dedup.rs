@@ -495,6 +495,7 @@ mod tests {
                     path_key: lyra_db::libraries::path_key_for(path),
                     language: None,
                     country: None,
+                    follow_links: false,
                 },
             )
         })?;

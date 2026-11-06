@@ -44,6 +44,15 @@ pub struct Library {
     pub country: Option<String>,
     /// How many days an entry stays missing before a sync purges it; never without.
     pub purge_missing_after_days: Option<u32>,
+    /// Whether scans and the files they find may lead outside the library through links; off
+    /// without.
+    pub follow_links: Option<bool>,
+}
+
+impl Library {
+    pub fn follows_links(&self) -> bool {
+        self.follow_links.unwrap_or(false)
+    }
 }
 
 /// The bounds of [`Library::purge_missing_after_days`].
@@ -111,7 +120,7 @@ pub(crate) fn normalize_library_name(raw: &str) -> Result<(String, String), Libr
 
 /// Collapse `.`/`..`/`//`. Used as the comparison key when `canonicalize`
 /// is unavailable (missing path, dead mount, etc.).
-fn lexical_normalize_path(path: &Path) -> PathBuf {
+pub fn lexical_normalize_path(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for component in path.components() {
         match component {
@@ -298,6 +307,7 @@ pub struct LibraryInsert {
     pub path_key: String,
     pub language: Option<String>,
     pub country: Option<String>,
+    pub follow_links: bool,
 }
 
 /// Auto-grants the creator atomically with the node insert. No syscalls inside;
@@ -347,6 +357,7 @@ fn create_inner(
         language: request.language,
         country: request.country,
         purge_missing_after_days: None,
+        follow_links: request.follow_links.then_some(true),
     };
     let qr = db.exec_mut(QueryBuilder::insert().element(&created).query())?;
     let library_db_id = qr
@@ -415,6 +426,7 @@ pub fn update(
                 "purge_missing_after_days",
                 stored.purge_missing_after_days.is_none(),
             ),
+            ("follow_links", stored.follow_links.is_none()),
         ],
         &stored,
     )?;
@@ -977,6 +989,7 @@ mod tests {
             path_key,
             language: None,
             country: None,
+            follow_links: false,
         }
     }
 
@@ -990,6 +1003,7 @@ mod tests {
             path_key,
             language: None,
             country: None,
+            follow_links: false,
         }
     }
 
@@ -1382,8 +1396,10 @@ mod tests {
             let mut request = insert_request("Music", "clear-optionals");
             request.language = Some("en".to_string());
             request.country = Some("us".to_string());
+            request.follow_links = true;
             Ok(create_system(t, request)?)
         })?;
+        assert!(seeded.follows_links());
         let library_db_id = seeded.db_id.expect("created library has a db_id");
 
         db.transaction_mut(|t| -> anyhow::Result<()> {
@@ -1392,6 +1408,7 @@ mod tests {
                 &Library {
                     language: None,
                     country: None,
+                    follow_links: None,
                     ..seeded
                 },
             )?;
@@ -1414,6 +1431,8 @@ mod tests {
             .collect(),
             "only non-Option keys may remain after an all-None update"
         );
+        let stored = get_by_id(&db, library_db_id)?.expect("library stored");
+        assert!(!stored.follows_links());
         Ok(())
     }
 
@@ -1681,6 +1700,7 @@ mod tests {
                             path_key,
                             language: None,
                             country: None,
+                            follow_links: false,
                         },
                         user_db_id,
                     )?;
@@ -1702,6 +1722,7 @@ mod tests {
                             path_key,
                             language: None,
                             country: None,
+                            follow_links: false,
                         },
                         other_user,
                     )?)

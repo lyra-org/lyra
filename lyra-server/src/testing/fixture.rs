@@ -571,6 +571,7 @@ impl Folders {
                 path,
                 language: None,
                 country: None,
+                follow_links: false,
             },
         )?;
         let library = created.db_id.context("library has a db_id")?;
@@ -814,6 +815,7 @@ impl Fixture {
                     path,
                     language: library.language.clone(),
                     country: None,
+                    follow_links: false,
                 },
             )?;
             let library_db_id = created.db_id.context("library has a db_id")?;

@@ -400,6 +400,7 @@ mod tests {
             path_key: lyra_db::libraries::path_key_for(&path),
             language: None,
             country: None,
+            follow_links: false,
         };
         db.transaction_mut(|transaction| -> anyhow::Result<Library> {
             if let Some(user_db_id) = creator_user_db_id {

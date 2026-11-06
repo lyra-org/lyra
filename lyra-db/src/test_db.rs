@@ -149,6 +149,7 @@ fn build_test_library(
         language: None,
         country: None,
         purge_missing_after_days: None,
+        follow_links: None,
     })
 }
 

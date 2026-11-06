@@ -430,6 +430,7 @@ mod tests {
                         path_key: lyra_db::libraries::path_key_for(dir.path()),
                         language: None,
                         country: None,
+                        follow_links: false,
                     },
                 )
             })?;
