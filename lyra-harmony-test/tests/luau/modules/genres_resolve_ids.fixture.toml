@@ -1,0 +1,5 @@
+run_as = "librarian"
+
+[[users]]
+key = "librarian"
+permissions = ["manage_libraries"]
