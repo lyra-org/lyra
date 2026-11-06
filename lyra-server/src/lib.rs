@@ -10,6 +10,7 @@ use std::{
     net::SocketAddr,
     path::PathBuf,
     sync::Arc,
+    time::Duration,
 };
 
 use agdb::DbAny;
@@ -199,7 +200,7 @@ async fn serve(capture: Option<CaptureArgs>, listener: TcpListener) -> Result<()
     shutdown.notify_one();
     services::drain_library_syncs().await;
     services::metadata::mapping_admin::wait_for_reingest().await;
-    log_task_failure("background sync", bg_handle.await);
+    stop_background_sync(bg_handle, BACKGROUND_SYNC_DRAIN_TIMEOUT).await;
     // A restart in progress ends before the plugins it would start are torn down.
     log_task_failure("plugin supervisor", plugin_supervisor.await);
 
@@ -210,6 +211,22 @@ async fn serve(capture: Option<CaptureArgs>, listener: TcpListener) -> Result<()
         anyhow::bail!("server stopped after a fatal error: {reason}");
     }
     Ok(())
+}
+
+/// How long shutdown waits for the background sync to stop on its own, at most through the
+/// provider calls it is in. It stops at the next check; this bounds what no check interrupts.
+const BACKGROUND_SYNC_DRAIN_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Waits for the background sync, aborting it when it outlasts `timeout`.
+async fn stop_background_sync(mut handle: tokio::task::JoinHandle<()>, timeout: Duration) {
+    match tokio::time::timeout(timeout, &mut handle).await {
+        Ok(result) => log_task_failure("background sync", result),
+        Err(_) => {
+            tracing::warn!("background sync still running at shutdown, aborting it");
+            handle.abort();
+            let _ = handle.await;
+        }
+    }
 }
 
 fn log_task_failure(task: &'static str, result: Result<(), tokio::task::JoinError>) {
@@ -434,6 +451,20 @@ pub async fn run_settings_reset() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn a_background_sync_past_its_deadline_is_aborted() {
+        let dropped = std::sync::Arc::new(());
+        let held = dropped.clone();
+        let sync = tokio::spawn(async move {
+            let _held = held;
+            std::future::pending::<()>().await;
+        });
+
+        super::stop_background_sync(sync, std::time::Duration::from_secs(1)).await;
+
+        assert_eq!(std::sync::Arc::strong_count(&dropped), 1);
+    }
 
     #[test]
     fn missing_library_resolves_to_none() -> anyhow::Result<()> {
