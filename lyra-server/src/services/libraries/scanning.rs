@@ -23,11 +23,20 @@ use rayon::iter::{
     IntoParallelIterator,
     ParallelIterator,
 };
-use walkdir::WalkDir;
+use walkdir::{
+    DirEntry,
+    WalkDir,
+};
 
-use crate::services::metadata::ingestion::{
-    SourceDirGroup,
-    group_by_source_dir,
+use crate::services::{
+    libraries::{
+        MediaRoots,
+        is_media_file,
+    },
+    metadata::ingestion::{
+        SourceDirGroup,
+        group_by_source_dir,
+    },
 };
 use lyra_db::{
     Entry,
@@ -52,11 +61,19 @@ pub(crate) struct EntryScanPlan {
     pub(crate) observed_paths: HashSet<PathBuf>,
     /// The entries that moved, as they were before.
     pub(crate) moved_from: Vec<Entry>,
-    /// The paths the scan couldn't read, with why. What lies under them is no evidence either way.
-    pub(crate) unlistable: Vec<(PathBuf, String)>,
+    pub(crate) gaps: ScanGaps,
 }
 
-impl EntryScanPlan {
+/// What a scan left out.
+#[derive(Debug, Default)]
+pub(crate) struct ScanGaps {
+    /// The paths the scan couldn't read, with why. What lies under them is no evidence either way.
+    pub(crate) unlistable: Vec<(PathBuf, String)>,
+    /// The links the scan left out, with why. Unlike unlistable paths, they protect nothing.
+    pub(crate) skipped_links: Vec<(PathBuf, String)>,
+}
+
+impl ScanGaps {
     pub(crate) fn protected_paths(&self) -> Vec<PathBuf> {
         self.unlistable
             .iter()
@@ -68,28 +85,90 @@ impl EntryScanPlan {
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ScanError {
     #[error("library root has no supported files")]
-    EmptyRoot,
+    EmptyRoot { gaps: ScanGaps },
     #[error("library root can't be listed: {0}")]
     UnlistableRoot(String),
 }
 
 pub(crate) struct ScanResult {
     pub(crate) entries: Vec<Entry>,
-    pub(crate) unlistable: Vec<(PathBuf, String)>,
+    pub(crate) gaps: ScanGaps,
 }
 
-pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<ScanResult> {
-    let mut entries = Vec::new();
-    let mut unlistable = Vec::new();
+/// What a scan following links has to remember, to read no folder twice.
+pub(crate) struct FollowedLinks {
+    roots: MediaRoots,
+    /// The folders followed links led to so far.
+    followed: Vec<PathBuf>,
+}
 
-    let mut walker = WalkDir::new(root).into_iter();
+impl FollowedLinks {
+    /// A scan following links in a library of `roots`, which should show every library.
+    pub(crate) fn new(roots: MediaRoots) -> Self {
+        Self {
+            roots,
+            followed: Vec::new(),
+        }
+    }
+
+    /// Why the scan leaves out the link `entry`, if it does. A folder it keeps counts as followed.
+    fn refusal(&mut self, entry: &DirEntry) -> std::io::Result<Option<&'static str>> {
+        let target = std::fs::canonicalize(entry.path())?;
+        // Under a library nested in this one, that library's setting decides, as it does at serve.
+        if !self.roots.follows_links_at(entry.path()) {
+            return Ok(Some("the library holding the link doesn't follow links"));
+        }
+        if entry.file_type().is_dir() {
+            if self.roots.in_library(&target) {
+                return Ok(Some("the link leads into a library"));
+            }
+            if self
+                .followed
+                .iter()
+                .any(|folder| target.starts_with(folder))
+            {
+                return Ok(Some("the link leads into a folder already followed"));
+            }
+            self.followed.push(target);
+            return Ok(None);
+        }
+        if !entry.file_type().is_file() {
+            return Ok(Some("the link's target is not a regular file"));
+        }
+        if !is_media_file(&target) {
+            return Ok(Some(
+                "the link's target is not audio, a cue sheet or a cover",
+            ));
+        }
+        Ok(None)
+    }
+}
+
+/// Scans `root`, following its links with `followed`, or skipping them without.
+pub(crate) fn scan_fs(
+    root: &Path,
+    mut followed: Option<FollowedLinks>,
+) -> anyhow::Result<ScanResult> {
+    let mut entries = Vec::new();
+    let mut gaps = ScanGaps::default();
+
+    let walker = WalkDir::new(root).follow_links(followed.is_some());
+    // Which of two links to one folder is followed shouldn't change between syncs.
+    let mut walker = if followed.is_some() {
+        walker.sort_by_file_name()
+    } else {
+        walker
+    }
+    .into_iter();
     while let Some(entry) = walker.next() {
         let de = match entry {
             Ok(de) => de,
             Err(err) => {
                 let message = err.to_string();
                 match err.path() {
-                    Some(path) if path != root => unlistable.push((path.to_path_buf(), message)),
+                    Some(path) if path != root => {
+                        gaps.unlistable.push((path.to_path_buf(), message))
+                    }
                     _ => return Err(ScanError::UnlistableRoot(message).into()),
                 }
                 continue;
@@ -98,7 +177,7 @@ pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<ScanResult> {
 
         // A stored path is text, so one that isn't would never match itself again.
         if de.path().to_str().is_none() {
-            unlistable.push((
+            gaps.unlistable.push((
                 de.path().to_path_buf(),
                 "the path is not valid UTF-8".to_string(),
             ));
@@ -108,13 +187,40 @@ pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<ScanResult> {
             continue;
         }
 
+        if de.depth() > 0 && de.path_is_symlink() {
+            let refusal = match &mut followed {
+                Some(followed) => followed.refusal(&de),
+                None => Ok(Some("symbolic links are not followed in this library")),
+            };
+            let left_out = match refusal {
+                Ok(None) => false,
+                Ok(Some(reason)) => {
+                    gaps.skipped_links
+                        .push((de.path().to_path_buf(), reason.to_string()));
+                    true
+                }
+                Err(err) => {
+                    gaps.unlistable
+                        .push((de.path().to_path_buf(), err.to_string()));
+                    true
+                }
+            };
+            if left_out {
+                if de.file_type().is_dir() {
+                    walker.skip_current_dir();
+                }
+                continue;
+            }
+        }
+
         let md = match de.metadata() {
             Ok(md) => md,
             Err(err) => {
                 if de.path() == root {
                     return Err(ScanError::UnlistableRoot(err.to_string()).into());
                 }
-                unlistable.push((de.path().to_path_buf(), err.to_string()));
+                gaps.unlistable
+                    .push((de.path().to_path_buf(), err.to_string()));
                 if de.file_type().is_dir() {
                     walker.skip_current_dir();
                 }
@@ -140,7 +246,7 @@ pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<ScanResult> {
         {
             Some(modified) => modified.as_millis() as u64,
             None => {
-                unlistable.push((
+                gaps.unlistable.push((
                     de.path().to_path_buf(),
                     "failed to read the modification time".to_string(),
                 ));
@@ -179,12 +285,20 @@ pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<ScanResult> {
         });
     }
 
-    if !unlistable.is_empty() {
+    if !gaps.unlistable.is_empty() {
         tracing::warn!(
-            path = %unlistable[0].0.display(),
-            error = %unlistable[0].1,
-            count = unlistable.len(),
+            path = %gaps.unlistable[0].0.display(),
+            error = %gaps.unlistable[0].1,
+            count = gaps.unlistable.len(),
             "filesystem scan could not read some paths"
+        );
+    }
+    if let Some((path, reason)) = gaps.skipped_links.first() {
+        tracing::warn!(
+            path = %path.display(),
+            reason,
+            count = gaps.skipped_links.len(),
+            "filesystem scan skipped symbolic links"
         );
     }
 
@@ -204,10 +318,7 @@ pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<ScanResult> {
         .into_iter()
         .filter(|entry| entry.kind == EntryKind::File || valid_dirs.contains(&entry.full_path))
         .collect();
-    Ok(ScanResult {
-        entries,
-        unlistable,
-    })
+    Ok(ScanResult { entries, gaps })
 }
 
 /// The scanned entries with what the library already knows of them: the stored ids of those at a
@@ -340,24 +451,23 @@ pub(crate) fn compute_hashes(to_hash: Vec<PathBuf>) -> HashMap<String, String> {
     pairs.into_iter().collect()
 }
 
-/// Scans the library and plans what changed. Fails closed when the scan finds no supported file
-/// while the library has entries, as on an unmounted share: nothing then counts as gone.
+/// Scans the library, following links with `followed` or skipping them without, and plans what
+/// changed. Fails closed when the scan finds no supported file while the
+/// library has entries, as on an unmounted share: nothing then counts as gone.
 pub(crate) fn prepare_entry_scan_plan(
     library: &Library,
     existing: Vec<Entry>,
+    followed: Option<FollowedLinks>,
 ) -> anyhow::Result<EntryScanPlan> {
     let ScanResult {
         entries: scanned,
-        unlistable,
-    } = scan_fs(&library.path)?;
+        gaps,
+    } = scan_fs(&library.path, followed)?;
     let stored = StoredEntries::new(library, existing)?;
     if !stored.is_empty() && !scanned.iter().any(|entry| entry.kind == EntryKind::File) {
-        return Err(ScanError::EmptyRoot.into());
+        return Err(ScanError::EmptyRoot { gaps }.into());
     }
-    let protected = unlistable
-        .iter()
-        .map(|(path, _)| path.clone())
-        .collect::<Vec<_>>();
+    let protected = gaps.protected_paths();
     let (enriched, moved_from) = diff_and_match_moves(scanned, &stored, &protected);
     let observed_paths = enriched
         .iter()
@@ -373,7 +483,7 @@ pub(crate) fn prepare_entry_scan_plan(
         stored,
         observed_paths,
         moved_from,
-        unlistable,
+        gaps,
     })
 }
 
@@ -564,7 +674,7 @@ mod tests {
 
         let db = new_db()?;
         let library = new_library(&db, &root).await?;
-        let plan = prepare_entry_scan_plan(&library, Vec::new())?;
+        let plan = prepare_entry_scan_plan(&library, Vec::new(), None)?;
         assert_eq!(plan.groups.len(), 1);
         full_sync(&db, &library).await?;
 
@@ -660,7 +770,7 @@ mod tests {
 
         let db = new_db()?;
         let library = new_library(&db, &root).await?;
-        let plan = prepare_entry_scan_plan(&library, Vec::new())?;
+        let plan = prepare_entry_scan_plan(&library, Vec::new(), None)?;
         assert_eq!(plan.groups.len(), 2);
         assert!(
             plan.groups
@@ -713,7 +823,7 @@ mod tests {
         let library = new_library(&db, &root).await?;
         let EntryScanPlan {
             dirs, mut stored, ..
-        } = prepare_entry_scan_plan(&library, Vec::new())?;
+        } = prepare_entry_scan_plan(&library, Vec::new(), None)?;
         sync_entry_dirs(&db, &mut stored, dirs).await?;
         assert_eq!(load_existing(&db, &library).await?.len(), 2);
 
@@ -765,8 +875,8 @@ mod tests {
         let late = old.join("nested/late.mp3");
         fs::write(&late, b"late")?;
 
-        let plan = prepare_entry_scan_plan(&library, load_existing(&db, &library).await?)?;
-        assert_eq!(plan.protected_paths(), vec![old.clone()]);
+        let plan = prepare_entry_scan_plan(&library, load_existing(&db, &library).await?, None)?;
+        assert_eq!(plan.gaps.protected_paths(), vec![old.clone()]);
         full_sync(&db, &library).await?;
 
         let entries = load_existing(&db, &library).await?;
@@ -825,8 +935,12 @@ mod tests {
             assert_eq!(entries.len(), 1);
             assert_eq!(entries[0].full_path, plain);
         }
-        let plan = prepare_entry_scan_plan(&library, Vec::new())?;
-        let unlistable = plan.protected_paths().into_iter().collect::<HashSet<_>>();
+        let plan = prepare_entry_scan_plan(&library, Vec::new(), None)?;
+        let unlistable = plan
+            .gaps
+            .protected_paths()
+            .into_iter()
+            .collect::<HashSet<_>>();
         assert_eq!(unlistable, HashSet::from([folder, file]));
 
         let _ = fs::remove_dir_all(&root);
@@ -850,11 +964,287 @@ mod tests {
             .expect_err("an emptied root syncs nothing");
         assert!(matches!(
             err.downcast_ref::<ScanError>(),
-            Some(ScanError::EmptyRoot)
+            Some(ScanError::EmptyRoot { .. })
         ));
         assert_eq!(load_existing(&db, &library).await?.len(), 2);
 
         let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn links_go_unfollowed_and_reported_apart_from_unlistable_paths() -> anyhow::Result<()> {
+        let root = temp_path("links-off");
+        let outside = temp_path("links-off-outside");
+        fs::create_dir_all(&root)?;
+        fs::create_dir_all(&outside)?;
+        fs::write(root.join("song.mp3"), b"song")?;
+        fs::write(outside.join("elsewhere.mp3"), b"elsewhere")?;
+        fs::write(outside.join("config.json"), b"secret")?;
+        let linked_folder = root.join("linked");
+        let linked_file = root.join("x.flac");
+        let broken = root.join("broken.flac");
+        std::os::unix::fs::symlink(&outside, &linked_folder)?;
+        std::os::unix::fs::symlink(outside.join("config.json"), &linked_file)?;
+        std::os::unix::fs::symlink(root.join("nothing"), &broken)?;
+
+        let ScanResult { entries, gaps } = scan_fs(&root, None)?;
+
+        let paths = entries
+            .iter()
+            .map(|entry| entry.full_path.clone())
+            .collect::<HashSet<_>>();
+        assert_eq!(paths, HashSet::from([root.clone(), root.join("song.mp3")]));
+        assert!(gaps.unlistable.is_empty());
+        let skipped = gaps
+            .skipped_links
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect::<HashSet<_>>();
+        assert_eq!(skipped, HashSet::from([linked_folder, linked_file, broken]));
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&outside);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_file_replaced_by_a_link_counts_as_gone() -> anyhow::Result<()> {
+        let root = temp_path("link-replaces");
+        fs::create_dir_all(&root)?;
+        let song = root.join("song.mp3");
+        fs::write(&song, b"song")?;
+        fs::write(root.join("kept.mp3"), b"kept")?;
+        let outside = temp_path("link-replaces-outside");
+        fs::write(&outside, b"secret")?;
+
+        let db = new_db()?;
+        let library = new_library(&db, &root).await?;
+        full_sync(&db, &library).await?;
+        fs::remove_file(&song)?;
+        std::os::unix::fs::symlink(&outside, &song)?;
+        full_sync(&db, &library).await?;
+
+        let entries = load_existing(&db, &library).await?;
+        let entry = entries
+            .iter()
+            .find(|entry| entry.full_path == song)
+            .expect("the entry stays");
+        assert!(entry.is_missing());
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_file(&outside);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_root_that_is_a_link_still_scans_as_named() -> anyhow::Result<()> {
+        let real = temp_path("link-root-real");
+        fs::create_dir_all(&real)?;
+        fs::write(real.join("song.mp3"), b"song")?;
+        let root = temp_path("link-root");
+        std::os::unix::fs::symlink(&real, &root)?;
+
+        let ScanResult { entries, gaps } = scan_fs(&root, None)?;
+
+        assert!(gaps.skipped_links.is_empty());
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.full_path == root.join("song.mp3"))
+        );
+
+        let _ = fs::remove_file(&root);
+        let _ = fs::remove_dir_all(&real);
+        Ok(())
+    }
+
+    /// `root` and `outside` for a test of following links, removed when the test is over.
+    fn following_layout(name: &str) -> anyhow::Result<(tempfile::TempDir, PathBuf, PathBuf)> {
+        let dir = tempfile::Builder::new().prefix(name).tempdir()?;
+        let base = fs::canonicalize(dir.path())?;
+        let (root, outside) = (base.join("library"), base.join("outside"));
+        fs::create_dir_all(&root)?;
+        fs::create_dir_all(outside.join("album/disc"))?;
+        fs::write(outside.join("album/song.mp3"), b"song")?;
+        fs::write(outside.join("album/disc/deep.mp3"), b"deep")?;
+        fs::write(outside.join("album/notes.txt"), b"notes")?;
+        fs::write(outside.join("config.json"), b"secret")?;
+        Ok((dir, root, outside))
+    }
+
+    fn scan_following(root: &Path, others: &[PathBuf]) -> anyhow::Result<ScanResult> {
+        let roots =
+            MediaRoots::around(others.iter().cloned().chain([root.to_path_buf()])).following(root);
+        scan_fs(root, Some(FollowedLinks::new(roots)))
+    }
+
+    fn scanned(result: &ScanResult) -> HashSet<PathBuf> {
+        result
+            .entries
+            .iter()
+            .map(|entry| entry.full_path.clone())
+            .collect()
+    }
+
+    fn skipped(result: &ScanResult) -> HashSet<PathBuf> {
+        result
+            .gaps
+            .skipped_links
+            .iter()
+            .map(|(path, _)| path.clone())
+            .collect()
+    }
+
+    #[test]
+    fn a_followed_folder_keeps_its_lexical_paths() -> anyhow::Result<()> {
+        let (_dir, root, outside) = following_layout("follow-folder")?;
+        let linked = root.join("linked");
+        std::os::unix::fs::symlink(outside.join("album"), &linked)?;
+
+        let result = scan_following(&root, &[])?;
+
+        assert_eq!(
+            scanned(&result),
+            HashSet::from([
+                root.clone(),
+                linked.clone(),
+                linked.join("song.mp3"),
+                linked.join("disc"),
+                linked.join("disc/deep.mp3"),
+            ])
+        );
+        assert!(result.gaps.skipped_links.is_empty());
+        assert!(result.gaps.unlistable.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn a_file_link_is_indexed_only_for_a_media_target() -> anyhow::Result<()> {
+        let (_dir, root, outside) = following_layout("follow-file")?;
+        let (audio, secret) = (root.join("a.mp3"), root.join("x.flac"));
+        std::os::unix::fs::symlink(outside.join("album/song.mp3"), &audio)?;
+        std::os::unix::fs::symlink(outside.join("config.json"), &secret)?;
+        let fifo = outside.join("fifo.flac");
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()?
+                .success()
+        );
+        let piped = root.join("piped.flac");
+        std::os::unix::fs::symlink(&fifo, &piped)?;
+
+        let result = scan_following(&root, &[])?;
+
+        assert_eq!(scanned(&result), HashSet::from([root.clone(), audio]));
+        assert_eq!(skipped(&result), HashSet::from([secret, piped]));
+        Ok(())
+    }
+
+    #[test]
+    fn a_folder_link_into_a_library_is_skipped_and_a_file_link_is_not() -> anyhow::Result<()> {
+        let (_dir, root, outside) = following_layout("follow-library")?;
+        let other = outside.join("album");
+        let (folder, own, file) = (root.join("other"), root.join("own"), root.join("song.mp3"));
+        fs::create_dir_all(root.join("real"))?;
+        fs::write(root.join("real/kept.mp3"), b"kept")?;
+        std::os::unix::fs::symlink(&other, &folder)?;
+        std::os::unix::fs::symlink(root.join("real"), &own)?;
+        std::os::unix::fs::symlink(other.join("song.mp3"), &file)?;
+
+        let result = scan_following(&root, std::slice::from_ref(&other))?;
+
+        assert_eq!(skipped(&result), HashSet::from([folder, own]));
+        assert_eq!(
+            scanned(&result),
+            HashSet::from([
+                root.clone(),
+                root.join("real"),
+                root.join("real/kept.mp3"),
+                file,
+            ])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_link_in_a_nested_library_goes_by_that_librarys_setting() -> anyhow::Result<()> {
+        let (_dir, root, outside) = following_layout("follow-nested")?;
+        let nested = root.join("nested");
+        fs::create_dir_all(&nested)?;
+        fs::write(nested.join("own.mp3"), b"own")?;
+        let (kept, left_out) = (root.join("a.mp3"), nested.join("b.mp3"));
+        std::os::unix::fs::symlink(outside.join("album/song.mp3"), &kept)?;
+        std::os::unix::fs::symlink(outside.join("album/song.mp3"), &left_out)?;
+
+        let result = scan_following(&root, std::slice::from_ref(&nested))?;
+
+        assert_eq!(skipped(&result), HashSet::from([left_out]));
+        assert!(scanned(&result).contains(&kept));
+        Ok(())
+    }
+
+    #[test]
+    fn a_folder_already_followed_is_read_once() -> anyhow::Result<()> {
+        let (_dir, root, outside) = following_layout("follow-twice")?;
+        let album = outside.join("album");
+        let (first, same, under, file) = (
+            root.join("a"),
+            root.join("b"),
+            root.join("c"),
+            root.join("d.mp3"),
+        );
+        std::os::unix::fs::symlink(&album, &first)?;
+        std::os::unix::fs::symlink(&album, &same)?;
+        std::os::unix::fs::symlink(album.join("disc"), &under)?;
+        std::os::unix::fs::symlink(album.join("song.mp3"), &file)?;
+
+        let result = scan_following(&root, &[])?;
+
+        assert_eq!(skipped(&result), HashSet::from([same, under]));
+        let paths = scanned(&result);
+        assert!(paths.contains(&first.join("song.mp3")));
+        assert!(paths.contains(&file), "a file link is read regardless");
+        Ok(())
+    }
+
+    #[test]
+    fn broken_links_and_loops_are_unlistable_while_following() -> anyhow::Result<()> {
+        let (_dir, root, _outside) = following_layout("follow-broken")?;
+        fs::write(root.join("song.mp3"), b"song")?;
+        let (broken, up, spin) = (
+            root.join("broken.flac"),
+            root.join("up"),
+            root.join("spin.flac"),
+        );
+        std::os::unix::fs::symlink(root.join("nothing"), &broken)?;
+        std::os::unix::fs::symlink(&root, &up)?;
+        std::os::unix::fs::symlink(&spin, &spin)?;
+
+        let result = scan_following(&root, &[])?;
+
+        let unlistable = result
+            .gaps
+            .unlistable
+            .iter()
+            .map(|(path, _)| path.clone())
+            .collect::<HashSet<_>>();
+        assert_eq!(unlistable, HashSet::from([broken, up, spin]));
+        Ok(())
+    }
+
+    #[test]
+    fn a_link_for_a_root_is_followed_as_the_root() -> anyhow::Result<()> {
+        let (_dir, real, outside) = following_layout("follow-root")?;
+        fs::write(real.join("song.mp3"), b"song")?;
+        let root = outside.join("alias");
+        std::os::unix::fs::symlink(&real, &root)?;
+
+        let result = scan_following(&root, &[])?;
+
+        assert!(result.gaps.skipped_links.is_empty());
+        assert!(scanned(&result).contains(&root.join("song.mp3")));
         Ok(())
     }
 
@@ -895,8 +1285,8 @@ mod tests {
             return Ok(());
         }
         fs::remove_file(open.join("c.mp3"))?;
-        let plan = prepare_entry_scan_plan(&library, load_existing(&db, &library).await?)?;
-        assert_eq!(plan.protected_paths(), vec![locked.clone()]);
+        let plan = prepare_entry_scan_plan(&library, load_existing(&db, &library).await?, None)?;
+        assert_eq!(plan.gaps.protected_paths(), vec![locked.clone()]);
         let result = full_sync(&db, &library).await;
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o755))?;
         result?;

@@ -20,6 +20,7 @@ use std::{
 };
 
 use super::{
+    MediaRoots,
     orchestrator::{
         SyncRunControlError,
         SyncRunProgress,
@@ -30,6 +31,9 @@ use super::{
     },
     scanning::{
         EntryScanPlan,
+        FollowedLinks,
+        ScanError,
+        ScanGaps,
         hash_entry_group,
         prepare_entry_scan_plan,
     },
@@ -134,13 +138,23 @@ pub(crate) async fn sync_entries_incremental(
         .db_id
         .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
 
-    let existing = {
+    let (existing, followed) = {
         let db_read = db.read().await;
-        lyra_db::entries::load_existing(&*db_read, library_db_id)?
+        let followed = if library.follows_links() {
+            Some(FollowedLinks::new(MediaRoots::for_principal(
+                &*db_read, None,
+            )?))
+        } else {
+            None
+        };
+        (
+            lyra_db::entries::load_existing(&*db_read, library_db_id)?,
+            followed,
+        )
     };
     let scan = {
         let library = library.clone();
-        tokio::task::spawn_blocking(move || prepare_entry_scan_plan(&library, existing))
+        tokio::task::spawn_blocking(move || prepare_entry_scan_plan(&library, existing, followed))
     };
     // A cancelled run leaves the scan to finish on its own; it only reads.
     let scan_plan = match &progress {
@@ -150,9 +164,18 @@ pub(crate) async fn sync_entries_incremental(
         },
         None => scan.await,
     }
-    .context("library scan task panicked")??;
-    report_unlistable(&scan_plan.unlistable, progress.as_ref()).await;
-    let protected_paths = scan_plan.protected_paths();
+    .context("library scan task panicked")?;
+    let scan_plan = match scan_plan {
+        Ok(plan) => plan,
+        Err(err) => {
+            if let Some(ScanError::EmptyRoot { gaps }) = err.downcast_ref() {
+                report_scan_gaps(gaps, progress.as_ref()).await;
+            }
+            return Err(err);
+        }
+    };
+    report_scan_gaps(&scan_plan.gaps, progress.as_ref()).await;
+    let protected_paths = scan_plan.gaps.protected_paths();
     let EntryScanPlan {
         dirs,
         groups,
@@ -308,25 +331,20 @@ pub(super) async fn sync_entry_dirs(
     Ok(())
 }
 
-/// Reports each path the scan couldn't read as a failed unit, so the run shows it.
-async fn report_unlistable(
-    unlistable: &[(std::path::PathBuf, String)],
-    progress: Option<&SyncRunProgress>,
-) {
+/// Reports each path the scan couldn't read as a failed unit and each link it left out as a
+/// skipped one, so the run shows them.
+async fn report_scan_gaps(gaps: &ScanGaps, progress: Option<&SyncRunProgress>) {
     let Some(progress) = progress else {
         return;
     };
-    if unlistable.is_empty() {
+    let count = gaps.unlistable.len() + gaps.skipped_links.len();
+    if count == 0 {
         return;
     }
     progress
-        .add_stage_total(
-            SyncStageKey::Discover,
-            unlistable.len() as u64,
-            SyncTotalState::Final,
-        )
+        .add_stage_total(SyncStageKey::Discover, count as u64, SyncTotalState::Final)
         .await;
-    for (path, error) in unlistable {
+    for (path, error) in &gaps.unlistable {
         let details = SyncWorkDetails::new("scan_folder")
             .source_dir(Some(path.to_string_lossy().into_owned()));
         let work_id = progress
@@ -334,6 +352,18 @@ async fn report_unlistable(
             .await;
         progress
             .fail_work(work_id, SyncStageKey::Discover, details, error.clone())
+            .await;
+    }
+    for (path, reason) in &gaps.skipped_links {
+        let path = path.to_string_lossy().into_owned();
+        let work_id = progress
+            .start_work(
+                SyncStageKey::Discover,
+                SyncWorkDetails::new("scan_link").source_dir(Some(path.clone())),
+            )
+            .await;
+        progress
+            .skip_work(work_id, SyncStageKey::Discover, format!("{path}: {reason}"))
             .await;
     }
 }
@@ -2387,6 +2417,71 @@ FILE "album.flac" WAVE
             local_cover_of(&library, &audio).await?,
             Some(linked.join("cover.png").to_string_lossy().into_owned())
         );
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_emptied_root_reports_a_broken_link_it_follows_as_a_failure() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("broken-followed").await?;
+        let library = follow_links(&library).await?;
+        let audio = album_track(&root.join("Album"), "Album")?;
+        sync(&library).await?;
+        std::fs::remove_dir_all(root.join("Album"))?;
+        std::os::unix::fs::symlink(root.join("nothing"), root.join("broken.flac"))?;
+
+        let progress = super::super::orchestrator::begin_test_run(&library).await;
+        let result = sync_library_pipeline(
+            &STATE.db.get(),
+            &library,
+            LibrarySyncOptions::default(),
+            Some(progress.clone()),
+        )
+        .await;
+
+        assert!(result.is_err());
+        let run = super::super::orchestrator::get_sync_run(progress.run_id())
+            .await?
+            .expect("run recorded");
+        assert_eq!(run.failure_count, 1);
+        assert!(!entry_for(&library, &audio).await?.is_missing());
+        super::super::orchestrator::end_test_run(&progress).await;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_emptied_root_reports_a_broken_link_and_marks_nothing_missing() -> anyhow::Result<()>
+    {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("broken-link-only").await?;
+        let audio = album_track(&root.join("Album"), "Album")?;
+        sync(&library).await?;
+        std::fs::remove_dir_all(root.join("Album"))?;
+        std::os::unix::fs::symlink(root.join("nothing"), root.join("broken.flac"))?;
+
+        let progress = super::super::orchestrator::begin_test_run(&library).await;
+        let result = sync_library_pipeline(
+            &STATE.db.get(),
+            &library,
+            LibrarySyncOptions::default(),
+            Some(progress.clone()),
+        )
+        .await;
+
+        let err = result.expect_err("the emptied root fails the sync");
+        assert!(matches!(
+            err.downcast_ref::<ScanError>(),
+            Some(ScanError::EmptyRoot { .. })
+        ));
+        let run = super::super::orchestrator::get_sync_run(progress.run_id())
+            .await?
+            .expect("run recorded");
+        assert_eq!(run.progress.skipped_units, 1);
+        assert_eq!(run.failure_count, 0, "a skipped link is no failure");
+        assert!(!entry_for(&library, &audio).await?.is_missing());
+        super::super::orchestrator::end_test_run(&progress).await;
         Ok(())
     }
 

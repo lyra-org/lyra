@@ -74,3 +74,18 @@ Copy [`config.example.json`](../config.example.json) to `config.json`, keeping o
 - Resized or converted covers are kept in `cover-transforms` under the data directory; `covers.transform_cache_max_bytes` bounds its size (512 MiB by default), oldest evicted first. A cover's entries go when the cover does.
 - `rate_limit.*` limits requests per caller. A request with a session or API key, or a download with its `media_token`, counts against that credential, and every credential of one user together gets four times `global_per_minute`; any other request counts against its client address (each IPv6 /64), read from `X-Forwarded-For`, `Forwarded` or `X-Real-IP` only when the peer is one of `rate_limit.trusted_proxies`. With authentication disabled every request counts against its address. Each caller gets `global_per_minute`, and a credential's API calls, besides covers and downloads, also `authenticated_per_minute`. Plugin routes authenticate their own way, so they are limited per client address. `/api/stream` is not request-limited; transcoding limits bound it instead. Login attempts get `login_per_minute` per client address. A request over a limit gets `429 Too Many Requests` with `Retry-After`.
 - `transcoding.max_concurrent` caps encodes across HLS, streams and downloads, and `transcoding.max_concurrent_per_user` caps one user's stream and download encodes; `0` means no limit. Anonymous requests get a per-user allowance for each client address (each IPv6 /64), and together at most half of `transcoding.max_concurrent`, rounded down. A stream or download over a limit gets `429 Too Many Requests` with `Retry-After`; HLS waits up to ten seconds for a free slot first. Serving an original file or a cached transcode is never limited.
+
+## Symbolic links in libraries
+
+A library skips symbolic links by default: a sync counts them as skipped in the run's `discover` stage and logs how many there were and the first one, and a file replaced by a link counts as missing. Set `follow_links` on the library through the library API to follow them. The change reaches the catalog with the next sync, and a link's target must exist inside the container when Lyra runs in Docker.
+
+With `follow_links` on:
+
+- A sync follows links to folders, and to files whose real name is audio, a cue sheet or a `cover` image.
+- A folder link is skipped when it leads into a library or a folder already followed. Links to files are not, so a file can be scanned twice. Broken links and loops fail a `discover` item on each sync, and what they held stays in the catalog.
+- Entries keep the path of the link.
+- Where libraries nest, a link goes by the setting of the deepest library holding it.
+
+Whatever the setting, Lyra checks a library's file again each time it serves or registers it, and each time it reads metadata from it, since a link can change after a sync. The file must be a regular file inside a library the caller can see, or, in a library with `follow_links` on, outside every library and named as above. A link is refused when the deepest library holding its target is one the caller can't see.
+
+Cover URLs are public, so they have no caller and every library counts as visible to them. In exchange, a cover outside every library must be named as a `cover` image, not just any media.

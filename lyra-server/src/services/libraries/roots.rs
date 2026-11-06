@@ -148,6 +148,17 @@ impl MediaRoots {
             .max_by_key(|library| library.lexical.components().count())
     }
 
+    /// Whether the library speaking for `path` follows links.
+    pub(crate) fn follows_links_at(&self, path: &Path) -> bool {
+        self.owner(&lexical_normalize_path(path))
+            .is_some_and(|owner| owner.follows_links)
+    }
+
+    /// Whether any library root holds `target`, a canonical path.
+    pub(crate) fn in_library(&self, target: &Path) -> bool {
+        self.target_visible(target).is_some()
+    }
+
     /// Whether the deepest library root holding `target` is visible, if any holds it. A visible
     /// library doesn't open what a hidden one nested in it holds to links; the two compare by
     /// depth, a tie going to the visible one.

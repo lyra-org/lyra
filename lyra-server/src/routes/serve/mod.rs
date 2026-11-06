@@ -1212,6 +1212,60 @@ pub(crate) mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn a_linked_folder_plays_once_its_library_follows_links() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        prepare_streamable_track(&test_dir).await?;
+        let outside = tempfile::tempdir()?;
+        let target = outside.path().join("elsewhere.flac");
+        std::fs::copy(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/assets/metadata/integration_track.flac"),
+            &target,
+        )?;
+        std::os::unix::fs::symlink(outside.path(), test_dir.join("linked"))?;
+        let library = lyra_db::libraries::get(&*STATE.db.read().await)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("library missing"))?;
+        let library = STATE.db.write().await.transaction_mut(|t| {
+            lyra_db::libraries::update(
+                t,
+                &Library {
+                    follow_links: Some(true),
+                    ..library
+                },
+            )
+            .map_err(anyhow::Error::from)
+        })?;
+        crate::services::libraries::sync_library(&STATE.db.get(), &library).await?;
+        let track_id = {
+            let db = STATE.db.read().await;
+            let entry = lyra_db::entries::load_existing(
+                &*db,
+                library.db_id.expect("stored library has an id"),
+            )?
+            .into_iter()
+            .find(|entry| entry.full_path == test_dir.join("linked/elsewhere.flac"))
+            .ok_or_else(|| anyhow::anyhow!("the linked file was not scanned"))?;
+            lyra_db::tracks::get_by_entry(&db, entry.db_id.expect("stored entry has an id"))?
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("the linked file has no track"))?
+                .id
+        };
+        let headers = create_user_with_permissions("linked-listener", vec![]).await?;
+        let query = playback_url_query(&track_id, &headers, "stream_url", "").await?;
+
+        let (status, _, body) = send(Method::GET, format!("/{track_id}?{query}")).await?;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, std::fs::read(&target)?);
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_followed_link_serves_its_target_under_a_media_token() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         let test_dir = initialize_test_runtime().await?;
