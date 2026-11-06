@@ -9,7 +9,7 @@ album = "エルマ"
 album_artists = ["ヨルシカ"]
 artists = ["ヨルシカ"]
 title = "ノーチラス"
-genre = "Pop"
+genres = ["Pop"]
 track = 14
 duration_ms = 240813
 
@@ -19,7 +19,7 @@ album = "エルマ"
 album_artists = ["ヨルシカ"]
 artists = ["ヨルシカ"]
 title = "海底、月明かり"
-genre = "Pop"
+genres = ["Pop"]
 track = 13
 duration_ms = 145146
 
@@ -29,7 +29,7 @@ album = "エルマ"
 album_artists = ["ヨルシカ"]
 artists = ["ヨルシカ"]
 title = "エイミー"
-genre = "Pop"
+genres = ["Pop"]
 track = 12
 duration_ms = 212906
 
@@ -39,7 +39,7 @@ album = "エルマ"
 album_artists = ["ヨルシカ"]
 artists = ["ヨルシカ"]
 title = "声"
-genre = "Pop"
+genres = ["Pop"]
 track = 11
 duration_ms = 288906
 
@@ -49,7 +49,7 @@ album = "エルマ"
 album_artists = ["ヨルシカ"]
 artists = ["ヨルシカ"]
 title = "森の教会"
-genre = "Pop"
+genres = ["Pop"]
 track = 10
 duration_ms = 119653
 
@@ -59,7 +59,7 @@ album = "エルマ"
 album_artists = ["ヨルシカ"]
 artists = ["ヨルシカ"]
 title = "心に穴が空いた"
-genre = "Pop"
+genres = ["Pop"]
 track = 9
 duration_ms = 264506
 
@@ -69,7 +69,7 @@ album = "エルマ"
 album_artists = ["ヨルシカ"]
 artists = ["ヨルシカ"]
 title = "歩く"
-genre = "Pop"
+genres = ["Pop"]
 track = 8
 duration_ms = 206786
 
@@ -79,7 +79,7 @@ album = "エルマ"
 album_artists = ["ヨルシカ"]
 artists = ["ヨルシカ"]
 title = "雨晴るる"
-genre = "Pop"
+genres = ["Pop"]
 track = 7
 duration_ms = 222746
 
@@ -89,7 +89,7 @@ album = "エルマ"
 album_artists = ["ヨルシカ"]
 artists = ["ヨルシカ"]
 title = "神様のダンス"
-genre = "Pop"
+genres = ["Pop"]
 track = 6
 duration_ms = 232480
 
@@ -99,7 +99,7 @@ album = "エルマ"
 album_artists = ["ヨルシカ"]
 artists = ["ヨルシカ"]
 title = "湖の街"
-genre = "Pop"
+genres = ["Pop"]
 track = 5
 duration_ms = 110080
 
@@ -109,7 +109,7 @@ album = "エルマ"
 album_artists = ["ヨルシカ"]
 artists = ["ヨルシカ"]
 title = "雨とカプチーノ"
-genre = "Pop"
+genres = ["Pop"]
 track = 4
 duration_ms = 269613
 
@@ -119,7 +119,7 @@ album = "エルマ"
 album_artists = ["ヨルシカ"]
 artists = ["ヨルシカ"]
 title = "夕凪、某、花惑い"
-genre = "Pop"
+genres = ["Pop"]
 track = 3
 duration_ms = 198533
 
@@ -129,7 +129,7 @@ album = "エルマ"
 album_artists = ["ヨルシカ"]
 artists = ["ヨルシカ"]
 title = "憂一乗"
-genre = "Pop"
+genres = ["Pop"]
 track = 2
 duration_ms = 272040
 
@@ -139,7 +139,7 @@ album = "エルマ"
 album_artists = ["ヨルシカ"]
 artists = ["ヨルシカ"]
 title = "車窓"
-genre = "Pop"
+genres = ["Pop"]
 track = 1
 duration_ms = 115853
 

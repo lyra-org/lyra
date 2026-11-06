@@ -8,7 +8,7 @@ file_path = "[2021.10.22] Hoshimachi Suisei & Inui Toko - OUT OF FRAME [FLAC 24b
 album = "OUT OF FRAME"
 artists = ["Hoshimachi Suisei & Inui Toko"]
 title = "OUT OF FRAME (Instrumental)"
-genre = "Jpop"
+genres = ["Jpop"]
 track = 2
 duration_ms = 245131
 
@@ -17,7 +17,7 @@ file_path = "[2021.10.22] Hoshimachi Suisei & Inui Toko - OUT OF FRAME [FLAC 24b
 album = "OUT OF FRAME"
 artists = ["Hoshimachi Suisei & Inui Toko"]
 title = "OUT OF FRAME"
-genre = "Jpop"
+genres = ["Jpop"]
 track = 1
 duration_ms = 245131
 

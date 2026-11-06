@@ -78,37 +78,39 @@ pub fn split_delimited_string(items: Vec<String>) -> Vec<String> {
         return items;
     }
     let s = &items[0];
-    let mut result = Vec::new();
-    // Split on delimiters only at parenthesis depth 0
-    let mut depth = 0u32;
-    let mut start = 0;
-    for (i, ch) in s.char_indices() {
-        match ch {
-            '(' | '\u{ff08}' => depth += 1,
-            ')' | '\u{ff09}' => depth = depth.saturating_sub(1),
-            ',' | '&' | '\u{3001}' if depth == 0 => {
-                let part = s[start..i].trim();
-                if !part.is_empty() {
-                    for sub in split_on_word(part, " and ") {
-                        result.extend(split_on_word(&sub, " feat."));
-                    }
-                }
-                start = i + ch.len_utf8();
-            }
-            _ => {}
-        }
-    }
-    let tail = s[start..].trim();
-    if !tail.is_empty() {
-        for sub in split_on_word(tail, " and ") {
-            result.extend(split_on_word(&sub, " feat."));
-        }
-    }
+    let result: Vec<String> = split_outside_parens(s, |ch| matches!(ch, ',' | '&' | '\u{3001}'))
+        .into_iter()
+        .flat_map(|part| split_on_word(part, " and "))
+        .flat_map(|sub| split_on_word(&sub, " feat."))
+        .collect();
     if result.len() > 1 {
         result
     } else {
         vec![s.clone()]
     }
+}
+
+/// The trimmed, non-empty parts of `s` between separators outside parentheses.
+pub(crate) fn split_outside_parens(s: &str, is_separator: impl Fn(char) -> bool) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0u32;
+    let mut start = 0;
+    for (i, ch) in s.char_indices() {
+        if is_open_paren(ch) {
+            depth += 1;
+        } else if is_close_paren(ch) {
+            depth = depth.saturating_sub(1);
+        } else if depth == 0 && is_separator(ch) {
+            parts.push(&s[start..i]);
+            start = i + ch.len_utf8();
+        }
+    }
+    parts.push(&s[start..]);
+    parts
+        .into_iter()
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect()
 }
 
 fn is_open_paren(ch: char) -> bool {

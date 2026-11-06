@@ -9,7 +9,7 @@ album = "HATED"
 album_artists = ["十五少女", "十五少女"]
 artists = ["十五少女"]
 title = "ノンブレス・オブリージュ (十五少女 Cover)"
-genre = "Pop"
+genres = ["Pop"]
 track = 6
 duration_ms = 205345
 
@@ -19,7 +19,7 @@ album = "HATED"
 album_artists = ["十五少女", "十五少女"]
 artists = ["十五少女"]
 title = "死にたいと言ってくれ。 HATED Ver."
-genre = "Pop"
+genres = ["Pop"]
 track = 5
 duration_ms = 236919
 
@@ -29,7 +29,7 @@ album = "HATED"
 album_artists = ["十五少女", "十五少女"]
 artists = ["十五少女"]
 title = "還る HATED ver."
-genre = "Pop"
+genres = ["Pop"]
 track = 4
 duration_ms = 342265
 
@@ -39,7 +39,7 @@ album = "HATED"
 album_artists = ["十五少女", "十五少女"]
 artists = ["十五少女"]
 title = "何度死んでも構わない。だから HATED Ver."
-genre = "Pop"
+genres = ["Pop"]
 track = 3
 duration_ms = 238585
 
@@ -49,7 +49,7 @@ album = "HATED"
 album_artists = ["十五少女", "十五少女"]
 artists = ["十五少女"]
 title = "今日だけは。 HATED Ver."
-genre = "Pop"
+genres = ["Pop"]
 track = 2
 duration_ms = 275199
 
@@ -59,7 +59,7 @@ album = "HATED"
 album_artists = ["十五少女", "十五少女"]
 artists = ["十五少女"]
 title = "君が死んだ日の天気は HATED Ver."
-genre = "Pop"
+genres = ["Pop"]
 track = 1
 duration_ms = 254959
 

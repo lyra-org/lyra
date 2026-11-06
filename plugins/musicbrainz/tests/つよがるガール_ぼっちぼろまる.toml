@@ -8,7 +8,7 @@ file_path = "ぼっちぼろまる - つよがるガール (2024) [WEB-FLAC]/04 
 album = "つよがるガール"
 artists = ["ぼっちぼろまる feat.もっさ"]
 title = "つよがるガール (Instrumental)"
-genre = "Anime"
+genres = ["Anime"]
 track = 4
 duration_ms = 189433
 
@@ -17,7 +17,7 @@ file_path = "ぼっちぼろまる - つよがるガール (2024) [WEB-FLAC]/03 
 album = "つよがるガール"
 artists = ["ぼっちぼろまる feat.もっさ"]
 title = "つよがるガール (Anime Edit)"
-genre = "Anime"
+genres = ["Anime"]
 track = 3
 duration_ms = 90933
 
@@ -26,7 +26,7 @@ file_path = "ぼっちぼろまる - つよがるガール (2024) [WEB-FLAC]/02 
 album = "つよがるガール"
 artists = ["ぼっちぼろまる"]
 title = "ダメニンゲンぱれーど(再)"
-genre = "JPop"
+genres = ["JPop"]
 track = 2
 duration_ms = 202800
 
@@ -35,7 +35,7 @@ file_path = "ぼっちぼろまる - つよがるガール (2024) [WEB-FLAC]/01 
 album = "つよがるガール"
 artists = ["ぼっちぼろまる feat.もっさ"]
 title = "つよがるガール"
-genre = "Anime"
+genres = ["Anime"]
 disc = 1
 track = 1
 duration_ms = 189466

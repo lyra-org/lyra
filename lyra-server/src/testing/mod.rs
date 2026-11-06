@@ -871,7 +871,7 @@ mod tests {
             title: Some(format!("Track {track}")),
             date: None,
             copyright: None,
-            genre: None,
+            genres: Vec::new(),
             label: None,
             catalog_number: None,
             media: None,

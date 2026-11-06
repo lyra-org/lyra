@@ -10,7 +10,7 @@ album_artists = ["音田雅則"]
 artists = ["音田雅則"]
 title = "fake face dance music"
 copyright = "℗© 2023 Masanori Otoda"
-genre = "J-POP"
+genres = ["J-POP"]
 track = 1
 duration_ms = 151015
 

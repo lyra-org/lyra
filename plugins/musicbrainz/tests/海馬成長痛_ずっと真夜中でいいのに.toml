@@ -10,7 +10,7 @@ album_artists = ["ずっと真夜中でいいのに。", "ずっと真夜中で�
 artists = ["ずっと真夜中でいいのに。"]
 title = "海馬成長痛"
 copyright = "An EMI Records release; ℗ 2024 UNIVERSAL MUSIC LLC"
-genre = "Rock"
+genres = ["Rock"]
 track = 1
 duration_ms = 189533
 

@@ -75,7 +75,8 @@ pub struct RawTrackTags {
     pub title: Option<String>,
     pub date: Option<String>,
     pub copyright: Option<String>,
-    pub genre: Option<String>,
+    #[serde(default)]
+    pub genres: Vec<String>,
     pub label: Option<String>,
     pub catalog_number: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -194,9 +195,21 @@ pub struct ParsedReleaseGroup<T> {
     pub tracks: Vec<T>,
 }
 
-/// The genres a genre tag's text names.
-pub fn split_genres(genre: Option<String>) -> Option<Vec<String>> {
-    let genres = split_delimited_string(genre.into_iter().collect());
+/// The genres a track's genre values name, each value split on its commas, without repeats.
+pub fn split_genres<S: AsRef<str>>(values: impl IntoIterator<Item = S>) -> Option<Vec<String>> {
+    let mut seen = HashSet::new();
+    let mut genres = Vec::new();
+    for value in values {
+        for genre in
+            artists::split_outside_parens(value.as_ref(), |ch| matches!(ch, ',' | '\u{3001}'))
+        {
+            // `Folk, World, & Country` lists its last genre after a conjunction.
+            let genre = genre.strip_prefix('&').map_or(genre, str::trim_start);
+            if !genre.is_empty() && seen.insert(genre.to_string()) {
+                genres.push(genre.to_string());
+            }
+        }
+    }
     (!genres.is_empty()).then_some(genres)
 }
 
@@ -230,7 +243,7 @@ pub fn process_raw_tags(raw_tags: Vec<RawTrackTags>) -> Vec<TrackMetadata> {
                 path::extract_year_from_file_path_for_canonical(&raw.file_path)
             }
         });
-        let genres = split_genres(raw.genre);
+        let genres = split_genres(&raw.genres);
 
         let meta = TrackMetadata {
             id: 0,
@@ -408,6 +421,76 @@ mod tests {
     use crate::artists::extract_featured_artists_from_title;
 
     #[test]
+    fn genres_split_only_on_supported_delimiters_and_trim_values() {
+        assert_eq!(
+            crate::split_genres(Some(
+                "R&B/Soul, Stage & Screen, Drum & Bass, Rhythm and Blues, Electronic, Pop, Stage & Screen, J-Pop, Future Bass、Rap/Hip Hop (Live, Remastered)".to_string()
+            )),
+            Some(vec![
+                "R&B/Soul",
+                "Stage & Screen",
+                "Drum & Bass",
+                "Rhythm and Blues",
+                "Electronic",
+                "Pop",
+                "J-Pop",
+                "Future Bass",
+                "Rap/Hip Hop (Live, Remastered)"
+            ].into_iter().map(str::to_string).collect())
+        );
+        assert_eq!(
+            crate::split_genres(Some("J-Pop ".to_string())),
+            Some(vec!["J-Pop".to_string()])
+        );
+        assert_eq!(crate::split_genres(Some("  ".to_string())), None);
+        assert_eq!(
+            crate::split_genres(Some("Pop, Pop, Pop".to_string())),
+            Some(vec!["Pop".to_string()])
+        );
+        assert_eq!(crate::split_genres(Some(" , 、 ".to_string())), None);
+        assert_eq!(
+            crate::split_genres(Some("Folk, World, & Country".to_string())),
+            Some(vec![
+                "Folk".to_string(),
+                "World".to_string(),
+                "Country".to_string()
+            ])
+        );
+        assert_eq!(
+            crate::split_genres(Some("Pop, &".to_string())),
+            Some(vec!["Pop".to_string()])
+        );
+        assert_eq!(
+            crate::split_genres(Some("Stage & Screen".to_string())),
+            Some(vec!["Stage & Screen".to_string()])
+        );
+        assert_eq!(
+            crate::split_genres(["J-POP/General", "Rap/Hip Hop"]),
+            Some(vec!["J-POP/General".to_string(), "Rap/Hip Hop".to_string()])
+        );
+        assert_eq!(
+            crate::split_genres(["J-pop", " ", "Dance, Rock", "J-pop"]),
+            Some(vec![
+                "J-pop".to_string(),
+                "Dance".to_string(),
+                "Rock".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn artist_splitting_still_splits_on_ampersands_and_conjunctions() {
+        assert_eq!(
+            crate::split_delimited_string(vec!["A & B and C feat. D、E (F, G)".to_string()]),
+            vec!["A", "B", "C", "D", "E (F, G)"]
+        );
+        assert_eq!(
+            crate::split_delimited_string(vec!["Solo ".to_string()]),
+            vec!["Solo "]
+        );
+    }
+
+    #[test]
     fn extract_featured_artists_from_parenthesized_title() {
         let featured =
             extract_featured_artists_from_title("厭わない (feat. 富田美憂 & 市ノ瀬加那)");
@@ -424,7 +507,7 @@ mod tests {
             title: Some("厭わない (feat. 富田美憂 & 市ノ瀬加那)".to_string()),
             date: Some("2023-01-17".to_string()),
             copyright: None,
-            genre: None,
+            genres: Vec::new(),
             label: None,
             catalog_number: None,
             media: None,
@@ -463,7 +546,7 @@ mod tests {
             title: None,
             date: None,
             copyright: None,
-            genre: None,
+            genres: Vec::new(),
             label: None,
             catalog_number: None,
             media: None,
@@ -493,7 +576,7 @@ mod tests {
             title: Some("One".to_string()),
             date: date.map(str::to_string),
             copyright: copyright.map(str::to_string),
-            genre: None,
+            genres: Vec::new(),
             label: None,
             catalog_number: None,
             media: None,
@@ -529,7 +612,7 @@ mod tests {
             title: Some("厭わない (feat. 富田美憂 & 市ノ瀬加那)".to_string()),
             date: Some("2023-01-17".to_string()),
             copyright: None,
-            genre: None,
+            genres: Vec::new(),
             label: None,
             catalog_number: None,
             media: None,
@@ -564,7 +647,7 @@ mod tests {
             title: Some("瞬く日々へ".to_string()),
             date: Some("2026-01-01".to_string()),
             copyright: None,
-            genre: None,
+            genres: Vec::new(),
             label: None,
             catalog_number: None,
             media: None,
@@ -613,7 +696,7 @@ mod tests {
             title: Some("不可思議のカルテ".to_string()),
             date: Some("2018-10-03".to_string()),
             copyright: None,
-            genre: None,
+            genres: Vec::new(),
             label: None,
             catalog_number: None,
             media: None,
@@ -676,7 +759,7 @@ mod tests {
             title: Some("Shared CV".to_string()),
             date: Some("2024-01-01".to_string()),
             copyright: None,
-            genre: None,
+            genres: Vec::new(),
             label: None,
             catalog_number: None,
             media: None,
@@ -732,7 +815,7 @@ mod tests {
             title: Some("BABY!".to_string()),
             date: Some("2018-10-03".to_string()),
             copyright: None,
-            genre: None,
+            genres: Vec::new(),
             label: None,
             catalog_number: None,
             media: None,
@@ -773,7 +856,7 @@ mod tests {
             title: Some("Insane Dream".to_string()),
             date: None,
             copyright: None,
-            genre: None,
+            genres: Vec::new(),
             label: None,
             catalog_number: None,
             media: None,
@@ -803,7 +886,7 @@ mod tests {
             title: Some("Insane Dream".to_string()),
             date: Some("2020-01-01".to_string()),
             copyright: None,
-            genre: None,
+            genres: Vec::new(),
             label: None,
             catalog_number: None,
             media: None,
@@ -834,7 +917,7 @@ mod tests {
             title: Some("Track".to_string()),
             date: None,
             copyright: None,
-            genre: None,
+            genres: Vec::new(),
             label: None,
             catalog_number: None,
             media: None,

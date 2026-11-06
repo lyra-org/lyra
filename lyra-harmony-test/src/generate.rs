@@ -907,9 +907,13 @@ fn write_raw_tags_sections(
             let escaped = escape_toml_string(copyright);
             out.push_str(&format!("copyright = \"{escaped}\"\n"));
         }
-        if let Some(ref genre) = raw.genre {
-            let escaped = escape_toml_string(genre);
-            out.push_str(&format!("genre = \"{escaped}\"\n"));
+        if !raw.genres.is_empty() {
+            let quoted: Vec<String> = raw
+                .genres
+                .iter()
+                .map(|s| format!("\"{}\"", escape_toml_string(s)))
+                .collect();
+            out.push_str(&format!("genres = [{}]\n", quoted.join(", ")));
         }
         if let Some(ref label) = raw.label {
             let escaped = escape_toml_string(label);
@@ -1344,6 +1348,20 @@ mod tests {
     };
 
     #[test]
+    fn shared_metadata_parser_preserves_genre_names_and_splits_values() {
+        assert_eq!(
+            lyra_metadata::split_genres(Some(
+                "R&B/Soul, Stage & Screen, Drum & Bass, Rhythm and Blues, Electronic, Pop, Stage & Screen, J-Pop, Future Bass、Rap/Hip Hop (Live, Remastered)".to_string()
+            )),
+            Some(vec![
+                "R&B/Soul", "Stage & Screen", "Drum & Bass", "Rhythm and Blues",
+                "Electronic", "Pop", "J-Pop", "Future Bass", "Rap/Hip Hop (Live, Remastered)"
+            ].into_iter().map(str::to_string).collect())
+        );
+        assert_eq!(lyra_metadata::split_genres(Some(" ".to_string())), None);
+    }
+
+    #[test]
     fn generated_raw_tags_keep_edition_signals() -> anyhow::Result<()> {
         let raw: lyra_metadata::RawTrackTags = serde_json::from_value(json!({
             "file_path": "/music/Album/01.flac",
@@ -1351,7 +1369,6 @@ mod tests {
             "title": "Track",
             "date": null,
             "copyright": null,
-            "genre": null,
             "label": null,
             "catalog_number": null,
             "media": "WEB",

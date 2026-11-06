@@ -9,7 +9,7 @@ album = "Tree"
 album_artists = ["SEKAI NO OWARI"]
 artists = ["SEKAI NO OWARI"]
 title = "Dragon Night"
-genre = "J-Rock"
+genres = ["J-Rock"]
 track = 13
 duration_ms = 229320
 
@@ -19,7 +19,7 @@ album = "Tree"
 album_artists = ["SEKAI NO OWARI"]
 artists = ["SEKAI NO OWARI"]
 title = "RPG"
-genre = "J-Rock"
+genres = ["J-Rock"]
 track = 12
 duration_ms = 291360
 
@@ -29,7 +29,7 @@ album = "Tree"
 album_artists = ["SEKAI NO OWARI"]
 artists = ["SEKAI NO OWARI"]
 title = "PLAY"
-genre = "J-Rock"
+genres = ["J-Rock"]
 track = 11
 duration_ms = 240600
 
@@ -39,7 +39,7 @@ album = "Tree"
 album_artists = ["SEKAI NO OWARI"]
 artists = ["SEKAI NO OWARI"]
 title = "broken bone"
-genre = "J-Rock"
+genres = ["J-Rock"]
 track = 10
 duration_ms = 173040
 
@@ -49,7 +49,7 @@ album = "Tree"
 album_artists = ["SEKAI NO OWARI"]
 artists = ["SEKAI NO OWARI"]
 title = "Death Disco"
-genre = "J-Rock"
+genres = ["J-Rock"]
 track = 9
 duration_ms = 255120
 
@@ -59,7 +59,7 @@ album = "Tree"
 album_artists = ["SEKAI NO OWARI"]
 artists = ["SEKAI NO OWARI"]
 title = "銀河街の悪夢 (Gingagai no Akumu)"
-genre = "J-Rock"
+genres = ["J-Rock"]
 track = 8
 duration_ms = 382800
 
@@ -69,7 +69,7 @@ album = "Tree"
 album_artists = ["SEKAI NO OWARI"]
 artists = ["SEKAI NO OWARI"]
 title = "ピエロ (Pierrot)"
-genre = "J-Rock"
+genres = ["J-Rock"]
 track = 7
 duration_ms = 338280
 
@@ -79,7 +79,7 @@ album = "Tree"
 album_artists = ["SEKAI NO OWARI"]
 artists = ["SEKAI NO OWARI"]
 title = "マーメイドラプソディー (Mermaid Rhapsody)"
-genre = "J-Rock"
+genres = ["J-Rock"]
 track = 6
 duration_ms = 320400
 
@@ -89,7 +89,7 @@ album = "Tree"
 album_artists = ["SEKAI NO OWARI"]
 artists = ["SEKAI NO OWARI"]
 title = "アースチャイルド (Earth Child)"
-genre = "J-Rock"
+genres = ["J-Rock"]
 track = 5
 duration_ms = 263880
 
@@ -99,7 +99,7 @@ album = "Tree"
 album_artists = ["SEKAI NO OWARI"]
 artists = ["SEKAI NO OWARI"]
 title = "ムーンライトステーション (Moonlight Station)"
-genre = "J-Rock"
+genres = ["J-Rock"]
 track = 4
 duration_ms = 232560
 
@@ -109,7 +109,7 @@ album = "Tree"
 album_artists = ["SEKAI NO OWARI"]
 artists = ["SEKAI NO OWARI"]
 title = "スノーマジックファンタジー (Snow Magic Fantasy)"
-genre = "J-Rock"
+genres = ["J-Rock"]
 track = 3
 duration_ms = 316080
 
@@ -119,7 +119,7 @@ album = "Tree"
 album_artists = ["SEKAI NO OWARI"]
 artists = ["SEKAI NO OWARI"]
 title = "炎と森のカーニバル (Honoo to Mori no Carnival)"
-genre = "J-Rock"
+genres = ["J-Rock"]
 track = 2
 duration_ms = 298080
 
@@ -129,7 +129,7 @@ album = "Tree"
 album_artists = ["SEKAI NO OWARI"]
 artists = ["SEKAI NO OWARI"]
 title = "the bell"
-genre = "J-Rock"
+genres = ["J-Rock"]
 track = 1
 duration_ms = 38280
 

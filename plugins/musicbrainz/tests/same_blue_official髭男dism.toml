@@ -10,7 +10,7 @@ album_artists = ["Official髭男dism", "Official髭男dism"]
 artists = ["Official髭男dism"]
 title = "Same Blue"
 copyright = "℗ 2024 IRORI Records / PONY CANYON"
-genre = "J-Pop, Anime"
+genres = ["J-Pop, Anime"]
 track = 1
 duration_ms = 237836
 

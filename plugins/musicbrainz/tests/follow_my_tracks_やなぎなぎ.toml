@@ -18,7 +18,7 @@ album = "Follow My Tracks"
 album_artists = ["やなぎなぎ"]
 artists = ["やなぎなぎ"]
 title = "ターミナル"
-genre = "JPop"
+genres = ["JPop"]
 track = 12
 duration_ms = 386386
 
@@ -28,7 +28,7 @@ album = "Follow My Tracks"
 album_artists = ["やなぎなぎ"]
 artists = ["やなぎなぎ"]
 title = "未来ペンシル"
-genre = "JPop"
+genres = ["JPop"]
 track = 11
 duration_ms = 314760
 
@@ -38,7 +38,7 @@ album = "Follow My Tracks"
 album_artists = ["やなぎなぎ"]
 artists = ["やなぎなぎ"]
 title = "カザキリ"
-genre = "JPop"
+genres = ["JPop"]
 track = 10
 duration_ms = 227773
 
@@ -48,7 +48,7 @@ album = "Follow My Tracks"
 album_artists = ["やなぎなぎ"]
 artists = ["やなぎなぎ"]
 title = "ワンルームトラベル"
-genre = "JPop"
+genres = ["JPop"]
 track = 9
 duration_ms = 217333
 
@@ -58,7 +58,7 @@ album = "Follow My Tracks"
 album_artists = ["やなぎなぎ"]
 artists = ["やなぎなぎ"]
 title = "夜天幕"
-genre = "JPop"
+genres = ["JPop"]
 track = 8
 duration_ms = 236506
 
@@ -68,7 +68,7 @@ album = "Follow My Tracks"
 album_artists = ["やなぎなぎ"]
 artists = ["やなぎなぎ"]
 title = "オラリオン"
-genre = "JPop"
+genres = ["JPop"]
 track = 7
 duration_ms = 250480
 
@@ -78,7 +78,7 @@ album = "Follow My Tracks"
 album_artists = ["やなぎなぎ"]
 artists = ["やなぎなぎ"]
 title = "モノクローム.サイレントシティ"
-genre = "JPop"
+genres = ["JPop"]
 track = 6
 duration_ms = 213840
 
@@ -97,7 +97,7 @@ album = "Follow My Tracks"
 album_artists = ["やなぎなぎ"]
 artists = ["やなぎなぎ"]
 title = "パラレルエレベーター"
-genre = "JPop"
+genres = ["JPop"]
 track = 5
 duration_ms = 213946
 
@@ -116,7 +116,7 @@ album = "Follow My Tracks"
 album_artists = ["やなぎなぎ"]
 artists = ["やなぎなぎ"]
 title = "rooter's song"
-genre = "JPop"
+genres = ["JPop"]
 track = 4
 duration_ms = 222746
 
@@ -135,7 +135,7 @@ album = "Follow My Tracks"
 album_artists = ["やなぎなぎ"]
 artists = ["やなぎなぎ"]
 title = "キャメルバックの街"
-genre = "JPop"
+genres = ["JPop"]
 track = 3
 duration_ms = 309120
 
@@ -145,7 +145,7 @@ album = "Follow My Tracks"
 album_artists = ["やなぎなぎ"]
 artists = ["やなぎなぎ"]
 title = "春擬き"
-genre = "JPop"
+genres = ["JPop"]
 track = 2
 duration_ms = 271093
 
@@ -173,7 +173,7 @@ album = "Follow My Tracks"
 album_artists = ["やなぎなぎ"]
 artists = ["やなぎなぎ"]
 title = "Follw My Tracks"
-genre = "JPop"
+genres = ["JPop"]
 track = 1
 duration_ms = 188346
 

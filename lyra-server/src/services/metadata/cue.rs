@@ -605,11 +605,8 @@ pub(super) async fn parse_cue_metadata_for_entry(
             .date
             .as_deref()
             .or(parsed_sheet.comments.date.as_deref());
-        let genre = track
-            .comments
-            .genre
-            .clone()
-            .or_else(|| parsed_sheet.comments.genre.clone());
+        let genres = split_genres(track.comments.genre.as_deref())
+            .or_else(|| split_genres(parsed_sheet.comments.genre.as_deref()));
 
         metadata.push(TrackMetadata {
             entry_db_id: track.audio_entry.entry_id,
@@ -633,7 +630,7 @@ pub(super) async fn parse_cue_metadata_for_entry(
             track: Some(track.track_no),
             track_total: Some(track_total),
             duration_ms,
-            genres: split_genres(genre),
+            genres,
             label: None,
             catalog_number: None,
             media_formats: Vec::new(),

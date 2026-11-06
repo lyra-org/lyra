@@ -104,7 +104,7 @@ pub(crate) fn apply_mapping(
     let mut artists: Vec<String> = Vec::new();
     let mut date: Option<String> = None;
     let mut copyright: Option<String> = None;
-    let mut genre: Option<String> = None;
+    let mut genres: Vec<String> = Vec::new();
     let mut label: Option<String> = None;
     let mut catalog_number: Option<String> = None;
 
@@ -117,7 +117,7 @@ pub(crate) fn apply_mapping(
             FieldName::Title => fill_scalar(&mut title, tag, key),
             FieldName::Date => fill_scalar(&mut date, tag, key),
             FieldName::Copyright => fill_scalar(&mut copyright, tag, key),
-            FieldName::Genre => fill_scalar(&mut genre, tag, key),
+            FieldName::Genre => fill_genres(&mut genres, tag, key),
             FieldName::Label => fill_scalar(&mut label, tag, key),
             FieldName::CatalogNumber => fill_scalar(&mut catalog_number, tag, key),
             FieldName::AlbumArtists => fill_multi(&mut album_artists, tag, key),
@@ -135,7 +135,7 @@ pub(crate) fn apply_mapping(
         title,
         date,
         copyright,
-        genre,
+        genres,
         label,
         catalog_number,
         media: non_empty_string(tag, ItemKey::OriginalMediaType),
@@ -262,6 +262,13 @@ fn fill_scalar(slot: &mut Option<String>, tag: &Tag, key: ItemKey) {
     }
 }
 
+/// Values naming no genre leave the slot to a later rule.
+fn fill_genres(slot: &mut Vec<String>, tag: &Tag, key: ItemKey) {
+    if slot.is_empty() && lyra_metadata::split_genres(tag.get_strings(key)).is_some() {
+        *slot = tag.get_strings(key).map(str::to_string).collect();
+    }
+}
+
 fn fill_multi(slot: &mut Vec<String>, tag: &Tag, key: ItemKey) {
     if !slot.is_empty() {
         return;
@@ -359,6 +366,52 @@ mod tests {
         Ok(())
     }
 
+    fn genre_rules(source_keys: &[&str]) -> MetadataMappingConfig {
+        MetadataMappingConfig {
+            rules: source_keys
+                .iter()
+                .map(|source_key| MappingRule {
+                    source_key: (*source_key).to_string(),
+                    destination: FieldName::Genre,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn genre_mapping_keeps_every_value() {
+        let mut tag = Tag::new(lofty::tag::TagType::VorbisComments);
+        for value in ["J-pop", "Dance", "Rock"] {
+            tag.push(lofty::tag::TagItem::new(
+                ItemKey::Genre,
+                lofty::tag::ItemValue::Text(value.to_string()),
+            ));
+        }
+        let raw = apply_mapping(
+            &tag,
+            &FileProperties::default(),
+            "test.flac",
+            &default_config(),
+        );
+        assert_eq!(raw.genres, vec!["J-pop", "Dance", "Rock"]);
+    }
+
+    #[test]
+    fn blank_genre_values_do_not_stop_a_later_rule() {
+        for blank in [" ", ", 、"] {
+            let mut tag = Tag::new(lofty::tag::TagType::VorbisComments);
+            tag.insert_text(ItemKey::Genre, blank.to_string());
+            tag.insert_text(ItemKey::Label, "Stage & Screen".to_string());
+            let raw = apply_mapping(
+                &tag,
+                &FileProperties::default(),
+                "test.flac",
+                &genre_rules(&["Genre", "Label"]),
+            );
+            assert_eq!(raw.genres, vec!["Stage & Screen"], "blank value {blank:?}");
+        }
+    }
+
     /// Only FLAC fixtures exist, so other tag formats go unchecked here.
     #[test]
     fn apply_mapping_round_trips_flac_fixture() -> anyhow::Result<()> {
@@ -383,7 +436,10 @@ mod tests {
 
         let expected_album = tag.album().map(|s| s.to_string());
         let expected_title = tag.title().map(|s| s.to_string());
-        let expected_genre = tag.genre().map(|s| s.to_string());
+        let expected_genres: Vec<String> = tag
+            .get_strings(ItemKey::Genre)
+            .map(|s| s.to_string())
+            .collect();
         let expected_date = [ItemKey::ReleaseDate, ItemKey::RecordingDate, ItemKey::Year]
             .into_iter()
             .find_map(|key| tag.get_string(key))
@@ -422,7 +478,7 @@ mod tests {
             "album drifted from pre-mapping extraction"
         );
         assert_eq!(raw.title, expected_title, "title drifted");
-        assert_eq!(raw.genre, expected_genre, "genre drifted");
+        assert_eq!(raw.genres, expected_genres, "genres drifted");
         assert_eq!(raw.date, expected_date, "date drifted");
         assert_eq!(raw.copyright, expected_copyright, "copyright drifted");
         assert_eq!(

@@ -1088,6 +1088,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_blank_genre_tag_leaves_a_cue_tracks_genre_to_the_cue() -> anyhow::Result<()> {
+        let track = cue_track_with(
+            "Album",
+            &[("GENRE", " ")],
+            "REM GENRE \"Stage & Screen, R&B/Soul\"\n",
+        )
+        .await?;
+        assert_eq!(
+            track.genres,
+            Some(vec!["Stage & Screen".to_string(), "R&B/Soul".to_string()])
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_blank_cue_track_genre_leaves_it_to_the_sheet() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let audio_path = dir.path().join("Album/album.flac");
+        fixture_with_comments(&audio_path, "integration_track.flac", &[], &[])?;
+        let cue_path = dir.path().join("Album/album.cue");
+        std::fs::write(
+            &cue_path,
+            "REM GENRE \"Drum & Bass\"\nFILE \"album.flac\" WAVE\n  TRACK 01 AUDIO\n    TITLE \"One\"\n    REM GENRE \" \"\n    INDEX 01 00:00:00\n",
+        )?;
+        let output = parse_metadata(
+            &mapping::default_config(),
+            vec![file_entry(1, &audio_path), file_entry(2, &cue_path)],
+            &CueLinks::default(),
+        )
+        .await?;
+        assert_eq!(
+            output.metadata[0].genres,
+            Some(vec!["Drum & Bass".to_string()])
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_metadata_keeps_every_value_of_a_multi_value_genre_tag() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("Album/01 - One.flac");
+        fixture_with_comments(
+            &path,
+            "integration_track.flac",
+            &[],
+            &[
+                ("GENRE", "J-pop"),
+                ("GENRE", "Dance"),
+                ("GENRE", " "),
+                ("GENRE", "Rock"),
+                ("GENRE", "J-pop"),
+            ],
+        )?;
+        let output = parse_metadata(
+            &mapping::default_config(),
+            vec![file_entry(1, &path)],
+            &CueLinks::default(),
+        )
+        .await?;
+        assert_eq!(
+            output.metadata[0].genres,
+            Some(vec![
+                "J-pop".to_string(),
+                "Dance".to_string(),
+                "Rock".to_string()
+            ])
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn parse_metadata_reads_cue_comments_as_it_reads_tags() -> anyhow::Result<()> {
         let (date, genre) = ("1994-05-03T12:00", "Rock, Pop");
         let dir = tempfile::tempdir()?;

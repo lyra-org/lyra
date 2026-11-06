@@ -10,7 +10,7 @@ album_artists = ["ツユ", "ツユ"]
 artists = ["ツユ"]
 title = "終点の先が在るとするならば。"
 copyright = "℗© 2021 TUYU Records"
-genre = "Pop"
+genres = ["Pop"]
 track = 1
 duration_ms = 179297
 

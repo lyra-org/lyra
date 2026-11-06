@@ -10,7 +10,7 @@ album_artists = ["Ayase", "Ayase"]
 artists = ["Ayase"]
 title = "幽霊東京"
 copyright = "℗ 2021 Ayase © 2021 Ayase"
-genre = "Pop"
+genres = ["Pop"]
 track = 2
 duration_ms = 210626
 
@@ -21,7 +21,7 @@ album_artists = ["Ayase", "Ayase"]
 artists = ["Ayase"]
 title = "夜撫でるメノウ"
 copyright = "℗ 2021 Ayase © 2021 Ayase"
-genre = "Pop"
+genres = ["Pop"]
 track = 1
 duration_ms = 262800
 
