@@ -91,7 +91,8 @@ To release a version:
 4. Move `main` to the next development version, such as `0.0.3-dev.0`, in the workspace and every
    in-repository `lyra`. Set `PREVIOUS_RELEASE` in
    [`lyra-db/src/migration.rs`](../lyra-db/src/migration.rs) to the released version, empty
-   `STEPS` and delete their tests, and commit as `release: start 0.0.3 development`.
+   `STEPS`, delete the steps' files and `mod` lines, and commit as
+   `release: start 0.0.3 development`.
 5. Push the commits and the tag together.
 6. In lyra-web, tag the commit that `web.rev` holds at the release with the same tag, such as
    `v0.0.2`, and push that tag. lyra-web has no tags for development versions.
@@ -137,16 +138,32 @@ with the same contents is kept as it is, and one with other contents gets a numb
 as `lyra.db.from-0.0.2.1`.
 
 Any change to stored data, such as a renamed key, a new required value or a moved edge, needs a
-step appended to `STEPS` that rewrites the shape before it into the one after. `STEPS` is
+step appended to `STEPS` that rewrites the shape before it into the one after. While
+`PREVIOUS_RELEASE` is unset, before the first release, add no steps. Within a cycle `STEPS` is
 append-only: once a step is on `main`, never edit, reorder or remove it, since databases already
 count it as run; fix a mistake with a new step. The steps run after the current root aliases and
 indexes exist, in one transaction with them and the new stamp, so a failed step leaves the database
-as it was. Test each step by seeding the shape before it directly, running it, and reading the
-result through the current code.
+as it was.
 
 Steps are matched by count, not identity. Local branches that share a development version and
 append different steps treat each other's databases as already migrated, so recreate the database,
 or restore its backup, when switching between such branches.
+
+### Writing a step
+
+A step lives for one cycle: the release that ships it is the last to need it, and starting the next
+cycle deletes it. Write it so that deleting it touches nothing else:
+
+- Put each step in its own file, `lyra-db/src/migration/<change>.rs`, exposing one `run` function
+  with the `Step` signature. Its `mod` line and its `STEPS` entry are the only lines outside that
+  file.
+- Keep it self-contained. Query agdb directly and spell out the aliases, keys and values of the
+  shapes it reads and writes, rather than using stored-data types or helpers, which keep changing
+  after the step lands while the step must keep doing what it did.
+- Change no other code for its sake. Current code reads only the new shape, and no helper, fixture
+  or optional field elsewhere exists just to serve a step.
+- Keep its tests in the same file. Seed the shape before it directly, run the step, and read the
+  result through the current code.
 
 ## Docker builds
 
