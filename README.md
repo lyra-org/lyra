@@ -1,4 +1,10 @@
-# Lyra
+<p align="center">
+  <img src="docs/assets/banner.png" alt="Lyra" width="640">
+</p>
+
+<p align="center">
+  <a href="https://discord.gg/AvYTcZYzJh"><img src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
+</p>
 
 Lyra is a self-hosted music server with a focus on accurate music metadata. Plugins extend what it can do.
 
