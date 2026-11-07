@@ -4,16 +4,17 @@ Lyra is a self-hosted music server with a focus on accurate music metadata. Plug
 
 > [!IMPORTANT]
 >
-> Lyra is currently in pre-alpha. Expect breaking changes, crashes, and data resets.
+> Lyra is in alpha. Expect breaking changes and crashes. Your data migrates between releases one release at a time.
 
 ## Get started
 
-Follow the [installation guide](docs/installation.md) to run Lyra with Docker Compose and add your music. Choose optional plugins from the included repository; no configuration file is needed.
+Follow the [getting started guide](https://lyra.pub/guides/getting-started/) to run Lyra with Docker Compose and add your music. Choose optional plugins from the included repository; no configuration file is needed.
 
 ## Learn more
 
-- [Change settings](docs/configuration.md)
-- [Install plugins](docs/plugin-repositories.md)
+- [Change settings](https://lyra.pub/guides/configuration/)
+- [Install plugins](https://lyra.pub/guides/plugins/)
+- [Publish plugins](docs/plugin-repositories.md)
 - [Contribute to Lyra](docs/development.md)
 
 ## License

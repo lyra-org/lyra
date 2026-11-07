@@ -48,26 +48,9 @@ cargo install --locked --path lyra-server
 lyra serve
 ```
 
-For a frontend, build [lyra-web](https://github.com/lyra-org/lyra-web) and set `LYRA_STATIC_DIR` to its output.
+For a frontend, build [lyra-web](https://github.com/lyra-org/lyra-web) and set `LYRA_STATIC_DIR` to its output. Settings and `config.json` are described in [configuration](https://lyra.pub/guides/configuration/).
 
 See [plugin repositories](plugin-repositories.md) to install plugins.
-
-## Startup library
-
-To create and scan a library at startup, add a `library` block to [`config.json`](configuration.md):
-
-```json
-{
-  "library": {
-    "path": "/music",
-    "name": "Music",
-    "language": "en",
-    "country": "US"
-  }
-}
-```
-
-Use a path visible to the server. `path` is required. `name` defaults to `Music`. `language` and `country` are optional; language accepts ISO 639-1 or 639-3 codes or English names, and country accepts country codes or names.
 
 ## Versions and releases
 

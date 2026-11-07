@@ -11,6 +11,7 @@
 - Layers depend only downward: `lyra-db` ← `services` ← `plugins` ← `routes` ← `lib.rs` composition; `config` sits on `lyra-db` and only `lib.rs` reads it. Services reach the plugin runtime only through the abstractions they own (`services/plugin_dispatch.rs`, `services/plugin_scope.rs`), which plugins implement and publish. Each layer owns its test helpers (`services/testing.rs`, `plugins/testing.rs`) and its generation state; the plugin generation lives inside the services one (`services/state.rs`, `plugins/state.rs`), so one reset swaps both. How database and service types look from Luau belongs to the plugin layer (`plugins/types.rs` and the module that exposes them); `lyra-db` and `services` stay free of Luau.
 - Do not add new top-level modules to `lyra-server/src/` — each one represents a major domain layer and should only be introduced with an explicit decision about what boundary it owns.
 - Split files into subdirectory modules when they grow multiple distinct sub-responsibilities that would each benefit from independent navigation and ownership.
+- `docs/`: documentation for people working on Lyra, plus the plugin repository formats. User-facing guides live on the website (https://lyra.pub), not here. Add to `docs/` only what a contributor needs and the code, the OpenAPI document, or the generated Luau definitions don't already say.
 - `docs/reference/agdb.md`: agdb behavior reference (read before DB changes).
 - `docs/reference/mlua.md`: mlua/mluau behavior reference (read before Lua/mlua changes).
 
