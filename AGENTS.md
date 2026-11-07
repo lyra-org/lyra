@@ -46,3 +46,6 @@ Run `cargo run -p lyra-docs -- setup` before Luau analysis after changing Rust-d
 
 ## Commit & Pull Request Guidelines
 - Follow `docs/commits.md` for commit subject scopes and message style.
+
+## Releases
+- Before tagging a version, run Clippy and the tests as `docs/development.md` lists them, and tag only if they pass.
