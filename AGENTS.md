@@ -13,7 +13,7 @@
 - Split files into subdirectory modules when they grow multiple distinct sub-responsibilities that would each benefit from independent navigation and ownership.
 - `docs/`: documentation for people working on Lyra, plus the plugin repository formats. User-facing guides live on the website (https://lyra.pub), not here. Add to `docs/` only what a contributor needs and the code, the OpenAPI document, or the generated Luau definitions don't already say.
 - `docs/reference/agdb.md`: agdb behavior reference (read before DB changes).
-- `docs/reference/mlua.md`: mlua/mluau behavior reference (read before Lua/mlua changes).
+- `docs/reference/harmony.md`: Harmony reference, covering the Luau runtime and bindings (read before changing either).
 
 ## Backward Compatibility Policy
 - Current testers expect breaking changes. Optimize for one canonical current-state implementation.
