@@ -3,7 +3,7 @@
   "id": "audiomuse",
   "name": "AudioMuse AI",
   "version": "0.0.3",
-  "lyra": "0.0.1-dev.5",
+  "lyra": "0.0.1",
   "description": "AI-powered music similarity and mix generation via AudioMuse",
   "entrypoint": "init.luau",
   "scopes": [
