@@ -15,6 +15,7 @@ use axum::{
 
 use crate::{
     routes::AppError,
+    routes::streamed_body::streamed_body,
     services::STATE,
     services::playback_sources::SourceVersion,
     services::{
@@ -135,10 +136,7 @@ pub(super) async fn transcoded_response(
         Lookup::Encoding(encoding) if follow_encode => {
             let mut encoding = encoding;
             encoding.started().await?;
-            encoding_stream_response(
-                delivery.content_type,
-                Body::from_stream(encoding.into_stream()),
-            )
+            encoding_stream_response(delivery.content_type, streamed_body(encoding.into_stream()))
         }
         Lookup::Encoding(encoding) => {
             // Nothing is sent until the file is complete, so the encode must not depend on the

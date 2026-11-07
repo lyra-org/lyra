@@ -24,6 +24,8 @@ use tokio::io::{
 use tokio::sync::mpsc as tokio_mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
+use crate::routes::streamed_body::streamed_body;
+
 const FILE_STREAM_CHUNK_SIZE: usize = 64 * 1024;
 
 enum RangeParse {
@@ -192,7 +194,7 @@ pub(crate) fn build_ranged_body(
     });
 
     Ok(RangedFileBody {
-        body: Body::from_stream(ReceiverStream::new(rx)),
+        body: streamed_body(ReceiverStream::new(rx)),
         content_length,
         status,
         content_range,

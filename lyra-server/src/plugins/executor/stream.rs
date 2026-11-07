@@ -136,22 +136,19 @@ impl futures::Stream for ApiResponseStream {
             return Poll::Ready(Some(Ok(chunk)));
         }
         self.shared.waker.register(cx.waker());
-        match self.shared.end() {
-            None => Poll::Pending,
-            // Every chunk was sent before the producer finished.
-            Some(StreamEnd::Finished) => match self.rx.try_recv() {
-                Ok(chunk) => Poll::Ready(Some(Ok(chunk))),
-                Err(_) => {
-                    self.done = true;
-                    Poll::Ready(None)
-                }
-            },
-            Some(StreamEnd::Failed(reason)) => {
-                self.done = true;
-                Poll::Ready(Some(Err(std::io::Error::other(format!(
-                    "the plugin's streamed response failed: {reason}"
-                )))))
-            }
+        let Some(end) = self.shared.end() else {
+            return Poll::Pending;
+        };
+        // A chunk sent before the end may have arrived since the poll above.
+        if let Ok(chunk) = self.rx.try_recv() {
+            return Poll::Ready(Some(Ok(chunk)));
+        }
+        self.done = true;
+        match end {
+            StreamEnd::Finished => Poll::Ready(None),
+            StreamEnd::Failed(reason) => Poll::Ready(Some(Err(std::io::Error::other(format!(
+                "the plugin's streamed response failed: {reason}"
+            ))))),
         }
     }
 }

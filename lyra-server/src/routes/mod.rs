@@ -37,6 +37,7 @@ mod search;
 mod serve;
 mod server;
 mod sorting;
+mod streamed_body;
 mod sync;
 mod tags;
 mod targets;

@@ -24,6 +24,7 @@ use crate::plugins::executor::{
     ApiResponseKind,
 };
 use crate::routes::AppError;
+use crate::routes::streamed_body::streamed_body;
 use crate::services::auth::Principal;
 use crate::services::auth::media_tokens::MediaTokenPurpose;
 use crate::services::delivery::{
@@ -171,7 +172,7 @@ fn body_response(
         }
         Some(ApiResponseBody::Stream(stream)) => {
             content_type = Some(HeaderValue::from_static("application/octet-stream"));
-            Body::from_stream(stream)
+            streamed_body(stream)
         }
         None => Body::empty(),
     };
