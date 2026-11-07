@@ -34,7 +34,7 @@ use super::bootstrap::{
 };
 
 /// The release before this version; its databases run every step in `STEPS`.
-pub(crate) const PREVIOUS_RELEASE: Option<&str> = None;
+pub(crate) const PREVIOUS_RELEASE: Option<&str> = Some("0.0.1");
 
 pub(crate) type Step = fn(&mut DbAnyTransactionMut<'_>) -> anyhow::Result<()>;
 

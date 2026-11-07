@@ -3,7 +3,7 @@
   "id": "lrclib",
   "name": "LRCLIB Lyrics Provider",
   "version": "0.0.4",
-  "lyra": "0.0.1",
+  "lyra": "0.0.2-dev.0",
   "description": "Fetches lyrics from the LRCLIB community database",
   "entrypoint": "init.luau",
   "scopes": [
