@@ -16,10 +16,9 @@
 - `docs/reference/harmony.md`: Harmony reference, covering the Luau runtime and bindings (read before changing either).
 
 ## Backward Compatibility Policy
-- Current testers expect breaking changes. Optimize for one canonical current-state implementation.
-- Plugin compatibility is not guaranteed; all known plugins are maintained in this repository and updated alongside server changes.
-- Databases from the previous release or from an earlier build of the current cycle must open: append a step to `STEPS` in `lyra-db/src/migration.rs` for any change to stored data, and never edit existing steps. Other databases are refused; add no other compatibility code for stored data.
-- Do not introduce compatibility bridges, migration shims, fallback paths, or dual behavior for old local states beyond `lyra-db/src/migration.rs` unless explicitly requested.
+- The only commitment during the alpha is a best-effort approach to migrating data, so that no data is lost on a supported upgrade path. Everything else may break, and breaking changes are encouraged, including to the REST API, the plugin API, and internal APIs. Change things outright and update their callers; known plugins live in this repository and move with the server. Optimize for one canonical current-state implementation.
+- To keep that commitment, databases from the previous release or from an earlier build of the current cycle must open: any change to stored data needs a migration step, written as `docs/development.md` describes under "Database migrations" so the next cycle can delete it. Other databases are refused; add no other compatibility code for stored data.
+- Do not introduce compatibility bridges, shims, fallback paths, or dual behavior for old API shapes or old local states beyond migration steps unless explicitly requested.
 - Prefer one canonical codepath, fail-fast diagnostics, and explicit recovery steps.
 
 ## Build, Test, and Development Commands
