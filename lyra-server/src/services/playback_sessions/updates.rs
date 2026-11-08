@@ -19,6 +19,7 @@ use tokio::sync::{
 };
 
 use crate::services::playback_sessions as playbacks;
+use crate::services::plugin_dispatch::DispatchNotStarted;
 use lyra_db::PlaybackState;
 
 /// Broadcast channel capacity for playback state events pushed to WS clients.
@@ -242,10 +243,14 @@ pub(crate) fn dispatch_update_for_caller(
     if let Some(runtime) = generation.plugin_dispatch.get()
         && let Err(error) = runtime.dispatch_playback_update(payload)
     {
-        tracing::warn!(
-            error = %error,
-            "failed to enqueue plugin playback on_update dispatch"
-        );
+        if DispatchNotStarted::caused(&error) {
+            tracing::debug!("dropped plugin playback on_update dispatch during a reload");
+        } else {
+            tracing::warn!(
+                error = %error,
+                "failed to enqueue plugin playback on_update dispatch"
+            );
+        }
     }
 }
 

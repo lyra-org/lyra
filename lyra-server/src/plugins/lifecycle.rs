@@ -6,10 +6,14 @@
 use std::{
     collections::HashSet,
     sync::Arc,
+    time::Duration,
 };
 
 use crate::{
-    plugins::executor::ExecutorId,
+    plugins::executor::{
+        DrainOutcome,
+        ExecutorId,
+    },
     services::plugin_scope::PluginId,
 };
 use anyhow::{
@@ -23,6 +27,9 @@ use tokio::sync::{
     RwLockReadGuard,
 };
 use tokio_util::sync::CancellationToken;
+
+/// How long a reload lets the calls running on the replaced runtime finish.
+const RELOAD_DRAIN_LIMIT: Duration = Duration::from_secs(10);
 
 pub(crate) struct PluginRegistrationGuard<'a> {
     _guard: RwLockReadGuard<'a, HashSet<PluginId>>,
@@ -271,13 +278,19 @@ impl PluginRegistries {
         // The replaced runtime must run no more Lua, so none of its tasks
         // can register once teardown reopens registrations. A failed shutdown
         // means its thread had already exited, which leaves it just as stopped.
-        if let Some(old_runtime) = crate::plugins::STATE.generation().runtime.get()
-            && let Err(error) = old_runtime.shutdown().await
-        {
-            tracing::warn!(
-                error = %format!("{error:#}"),
-                "replaced plugin runtime had already stopped"
-            );
+        if let Some(old_runtime) = crate::plugins::STATE.generation().runtime.get() {
+            if old_runtime.drain(RELOAD_DRAIN_LIMIT, &shutdown).await == DrainOutcome::TimedOut {
+                tracing::warn!(
+                    limit_ms = RELOAD_DRAIN_LIMIT.as_millis() as u64,
+                    "replaced plugin runtime still had calls running; cancelling them"
+                );
+            }
+            if let Err(error) = old_runtime.shutdown().await {
+                tracing::warn!(
+                    error = %format!("{error:#}"),
+                    "replaced plugin runtime had already stopped"
+                );
+            }
         }
         for plugin_id in &old_ids {
             self.teardown_plugin(plugin_id, true).await;
@@ -939,6 +952,67 @@ mod tests {
             .context("shutdown never ended the slow startup entrypoint")???;
         assert_eq!(outcome, PublishOutcome::ShuttingDown);
         assert_eq!(published_runtime()?.id(), startup.id());
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_handler_running_during_a_reload_finishes_with_its_result() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        let plugins_dir = tempfile::tempdir()?;
+        crate::plugins::testing::write_plugin(
+            &plugins_dir.path().join("held"),
+            "held",
+            TASK_AND_METADATA,
+            r#"
+                local task = require("@harmony/task")
+                local metadata = require("@lyra/metadata")
+                metadata.Provider.new("held"):refresh(metadata.EntityType.Release, function(ctx)
+                    task.wait(0.4)
+                    return ctx.value
+                end)
+            "#,
+        )?;
+        init_state_over(plugins_dir.path()).await?;
+        let first = crate::plugins::bootstrap::initialize_harmony().await?;
+        let registries = crate::plugins::STATE.generation().registries.clone();
+        registries
+            .start_plugins(first.clone(), CancellationToken::new())
+            .await?;
+        let handler = crate::services::providers::provider_registry()
+            .read()
+            .await
+            .get_refresh_callback("held", crate::services::EntityType::Release)
+            .copied()
+            .context("held handler")?;
+
+        let call = tokio::spawn({
+            let first = first.clone();
+            async move {
+                crate::services::plugin_dispatch::PluginDispatch::dispatch_metadata_refresh(
+                    &first,
+                    crate::services::plugin_dispatch::MetadataRefreshRequest {
+                        handler,
+                        context: serde_json::json!({ "value": 42 }),
+                        deadline: std::time::Instant::now() + std::time::Duration::from_secs(30),
+                    },
+                )
+                .await
+            }
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while first.slots_in_use() == 0 {
+            anyhow::ensure!(
+                std::time::Instant::now() < deadline,
+                "the handler never took its slot"
+            );
+            tokio::task::yield_now().await;
+        }
+
+        registries.reload_all_plugins().await?;
+
+        assert_eq!(call.await??.values, vec![serde_json::json!(42)]);
+        assert!(is_stopped(&first).await);
+        assert_ne!(published_runtime()?.id(), first.id());
         Ok(())
     }
 }

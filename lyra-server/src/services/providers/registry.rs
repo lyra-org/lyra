@@ -37,6 +37,7 @@ use crate::services::metadata::layers::{
     MANUAL_SOURCE_ID,
 };
 use crate::services::plugin_dispatch::{
+    DispatchNotStarted,
     PluginCallbackHandle,
     RefreshTargetGone,
 };
@@ -135,7 +136,8 @@ impl ProviderCallStage {
 /// How a provider call ended without the handler's answer.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ProviderCallError {
-    /// No handler is registered at the moment of the call, as during a plugin reload.
+    /// No handler is registered at the moment of the call, as during a plugin reload, or the
+    /// runtime holding it never started the call because it is being replaced.
     #[error("no handler is registered for the call")]
     NotRegistered,
     /// The handler stopped because something it was writing is gone.
@@ -208,7 +210,13 @@ where
     );
 
     match read_lookup().await? {
-        ProviderLookup::Call(handler) => call(handler).await.map_err(ProviderCallError::of_handler),
+        ProviderLookup::Call(handler) => call(handler).await.map_err(|error| {
+            if DispatchNotStarted::caused(&error) {
+                ProviderCallError::NotRegistered
+            } else {
+                ProviderCallError::of_handler(error)
+            }
+        }),
         ProviderLookup::Answer(answer) => Ok(answer),
     }
 }

@@ -354,3 +354,231 @@ async fn shutdown_and_dropped_handles_end_the_executor_as_a_stop() -> Result<()>
     assert_eq!(exit.wait().await, ExecutorExitKind::Stopped);
     Ok(())
 }
+
+/// Starts the slow handler and returns once it holds its slot.
+async fn hold_slot(
+    executor: &mut TestExecutor,
+) -> Result<tokio::task::JoinHandle<Result<MetadataRefreshResult>>> {
+    let running = tokio::spawn({
+        let handle = executor.handle.clone();
+        let request = request(executor.slow, Duration::from_secs(30));
+        async move { handle.dispatch_metadata_refresh(request).await }
+    });
+    signal(&mut executor.started).await?;
+    Ok(running)
+}
+
+/// Starts a drain and returns once it stands in line for the slots.
+async fn start_drain(
+    handle: &PluginExecutorHandle,
+    limit: Duration,
+) -> Result<tokio::task::JoinHandle<DrainOutcome>> {
+    let drain = tokio::spawn({
+        let handle = handle.clone();
+        async move { handle.drain(limit, &CancellationToken::new()).await }
+    });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while handle.tx.slots.available_permits() > 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await?;
+    Ok(drain)
+}
+
+const LONG_LIMIT: Duration = Duration::from_secs(60);
+
+#[tokio::test]
+async fn a_drain_waits_for_the_running_call_and_fails_the_one_behind_it() -> Result<()> {
+    use crate::services::providers::{
+        ProviderCallError,
+        ProviderCallStage,
+        ProviderLookup,
+        with_provider_call,
+    };
+
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
+    let mut executor = test_executor()?;
+    let running = hold_slot(&mut executor).await?;
+    let drain = start_drain(&executor.handle, LONG_LIMIT).await?;
+
+    let provider_call = tokio::spawn({
+        let handle = executor.handle.clone();
+        let request = request(executor.fast, Duration::from_secs(30));
+        async move {
+            with_provider_call(
+                "dispatch-fast",
+                ProviderCallStage::MetadataRefresh,
+                |_| Some(ProviderLookup::Call(())),
+                |()| async move { handle.dispatch_metadata_refresh(request).await },
+            )
+            .await
+        }
+    });
+    let direct_call = tokio::spawn({
+        let handle = executor.handle.clone();
+        let request = request(executor.fast, Duration::from_secs(30));
+        async move { handle.dispatch_metadata_refresh(request).await }
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(!provider_call.is_finished());
+    assert!(!drain.is_finished());
+
+    executor.release.notify_one();
+    let result = tokio::time::timeout(Duration::from_secs(2), running).await???;
+    assert_eq!(result.values, vec![serde_json::json!(42)]);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(2), drain).await??,
+        DrainOutcome::Drained
+    );
+
+    assert!(matches!(
+        tokio::time::timeout(Duration::from_secs(2), provider_call).await??,
+        Err(ProviderCallError::NotRegistered)
+    ));
+    let error = direct_call.await?.expect_err("the call never started");
+    assert!(DispatchNotStarted::caused(&error), "{error:#}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_handler_outlasting_the_limit_does_not_hold_up_the_shutdown() -> Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
+    let mut executor = test_executor()?;
+    let running = hold_slot(&mut executor).await?;
+
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(2),
+        executor
+            .handle
+            .drain(Duration::from_millis(50), &CancellationToken::new()),
+    )
+    .await?;
+    assert_eq!(outcome, DrainOutcome::TimedOut);
+
+    let error = executor
+        .handle
+        .dispatch_metadata_refresh(request(executor.fast, Duration::from_secs(2)))
+        .await
+        .expect_err("a drained runtime admits nothing");
+    assert!(DispatchNotStarted::caused(&error), "{error:#}");
+
+    tokio::time::timeout(Duration::from_secs(2), executor.handle.shutdown()).await??;
+    let error = tokio::time::timeout(Duration::from_secs(2), running)
+        .await??
+        .expect_err("shutdown cancels the running handler");
+    assert!(!DispatchNotStarted::caused(&error), "{error:#}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_nested_call_queued_behind_the_drain_ends_it_at_its_limit() -> Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
+    let mut executor = test_executor()?;
+    let running = hold_slot(&mut executor).await?;
+    let drain = start_drain(&executor.handle, Duration::from_millis(100)).await?;
+
+    // The running handler can't finish until the call it made does.
+    let nested = tokio::spawn({
+        let handle = executor.handle.clone();
+        let request = request(executor.fast, Duration::from_secs(30));
+        let release = executor.release.clone();
+        async move {
+            let result = handle.dispatch_metadata_refresh(request).await;
+            release.notify_one();
+            result
+        }
+    });
+
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(2), drain).await??,
+        DrainOutcome::TimedOut
+    );
+    let error = tokio::time::timeout(Duration::from_secs(2), nested)
+        .await??
+        .expect_err("the nested call never started");
+    assert!(DispatchNotStarted::caused(&error), "{error:#}");
+    tokio::time::timeout(Duration::from_secs(2), running).await???;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_crash_ends_a_drain_at_once() -> Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
+
+    let crashed = empty_executor()?;
+    crashed.inject_panic().await.expect_err("it crashed");
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(2),
+        crashed.drain(LONG_LIMIT, &CancellationToken::new()),
+    )
+    .await?;
+    assert_ne!(outcome, DrainOutcome::TimedOut);
+
+    let mut executor = test_executor()?;
+    let running = hold_slot(&mut executor).await?;
+    let drain = start_drain(&executor.handle, LONG_LIMIT).await?;
+    executor
+        .handle
+        .inject_panic()
+        .await
+        .expect_err("it crashed");
+    let outcome = tokio::time::timeout(Duration::from_secs(2), drain).await??;
+    assert_ne!(outcome, DrainOutcome::TimedOut);
+    running.await?.expect_err("the crash ended the handler");
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancelling_ends_a_drain_and_closes_the_slots() -> Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
+    let mut executor = test_executor()?;
+    let running = hold_slot(&mut executor).await?;
+    let cancelled = CancellationToken::new();
+    cancelled.cancel();
+
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(2),
+        executor.handle.drain(LONG_LIMIT, &cancelled),
+    )
+    .await?;
+    assert_eq!(outcome, DrainOutcome::Cancelled);
+    assert!(executor.handle.tx.slots.is_closed());
+    running.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn lossy_updates_report_never_started_while_draining() -> Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
+    let mut executor = test_executor()?;
+    let running = hold_slot(&mut executor).await?;
+    let drain = start_drain(&executor.handle, LONG_LIMIT).await?;
+    let update = crate::services::listens::ListenUpdatePayload {
+        event: "recorded".to_string(),
+        user_id: "user".to_string(),
+        listens: Vec::new(),
+    };
+
+    let error = executor
+        .handle
+        .dispatch_listen_update(update.clone())
+        .expect_err("no slot is free during a drain");
+    assert!(DispatchNotStarted::caused(&error), "{error:#}");
+
+    executor.release.notify_one();
+    tokio::time::timeout(Duration::from_secs(2), running).await???;
+    drain.await?;
+    let error = executor
+        .handle
+        .dispatch_listen_update(update)
+        .expect_err("a closed runtime admits nothing");
+    assert!(DispatchNotStarted::caused(&error), "{error:#}");
+    Ok(())
+}

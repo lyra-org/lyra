@@ -16,6 +16,7 @@ mod updates;
 mod vm;
 mod websocket;
 pub(crate) use self::actor::{
+    DrainOutcome,
     ExecutorExitKind,
     ExecutorId,
     PluginExecutorHandle,

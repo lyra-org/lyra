@@ -49,6 +49,18 @@ impl PluginCallbackHandle {
     }
 }
 
+/// A dispatch the runtime never admitted, because it is being replaced or has stopped: no handler
+/// ran, so the caller can treat the handler as absent.
+#[derive(Debug, thiserror::Error)]
+#[error("plugin executor queue is unavailable")]
+pub(crate) struct DispatchNotStarted;
+
+impl DispatchNotStarted {
+    pub(crate) fn caused(error: &anyhow::Error) -> bool {
+        error.chain().any(|cause| cause.is::<Self>())
+    }
+}
+
 /// The loaded plugin runtime as services reach it: dispatch to the handlers
 /// plugins registered with service registries. The plugin executor
 /// implements it and publishes it per generation.

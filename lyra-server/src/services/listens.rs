@@ -27,6 +27,7 @@ use serde::{
     Serialize,
 };
 
+use super::plugin_dispatch::DispatchNotStarted;
 use super::{
     auth::Principal,
     catalog::{
@@ -240,7 +241,11 @@ pub(crate) fn dispatch_recorded(user_public_id: &str, listens: impl IntoIterator
         listens,
     };
     if let Err(error) = runtime.dispatch_listen_update(payload) {
-        tracing::warn!(error = %error, "failed to enqueue plugin listen on_update dispatch");
+        if DispatchNotStarted::caused(&error) {
+            tracing::debug!("dropped plugin listen on_update dispatch during a reload");
+        } else {
+            tracing::warn!(error = %error, "failed to enqueue plugin listen on_update dispatch");
+        }
     }
 }
 

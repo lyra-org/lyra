@@ -8,6 +8,7 @@ use std::{
     sync::{
         Arc,
         atomic::{
+            AtomicBool,
             AtomicU64,
             Ordering,
         },
@@ -30,6 +31,7 @@ use harmony_core::{
 };
 
 use futures::future::BoxFuture;
+use tokio_util::sync::CancellationToken;
 
 use super::messages::PluginExecutorCommand;
 use super::{
@@ -46,7 +48,10 @@ use super::{
     WebSocketStartRequest,
 };
 use crate::services::playback_sessions::PlaybackUpdatePayload;
-use crate::services::plugin_dispatch::PluginDispatch;
+use crate::services::plugin_dispatch::{
+    DispatchNotStarted,
+    PluginDispatch,
+};
 
 const EXECUTOR_QUEUE_CAPACITY: usize = 256;
 /// Slots for lifecycle commands, apart from the ones dispatched handlers hold
@@ -61,6 +66,8 @@ mod dispatch_tests;
 struct PluginExecutorSender {
     tx: mpsc::SyncSender<QueuedPluginExecutorCommand>,
     slots: Arc<tokio::sync::Semaphore>,
+    capacity: u32,
+    draining: Arc<AtomicBool>,
     control_slots: Arc<tokio::sync::Semaphore>,
 }
 
@@ -82,16 +89,18 @@ impl PluginExecutorSender {
             .clone()
             .acquire_owned()
             .await
-            .context("plugin executor queue is unavailable")?;
+            .map_err(|_| DispatchNotStarted)?;
         self.enqueue(command, permit)
     }
 
     fn try_send(&self, command: PluginExecutorCommand) -> Result<()> {
-        let permit = self
-            .slots
-            .clone()
-            .try_acquire_owned()
-            .context("plugin executor queue is full or unavailable")?;
+        let permit = self.slots.clone().try_acquire_owned().map_err(|error| {
+            if self.draining.load(Ordering::Acquire) {
+                anyhow::Error::new(DispatchNotStarted)
+            } else {
+                anyhow::Error::new(error).context("plugin executor queue is full or unavailable")
+            }
+        })?;
         self.enqueue(command, permit)
     }
 
@@ -105,7 +114,7 @@ impl PluginExecutorSender {
                 command,
                 _permit: permit,
             })
-            .context("plugin executor queue is unavailable")
+            .map_err(|_| DispatchNotStarted.into())
     }
 }
 
@@ -121,6 +130,18 @@ impl QueuedPluginExecutorCommand {
         drop(_permit);
         command
     }
+}
+
+/// How waiting for a runtime's calls to finish ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DrainOutcome {
+    /// No call was left running or waiting.
+    Drained,
+    /// Calls were still running at the limit.
+    TimedOut,
+    Cancelled,
+    /// The executor thread ended, taking its calls with it.
+    Exited,
 }
 
 /// One executor thread, unique for the life of the process.
@@ -332,6 +353,35 @@ impl PluginExecutorHandle {
         self.request_control(PluginExecutorCommand::Shutdown).await
     }
 
+    /// Lets the calls holding or already waiting for a slot finish, up to `limit`, and fails every
+    /// call that hasn't started by the end. Later dispatches fail with [`DispatchNotStarted`].
+    /// Stops waiting once `cancelled` fires or the executor thread ends.
+    pub(crate) async fn drain(
+        &self,
+        limit: Duration,
+        cancelled: &CancellationToken,
+    ) -> DrainOutcome {
+        self.tx.draining.store(true, Ordering::Release);
+        let all_slots = self.tx.slots.acquire_many(self.tx.capacity);
+        tokio::pin!(all_slots);
+        // Neither the acquire nor its slots may be released before the close: they would go to
+        // the calls queued behind it, which would start only to be cancelled.
+        let (outcome, _slots) = tokio::select! {
+            biased;
+            () = cancelled.cancelled() => (DrainOutcome::Cancelled, None),
+            _ = self.exit().wait() => (DrainOutcome::Exited, None),
+            slots = &mut all_slots => (DrainOutcome::Drained, slots.ok()),
+            () = tokio::time::sleep(limit) => (DrainOutcome::TimedOut, None),
+        };
+        self.tx.slots.close();
+        outcome
+    }
+
+    #[cfg(test)]
+    pub(crate) fn slots_in_use(&self) -> usize {
+        self.tx.capacity as usize - self.tx.slots.available_permits()
+    }
+
     /// Fails the entrypoints running and yet to run, and stops every stream,
     /// so a runtime that is to shut down soon frees its thread for the ask.
     pub(crate) fn cancel_entrypoints(&self) {
@@ -437,6 +487,8 @@ fn plugin_executor_channel(
         PluginExecutorSender {
             tx,
             slots: Arc::new(tokio::sync::Semaphore::new(capacity)),
+            capacity: capacity as u32,
+            draining: Arc::default(),
             control_slots: Arc::new(tokio::sync::Semaphore::new(EXECUTOR_CONTROL_CAPACITY)),
         },
         rx,
@@ -698,6 +750,21 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn an_ended_executor_ends_a_drain_with_slots_still_out() -> Result<()> {
+        let (handle, _rx) = handle_with_capacity(1);
+        handle.dispatch_playback_update(playback_update())?;
+
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(2),
+            handle.drain(Duration::from_secs(60), &CancellationToken::new()),
+        )
+        .await?;
+
+        assert_eq!(outcome, DrainOutcome::Exited);
+        Ok(())
+    }
+
     #[test]
     fn playback_update_remains_lossy_when_queue_is_full() -> Result<()> {
         let (handle, rx) = handle_with_capacity(1);
@@ -711,6 +778,7 @@ mod tests {
             .dispatch_playback_update(payload.clone())
             .unwrap_err();
         assert!(error.to_string().contains("queue is full"));
+        assert!(!DispatchNotStarted::caused(&error));
 
         drop(rx.recv()?.into_command());
         handle.dispatch_playback_update(payload)?;

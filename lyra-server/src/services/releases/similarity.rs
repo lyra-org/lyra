@@ -31,6 +31,7 @@ use crate::{
     services::auth::Principal,
     services::plugin_dispatch::{
         DispatchCancellation,
+        DispatchNotStarted,
         PluginDispatch,
         SimilarReleaseCandidate,
         SimilarReleaseExternalRef,
@@ -222,6 +223,10 @@ where
 
         let dispatch = match dispatch {
             Ok(Ok(result)) => result,
+            Ok(Err(err)) if DispatchNotStarted::caused(&err) => {
+                tracing::debug!(provider_id, "similar releases provider is being reloaded");
+                continue;
+            }
             Ok(Err(err)) => {
                 tracing::warn!(
                     provider_id,

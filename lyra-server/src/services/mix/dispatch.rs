@@ -27,6 +27,7 @@ use crate::services::{
     STATE,
     options::typed_options,
     plugin_dispatch::{
+        DispatchNotStarted,
         MixHandlerRequest,
         MixHandlerTrack,
     },
@@ -244,6 +245,10 @@ pub(super) async fn dispatch(
         .await
         {
             Ok(Ok(result)) => result.tracks,
+            Ok(Err(err)) if DispatchNotStarted::caused(&err) => {
+                tracing::debug!(mixer = %mixer_id, "mixer is being reloaded, trying next");
+                continue;
+            }
             Ok(Err(err)) => {
                 tracing::warn!(mixer = %mixer_id, error = %err, "mixer handler crashed, trying next");
                 continue;
