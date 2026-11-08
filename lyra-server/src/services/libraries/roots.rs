@@ -18,13 +18,10 @@ use lyra_db::{
     libraries::lexical_normalize_path,
 };
 
-use crate::{
-    services::STATE,
-    services::{
-        auth::Principal,
-        catalog::Viewer,
-        covers::is_cover_file,
-    },
+use crate::services::{
+    auth::Principal,
+    catalog::Viewer,
+    covers::is_cover_file,
 };
 
 /// Where `root` leads now. A root can be retargeted while a batch of files is being judged, so no
@@ -245,21 +242,6 @@ fn regular_target(path: &Path) -> anyhow::Result<PathBuf> {
 /// Whether the file's name is one a followed link may lead to: audio, a cue sheet or a cover.
 pub(crate) fn is_media_file(path: &Path) -> bool {
     classify_file_kind(path).is_some() || is_cover_file(path)
-}
-
-/// Resolves `path` to the file it leads to, refusing anything [`MediaRoots`] of the libraries
-/// `principal` can see and the configured cover storage root wouldn't serve. Plugins may name any
-/// path, so every file they have the server read goes through here.
-pub(crate) async fn confine_to_media_roots(
-    path: &str,
-    principal: Option<&Principal>,
-) -> anyhow::Result<PathBuf> {
-    let roots = {
-        let db = STATE.db.read().await;
-        MediaRoots::for_principal(&*db, principal)?
-    }
-    .and_covers(crate::services::covers::configured_covers_root());
-    roots.resolve_off_thread(PathBuf::from(path)).await
 }
 
 #[cfg(test)]

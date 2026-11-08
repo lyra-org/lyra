@@ -103,7 +103,6 @@ pub use releases::release_routes;
 pub use roles::role_routes;
 pub use search::search_routes;
 pub(crate) use serve::{
-    build_ranged_file_body,
     serve_hls_playlist_for_track,
     track_response,
 };

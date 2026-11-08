@@ -183,7 +183,7 @@ pub(crate) enum ApiResponseKind {
     Text,
     Bytes,
     Redirect,
-    File,
+    Cover,
     StreamTrack,
     DownloadTrack,
     HlsPlaylist,
@@ -199,7 +199,7 @@ impl ApiResponseKind {
             "text" => Self::Text,
             "bytes" => Self::Bytes,
             "redirect" => Self::Redirect,
-            "file" => Self::File,
+            "cover" => Self::Cover,
             "stream_track" => Self::StreamTrack,
             "download_track" => Self::DownloadTrack,
             "hls_playlist" => Self::HlsPlaylist,
@@ -216,7 +216,7 @@ impl ApiResponseKind {
             Self::Text => "text",
             Self::Bytes => "bytes",
             Self::Redirect => "redirect",
-            Self::File => "file",
+            Self::Cover => "cover",
             Self::StreamTrack => "stream_track",
             Self::DownloadTrack => "download_track",
             Self::HlsPlaylist => "hls_playlist",
@@ -230,7 +230,7 @@ impl ApiResponseKind {
     pub(crate) fn takes_fallback(self) -> bool {
         matches!(
             self,
-            Self::File | Self::StreamTrack | Self::DownloadTrack | Self::HlsPlaylist
+            Self::Cover | Self::StreamTrack | Self::DownloadTrack | Self::HlsPlaylist
         )
     }
 
@@ -252,8 +252,8 @@ pub(crate) struct ApiHandlerResponse {
     pub(crate) status: u16,
     pub(crate) headers: Vec<(String, String)>,
     pub(crate) body: Option<ApiResponseBody>,
-    pub(crate) path: Option<String>,
-    pub(crate) transform: Option<serde_json::Value>,
+    /// The cover a `cover` response serves, read as it is served.
+    pub(crate) cover: Option<crate::plugins::api::options::CoverRequest>,
     pub(crate) track_id: Option<String>,
     /// The options of a track response, read as it is served.
     pub(crate) options: Option<crate::plugins::api::options::TrackResponseOptions>,

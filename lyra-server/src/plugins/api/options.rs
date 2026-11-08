@@ -3,17 +3,20 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-//! The options plugins give `stream_track`, `download_track` and `hls_playlist` responses, and
-//! `playback_sources.decide`.
+//! The options plugins give `stream_track`, `download_track`, `hls_playlist` and `cover`
+//! responses, and `playback_sources.decide`.
 
 use crate::{
     plugins::{
         args,
         executor::ApiResponseKind,
     },
-    services::delivery::{
-        HlsPlaylistOptions,
-        ServeTrackOptions,
+    services::{
+        covers::CoverTransformOptions,
+        delivery::{
+            HlsPlaylistOptions,
+            ServeTrackOptions,
+        },
     },
 };
 use harmony_luau as luau;
@@ -68,6 +71,16 @@ pub(crate) enum DeliveryCodec {
     Wma,
 }
 
+#[harmony_macros::string_enum(description = "An image format Lyra serves covers in.")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CoverFormat {
+    Jpg,
+    Png,
+    Webp,
+}
+
+const COVER_FIELDS: &[&str] = &["format", "quality", "max_width", "max_height"];
+
 const SERVE_FIELDS: &[&str] = &[
     "format",
     "preferred_codecs",
@@ -108,6 +121,13 @@ pub(crate) struct TrackStreamRequest {
     pub(crate) public: bool,
     pub(crate) wait_for_transcode: bool,
     pub(crate) options: ServeTrackOptions,
+}
+
+/// A `cover` response's cover and the options it is served with.
+#[derive(Clone, Debug)]
+pub(crate) struct CoverRequest {
+    pub(crate) cover_id: String,
+    pub(crate) options: CoverTransformOptions,
 }
 
 /// The options of a track response, read as it will be served.
@@ -200,6 +220,32 @@ pub(crate) fn track_response_options(
     }
 }
 
+/// The options of a `cover` response, read from `options`.
+pub(crate) fn cover_options(
+    options: &luau::Value,
+    owner: &str,
+) -> luau::runtime::Result<CoverTransformOptions> {
+    let Some(table) = options_table(options, owner)? else {
+        return Ok(CoverTransformOptions::default());
+    };
+    args::reject_unknown_fields(&table, owner, COVER_FIELDS)?;
+    let format =
+        args::optional_string_enum::<CoverFormat>(&table, "format", owner)?.map(|format| {
+            match format {
+                CoverFormat::Jpg => image::ImageFormat::Jpeg,
+                CoverFormat::Png => image::ImageFormat::Png,
+                CoverFormat::Webp => image::ImageFormat::WebP,
+            }
+        });
+    CoverTransformOptions::new(
+        format,
+        optional_u32(&table, "quality", owner)?,
+        optional_bound(&table, "max_width", owner)?,
+        optional_bound(&table, "max_height", owner)?,
+    )
+    .map_err(|err| crate::plugins::runtime_error(format!("{owner}: {err}")))
+}
+
 fn serve_options(table: &luau::Table, owner: &str) -> luau::runtime::Result<ServeTrackOptions> {
     Ok(ServeTrackOptions {
         format: args::optional_string_enum::<DeliveryFormat>(table, "format", owner)?
@@ -224,6 +270,15 @@ fn optional_u64(table: &luau::Table, key: &str, owner: &str) -> luau::runtime::R
             "{owner}.{key} must be a non-negative integer, got {value}"
         ))
     })
+}
+
+/// A cover bound, capped at the largest the host takes rather than refused past it.
+fn optional_bound(
+    table: &luau::Table,
+    key: &str,
+    owner: &str,
+) -> luau::runtime::Result<Option<u32>> {
+    Ok(optional_u64(table, key, owner)?.map(|bound| u32::try_from(bound).unwrap_or(u32::MAX)))
 }
 
 fn optional_u32(table: &luau::Table, key: &str, owner: &str) -> luau::runtime::Result<Option<u32>> {
@@ -328,7 +383,36 @@ pub(crate) fn hls_serve_options_interface() -> InterfaceDescriptor {
     options_interface("HlsServeOptions")
 }
 
-/// The unions the option interfaces name.
+/// `CoverServeOptions`, the options of `cover`.
+#[cfg(feature = "docgen")]
+pub(crate) fn cover_serve_options_interface() -> InterfaceDescriptor {
+    let mut descriptor = InterfaceDescriptor::new("CoverServeOptions", None);
+    descriptor.fields.extend([
+        option_field(
+            "format",
+            Option::<CoverFormat>::luau_type(),
+            "The format to serve. Defaults to the stored image's.",
+        ),
+        option_field(
+            "quality",
+            Option::<u8>::luau_type(),
+            "The JPEG quality, from 0 to 100, snapped up to 50, 75, 90 or 100. Defaults to 90; ignored for other formats.",
+        ),
+        option_field(
+            "max_width",
+            Option::<u32>::luau_type(),
+            "The most pixels wide to serve, greater than 0, snapped up to 64, 128, 256, 512, 1024 or 2048; a larger bound serves the full width. A bound past 4294967295 is capped to it rather than refused.",
+        ),
+        option_field(
+            "max_height",
+            Option::<u32>::luau_type(),
+            "The most pixels high to serve, as `max_width` bounds the width.",
+        ),
+    ]);
+    descriptor
+}
+
+/// The unions the track option interfaces name.
 #[cfg(feature = "docgen")]
 pub(crate) fn delivery_aliases() -> Vec<TypeAliasDescriptor> {
     vec![

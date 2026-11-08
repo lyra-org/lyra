@@ -11,9 +11,9 @@ use axum::http::header::{
     TRANSFER_ENCODING,
 };
 
-use super::image::ParsedImageTransformOptions;
 use super::*;
 use crate::plugins::api::options::{
+    CoverRequest,
     TrackResponseOptions,
     TrackStreamRequest,
 };
@@ -24,8 +24,8 @@ use crate::plugins::executor::{
     ApiResponseKind,
 };
 use crate::routes::AppError;
+use crate::routes::covers::serve_cover;
 use crate::routes::streamed_body::streamed_body;
-use crate::services::auth::Principal;
 use crate::services::auth::media_tokens::MediaTokenPurpose;
 use crate::services::delivery::{
     DeliveryTarget,
@@ -33,7 +33,7 @@ use crate::services::delivery::{
     stream_track_access,
 };
 
-/// The headers that frame the bodies Lyra serves for `file`, `stream_track`, `download_track`,
+/// The headers that frame the bodies Lyra serves for `cover`, `stream_track`, `download_track`,
 /// `hls_playlist`, `filler` and `stream` responses, which those responses may not set.
 const FRAMING_HEADERS: [HeaderName; 4] = [
     CONTENT_LENGTH,
@@ -61,9 +61,6 @@ pub(super) async fn plugin_api_response_to_axum(
 ) -> Result<Response> {
     let headers = framed_headers(response.kind, &response.headers)?;
     let status = StatusCode::from_u16(response.status).context("invalid response status code")?;
-    if response.kind != ApiResponseKind::File && response.path.is_some() {
-        bail!("{} response cannot include path", response.kind);
-    }
     let fallback = response.fallback.take().map(Fallback::of).transpose()?;
     let served = match response.kind {
         ApiResponseKind::StreamTrack
@@ -74,13 +71,14 @@ pub(super) async fn plugin_api_response_to_axum(
             serve_track(&response, track, request_method, request_headers)
                 .await
                 .map(|served| with_plugin_status_and_headers(served, status, headers))
-                .map_err(ServeFailure::Lyra)
         }
-        ApiResponseKind::File => {
-            let file = FileRequest::of(response)?;
-            serve_file(file, status, headers, request_headers)
+        ApiResponseKind::Cover => {
+            let status = served_status(response.kind, status)?;
+            let CoverRequest { cover_id, options } =
+                response.cover.context("cover response requires cover_id")?;
+            serve_cover(&cover_id, options, request_headers)
                 .await
-                .map_err(ServeFailure::Unserved)
+                .map(|served| with_plugin_status_and_headers(served, status, headers))
         }
         ApiResponseKind::Json
         | ApiResponseKind::Empty
@@ -94,18 +92,9 @@ pub(super) async fn plugin_api_response_to_axum(
     };
     match (served, fallback) {
         (Ok(served), _) => Ok(served),
-        (Err(ServeFailure::Lyra(error)), None) => Ok(error.into_response()),
-        (Err(ServeFailure::Unserved(error)), None) => Err(error),
-        (Err(failure), Some(fallback)) => fallback.answer(failure),
+        (Err(error), None) => Ok(error.into_response()),
+        (Err(error), Some(fallback)) => fallback.answer(error),
     }
-}
-
-/// Why Lyra failed to serve a response whose body it serves itself.
-enum ServeFailure {
-    /// An error Lyra answers with its own response.
-    Lyra(AppError),
-    /// A well-formed response Lyra could not serve, which it answers as an invalid response.
-    Unserved(anyhow::Error),
 }
 
 /// A response's fallback, checked before Lyra serves the response.
@@ -125,26 +114,16 @@ impl Fallback {
         })
     }
 
-    /// The fallback in place of the response Lyra failed to serve, with the headers of Lyra's
-    /// error that a client acts on.
-    fn answer(self, failure: ServeFailure) -> Result<Response> {
-        let lyra = match failure {
-            ServeFailure::Lyra(error) => {
-                tracing::debug!(%error, "answering a failed plugin response with its fallback");
-                // Lyra's own answer also logs an internal error and acts on a poisoned database.
-                Some(error.into_response())
-            }
-            ServeFailure::Unserved(error) => {
-                tracing::warn!(%error, "answering a failed plugin response with its fallback");
-                None
-            }
-        };
+    /// The fallback in place of the response Lyra failed to serve with `error`, with the headers
+    /// of Lyra's error that a client acts on.
+    fn answer(self, error: AppError) -> Result<Response> {
+        tracing::debug!(%error, "answering a failed plugin response with its fallback");
+        // Lyra's own answer also logs an internal error and acts on a poisoned database.
+        let lyra = error.into_response();
         let mut response = body_response(self.status, self.headers, self.body)?;
-        if let Some(lyra) = lyra {
-            for name in CARRIED_ERROR_HEADERS {
-                if let Some(value) = lyra.headers().get(&name) {
-                    response.headers_mut().insert(name, value.clone());
-                }
+        for name in CARRIED_ERROR_HEADERS {
+            if let Some(value) = lyra.headers().get(&name) {
+                response.headers_mut().insert(name, value.clone());
             }
         }
         Ok(response)
@@ -206,68 +185,6 @@ fn with_headers(
     Ok(response)
 }
 
-/// What a `file` response asks Lyra to serve. A response that doesn't say is a plugin error,
-/// which its fallback doesn't answer.
-struct FileRequest {
-    path: String,
-    transform: Option<ParsedImageTransformOptions>,
-    principal: Option<Principal>,
-}
-
-impl FileRequest {
-    fn of(response: ApiHandlerResponse) -> Result<Self> {
-        let path = response.path.context("file response requires path")?;
-        let path = path.trim();
-        if path.is_empty() {
-            bail!("file path must not be empty");
-        }
-        Ok(Self {
-            path: path.to_owned(),
-            transform: parse_image_transform_options(response.transform.as_ref())?,
-            principal: response.principal,
-        })
-    }
-}
-
-/// A `file` response's file, confined to the media roots the response's principal sees.
-async fn serve_file(
-    file: FileRequest,
-    status: StatusCode,
-    headers: HeaderMap,
-    request_headers: &HeaderMap,
-) -> Result<Response> {
-    let trimmed = file.path.as_str();
-    let confined =
-        crate::services::libraries::confine_to_media_roots(trimmed, file.principal.as_ref())
-            .await?;
-    if let Some(transform) = file.transform {
-        let owned_path = confined
-            .to_str()
-            .with_context(|| format!("file response path '{trimmed}' is not valid UTF-8"))?
-            .to_owned();
-        let (bytes, format) =
-            tokio::task::spawn_blocking(move || transform_image(&owned_path, &transform))
-                .await
-                .map_err(|err| anyhow::anyhow!("failed to join image transform task: {err}"))??;
-        let content_type = HeaderValue::from_static(image_format_mime(format));
-        return with_headers(status, Body::from(bytes), headers, Some(content_type));
-    }
-    let ranged =
-        build_ranged_file_body(confined.as_path(), request_headers.get(RANGE), status).await?;
-    let content_type = HeaderValue::from_static(infer_content_type(trimmed));
-    let mut served = with_headers(ranged.status, ranged.body, headers, Some(content_type))?;
-    served
-        .headers_mut()
-        .insert(CONTENT_LENGTH, ranged.content_length);
-    if let Some(content_range) = ranged.content_range {
-        served.headers_mut().insert(CONTENT_RANGE, content_range);
-    }
-    served
-        .headers_mut()
-        .insert(ACCEPT_RANGES, HeaderValue::from_static("bytes"));
-    Ok(served)
-}
-
 /// `size` zero bytes, sent a chunk at a time from one shared buffer.
 fn filler_body(size: u64) -> Body {
     static CHUNK: [u8; 64 * 1024] = [0; 64 * 1024];
@@ -283,7 +200,7 @@ fn filler_body(size: u64) -> Body {
 fn framed_headers(kind: ApiResponseKind, pairs: &[(String, String)]) -> Result<HeaderMap> {
     let framed = matches!(
         kind,
-        ApiResponseKind::File
+        ApiResponseKind::Cover
             | ApiResponseKind::StreamTrack
             | ApiResponseKind::DownloadTrack
             | ApiResponseKind::HlsPlaylist
@@ -306,7 +223,8 @@ fn framed_headers(kind: ApiResponseKind, pairs: &[(String, String)]) -> Result<H
     Ok(headers)
 }
 
-/// The status a track response asks to replace Lyra's 200 with: one that carries the whole body.
+/// The status a track or cover response asks to replace Lyra's 200 with: one that carries the
+/// whole body.
 fn served_status(kind: ApiResponseKind, status: StatusCode) -> Result<StatusCode> {
     if !(200..=203).contains(&status.as_u16()) {
         bail!("{kind} response status must be 200 to 203, got {status}");
@@ -411,6 +329,7 @@ mod tests {
     use axum::http::HeaderMap;
 
     use crate::plugins::api::options::{
+        CoverRequest,
         TrackResponseOptions,
         TrackStreamRequest,
     };
@@ -418,6 +337,7 @@ mod tests {
         Caller,
         ClientAddress,
     };
+    use crate::services::covers::CoverTransformOptions;
     use crate::services::delivery::HlsPlaylistOptions;
     use std::collections::HashSet;
     use std::time::{
@@ -571,8 +491,7 @@ mod tests {
             status: 200,
             headers: Vec::new(),
             body: None,
-            path: None,
-            transform: None,
+            cover: None,
             track_id: Some(track_id.to_string()),
             options: Some(stream_options(public)),
             principal: None,
@@ -677,14 +596,24 @@ mod tests {
         Ok(())
     }
 
-    fn file_response(path: &std::path::Path) -> ApiHandlerResponse {
+    fn cover_response(
+        cover_id: &str,
+        options: CoverTransformOptions,
+        status: u16,
+        headers: &[(&str, &str)],
+    ) -> ApiHandlerResponse {
         ApiHandlerResponse {
-            kind: ApiResponseKind::File,
-            status: 200,
-            headers: Vec::new(),
+            kind: ApiResponseKind::Cover,
+            status,
+            headers: headers
+                .iter()
+                .map(|(name, value)| (name.to_string(), value.to_string()))
+                .collect(),
             body: None,
-            path: Some(path.to_string_lossy().into_owned()),
-            transform: None,
+            cover: Some(CoverRequest {
+                cover_id: cover_id.to_string(),
+                options,
+            }),
             track_id: None,
             options: None,
             principal: None,
@@ -693,114 +622,143 @@ mod tests {
         }
     }
 
+    fn bounded(max_width: u32) -> CoverTransformOptions {
+        CoverTransformOptions {
+            max_width: Some(max_width),
+            ..CoverTransformOptions::default()
+        }
+    }
+
+    /// A 200x200 PNG stored as a release's cover in a library at `dir`, returning the cover's
+    /// public id and its file.
+    async fn stored_cover(
+        dir: &std::path::Path,
+        hash: &str,
+    ) -> anyhow::Result<(String, std::path::PathBuf)> {
+        let path = dir.join("cover.png");
+        image::DynamicImage::new_rgb8(200, 200).save(&path)?;
+        let mut db = STATE.db.write().await;
+        lyra_db::test_db::insert_library(
+            &mut db,
+            "Covers",
+            dir.to_str().context("UTF-8 temp path")?,
+        )?;
+        let release = lyra_db::fixtures::insert_release(&mut db, "Release")?;
+        let cover_id = db
+            .transaction_mut(|t| {
+                lyra_db::covers::upsert(
+                    t,
+                    release,
+                    lyra_db::covers::CoverSource::Local,
+                    lyra_db::Cover {
+                        db_id: None,
+                        id: nanoid::nanoid!(),
+                        path: path.to_string_lossy().into_owned(),
+                        mime_type: "image/png".to_string(),
+                        hash: hash.to_string(),
+                        blurhash: None,
+                        provider_id: None,
+                    },
+                )
+            })?
+            .cover
+            .id;
+        Ok((cover_id, path))
+    }
+
     #[tokio::test]
-    async fn plugin_file_responses_are_confined_to_library_roots() -> anyhow::Result<()> {
+    async fn cover_responses_serve_cached_variants_with_the_plugin_status_and_headers()
+    -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
-        let test_dir = unique_test_dir("lyra-plugin-bridge-file-test")?;
-        let library_dir = test_dir.join("library");
-        std::fs::create_dir_all(&library_dir)?;
-        let outside_dir = unique_test_dir("lyra-plugin-bridge-file-outside")?;
-        std::fs::create_dir_all(&outside_dir)?;
-        init_library_test_state(test_dir.clone()).await?;
+        crate::services::testing::init_default_test_state()?;
+        let dir = tempfile::tempdir()?;
+        let hash = "0123456789abcdef0123456789abcdef";
+        let (cover_id, _) = stored_cover(dir.path(), hash).await?;
+        let plugin_headers = [
+            ("cache-control", "public"),
+            ("etag", "\"tag\""),
+            ("x-plugin", "kept"),
+        ];
+        let no_range = HeaderMap::new();
 
-        let hidden_dir = test_dir.join("hidden");
-        std::fs::create_dir_all(&hidden_dir)?;
-        let principal = {
-            let mut db = STATE.db.write().await;
-            let library_db_id = lyra_db::test_db::insert_library(
-                &mut db,
-                "File Bridge Lib",
-                library_dir.to_str().context("library dir is utf-8")?,
-            )?;
-            lyra_db::test_db::insert_library(
-                &mut db,
-                "File Bridge Hidden",
-                hidden_dir.to_str().context("hidden dir is utf-8")?,
-            )?;
-            let library_public_id = lyra_db::lookup::find_id_by_db_id(&*db, library_db_id)?
-                .context("inserted library has public id")?;
-            let user = lyra_db::fixtures::test_user("file-bridge-user")?;
-            let user_public_id = user.id.clone();
-            let user_db_id = lyra_db::users::create(&mut db, &user)?;
-            Principal::from_parts(
-                user_db_id,
-                user_public_id,
-                "file-bridge-user".to_string(),
-                Vec::new(),
-                None,
-                HashSet::from([library_public_id]),
-            )
-        };
-
-        let inside = library_dir.join("cover.jpg");
-        std::fs::write(&inside, b"inside")?;
-        let outside = outside_dir.join("secret.txt");
-        std::fs::write(&outside, b"outside")?;
-        let escape_link = library_dir.join("escape.jpg");
-        std::os::unix::fs::symlink(&outside, &escape_link)?;
-
-        let headers = axum::http::HeaderMap::new();
-
-        let served =
-            plugin_api_response_to_axum(file_response(&inside), &Method::GET, &headers).await?;
+        let served = plugin_api_response_to_axum(
+            cover_response(&cover_id, bounded(100), 203, &plugin_headers),
+            &Method::GET,
+            &no_range,
+        )
+        .await?;
+        assert_eq!(served.status(), StatusCode::NON_AUTHORITATIVE_INFORMATION);
+        assert_eq!(header(&served, "cache-control"), Some("public"));
+        assert_eq!(header(&served, "etag"), Some("\"tag\""));
+        assert_eq!(header(&served, "x-plugin"), Some("kept"));
+        assert_eq!(header(&served, "content-type"), Some("image/png"));
+        assert_eq!(header(&served, "accept-ranges"), Some("bytes"));
+        let body = axum::body::to_bytes(served.into_body(), usize::MAX).await?;
+        let image = image::load_from_memory(&body)?;
         assert_eq!(
-            served.status(),
-            StatusCode::OK,
-            "files inside a library root must serve"
+            (image.width(), image.height()),
+            (128, 128),
+            "bounds snap as the REST route's do"
         );
-
-        let rejected =
-            plugin_api_response_to_axum(file_response(&outside), &Method::GET, &headers).await;
-        assert!(
-            rejected.is_err_and(|err| err.to_string().contains("outside library")),
-            "files outside all roots must be rejected"
-        );
-
-        let symlinked =
-            plugin_api_response_to_axum(file_response(&escape_link), &Method::GET, &headers).await;
-        assert!(
-            symlinked.is_err_and(|err| err.to_string().contains("outside library")),
-            "symlinks escaping a library root must be rejected"
-        );
-
-        let climbing = library_dir
-            .join("..")
-            .join("..")
-            .join(outside_dir.file_name().context("outside dir has a name")?)
-            .join("secret.txt");
-        let climbed =
-            plugin_api_response_to_axum(file_response(&climbing), &Method::GET, &headers).await;
-        assert!(
-            climbed.is_err_and(|err| err.to_string().contains("outside library")),
-            "`..` must not leave a library root"
-        );
-
-        let hidden = hidden_dir.join("cover.jpg");
-        std::fs::write(&hidden, b"hidden")?;
-        let as_principal = |path: &std::path::Path| ApiHandlerResponse {
-            principal: Some(principal.clone()),
-            client: ClientAddress::default(),
-            ..file_response(path)
-        };
-        let served =
-            plugin_api_response_to_axum(as_principal(&inside), &Method::GET, &headers).await?;
-        assert_eq!(served.status(), StatusCode::OK);
-        let rejected =
-            plugin_api_response_to_axum(as_principal(&hidden), &Method::GET, &headers).await;
-        assert!(
-            rejected.is_err_and(|err| err.to_string().contains("outside library")),
-            "files in libraries the principal can't see must be rejected"
-        );
-        let served =
-            plugin_api_response_to_axum(file_response(&hidden), &Method::GET, &headers).await?;
+        let cached = STATE
+            .boot
+            .get()
+            .cover_cache_dir
+            .join(hash)
+            .join("128x0.png");
         assert_eq!(
-            served.status(),
-            StatusCode::OK,
-            "responses without a principal serve from every library"
+            std::fs::read(&cached)?,
+            body,
+            "the variant is kept in the cache"
         );
 
-        let _ = std::fs::remove_dir_all(test_dir);
-        let _ = std::fs::remove_dir_all(outside_dir);
+        let mut range = HeaderMap::new();
+        range.insert(
+            axum::http::header::RANGE,
+            axum::http::HeaderValue::from_static("bytes=0-3"),
+        );
+        let ranged = plugin_api_response_to_axum(
+            cover_response(&cover_id, bounded(100), 203, &plugin_headers),
+            &Method::GET,
+            &range,
+        )
+        .await?;
+        assert_eq!(ranged.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(header(&ranged, "content-length"), Some("4"));
+        assert_eq!(header(&ranged, "x-plugin"), Some("kept"));
+        let ranged = axum::body::to_bytes(ranged.into_body(), usize::MAX).await?;
+        assert_eq!(&ranged[..], &body[..4], "a range of the cached variant");
+
+        let original = plugin_api_response_to_axum(
+            cover_response(&cover_id, CoverTransformOptions::default(), 200, &[]),
+            &Method::GET,
+            &no_range,
+        )
+        .await?;
+        assert_eq!(original.status(), StatusCode::OK);
+        assert_eq!(header(&original, "content-type"), Some("image/png"));
+        assert_eq!(
+            header(&original, "cache-control"),
+            Some("public, max-age=31536000, immutable"),
+            "Lyra's headers stay where the plugin sets none"
+        );
+        let original = axum::body::to_bytes(original.into_body(), usize::MAX).await?;
+        assert_eq!(image::load_from_memory(&original)?.width(), 200);
+
+        let refused = plugin_api_response_to_axum(
+            cover_response(&cover_id, bounded(100), 200, &[("content-length", "1")]),
+            &Method::GET,
+            &no_range,
+        )
+        .await;
+        assert!(refused.is_err_and(|error| error.to_string().contains("cannot set the")));
+        let refused = plugin_api_response_to_axum(
+            cover_response(&cover_id, bounded(100), 206, &[]),
+            &Method::GET,
+            &no_range,
+        )
+        .await;
+        assert!(refused.is_err_and(|error| error.to_string().contains("must be 200 to 203")));
         Ok(())
     }
 
@@ -1293,57 +1251,68 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_file_responses_answer_with_their_fallback() -> anyhow::Result<()> {
+    async fn failed_cover_responses_answer_with_their_fallback() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
-        let test_dir = unique_test_dir("lyra-plugin-bridge-file-fallback")?;
-        std::fs::create_dir_all(&test_dir)?;
-        init_library_test_state(test_dir.clone()).await?;
-        let outside = unique_test_dir("lyra-plugin-bridge-file-fallback-outside")?;
-        std::fs::create_dir_all(&outside)?;
-        let secret = outside.join("secret.txt");
-        std::fs::write(&secret, b"secret")?;
+        crate::services::testing::init_default_test_state()?;
+        let dir = tempfile::tempdir()?;
+        let (cover_id, path) = stored_cover(dir.path(), "fedcba9876543210fedcba9876543210").await?;
+        let no_range = HeaderMap::new();
+        let with_fallback = |cover_id: &str| ApiHandlerResponse {
+            fallback: Some(text_fallback(200, &[("content-type", "text/xml")])),
+            ..cover_response(cover_id, bounded(64), 200, &[("x-plugin", "kept")])
+        };
 
-        let answered = plugin_api_response_to_axum(
-            ApiHandlerResponse {
-                fallback: Some(text_fallback(404, &[])),
-                ..file_response(&secret)
-            },
+        let missing = plugin_api_response_to_axum(
+            cover_response("missing", bounded(64), 200, &[]),
             &Method::GET,
-            &axum::http::HeaderMap::new(),
+            &no_range,
         )
         .await?;
-        assert_eq!(answered.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            missing.status(),
+            StatusCode::NOT_FOUND,
+            "without a fallback Lyra answers with its own error"
+        );
+
+        let answered =
+            plugin_api_response_to_axum(with_fallback("missing"), &Method::GET, &no_range).await?;
+        assert_eq!(answered.status(), StatusCode::OK);
+        assert_eq!(header(&answered, "content-type"), Some("text/xml"));
+        assert_eq!(header(&answered, "x-plugin"), None);
         assert_eq!(body_text(answered).await?, "fallback");
 
-        let _ = std::fs::remove_dir_all(test_dir);
-        let _ = std::fs::remove_dir_all(outside);
+        std::fs::remove_file(&path)?;
+        let gone =
+            plugin_api_response_to_axum(with_fallback(&cover_id), &Method::GET, &no_range).await?;
+        assert_eq!(
+            body_text(gone).await?,
+            "fallback",
+            "a cover whose file is gone"
+        );
+        let db = STATE.db.read().await;
+        assert!(
+            lyra_db::covers::get_by_public_id(&*db, &cover_id)?.is_none(),
+            "a cover confirmed gone is removed, as the REST route removes it"
+        );
         Ok(())
     }
 
     #[tokio::test]
-    async fn malformed_file_responses_ignore_their_fallback() {
-        for response in [
+    async fn malformed_cover_responses_ignore_their_fallback() {
+        let answered = plugin_api_response_to_axum(
             ApiHandlerResponse {
-                path: None,
-                ..file_response(std::path::Path::new("cover.jpg"))
+                cover: None,
+                fallback: Some(text_fallback(404, &[])),
+                ..cover_response("cover", CoverTransformOptions::default(), 200, &[])
             },
-            file_response(std::path::Path::new("  ")),
-            ApiHandlerResponse {
-                transform: Some(serde_json::json!("not a table")),
-                ..file_response(std::path::Path::new("cover.jpg"))
-            },
-        ] {
-            let answered = plugin_api_response_to_axum(
-                ApiHandlerResponse {
-                    fallback: Some(text_fallback(404, &[])),
-                    ..response
-                },
-                &Method::GET,
-                &axum::http::HeaderMap::new(),
-            )
-            .await;
-            assert!(answered.is_err(), "a malformed file response was answered");
-        }
+            &Method::GET,
+            &axum::http::HeaderMap::new(),
+        )
+        .await;
+        assert!(
+            answered.is_err(),
+            "a cover response without a cover was answered"
+        );
     }
 
     #[test]
@@ -1352,13 +1321,20 @@ mod tests {
             AppError::too_many_requests(std::time::Duration::from_secs(5)),
             AppError::service_unavailable_for("busy", std::time::Duration::from_secs(5)),
         ] {
-            let answered = super::Fallback::of(text_fallback(200, &[("retry-after", "99")]))?
-                .answer(super::ServeFailure::Lyra(error))?;
+            let answered =
+                super::Fallback::of(text_fallback(200, &[("retry-after", "99")]))?.answer(error)?;
             assert_eq!(answered.status(), StatusCode::OK);
             assert_eq!(header(&answered, "retry-after"), Some("5"));
         }
-        let answered = super::Fallback::of(text_fallback(200, &[]))?
-            .answer(super::ServeFailure::Lyra(AppError::not_found("gone")))?;
+        let busy = super::Fallback::of(text_fallback(200, &[]))?
+            .answer(crate::services::covers::CoverTransformError::Busy.into())?;
+        assert_eq!(
+            header(&busy, "retry-after"),
+            Some("1"),
+            "busy cover transforms carry Lyra's retry-after"
+        );
+        let answered =
+            super::Fallback::of(text_fallback(200, &[]))?.answer(AppError::not_found("gone"))?;
         assert_eq!(header(&answered, "retry-after"), None);
         Ok(())
     }

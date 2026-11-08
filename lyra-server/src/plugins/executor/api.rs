@@ -181,8 +181,18 @@ pub(super) fn parse_api_response(
     let status = response_status(&table)?;
     let kind = response_kind(&table)?;
     let headers = harmony_serde::optional_string_pairs_field(&table, "headers")?;
-    let path = table.optional_string_field("path")?;
-    let transform = harmony_serde::optional_json_field(&table, "transform")?;
+    let cover = match kind {
+        ApiResponseKind::Cover => Some(crate::plugins::api::options::CoverRequest {
+            cover_id: table
+                .optional_string_field("cover_id")?
+                .ok_or_else(|| anyhow::anyhow!("cover responses require cover_id"))?,
+            options: crate::plugins::api::options::cover_options(
+                &table.get("options")?,
+                "cover options",
+            )?,
+        }),
+        _ => None,
+    };
     let options = match kind {
         ApiResponseKind::StreamTrack
         | ApiResponseKind::DownloadTrack
@@ -219,8 +229,7 @@ pub(super) fn parse_api_response(
         status,
         headers,
         body,
-        path,
-        transform,
+        cover,
         track_id,
         options,
         principal: None,
@@ -308,7 +317,7 @@ fn response_body(kind: ApiResponseKind, table: &luau::Table) -> Result<Option<Ap
             &table.get("size_bytes")?,
         )?)),
         ApiResponseKind::Redirect
-        | ApiResponseKind::File
+        | ApiResponseKind::Cover
         | ApiResponseKind::StreamTrack
         | ApiResponseKind::DownloadTrack
         | ApiResponseKind::HlsPlaylist

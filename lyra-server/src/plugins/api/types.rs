@@ -52,7 +52,7 @@ pub(super) struct ApiRequest;
 #[cfg(feature = "docgen")]
 pub(super) struct ApiContext;
 #[cfg(feature = "docgen")]
-pub(super) struct ImageTransformOptions;
+pub(super) struct CoverServeOptions;
 #[cfg(feature = "docgen")]
 pub(super) struct TrackServeOptions;
 #[cfg(feature = "docgen")]
@@ -166,9 +166,9 @@ impl LuauTypeInfo for ApiContext {
 }
 
 #[cfg(feature = "docgen")]
-impl LuauTypeInfo for ImageTransformOptions {
+impl LuauTypeInfo for CoverServeOptions {
     fn luau_type() -> LuauType {
-        LuauType::literal("ImageTransformOptions")
+        LuauType::literal("CoverServeOptions")
     }
 }
 

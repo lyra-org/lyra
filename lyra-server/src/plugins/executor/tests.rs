@@ -3130,8 +3130,8 @@ fn api_responses_take_only_body_fallbacks_on_served_bodies() -> Result<()> {
                 )
             end, { auth = "public" })
 
-            api.get("/file-fallback", function()
-                return { kind = "stream_track", track_id = "track", fallback = { kind = "file", path = "/x" } }
+            api.get("/cover-fallback", function()
+                return { kind = "stream_track", track_id = "track", fallback = { kind = "cover", cover_id = "x" } }
             end, { auth = "public" })
 
             api.get("/json-with-fallback", function()
@@ -3159,7 +3159,7 @@ fn api_responses_take_only_body_fallbacks_on_served_bodies() -> Result<()> {
     );
     assert!(matches!(fallback.body, Some(ApiResponseBody::Bytes(ref body)) if body == b"refused"));
 
-    let error = dispatch("/file-fallback").expect_err("a file fallback is refused");
+    let error = dispatch("/cover-fallback").expect_err("a cover fallback is refused");
     assert!(
         error
             .to_string()

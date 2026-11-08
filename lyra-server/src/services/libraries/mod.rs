@@ -48,7 +48,6 @@ pub(crate) use orchestrator::{
 };
 pub(crate) use roots::{
     MediaRoots,
-    confine_to_media_roots,
     is_media_file,
 };
 pub(crate) use sync::system_context;

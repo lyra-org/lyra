@@ -18,6 +18,8 @@ local found = covers.get({
 })
 assert(found[ids.a].hash == "a" and found[ids.a].blurhash == "L00000fQfQfQ")
 assert(found[ids.a].owner_id == ids.a and found[ids.a].mime_type == "image/png")
+assert(found[ids.a].id ~= "" and (found[ids.a] :: any).path == nil, "a cover names its id, not its file")
+assert(found[ids.ta].id == found[ids.a].id, "the id names the cover, whichever item shows it")
 assert(found[ids.ta].owner_id == ids.a, "a track shows its release's cover")
 assert(found[ids.singer] == nil, "an artist without a cover doesn't take its release's")
 assert(found[ids.secret] == nil and found[ids.tsecret] == nil, "unseen releases and tracks are absent")

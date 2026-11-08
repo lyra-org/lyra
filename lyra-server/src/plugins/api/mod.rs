@@ -56,8 +56,8 @@ use self::types::{
     ApiWebSocketOptions,
     ApiWebSocketReader,
     ApiWebSocketSender,
+    CoverServeOptions,
     HlsServeOptions,
-    ImageTransformOptions,
     TrackServeOptions,
     TrackStreamOptions,
 };
@@ -560,37 +560,6 @@ impl ApiModule {
     }
 
     #[harmony(
-        name = "response.file",
-        description = "Builds a file response. The path must resolve inside a library root or the configured cover storage root. Its headers may not include the framing headers content-length, content-range, accept-ranges and transfer-encoding, which Lyra sets for the file it serves; a ranged request answers with 206 or 416 whatever its status. When Lyra can't serve the file it fails as for an invalid response, or answers with the fallback `response.with_fallback` attaches.",
-        args(status: Option<u16>, path: String, headers: Option<ApiHeaders>, transform: Option<ImageTransformOptions>),
-        returns(ApiResponse)
-    )]
-    fn response_file(
-        status: Option<Status>,
-        path: String,
-        headers: Option<luau::Value>,
-        transform: Option<luau::Value>,
-    ) -> luau::runtime::Result<luau::OwnedTable> {
-        let status = status.map_or(StatusCode::OK.as_u16(), |status| status.0);
-        let path = path.trim();
-        if path.is_empty() {
-            return Err(crate::plugins::runtime_error("file path must not be empty"));
-        }
-        let headers = optional_value(headers);
-        let transform = optional_value(transform);
-        let mut response = kind_table("file");
-        response.set_field("status", i64::from(status));
-        response.set_field("path", path);
-        if !is_nil(&headers) {
-            response.set_field("headers", headers_to_value(headers)?);
-        }
-        if !is_nil(&transform) {
-            response.set_field("transform", transform);
-        }
-        Ok(response)
-    }
-
-    #[harmony(
         name = "response.stream_track",
         description = "Builds a response that streams the track, delivered as `options` ask. A `status` or `headers` set on the response apply to the audio Lyra serves. Its headers replace Lyra's of the same name, and its cache-control also Lyra's pragma and expires, but may not include the framing headers content-length, content-range, accept-ranges and transfer-encoding. Its status, which must be 200 to 203, replaces the 200 of a whole body; a ranged 206 and a 416 keep theirs. When Lyra can't serve the track it answers with its own error, without the response's status or headers, or with the fallback `response.with_fallback` attaches.",
         args(track_id: String, options: Option<TrackStreamOptions>),
@@ -630,8 +599,28 @@ impl ApiModule {
     }
 
     #[harmony(
+        name = "response.cover",
+        description = "Builds a response that serves the cover with public id `cover_id`, as `options` ask. Lyra serves any cover by its id, as `/api/covers/{id}` does, so the plugin decides which covers a caller may see. Images that can't be transformed safely, such as animated or lossless WebP, are served as stored. A `status` or `headers` set on the response apply to the image Lyra serves. Its headers replace Lyra's of the same name, including Lyra's cache-control, which keeps the image for a year, but may not include the framing headers content-length, content-range, accept-ranges and transfer-encoding. Its status, which must be 200 to 203, replaces the 200 of a whole body; a ranged 206 and a 416 keep theirs. When Lyra can't serve the cover, as when it is missing, its file is gone, or Lyra is too busy to transform it, it answers with its own error, without the response's status or headers, or with the fallback `response.with_fallback` attaches. Raises on invalid options.",
+        args(cover_id: String, options: Option<CoverServeOptions>),
+        returns(ApiResponse)
+    )]
+    fn response_cover(
+        cover_id: String,
+        options: Option<luau::Value>,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let options = optional_value(options);
+        options::cover_options(&options, "cover options")?;
+        let mut response = kind_table(ApiResponseKind::Cover.as_str());
+        response.set_field("cover_id", cover_id);
+        if !is_nil(&options) {
+            response.set_field("options", options);
+        }
+        Ok(response)
+    }
+
+    #[harmony(
         name = "response.with_fallback",
-        description = "Sets `fallback` on `response`, a `file`, `stream_track`, `download_track` or `hls_playlist` response, and returns it: the response then answers with `fallback` when Lyra can't serve it, in place of Lyra's own error. `fallback` must be a `json`, `empty`, `text` or `bytes` response, and is sent as it is, but with Lyra's retry-after when Lyra's error has one, as when it is out of transcoding capacity. A 416 for an unsatisfiable range stays Lyra's, and a failure after the body has started only cuts the body short.",
+        description = "Sets `fallback` on `response`, a `cover`, `stream_track`, `download_track` or `hls_playlist` response, and returns it: the response then answers with `fallback` when Lyra can't serve it, in place of Lyra's own error. `fallback` must be a `json`, `empty`, `text` or `bytes` response, and is sent as it is, but with Lyra's retry-after when Lyra's error has one, as when it is out of transcoding capacity or too busy to transform a cover. A 416 for an unsatisfiable range stays Lyra's, and a failure after the body has started only cuts the body short.",
         args(response: ApiResponse, fallback: ApiResponse),
         returns(ApiResponse)
     )]
@@ -642,7 +631,7 @@ impl ApiModule {
         let kind = table_response_kind(&response, "response")?;
         if !kind.takes_fallback() {
             return Err(crate::plugins::runtime_error(format!(
-                "response.with_fallback takes a file, stream_track, download_track or hls_playlist response, got {kind}"
+                "response.with_fallback takes a cover, stream_track, download_track or hls_playlist response, got {kind}"
             )));
         }
         let fallback_kind = table_response_kind(&fallback, "fallback")?;
@@ -940,6 +929,7 @@ fn support_aliases() -> Vec<TypeAliasDescriptor> {
         ),
     ];
     aliases.extend(options::delivery_aliases());
+    aliases.push(options::CoverFormat::type_alias_descriptor());
     aliases.extend(api_response_aliases());
     aliases.extend([
         JsonValue::type_alias_descriptor(),
@@ -1019,13 +1009,13 @@ fn api_response_aliases() -> Vec<TypeAliasDescriptor> {
         ),
         response_alias("ApiRedirectResponse", "redirect", []),
         response_alias(
-            "ApiFileResponse",
-            "file",
+            "ApiCoverResponse",
+            "cover",
             [
-                field("path", String::luau_type()),
+                field("cover_id", String::luau_type()),
                 field(
-                    "transform",
-                    LuauType::optional(ImageTransformOptions::luau_type()),
+                    "options",
+                    LuauType::optional(CoverServeOptions::luau_type()),
                 ),
                 fallback_field(),
             ],
@@ -1093,7 +1083,7 @@ fn api_response_aliases() -> Vec<TypeAliasDescriptor> {
                 LuauType::literal("ApiTextResponse"),
                 LuauType::literal("ApiBytesResponse"),
                 LuauType::literal("ApiRedirectResponse"),
-                LuauType::literal("ApiFileResponse"),
+                LuauType::literal("ApiCoverResponse"),
                 LuauType::literal("ApiStreamTrackResponse"),
                 LuauType::literal("ApiDownloadTrackResponse"),
                 LuauType::literal("ApiHlsPlaylistResponse"),
@@ -1253,15 +1243,7 @@ fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
                 field("params", ApiPathParams::luau_type()),
             ],
         ),
-        interface(
-            "ImageTransformOptions",
-            [
-                field("format", LuauType::optional(String::luau_type())),
-                field("quality", LuauType::optional(u8::luau_type())),
-                field("max_width", LuauType::optional(u32::luau_type())),
-                field("max_height", LuauType::optional(u32::luau_type())),
-            ],
-        ),
+        options::cover_serve_options_interface(),
         options::track_serve_options_interface(),
         options::track_stream_options_interface(),
         options::hls_serve_options_interface(),

@@ -132,7 +132,7 @@ impl LuauTypeInfo for CoverOptions {
 
 #[harmony_macros::module(
     id = "lyra/covers",
-    description = "Item covers, read from disk by plugins that serve the image themselves, and the manual covers users upload. Releases and artists have their own cover; a track its own, else that of the first of its releases the caller can see, by release id; a playlist its uploaded cover, else, like a genre, the cover of one release in it: a playlist's is picked deterministically from its tracks' releases, a genre's from listens when they are enough, else deterministically. An owner's own cover is its pinned source's, else the first of manual, provider and local. Covers are read from their stored records without looking at the files unless `require_file` is set.",
+    description = "Item covers, which plugins serve with `api.response.cover`, and the manual covers users upload. Releases and artists have their own cover; a track its own, else that of the first of its releases the caller can see, by release id; a playlist its uploaded cover, else, like a genre, the cover of one release in it: a playlist's is picked deterministically from its tracks' releases, a genre's from listens when they are enough, else deterministically. An owner's own cover is its pinned source's, else the first of manual, provider and local. Covers are read from their stored records without looking at the files unless `require_file` is set.",
     docs_feature = "docgen",
     extend = install_limits,
     describe = describe_limits

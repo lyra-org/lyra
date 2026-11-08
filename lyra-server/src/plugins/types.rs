@@ -485,7 +485,7 @@ impl DescribeInterface for EntryInfo {
 /// [`crate::services::covers::ResolvedCover`] as plugins read it.
 #[derive(serde::Serialize)]
 pub(crate) struct CoverInfo {
-    path: String,
+    id: String,
     mime_type: String,
     hash: String,
     blurhash: Option<String>,
@@ -504,7 +504,7 @@ impl CoverInfo {
             .cloned()
             .ok_or_else(|| crate::plugins::runtime_error("a cover's owner has no public id"))?;
         Ok(Self {
-            path: cover.path,
+            id: cover.id,
             mime_type: cover.mime_type,
             hash: cover.hash,
             blurhash: cover.blurhash,
@@ -531,7 +531,11 @@ impl DescribeInterface for CoverInfo {
             name: "Cover",
             description: Some("An item's cover image."),
             fields: vec![
-                field("path", String::luau_type(), Some("The image file on disk.")),
+                field(
+                    "id",
+                    String::luau_type(),
+                    Some("The cover's public id, which `api.response.cover` serves."),
+                ),
                 field("mime_type", String::luau_type(), None),
                 field(
                     "hash",

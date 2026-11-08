@@ -3,8 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-mod content_type;
-mod image;
 mod responses;
 #[cfg(test)]
 mod stream_tests;
@@ -17,10 +15,7 @@ use std::{
     },
     env,
     ffi::OsString,
-    path::{
-        Path as FsPath,
-        PathBuf,
-    },
+    path::PathBuf,
     sync::{
         Arc,
         LazyLock,
@@ -61,7 +56,6 @@ use axum::{
             CONTENT_TYPE,
             HeaderName,
             HeaderValue,
-            RANGE,
         },
     },
     response::{
@@ -80,12 +74,6 @@ use futures::future::BoxFuture;
 use tower::ServiceExt;
 use tower_http::services::ServeDir;
 
-use self::content_type::infer_content_type;
-use self::image::{
-    image_format_mime,
-    parse_image_transform_options,
-    transform_image,
-};
 use self::responses::{
     header_pairs,
     plugin_api_response_to_axum,
@@ -107,7 +95,6 @@ use crate::plugins::api::{
 };
 use crate::routes::request::bearer_credential;
 use crate::routes::{
-    build_ranged_file_body,
     serve_hls_playlist_for_track,
     track_response,
 };

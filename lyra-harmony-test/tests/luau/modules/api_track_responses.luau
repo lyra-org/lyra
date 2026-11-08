@@ -85,7 +85,7 @@ for _, response in
 	{
 		api.response.download_track("track"),
 		api.response.hls_playlist("track"),
-		api.response.file(200, "/music/cover.jpg"),
+		api.response.cover("cover"),
 	} :: { api.ApiResponse }
 do
 	assert(api.response.with_fallback(response, api.response.empty(404)).fallback ~= nil, response.kind)
@@ -96,13 +96,13 @@ end
 
 refuses(
 	"a fallback for a body the plugin builds",
-	"takes a file, stream_track, download_track or hls_playlist response, got text",
+	"takes a cover, stream_track, download_track or hls_playlist response, got text",
 	function()
 		return api.response.with_fallback(refused, api.response.empty(404))
 	end
 )
-refuses("a fallback Lyra serves", "fallback must be a json, empty, text or bytes response, got file", function()
-	return api.response.with_fallback(stream, api.response.file(200, "/music/cover.jpg"))
+refuses("a fallback Lyra serves", "fallback must be a json, empty, text or bytes response, got cover", function()
+	return api.response.with_fallback(stream, api.response.cover("cover"))
 end)
 refuses("a redirect fallback", "got redirect", function()
 	return api.response.with_fallback(stream, api.response.redirect(302, "/elsewhere"))
