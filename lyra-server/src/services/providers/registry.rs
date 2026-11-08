@@ -954,6 +954,42 @@ pub(crate) mod tests {
             "different providers should not share a lock"
         );
     }
+
+    #[tokio::test]
+    async fn a_torn_down_providers_running_call_still_holds_its_lock() {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state().expect("test state");
+        let plugin_id = PluginId::new("demo").expect("valid plugin id");
+        provider_registry()
+            .write()
+            .await
+            .register(plugin_id.clone(), "demo".to_string(), None)
+            .expect("register provider");
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Semaphore::new(0));
+
+        let running = tokio::spawn({
+            let (entered, release) = (entered.clone(), release.clone());
+            async move {
+                with_provider_call("demo", ProviderCallStage::MetadataRefresh, || async {
+                    entered.notify_one();
+                    release.acquire().await.expect("gate").forget();
+                })
+                .await;
+            }
+        });
+        entered.notified().await;
+        teardown_plugin_providers(&plugin_id).await;
+
+        let next = || with_provider_call("demo", ProviderCallStage::MetadataRefresh, || async {});
+        assert!(
+            timeout(Duration::from_millis(50), next()).await.is_err(),
+            "a call after the teardown waits for the one still running"
+        );
+        release.add_permits(1);
+        running.await.expect("running call");
+        next().await;
+    }
 }
 
 impl PluginScopedInner for ProviderRegistry {
@@ -1006,49 +1042,11 @@ impl Drop for ProviderRegistry {
     }
 }
 
+/// The provider's call and sync locks stay: they are keyed by provider id and
+/// belong to the passes holding them, which can outlive the plugin.
 pub(crate) async fn teardown_plugin_providers(plugin_id: &PluginId) {
-    // One generation snapshot for the whole teardown so the captured
-    // provider_ids and the purged locks belong to the same registries.
     let generation = crate::services::STATE.generation();
-    let providers = &generation.providers;
-
-    // Capture the plugin's provider_ids before the registry bucket is
-    // cleared so we can also purge the out-of-band sync_locks entries
-    // they own. Without this, a plugin that crashed mid-sync would see
-    // "sync already in progress" forever after restart — the lock
-    // lives outside the registry and never hears about teardown
-    // otherwise.
-    let owned_provider_ids: Vec<String> = {
-        let registry = providers.registry.read().await;
-        registry
-            .providers
-            .get(plugin_id)
-            .map(|bucket| bucket.keys().cloned().collect())
-            .unwrap_or_default()
-    };
-
-    ScopedRegistry::from_shared(providers.registry.clone())
+    ScopedRegistry::from_shared(generation.providers.registry.clone())
         .teardown(plugin_id)
         .await;
-
-    if !owned_provider_ids.is_empty() {
-        {
-            let mut locks = providers
-                .sync_locks
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            for id in &owned_provider_ids {
-                locks.remove(id);
-            }
-        }
-
-        let mut call_locks = providers.call_locks.lock().await;
-        for id in &owned_provider_ids {
-            call_locks.remove(id);
-        }
-    }
-
-    // library_refresh_locks is keyed by library db_id (not plugin) and
-    // outlives any single plugin — a library's refresh task owns its
-    // own lock lifecycle. Intentionally untouched here.
 }

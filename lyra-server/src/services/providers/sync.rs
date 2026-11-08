@@ -246,6 +246,29 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn a_running_sync_keeps_its_lock_through_its_plugins_teardown() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let plugin_id = crate::services::plugin_scope::PluginId::new("provider_plugin")?;
+        provider_registry().write().await.register(
+            plugin_id.clone(),
+            "provider".to_string(),
+            None,
+        )?;
+
+        let held = ProviderSyncLock::acquire("provider")?;
+        crate::services::providers::teardown_plugin_providers(&plugin_id).await;
+
+        assert!(matches!(
+            ProviderSyncLock::acquire("provider"),
+            Err(ProviderServiceError::SyncAlreadyRunning(_))
+        ));
+        drop(held);
+        drop(ProviderSyncLock::acquire("provider")?);
+        Ok(())
+    }
+
     #[test]
     fn next_sync_due_is_none_when_disabled_and_set_when_enabled() {
         let last_run = Instant::now();
