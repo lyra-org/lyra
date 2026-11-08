@@ -84,12 +84,11 @@ local scheduled_tasks = require("@self/routes/scheduled_tasks")
 local session = require("@self/protocol/session")
 local statics = require("@self/protocol/statics")
 local syncplay = require("@self/routes/syncplay")
+local system_info = require("@self/protocol/system_info")
 local user_data = require("@self/protocol/items/user_data")
 local user_data_routes = require("@self/routes/user_data")
 local websocket = require("@self/protocol/websocket")
 
--- Represents the last known supported Jellyfin server version.
-local SERVER_VERSION = "12.4.0"
 local SERVER_ID = constants.SERVER_ID
 local P = constants.ROUTE_PREFIX
 
@@ -103,15 +102,7 @@ type ResolvedAuth = auth.ResolvedAuth
 type PlaybackPayload = { [string]: string | number | boolean? }
 type PublicUser = users.PublicUser
 
-type PublicSystemInfo = {
-	ServerName: string,
-	Version: string,
-	ProductName: string,
-	Id: string,
-	LocalAddress: string,
-	PublicAddress: string?,
-	StartupWizardCompleted: boolean,
-}
+type PublicSystemInfo = system_info.PublicSystemInfo
 
 type SystemInfo = PublicSystemInfo & {
 	HasPendingRestart: boolean,
@@ -368,21 +359,6 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 	end
 end, { auth = "public" })
 
-local function public_system_info<T>(extra: T): T & PublicSystemInfo
-	local server_info = server.info()
-	local public_address: string? = if server_info.published_url then `{server_info.published_url}{P}` else nil
-	local info: T & PublicSystemInfo = extra
-	info.ServerName = "Lyra"
-	info.Version = SERVER_VERSION
-	-- Official Jellyfin SDK server discovery rejects servers whose product name is not "Jellyfin Server".
-	info.ProductName = "Jellyfin Server"
-	info.Id = SERVER_ID
-	info.LocalAddress = `http://{server_info.hostname}:{server_info.port}{P}`
-	info.PublicAddress = public_address
-	info.StartupWizardCompleted = true
-	return info
-end
-
 local AUTH_PROVIDER_ID = "Lyra"
 
 local function find_public_user_by_id(user_id: string): PublicUser?
@@ -609,8 +585,8 @@ api.get(P .. "/Auth/PasswordResetProviders", function(ctx: ApiContext)
 	}
 	return api.response.json(200, providers)
 end, { auth = "public", case_insensitive = true })
-api.get(P .. "/System/Info/Public", function(): ApiResponse
-	return api.response.json(200, public_system_info({}))
+api.get(P .. "/System/Info/Public", function(ctx: ApiContext): ApiResponse
+	return api.response.json(200, system_info.public_system_info(server.info(), ctx, {}))
 end, { auth = "public", case_insensitive = true })
 api.get(P .. "/System/Info", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
@@ -620,7 +596,7 @@ api.get(P .. "/System/Info", function(ctx: ApiContext)
 
 	return api.response.json(
 		200,
-		public_system_info({
+		system_info.public_system_info(server.info(), ctx, {
 			HasPendingRestart = false,
 			IsShuttingDown = false,
 			SupportsLibraryMonitor = false,
