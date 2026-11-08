@@ -21,7 +21,6 @@ fn default_server_info() -> crate::plugins::server::ServerInfo {
         id: "raw-runtime".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         commit_hash: "test".to_string(),
-        hostname: "localhost".to_string(),
         port: 0,
         published_url: None,
         setup: crate::services::setup::Status {
@@ -1196,7 +1195,6 @@ fn plugin_executor_reads_server_info_from_vm_context() -> Result<()> {
             id: "server-1".to_string(),
             version: "9.8.7".to_string(),
             commit_hash: "abc123".to_string(),
-            hostname: "test-host".to_string(),
             port: 3210,
             published_url: Some("https://lyra.example".to_string()),
             setup: crate::services::setup::Status {

@@ -3,8 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::sync::LazyLock;
-
 use harmony_luau as luau;
 use harmony_luau::{
     DescribeInterface,
@@ -17,15 +15,11 @@ use serde::Serialize;
 
 use crate::services::STATE;
 
-static HOSTNAME: LazyLock<String> =
-    LazyLock::new(|| gethostname::gethostname().to_string_lossy().into_owned());
-
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct ServerInfo {
     pub(crate) id: String,
     pub(crate) version: String,
     pub(crate) commit_hash: String,
-    pub(crate) hostname: String,
     pub(crate) port: u16,
     pub(crate) published_url: Option<String>,
     pub(crate) setup: crate::services::setup::Status,
@@ -64,7 +58,6 @@ pub(crate) async fn load_server_info() -> anyhow::Result<ServerInfo> {
         id: info.id,
         version: env!("CARGO_PKG_VERSION").to_string(),
         commit_hash: STATE.boot.get().build.commit_hash.clone(),
-        hostname: HOSTNAME.clone(),
         port: STATE.boot.get().port,
         published_url: config.published_url.clone(),
         setup,
@@ -84,11 +77,10 @@ impl ServerInfoModuleStore {
     }
 }
 fn server_info_table(info: &ServerInfo) -> luau::OwnedTable {
-    let mut table = luau::OwnedTable::with_capacity(0, 7);
+    let mut table = luau::OwnedTable::with_capacity(0, 6);
     table.set_field("id", info.id.clone());
     table.set_field("version", info.version.clone());
     table.set_field("commit_hash", info.commit_hash.clone());
-    table.set_field("hostname", info.hostname.clone());
     table.set_field("port", i64::from(info.port));
     table.set_field("published_url", info.published_url.clone());
     let mut setup = luau::OwnedTable::with_capacity(0, 2);
@@ -123,11 +115,6 @@ impl DescribeInterface for ServerInfo {
             },
             FieldDescriptor {
                 name: "commit_hash",
-                ty: String::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "hostname",
                 ty: String::luau_type(),
                 description: None,
             },

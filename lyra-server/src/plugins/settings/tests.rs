@@ -24,7 +24,6 @@ fn server_info() -> crate::plugins::server::ServerInfo {
         id: "settings-test".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         commit_hash: "test".to_string(),
-        hostname: "localhost".to_string(),
         port: 0,
         published_url: None,
         setup: crate::services::setup::Status {

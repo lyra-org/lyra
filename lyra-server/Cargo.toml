@@ -38,7 +38,6 @@ bytes = "1"
 base64 = { workspace = true }
 matchit = "0.8" # pinned to axum's transitive version to avoid a duplicate
 multimap = "0.10"
-gethostname = "1"
 nanoid = "0.4"
 percent-encoding = { workspace = true }
 rand = "0.9"
