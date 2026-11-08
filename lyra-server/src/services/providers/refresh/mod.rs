@@ -157,11 +157,12 @@ async fn deduplicate_release_scope(library_db_id: DbId, providers_called: &[Stri
     deduplicate_release_scope_locked(&mut db_write, library_db_id, &provider_scope);
 }
 
+/// Returns whether a release may have been merged away, which a failure partway also leaves open.
 fn deduplicate_release_scope_locked(
     db_write: &mut DbAny,
     library_db_id: DbId,
     provider_scope: &HashSet<String>,
-) {
+) -> bool {
     let (declared_release_ids, unique_track_id_pairs) = {
         let registry = futures::executor::block_on(provider_registry().read_owned());
         (
@@ -170,19 +171,23 @@ fn deduplicate_release_scope_locked(
         )
     };
     if !declared_release_ids.has_unique() {
-        return;
+        return false;
     }
-    if let Err(err) = deduplicate_releases_by_external_id(
+    match deduplicate_releases_by_external_id(
         db_write,
         library_db_id,
         &declared_release_ids,
         &unique_track_id_pairs,
         Some(provider_scope),
     ) {
-        tracing::warn!(
-            library_db_id = library_db_id.0,
-            error = %format_args!("{err:#}"),
-            "release deduplication by external id failed during metadata refresh callback"
-        );
+        Ok(merged) => merged > 0,
+        Err(err) => {
+            tracing::warn!(
+                library_db_id = library_db_id.0,
+                error = %format_args!("{err:#}"),
+                "release deduplication by external id failed during metadata refresh callback"
+            );
+            true
+        }
     }
 }

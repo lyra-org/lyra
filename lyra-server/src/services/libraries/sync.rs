@@ -2385,6 +2385,62 @@ FILE "album.flac" WAVE
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn a_merge_between_providers_refreshes_contexts_the_first_left_alone()
+    -> anyhow::Result<()> {
+        const PROVIDERS: &str = r#"
+            local metadata = require("@lyra/metadata")
+            local ET = metadata.EntityType
+            local first = metadata.Provider.new("first")
+            first:id({ id_type = "artist_id", entity = ET.Artist, unique = true, scheme = "first:artist" })
+            first:refresh(ET.Release, function(ctx)
+                if ctx.release_title == "Variant Unmatched" then
+                    error("no match")
+                end
+                local layer = first:layer(ctx.artists[1].id)
+                layer:set_id("artist_id", "same-artist")
+                layer:save()
+            end)
+            local second = metadata.Provider.new("second")
+            second:refresh(ET.Release, function(ctx)
+                if ctx.artists[1].artist_name ~= "Canonical Spelling" then
+                    error("stale context: " .. ctx.artists[1].artist_name)
+                end
+            end)
+        "#;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        let (root, library) = empty_library("merge-between-providers").await?;
+        canonical_and_variant_files(&root, &["Variant Matched", "Variant Unmatched"])?;
+        let (runtime, _plugins) =
+            start_plugin("provider-pair", &["lyra.metadata"], PROVIDERS).await?;
+
+        let progress = super::super::orchestrator::begin_test_run(&library).await;
+        sync_library_pipeline(
+            &STATE.db.get(),
+            &library,
+            LibrarySyncOptions {
+                releases: SyncReleases::All,
+                covers: CoverSyncOptions::SKIP,
+            },
+            progress.clone(),
+        )
+        .await?;
+        let run = super::super::orchestrator::get_sync_run(progress.run_id())
+            .await?
+            .expect("run");
+        super::super::orchestrator::end_test_run(&progress).await;
+
+        assert_eq!(
+            run.progress.failed_units, 1,
+            "only the first provider's own failure; the second read the artist the merge left"
+        );
+        assert_eq!(artist_names().await?, ["Canonical Spelling"]);
+        runtime.shutdown().await?;
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn sync_of_every_release_refreshes_each_once() -> anyhow::Result<()> {
         use crate::services::{
             CoverSyncOptions,

@@ -271,7 +271,7 @@ async fn refresh_locked_library(
     let mut refreshed_releases = HashSet::new();
     let mut context_cache: HashMap<DbId, serde_json::Value> = HashMap::new();
     // Every release's context is built on its first pass and rebuilt after a provider refreshed
-    // it.
+    // it, or a merge may have taken something it names.
     let mut dirty_releases: HashSet<DbId> = releases
         .iter()
         .filter_map(|release| release.db_id.clone().map(Into::<DbId>::into))
@@ -356,7 +356,14 @@ async fn refresh_locked_library(
             continue;
         }
 
-        deduplicate_after_providers(&HashSet::from([provider_id.clone()]), library_db_id).await;
+        if deduplicate_after_providers(&HashSet::from([provider_id.clone()]), library_db_id).await {
+            // A context cached for a release this pass left alone may name what was merged away.
+            dirty_releases.extend(
+                releases
+                    .iter()
+                    .filter_map(|release| release.db_id.clone().map(Into::<DbId>::into)),
+            );
+        }
     }
 
     if let Err(err) = progress.check_cancelled() {
@@ -423,24 +430,30 @@ async fn refresh_locked_library(
 }
 
 /// Merges what the providers' refreshes made duplicates of, unless none of them refreshed
-/// anything.
+/// anything. Returns whether anything may have been merged away, which a failure partway also
+/// leaves open.
 pub(crate) async fn deduplicate_after_providers(
     provider_ids: &HashSet<String>,
     library_db_id: DbId,
-) {
+) -> bool {
     if provider_ids.is_empty() {
-        return;
+        return false;
     }
     let declared_artist_ids = declared_artist_ids().await;
     let mut db_write = STATE.db.write().await;
-    if let Err(err) = deduplicate_artists_by_external_id(&mut db_write, &declared_artist_ids) {
-        tracing::warn!(
-            ?provider_ids,
-            error = %format_args!("{err:#}"),
-            "artist deduplication failed during metadata refresh"
-        );
-    }
-    deduplicate_release_scope_locked(&mut db_write, library_db_id, provider_ids);
+    let artists_merged =
+        match deduplicate_artists_by_external_id(&mut db_write, &declared_artist_ids) {
+            Ok(merged) => merged > 0,
+            Err(err) => {
+                tracing::warn!(
+                    ?provider_ids,
+                    error = %format_args!("{err:#}"),
+                    "artist deduplication failed during metadata refresh"
+                );
+                true
+            }
+        };
+    deduplicate_release_scope_locked(&mut db_write, library_db_id, provider_ids) || artists_merged
 }
 
 /// One unit of work: asks a provider about a release, unless its sync filter turns the release
