@@ -15,6 +15,10 @@ local HASH_LENGTH = 8
 
 local module = {}
 
+local function id_of(cover: Cover): string
+	return `{cover.owner_id}.{string.sub(cover.hash, 1, HASH_LENGTH)}`
+end
+
 -- The coverArt id of each item the caller can see that has a cover, keyed by item id. Reads the
 -- stored records only, so it never touches the disk.
 function module.ids(item_ids: { string }): { [string]: string }
@@ -23,7 +27,7 @@ function module.ids(item_ids: { string }): { [string]: string }
 	end
 	local ids: { [string]: string } = {}
 	for item_id, cover in covers.get(item_ids) do
-		ids[item_id] = `{cover.owner_id}.{string.sub(cover.hash, 1, HASH_LENGTH)}`
+		ids[item_id] = id_of(cover)
 	end
 	return ids
 end
@@ -36,6 +40,12 @@ function module.find(cover_art_id: string): Cover?
 		return nil
 	end
 	return covers.get({ item_id }, { require_file = true })[item_id]
+end
+
+-- Whether `cover_art_id` is the id listings give `cover`, which names its image for good. A bare
+-- item id, or one with an older image's hash, names whatever image the item shows.
+function module.names_current(cover_art_id: string, cover: Cover): boolean
+	return cover_art_id == id_of(cover)
 end
 
 return module

@@ -279,7 +279,8 @@ module.methods = {
 	end,
 
 	-- The image as stored, or scaled down to fit `size` on both sides. A size of 0 or less asks
-	-- for the stored image.
+	-- for the stored image. An id naming the current image keeps the host's lasting cache; any
+	-- other id is revalidated by the image's hash, as the image it names can change.
 	getCoverArt = function(req: Request): ApiResponse
 		local id = request.required(req.params, "id")
 		local size = request.int(req.params, "size")
@@ -287,10 +288,19 @@ module.methods = {
 		if not cover then
 			return request.not_found("Cover art")
 		end
-		if size and size > 0 then
-			return or_failed(api.response.cover(cover.id, { max_width = size, max_height = size }), COVER_FAILED)
+		local served = if size and size > 0
+			then api.response.cover(cover.id, { max_width = size, max_height = size })
+			else api.response.cover(cover.id)
+		if not cover_art.names_current(id, cover) then
+			local etag = `"{cover.hash}"`
+			local headers = { ["cache-control"] = "no-cache", etag = etag }
+			local if_none_match = req.ctx.request.headers["if-none-match"]
+			if if_none_match == etag or if_none_match == cover.hash then
+				return api.response.empty(304, headers)
+			end
+			served.headers = headers
 		end
-		return or_failed(api.response.cover(cover.id), COVER_FAILED)
+		return or_failed(served, COVER_FAILED)
 	end,
 
 	-- Every lyrics entry the caller sees, in rank order.

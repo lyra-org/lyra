@@ -70,6 +70,32 @@ assert(resized.fallback ~= nil, "a resized image fails as the stored one does")
 local huge = cover_art({ id = album_art, size = "99999999999" }).options
 assert(huge.max_width == 99999999999, `the host caps a size past its bound, got {huge.max_width}`)
 
+-- The id listings give names its image for good, and keeps the host's lasting cache. A bare item
+-- id, or one with an older image's hash, names whatever the item shows now, so it is revalidated.
+local etag = `"{cover.hash}"`
+for _, mutable in { ids.album, ids.a1, `{ids.album}.00000000` } do
+	local revalidated = cover_art({ id = mutable, size = "300" })
+	assert(revalidated.kind == "cover" and revalidated.cover_id == cover.id, mutable)
+	assert(revalidated.headers["cache-control"] == "no-cache", revalidated.headers["cache-control"])
+	assert(revalidated.headers.etag == etag, revalidated.headers.etag)
+	assert(revalidated.fallback ~= nil, "it fails as the lasting one does")
+	local unchanged = call.raw(
+		"getCoverArt",
+		{ apiKey = key, id = mutable },
+		{ headers = { ["if-none-match"] = etag } }
+	)
+	assert(unchanged.kind == "empty" and unchanged.status == 304, `{mutable} answered {unchanged.kind}`)
+	assert(unchanged.headers.etag == etag and unchanged.headers["cache-control"] == "no-cache")
+	local changed = call.raw(
+		"getCoverArt",
+		{ apiKey = key, id = mutable },
+		{ headers = { ["if-none-match"] = '"older"' } }
+	)
+	assert(changed.kind == "cover", "another image is sent again")
+end
+local lasting = call.raw("getCoverArt", { apiKey = key, id = album_art }, { headers = { ["if-none-match"] = etag } })
+assert(lasting.kind == "cover" and lasting.headers == nil, "the current id leaves caching to the host")
+
 -- A bare item id, or one with a stale hash, names the item's current cover.
 assert(cover_art({ id = ids.album }).cover_id == cover.id, "an album id")
 assert(cover_art({ id = ids.a1 }).cover_id == cover.id, "a song id shows its album's")
