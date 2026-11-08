@@ -73,6 +73,7 @@ use crate::services::{
     providers::{
         LibraryRefreshOptions,
         ListedArtist,
+        deduplicate_after_providers,
         refresh_library_metadata_after_others,
         refresh_release_metadata_for_scan,
         release_refresh_provider_ids,
@@ -453,10 +454,11 @@ pub(crate) async fn sync_library_pipeline(
     let observation = sync_entries_incremental(db, library, progress.clone()).await?;
     mark_missing_entries_for_scan(db, library, &observation, progress.clone()).await?;
     progress.check_cancelled()?;
-    let plans = process_pending_metadata(db, library, progress.clone()).await?;
+    let mut plans = process_pending_metadata(db, library, progress.clone()).await?;
     let stages = ReleaseArtifactStages::for_sync(options);
+    let mut provider_count = 0;
     if stages.provider_refresh {
-        let provider_count = release_refresh_provider_ids(None, false).await?.len() as u64;
+        provider_count = release_refresh_provider_ids(None, false).await?.len() as u64;
         progress
             .add_stage_total(
                 SyncStageKey::ProviderRefresh,
@@ -499,38 +501,55 @@ pub(crate) async fn sync_library_pipeline(
     if options.releases == SyncReleases::All {
         refresh_every_release(library_db_id, options.covers, progress.clone()).await?;
     }
-    let changed_releases = plans
-        .iter()
-        .map(|plan| (plan.release_id, plan.release_public_id.clone()))
-        .collect::<Vec<_>>();
-    futures::stream::iter(plans)
-        .for_each_concurrent(MAX_CONCURRENT_ALBUM_PIPELINE, |plan| {
-            let db = db.clone();
-            let library_path = library.path.clone();
+    // Each chunk's refreshes finish before anything merges, so its artifacts run on what the merge
+    // left and later work reads fresh contexts. Chunks rather than the whole scan at once, so a
+    // cancelled scan keeps the releases it finished.
+    for chunk in plans.chunks_mut(MAX_CONCURRENT_ALBUM_PIPELINE) {
+        if progress.is_cancelled() {
+            break;
+        }
+        follow_merged_releases(db, chunk).await?;
+        if stages.provider_refresh {
+            let refreshed_by = refresh_changed_releases(
+                db,
+                library_db_id,
+                &library.path,
+                chunk,
+                provider_count,
+                &progress,
+            )
+            .await;
+            deduplicate_after_providers(&refreshed_by, library_db_id).await;
+            follow_merged_releases(db, chunk).await?;
+        }
+        let mut first_on_release = HashSet::new();
+        futures::future::join_all(chunk.iter().map(|plan| {
+            let covers = first_on_release.insert(plan.release_id);
             let progress = progress.clone();
             async move {
                 #[cfg(test)]
-                tests::before_release_artifacts(&plan).await;
+                tests::before_release_artifacts(plan).await;
                 if process_release_artifacts(
-                    &db,
+                    db,
                     library_db_id,
-                    &library_path,
-                    &plan,
+                    &library.path,
+                    plan,
                     stages,
+                    covers,
                     progress,
                 )
                 .await
                 {
-                    mark_entries_synced(&db, library_db_id, &plan.entry_ids).await;
+                    mark_entries_synced(db, library_db_id, &plan.entry_ids).await;
                 }
             }
-        })
+        }))
         .await;
+    }
     progress.check_cancelled()?;
     refresh_gone_covers(db, library, library_db_id).await;
     if !stages.covers.skips() {
-        sync_changed_artist_covers(db, library, &changed_releases, stages.covers, &progress)
-            .await?;
+        sync_changed_artist_covers(db, library, &plans, stages.covers, &progress).await?;
     }
     purge_expired_missing(db, library, &observation, &progress).await?;
     cleanup_metadata_orphans(db, library_db_id, progress).await?;
@@ -629,28 +648,21 @@ impl ReleaseArtifactStages {
     }
 }
 
-/// Fetches the covers of the artists credited on the changed releases or on their tracks, after
-/// the releases' provider refreshes stored what they found. A release gone meanwhile has no
-/// artists to pass; artists that can't be listed are none to pass, so the totals still settle.
+/// Fetches the covers of the artists credited on the changed releases, or the releases they were
+/// merged into, or on their tracks, after the releases' provider refreshes stored what they found.
+/// A release gone meanwhile has no artists to pass; artists that can't be listed are none to
+/// pass, so the totals still settle.
 async fn sync_changed_artist_covers(
     db: &DbAsync,
     library: &Library,
-    releases: &[(DbId, Option<String>)],
+    plans: &[ReleaseArtifactPlan],
     options: CoverSyncOptions,
     progress: &SyncRunProgress,
 ) -> Result<(), SyncRunControlError> {
     let artists = {
         let db_read = db.read().await;
-        let current = releases
-            .iter()
-            .filter(|(release_id, public_id)| {
-                public_id.is_some()
-                    && lyra_db::lookup::find_id_by_db_id(&db_read, *release_id)
-                        .is_ok_and(|found| found == *public_id)
-            })
-            .map(|(release_id, _)| *release_id)
-            .collect::<Vec<_>>();
-        lyra_db::artists::get_by_releases(&db_read, &current)
+        current_release_ids(&*db_read, plans)
+            .and_then(|current| lyra_db::artists::get_by_releases(&db_read, &current))
     };
     let artists = match artists {
         Ok(artists) => ListedArtist::list(artists),
@@ -1022,6 +1034,8 @@ struct ReleaseArtifactPlan {
     track_ids: Vec<DbId>,
     /// The entries marked synced once the release's artifacts finish.
     entry_ids: Vec<DbId>,
+    /// Neither the release nor any of its tracks' releases remain.
+    gone: bool,
 }
 
 struct ReleaseArtifactContext<'a> {
@@ -1035,7 +1049,26 @@ struct ReleaseArtifactContext<'a> {
     progress: SyncRunProgress,
 }
 
-impl ReleaseArtifactContext<'_> {
+impl<'a> ReleaseArtifactContext<'a> {
+    fn new(
+        db: &'a DbAsync,
+        library_db_id: DbId,
+        library_path: &'a Path,
+        plan: &ReleaseArtifactPlan,
+        progress: SyncRunProgress,
+    ) -> Self {
+        Self {
+            db,
+            library_db_id,
+            library_path,
+            release_id: plan.release_id,
+            release_public_id: plan.release_public_id.clone(),
+            release_title: plan.release_title.clone(),
+            run_id: progress.run_id().to_string(),
+            progress,
+        }
+    }
+
     fn details(&self, stage: &'static str) -> SyncWorkDetails {
         SyncWorkDetails::release(
             stage,
@@ -1065,53 +1098,186 @@ async fn release_artifact_plan(
         release_title: Some(release.release_title),
         track_ids,
         entry_ids,
+        gone: false,
     }))
 }
 
-/// Runs a release's artifact stages; false when its entries need another sync: its local cover
-/// failed to persist or the run was cancelled. Provider, lyrics and provider cover failures are
-/// failed units that `/refresh` retries.
+/// The release the plan's tracks are on now: its own, unless a merge took it and agdb gave its id
+/// to another node, then the one the tracks moved to.
+fn current_release(
+    db: &impl lyra_db::DbAccess,
+    plan: &ReleaseArtifactPlan,
+) -> anyhow::Result<Option<lyra_db::Release>> {
+    if plan.release_public_id.is_some()
+        && lyra_db::lookup::find_id_by_db_id(db, plan.release_id)? == plan.release_public_id
+    {
+        return lyra_db::releases::get_by_id(db, plan.release_id);
+    }
+    for &track_id in &plan.track_ids {
+        if let Some(release) = lyra_db::releases::get_by_track(db, track_id)?
+            .into_iter()
+            .next()
+        {
+            return Ok(Some(release));
+        }
+    }
+    Ok(None)
+}
+
+fn current_release_ids(
+    db: &impl lyra_db::DbAccess,
+    plans: &[ReleaseArtifactPlan],
+) -> anyhow::Result<Vec<DbId>> {
+    let mut release_ids = HashSet::new();
+    for plan in plans {
+        if let Some(release) = current_release(db, plan)? {
+            release_ids.extend(release.db_id.map(DbId::from));
+        }
+    }
+    Ok(release_ids.into_iter().collect())
+}
+
+/// Points the plans at the releases their tracks are on now.
+async fn follow_merged_releases(
+    db: &DbAsync,
+    plans: &mut [ReleaseArtifactPlan],
+) -> anyhow::Result<()> {
+    let db_read = db.read().await;
+    for plan in plans.iter_mut().filter(|plan| !plan.gone) {
+        match current_release(&*db_read, plan)? {
+            Some(release) => {
+                plan.release_id = release.db_id.map_or(plan.release_id, Into::into);
+                plan.release_public_id = Some(release.id);
+                plan.release_title = Some(release.release_title);
+            }
+            None => plan.gone = true,
+        }
+    }
+    Ok(())
+}
+
+/// Settles `units` of `stage` that won't run.
+async fn skip_units(
+    progress: &SyncRunProgress,
+    stage: SyncStageKey,
+    units: u64,
+    reason: &'static str,
+) {
+    for _ in 0..units {
+        let work_id = progress
+            .start_work(stage, SyncWorkDetails::new(reason))
+            .await;
+        progress.skip_work(work_id, stage, reason).await;
+    }
+}
+
+/// Refreshes the releases from every enabled provider, returning the providers that refreshed any
+/// of them.
+async fn refresh_changed_releases(
+    db: &DbAsync,
+    library_db_id: DbId,
+    library_path: &Path,
+    plans: &[ReleaseArtifactPlan],
+    provider_count: u64,
+    progress: &SyncRunProgress,
+) -> HashSet<String> {
+    futures::future::join_all(plans.iter().map(|plan| async move {
+        #[cfg(test)]
+        tests::before_release_refresh(plan).await;
+        if plan.gone {
+            skip_units(
+                progress,
+                SyncStageKey::ProviderRefresh,
+                provider_count,
+                "release_gone",
+            )
+            .await;
+            return Vec::new();
+        }
+        if progress.is_cancelled() {
+            return Vec::new();
+        }
+        refresh_changed_release(&ReleaseArtifactContext::new(
+            db,
+            library_db_id,
+            library_path,
+            plan,
+            progress.clone(),
+        ))
+        .await
+    }))
+    .await
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+/// Runs a release's artifact stages, its cover ones only when `covers` says no other plan of the
+/// same release does; false when its entries need another sync: its local cover failed to persist
+/// or the run was cancelled. Lyrics and provider cover failures are failed units that `/refresh`
+/// retries, as provider failures are.
 async fn process_release_artifacts(
     db: &DbAsync,
     library_db_id: DbId,
     library_path: &Path,
     plan: &ReleaseArtifactPlan,
     stages: ReleaseArtifactStages,
+    covers: bool,
     progress: SyncRunProgress,
 ) -> bool {
-    let run_id = progress.run_id().to_string();
-    let release_id = plan.release_id;
-    let release_public_id = plan.release_public_id.clone();
-    let release_title = plan.release_title.clone();
-    let context = ReleaseArtifactContext {
-        db,
-        library_db_id,
-        library_path,
-        release_id,
-        release_public_id: release_public_id.clone(),
-        release_title: release_title.clone(),
-        run_id: run_id.clone(),
-        progress: progress.clone(),
-    };
     if progress.is_cancelled() {
         return false;
     }
-    if stages.provider_refresh {
-        refresh_changed_release(&context).await;
-        if progress.is_cancelled() {
-            return false;
-        }
+    if plan.gone {
+        let lyrics_units = plan.track_ids.len() as u64;
+        skip_units(
+            &progress,
+            SyncStageKey::Lyrics,
+            lyrics_units,
+            "release_gone",
+        )
+        .await;
+        skip_cover_units(&progress, stages, "release_gone").await;
+        return true;
     }
+    let run_id = progress.run_id().to_string();
+    let context =
+        ReleaseArtifactContext::new(db, library_db_id, library_path, plan, progress.clone());
 
-    let local_cover = sync_local_release_cover_metadata(&context).await;
-    dispatch_release_lyrics(library_db_id, release_id, plan, run_id, progress.clone()).await;
-    if !stages.covers.skips() {
+    let local_cover = if covers {
+        sync_local_release_cover_metadata(&context).await
+    } else {
+        Ok(())
+    };
+    dispatch_release_lyrics(
+        library_db_id,
+        plan.release_id,
+        plan,
+        run_id,
+        progress.clone(),
+    )
+    .await;
+    if !covers {
+        skip_cover_units(&progress, stages, "release_merged").await;
+    } else if !stages.covers.skips() {
         sync_provider_release_cover(&context, stages.covers).await;
     }
     local_cover.is_ok() && !progress.is_cancelled()
 }
 
-async fn refresh_changed_release(context: &ReleaseArtifactContext<'_>) {
+/// Settles the local cover unit of a release and its provider cover unit, when the run has them.
+async fn skip_cover_units(
+    progress: &SyncRunProgress,
+    stages: ReleaseArtifactStages,
+    reason: &'static str,
+) {
+    skip_units(progress, SyncStageKey::LocalCoverMetadata, 1, reason).await;
+    if !stages.covers.skips() {
+        skip_units(progress, SyncStageKey::ProviderCover, 1, reason).await;
+    }
+}
+
+async fn refresh_changed_release(context: &ReleaseArtifactContext<'_>) -> Vec<String> {
     let library_db_id = context.library_db_id;
     let release_id = context.release_id;
     let run_id = &context.run_id;
@@ -1122,7 +1288,7 @@ async fn refresh_changed_release(context: &ReleaseArtifactContext<'_>) {
         stage = "provider_refresh",
         "scan release stage started"
     );
-    if let Err(err) = refresh_release_metadata_for_scan(
+    match refresh_release_metadata_for_scan(
         library_db_id,
         release_id,
         context.progress.clone(),
@@ -1131,14 +1297,18 @@ async fn refresh_changed_release(context: &ReleaseArtifactContext<'_>) {
     )
     .await
     {
-        tracing::warn!(
-            library_db_id = library_db_id.0,
-            run_id = %run_id,
-            release_db_id = release_id.0,
-            stage = "provider_refresh",
-            error = %format_args!("{:#}", anyhow::Error::from(err)),
-            "scan release provider refresh failed"
-        );
+        Ok(refreshed_by) => refreshed_by,
+        Err(err) => {
+            tracing::warn!(
+                library_db_id = library_db_id.0,
+                run_id = %run_id,
+                release_db_id = release_id.0,
+                stage = "provider_refresh",
+                error = %format_args!("{:#}", anyhow::Error::from(err)),
+                "scan release provider refresh failed"
+            );
+            Vec::new()
+        }
     }
 }
 
@@ -1653,6 +1823,7 @@ FILE "album.flac" WAVE
     struct Hooks {
         reject_album: Option<&'static str>,
         applied: std::sync::Mutex<Vec<String>>,
+        before_refresh: Option<ArtifactGate>,
         before_artifacts: Option<ArtifactGate>,
         before_parse: Option<Gate<PathBuf>>,
         planned: std::sync::Mutex<Vec<(Vec<DbId>, Vec<DbId>)>>,
@@ -1696,6 +1867,16 @@ FILE "album.flac" WAVE
                     .push((plan.track_ids.clone(), plan.entry_ids.clone()));
                 hooks.before_artifacts.clone()
             })
+            .ok()
+            .flatten();
+        if let Some(gate) = gate {
+            gate(plan.release_title.clone()).await;
+        }
+    }
+
+    pub(super) async fn before_release_refresh(plan: &ReleaseArtifactPlan) {
+        let gate = HOOKS
+            .try_with(|hooks| hooks.before_refresh.clone())
             .ok()
             .flatten();
         if let Some(gate) = gate {
@@ -1834,6 +2015,373 @@ FILE "album.flac" WAVE
             .collect();
         ids.sort();
         ids
+    }
+
+    fn artist_file(path: &Path, album: &str, artist: &str, track: u32) -> anyhow::Result<()> {
+        use lofty::{
+            config::WriteOptions,
+            prelude::*,
+            tag::ItemKey,
+        };
+        album_file(path, album, track)?;
+        let mut tagged = lofty::read_from_path(path)?;
+        let tag = tagged.primary_tag_mut().expect("tag");
+        tag.set_artist(artist.to_string());
+        tag.set_title(format!("{album} {track}"));
+        tag.insert_text(ItemKey::AlbumArtist, artist.to_string());
+        tag.save_to_path(path, WriteOptions::default())?;
+        Ok(())
+    }
+
+    async fn wait_for_active_refreshes(run_id: &str, units: u64) {
+        loop {
+            let run = super::super::orchestrator::get_sync_run(run_id)
+                .await
+                .expect("run")
+                .expect("run");
+            let refreshing = run
+                .current
+                .is_some_and(|current| matches!(current.stage, SyncStageKey::ProviderRefresh));
+            if refreshing && run.active_units >= units {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    }
+
+    /// Runs `init` as a plugin, its entrypoint having registered whatever providers it needs.
+    async fn start_plugin(
+        id: &str,
+        scopes: &[&str],
+        init: &str,
+    ) -> anyhow::Result<(
+        crate::plugins::executor::PluginExecutorHandle,
+        tempfile::TempDir,
+    )> {
+        crate::plugins::testing::start_runtime().await?;
+        let plugins = tempfile::tempdir()?;
+        crate::plugins::testing::write_plugin(&plugins.path().join(id), id, scopes, init)?;
+        let server_info = crate::plugins::server::load_server_info().await?;
+        let auth = crate::plugins::auth::AuthCapabilities::from_config(&STATE.config().auth);
+        let (runtime, errors) =
+            crate::plugins::executor::PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
+                plugins.path().to_path_buf(),
+                server_info,
+                auth,
+                STATE.db.get(),
+                Vec::new(),
+                Some(STATE.settings.clone()),
+            )?;
+        assert!(errors.is_empty(), "{errors:?}");
+        runtime.exec_plugin(id).await?;
+        crate::plugins::STATE.publish_runtime(runtime.clone());
+        Ok((runtime, plugins))
+    }
+
+    /// Lets `Canonical Spelling` hold the most references, so it survives a merge with `Variant
+    /// Spelling`, and returns the path of every file of the variant's albums.
+    fn canonical_and_variant_files(root: &Path, variants: &[&str]) -> anyhow::Result<Vec<PathBuf>> {
+        for track in 1..=8 {
+            artist_file(
+                &root.join(format!("Canonical/{track:02}.flac")),
+                "Canonical",
+                "Canonical Spelling",
+                track,
+            )?;
+        }
+        let mut files = Vec::new();
+        for album in variants {
+            let file = root.join(format!("Variant/{album}/01.flac"));
+            artist_file(&file, album, "Variant Spelling", 1)?;
+            files.push(file);
+        }
+        Ok(files)
+    }
+
+    async fn artist_names() -> anyhow::Result<Vec<String>> {
+        let db = STATE.db.read().await;
+        Ok(roots::members::<lyra_db::Artist>(&*db, Root::Artists)?
+            .into_iter()
+            .map(|artist| artist.artist_name)
+            .collect())
+    }
+
+    struct QueuedRefreshScan {
+        result: anyhow::Result<()>,
+        failed_units: u64,
+        /// Each release's artist names.
+        release_artists: Vec<Vec<String>>,
+        artists: Vec<String>,
+        variant_files_synced: Vec<bool>,
+    }
+
+    /// Scans four releases by two spellings of an artist, whose provider gives both one unique id.
+    /// The provider's refreshes queue behind a held call until all four have built their contexts,
+    /// with the release of the spelling that survives a merge first, so a merge between refreshes
+    /// deletes the artist the ones still queued name.
+    async fn scan_with_queued_refreshes(
+        name: &str,
+        cancel: bool,
+    ) -> anyhow::Result<QueuedRefreshScan> {
+        const PROVIDER: &str = r#"
+            local metadata = require("@lyra/metadata")
+            local ET = metadata.EntityType
+            local provider = metadata.Provider.new("queued")
+            provider:id({ id_type = "artist_id", entity = ET.Artist, unique = true, scheme = "queued:artist" })
+            provider:refresh(ET.Release, function(ctx)
+                local layer = provider:layer(ctx.artists[1].id)
+                layer:set_field("artist_name", "Canonical Spelling")
+                layer:set_id("artist_id", "same-artist")
+                layer:save()
+            end)
+        "#;
+
+        crate::plugins::testing::init_default_test_state()?;
+        let (root, library) = empty_library(name).await?;
+        let variant_files =
+            canonical_and_variant_files(&root, &["Variant One", "Variant Two", "Variant Three"])?;
+        let (runtime, _plugins) = start_plugin("queued", &["lyra.metadata"], PROVIDER).await?;
+
+        let (held, is_held) = tokio::sync::oneshot::channel();
+        let (release, released) = tokio::sync::oneshot::channel::<()>();
+        let holder = tokio::spawn(crate::services::providers::with_provider_call(
+            "queued",
+            crate::services::providers::ProviderCallStage::MetadataRefresh,
+            || async move {
+                let _ = held.send(());
+                let _ = released.await;
+            },
+        ));
+        is_held.await?;
+
+        let progress = super::super::orchestrator::begin_test_run(&library).await;
+        let run_id = progress.run_id().to_string();
+        let gate: ArtifactGate = {
+            let run_id = run_id.clone();
+            std::sync::Arc::new(move |title: Option<String>| {
+                let run_id = run_id.clone();
+                Box::pin(async move {
+                    if title.as_deref() != Some("Canonical") {
+                        wait_for_active_refreshes(&run_id, 1).await;
+                    }
+                })
+            })
+        };
+        let hooks = Hooks {
+            before_refresh: Some(gate),
+            ..Hooks::default()
+        };
+        let driver = async {
+            wait_for_active_refreshes(&run_id, 4).await;
+            if cancel {
+                super::super::orchestrator::cancel_sync_run(&run_id)
+                    .await
+                    .expect("cancel");
+            }
+            let _ = release.send(());
+        };
+        let (result, ()) = tokio::time::timeout(
+            Duration::from_secs(60),
+            futures::future::join(sync_with(hooks.into(), &library, progress.clone()), driver),
+        )
+        .await?;
+        holder.await?;
+
+        let failed_units = super::super::orchestrator::get_sync_run(&run_id)
+            .await?
+            .expect("run")
+            .progress
+            .failed_units;
+        super::super::orchestrator::end_test_run(&progress).await;
+
+        let release_artists = {
+            let db = STATE.db.read().await;
+            let mut release_artists = Vec::new();
+            for release in lyra_db::releases::get(&db, library.db_id.expect("library db_id"))? {
+                let release_id = release.db_id.map(DbId::from).expect("release db_id");
+                release_artists.push(
+                    lyra_db::artists::get(&db, release_id)?
+                        .into_iter()
+                        .map(|artist| artist.artist_name)
+                        .collect(),
+                );
+            }
+            release_artists
+        };
+        let mut variant_files_synced = Vec::new();
+        for file in &variant_files {
+            variant_files_synced.push(synced(&library, file).await?);
+        }
+        let artists = artist_names().await?;
+        runtime.shutdown().await?;
+        let _ = std::fs::remove_dir_all(root);
+        Ok(QueuedRefreshScan {
+            result,
+            failed_units,
+            release_artists,
+            artists,
+            variant_files_synced,
+        })
+    }
+
+    fn assert_merged_into_canonical_spelling(scan: &QueuedRefreshScan) {
+        assert_eq!(scan.failed_units, 0, "a queued refresh lost its artist");
+        assert_eq!(scan.artists, ["Canonical Spelling"]);
+        assert_eq!(scan.release_artists.len(), 4);
+        for artists in &scan.release_artists {
+            assert_eq!(artists, &["Canonical Spelling"]);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn queued_refreshes_keep_their_artist_until_the_batch_is_done() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        let scan = scan_with_queued_refreshes("queued-refreshes", false).await?;
+        scan.result.as_ref().expect("scan");
+        assert_merged_into_canonical_spelling(&scan);
+        assert_eq!(scan.variant_files_synced, [true, true, true]);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_scan_cancelled_during_refreshes_merges_them_and_leaves_its_files_unsynced()
+    -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        let scan = scan_with_queued_refreshes("cancelled-refreshes", true).await?;
+        let err = scan.result.as_ref().expect_err("the run wasn't cancelled");
+        assert!(
+            err.downcast_ref::<SyncRunControlError>().is_some(),
+            "{err:#}"
+        );
+        assert_merged_into_canonical_spelling(&scan);
+        assert_eq!(scan.variant_files_synced, [false, false, false]);
+        Ok(())
+    }
+
+    /// Answers every track's lyrics lookup with the artist name it was asked about.
+    const ECHO_LYRICS: &str = r#"
+        http.set_rate_limit({ domain = "example.invalid", requests_per_second = 1 })
+        provider:lyrics({ timeout_ms = 5000 }, function(ctx)
+            return {
+                kind = "hit",
+                candidates = {{
+                    lyrics = { id = ctx.track_id, language = "und", plain_text = ctx.artist_name, lines = {} },
+                    title = ctx.track_name,
+                    artist = ctx.artist_name,
+                    duration_ms = ctx.duration_ms,
+                    language = "und",
+                }},
+            }
+        end)
+    "#;
+
+    async fn track_of_file(library: &Library, file: &Path) -> anyhow::Result<DbId> {
+        let entry = entry_for(library, file).await?.db_id.expect("entry db_id");
+        let db = STATE.db.read().await;
+        lyra_db::tracks::get_by_entry(&db, entry)?
+            .into_iter()
+            .next()
+            .and_then(|track| track.db_id.map(DbId::from))
+            .ok_or_else(|| anyhow::anyhow!("no track for {}", file.display()))
+    }
+
+    async fn lyrics_of_track(track: DbId) -> anyhow::Result<Vec<String>> {
+        let db = STATE.db.read().await;
+        Ok(lyra_db::lyrics::get_visible_for_track(&*db, track, None)?
+            .into_iter()
+            .map(|row| row.plain_text)
+            .collect())
+    }
+
+    const LYRICS_SCOPES: &[&str] = &["harmony.http", "lyra.metadata", "lyra.lyrics"];
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn lyrics_are_looked_up_under_the_artist_a_merge_leaves() -> anyhow::Result<()> {
+        let init = format!(
+            r#"
+            local http = require("@harmony/http")
+            local metadata = require("@lyra/metadata")
+            local ET = metadata.EntityType
+            local provider = metadata.Provider.new("renaming")
+            provider:id({{ id_type = "artist_id", entity = ET.Artist, unique = true, scheme = "renaming:artist" }})
+            provider:refresh(ET.Release, function(ctx)
+                local layer = provider:layer(ctx.artists[1].id)
+                layer:set_id("artist_id", "same-artist")
+                layer:save()
+            end)
+            {ECHO_LYRICS}
+        "#
+        );
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        let (root, library) = empty_library("merged-lyrics").await?;
+        let files = canonical_and_variant_files(&root, &["Variant"])?;
+        let (runtime, _plugins) = start_plugin("renaming", LYRICS_SCOPES, &init).await?;
+
+        sync(&library).await?;
+
+        assert_eq!(artist_names().await?, ["Canonical Spelling"]);
+        assert_eq!(
+            lyrics_of_track(track_of_file(&library, &files[0]).await?).await?,
+            ["Canonical Spelling"]
+        );
+        runtime.shutdown().await?;
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_merged_away_release_keeps_its_tracks_lyrics_and_sync() -> anyhow::Result<()> {
+        let init = format!(
+            r#"
+            local http = require("@harmony/http")
+            local metadata = require("@lyra/metadata")
+            local ET = metadata.EntityType
+            local provider = metadata.Provider.new("rejoining")
+            provider:id({{ id_type = "release_id", entity = ET.Release, unique = true, scheme = "rejoining:release" }})
+            provider:refresh(ET.Release, function(ctx)
+                local layer = provider:layer(ctx.id)
+                layer:set_id("release_id", "same-release")
+                layer:save()
+            end)
+            {ECHO_LYRICS}
+        "#
+        );
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        let (root, library) = empty_library("merged-release").await?;
+        let files = [root.join("Disc One/01.flac"), root.join("Disc Two/01.flac")];
+        album_file(&files[0], "Disc One", 1)?;
+        album_file(&files[1], "Disc Two", 1)?;
+        let (runtime, _plugins) = start_plugin("rejoining", LYRICS_SCOPES, &init).await?;
+
+        let progress = super::super::orchestrator::begin_test_run(&library).await;
+        sync_with(Hooks::default().into(), &library, progress.clone()).await?;
+        let run = super::super::orchestrator::get_sync_run(progress.run_id())
+            .await?
+            .expect("run");
+        super::super::orchestrator::end_test_run(&progress).await;
+
+        assert_eq!(run.progress.failed_units, 0);
+        let releases = {
+            let db = STATE.db.read().await;
+            lyra_db::releases::get(&db, library.db_id.expect("library db_id"))?
+        };
+        assert_eq!(releases.len(), 1, "the two releases didn't merge");
+        for file in &files {
+            assert!(synced(&library, file).await?, "{}", file.display());
+            assert_eq!(
+                lyrics_of_track(track_of_file(&library, file).await?)
+                    .await?
+                    .len(),
+                1,
+                "{}",
+                file.display()
+            );
+        }
+        runtime.shutdown().await?;
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
     }
 
     #[tokio::test(flavor = "multi_thread")]

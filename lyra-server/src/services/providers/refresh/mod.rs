@@ -49,6 +49,7 @@ pub(crate) use entity::refresh_entity_metadata;
 pub(in crate::services::providers) use entity::resolve_library_id_for_entity;
 pub(crate) use library::{
     LibraryRefreshOptions,
+    deduplicate_after_providers,
     refresh_library_metadata,
     refresh_library_metadata_after_others,
     refresh_release_metadata_for_scan,

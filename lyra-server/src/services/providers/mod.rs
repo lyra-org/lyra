@@ -123,6 +123,7 @@ pub(crate) use links::{
 pub(crate) use refresh::{
     LibraryRefreshOptions,
     ListedArtist,
+    deduplicate_after_providers,
     refresh_entity_metadata,
     refresh_library_metadata,
     refresh_library_metadata_after_others,

@@ -138,14 +138,16 @@ pub(crate) async fn release_refresh_provider_ids(
 }
 
 /// Refreshes a release a scan found new or changed from every enabled provider, without sync
-/// filters.
+/// filters, returning the providers that refreshed it. The scan merges what they found with
+/// [`deduplicate_after_providers`] once the refreshes running beside this one are done, so what
+/// runs after them reads what the merge left.
 pub(crate) async fn refresh_release_metadata_for_scan(
     library_db_id: DbId,
     release_id: DbId,
     progress: SyncRunProgress,
     release_public_id: Option<String>,
     release_title: Option<String>,
-) -> Result<usize, ProviderServiceError> {
+) -> Result<Vec<String>, ProviderServiceError> {
     {
         let db = STATE.db.read().await;
         lyra_db::libraries::get_by_id(&db, library_db_id)?
@@ -164,8 +166,8 @@ pub(crate) async fn refresh_release_metadata_for_scan(
 
     for callback in &callbacks {
         let provider_id = &callback.provider_id;
-        if let Err(err) = progress.check_cancelled() {
-            return Err(ProviderServiceError::Internal(err.into()));
+        if progress.is_cancelled() {
+            break;
         }
         if dirty || context.is_none() {
             let rebuilt = {
@@ -215,11 +217,9 @@ pub(crate) async fn refresh_release_metadata_for_scan(
         }
         providers_called.push(provider_id.clone());
         dirty = true;
-
-        deduplicate_after_provider(provider_id, library_db_id).await;
     }
 
-    Ok(usize::from(!providers_called.is_empty()))
+    Ok(providers_called)
 }
 
 async fn refresh_locked_library(
@@ -356,7 +356,7 @@ async fn refresh_locked_library(
             continue;
         }
 
-        deduplicate_after_provider(provider_id, library_db_id).await;
+        deduplicate_after_providers(&HashSet::from([provider_id.clone()]), library_db_id).await;
     }
 
     if let Err(err) = progress.check_cancelled() {
@@ -422,22 +422,25 @@ async fn refresh_locked_library(
     Ok(refreshed_releases.len())
 }
 
-/// Merges what a provider's refreshes made duplicates of.
-async fn deduplicate_after_provider(provider_id: &str, library_db_id: DbId) {
+/// Merges what the providers' refreshes made duplicates of, unless none of them refreshed
+/// anything.
+pub(crate) async fn deduplicate_after_providers(
+    provider_ids: &HashSet<String>,
+    library_db_id: DbId,
+) {
+    if provider_ids.is_empty() {
+        return;
+    }
     let declared_artist_ids = declared_artist_ids().await;
     let mut db_write = STATE.db.write().await;
     if let Err(err) = deduplicate_artists_by_external_id(&mut db_write, &declared_artist_ids) {
         tracing::warn!(
-            provider_id,
+            ?provider_ids,
             error = %format_args!("{err:#}"),
             "artist deduplication failed during metadata refresh"
         );
     }
-    deduplicate_release_scope_locked(
-        &mut db_write,
-        library_db_id,
-        &HashSet::from([provider_id.to_string()]),
-    );
+    deduplicate_release_scope_locked(&mut db_write, library_db_id, provider_ids);
 }
 
 /// One unit of work: asks a provider about a release, unless its sync filter turns the release
