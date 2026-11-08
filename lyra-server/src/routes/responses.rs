@@ -132,6 +132,11 @@ pub struct LyricsCandidateSummaryResponse {
     pub scope: LyricsScopeResponse,
     pub source: LyricsSourceResponse,
     pub lrc_available: bool,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "As `has_word_cues` in a lyrics response.")
+    )]
+    pub has_word_cues: bool,
     pub updated_at: String,
 }
 

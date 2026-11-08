@@ -91,6 +91,13 @@ struct LyricsCandidatesQuery {
         schemars(description = "Eligibility format: `json` (default), `plain`, or `lrc`.")
     )]
     format: Option<String>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Preferred language as an ISO-639-1/3 code or language name, as on `GET /api/tracks/{id}/lyrics`. Orders matching candidates first below personal and shared manual lyrics; omits none."
+        )
+    )]
+    language: Option<String>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -193,9 +200,12 @@ async fn get_track_lyrics_candidates(
 
     let format = parse_lyrics_format(query.format.as_deref())?;
     let require_synced = format == "lrc";
+    let language_hint = lyrics_service::normalize_language_hint(query.language.as_deref())
+        .map_err(|error| AppError::bad_request(error.to_string()))?;
     let candidates = lyrics_service::visible_for_track(db, track_db_id, Some(&principal))?;
     let providers = crate::services::providers::active_providers(db)?;
     let ranking = lyrics_service::Ranking {
+        language_hint: language_hint.as_deref(),
         require_synced,
         ..lyrics_service::Ranking::default()
     };
@@ -400,6 +410,7 @@ fn lyrics_candidate_summary(
         scope: LyricsScopeResponse::from_lyrics(lyrics),
         source: LyricsSourceResponse::from_lyrics(lyrics),
         lrc_available: lyrics_service::has_meaningful_synced(lyrics, duration_ms),
+        has_word_cues: lyrics.has_word_cues,
         updated_at: crate::services::timestamps::unix_ms_to_rfc3339_u64(lyrics.updated_at_ms),
     }
 }
@@ -572,10 +583,13 @@ fn get_track_lyrics_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn get_track_lyrics_candidates_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List visible lyrics candidates").description(
-        "Enumerates stored candidates currently visible and eligible for the caller, best first \
-         in the order that picks the lyrics `GET /api/tracks/{id}/lyrics` returns. The list \
-         contains enabled-provider rows, the shared manual row, and only the caller's personal \
-         row. `format=lrc` omits candidates without meaningful synced coverage.",
+        "Enumerates stored candidates currently visible and eligible for the caller, best first. \
+         For the same `language` and `format`, and with no `provider`, the order matches \
+         `GET /api/tracks/{id}/lyrics`, whose response is the first candidate. The list contains \
+         enabled-provider rows, the shared manual row, and only the caller's personal row. \
+         `format=lrc` omits candidates without meaningful synced coverage. Returns 400 for an \
+         unsupported `format` or an unrecognized `language`, and 404 if the track does not exist \
+         or is hidden from the caller.",
     )
 }
 
@@ -720,6 +734,51 @@ mod tests {
         )
     }
 
+    /// Synced lyrics from an enabled provider at `position`.
+    fn insert_provider_lyrics(
+        db: &mut agdb::DbAny,
+        track: DbId,
+        provider_id: &str,
+        position: u32,
+        language: &str,
+        words: Vec<lyra_db::lyrics::WordInput>,
+    ) -> anyhow::Result<()> {
+        lyra_db::providers::upsert(
+            db,
+            &lyra_db::ProviderConfig {
+                db_id: None,
+                provider_id: provider_id.to_string(),
+                position,
+                enabled: true,
+            },
+        )?;
+        lyra_db::lyrics::upsert_from_plugin(
+            db,
+            track,
+            lyra_db::lyrics::LyricsInput {
+                language: language.to_string(),
+                plain_text: format!("{provider_id} lyrics"),
+                lines: vec![
+                    lyra_db::lyrics::LineInput {
+                        ts_ms: 1_000,
+                        text: "line one".to_string(),
+                        words,
+                    },
+                    lyra_db::lyrics::LineInput {
+                        ts_ms: 3_000,
+                        text: "line two".to_string(),
+                        words: Vec::new(),
+                    },
+                ],
+                last_checked_at_ms: 1,
+            },
+            format!("{provider_id}-row"),
+            provider_id,
+            Some(4_000),
+        )?;
+        Ok(())
+    }
+
     async fn install_lyrics_handler(
         provider_id: &str,
         callback: crate::services::plugin_dispatch::PluginCallbackHandle,
@@ -743,6 +802,22 @@ mod tests {
             )
             .ok_or_else(|| anyhow::anyhow!("lyrics handler not stored"))?;
         Ok(())
+    }
+
+    async fn candidates(
+        headers: &HeaderMap,
+        track_id: &str,
+        language: Option<&str>,
+    ) -> Result<Json<LyricsCandidatesResponse>, AppError> {
+        get_track_lyrics_candidates(
+            headers.clone(),
+            Path(track_id.to_string()),
+            Query(LyricsCandidatesQuery {
+                format: None,
+                language: language.map(str::to_string),
+            }),
+        )
+        .await
     }
 
     #[tokio::test]
@@ -829,6 +904,109 @@ mod tests {
         );
         assert!(dispatch.calls(busy).is_empty());
         assert_eq!(dispatch.calls(quiet).len(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn candidates_follow_language_like_get_lyrics() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        super::super::setup_route_test().await?;
+        let (track_id, reader) = {
+            let mut db = STATE.db.write().await;
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
+            let (track, track_id, library) = insert_library_track(&mut db, "candidates-language")?;
+            let reader = lyra_db::users::create(
+                &mut db,
+                &lyra_db::fixtures::test_user("candidates-reader")?,
+            )?;
+            grant_library(&mut db, reader, library)?;
+            insert_provider_lyrics(&mut db, track, "first_provider", 0, "eng", Vec::new())?;
+            insert_provider_lyrics(
+                &mut db,
+                track,
+                "second_provider",
+                1,
+                "jpn",
+                vec![lyra_db::lyrics::WordInput {
+                    ts_ms: 1_000,
+                    char_start: 0,
+                    char_end: 4,
+                }],
+            )?;
+            (track_id, reader)
+        };
+        let headers = bearer_headers_for_user(reader).await?;
+
+        for (language, expected_first) in [
+            (None, "first_provider"),
+            (Some("eng"), "first_provider"),
+            (Some("Japanese"), "second_provider"),
+        ] {
+            let Json(listed) = route_ok(candidates(&headers, &track_id, language).await)?;
+            assert_eq!(listed.items.len(), 2);
+            assert_eq!(listed.items[0].provider_id.as_deref(), Some(expected_first));
+
+            let served = route_ok(
+                get_track_lyrics(
+                    headers.clone(),
+                    Path(track_id.clone()),
+                    Query(LyricsQuery {
+                        format: None,
+                        language: language.map(str::to_string),
+                        provider: None,
+                    }),
+                )
+                .await,
+            )?;
+            let served: serde_json::Value = serde_json::from_slice(
+                &axum::body::to_bytes(served.into_body(), usize::MAX).await?,
+            )?;
+            assert_eq!(served["id"], listed.items[0].id);
+        }
+
+        let Json(listed) = route_ok(candidates(&headers, &track_id, None).await)?;
+        let word_cues = |provider: &str| {
+            listed
+                .items
+                .iter()
+                .find(|item| item.provider_id.as_deref() == Some(provider))
+                .map(|item| item.has_word_cues)
+        };
+        assert_eq!(word_cues("first_provider"), Some(false));
+        assert_eq!(word_cues("second_provider"), Some(true));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn candidates_reject_bad_language_after_the_access_check() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        super::super::setup_route_test().await?;
+        let (track_id, reader, outsider) = {
+            let mut db = STATE.db.write().await;
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
+            let (_, track_id, library) = insert_library_track(&mut db, "candidates-bad-language")?;
+            let reader = lyra_db::users::create(
+                &mut db,
+                &lyra_db::fixtures::test_user("bad-language-reader")?,
+            )?;
+            let outsider = lyra_db::users::create(
+                &mut db,
+                &lyra_db::fixtures::test_user("bad-language-outsider")?,
+            )?;
+            grant_library(&mut db, reader, library)?;
+            (track_id, reader, outsider)
+        };
+
+        for (user, expected) in [
+            (reader, StatusCode::BAD_REQUEST),
+            (outsider, StatusCode::NOT_FOUND),
+        ] {
+            let headers = bearer_headers_for_user(user).await?;
+            assert_eq!(
+                route_error_status(candidates(&headers, &track_id, Some("not-a-language")).await)?,
+                expected
+            );
+        }
         Ok(())
     }
 
@@ -981,7 +1159,10 @@ mod tests {
             get_track_lyrics_candidates(
                 alice_headers.clone(),
                 Path(track_public_id.clone()),
-                Query(LyricsCandidatesQuery { format: None }),
+                Query(LyricsCandidatesQuery {
+                    format: None,
+                    language: None,
+                }),
             )
             .await,
         )?;
@@ -1047,6 +1228,7 @@ mod tests {
                 Path(track_public_id.clone()),
                 Query(LyricsCandidatesQuery {
                     format: Some("lrc".to_string()),
+                    language: None,
                 }),
             )
             .await,
