@@ -976,10 +976,23 @@ mod tests {
 
         let mut range = HeaderMap::new();
         range.insert(header::RANGE, "bytes=0-3".parse()?);
-        let response = get_public_cover(range, Path(cover_id.clone()), Query(query()))
+        let response = get_public_cover(range.clone(), Path(cover_id.clone()), Query(query()))
             .await
             .map_err(|err| anyhow::anyhow!("{err:?}"))?;
         assert_eq!(response.status(), axum::http::StatusCode::PARTIAL_CONTENT);
+        range.insert(header::IF_RANGE, "\"tag\"".parse()?);
+        let response = get_public_cover(range, Path(cover_id.clone()), Query(query()))
+            .await
+            .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::OK,
+            "Lyra sets no validator an If-Range could match"
+        );
+        assert_eq!(
+            axum::body::to_bytes(response.into_body(), usize::MAX).await?,
+            body
+        );
 
         for invalid in [
             CoverQuery {

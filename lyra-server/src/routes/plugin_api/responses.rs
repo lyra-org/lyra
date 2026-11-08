@@ -25,6 +25,7 @@ use crate::plugins::executor::{
 };
 use crate::routes::AppError;
 use crate::routes::covers::serve_cover;
+use crate::routes::settle_if_range;
 use crate::routes::streamed_body::streamed_body;
 use crate::services::auth::media_tokens::MediaTokenPurpose;
 use crate::services::delivery::{
@@ -62,6 +63,8 @@ pub(super) async fn plugin_api_response_to_axum(
     let headers = framed_headers(response.kind, &response.headers)?;
     let status = StatusCode::from_u16(response.status).context("invalid response status code")?;
     let fallback = response.fallback.take().map(Fallback::of).transpose()?;
+    // Lyra's own bodies carry no validators, so an If-Range can only match the plugin's.
+    let request_headers = &*settle_if_range(request_headers, &headers);
     let served = match response.kind {
         ApiResponseKind::StreamTrack
         | ApiResponseKind::DownloadTrack
@@ -728,6 +731,36 @@ mod tests {
         assert_eq!(header(&ranged, "x-plugin"), Some("kept"));
         let ranged = axum::body::to_bytes(ranged.into_body(), usize::MAX).await?;
         assert_eq!(&ranged[..], &body[..4], "a range of the cached variant");
+
+        for (if_range, partial) in [("\"tag\"", true), ("\"old\"", false)] {
+            range.insert(
+                axum::http::header::IF_RANGE,
+                axum::http::HeaderValue::from_static(if_range),
+            );
+            let resumed = plugin_api_response_to_axum(
+                cover_response(&cover_id, bounded(100), 200, &plugin_headers),
+                &Method::GET,
+                &range,
+            )
+            .await?;
+            let status = resumed.status();
+            let resumed = axum::body::to_bytes(resumed.into_body(), usize::MAX).await?;
+            if partial {
+                assert_eq!(
+                    status,
+                    StatusCode::PARTIAL_CONTENT,
+                    "the plugin's ETag matches"
+                );
+                assert_eq!(&resumed[..], &body[..4]);
+            } else {
+                assert_eq!(
+                    status,
+                    StatusCode::OK,
+                    "another version sends the whole body"
+                );
+                assert_eq!(resumed, body);
+            }
+        }
 
         let original = plugin_api_response_to_axum(
             cover_response(&cover_id, CoverTransformOptions::default(), 200, &[]),

@@ -104,6 +104,7 @@ pub use roles::role_routes;
 pub use search::search_routes;
 pub(crate) use serve::{
     serve_hls_playlist_for_track,
+    settle_if_range,
     track_response,
 };
 pub use sync::sync_routes;

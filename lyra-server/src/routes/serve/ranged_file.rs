@@ -3,7 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::path::Path as FsPath;
+use std::{
+    borrow::Cow,
+    path::Path as FsPath,
+};
 
 use anyhow::{
     Context,
@@ -12,8 +15,15 @@ use anyhow::{
 };
 use axum::body::Body;
 use axum::http::{
+    HeaderMap,
     HeaderValue,
     StatusCode,
+    header::{
+        ETAG,
+        IF_RANGE,
+        LAST_MODIFIED,
+        RANGE,
+    },
 };
 use bytes::Bytes;
 use tokio::io::{
@@ -83,6 +93,44 @@ fn parse_range_header(value: &HeaderValue, size: u64) -> RangeParse {
         return RangeParse::Invalid;
     }
     RangeParse::Valid { start, end }
+}
+
+/// The range `request` asks for of a body whose ETag and Last-Modified are in `validators`. Under
+/// an `If-Range` the range stands only when its entity tag strongly matches the ETag, or its date
+/// is exactly the Last-Modified; otherwise it names another version, and the whole body is sent.
+pub(crate) fn requested_range<'a>(
+    request: &'a HeaderMap,
+    validators: &HeaderMap,
+) -> Option<&'a HeaderValue> {
+    let range = request.get(RANGE)?;
+    let Some(if_range) = request.get(IF_RANGE) else {
+        return Some(range);
+    };
+    let validator = if if_range.as_bytes().starts_with(b"\"") {
+        validators.get(ETAG)
+    } else if if_range.as_bytes().starts_with(b"W/") {
+        None
+    } else {
+        validators.get(LAST_MODIFIED)
+    };
+    (validator == Some(if_range)).then_some(range)
+}
+
+/// `request` with its `If-Range` settled against `validators`, for a body whose validators are
+/// set only after Lyra serves it: the range stays only if it would stand, and the If-Range goes.
+pub(crate) fn settle_if_range<'a>(
+    request: &'a HeaderMap,
+    validators: &HeaderMap,
+) -> Cow<'a, HeaderMap> {
+    if !request.contains_key(IF_RANGE) {
+        return Cow::Borrowed(request);
+    }
+    let mut settled = request.clone();
+    settled.remove(IF_RANGE);
+    if requested_range(request, validators).is_none() {
+        settled.remove(RANGE);
+    }
+    Cow::Owned(settled)
 }
 
 pub(crate) async fn build_ranged_file_body(
@@ -205,6 +253,7 @@ pub(crate) fn build_ranged_body(
 mod tests {
     use super::*;
     use axum::body::to_bytes;
+    use axum::http::HeaderName;
     use std::time::{
         Duration,
         SystemTime,
@@ -224,6 +273,48 @@ mod tests {
             RangeParse::Valid { start, end } => Some((start, end)),
             RangeParse::Invalid => None,
         }
+    }
+
+    fn request(pairs: &[(HeaderName, &'static str)]) -> HeaderMap {
+        pairs
+            .iter()
+            .map(|(name, value)| (name.clone(), HeaderValue::from_static(value)))
+            .collect()
+    }
+
+    #[test]
+    fn if_range_keeps_the_range_only_for_the_same_version() {
+        const DATE: &str = "Wed, 21 Oct 2015 07:28:00 GMT";
+        let validators = request(&[(ETAG, "\"v2\""), (LAST_MODIFIED, DATE)]);
+        let ranged = |if_range: &'static str, validators: &HeaderMap| {
+            requested_range(
+                &request(&[(RANGE, "bytes=100-"), (IF_RANGE, if_range)]),
+                validators,
+            )
+            .is_some()
+        };
+        assert!(ranged("\"v2\"", &validators), "a strong match");
+        assert!(ranged(DATE, &validators), "the exact Last-Modified");
+        assert!(!ranged("\"v1\"", &validators), "another version");
+        assert!(!ranged("W/\"v2\"", &validators), "a weak tag never matches");
+        assert!(
+            !ranged("Wed, 21 Oct 2015 07:28:01 GMT", &validators),
+            "another date"
+        );
+        let weak = request(&[(ETAG, "W/\"v2\"")]);
+        assert!(!ranged("\"v2\"", &weak), "a weak ETag never matches");
+        assert!(!ranged("\"v2\"", &HeaderMap::new()), "no validators");
+        assert!(
+            requested_range(&request(&[(RANGE, "bytes=100-")]), &HeaderMap::new()).is_some(),
+            "a range without If-Range stands"
+        );
+
+        let asked = request(&[(RANGE, "bytes=100-"), (IF_RANGE, "\"v1\"")]);
+        let settled = settle_if_range(&asked, &validators);
+        assert!(!settled.contains_key(RANGE) && !settled.contains_key(IF_RANGE));
+        let asked = request(&[(RANGE, "bytes=100-"), (IF_RANGE, "\"v2\"")]);
+        let settled = settle_if_range(&asked, &validators);
+        assert!(settled.contains_key(RANGE) && !settled.contains_key(IF_RANGE));
     }
 
     #[test]

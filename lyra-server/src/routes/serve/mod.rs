@@ -11,10 +11,14 @@ mod transcoded;
 
 pub use download::download_routes;
 pub(crate) use hls::serve_hls_playlist_for_track;
-pub(crate) use ranged_file::build_ranged_file_body;
 use ranged_file::{
     RangedFileBody,
     build_ranged_body,
+    requested_range,
+};
+pub(crate) use ranged_file::{
+    build_ranged_file_body,
+    settle_if_range,
 };
 
 use axum::Router;
@@ -26,6 +30,7 @@ use axum::{
     },
     http::{
         HeaderMap,
+        HeaderValue,
         Method,
         Response,
         StatusCode,
@@ -203,13 +208,20 @@ pub async fn file_response(
     file_response_with_cache_control(path, content_type, headers, NO_STORE).await
 }
 
+/// The range `headers` ask for of a body Lyra serves. Lyra sets no validators, so a range under
+/// an `If-Range` is never served.
+fn own_range(headers: &HeaderMap) -> Option<&HeaderValue> {
+    requested_range(headers, &HeaderMap::new())
+}
+
 pub(crate) async fn file_response_with_cache_control(
     path: &FsPath,
     content_type: &str,
     headers: &HeaderMap,
     cache_control: &str,
 ) -> Result<Response<Body>, AppError> {
-    let ranged = build_ranged_file_body(path, headers.get(header::RANGE), StatusCode::OK).await?;
+    let range = own_range(headers);
+    let ranged = build_ranged_file_body(path, range, StatusCode::OK).await?;
     ranged_response(ranged, content_type, cache_control)
 }
 
@@ -248,7 +260,8 @@ pub(crate) fn open_file_response_with_cache_control(
     headers: &HeaderMap,
     cache_control: &str,
 ) -> Result<Response<Body>, AppError> {
-    let ranged = build_ranged_body(file, size, headers.get(header::RANGE), StatusCode::OK)?;
+    let range = own_range(headers);
+    let ranged = build_ranged_body(file, size, range, StatusCode::OK)?;
     ranged_response(ranged, content_type, cache_control)
 }
 
