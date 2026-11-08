@@ -219,7 +219,9 @@ impl PluginExecutor {
             } else {
                 let mut context = std::task::Context::from_waker(std::task::Waker::noop());
                 match task.completion.poll(&mut context) {
-                    std::task::Poll::Ready(result) => Some(result.map_err(anyhow::Error::msg)),
+                    std::task::Poll::Ready(result) => {
+                        Some(result.map_err(|error| anyhow::Error::msg(error.message)))
+                    }
                     std::task::Poll::Pending => None,
                 }
             };

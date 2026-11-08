@@ -69,12 +69,12 @@ pub struct TaskHandle {
 
 #[derive(Default)]
 pub struct LocalLuauTaskCompletion {
-    result: RefCell<Option<std::result::Result<Vec<luau::Value>, String>>>,
+    result: RefCell<Option<std::result::Result<Vec<luau::Value>, luau::RaisedError>>>,
     waker: RefCell<Option<Waker>>,
 }
 
 impl LocalLuauTaskCompletion {
-    fn complete(&self, result: std::result::Result<Vec<luau::Value>, String>) {
+    fn complete(&self, result: std::result::Result<Vec<luau::Value>, luau::RaisedError>) {
         *self.result.borrow_mut() = Some(result);
         if let Some(waker) = self.waker.borrow_mut().take() {
             waker.wake();
@@ -84,7 +84,7 @@ impl LocalLuauTaskCompletion {
     pub fn poll(
         &self,
         cx: &mut Context<'_>,
-    ) -> Poll<std::result::Result<Vec<luau::Value>, String>> {
+    ) -> Poll<std::result::Result<Vec<luau::Value>, luau::RaisedError>> {
         if let Some(result) = self.result.borrow_mut().take() {
             return Poll::Ready(result);
         }
@@ -455,7 +455,7 @@ impl Scheduler {
         task.state = TaskState::Cancelled;
         task.wake_at = None;
         if let Some(completion) = task.completion.as_ref() {
-            completion.complete(Err(format!("Luau task {} was cancelled", id.0)));
+            completion.complete(Err(format!("Luau task {} was cancelled", id.0).into()));
         }
         true
     }
@@ -526,7 +526,8 @@ impl Scheduler {
                 }
                 WorkPoll::Cancelled => {
                     if let Some(completion) = task.completion.as_ref() {
-                        completion.complete(Err(format!("Luau task {} was cancelled", id.0)));
+                        completion
+                            .complete(Err(format!("Luau task {} was cancelled", id.0).into()));
                     }
                     task.work = None;
                     task.state = TaskState::Cancelled;
@@ -535,12 +536,15 @@ impl Scheduler {
                 }
                 WorkPoll::Failed(error) => {
                     if let Some(completion) = task.completion.as_ref() {
-                        completion.complete(Err(format!("Luau task {} failed: {error}", id.0)));
+                        completion.complete(Err(luau::RaisedError {
+                            kind: error.kind,
+                            message: format!("Luau task {} failed: {}", id.0, error.message),
+                        }));
                     }
                     drop_catching_panic(&task.context, task.work.take());
                     task.state = TaskState::Failed;
                     task.wake_at = None;
-                    task.error = Some(Arc::from(error));
+                    task.error = Some(Arc::from(error.message));
                     completed += 1;
                 }
                 WorkPoll::Yielded if task.borrows_thread => {
@@ -1431,7 +1435,7 @@ enum WorkPoll {
     /// The thread yielded on its own, with nothing scheduled to resume it.
     Yielded,
     Cancelled,
-    Failed(String),
+    Failed(luau::RaisedError),
     Pending,
 }
 
@@ -1444,9 +1448,9 @@ fn poll_work(
     match work {
         TaskWork::Future(future) => match catch_host_panic(context, || future.as_mut().poll(cx)) {
             Ok(Poll::Ready(Ok(()))) => WorkPoll::Completed { output: None },
-            Ok(Poll::Ready(Err(error))) => WorkPoll::Failed(error.to_string()),
+            Ok(Poll::Ready(Err(error))) => WorkPoll::Failed(error.to_string().into()),
             Ok(Poll::Pending) => WorkPoll::Pending,
-            Err(panic) => WorkPoll::Failed(panic),
+            Err(panic) => WorkPoll::Failed(panic.into()),
         },
         TaskWork::LuauThread {
             vm,
@@ -1462,7 +1466,7 @@ fn poll_work(
             }
             let previous = match vm.set_thread_call_context(thread, context.clone()) {
                 Ok(previous) => previous,
-                Err(error) => return WorkPoll::Failed(error.to_string()),
+                Err(error) => return WorkPoll::Failed(error.to_string().into()),
             };
             let result = resume_luau_thread(vm, thread, args, resume_limit);
             args.clear();
@@ -1491,7 +1495,7 @@ fn poll_work(
             drop_catching_panic(context, finished);
             let previous = match vm.set_thread_call_context(&thread, context.clone()) {
                 Ok(previous) => previous,
-                Err(error) => return WorkPoll::Failed(error.to_string()),
+                Err(error) => return WorkPoll::Failed(error.to_string().into()),
             };
             let _guard = resume_limit.map(|limit| limit.guard(&vm));
             let result = match output {
@@ -1567,7 +1571,7 @@ fn poll_luau_resume(
                 WorkPoll::Yielded
             }
         }
-        Err(error) => WorkPoll::Failed(error.to_string()),
+        Err(error) => WorkPoll::Failed((&error).into()),
     }
 }
 

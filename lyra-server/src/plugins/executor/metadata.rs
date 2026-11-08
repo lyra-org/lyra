@@ -190,7 +190,9 @@ async fn run_handler<M: Send + Sync + 'static>(
         return Ok(None);
     };
     guard.armed = false;
-    result.map(Some).map_err(anyhow::Error::msg)
+    result
+        .map(Some)
+        .map_err(|error| anyhow::Error::msg(error.message))
 }
 
 pub(crate) async fn dispatch_similar_releases_in_vm(

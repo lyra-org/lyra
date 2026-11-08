@@ -122,7 +122,7 @@ impl TestPlugin {
         Ok(luau::ScheduledFuture::new(async move {
             let values = std::future::poll_fn(|cx| completion.poll(cx))
                 .await
-                .map_err(luau::Error::Runtime)?;
+                .map_err(|error| luau::Error::Runtime(error.message))?;
             if let Some((response, produce)) = values.first().and_then(stream_response) {
                 let body = crate::plugins::executor::queue_stream(
                     &vm,

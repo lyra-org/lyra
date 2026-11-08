@@ -144,6 +144,12 @@ impl RaisedError {
     }
 }
 
+impl From<&Error> for RaisedError {
+    fn from(error: &Error) -> Self {
+        Self::of(error, error.to_string())
+    }
+}
+
 impl From<&str> for RaisedError {
     fn from(message: &str) -> Self {
         Self {

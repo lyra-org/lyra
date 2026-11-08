@@ -490,7 +490,7 @@ pub(super) fn poll_streams(vm: &luau::Vm) {
         } else {
             let mut cx = Context::from_waker(std::task::Waker::noop());
             match producing.completion.poll(&mut cx) {
-                Poll::Ready(result) => Some(result.map(|_| ())),
+                Poll::Ready(result) => Some(result.map(|_| ()).map_err(|error| error.message)),
                 Poll::Pending => None,
             }
         };

@@ -2395,7 +2395,7 @@ mod tests {
     ) -> Option<Result<Vec<luau::Value>, String>> {
         let mut context = std::task::Context::from_waker(std::task::Waker::noop());
         match completion.poll(&mut context) {
-            std::task::Poll::Ready(result) => Some(result),
+            std::task::Poll::Ready(result) => Some(result.map_err(|error| error.message)),
             std::task::Poll::Pending => None,
         }
     }
