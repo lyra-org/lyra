@@ -300,6 +300,10 @@ async fn delete_user(
         .db_id
         .ok_or_else(|| AppError::not_found(format!("user has no db_id: {user_id}")))?;
 
+    if user.username == DEFAULT_USERNAME {
+        return Err(AppError::bad_request("cannot delete the default user"));
+    }
+
     if user_db_id == principal.require(&db)? {
         return Err(AppError::bad_request("cannot delete yourself"));
     }
@@ -544,7 +548,7 @@ fn delete_user_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Delete user")
         .description(
             "Deletes a user and revokes all their sessions. Requires ManageUsers permission. \
-             Deleting admin users requires Admin permission.",
+             Deleting admin users requires Admin permission. The default user cannot be deleted.",
         )
         .response::<204, ()>()
 }
@@ -1015,6 +1019,41 @@ mod tests {
             "{listed:?}"
         );
         assert!(listed.contains(&DEFAULT_USERNAME.to_string()), "{listed:?}");
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn delete_user_refuses_the_default_user_in_both_auth_modes() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        crate::services::auth::ensure_default_user(&STATE.config()).await?;
+        let admin_headers =
+            create_headers_with_role("first-admin", lyra_db::roles::BUILTIN_ADMIN_ROLE).await?;
+        create_headers_with_role("second-admin", lyra_db::roles::BUILTIN_ADMIN_ROLE).await?;
+        let default_id = {
+            let db = STATE.db.read().await;
+            lyra_db::users::get_by_username(&db, DEFAULT_USERNAME)?
+                .expect("default user exists")
+                .id
+        };
+
+        for (auth_enabled, headers) in [(true, admin_headers), (false, HeaderMap::new())] {
+            set_auth_enabled(auth_enabled);
+            let response = delete_user(headers, Path(default_id.clone()))
+                .await
+                .expect_err("the default user can't be deleted")
+                .into_response();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let body = to_bytes(response.into_body(), usize::MAX).await?;
+            let body = String::from_utf8(body.to_vec())?;
+            assert!(body.contains("cannot delete the default user"), "{body}");
+        }
+
+        let db = STATE.db.read().await;
+        assert!(lyra_db::users::get_by_public_id(&db, &default_id)?.is_some());
+        drop(db);
 
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())
