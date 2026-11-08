@@ -15,6 +15,7 @@ use std::{
     },
     env,
     ffi::OsString,
+    net::SocketAddr,
     path::PathBuf,
     sync::{
         Arc,
@@ -34,6 +35,7 @@ use axum::{
         Bytes,
     },
     extract::{
+        ConnectInfo,
         DefaultBodyLimit,
         Path,
         Query,
@@ -93,7 +95,10 @@ use crate::plugins::api::{
     placeholder_offset,
     registered_routes,
 };
-use crate::routes::request::bearer_credential;
+use crate::routes::request::{
+    base_url,
+    bearer_credential,
+};
 use crate::routes::{
     serve_hls_playlist_for_track,
     track_response,
@@ -429,6 +434,7 @@ fn build_http_method_router(route: &RegisteredRoute) -> Result<MethodRouter> {
               Query(pairs): Query<Vec<(String, String)>>,
               params: Option<Path<HashMap<String, String>>>,
               client: Option<axum::Extension<crate::services::auth::caller::ClientAddress>>,
+              peer: Option<axum::Extension<ConnectInfo<SocketAddr>>>,
               body: Bytes| {
             let route = dispatch_route.clone();
             async move {
@@ -436,11 +442,14 @@ fn build_http_method_router(route: &RegisteredRoute) -> Result<MethodRouter> {
                 let client = client
                     .map(|axum::Extension(client)| client)
                     .unwrap_or_default();
+                let peer = peer.map(|axum::Extension(ConnectInfo(peer))| peer);
+                let base_url = base_url(peer, &headers, &uri);
                 dispatch_registered_route(RegisteredRouteRequest {
                     route,
                     method,
                     uri,
                     headers,
+                    base_url,
                     query,
                     params,
                     client,
@@ -512,6 +521,7 @@ struct RegisteredRouteRequest {
     method: Method,
     uri: Uri,
     headers: HeaderMap,
+    base_url: Option<String>,
     query: HashMap<String, Vec<String>>,
     params: Option<Path<HashMap<String, String>>>,
     client: crate::services::auth::caller::ClientAddress,
@@ -524,6 +534,7 @@ async fn dispatch_registered_route(request: RegisteredRouteRequest) -> Response 
         method,
         uri,
         headers,
+        base_url,
         query,
         params,
         client,
@@ -562,6 +573,7 @@ async fn dispatch_registered_route(request: RegisteredRouteRequest) -> Response 
         method: method.as_str().to_string(),
         path: uri.path().to_string(),
         headers: header_pairs(&headers),
+        base_url,
         query,
         params: params.map(|params| params.0).unwrap_or_default(),
         body: body.to_vec(),

@@ -189,6 +189,7 @@ fn api_request(
         method: "GET".to_string(),
         path: path.to_string(),
         headers: Vec::new(),
+        base_url: None,
         query: HashMap::new(),
         params: HashMap::new(),
         body: Vec::new(),

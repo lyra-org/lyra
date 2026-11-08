@@ -98,7 +98,7 @@ pub(super) fn api_context_value(request: &ApiHandlerRequest) -> Result<luau::Val
         ctx.set_field("auth", luau::Value::Nil);
     }
 
-    let mut req = luau::OwnedTable::with_capacity(0, 6);
+    let mut req = luau::OwnedTable::with_capacity(0, 7);
     req.set_field(
         "method",
         luau::Value::String(request.method.as_bytes().to_vec()),
@@ -108,6 +108,7 @@ pub(super) fn api_context_value(request: &ApiHandlerRequest) -> Result<luau::Val
         luau::Value::String(request.path.as_bytes().to_vec()),
     );
     req.set_field("headers", headers_table(&request.headers));
+    req.set_field("base_url", request.base_url.clone());
     req.set_field("query", query_table(&request.query));
     req.set_field("body_raw", luau::Value::String(request.body.clone()));
     if let Some(json) = parse_json_body(&request.headers, &request.body) {

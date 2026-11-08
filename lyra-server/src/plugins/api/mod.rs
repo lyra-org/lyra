@@ -1229,6 +1229,11 @@ fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
                 field("method", String::luau_type()),
                 field("path", String::luau_type()),
                 field("headers", ApiHeaders::luau_type()),
+                described_field(
+                    "base_url",
+                    Option::<String>::luau_type(),
+                    "The address the caller used, as `scheme://authority` with no trailing slash and no default port; nil if the request doesn't give a usable one or on a WebSocket route. The caller can influence it, so it may be reflected to that caller but must not be used for authorization or stored as a canonical URL. `server.info().published_url` is the stable address.",
+                ),
                 field("query", ApiQueryParams::luau_type()),
                 field("body_raw", String::luau_type()),
                 field("json", JsonValue::luau_type()),

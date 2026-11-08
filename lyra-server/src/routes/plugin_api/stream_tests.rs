@@ -3,7 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-//! Streamed plugin responses as a client sees them on the wire.
+//! Plugin routes as a client sees them on the wire.
 
 use std::{
     collections::HashMap,
@@ -44,6 +44,10 @@ end, { auth = "public" })
 
 api.get("/ping", function()
 	return api.response.text(200, "pong")
+end, { auth = "public" })
+
+api.get("/base-url", function(ctx)
+	return api.response.json(200, { base_url = ctx.request.base_url })
 end, { auth = "public" })
 
 api.get("/stream/ok", function()
@@ -138,6 +142,7 @@ async fn serve() -> Result<Server> {
     for path in [
         "/count",
         "/ping",
+        "/base-url",
         "/stream/ok",
         "/stream/fail",
         "/stream/endless",
@@ -180,6 +185,7 @@ async fn respond(
         method: method.as_str().to_string(),
         path: uri.path().to_string(),
         headers: Vec::new(),
+        base_url: None,
         query: HashMap::new(),
         params: HashMap::new(),
         body: Vec::new(),
@@ -251,6 +257,54 @@ async fn read_until(stream: &mut tokio::net::TcpStream, needle: &str) -> Result<
     .await
     .with_context(|| format!("{needle:?} never arrived"))??;
     Ok(String::from_utf8_lossy(&raw).into_owned())
+}
+
+#[tokio::test]
+async fn a_route_handler_gets_the_callers_base_url() -> Result<()> {
+    use axum::extract::ConnectInfo;
+    use tower::ServiceExt;
+
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    let server = serve().await?;
+    crate::plugins::STATE.publish_runtime(server.handle.clone());
+    let route = crate::plugins::api::RegisteredRoute {
+        key: crate::plugins::api::RouteKey::new("GET", "/base-url")?,
+        plugin_id: crate::services::plugin_scope::PluginId::new(PLUGIN_ID)?,
+        auth_mode: crate::plugins::api::RouteAuthMode::Public,
+        case_insensitive: false,
+        max_body_bytes: None,
+        handler: crate::plugins::api::tests::registered_handler("GET", "/base-url")
+            .await
+            .context("/base-url is registered")?,
+        kind: crate::plugins::api::RouteKind::Http,
+    };
+    let app = axum::Router::new().route("/base-url", super::build_http_method_router(&route)?);
+
+    let proxy = std::net::SocketAddr::from(([127, 0, 0, 1], 4746));
+    let stranger = std::net::SocketAddr::from(([203, 0, 113, 10], 4746));
+    for (peer, expected) in [
+        (Some(proxy), serde_json::json!("https://lyra.example")),
+        (Some(stranger), serde_json::json!("http://lyra.local:4746")),
+        (None, serde_json::json!("http://lyra.local:4746")),
+    ] {
+        let mut request = axum::http::Request::builder()
+            .uri("/base-url")
+            .header("host", "lyra.local:4746")
+            .header("x-forwarded-proto", "https")
+            .header("x-forwarded-host", "lyra.example");
+        if let Some(peer) = peer {
+            request = request.extension(ConnectInfo(peer));
+        }
+        let response = app
+            .clone()
+            .oneshot(request.body(axum::body::Body::empty())?)
+            .await?;
+        assert_eq!(response.status(), axum::http::StatusCode::OK, "{peer:?}");
+        let body = axum::body::to_bytes(response.into_body(), 1024).await?;
+        let json: serde_json::Value = serde_json::from_slice(&body)?;
+        assert_eq!(json["base_url"], expected, "{peer:?}");
+    }
+    Ok(())
 }
 
 const TERMINATING_CHUNK: &str = "\r\n0\r\n\r\n";

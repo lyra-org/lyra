@@ -159,6 +159,7 @@ pub(crate) struct ApiHandlerRequest {
     pub(crate) method: String,
     pub(crate) path: String,
     pub(crate) headers: Vec<(String, String)>,
+    pub(crate) base_url: Option<String>,
     pub(crate) query: HashMap<String, Vec<String>>,
     pub(crate) params: HashMap<String, String>,
     pub(crate) body: Vec<u8>,

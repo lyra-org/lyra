@@ -36,6 +36,7 @@ pub(crate) use config::{
 };
 pub(crate) use kind::{
     Kind,
+    normalize_origin,
     resolve_path,
 };
 pub(crate) use update::{

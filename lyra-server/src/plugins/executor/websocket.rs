@@ -50,6 +50,7 @@ impl PluginExecutor {
             method: request.method,
             path: request.path,
             headers: request.headers,
+            base_url: None,
             query: request.query,
             params: request.params,
             body: Vec::new(),

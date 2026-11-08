@@ -286,6 +286,7 @@ async fn waiting_api_callback_does_not_delay_metadata_deadlines() -> Result<()> 
                     method: "GET".into(),
                     path: "/dispatch-wait".into(),
                     headers: Vec::new(),
+                    base_url: None,
                     query: Default::default(),
                     params: Default::default(),
                     body: Vec::new(),
