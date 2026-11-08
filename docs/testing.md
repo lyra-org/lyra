@@ -54,6 +54,7 @@ a scope another kept one narrows can't go:
 ```toml
 run_as = "owner"
 without_scopes = ["lyra.ratings"]
+auth_disabled = true         # optional; the server runs with authentication off
 
 [[plugins]]                  # a one-file library plugin the test's plugin depends on and requires
 id = "notes"

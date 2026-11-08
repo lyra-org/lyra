@@ -3,8 +3,9 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-//! Creating users and changing their passwords. Each change is authorised and checked before its
-//! password is hashed, then checked again under the write lock, since hashing runs without it.
+//! Which users read as accounts, creating users and changing their passwords. Each change is
+//! authorised and checked before its password is hashed, then checked again under the write lock,
+//! since hashing runs without it.
 
 use agdb::{
     DbAny,
@@ -54,6 +55,27 @@ impl From<Recheck> for AccountError {
 }
 
 type AccountResult<T> = Result<T, AccountError>;
+
+/// The default user stands in for callers only while authentication is off. While it is on the
+/// user is no one's account, though its data stays stored.
+pub(crate) fn is_account(user: &User) -> bool {
+    !STATE.config().auth.enabled || user.username != DEFAULT_USERNAME
+}
+
+/// Every user that reads as an account.
+pub(crate) fn list(db: &impl lyra_db::DbAccess) -> anyhow::Result<Vec<User>> {
+    let mut users = lyra_db::users::get(db)?;
+    users.retain(is_account);
+    Ok(users)
+}
+
+/// The user with this public id, if it reads as an account.
+pub(crate) fn get_by_public_id(
+    db: &impl lyra_db::DbAccess,
+    id: &str,
+) -> anyhow::Result<Option<User>> {
+    Ok(lyra_db::users::get_by_public_id(db, id)?.filter(is_account))
+}
 
 pub(crate) struct CreatedUser {
     pub(crate) id: String,

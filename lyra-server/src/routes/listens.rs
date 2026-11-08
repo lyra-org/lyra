@@ -40,6 +40,7 @@ use crate::{
     services::{
         auth::{
             Principal,
+            accounts,
             require_permission,
             require_principal,
         },
@@ -458,7 +459,7 @@ impl ListenOwner<'_> {
         match self {
             Self::Principal => Ok((principal.require(db)?, principal.user_public_id.clone())),
             Self::Public(user_id) => {
-                let user = lyra_db::users::get_by_public_id(db, user_id)?
+                let user = accounts::get_by_public_id(db, user_id)?
                     .ok_or_else(|| AppError::not_found(format!("User not found: {user_id}")))?;
                 let user_db_id = user
                     .db_id
@@ -536,11 +537,16 @@ async fn rows_for_managed_listens(
             resolve_accessible_track_filter(&db, principal, track_id, merge_pairs.as_ref())
         })
         .transpose()?;
-    let summaries = lyra_db::listens::list_summaries(
+    let account_ids = accounts::list(&*db)?
+        .into_iter()
+        .map(|user| user.id)
+        .collect::<HashSet<_>>();
+    let mut summaries = lyra_db::listens::list_summaries(
         &db,
         lyra_db::listens::ListenOwners::All,
         track_filter.as_ref().map(|filter| &filter.track_public_ids),
     )?;
+    summaries.retain(|summary| account_ids.contains(&summary.user_public_id));
 
     if let Some(track_id) = query.track_id.as_deref() {
         let mut rows_by_user: HashMap<String, ListenRow> = HashMap::new();
@@ -606,7 +612,7 @@ async fn hydrate_listen_rows(
         let user_exists = match visible_users.get(&row.user_id).copied() {
             Some(exists) => exists,
             None => {
-                let exists = lyra_db::users::get_by_public_id(&db, &row.user_id)?.is_some();
+                let exists = accounts::get_by_public_id(&*db, &row.user_id)?.is_some();
                 visible_users.insert(row.user_id.clone(), exists);
                 exists
             }
@@ -854,7 +860,7 @@ pub(super) fn submit_me_listens_docs(op: TransformOperation) -> TransformOperati
 #[cfg(feature = "docgen")]
 fn get_listens_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List listen summaries").description(
-        "Requires ManageLibraries or Admin. Returns per-user per-track listen summaries for visible library content as `{ items, next_cursor }`. The first page creates a bounded snapshot; continuation pages recheck current user and track visibility.",
+        "Requires ManageLibraries or Admin. Returns per-user per-track listen summaries for visible library content as `{ items, next_cursor }`. The default user's listens are left out, and `user_id` naming it finds no user, while authentication is enabled. The first page creates a bounded snapshot; continuation pages recheck current user and track visibility.",
     )
 }
 
@@ -964,6 +970,200 @@ mod tests {
         let ids = rows.into_iter().map(|row| row.user_id).collect::<Vec<_>>();
         assert_eq!(ids, vec!["user-a", "user-b"]);
     }
+    mod default_user {
+        use axum::{
+            http::{
+                StatusCode,
+                header::AUTHORIZATION,
+            },
+            response::IntoResponse,
+        };
+        use lyra_db::users::DEFAULT_USERNAME;
+
+        use super::*;
+
+        struct Fixture {
+            headers: HeaderMap,
+            admin_id: String,
+            default_id: String,
+            track_id: String,
+        }
+
+        fn set_auth_enabled(enabled: bool) {
+            let mut config = STATE.config().as_ref().clone();
+            config.auth.enabled = enabled;
+            crate::services::testing::publish_config(config);
+        }
+
+        async fn submit_listen(headers: &HeaderMap, track_id: &str) -> anyhow::Result<()> {
+            let _ = submit_me_listens(
+                headers.clone(),
+                Json(ListenSubmissionRequest {
+                    plays: vec![SubmittedPlayRequest {
+                        play_id: nanoid::nanoid!(),
+                        track_id: track_id.to_string(),
+                        started_at: "2026-10-01T12:00:00Z".to_string(),
+                        played_ms: None,
+                        listened: Some(true),
+                    }],
+                }),
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+            Ok(())
+        }
+
+        /// An admin and the default user, each with a listen of the one track.
+        async fn setup() -> anyhow::Result<Fixture> {
+            crate::plugins::testing::init_library_test_state(std::path::PathBuf::from(".")).await?;
+            crate::services::auth::ensure_default_user(&STATE.config()).await?;
+            let (admin_db_id, admin_id, default_id, track_id) = {
+                let mut db = STATE.db.write().await;
+                let admin = lyra_db::fixtures::test_user("listening-admin")?;
+                let admin_id = admin.id.clone();
+                let admin_db_id = lyra_db::users::create(&mut db, &admin)?;
+                lyra_db::roles::ensure_user_has_role(
+                    &mut db,
+                    admin_db_id,
+                    lyra_db::roles::BUILTIN_ADMIN_ROLE,
+                )?;
+                let default_id = lyra_db::users::get_by_username(&db, DEFAULT_USERNAME)?
+                    .expect("default user exists")
+                    .id;
+                let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Track")?;
+                let track_id = lyra_db::tracks::get_by_id(&db, track_db_id)?
+                    .expect("track exists")
+                    .id;
+                (admin_db_id, admin_id, default_id, track_id)
+            };
+            let session =
+                crate::services::testing::create_session(admin_db_id, Default::default()).await?;
+            let mut headers = HeaderMap::new();
+            headers.insert(AUTHORIZATION, format!("Bearer {}", session.token).parse()?);
+
+            submit_listen(&headers, &track_id).await?;
+            set_auth_enabled(false);
+            submit_listen(&HeaderMap::new(), &track_id).await?;
+            set_auth_enabled(true);
+
+            Ok(Fixture {
+                headers,
+                admin_id,
+                default_id,
+                track_id,
+            })
+        }
+
+        /// The users with a row in the listing, sorted, or the refusal's status.
+        async fn listed_users(
+            fixture: &Fixture,
+            user_id: Option<&str>,
+            track_id: Option<&str>,
+        ) -> Result<Vec<String>, StatusCode> {
+            let Json(page) = get_listens(
+                fixture.headers.clone(),
+                Query(ListenQuery {
+                    user_id: user_id.map(str::to_string),
+                    track_id: track_id.map(str::to_string),
+                    page: routes::PageQuery::default(),
+                    sort_by: None,
+                    sort_order: None,
+                    merge_unique_external_ids: None,
+                }),
+            )
+            .await
+            .map_err(|error| error.into_response().status())?;
+            let mut users = page
+                .items
+                .into_iter()
+                .map(|item| item.user_id)
+                .collect::<Vec<_>>();
+            users.sort();
+            Ok(users)
+        }
+
+        fn sorted(mut ids: Vec<String>) -> Vec<String> {
+            ids.sort();
+            ids
+        }
+
+        #[tokio::test]
+        async fn all_users_listens_show_it_only_while_auth_is_off() -> anyhow::Result<()> {
+            let _guard = crate::services::testing::runtime_test_lock().await;
+            let fixture = setup().await?;
+            let track = Some(fixture.track_id.as_str());
+
+            let only_admin = vec![fixture.admin_id.clone()];
+            assert_eq!(
+                listed_users(&fixture, None, None).await,
+                Ok(only_admin.clone())
+            );
+            assert_eq!(listed_users(&fixture, None, track).await, Ok(only_admin));
+
+            set_auth_enabled(false);
+            let both = sorted(vec![fixture.admin_id.clone(), fixture.default_id.clone()]);
+            assert_eq!(listed_users(&fixture, None, None).await, Ok(both.clone()));
+            assert_eq!(listed_users(&fixture, None, track).await, Ok(both));
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn naming_it_finds_no_user_only_while_auth_is_on() -> anyhow::Result<()> {
+            let _guard = crate::services::testing::runtime_test_lock().await;
+            let fixture = setup().await?;
+            let default_id = Some(fixture.default_id.as_str());
+            let track = Some(fixture.track_id.as_str());
+
+            for track_id in [None, track] {
+                assert_eq!(
+                    listed_users(&fixture, default_id, track_id).await,
+                    Err(StatusCode::NOT_FOUND)
+                );
+            }
+
+            set_auth_enabled(false);
+            for track_id in [None, track] {
+                assert_eq!(
+                    listed_users(&fixture, default_id, track_id).await,
+                    Ok(vec![fixture.default_id.clone()])
+                );
+            }
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn a_continuation_drops_its_rows_only_while_auth_is_on() -> anyhow::Result<()> {
+            let _guard = crate::services::testing::runtime_test_lock().await;
+            let fixture = setup().await?;
+            let principal = {
+                let db = STATE.db.read().await;
+                let admin_db_id = lyra_db::users::get_by_public_id(&db, &fixture.admin_id)?
+                    .and_then(|user| user.db_id)
+                    .expect("admin exists");
+                drop(db);
+                crate::services::testing::user_principal(admin_db_id).await?
+            };
+            let item_ids = vec![listen_row_id(&ListenRow {
+                user_id: fixture.default_id.clone(),
+                track_id: fixture.track_id.clone(),
+                listen_count: 1,
+                last_played_ms: None,
+            })];
+
+            let hydrated = hydrate_listen_rows(&principal, &item_ids)
+                .await
+                .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+            assert!(hydrated.is_empty());
+
+            set_auth_enabled(false);
+            let hydrated = hydrate_listen_rows(&principal, &item_ids)
+                .await
+                .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+            assert_eq!(hydrated.len(), 1);
+            Ok(())
+        }
+    }
+
     mod submission {
         use axum::{
             http::{

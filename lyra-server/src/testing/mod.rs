@@ -432,6 +432,12 @@ pub async fn run_luau_plugin_test_file(
     })?;
     let relative_path_text = relative_path.to_string_lossy().replace('\\', "/");
 
+    if fixture.is_some_and(Fixture::auth_disabled) {
+        let mut config = STATE.config().as_ref().clone();
+        config.auth.enabled = false;
+        services::testing::publish_config(config);
+    }
+
     let (principal, seeded) = {
         let mut db = STATE.db.write().await;
         let (run_as, seeded) = match fixture {

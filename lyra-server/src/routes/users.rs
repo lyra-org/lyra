@@ -268,7 +268,7 @@ async fn list_users(headers: HeaderMap) -> Result<Json<Vec<PublicUser>>, AppErro
     let _principal = require_manage_users(bearer_credential(&headers)).await?;
 
     let db = STATE.db.read().await;
-    let users = lyra_db::users::get(&db)?;
+    let users = accounts::list(&db)?;
     let public_users = users
         .into_iter()
         .map(|user| {
@@ -533,8 +533,10 @@ fn create_user_docs(op: TransformOperation) -> TransformOperation {
 
 #[cfg(feature = "docgen")]
 fn list_users_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("List users")
-        .description("Returns all users. Requires ManageUsers permission.")
+    op.summary("List users").description(
+        "Returns all users. The default user is left out while authentication is enabled. \
+             Requires ManageUsers permission.",
+    )
 }
 
 #[cfg(feature = "docgen")]
@@ -967,6 +969,53 @@ mod tests {
 
         remote_registry::unregister(target.connection_id).await;
         remote_registry::unregister(bystander.connection_id).await;
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    fn set_auth_enabled(enabled: bool) {
+        let mut config = STATE.config().as_ref().clone();
+        config.auth.enabled = enabled;
+        crate::services::testing::publish_config(config);
+    }
+
+    async fn listed_usernames(headers: HeaderMap) -> Vec<String> {
+        let Ok(Json(users)) = list_users(headers).await else {
+            panic!("listing users should succeed");
+        };
+        users.into_iter().map(|user| user.username).collect()
+    }
+
+    #[tokio::test]
+    async fn list_users_shows_the_default_user_only_while_auth_is_off() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        crate::services::auth::ensure_default_user(&STATE.config()).await?;
+        let headers = create_headers_with_permissions(
+            "listing-manager",
+            "listing-manager",
+            vec![Permission::ManageUsers],
+        )
+        .await?;
+
+        let listed = listed_usernames(headers).await;
+        assert!(
+            listed.contains(&"listing-manager".to_string()),
+            "{listed:?}"
+        );
+        assert!(
+            !listed.contains(&DEFAULT_USERNAME.to_string()),
+            "{listed:?}"
+        );
+
+        set_auth_enabled(false);
+        let listed = listed_usernames(HeaderMap::new()).await;
+        assert!(
+            listed.contains(&"listing-manager".to_string()),
+            "{listed:?}"
+        );
+        assert!(listed.contains(&DEFAULT_USERNAME.to_string()), "{listed:?}");
+
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())
     }

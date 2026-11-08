@@ -8,6 +8,7 @@
 use std::{
     path::PathBuf,
     sync::{
+        Arc,
         LazyLock,
         Mutex as StdMutex,
         PoisonError,
@@ -39,7 +40,6 @@ pub(crate) use self::test_state::{
     for_each_db_gap,
     init_default_test_state,
     init_library_test_state,
-    publish_config,
     record_plugin_dispatch,
     run_with_recycle_at,
     user_principal,
@@ -58,6 +58,18 @@ use crate::services::{
     },
     state::resolve_settings,
 };
+
+/// Publishes `config` in place of the current one, keeping the current
+/// provenance and file layer. For tests that poke typed config fields;
+/// the settings API tests resolve real values instead.
+pub(crate) fn publish_config(config: server_settings::Config) {
+    let current = STATE.settings.get();
+    STATE.publish_settings(Arc::new(ResolvedSettings {
+        config: Arc::new(config),
+        effective: current.effective.clone(),
+        file: current.file.clone(),
+    }));
+}
 
 static RUNTIME_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
@@ -294,20 +306,6 @@ mod test_state {
     ) -> anyhow::Result<crate::services::auth::sessions::CreatedSession> {
         let principal = user_principal(user_db_id).await?;
         Ok(crate::services::auth::sessions::create_session_for_user(&principal, metadata).await?)
-    }
-
-    /// Publishes `config` in place of the current one, keeping the current
-    /// provenance and file layer. For tests that poke typed config fields;
-    /// the settings API tests resolve real values instead.
-    pub(crate) fn publish_config(config: crate::services::settings::server::Config) {
-        let current = STATE.settings.get();
-        STATE.publish_settings(Arc::new(
-            crate::services::settings::server::ResolvedSettings {
-                config: Arc::new(config),
-                effective: current.effective.clone(),
-                file: current.file.clone(),
-            },
-        ));
     }
 
     /// Runs `operation` to completion, handing the DB write lock to `between` each time `operation`

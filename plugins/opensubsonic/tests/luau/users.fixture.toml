@@ -21,6 +21,9 @@ admin = true
 [[users]]
 key = "lonely"
 
+[[users]]
+key = "default"
+
 [[api_keys]]
 key = "lonely_key"
 user = "lonely"
@@ -50,3 +53,10 @@ users = ["downloader"]
 [[libraries]]
 key = "locked"
 name = "Locked"
+
+[[playlists]]
+key = "left_behind"
+owner = "default"
+name = "Left Behind"
+public = true
+tracks = []

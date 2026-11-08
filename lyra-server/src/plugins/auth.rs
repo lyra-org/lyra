@@ -785,12 +785,16 @@ impl DescribeInterface for OwnersQuery {
             FieldDescriptor {
                 name: "user_id",
                 ty: Option::<String>::luau_type(),
-                description: Some("Reads this user's instead of the caller's."),
+                description: Some(
+                    "Reads this user's instead of the caller's. The default user reads as missing while authentication is enabled.",
+                ),
             },
             FieldDescriptor {
                 name: "all_users",
                 ty: Option::<bool>::luau_type(),
-                description: Some("Reads every user's."),
+                description: Some(
+                    "Reads every user's, leaving out the default user's while authentication is enabled.",
+                ),
             },
         ]);
         descriptor

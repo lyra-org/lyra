@@ -47,6 +47,7 @@ use crate::{
         SyncRunStartResponse,
         auth::{
             access,
+            accounts,
             require_authenticated,
             require_can_create_library,
         },
@@ -630,6 +631,7 @@ async fn list_library_access(
     let users = lyra_db::libraries::users_with_access(&db, library_db_id)?;
     let response = users
         .into_iter()
+        .filter(accounts::is_account)
         .map(|user| {
             let role = user.db_id.and_then(|db_id| public_user_role(&db, db_id));
             LibraryAccessResponse {
@@ -728,8 +730,10 @@ async fn revoke_library_access(
 
 #[cfg(feature = "docgen")]
 fn list_library_access_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("List library access")
-        .description("Returns explicit user grants for a library. Admin bypass is not listed.")
+    op.summary("List library access").description(
+        "Returns explicit user grants for a library. Admin bypass is not listed, and the default \
+         user is left out while authentication is enabled.",
+    )
 }
 
 #[cfg(feature = "docgen")]
@@ -1249,6 +1253,61 @@ mod tests {
             .await
             .map_err(|err| anyhow::anyhow!("{err:?}"))?;
         assert_eq!(revoked_again, StatusCode::NO_CONTENT);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn library_access_lists_the_default_user_only_while_auth_is_off() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        setup_route_test().await?;
+        crate::services::auth::ensure_default_user(&STATE.config()).await?;
+
+        let (manager_db_id, default_id, library_id) = {
+            let mut db = STATE.db.write().await;
+            let manager_db_id = create_user_with_permissions(
+                &mut db,
+                "manager",
+                vec![Permission::ManageLibraries],
+            )?;
+            let default_id =
+                lyra_db::users::get_by_username(&db, lyra_db::users::DEFAULT_USERNAME)?
+                    .expect("default user")
+                    .id;
+            let library = db.transaction_mut(|t| -> anyhow::Result<lyra_db::Library> {
+                Ok(lyra_db::libraries::create_with_creator(
+                    t,
+                    library_insert("Managed", "default-access"),
+                    manager_db_id,
+                )?)
+            })?;
+            (manager_db_id, default_id, library.id)
+        };
+        let session =
+            crate::services::testing::create_session(manager_db_id, Default::default()).await?;
+        let headers = bearer_headers(&session.token);
+        grant_library_access(
+            headers.clone(),
+            Path(library_id.clone()),
+            Json(LibraryGrantAccessRequest {
+                user_id: default_id.clone(),
+                kind: LibraryAccessKind::ReadWrite,
+            }),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+
+        let Json(access) = list_library_access(headers, Path(library_id.clone()))
+            .await
+            .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert!(!access.iter().any(|grant| grant.id == default_id));
+
+        let mut config = STATE.config().as_ref().clone();
+        config.auth.enabled = false;
+        crate::services::testing::publish_config(config);
+        let Json(access) = list_library_access(HeaderMap::new(), Path(library_id))
+            .await
+            .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert!(access.iter().any(|grant| grant.id == default_id));
         Ok(())
     }
 }

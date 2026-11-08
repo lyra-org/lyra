@@ -300,10 +300,9 @@ fn now_ms() -> u64 {
 
 /// The user an `owner_id` filter names.
 fn resolve_owner_filter(db: &agdb::DbAny, owner_id: &str) -> Result<DbId, AppError> {
-    let not_found = || AppError::not_found(format!("User not found: {owner_id}"));
-    let owner_db_id = lyra_db::lookup::find_node_id_by_id(db, owner_id)?.ok_or_else(not_found)?;
-    lyra_db::users::get_by_id(db, owner_db_id)?.ok_or_else(not_found)?;
-    Ok(owner_db_id)
+    crate::services::auth::accounts::get_by_public_id(db, owner_id)?
+        .and_then(|user| user.db_id)
+        .ok_or_else(|| AppError::not_found(format!("User not found: {owner_id}")))
 }
 
 /// A 400 for an [`playlists::InvalidPlaylistRequest`], and `err` as it maps otherwise.
@@ -1260,6 +1259,27 @@ mod tests {
             entry_ids(db, victim.db_id)?,
             victim.entry_ids,
             "victim entries changed at gap {gap}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn owner_filter_names_the_default_user_only_while_auth_is_off() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        crate::services::auth::ensure_default_user(&STATE.config()).await?;
+        let db = STATE.db.read().await;
+        let default_user = lyra_db::users::get_by_username(&db, lyra_db::users::DEFAULT_USERNAME)?
+            .ok_or_else(|| anyhow!("default user missing"))?;
+
+        assert!(resolve_owner_filter(&db, &default_user.id).is_err());
+
+        let mut config = STATE.config().as_ref().clone();
+        config.auth.enabled = false;
+        crate::services::testing::publish_config(config);
+        assert_eq!(
+            resolve_owner_filter(&db, &default_user.id).ok(),
+            default_user.db_id
         );
         Ok(())
     }

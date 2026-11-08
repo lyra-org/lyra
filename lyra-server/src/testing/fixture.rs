@@ -55,6 +55,9 @@ pub struct Fixture {
     /// Scopes the test plugin declares that it goes without for the test.
     #[serde(default)]
     without_scopes: Vec<String>,
+    /// Whether the test runs with authentication disabled.
+    #[serde(default)]
+    auth_disabled: bool,
     /// Library plugins the test's plugin depends on and can require.
     #[serde(default)]
     plugins: Vec<Plugin>,
@@ -689,6 +692,10 @@ impl Fixture {
             }
             anyhow::Ok(())
         })
+    }
+
+    pub(crate) fn auth_disabled(&self) -> bool {
+        self.auth_disabled
     }
 
     pub(crate) fn without_scopes(&self) -> &[String] {

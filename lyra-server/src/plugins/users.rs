@@ -15,7 +15,10 @@ use serde::Serialize;
 
 use crate::{
     plugins::db::Db,
-    services::auth::resolve_principal,
+    services::auth::{
+        accounts,
+        resolve_principal,
+    },
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -31,11 +34,14 @@ pub(crate) struct UsersModule;
 
 #[harmony_macros::module(id = "lyra/users", docs_feature = "docgen")]
 impl UsersModule {
-    #[harmony(returns(Vec<PublicUser>))]
+    #[harmony(
+        description = "Lists the users. The default user is left out while authentication is enabled.",
+        returns(Vec<PublicUser>)
+    )]
     async fn list(#[context] db: Db) -> luau::runtime::Result<luau::Value> {
         let db = db.read().await;
         let libraries = lyra_db::libraries::get(&*db)?;
-        let users = lyra_db::users::get(&*db)?
+        let users = accounts::list(&*db)?
             .into_iter()
             .filter_map(|user| {
                 let user_db_id = user.db_id?;

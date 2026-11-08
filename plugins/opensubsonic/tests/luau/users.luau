@@ -92,6 +92,18 @@ same_folders(listed.deputy, { "music", "extra", "locked" }, "the listed admin's 
 assert(listed.listener.adminRole == false and listed.listener.downloadRole == false, "the listed listener's roles")
 assert(listed.downloader.downloadRole == true and listed.deputy.adminRole == true, "the listed roles")
 
+-- While authentication is on the default user is no account, though what it left behind stays.
+assert(listed.default == nil, "the default user isn't listed")
+assert(call.error_code("getUser", admin_key, { username = "default" }) == 70, "nor found by name")
+assert(call.error_code("getPlaylists", admin_key, { username = "default" }) == 70, "nor named for its playlists")
+local left_behind: any = nil
+for _, item in call.ok("getPlaylists", listener_key).playlists.playlist do
+	if item.id == fixture.ids.left_behind then
+		left_behind = item
+	end
+end
+assert(left_behind and left_behind.owner == nil and left_behind.readonly == true, "its public playlist has no owner")
+
 -- XML carries roles as attributes and folders as elements.
 local xml = call.raw("getUser", { apiKey = downloader_key, username = "downloader" }).body
 assert(string.find(xml, `downloadRole="true"`, 1, true), xml)

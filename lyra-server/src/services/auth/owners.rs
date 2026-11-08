@@ -14,6 +14,7 @@ use lyra_db::{
 use super::{
     AuthError,
     Principal,
+    accounts,
     require_permission,
 };
 
@@ -44,7 +45,7 @@ pub(crate) fn resolve(
             .collect(),
         Owners::User(user_id) => {
             require_permission(principal, Permission::ManageUsers)?;
-            let user = lyra_db::users::get_by_public_id(db, user_id)?;
+            let user = accounts::get_by_public_id(db, user_id)?;
             if let Some(user_db_id) = user.as_ref().and_then(|user| user.db_id)
                 && !manages(db, principal, principal_db_id, user_db_id)?
             {
@@ -57,7 +58,7 @@ pub(crate) fn resolve(
         Owners::All => {
             require_permission(principal, Permission::ManageUsers)?;
             let mut users = Vec::new();
-            for user in lyra_db::users::get(db)? {
+            for user in accounts::list(db)? {
                 if let Some(user_db_id) = user.db_id
                     && manages(db, principal, principal_db_id, user_db_id)?
                 {

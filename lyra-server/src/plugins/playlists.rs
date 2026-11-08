@@ -43,6 +43,7 @@ use crate::{
         auth::{
             Principal,
             access,
+            accounts,
         },
         catalog::{
             Direction,
@@ -353,13 +354,12 @@ impl PlaylistsModule {
         };
         let owner = match &query.owner_id {
             None => None,
-            Some(owner_id) => match lyra_db::lookup::find_node_id_by_id(&*db, owner_id)
+            Some(owner_id) => match accounts::get_by_public_id(&*db, owner_id)
                 .map_err(crate::plugins::runtime_error)?
+                .and_then(|user| user.db_id)
             {
-                Some(owner_db_id) if lyra_db::users::get_by_id(&*db, owner_db_id)?.is_some() => {
-                    Some(owner_db_id)
-                }
-                _ => return empty(),
+                Some(owner_db_id) => Some(owner_db_id),
+                None => return empty(),
             },
         };
         let ids = query

@@ -8,3 +8,6 @@ admin = true
 
 [[users]]
 key = "listener"
+
+[[users]]
+key = "default"
