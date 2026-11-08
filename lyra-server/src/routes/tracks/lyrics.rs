@@ -305,6 +305,7 @@ async fn refresh_track_lyrics(
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
+    require_permission(&principal, lyra_db::Permission::SyncMetadata)?;
     let track_db_id = {
         let db = &*STATE.db.read().await;
         let track_db_id = lyra_db::lookup::find_node_id_by_id(db, &id)?
@@ -603,8 +604,9 @@ fn refresh_track_lyrics_docs(op: TransformOperation) -> TransformOperation {
         .description(
             "Re-runs every registered lyrics provider for the track with `force_refresh=true`, \
              bypassing each provider's negative cache. Awaits all dispatches before returning. \
+             Requires `SyncMetadata`, returning 403 without it. \
              Returns 204 once dispatch completes; the caller should then GET the lyrics to read \
-             what was stored. 404 if the track does not exist.",
+             what was stored. 404 if the track does not exist or is hidden from the caller.",
         )
         .response::<204, ()>()
 }
@@ -640,6 +642,100 @@ mod tests {
 
     fn route_ok<T>(result: Result<T, AppError>) -> anyhow::Result<T> {
         result.map_err(|error| anyhow::anyhow!("{error:?}"))
+    }
+
+    fn route_error_status<T>(result: Result<T, AppError>) -> anyhow::Result<StatusCode> {
+        match result {
+            Ok(_) => anyhow::bail!("route unexpectedly succeeded"),
+            Err(error) => Ok(error.into_response().status()),
+        }
+    }
+
+    fn create_user_with_permissions(
+        db: &mut agdb::DbAny,
+        username: &str,
+        permissions: Vec<lyra_db::Permission>,
+    ) -> anyhow::Result<DbId> {
+        let user_id = lyra_db::users::create(db, &lyra_db::fixtures::test_user(username)?)?;
+        let role_name = format!("{username}-role");
+        lyra_db::roles::create(
+            db,
+            &lyra_db::roles::Role {
+                db_id: None,
+                id: nanoid::nanoid!(),
+                name: role_name.clone(),
+                permissions,
+            },
+        )?;
+        lyra_db::roles::ensure_user_has_role(db, user_id, &role_name)?;
+        Ok(user_id)
+    }
+
+    /// A 4 s track in its own library, returning its ids and the library's.
+    fn insert_library_track(
+        db: &mut agdb::DbAny,
+        name: &str,
+    ) -> anyhow::Result<(DbId, String, DbId)> {
+        let library = insert_library(db, name, &format!("/tmp/lyra-{name}"))?;
+        let release = insert_release(db, name)?;
+        let track = insert_track(db, name)?;
+        connect(db, library, release)?;
+        connect(db, release, track)?;
+        let mut track_row = lyra_db::tracks::get_by_id(db, track)?
+            .ok_or_else(|| anyhow::anyhow!("track missing"))?;
+        track_row.duration_ms = Some(4_000);
+        lyra_db::tracks::update(db, &track_row)?;
+        Ok((track, track_row.id, library))
+    }
+
+    fn grant_library(db: &mut agdb::DbAny, user: DbId, library: DbId) -> anyhow::Result<()> {
+        lyra_db::libraries::grant_access(
+            db,
+            user,
+            library,
+            lyra_db::libraries::AccessKind::ReadWrite,
+        )
+    }
+
+    #[tokio::test]
+    async fn refresh_requires_sync_metadata_before_track_access() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        super::super::setup_route_test().await?;
+        let (track_id, listener, hidden_syncer) = {
+            let mut db = STATE.db.write().await;
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
+            let (_, track_id, library) = insert_library_track(&mut db, "refresh-access")?;
+            let listener = lyra_db::users::create(
+                &mut db,
+                &lyra_db::fixtures::test_user("refresh-listener")?,
+            )?;
+            grant_library(&mut db, listener, library)?;
+            let hidden_syncer = create_user_with_permissions(
+                &mut db,
+                "refresh-hidden-syncer",
+                vec![lyra_db::Permission::SyncMetadata],
+            )?;
+            (track_id, listener, hidden_syncer)
+        };
+
+        let listener_headers = bearer_headers_for_user(listener).await?;
+        for id in [track_id.clone(), "missing-track-public-id".to_string()] {
+            assert_eq!(
+                route_error_status(refresh_track_lyrics(listener_headers.clone(), Path(id)).await)?,
+                StatusCode::FORBIDDEN
+            );
+        }
+        assert_eq!(
+            route_error_status(
+                refresh_track_lyrics(
+                    bearer_headers_for_user(hidden_syncer).await?,
+                    Path(track_id),
+                )
+                .await
+            )?,
+            StatusCode::NOT_FOUND
+        );
+        Ok(())
     }
 
     #[test]
