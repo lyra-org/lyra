@@ -117,6 +117,15 @@ pub(crate) struct MetadataGroup {
 }
 
 impl MetadataGroup {
+    /// Each file's [`Self::candidate_dir`], by its entry.
+    pub(crate) fn candidate_dirs(&self) -> BTreeMap<DbId, PathBuf> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.kind == EntryKind::File)
+            .filter_map(|entry| Some((entry.db_id?, self.candidate_dir(&entry.full_path))))
+            .collect()
+    }
+
     /// The directory a file's tracks coalesce as: its album root, or its own folder below one.
     pub(crate) fn candidate_dir(&self, file: &Path) -> PathBuf {
         let parent = file.parent().unwrap_or(Path::new(""));

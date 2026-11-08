@@ -9,8 +9,12 @@ mod releases;
 mod tracks;
 
 use std::{
+    collections::BTreeMap,
     mem,
-    path::PathBuf,
+    path::{
+        Path,
+        PathBuf,
+    },
 };
 
 use agdb::{
@@ -19,6 +23,7 @@ use agdb::{
 };
 
 pub(crate) use self::grouping::{
+    MetadataGroup,
     SourceDirGroup,
     album_groups,
     albums_left_by,
@@ -77,6 +82,35 @@ pub(crate) fn coalesce_disc_groups(groups: Vec<ParsedMetadataGroup>) -> Vec<Vec<
                 coalesce_group_key: group.coalesce_group_key,
                 source_dir: group.source_dir.to_string_lossy().to_string(),
                 tracks: group.metadata,
+            })
+            .collect(),
+    )
+}
+
+/// Coalesces one metadata group's parsed tracks into batches, comparing the folders
+/// `candidate_dirs` puts them in. A track it doesn't name counts as in `source_dir`.
+pub(crate) fn coalesce_group_tracks(
+    source_dir: &Path,
+    candidate_dirs: &BTreeMap<DbId, PathBuf>,
+    metadata: Vec<TrackMetadata>,
+) -> Vec<Vec<TrackMetadata>> {
+    let mut metadata_by_dir: BTreeMap<PathBuf, Vec<TrackMetadata>> = BTreeMap::new();
+    for track in metadata {
+        let dir = candidate_dirs
+            .get(&track.entry_db_id)
+            .map_or(source_dir, PathBuf::as_path);
+        metadata_by_dir
+            .entry(dir.to_path_buf())
+            .or_default()
+            .push(track);
+    }
+    coalesce_disc_groups(
+        metadata_by_dir
+            .into_iter()
+            .map(|(source_dir, metadata)| ParsedMetadataGroup {
+                coalesce_group_key: 0,
+                source_dir,
+                metadata,
             })
             .collect(),
     )
@@ -496,52 +530,20 @@ mod tests {
                 .any(|entry| entry.db_id.is_some_and(|id| entries.contains(&id)))
         });
         let mapping_config = ensure_config(db)?;
-        let mut parsed_groups = Vec::new();
 
-        for (coalesce_group_key, group) in groups.enumerate() {
-            let entry_source_dirs: std::collections::BTreeMap<DbId, PathBuf> = group
-                .entries
-                .iter()
-                .filter(|entry| entry.kind == lyra_db::entries::EntryKind::File)
-                .filter_map(|entry| Some((entry.db_id?, group.candidate_dir(&entry.full_path))))
-                .collect();
+        for group in groups {
+            let candidate_dirs = group.candidate_dirs();
             let (source_dir, entries) = (group.source_dir, group.entries);
             let parse_output =
                 parse_metadata(&mapping_config, entries, &Default::default(), &roots).await?;
             if !parse_output.skipped.is_empty() {
                 crate::services::metadata::log_skip_summary(&parse_output.skipped);
             }
-            let metadata = parse_output.metadata;
-            if metadata.is_empty() {
-                continue;
+            for metadata in
+                coalesce_group_tracks(&source_dir, &candidate_dirs, parse_output.metadata)
+            {
+                apply_metadata(db, library_db_id, metadata)?;
             }
-
-            let mut metadata_by_source_dir = std::collections::BTreeMap::new();
-            for track in metadata {
-                let track_source_dir = entry_source_dirs
-                    .get(&track.entry_db_id)
-                    .cloned()
-                    .unwrap_or_else(|| source_dir.clone());
-                metadata_by_source_dir
-                    .entry(track_source_dir)
-                    .or_insert_with(Vec::new)
-                    .push(track);
-            }
-
-            for (source_dir, metadata) in metadata_by_source_dir {
-                parsed_groups.push(ParsedMetadataGroup {
-                    coalesce_group_key,
-                    source_dir,
-                    metadata,
-                });
-            }
-        }
-
-        for metadata in coalesce_disc_groups(parsed_groups) {
-            if metadata.is_empty() {
-                continue;
-            }
-            apply_metadata(db, library_db_id, metadata)?;
         }
 
         cleanup_orphaned_metadata(db)?;

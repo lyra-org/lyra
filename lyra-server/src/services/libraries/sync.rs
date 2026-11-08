@@ -50,14 +50,15 @@ use crate::services::{
         sync_release_cover_for_tracks,
     },
     metadata::{
+        CueLinks,
         TrackMetadata,
         cleanup::cleanup_orphaned_metadata,
         ingestion::{
             MetadataApplyResult,
-            ParsedMetadataGroup,
+            MetadataGroup,
             albums_left_by,
             apply_metadata,
-            coalesce_disc_groups,
+            coalesce_group_tracks,
             metadata_groups,
         },
         load_mapping_config,
@@ -88,6 +89,7 @@ use lyra_db::{
         StoredEntries,
         mark_missing,
     },
+    metadata::mapping_config::MetadataMappingConfig,
 };
 
 pub(crate) const MAX_CONCURRENT_ALBUM_PIPELINE: usize = 4;
@@ -706,10 +708,10 @@ fn is_unsynced_file(entry: &Entry) -> bool {
     entry.kind == EntryKind::File && entry.synced_at_ms.is_none() && !entry.is_missing()
 }
 
-/// Reads the metadata groups holding unsynced files and applies the batches those files are in.
-/// Files with nothing left to do are marked synced as their group is read. A failed group, like
-/// a transiently unreadable file, is a failed unit, and its files stay unsynced for the next
-/// sync.
+/// Reads the metadata groups holding unsynced files and applies the batches those files are in,
+/// a few groups at a time, each visible in the catalog before the scan moves past it. Files with
+/// nothing left to do are marked synced as their group is read. A failed group, like a
+/// transiently unreadable file, is a failed unit, and its files stay unsynced for the next sync.
 async fn process_pending_metadata(
     db: &DbAsync,
     library: &Library,
@@ -759,185 +761,185 @@ async fn process_pending_metadata(
         .await;
 
     let mapping_config = load_mapping_config(db).await?;
+    let group_count = groups.len();
+    let mut applied_groups = futures::stream::iter(groups)
+        .map(|group| {
+            process_album_group(
+                db,
+                library_db_id,
+                group,
+                &mapping_config,
+                &cue_links,
+                &roots,
+                progress.clone(),
+            )
+        })
+        .buffer_unordered(MAX_CONCURRENT_ALBUM_PIPELINE);
 
-    let mut source_dirs_by_entry = BTreeMap::new();
-    let mut unsynced_entries = HashSet::new();
-    let mut unreadable_entries = HashSet::new();
-    let mut parsed_groups = Vec::new();
-    for (coalesce_group_key, group) in groups.into_iter().enumerate() {
-        progress.check_cancelled()?;
-        let source_dir = group.source_dir.clone();
-        let details = SyncWorkDetails::new("metadata_parse_group")
-            .source_dir(Some(source_dir.to_string_lossy().into_owned()));
-        let work_id = progress
-            .start_work(SyncStageKey::MetadataParse, details.clone())
-            .await;
-        let mut entry_source_dirs = BTreeMap::new();
-        let mut group_unsynced = HashMap::new();
-        for entry in &group.entries {
-            let Some(entry_db_id) = entry.db_id else {
-                continue;
-            };
-            if entry.kind != EntryKind::File {
-                continue;
-            }
-            let parent = group.candidate_dir(&entry.full_path);
-            source_dirs_by_entry.insert(entry_db_id, parent.clone());
-            entry_source_dirs.insert(entry_db_id, parent);
-            if entry.synced_at_ms.is_none() {
-                group_unsynced.insert(entry.full_path.clone(), entry_db_id);
-            }
-        }
-        let parse_output =
-            match parse_metadata(&mapping_config, group.entries, &cue_links, &roots).await {
-                Ok(output) => output,
-                Err(err) => {
-                    progress
-                        .fail_work(
-                            work_id,
-                            SyncStageKey::MetadataParse,
-                            details,
-                            format!("{err:#}"),
-                        )
-                        .await;
-                    continue;
-                }
-            };
-        if !parse_output.skipped.is_empty() {
-            log_skip_summary(&parse_output.skipped);
-        }
-        let unreadable = parse_output
-            .skipped
-            .iter()
-            .filter(|record| record.reason.is_transient())
-            .collect::<Vec<_>>();
-        unreadable_entries.extend(
-            unreadable
-                .iter()
-                .filter_map(|record| group_unsynced.get(&record.path).copied()),
-        );
-        let metadata = parse_output.metadata;
-        let read = metadata_entry_ids(&metadata).collect::<HashSet<_>>();
-        let finished = group_unsynced
-            .values()
-            .copied()
-            .filter(|entry_id| !read.contains(entry_id) && !unreadable_entries.contains(entry_id))
-            .collect::<Vec<_>>();
-        mark_entries_synced(db, library_db_id, &finished).await;
-        unsynced_entries.extend(group_unsynced.into_values());
-
-        let mut metadata_by_source_dir = BTreeMap::new();
-        for track in metadata {
-            let track_source_dir = entry_source_dirs
-                .get(&track.entry_db_id)
-                .cloned()
-                .unwrap_or_else(|| source_dir.clone());
-            metadata_by_source_dir
-                .entry(track_source_dir)
-                .or_insert_with(Vec::new)
-                .push(track);
-        }
-        for (source_dir, metadata) in metadata_by_source_dir {
-            parsed_groups.push(ParsedMetadataGroup {
-                coalesce_group_key,
-                source_dir,
-                metadata,
-            });
-        }
-        match unreadable.first() {
-            Some(first) => {
-                let err = anyhow::anyhow!(
-                    "{} files could not be read; {}: {}",
-                    unreadable.len(),
-                    first.path.display(),
-                    skip_reason_summary(&first.reason)
-                );
-                progress
-                    .fail_work(
-                        work_id,
-                        SyncStageKey::MetadataParse,
-                        details,
-                        format!("{err:#}"),
-                    )
-                    .await;
-            }
-            None => {
-                progress
-                    .complete_work(work_id, SyncStageKey::MetadataParse)
-                    .await;
-            }
+    // Groups whose tracks were one release keep it, so its artifacts run once for all of them.
+    let mut entries_by_release: BTreeMap<DbId, Vec<DbId>> = BTreeMap::new();
+    while let Some(applied) = applied_groups.next().await {
+        for (release_id, entry_ids) in applied? {
+            entries_by_release
+                .entry(release_id)
+                .or_default()
+                .extend(entry_ids);
         }
     }
 
-    let batches = coalesce_disc_groups(parsed_groups)
-        .into_iter()
-        .filter(|metadata| {
-            metadata_entry_ids(metadata).any(|entry_id| unsynced_entries.contains(&entry_id))
-        })
-        .collect::<Vec<_>>();
-    let batch_count = batches.len();
-    progress
-        .add_stage_total(
-            SyncStageKey::MetadataApply,
-            batch_count as u64,
-            SyncTotalState::Estimated,
-        )
-        .await;
-    let apply_results = futures::stream::iter(batches.into_iter().enumerate())
-        .map(|(group_id, metadata)| {
-            let db = db.clone();
-            let progress = progress.clone();
-            let source_dir = metadata
-                .first()
-                .and_then(|track| source_dirs_by_entry.get(&track.entry_db_id))
-                .cloned();
-            let entry_ids = metadata_entry_ids(&metadata)
-                .filter(|entry_id| !unreadable_entries.contains(entry_id))
-                .collect::<Vec<_>>();
-            async move {
-                let result = process_metadata_group(
-                    &db,
-                    library_db_id,
-                    group_id,
-                    source_dir,
-                    metadata,
-                    progress,
-                )
-                .await;
-                (entry_ids, result)
-            }
-        })
-        .buffer_unordered(MAX_CONCURRENT_ALBUM_PIPELINE)
-        .collect::<Vec<_>>()
-        .await;
-
-    // Batches whose tracks were one release keep it, so its artifacts run once for all of them.
-    let mut plans: Vec<ReleaseArtifactPlan> = Vec::new();
-    for (entry_ids, result) in apply_results {
-        let releases = match result {
-            Ok(apply_result) => apply_result.releases,
-            Err(err) if err.downcast_ref::<SyncRunControlError>().is_some() => return Err(err),
-            Err(_) => continue,
-        };
-        let Some(&release_id) = releases.first() else {
-            mark_entries_synced(db, library_db_id, &entry_ids).await;
-            continue;
-        };
-        match plans.iter_mut().find(|plan| plan.release_id == release_id) {
-            Some(plan) => plan.entry_ids.extend(entry_ids),
-            None => match release_artifact_plan(db, release_id, entry_ids.clone()).await? {
-                Some(plan) => plans.push(plan),
-                None => mark_entries_synced(db, library_db_id, &entry_ids).await,
-            },
+    // Built only now: a plan's tracks are read back, and a later group can add to its release.
+    let mut plans = Vec::with_capacity(entries_by_release.len());
+    for (release_id, entry_ids) in entries_by_release {
+        match release_artifact_plan(db, release_id, entry_ids.clone()).await? {
+            Some(plan) => plans.push(plan),
+            None => mark_entries_synced(db, library_db_id, &entry_ids).await,
         }
     }
     tracing::info!(
         library_db_id = library_db_id.0,
         run_id = %run_id,
-        group_count = batch_count,
+        group_count,
         "scan metadata groups completed"
     );
     Ok(plans)
+}
+
+/// Parses an album group, coalesces its discs and applies each batch in one write. Returns the
+/// release each batch applied to, with the entries marked synced once its artifacts finish. A
+/// failed parse or apply is a failed unit, so only a cancelled run fails this.
+async fn process_album_group(
+    db: &DbAsync,
+    library_db_id: DbId,
+    group: MetadataGroup,
+    mapping_config: &MetadataMappingConfig,
+    cue_links: &CueLinks,
+    roots: &Arc<MediaRoots>,
+    progress: SyncRunProgress,
+) -> anyhow::Result<Vec<(DbId, Vec<DbId>)>> {
+    progress.check_cancelled()?;
+    let source_dir = group.source_dir.clone();
+    let details = SyncWorkDetails::new("metadata_parse_group")
+        .source_dir(Some(source_dir.to_string_lossy().into_owned()));
+    let work_id = progress
+        .start_work(SyncStageKey::MetadataParse, details.clone())
+        .await;
+    let candidate_dirs = group.candidate_dirs();
+    let group_unsynced = group
+        .entries
+        .iter()
+        .filter(|entry| entry.kind == EntryKind::File && entry.synced_at_ms.is_none())
+        .filter_map(|entry| Some((entry.full_path.clone(), entry.db_id?)))
+        .collect::<HashMap<_, _>>();
+    let parse = async {
+        #[cfg(test)]
+        tests::before_parse(&source_dir).await;
+        parse_metadata(mapping_config, group.entries, cue_links, roots).await
+    };
+    let parsed = tokio::select! {
+        parsed = parse => parsed,
+        err = progress.cancelled() => return Err(err.into()),
+    };
+    let parse_output = match parsed {
+        Ok(output) => output,
+        Err(err) => {
+            progress
+                .fail_work(
+                    work_id,
+                    SyncStageKey::MetadataParse,
+                    details,
+                    format!("{err:#}"),
+                )
+                .await;
+            return Ok(Vec::new());
+        }
+    };
+    if !parse_output.skipped.is_empty() {
+        log_skip_summary(&parse_output.skipped);
+    }
+    let unreadable = parse_output
+        .skipped
+        .iter()
+        .filter(|record| record.reason.is_transient())
+        .collect::<Vec<_>>();
+    let unreadable_entries = unreadable
+        .iter()
+        .filter_map(|record| group_unsynced.get(&record.path).copied())
+        .collect::<HashSet<_>>();
+    let metadata = parse_output.metadata;
+    let read = metadata_entry_ids(&metadata).collect::<HashSet<_>>();
+    let finished = group_unsynced
+        .values()
+        .copied()
+        .filter(|entry_id| !read.contains(entry_id) && !unreadable_entries.contains(entry_id))
+        .collect::<Vec<_>>();
+    mark_entries_synced(db, library_db_id, &finished).await;
+
+    match unreadable.first() {
+        Some(first) => {
+            let err = anyhow::anyhow!(
+                "{} files could not be read; {}: {}",
+                unreadable.len(),
+                first.path.display(),
+                skip_reason_summary(&first.reason)
+            );
+            progress
+                .fail_work(
+                    work_id,
+                    SyncStageKey::MetadataParse,
+                    details,
+                    format!("{err:#}"),
+                )
+                .await;
+        }
+        None => {
+            progress
+                .complete_work(work_id, SyncStageKey::MetadataParse)
+                .await;
+        }
+    }
+
+    let unsynced_entries = group_unsynced.into_values().collect::<HashSet<_>>();
+    let batches = coalesce_group_tracks(&source_dir, &candidate_dirs, metadata)
+        .into_iter()
+        .filter(|metadata| {
+            metadata_entry_ids(metadata).any(|entry_id| unsynced_entries.contains(&entry_id))
+        })
+        .collect::<Vec<_>>();
+    progress
+        .add_stage_total(
+            SyncStageKey::MetadataApply,
+            batches.len() as u64,
+            SyncTotalState::Estimated,
+        )
+        .await;
+
+    let mut applied = Vec::with_capacity(batches.len());
+    for metadata in batches {
+        let batch_source_dir = metadata
+            .first()
+            .and_then(|track| candidate_dirs.get(&track.entry_db_id))
+            .cloned();
+        let entry_ids = metadata_entry_ids(&metadata)
+            .filter(|entry_id| !unreadable_entries.contains(entry_id))
+            .collect::<Vec<_>>();
+        let result = apply_metadata_batch(
+            db,
+            library_db_id,
+            batch_source_dir,
+            metadata,
+            progress.clone(),
+        )
+        .await;
+        match result {
+            Ok(apply_result) => match apply_result.releases.first() {
+                Some(&release_id) => applied.push((release_id, entry_ids)),
+                None => mark_entries_synced(db, library_db_id, &entry_ids).await,
+            },
+            Err(err) if err.downcast_ref::<SyncRunControlError>().is_some() => return Err(err),
+            Err(_) => {}
+        }
+    }
+    Ok(applied)
 }
 
 fn metadata_entry_ids(metadata: &[TrackMetadata]) -> impl Iterator<Item = DbId> + '_ {
@@ -946,10 +948,9 @@ fn metadata_entry_ids(metadata: &[TrackMetadata]) -> impl Iterator<Item = DbId> 
         .flat_map(|track| std::iter::once(track.entry_db_id).chain(track.cue_sheet_entry_id))
 }
 
-async fn process_metadata_group(
+async fn apply_metadata_batch(
     db: &DbAsync,
     library_db_id: DbId,
-    group_id: usize,
     source_dir: Option<PathBuf>,
     metadata: Vec<TrackMetadata>,
     progress: SyncRunProgress,
@@ -970,7 +971,6 @@ async fn process_metadata_group(
     tracing::debug!(
         library_db_id = library_db_id.0,
         run_id = %run_id,
-        group_id,
         track_count = metadata.len(),
         stage = "metadata_apply",
         "scan group stage started"
@@ -1001,7 +1001,6 @@ async fn process_metadata_group(
     tracing::info!(
         library_db_id = library_db_id.0,
         run_id = %run_id,
-        group_id,
         stage = "metadata_apply",
         release_count = apply_result.releases.len(),
         track_count = apply_result.tracks.len(),
@@ -1646,15 +1645,17 @@ FILE "album.flac" WAVE
         Ok(())
     }
 
-    type ArtifactGate = std::sync::Arc<
-        dyn Fn(Option<String>) -> futures::future::BoxFuture<'static, ()> + Send + Sync,
-    >;
+    type Gate<T> =
+        std::sync::Arc<dyn Fn(T) -> futures::future::BoxFuture<'static, ()> + Send + Sync>;
+    type ArtifactGate = Gate<Option<String>>;
 
     #[derive(Default)]
     struct Hooks {
         reject_album: Option<&'static str>,
         applied: std::sync::Mutex<Vec<String>>,
         before_artifacts: Option<ArtifactGate>,
+        before_parse: Option<Gate<PathBuf>>,
+        planned: std::sync::Mutex<Vec<(Vec<DbId>, Vec<DbId>)>>,
     }
 
     tokio::task_local! {
@@ -1675,9 +1676,26 @@ FILE "album.flac" WAVE
             .unwrap_or(Ok(()))
     }
 
+    pub(super) async fn before_parse(source_dir: &Path) {
+        let gate = HOOKS
+            .try_with(|hooks| hooks.before_parse.clone())
+            .ok()
+            .flatten();
+        if let Some(gate) = gate {
+            gate(source_dir.to_path_buf()).await;
+        }
+    }
+
     pub(super) async fn before_release_artifacts(plan: &ReleaseArtifactPlan) {
         let gate = HOOKS
-            .try_with(|hooks| hooks.before_artifacts.clone())
+            .try_with(|hooks| {
+                hooks
+                    .planned
+                    .lock()
+                    .expect("planned")
+                    .push((plan.track_ids.clone(), plan.entry_ids.clone()));
+                hooks.before_artifacts.clone()
+            })
             .ok()
             .flatten();
         if let Some(gate) = gate {
@@ -3216,6 +3234,312 @@ FILE "album.flac" WAVE
 
         sync(&library).await?;
         assert!(synced(&library, &second).await?);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    /// The title and track count of every release the catalog lists, read under one guard.
+    async fn catalog_releases() -> anyhow::Result<Vec<(String, usize)>> {
+        use crate::services::catalog::{
+            self,
+            pipeline::Catalog,
+            releases::{
+                ReleaseFilter,
+                Releases,
+            },
+        };
+
+        let db = STATE.db.read().await;
+        let ids = catalog::order(
+            &db,
+            &catalog::Viewer::System,
+            &catalog::Query::<Releases>::new(ReleaseFilter::default()),
+        )?;
+        let mut releases = Vec::with_capacity(ids.len());
+        for release in Releases::hydrate(&db, &ids)? {
+            let release = release.item;
+            let release_id = release
+                .db_id
+                .clone()
+                .map(DbId::from)
+                .expect("release db_id");
+            let tracks = lyra_db::tracks::get_direct(&db, release_id)?.len();
+            releases.push((release.release_title, tracks));
+        }
+        Ok(releases)
+    }
+
+    /// Waits until the catalog lists the release titled `title`, alone, and returns the tracks it
+    /// had when first seen.
+    async fn tracks_when_first_listed(title: &'static str) -> usize {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                if let [(listed, tracks)] = catalog_releases().await.expect("catalog").as_slice()
+                    && listed == title
+                {
+                    return *tracks;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("the finished album never reached the catalog")
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_finished_album_is_listed_while_later_groups_wait_to_parse() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("listed-while-parsing").await?;
+        let first = (1..=3)
+            .map(|track| {
+                let path = root.join(format!("First/{track:02}.flac"));
+                album_file(&path, "First", track).map(|()| path)
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let later = album_track(&root.join("Later"), "Later")?;
+
+        let gate: Gate<PathBuf> = std::sync::Arc::new(|source_dir: PathBuf| {
+            Box::pin(async move {
+                if source_dir.ends_with("Later") {
+                    assert_eq!(
+                        tracks_when_first_listed("First").await,
+                        3,
+                        "the album appeared partially"
+                    );
+                }
+            })
+        });
+        let hooks = Hooks {
+            before_parse: Some(gate),
+            ..Hooks::default()
+        };
+        sync_with(
+            hooks.into(),
+            &library,
+            SyncRunProgress::unreported_for_test(),
+        )
+        .await?;
+
+        for path in first.iter().chain([&later]) {
+            assert!(synced(&library, path).await?);
+        }
+        let mut releases = catalog_releases().await?;
+        releases.sort();
+        assert_eq!(
+            releases,
+            [("First".to_string(), 3), ("Later".to_string(), 1)]
+        );
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn groups_applying_to_one_release_are_planned_together() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("one-release").await?;
+        let (one, two) = (root.join("A/01.flac"), root.join("B/02.flac"));
+        album_file(&one, "Album", 1)?;
+        album_file(&two, "Album", 2)?;
+        sync(&library).await?;
+
+        let entry_of = async |path: &Path| -> anyhow::Result<DbId> {
+            Ok(entry_for(&library, path).await?.db_id.expect("entry db_id"))
+        };
+        let entries = [entry_of(&one).await?, entry_of(&two).await?];
+        let (winner, loser) = (release_of(entries[0]).await?, release_of(entries[1]).await?);
+        assert_ne!(winner, loser, "the groups must make separate releases");
+        {
+            let mut db = STATE.db.write().await;
+            db.transaction_mut(|t| {
+                crate::services::providers::merge_release_into_inside_tx(t, winner, loser)
+            })?;
+        }
+        shift_mtime(&one, 5)?;
+        shift_mtime(&two, 5)?;
+
+        let hooks = std::sync::Arc::new(Hooks::default());
+        sync_with(
+            hooks.clone(),
+            &library,
+            SyncRunProgress::unreported_for_test(),
+        )
+        .await?;
+
+        let tracks = snapshot(&library).await?;
+        let db = STATE.db.read().await;
+        let mut expected_tracks = Vec::new();
+        for entry in entries {
+            expected_tracks.extend(
+                lyra_db::tracks::get_by_entry(&db, entry)?
+                    .into_iter()
+                    .filter_map(|track| track.db_id.map(DbId::from)),
+            );
+        }
+        drop(db);
+        expected_tracks.sort();
+        let mut expected_entries = entries.to_vec();
+        expected_entries.sort();
+        assert_eq!(tracks[&one].1.len() + tracks[&two].1.len(), 2);
+
+        let mut planned = std::mem::take(&mut *hooks.planned.lock().expect("planned"));
+        assert_eq!(planned.len(), 1, "expected one plan");
+        let (mut track_ids, mut entry_ids) = planned.remove(0);
+        track_ids.sort();
+        entry_ids.sort();
+        assert_eq!(track_ids, expected_tracks);
+        assert_eq!(entry_ids, expected_entries);
+        assert!(synced(&library, &one).await? && synced(&library, &two).await?);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_failed_group_of_a_shared_release_is_left_for_the_next_sync() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("shared-release-failure").await?;
+        let (good, bad) = (root.join("A/01.flac"), root.join("B/02.flac"));
+        album_file(&good, "Good", 1)?;
+        album_file(&bad, "Bad", 2)?;
+        sync(&library).await?;
+
+        let good_entry = entry_for(&library, &good)
+            .await?
+            .db_id
+            .expect("entry db_id");
+        let bad_entry = entry_for(&library, &bad).await?.db_id.expect("entry db_id");
+        let (winner, loser) = (release_of(good_entry).await?, release_of(bad_entry).await?);
+        assert_ne!(winner, loser, "the groups must make separate releases");
+        {
+            let mut db = STATE.db.write().await;
+            db.transaction_mut(|t| {
+                crate::services::providers::merge_release_into_inside_tx(t, winner, loser)
+            })?;
+        }
+        shift_mtime(&good, 5)?;
+        shift_mtime(&bad, 5)?;
+
+        let progress = super::super::orchestrator::begin_test_run(&library).await;
+        let hooks = std::sync::Arc::new(Hooks {
+            reject_album: Some("Bad"),
+            ..Hooks::default()
+        });
+        sync_with(hooks.clone(), &library, progress.clone()).await?;
+        let run = super::super::orchestrator::get_sync_run(progress.run_id())
+            .await?
+            .expect("run");
+        super::super::orchestrator::end_test_run(&progress).await;
+
+        assert_eq!(run.progress.failed_units, 1);
+        let planned = std::mem::take(&mut *hooks.planned.lock().expect("planned"));
+        assert_eq!(planned.len(), 1, "expected one plan");
+        assert_eq!(
+            planned[0].1,
+            [good_entry],
+            "the failed group joined the plan"
+        );
+        assert!(synced(&library, &good).await?);
+        assert!(!synced(&library, &bad).await?);
+
+        let hooks = std::sync::Arc::new(Hooks::default());
+        sync_with(
+            hooks.clone(),
+            &library,
+            SyncRunProgress::unreported_for_test(),
+        )
+        .await?;
+
+        assert_eq!(*hooks.applied.lock().expect("applied"), ["Bad"]);
+        let planned = std::mem::take(&mut *hooks.planned.lock().expect("planned"));
+        assert_eq!(planned.len(), 1, "expected one plan");
+        assert_eq!(planned[0].1, [bad_entry]);
+        assert!(synced(&library, &bad).await?);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cancelling_during_parsing_leaves_applied_albums_for_the_next_sync()
+    -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cancel-parsing").await?;
+        let first = album_track(&root.join("First"), "First")?;
+        let later = album_track(&root.join("Later"), "Later")?;
+
+        let progress = super::super::orchestrator::begin_test_run(&library).await;
+        let run_id = progress.run_id().to_string();
+        let gate: Gate<PathBuf> = std::sync::Arc::new(move |source_dir: PathBuf| {
+            let run_id = run_id.clone();
+            Box::pin(async move {
+                if source_dir.ends_with("Later") {
+                    tracks_when_first_listed("First").await;
+                    super::super::orchestrator::cancel_sync_run(&run_id)
+                        .await
+                        .expect("cancel");
+                    std::future::pending::<()>().await;
+                }
+            })
+        });
+        let hooks = Hooks {
+            before_parse: Some(gate),
+            ..Hooks::default()
+        };
+        let result = tokio::time::timeout(
+            Duration::from_secs(30),
+            sync_with(hooks.into(), &library, progress.clone()),
+        )
+        .await
+        .expect("the cancelled scan kept waiting for a parse");
+        super::super::orchestrator::end_test_run(&progress).await;
+
+        let err = result.expect_err("the run finished despite its cancellation");
+        assert!(
+            err.downcast_ref::<SyncRunControlError>().is_some(),
+            "{err:#}"
+        );
+        let applied = snapshot(&library).await?[&first].clone();
+        assert_eq!(applied.1.len(), 1, "the applied album was lost");
+        assert!(
+            !synced(&library, &first).await?,
+            "an album without its artifacts counted as synced"
+        );
+        assert!(snapshot(&library).await?[&later].1.is_empty());
+
+        sync(&library).await?;
+        let after = snapshot(&library).await?;
+        assert_eq!(after[&first], applied, "re-applying replaced the track");
+        assert_eq!(after[&later].1.len(), 1);
+        assert!(synced(&library, &first).await? && synced(&library, &later).await?);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn apply_totals_grow_with_the_batches_a_group_produces() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("apply-totals").await?;
+        album_file(&root.join("Singles/one.flac"), "One", 1)?;
+        album_file(&root.join("Singles/two.flac"), "Two", 2)?;
+
+        let progress = super::super::orchestrator::begin_test_run(&library).await;
+        let hooks = std::sync::Arc::new(Hooks::default());
+        sync_with(hooks.clone(), &library, progress.clone()).await?;
+        let run = super::super::orchestrator::get_sync_run(progress.run_id())
+            .await?
+            .expect("run");
+        super::super::orchestrator::end_test_run(&progress).await;
+
+        assert_eq!(hooks.applied.lock().expect("applied").len(), 2);
+        assert_eq!(run.progress.failed_units, 0);
+        assert_eq!(
+            run.progress.completed_units + run.progress.skipped_units,
+            run.progress.total_units,
+            "every counted unit must settle, and no unit may go uncounted"
+        );
         let _ = std::fs::remove_dir_all(root);
         Ok(())
     }
