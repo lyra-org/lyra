@@ -21,19 +21,21 @@ local function list(list_items: (options.ItemsQueryOptions) -> any, params: { [s
 end
 
 local function image_status(id: number): number
-	return session.handle_primary_image_request({
+	local response = session.handle_primary_image_request({
 		plugin_id = "jellyfin",
 		request = { method = "GET", path = "/", headers = {}, query = {}, body_raw = "" },
 		params = { imageId = item_ids.encode_jellyfin_item_id(id) },
-	} :: any).status
+	} :: any)
+	return if response.kind == "cover" then 200 else response.status
 end
 
 local function genre_image_status(name: string): number
-	return session.handle_genre_image_request({
+	local response = session.handle_genre_image_request({
 		plugin_id = "jellyfin",
 		request = { method = "GET", path = "/", headers = {}, query = {}, body_raw = "" },
 		params = { name = name, imageType = "Primary" },
-	} :: any).status
+	} :: any)
+	return if response.kind == "cover" then 200 else response.status
 end
 
 local function assert_covered(item: any, what: string)

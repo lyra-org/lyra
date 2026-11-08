@@ -13,8 +13,7 @@ local playlist_access = require("../playlist_access")
 local requests = require("./requests")
 
 export type ResolvedCoverInfo = {
-	path: string,
-	mime_type: string,
+	id: string,
 	hash: string,
 	blurhash: string?,
 	owner_id: string?,
@@ -27,15 +26,14 @@ function module.normalize_cover_info(raw_cover: covers.Cover?): ResolvedCoverInf
 		return nil
 	end
 
-	local path = requests.trim(raw_cover.path)
+	local id = requests.trim(raw_cover.id)
 	local hash = requests.trim(raw_cover.hash)
-	if not path or not hash then
+	if not id or not hash then
 		return nil
 	end
 
 	return {
-		path = path,
-		mime_type = requests.trim(raw_cover.mime_type) or "application/octet-stream",
+		id = id,
 		hash = hash,
 		blurhash = requests.trim(raw_cover.blurhash),
 		owner_id = identifiers.encode_jellyfin_item_id(raw_cover.owner_id),

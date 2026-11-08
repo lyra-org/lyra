@@ -21,7 +21,8 @@ local function primary_image(id: string, api_key: string?)
 end
 
 local function status(id: string, api_key: string?): number
-	return primary_image(id, api_key).status
+	local response = primary_image(id, api_key)
+	return if response.kind == "cover" then 200 else response.status
 end
 
 -- Artwork routes are public, as upstream: an anonymous request gets any item's image, even a

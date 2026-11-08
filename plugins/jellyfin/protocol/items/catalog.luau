@@ -113,13 +113,7 @@ type LibraryInfo = {
 }
 type FavoriteLookup = options_module.FavoriteLookup
 type ItemsQueryOptions = options_module.ItemsQueryOptions
-type CoverInfo = {
-	path: string,
-	mime_type: string,
-	hash: string,
-	blurhash: string?,
-	owner_id: string?,
-}
+type CoverInfo = artwork.ResolvedCoverInfo
 type ArtistRelationMap = { [string]: { Artist }? }
 type ArtistRelationInfoMap = { [string]: { ArtistRelationInfo }? }
 type ReleaseRelationMap = { [string]: { Release }? }

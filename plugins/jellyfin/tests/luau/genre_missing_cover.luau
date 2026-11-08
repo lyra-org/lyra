@@ -18,11 +18,12 @@ local function rock_tag(): string?
 end
 
 local function image_status(): number
-	return session.handle_primary_image_request({
+	local response = session.handle_primary_image_request({
 		plugin_id = "jellyfin",
 		request = { method = "GET", path = "/", headers = {}, query = {}, body_raw = "" },
 		params = { imageId = item_ids.encode_jellyfin_item_id(fixture.ids.rock) },
-	} :: any).status
+	} :: any)
+	return if response.kind == "cover" then 200 else response.status
 end
 
 -- The listens make First the instance's pick, then Second once First's image fails, then Kept,

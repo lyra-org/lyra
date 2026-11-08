@@ -28,6 +28,7 @@ type ApiContext = api.ApiContext
 type ApiQueryParams = api.ApiQueryParams
 type ApiRequest = api.ApiRequest
 type ApiResponse = api.ApiResponse
+type CoverServeOptions = api.CoverServeOptions
 type JsonValue = api.JsonValue
 type JsonObject = { [string]: JsonValue }
 type LoginResult = auth.LoginResult
@@ -887,6 +888,22 @@ function module.to_playlist_user_permission(playlist: Playlist, user_id: string)
 	}
 end
 
+-- The bound on one side of an image: its explicit maximum, else the smallest size asked for.
+local function image_bound(query: ApiQueryParams?, max_key: string, size_keys: { string }): number?
+	local max = requests.parse_query_int(query, { max_key }, nil, 1, nil)
+	if max then
+		return max
+	end
+	local bound: number? = nil
+	for _, key in size_keys do
+		local size = requests.parse_query_int(query, { key }, nil, 1, nil)
+		if size and (bound == nil or size < bound) then
+			bound = size
+		end
+	end
+	return bound
+end
+
 local function respond_with_primary_image(ctx: ApiContext?, cover_info: artwork.ResolvedCoverInfo): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
 	local format_query = requests.parse_query_string(query, { "format" }, nil)
@@ -894,17 +911,12 @@ local function respond_with_primary_image(ctx: ApiContext?, cover_info: artwork.
 	if format_query ~= nil and requested_format == nil then
 		return responses.bad_request("invalid image format")
 	end
-
-	local requested_quality = requests.parse_query_int(query, { "quality" }, nil, 0, 100)
-	local requested_max_width = requests.parse_query_int(query, { "MaxWidth" }, nil, 1, nil)
-	local requested_max_height = requests.parse_query_int(query, { "MaxHeight" }, nil, 1, nil)
-
-	local image_format = requested_format
-	local image_quality = requested_quality
-	local use_transforms = image_format ~= nil
-		or image_quality ~= nil
-		or requested_max_width ~= nil
-		or requested_max_height ~= nil
+	local options: CoverServeOptions = {
+		format = requested_format,
+		quality = requests.parse_query_int(query, { "quality" }, nil, 0, 100),
+		max_width = image_bound(query, "MaxWidth", { "fillWidth", "width" }),
+		max_height = image_bound(query, "MaxHeight", { "fillHeight", "height" }),
+	}
 
 	-- Upstream's caching: a request naming the image `tag` gets an immutable response validated by
 	-- that tag, and `Cache-Control: no-cache` turns caching off.
@@ -928,23 +940,9 @@ local function respond_with_primary_image(ctx: ApiContext?, cover_info: artwork.
 		headers["cache-control"] = "public"
 	end
 
-	if not use_transforms then
-		headers["content-type"] = cover_info.mime_type
-		return api.response.file(200, cover_info.path, headers)
-	end
-
-	if image_format == nil then
-		image_format = "jpg"
-	end
-	if image_format == "jpg" then
-		image_quality = image_quality or 90
-	end
-	return api.response.file(200, cover_info.path, headers, {
-		format = image_format,
-		quality = image_quality,
-		max_width = requested_max_width,
-		max_height = requested_max_height,
-	})
+	local response = api.response.cover(cover_info.id, options)
+	response.headers = headers
+	return response
 end
 
 -- Artwork routes are public, as upstream: an anonymous caller gets any item's image, and a caller

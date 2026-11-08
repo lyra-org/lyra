@@ -10,9 +10,9 @@ local session = require("../../protocol/session")
 -- credentials, so the tag a listing advertises has to name the image the anonymous route serves.
 
 local ids = fixture.ids
-local hash_by_path = {}
+local hash_by_id = {}
 for _, cover in covers.artwork({ ids.shown, ids.secret }) do
-	hash_by_path[cover.path] = cover.hash
+	hash_by_id[cover.id] = cover.hash
 end
 
 local function served_hash(id: string, api_key: string?): string?
@@ -27,7 +27,7 @@ local function served_hash(id: string, api_key: string?): string?
 		},
 		params = { imageId = item_ids.encode_jellyfin_item_id(id) },
 	} :: any) :: any
-	return if response.status == 200 then hash_by_path[response.path] else nil
+	return if response.kind == "cover" then hash_by_id[response.cover_id] else nil
 end
 
 local function list(list_items: (options.ItemsQueryOptions) -> any, params: { [string]: string })

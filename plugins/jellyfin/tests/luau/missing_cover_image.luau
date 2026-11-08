@@ -18,7 +18,7 @@ local function image_status(id: string, api_key: string?): number
 		},
 		params = { imageId = item_ids.encode_jellyfin_item_id(id) },
 	} :: any) :: any
-	return response.status
+	return if response.kind == "cover" then 200 else response.status
 end
 
 local function album_tags(): { [string]: string? }

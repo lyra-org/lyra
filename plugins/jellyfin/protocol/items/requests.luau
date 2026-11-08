@@ -6,7 +6,7 @@
 
 local api = require("@lyra/api")
 
-type ImageFormat = "jpg" | "png" | "webp"
+type CoverFormat = api.CoverFormat
 
 local module = {}
 
@@ -213,7 +213,7 @@ function module.parse_query_int(
 		number = tonumber(module.trim(value) or "")
 	end
 
-	if number == nil then
+	if number == nil or number ~= number or math.abs(number) == math.huge then
 		return default_value
 	end
 
@@ -228,7 +228,7 @@ function module.parse_query_int(
 	return integer
 end
 
-function module.normalize_image_format(raw_format: string?): ImageFormat?
+function module.normalize_image_format(raw_format: string?): CoverFormat?
 	local text = module.trim(raw_format)
 	if not text then
 		return nil
