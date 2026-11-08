@@ -40,6 +40,7 @@ use crate::{
             LyricsCandidateSummaryResponse,
             LyricsCandidatesResponse,
             LyricsLineResponse,
+            LyricsRefreshResponse,
             LyricsResponse,
             LyricsScopeResponse,
             LyricsSourceResponse,
@@ -303,7 +304,7 @@ async fn delete_shared_track_lyrics(
 async fn refresh_track_lyrics(
     headers: HeaderMap,
     Path(id): Path<String>,
-) -> Result<StatusCode, AppError> {
+) -> Result<Json<LyricsRefreshResponse>, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
     require_permission(&principal, lyra_db::Permission::SyncMetadata)?;
     let track_db_id = {
@@ -319,8 +320,29 @@ async fn refresh_track_lyrics(
         track_db_id
     };
 
-    lyrics_service::providers::dispatch_for_track_identity(track_db_id, Some(&id), true).await?;
-    Ok(StatusCode::NO_CONTENT)
+    let outcome =
+        lyrics_service::providers::dispatch_for_track_identity(track_db_id, Some(&id), true)
+            .await?;
+    for (provider_id, error) in &outcome.failed {
+        tracing::warn!(
+            provider = provider_id.as_ref(),
+            track = %id,
+            error = %format!("{error:#}"),
+            "lyrics refresh failed for provider"
+        );
+    }
+    Ok(Json(LyricsRefreshResponse {
+        failed_providers: outcome
+            .failed
+            .iter()
+            .map(|(provider_id, _)| provider_id.to_string())
+            .collect(),
+        in_progress_providers: outcome
+            .in_progress
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+    }))
 }
 
 fn lyrics_upload_error_to_app_error(error: lyrics_service::LyricsUploadError) -> AppError {
@@ -600,15 +622,16 @@ fn delete_shared_track_lyrics_docs(op: TransformOperation) -> TransformOperation
 
 #[cfg(feature = "docgen")]
 fn refresh_track_lyrics_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Refresh track lyrics")
-        .description(
-            "Re-runs every registered lyrics provider for the track with `force_refresh=true`, \
-             bypassing each provider's negative cache. Awaits all dispatches before returning. \
-             Requires `SyncMetadata`, returning 403 without it. \
-             Returns 204 once dispatch completes; the caller should then GET the lyrics to read \
-             what was stored. 404 if the track does not exist or is hidden from the caller.",
-        )
-        .response::<204, ()>()
+    op.summary("Refresh track lyrics").description(
+        "Re-runs every registered lyrics provider for the track with `force_refresh=true`, \
+         bypassing each provider's negative cache. Awaits all dispatches before returning. \
+         Requires `SyncMetadata`, returning 403 without it, and 404 if the track does not exist \
+         or is hidden from the caller. The response carries no lyrics; read what was stored from \
+         `GET /api/tracks/{id}/lyrics/candidates` or `GET /api/tracks/{id}/lyrics`. \
+         A 200 can list every provider in `failed_providers`. Both lists empty means no errors \
+         were reported, not that every provider returned lyrics: misses, rate-limited results, \
+         rejected hits, unmet handler requirements, and cancelled handlers are not reported.",
+    )
 }
 
 #[cfg(test)]
@@ -697,6 +720,31 @@ mod tests {
         )
     }
 
+    async fn install_lyrics_handler(
+        provider_id: &str,
+        callback: crate::services::plugin_dispatch::PluginCallbackHandle,
+    ) -> anyhow::Result<()> {
+        lyra_db::providers::register(&mut *STATE.db.write().await, provider_id)?;
+        let registry = crate::services::providers::provider_registry();
+        let mut registry = registry.write().await;
+        registry.register(
+            crate::services::plugin_scope::PluginId::new("lyrics_routes_plugin")?,
+            provider_id.to_string(),
+            None,
+        )?;
+        registry
+            .set_lyrics_handler(
+                provider_id,
+                crate::services::providers::ProviderLyricsSpec::new(
+                    std::time::Duration::from_secs(5),
+                    Default::default(),
+                    callback,
+                ),
+            )
+            .ok_or_else(|| anyhow::anyhow!("lyrics handler not stored"))?;
+        Ok(())
+    }
+
     #[tokio::test]
     async fn refresh_requires_sync_metadata_before_track_access() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
@@ -735,6 +783,52 @@ mod tests {
             )?,
             StatusCode::NOT_FOUND
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn refresh_reports_failed_and_in_progress_providers() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        super::super::setup_route_test().await?;
+        let dispatch = crate::services::testing::FakePluginDispatch::install();
+        let (track, track_id, syncer) = {
+            let mut db = STATE.db.write().await;
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
+            let (track, track_id, library) = insert_library_track(&mut db, "refresh-outcome")?;
+            let syncer = create_user_with_permissions(
+                &mut db,
+                "refresh-syncer",
+                vec![lyra_db::Permission::SyncMetadata],
+            )?;
+            grant_library(&mut db, syncer, library)?;
+            (track, track_id, syncer)
+        };
+        let failing = dispatch.add(crate::services::testing::FakeResponse::Error(
+            "upstream 503".to_string(),
+        ));
+        let busy = dispatch.add(crate::services::testing::FakeResponse::Stall);
+        let quiet = dispatch.add(crate::services::testing::FakeResponse::Value(
+            serde_json::json!({ "kind": "miss" }),
+        ));
+        install_lyrics_handler("refresh_failing", failing).await?;
+        install_lyrics_handler("refresh_busy", busy).await?;
+        install_lyrics_handler("refresh_quiet", quiet).await?;
+        crate::services::providers::lyrics_in_flight()
+            .lock()
+            .expect("in-flight mutex")
+            .insert((track.0, std::sync::Arc::from("refresh_busy")));
+
+        let headers = bearer_headers_for_user(syncer).await?;
+        let Json(response) = route_ok(refresh_track_lyrics(headers, Path(track_id)).await)?;
+        assert_eq!(
+            serde_json::to_value(&response)?,
+            serde_json::json!({
+                "failed_providers": ["refresh_failing"],
+                "in_progress_providers": ["refresh_busy"],
+            })
+        );
+        assert!(dispatch.calls(busy).is_empty());
+        assert_eq!(dispatch.calls(quiet).len(), 1);
         Ok(())
     }
 

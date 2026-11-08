@@ -141,6 +141,25 @@ pub struct LyricsCandidatesResponse {
     pub items: Vec<LyricsCandidateSummaryResponse>,
 }
 
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+pub struct LyricsRefreshResponse {
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Metadata provider IDs whose refresh did not complete: a handler error, a timeout, or a failure to store the result."
+        )
+    )]
+    pub failed_providers: Vec<String>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Metadata provider IDs skipped because a lookup for this track was already running. That lookup may finish after this response and may not be forced, so the refresh can be retried."
+        )
+    )]
+    pub in_progress_providers: Vec<String>,
+}
+
 impl LyricsScopeResponse {
     pub(crate) fn from_lyrics(lyrics: &lyra_db::Lyrics) -> Self {
         match lyrics.kind {

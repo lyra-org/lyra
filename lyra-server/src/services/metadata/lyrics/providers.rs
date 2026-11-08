@@ -213,27 +213,52 @@ async fn wait_for_plugin_dispatch(cancel: &CancellationToken) -> bool {
     }
 }
 
+/// The providers a dispatch could not finish for its track.
+#[derive(Debug, Default)]
+pub(crate) struct LyricsDispatchOutcome {
+    pub(crate) failed: Vec<(Arc<str>, anyhow::Error)>,
+    /// Skipped because a lookup for this track and provider was already running.
+    pub(crate) in_progress: Vec<Arc<str>>,
+}
+
+impl LyricsDispatchOutcome {
+    fn into_result(self) -> Result<()> {
+        if self.failed.is_empty() {
+            return Ok(());
+        }
+        let failures: Vec<String> = self
+            .failed
+            .iter()
+            .map(|(provider_id, error)| format!("{provider_id}: {error:#}"))
+            .collect();
+        bail!("lyrics dispatch failed: {}", failures.join("; "));
+    }
+}
+
+/// [`dispatch_for_track_identity`], failing when any provider failed.
+pub(crate) async fn dispatch_for_track(track_db_id: DbId, force_refresh: bool) -> Result<()> {
+    dispatch_for_track_identity(track_db_id, None, force_refresh)
+        .await?
+        .into_result()
+}
+
 /// Run every matching handler of an active provider in provider order. Not
 /// stop-on-first-hit — each gate-passing `Hit` writes a row; `selection.rs`
 /// picks the winner.
-pub(crate) async fn dispatch_for_track(track_db_id: DbId, force_refresh: bool) -> Result<()> {
-    dispatch_for_track_identity(track_db_id, None, force_refresh).await
-}
-
 pub(crate) async fn dispatch_for_track_identity(
     track_db_id: DbId,
     expected_public_id: Option<&str>,
     force_refresh: bool,
-) -> Result<()> {
+) -> Result<LyricsDispatchOutcome> {
     let now = upload::now_ms().map_err(|err| anyhow::anyhow!("now_ms() failed: {err}"))?;
     let (mut context, preferred_languages, local, track_public_id) =
         match build_track_context(track_db_id, now).await? {
             Some(parts) => parts,
-            None => return Ok(()),
+            None => return Ok(LyricsDispatchOutcome::default()),
         };
     context.force_refresh = force_refresh;
     if expected_public_id.is_some_and(|expected| expected != track_public_id) {
-        return Ok(());
+        return Ok(LyricsDispatchOutcome::default());
     }
 
     let providers = active_providers(&*STATE.db.read().await)?;
@@ -248,7 +273,7 @@ pub(crate) async fn dispatch_for_track_identity(
             .collect()
     };
 
-    let mut failures = Vec::new();
+    let mut outcome = LyricsDispatchOutcome::default();
     for (provider_id, handler) in registry_snapshot {
         if !require_matches(&context, &handler.require) {
             continue;
@@ -265,6 +290,7 @@ pub(crate) async fn dispatch_for_track_identity(
                     track_db_id = track_db_id.0,
                     "lyrics dispatch deduped: another caller has this (track, provider) in flight"
                 );
+                outcome.in_progress.push(provider_id);
                 continue;
             }
         };
@@ -290,17 +316,14 @@ pub(crate) async fn dispatch_for_track_identity(
             }
             res = dispatch_fut => {
                 if let Err(err) = res {
-                    failures.push(format!("{provider_id}: {err:#}"));
+                    outcome.failed.push((provider_id, err));
                 }
             }
         }
         drop(guard);
     }
 
-    if !failures.is_empty() {
-        bail!("lyrics dispatch failed: {}", failures.join("; "));
-    }
-    Ok(())
+    Ok(outcome)
 }
 
 async fn dispatch_one(
@@ -586,7 +609,7 @@ pub(crate) async fn rescan(force_refresh: bool, cancel: CancellationToken) -> Re
                 tokio::select! {
                     _ = cancel.cancelled() => {}
                     res = dispatch_for_track_identity(track_db_id, Some(&track_public_id), force_refresh) => {
-                        if let Err(err) = res {
+                        if let Err(err) = res.and_then(LyricsDispatchOutcome::into_result) {
                             tracing::warn!(
                                 track_db_id = track_db_id.0,
                                 error = %err,
@@ -779,19 +802,39 @@ mod tests {
             install_handler_for_test(provider, handler).await;
         }
 
+        let success_id = success_id.expect("success handler");
+
+        let outcome = dispatch_for_track_identity(track_id, None, false).await?;
+        let failed: Vec<(&str, String)> = outcome
+            .failed
+            .iter()
+            .map(|(provider_id, error)| (provider_id.as_ref(), format!("{error:#}")))
+            .collect();
+        assert_eq!(failed.len(), 2, "{failed:?}");
+        assert_eq!(failed[0].0, "a_error");
+        assert!(failed[0].1.contains("upstream 503"), "{failed:?}");
+        assert_eq!(failed[1].0, "b_timeout");
+        assert!(
+            failed[1].1.contains("lyrics handler timed out"),
+            "{failed:?}"
+        );
+        assert!(outcome.in_progress.is_empty());
+        assert_eq!(dispatch.calls(success_id).len(), 1);
+
         let error = dispatch_for_track(track_id, false)
             .await
             .unwrap_err()
             .to_string();
-        assert!(error.contains("a_error: upstream 503"), "{error}");
         assert!(
-            error.contains("b_timeout: lyrics handler timed out"),
+            error.starts_with("lyrics dispatch failed: a_error: "),
             "{error}"
         );
-        assert_eq!(
-            dispatch.calls(success_id.expect("success handler")).len(),
-            1
+        assert!(error.contains("upstream 503"), "{error}");
+        assert!(
+            error.contains("; b_timeout: lyrics handler timed out"),
+            "{error}"
         );
+        assert_eq!(dispatch.calls(success_id).len(), 2);
         Ok(())
     }
 
@@ -820,7 +863,9 @@ mod tests {
                 .ids()[0];
             assert_eq!(replacement_id, track_id);
         }
-        dispatch_for_track_identity(track_id, Some(&original_public_id), false).await?;
+        let outcome =
+            dispatch_for_track_identity(track_id, Some(&original_public_id), false).await?;
+        assert!(outcome.failed.is_empty() && outcome.in_progress.is_empty());
         assert!(dispatch.calls(callback).is_empty());
         dispatch_for_track(track_id, false).await?;
         assert_eq!(dispatch.calls(callback).len(), 1);
@@ -935,11 +980,14 @@ mod tests {
         let first = tokio::spawn(async move { dispatch_for_track(track_id, false).await });
         wait_for_calls(&dispatch, callback, 1).await;
         dispatch_for_track(track_id, false).await?;
+        let outcome = dispatch_for_track_identity(track_id, None, false).await?;
         assert_eq!(
             dispatch.calls(callback).len(),
             1,
-            "second concurrent dispatch must dedupe (handler called exactly once)"
+            "concurrent dispatches must dedupe (handler called exactly once)"
         );
+        assert_eq!(outcome.in_progress, vec![Arc::<str>::from("test_dedupe")]);
+        assert!(outcome.failed.is_empty());
 
         release.add_permits(1);
         first.await.expect("join first")?;
