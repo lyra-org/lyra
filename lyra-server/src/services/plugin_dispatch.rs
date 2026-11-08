@@ -130,6 +130,12 @@ pub(crate) struct MetadataRefreshResult {
 #[error("{0}")]
 pub(crate) struct RefreshTargetGone(pub(crate) String);
 
+impl RefreshTargetGone {
+    pub(crate) fn caused(error: &anyhow::Error) -> bool {
+        error.chain().any(|cause| cause.is::<Self>())
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct SimilarReleaseExternalRef {
     pub(crate) provider_id: String,

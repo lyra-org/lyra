@@ -140,7 +140,14 @@ pub(crate) async fn mix(
         return Ok(Vec::new());
     }
 
-    let dispatched = dispatch::dispatch(&choice.candidates, request, &resolved, viewer).await?;
+    let dispatched = dispatch::dispatch(
+        &choice.candidates,
+        request,
+        &requirements,
+        &resolved,
+        viewer,
+    )
+    .await?;
     let db = STATE.db.read().await;
     resolved.verify(&db, request, viewer)?;
     let limit = request.limit.unwrap_or(DEFAULT_LIMIT);

@@ -123,12 +123,12 @@ pub(crate) use links::{
 pub(crate) use refresh::{
     LibraryRefreshOptions,
     ListedArtist,
+    ScanRefreshPlan,
     deduplicate_after_providers,
     refresh_entity_metadata,
     refresh_library_metadata,
     refresh_library_metadata_after_others,
     refresh_release_metadata_for_scan,
-    release_refresh_provider_ids,
     sync_artist_covers,
 };
 #[cfg(test)]
@@ -138,12 +138,15 @@ pub(crate) use registry::{
     LyricsInFlight,
     LyricsInFlightKey,
     MAX_SIMILAR_RELEASES_HANDLER_TIMEOUT,
+    ProviderCallError,
     ProviderCallStage,
     ProviderCoverSpec,
     ProviderIdSpec,
     ProviderIdUrlGenerator,
+    ProviderLookup,
     ProviderLyricsSpec,
     ProviderRegistries,
+    ProviderRegistry,
     ProviderRequireSpec,
     ProviderSimilarReleasesSpec,
     declared_artist_ids,
@@ -195,14 +198,6 @@ impl ProviderServiceError {
         matches!(
             self,
             Self::Internal(err) if err.is::<super::libraries::SyncRunControlError>()
-        )
-    }
-
-    /// Whether a handler stopped because something it was writing is gone.
-    pub(crate) fn is_target_gone(&self) -> bool {
-        matches!(
-            self,
-            Self::Internal(err) if err.is::<crate::services::plugin_dispatch::RefreshTargetGone>()
         )
     }
 

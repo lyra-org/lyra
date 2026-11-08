@@ -41,6 +41,7 @@ use crate::{
         LyricsInFlight,
         LyricsInFlightKey,
         ProviderCallStage,
+        ProviderLookup,
         ProviderLyricsSpec,
         ProviderRequireSpec,
         active_providers,
@@ -262,63 +263,38 @@ pub(crate) async fn dispatch_for_track_identity(
     }
 
     let providers = active_providers(&*STATE.db.read().await)?;
-    let registry_snapshot: Vec<(Arc<str>, ProviderLyricsSpec)> = {
+    let provider_ids: Vec<Arc<str>> = {
         let registry = provider_registry().read_owned().await;
         providers
             .iter()
-            .filter_map(|provider| {
-                let spec = registry.get_lyrics_handler(&provider.provider_id)?;
-                Some((Arc::from(provider.provider_id.as_str()), spec.clone()))
-            })
+            .filter(|provider| registry.has_lyrics_handler(&provider.provider_id))
+            .map(|provider| Arc::from(provider.provider_id.as_str()))
             .collect()
     };
 
     let mut outcome = LyricsDispatchOutcome::default();
-    for (provider_id, handler) in registry_snapshot {
-        if !require_matches(&context, &handler.require) {
+    for provider_id in provider_ids {
+        let Some(guard) = InFlightGuard::try_acquire(track_db_id, &provider_id) else {
+            tracing::debug!(
+                provider = provider_id.as_ref(),
+                track_db_id = track_db_id.0,
+                "lyrics dispatch deduped: another caller has this (track, provider) in flight"
+            );
+            outcome.in_progress.push(provider_id);
             continue;
-        }
-        if handler.cancel.is_cancelled() {
-            continue;
-        }
-
-        let guard = match InFlightGuard::try_acquire(track_db_id, &provider_id) {
-            Some(guard) => guard,
-            None => {
-                tracing::debug!(
-                    provider = provider_id.as_ref(),
-                    track_db_id = track_db_id.0,
-                    "lyrics dispatch deduped: another caller has this (track, provider) in flight"
-                );
-                outcome.in_progress.push(provider_id);
-                continue;
-            }
         };
 
-        let cancel = handler.cancel.clone();
-        let dispatch_fut = dispatch_one(
+        if let Err(err) = dispatch_one(
             &provider_id,
-            &handler,
             &context,
             &preferred_languages,
             &local,
             track_db_id,
             &track_public_id,
-        );
-        tokio::select! {
-            biased;
-            _ = cancel.cancelled() => {
-                tracing::debug!(
-                    provider = provider_id.as_ref(),
-                    track_db_id = track_db_id.0,
-                    "lyrics dispatch cancelled before completion"
-                );
-            }
-            res = dispatch_fut => {
-                if let Err(err) = res {
-                    outcome.failed.push((provider_id, err));
-                }
-            }
+        )
+        .await
+        {
+            outcome.failed.push((provider_id, err));
         }
         drop(guard);
     }
@@ -326,59 +302,136 @@ pub(crate) async fn dispatch_for_track_identity(
     Ok(outcome)
 }
 
+/// Calls the handler registered when the provider's turn comes, then records its answer. The
+/// spec's cancel token ends the call, and the recording after it, when the spec is replaced or
+/// torn down.
 async fn dispatch_one(
     provider_id: &str,
-    handler: &ProviderLyricsSpec,
     context: &LyricsTrackContext,
     preferred_languages: &[String],
     local: &LocalTrackContext,
     track_db_id: DbId,
     track_public_id: &str,
 ) -> Result<()> {
-    let timeout = if handler.timeout.is_zero() {
+    let call = with_provider_call(
+        provider_id,
+        ProviderCallStage::Lyrics,
+        |registry| {
+            let spec = registry.get_lyrics_handler(provider_id)?;
+            Some(if require_matches(context, &spec.require) {
+                ProviderLookup::Call(spec.clone())
+            } else {
+                ProviderLookup::Answer(None)
+            })
+        },
+        |spec| async move {
+            let answered = unless_cancelled(
+                &spec.cancel,
+                provider_id,
+                track_db_id,
+                call_lyrics_handler(&spec, context, track_db_id, track_public_id),
+            )
+            .await
+            .transpose()?
+            .flatten();
+            Ok(answered.map(|outcome| (outcome, spec.cancel.clone())))
+        },
+    )
+    .await;
+    let (outcome, cancel) = match call {
+        Ok(Some(answered)) => answered,
+        Ok(None) => return Ok(()),
+        // Enumerated with a handler, so a lookup that finds none now leaves this track unasked.
+        Err(error) => return Err(error.into()),
+    };
+
+    unless_cancelled(
+        &cancel,
+        provider_id,
+        track_db_id,
+        record_outcome(
+            provider_id,
+            outcome,
+            preferred_languages,
+            local,
+            track_db_id,
+            track_public_id,
+        ),
+    )
+    .await
+    .unwrap_or(Ok(()))
+}
+
+async fn unless_cancelled<T>(
+    cancel: &CancellationToken,
+    provider_id: &str,
+    track_db_id: DbId,
+    work: impl std::future::Future<Output = T>,
+) -> Option<T> {
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => {
+            tracing::debug!(
+                provider = provider_id,
+                track_db_id = track_db_id.0,
+                "lyrics dispatch cancelled before completion"
+            );
+            None
+        }
+        output = work => Some(output),
+    }
+}
+
+async fn call_lyrics_handler(
+    spec: &ProviderLyricsSpec,
+    context: &LyricsTrackContext,
+    track_db_id: DbId,
+    track_public_id: &str,
+) -> Result<Option<LyricsHandlerResult>> {
+    let timeout = if spec.timeout.is_zero() {
         DEFAULT_HANDLER_TIMEOUT
     } else {
-        handler.timeout
+        spec.timeout
     };
-    let callback = handler.handler;
-    let call_result: Result<Option<LyricsHandlerResult>> =
-        with_provider_call(provider_id, ProviderCallStage::Lyrics, || async {
-            {
-                let db = STATE.db.read().await;
-                if lyra_db::tracks::get_by_id(&*db, track_db_id)?
-                    .is_none_or(|track| track.id != track_public_id)
-                {
-                    return Ok(None);
-                }
-            }
-            let runtime = STATE
-                .generation()
-                .plugin_dispatch
-                .get()
-                .context("plugin runtime is not initialized")?;
-            let request = MetadataRefreshRequest {
-                handler: callback,
-                context: track_context_to_json(context),
-                deadline: std::time::Instant::now() + timeout,
-            };
-            let result = tokio::time::timeout(timeout, runtime.dispatch_metadata_refresh(request))
-                .await
-                .map_err(|_| {
-                    anyhow::anyhow!("lyrics handler timed out after {} ms", timeout.as_millis())
-                })??;
-            let value = result
-                .values
-                .into_iter()
-                .next()
-                .context("lyrics handler returned no value")?;
-            parse_handler_result(value).map(Some)
-        })
-        .await;
-
-    let Some(outcome) = call_result? else {
-        return Ok(());
+    {
+        let db = STATE.db.read().await;
+        if lyra_db::tracks::get_by_id(&*db, track_db_id)?
+            .is_none_or(|track| track.id != track_public_id)
+        {
+            return Ok(None);
+        }
+    }
+    let runtime = STATE
+        .generation()
+        .plugin_dispatch
+        .get()
+        .context("plugin runtime is not initialized")?;
+    let request = MetadataRefreshRequest {
+        handler: spec.handler,
+        context: track_context_to_json(context),
+        deadline: std::time::Instant::now() + timeout,
     };
+    let result = tokio::time::timeout(timeout, runtime.dispatch_metadata_refresh(request))
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!("lyrics handler timed out after {} ms", timeout.as_millis())
+        })??;
+    let value = result
+        .values
+        .into_iter()
+        .next()
+        .context("lyrics handler returned no value")?;
+    parse_handler_result(value).map(Some)
+}
 
+async fn record_outcome(
+    provider_id: &str,
+    outcome: LyricsHandlerResult,
+    preferred_languages: &[String],
+    local: &LocalTrackContext,
+    track_db_id: DbId,
+    track_public_id: &str,
+) -> Result<()> {
     match outcome {
         LyricsHandlerResult::Hit { candidates } => {
             // Defense in depth — contract is ≤5.
@@ -753,23 +806,6 @@ mod tests {
             .expect("lyrics handler stored")
     }
 
-    async fn wait_for_calls(
-        dispatch: &FakePluginDispatch,
-        callback: PluginCallbackHandle,
-        calls: usize,
-    ) {
-        for _ in 0..200 {
-            if dispatch.calls(callback).len() >= calls {
-                return;
-            }
-            tokio::task::yield_now().await;
-        }
-        panic!(
-            "handler {} was not called {calls} times",
-            callback.handler_id
-        );
-    }
-
     #[tokio::test]
     async fn disabled_providers_are_not_dispatched() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
@@ -884,7 +920,7 @@ mod tests {
         install_handler_for_test("test_hit", handler(callback)).await;
 
         let running = tokio::spawn(async move { dispatch_for_track(track_id, false).await });
-        wait_for_calls(&dispatch, callback, 1).await;
+        dispatch.wait_for_calls(callback, 1).await;
         assert!(
             STATE.db.get().try_write().is_ok(),
             "handler must run with no database lock held"
@@ -915,7 +951,7 @@ mod tests {
         install_handler_for_test("test_recycled_track", handler(callback)).await;
 
         let running = tokio::spawn(async move { dispatch_for_track(track_id, false).await });
-        wait_for_calls(&dispatch, callback, 1).await;
+        dispatch.wait_for_calls(callback, 1).await;
         let replacement_public_id = {
             let mut db = STATE.db.write().await;
             let mut replacement = lyra_db::tracks::get_by_id(&*db, track_id)?
@@ -978,7 +1014,7 @@ mod tests {
         install_handler_for_test("test_dedupe", handler(callback)).await;
 
         let first = tokio::spawn(async move { dispatch_for_track(track_id, false).await });
-        wait_for_calls(&dispatch, callback, 1).await;
+        dispatch.wait_for_calls(callback, 1).await;
         dispatch_for_track(track_id, false).await?;
         let outcome = dispatch_for_track_identity(track_id, None, false).await?;
         assert_eq!(
@@ -991,6 +1027,36 @@ mod tests {
 
         release.add_permits(1);
         first.await.expect("join first")?;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_provider_unregistered_after_enumeration_is_reported_as_failed() -> anyhow::Result<()>
+    {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        let dispatch = initialize_test_runtime().await?;
+        let track_id = install_track_in_state_db("Title", "Artist", 200_000).await;
+        let release = Arc::new(Semaphore::new(0));
+        let held = dispatch.add(FakeResponse::Held(release.clone(), Box::new(miss())));
+        let vanishing = dispatch.add(miss());
+        install_handler_for_test("a_held", handler(held)).await;
+        install_handler_for_test("b_vanishing", handler(vanishing)).await;
+
+        let run =
+            tokio::spawn(async move { dispatch_for_track_identity(track_id, None, false).await });
+        dispatch.wait_for_calls(held, 1).await;
+        teardown_plugin_providers(&test_plugin_id()).await;
+        release.add_permits(1);
+        let outcome = run.await.expect("join")?;
+
+        assert!(dispatch.calls(vanishing).is_empty());
+        let failed: Vec<&str> = outcome
+            .failed
+            .iter()
+            .map(|(provider_id, _)| provider_id.as_ref())
+            .collect();
+        assert_eq!(failed, ["b_vanishing"]);
+        assert!(outcome.in_progress.is_empty());
         Ok(())
     }
 
@@ -1015,7 +1081,7 @@ mod tests {
 
         let handle = tokio::spawn(async move { rescan(false, cancel).await });
         // Calls to one provider are serialized, so one handler call parks the rest.
-        wait_for_calls(&dispatch, callback, 1).await;
+        dispatch.wait_for_calls(callback, 1).await;
         let started_at_cancel = dispatch.calls(callback).len();
         teardown_plugin_providers(&test_plugin_id()).await;
 
@@ -1048,6 +1114,51 @@ mod tests {
         assert!(torn_down_cancel.is_cancelled());
         assert!(registry.get_lyrics_handler("test_kept").is_some());
         assert!(!kept_cancel.is_cancelled());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_dispatch_waiting_its_turn_reaches_the_handler_registered_by_then()
+    -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        let dispatch = initialize_test_runtime().await?;
+        let track_id = install_track_in_state_db("Waiting", "Artist", 180_000).await;
+        let old = dispatch.add(miss());
+        let old_cancel = install_handler_for_test("test_waiting", handler(old)).await;
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(Semaphore::new(0));
+        let running = tokio::spawn({
+            let (entered, release) = (entered.clone(), release.clone());
+            async move {
+                with_provider_call(
+                    "test_waiting",
+                    ProviderCallStage::Lyrics,
+                    |_| Some(ProviderLookup::Call(())),
+                    |()| async {
+                        entered.notify_one();
+                        release.acquire().await.expect("gate").forget();
+                        Ok(())
+                    },
+                )
+                .await
+            }
+        });
+        entered.notified().await;
+        let waiting = tokio::spawn(async move { dispatch_for_track(track_id, false).await });
+        tokio::task::yield_now().await;
+
+        let new = dispatch.add(miss());
+        provider_registry()
+            .write()
+            .await
+            .set_lyrics_handler("test_waiting", handler(new));
+        assert!(old_cancel.is_cancelled());
+        release.add_permits(1);
+        running.await.expect("join")?;
+        waiting.await.expect("join")?;
+
+        assert!(dispatch.calls(old).is_empty());
+        assert_eq!(dispatch.calls(new).len(), 1);
         Ok(())
     }
 

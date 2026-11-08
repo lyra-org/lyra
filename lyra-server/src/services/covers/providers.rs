@@ -29,10 +29,11 @@ use crate::{
     services::providers::{
         ExternalIdsByScheme,
         IdSchemes,
+        ProviderCallError,
         ProviderCallStage,
+        ProviderLookup,
         active_providers,
         id_schemes,
-        provider_registry,
         requirements_match,
         with_provider_call,
     },
@@ -296,48 +297,48 @@ fn normalize_provider_search_result(
 pub(crate) async fn search_provider(
     request: ProviderSearchRequest<'_>,
 ) -> std::result::Result<Vec<NormalizedProviderSearchResult>, ProviderSearchError> {
-    let handler = {
-        let registry = provider_registry().read_owned().await;
-        registry
-            .get_search_callback(request.provider_id, request.entity_type)
-            .copied()
-    };
-    let Some(handler) = handler else {
-        return Err(ProviderSearchError::NoSearchHandler {
-            provider_id: request.provider_id.to_string(),
-            entity_type: request.entity_type.as_str(),
-        });
-    };
-
     let provider_id = request.provider_id.to_string();
     let entity_type = request.entity_type;
     let include_cover_urls = request.include_cover_urls;
     let bypass_cache = request.bypass_cache;
     let query = request.query.to_string();
+    let provider = provider_id.as_str();
 
     let result = with_provider_call(
-        &provider_id.clone(),
+        provider,
         ProviderCallStage::MetadataRefresh,
-        || {
-            let provider_id = provider_id.clone();
-            async move {
-                let runtime = STATE
-                    .generation()
-                    .plugin_dispatch
-                    .get()
-                    .context("plugin runtime is not initialized")?;
-                runtime
-                    .dispatch_metadata_refresh(MetadataRefreshRequest {
-                        handler,
-                        context: serde_json::Value::String(query),
-                        deadline: std::time::Instant::now() + Duration::from_secs(300),
-                    })
-                    .await
-                    .with_context(|| format!("provider search handler failed for '{provider_id}'"))
-            }
+        |registry| {
+            registry
+                .get_search_callback(provider, entity_type)
+                .copied()
+                .map(ProviderLookup::Call)
+        },
+        |handler| async move {
+            let runtime = STATE
+                .generation()
+                .plugin_dispatch
+                .get()
+                .context("plugin runtime is not initialized")?;
+            runtime
+                .dispatch_metadata_refresh(MetadataRefreshRequest {
+                    handler,
+                    context: serde_json::Value::String(query),
+                    deadline: std::time::Instant::now() + Duration::from_secs(300),
+                })
+                .await
+                .with_context(|| format!("provider search handler failed for '{provider}'"))
         },
     )
-    .await?;
+    .await
+    .map_err(|err| match err {
+        ProviderCallError::NotRegistered => ProviderSearchError::NoSearchHandler {
+            provider_id: provider_id.clone(),
+            entity_type: entity_type.as_str(),
+        },
+        ProviderCallError::Failed(err) | ProviderCallError::TargetGone(err) => {
+            ProviderSearchError::Internal(err)
+        }
+    })?;
 
     let values = flatten_search_values(result.values);
     let schemes = if include_cover_urls {
@@ -739,57 +740,55 @@ async fn search_provider_cover(
         return Ok(cached);
     }
 
-    let spec = {
-        let registry = provider_registry().read_owned().await;
-        registry
-            .get_cover_handler(provider_id, entity_type)
-            .cloned()
-    };
-    let Some(spec) = spec else {
-        provider_cover_cache_put(cache_key, None).await;
-        return Ok(None);
-    };
-    if !requirements_match(context, &spec.require) {
-        provider_cover_cache_put(cache_key, None).await;
-        return Ok(None);
-    }
-
-    let provider_id_owned = provider_id.to_string();
-    let handler = spec.handler;
-    let timeout = spec.timeout;
     let handler_context = cover_handler_context(context, bypass_cache);
-    let dispatch = with_provider_call(
-        &provider_id_owned.clone(),
+    let dispatch = match with_provider_call(
+        provider_id,
         ProviderCallStage::CoverSearch,
-        || {
-            let provider_id = provider_id_owned.clone();
-            async move {
-                let runtime = STATE
-                    .generation()
-                    .plugin_dispatch
-                    .get()
-                    .context("plugin runtime is not initialized")?;
-                tokio::time::timeout(timeout, async move {
-                    runtime
-                        .dispatch_metadata_refresh(MetadataRefreshRequest {
-                            handler,
-                            context: handler_context,
-                            deadline: std::time::Instant::now() + timeout,
-                        })
-                        .await
-                })
-                .await
-                .with_context(|| {
-                    format!(
-                        "provider cover handler for '{}' timed out after {}ms",
-                        provider_id,
-                        timeout.as_millis()
-                    )
-                })?
-            }
+        |registry| {
+            let spec = registry.get_cover_handler(provider_id, entity_type)?;
+            Some(if requirements_match(context, &spec.require) {
+                ProviderLookup::Call(spec.clone())
+            } else {
+                ProviderLookup::Answer(None)
+            })
+        },
+        |spec| async move {
+            let runtime = STATE
+                .generation()
+                .plugin_dispatch
+                .get()
+                .context("plugin runtime is not initialized")?;
+            let timeout = spec.timeout;
+            tokio::time::timeout(
+                timeout,
+                runtime.dispatch_metadata_refresh(MetadataRefreshRequest {
+                    handler: spec.handler,
+                    context: handler_context,
+                    deadline: std::time::Instant::now() + timeout,
+                }),
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "provider cover handler for '{provider_id}' timed out after {}ms",
+                    timeout.as_millis()
+                )
+            })?
+            .map(Some)
         },
     )
-    .await?;
+    .await
+    {
+        Ok(Some(dispatch)) => dispatch,
+        Ok(None) => {
+            provider_cover_cache_put(cache_key, None).await;
+            return Ok(None);
+        }
+        Err(ProviderCallError::NotRegistered) => return Ok(None),
+        Err(ProviderCallError::Failed(err) | ProviderCallError::TargetGone(err)) => {
+            return Err(err);
+        }
+    };
 
     tracing::trace!(
         provider_id,
@@ -935,6 +934,31 @@ mod tests {
         source: IdSource,
     ) -> anyhow::Result<()> {
         lyra_db::external_ids::upsert(db, entity_id, provider_id, id_type, value, source)?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_search_for_an_unknown_provider_adds_no_call_lock() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+
+        let result = search_provider(ProviderSearchRequest {
+            provider_id: "made-up",
+            entity_type: EntityType::Release,
+            query: "anything",
+            include_cover_urls: false,
+            bypass_cache: false,
+        })
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(ProviderSearchError::NoSearchHandler { .. })
+        ));
+        assert_eq!(
+            crate::services::providers::registry_tests::call_lock_count().await,
+            0
+        );
         Ok(())
     }
 

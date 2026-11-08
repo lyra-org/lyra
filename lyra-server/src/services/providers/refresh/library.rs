@@ -31,8 +31,8 @@ use crate::services::{
         SyncTotalState,
         SyncWorkDetails,
     },
-    plugin_dispatch::RefreshTargetGone,
     providers::{
+        ProviderCallError,
         ProviderServiceError,
         declared_artist_ids,
         id_schemes,
@@ -42,7 +42,7 @@ use crate::services::{
 };
 
 use super::{
-    RefreshCallback,
+    UnregisteredProviders,
     artist_covers::{
         ListedArtist,
         sync_artist_covers,
@@ -51,11 +51,11 @@ use super::{
     cover_paths,
     deduplicate_release_scope_locked,
     dispatch::{
-        dispatch_refresh_callback,
-        dispatch_sync_filter_callback,
+        dispatch_refresh,
+        dispatch_sync_filter,
     },
     read_active_providers,
-    refresh_callbacks_for,
+    refresh_providers_for,
 };
 
 struct LibraryRefreshGuard {
@@ -126,42 +126,40 @@ pub(crate) async fn refresh_library_metadata_after_others(
     refresh_locked_library(library_db_id, options, progress).await
 }
 
-pub(crate) async fn release_refresh_provider_ids(
-    provider_filter: Option<&str>,
-    include_sync_filters: bool,
-) -> Result<Vec<String>, ProviderServiceError> {
-    let providers = read_active_providers().await?.only(provider_filter);
-    let callbacks =
-        refresh_callbacks_for(&providers, EntityType::Release, include_sync_filters).await;
-    Ok(callbacks
-        .into_iter()
-        .map(|callback| callback.provider_id)
-        .collect())
+/// The providers a library sync counted its changed releases' refresh units for. Every release
+/// settles one unit for each of them, whatever the registry holds by then.
+pub(crate) struct ScanRefreshPlan {
+    provider_ids: Vec<String>,
+    unregistered: UnregisteredProviders,
 }
 
-/// Refreshes a release a scan found new or changed from every enabled provider, without sync
+impl ScanRefreshPlan {
+    pub(crate) async fn current() -> Result<Self, ProviderServiceError> {
+        let providers = read_active_providers().await?;
+        Ok(Self {
+            provider_ids: refresh_providers_for(&providers, EntityType::Release).await,
+            unregistered: UnregisteredProviders::default(),
+        })
+    }
+
+    pub(crate) fn provider_count(&self) -> u64 {
+        self.provider_ids.len() as u64
+    }
+}
+
+/// Refreshes a release a scan found new or changed from the plan's providers, without sync
 /// filters, returning the providers that refreshed it. The scan merges what they found with
 /// [`deduplicate_after_providers`] once the refreshes running beside this one are done, so what
-/// runs after them reads what the merge left.
+/// runs after them reads what the merge left. A release that can't be read settles its remaining
+/// units as skipped.
 pub(crate) async fn refresh_release_metadata_for_scan(
     library_db_id: DbId,
     release_id: DbId,
+    plan: &ScanRefreshPlan,
     progress: SyncRunProgress,
     release_public_id: Option<String>,
     release_title: Option<String>,
 ) -> Result<Vec<String>, ProviderServiceError> {
-    {
-        let db = STATE.db.read().await;
-        lyra_db::libraries::get_by_id(&db, library_db_id)?
-            .ok_or(ProviderServiceError::LibraryNotFound(library_db_id.0))?;
-    }
-
-    let providers = read_active_providers().await?;
-    let callbacks = refresh_callbacks_for(&providers, EntityType::Release, false).await;
-    let schemes = id_schemes().await;
-    let mut providers_called = Vec::new();
-    let mut context: Option<serde_json::Value> = None;
-    let mut dirty = true;
     let details = |provider_id: &str| {
         SyncWorkDetails::release(
             "release_provider_refresh",
@@ -170,9 +168,28 @@ pub(crate) async fn refresh_release_metadata_for_scan(
         )
         .provider(provider_id)
     };
+    let skip_remaining = async |provider_ids: &[String], reason: &'static str| {
+        for provider_id in provider_ids {
+            let work_id = progress
+                .start_work(SyncStageKey::ProviderRefresh, details(provider_id))
+                .await;
+            progress
+                .skip_work(work_id, SyncStageKey::ProviderRefresh, reason)
+                .await;
+        }
+    };
 
-    for (index, callback) in callbacks.iter().enumerate() {
-        let provider_id = &callback.provider_id;
+    if let Err(err) = scan_library_exists(library_db_id).await {
+        skip_remaining(&plan.provider_ids, "release_unavailable").await;
+        return Err(err);
+    }
+
+    let schemes = id_schemes().await;
+    let mut providers_called = Vec::new();
+    let mut context: Option<serde_json::Value> = None;
+    let mut dirty = true;
+
+    for (index, provider_id) in plan.provider_ids.iter().enumerate() {
         if progress.is_cancelled() {
             break;
         }
@@ -184,38 +201,31 @@ pub(crate) async fn refresh_release_metadata_for_scan(
                     None => false,
                 };
                 if replaced || lyra_db::releases::get_by_id(&db, release_id)?.is_none() {
-                    None
+                    Ok(None)
                 } else {
-                    match build_release_context(&db, release_id, Some(library_db_id), &schemes) {
-                        Ok(context) => Some(context),
-                        Err(err) => {
-                            if providers_called.is_empty() {
-                                return Err(ProviderServiceError::Internal(err));
-                            }
-                            tracing::debug!(
-                                library_db_id = library_db_id.0,
-                                release_db_id = release_id.0,
-                                error = %format_args!("{err:#}"),
-                                "release disappeared during scan provider refresh"
-                            );
-                            None
-                        }
-                    }
+                    build_release_context(&db, release_id, Some(library_db_id), &schemes).map(Some)
+                }
+            };
+            // Settling persists the run, which takes the write lock the read above would block.
+            let rebuilt = match rebuilt {
+                Ok(rebuilt) => rebuilt,
+                Err(err) if providers_called.is_empty() => {
+                    skip_remaining(&plan.provider_ids[index..], "release_unavailable").await;
+                    return Err(ProviderServiceError::Internal(err));
+                }
+                Err(err) => {
+                    tracing::debug!(
+                        library_db_id = library_db_id.0,
+                        release_db_id = release_id.0,
+                        error = %format_args!("{err:#}"),
+                        "release disappeared during scan provider refresh"
+                    );
+                    None
                 }
             };
             let Some(rebuilt) = rebuilt else {
                 // The scan counted a unit for each of these providers.
-                for callback in &callbacks[index..] {
-                    let work_id = progress
-                        .start_work(
-                            SyncStageKey::ProviderRefresh,
-                            details(&callback.provider_id),
-                        )
-                        .await;
-                    progress
-                        .skip_work(work_id, SyncStageKey::ProviderRefresh, "release_gone")
-                        .await;
-                }
+                skip_remaining(&plan.provider_ids[index..], "release_gone").await;
                 break;
             };
             context = Some(rebuilt);
@@ -226,11 +236,13 @@ pub(crate) async fn refresh_release_metadata_for_scan(
             continue;
         };
         let refreshed = refresh_release_with_provider(
-            callback,
+            provider_id,
+            false,
             context.clone(),
             release_id,
             &progress,
             details(provider_id),
+            &plan.unregistered,
         )
         .await;
         if !refreshed {
@@ -241,6 +253,13 @@ pub(crate) async fn refresh_release_metadata_for_scan(
     }
 
     Ok(providers_called)
+}
+
+async fn scan_library_exists(library_db_id: DbId) -> Result<(), ProviderServiceError> {
+    let db = STATE.db.read().await;
+    lyra_db::libraries::get_by_id(&db, library_db_id)?
+        .ok_or(ProviderServiceError::LibraryNotFound(library_db_id.0))?;
+    Ok(())
 }
 
 async fn refresh_locked_library(
@@ -267,9 +286,9 @@ async fn refresh_locked_library(
     };
 
     let providers = read_active_providers().await?.only(options.provider_id);
-    let callbacks =
-        refresh_callbacks_for(&providers, EntityType::Release, options.apply_sync_filters).await;
+    let refreshers = refresh_providers_for(&providers, EntityType::Release).await;
     let schemes = id_schemes().await;
+    let unregistered = UnregisteredProviders::default();
     let release_count = releases
         .iter()
         .filter(|release| release.db_id.is_some())
@@ -277,7 +296,7 @@ async fn refresh_locked_library(
     progress
         .add_stage_total(
             SyncStageKey::ProviderRefresh,
-            release_count * callbacks.len() as u64,
+            release_count * refreshers.len() as u64,
             SyncTotalState::Final,
         )
         .await;
@@ -300,8 +319,7 @@ async fn refresh_locked_library(
     // Releases without a context: gone or merged away (`None`), or failing to build one.
     let mut unavailable: HashMap<DbId, Option<String>> = HashMap::new();
 
-    for callback in &callbacks {
-        let provider_id = &callback.provider_id;
+    for provider_id in &refreshers {
         let mut pass_touched = HashSet::new();
         for release in &releases {
             let Some(node_id) = release.db_id.clone().map(Into::<DbId>::into) else {
@@ -356,11 +374,13 @@ async fn refresh_locked_library(
                 continue;
             };
             let refreshed = refresh_release_with_provider(
-                callback,
+                provider_id,
+                options.apply_sync_filters,
                 context.clone(),
                 node_id,
                 &progress,
                 details,
+                &unregistered,
             )
             .await;
             if refreshed {
@@ -481,36 +501,44 @@ pub(crate) async fn deduplicate_after_providers(
 /// down. Returns whether the provider refreshed the release, or stopped because something it was
 /// writing is gone, which leaves what it saved before.
 async fn refresh_release_with_provider(
-    callback: &RefreshCallback,
+    provider_id: &str,
+    apply_sync_filters: bool,
     context: serde_json::Value,
     release_id: DbId,
     progress: &SyncRunProgress,
     details: SyncWorkDetails,
+    unregistered: &UnregisteredProviders,
 ) -> bool {
-    let provider_id = callback.provider_id.as_str();
     let work_id = progress
         .start_work(SyncStageKey::ProviderRefresh, details.clone())
         .await;
-    let should_run = match callback.filter {
-        Some(filter) => {
-            match dispatch_sync_filter_callback(provider_id, filter, context.clone()).await {
-                Ok(should_run) => should_run,
-                Err(err) if err.is::<RefreshTargetGone>() => {
-                    return skip_gone_target(progress, work_id, provider_id, release_id, &err)
-                        .await;
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        provider_id,
-                        release_db_id = release_id.0,
-                        error = %format_args!("{err:#}"),
-                        "sync filter failed, skipping release for provider"
-                    );
-                    false
-                }
-            }
+    let should_run = match dispatch_sync_filter(
+        provider_id,
+        EntityType::Release,
+        apply_sync_filters,
+        &context,
+    )
+    .await
+    {
+        Ok(should_run) => should_run,
+        Err(ProviderCallError::NotRegistered) => {
+            unregistered
+                .skip_not_registered(provider_id, progress, work_id)
+                .await;
+            return false;
         }
-        None => true,
+        Err(ProviderCallError::TargetGone(err)) => {
+            return skip_gone_target(progress, work_id, provider_id, release_id, &err).await;
+        }
+        Err(ProviderCallError::Failed(err)) => {
+            tracing::warn!(
+                provider_id,
+                release_db_id = release_id.0,
+                error = %format_args!("{err:#}"),
+                "sync filter failed, skipping release for provider"
+            );
+            false
+        }
     };
     if !should_run {
         progress
@@ -519,17 +547,23 @@ async fn refresh_release_with_provider(
         return false;
     }
 
-    match dispatch_refresh_callback(provider_id, callback.handler, context).await {
+    match dispatch_refresh(provider_id, EntityType::Release, context).await {
         Ok(()) => {
             progress
                 .complete_work(work_id, SyncStageKey::ProviderRefresh)
                 .await;
             true
         }
-        Err(err) if err.is_target_gone() => {
+        Err(ProviderCallError::TargetGone(err)) => {
             skip_gone_target(progress, work_id, provider_id, release_id, &err).await
         }
-        Err(err) => {
+        Err(ProviderCallError::NotRegistered) => {
+            unregistered
+                .skip_not_registered(provider_id, progress, work_id)
+                .await;
+            false
+        }
+        Err(ProviderCallError::Failed(err)) => {
             progress
                 .fail_work(
                     work_id,

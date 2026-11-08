@@ -25,6 +25,7 @@ use crate::services::{
     providers::{
         EntityRefreshOptions,
         EntityRefreshResult,
+        ProviderCallError,
         ProviderServiceError,
         RefreshTarget,
         id_schemes,
@@ -36,10 +37,10 @@ use super::{
     cover_path_buffers_for_library,
     cover_paths,
     deduplicate_release_scope,
-    dispatch::dispatch_refresh_callback,
+    dispatch::dispatch_refresh,
     passed_provider_options,
     read_active_providers,
-    refresh_callbacks_for,
+    refresh_providers_for,
 };
 
 pub(in crate::services::providers) fn resolve_library_id_for_entity(
@@ -77,22 +78,31 @@ pub(crate) async fn refresh_entity_metadata(
     };
 
     let providers = read_active_providers().await?;
-    let callbacks = refresh_callbacks_for(&providers, entity_type, false).await;
-    let provider_options = passed_provider_options(&callbacks, &options.provider_options).await?;
+    let refreshers = refresh_providers_for(&providers, entity_type).await;
+    let provider_options = passed_provider_options(&refreshers, &options.provider_options).await?;
     let mut providers_called = Vec::new();
-    for (callback, provider_options) in callbacks.into_iter().zip(provider_options) {
+    for (provider_id, provider_options) in refreshers.into_iter().zip(provider_options) {
         let context = context_with_options(context.clone(), provider_options);
-        match dispatch_refresh_callback(&callback.provider_id, callback.handler, context).await {
-            // What it saved first stays, so what follows the providers still runs for it.
-            Err(err) if err.is_target_gone() => tracing::debug!(
-                provider_id = %callback.provider_id,
-                entity_id = %target.public_id,
-                error = %err,
-                "a refresh's target went away during its handler"
+        match dispatch_refresh(&provider_id, entity_type, context).await {
+            Ok(()) => providers_called.push(provider_id),
+            Err(ProviderCallError::NotRegistered) => tracing::warn!(
+                provider_id,
+                "provider has no handler registered; skipping it for this refresh"
             ),
-            result => result?,
+            // What it saved first stays, so what follows the providers still runs for it.
+            Err(ProviderCallError::TargetGone(err)) => {
+                tracing::debug!(
+                    provider_id,
+                    entity_id = %target.public_id,
+                    error = %format_args!("{err:#}"),
+                    "a refresh's target went away during its handler"
+                );
+                providers_called.push(provider_id);
+            }
+            Err(ProviderCallError::Failed(err)) => {
+                return Err(ProviderServiceError::Internal(err));
+            }
         }
-        providers_called.push(callback.provider_id);
     }
 
     if entity_type == EntityType::Release

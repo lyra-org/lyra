@@ -36,7 +36,10 @@ use crate::services::metadata::layers::{
     LOCAL_SOURCE_ID,
     MANUAL_SOURCE_ID,
 };
-use crate::services::plugin_dispatch::PluginCallbackHandle;
+use crate::services::plugin_dispatch::{
+    PluginCallbackHandle,
+    RefreshTargetGone,
+};
 use crate::services::plugin_scope::{
     PluginId,
     PluginScopedInner,
@@ -129,16 +132,62 @@ impl ProviderCallStage {
     }
 }
 
-pub(crate) async fn with_provider_call<T, F, Fut>(
+/// How a provider call ended without the handler's answer.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ProviderCallError {
+    /// No handler is registered at the moment of the call, as during a plugin reload.
+    #[error("no handler is registered for the call")]
+    NotRegistered,
+    /// The handler stopped because something it was writing is gone.
+    #[error(transparent)]
+    TargetGone(anyhow::Error),
+    #[error(transparent)]
+    Failed(anyhow::Error),
+}
+
+impl ProviderCallError {
+    fn of_handler(error: anyhow::Error) -> Self {
+        if RefreshTargetGone::caused(&error) {
+            Self::TargetGone(error)
+        } else {
+            Self::Failed(error)
+        }
+    }
+}
+
+/// What a provider call's lookup found: `None` from the lookup means no handler is registered.
+pub(crate) enum ProviderLookup<H, T> {
+    Call(H),
+    /// The answer the handler's settings already give, with no call to make.
+    Answer(T),
+}
+
+/// Runs `call` with the handler `lookup` copies out of the registry, under the provider's call
+/// lock. The registry lock is released before `call`: a running handler can register others.
+///
+/// `lookup` runs before the lock too, so a provider with nothing to call neither waits behind
+/// its other calls nor gets a lock entry, keeping those to providers that had a handler. The read
+/// under the lock is the one that counts.
+pub(crate) async fn with_provider_call<H, T, L, F, Fut>(
     provider_id: &str,
     stage: ProviderCallStage,
+    lookup: L,
     call: F,
-) -> T
+) -> Result<T, ProviderCallError>
 where
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = T>,
+    L: Fn(&ProviderRegistry) -> Option<ProviderLookup<H, T>>,
+    F: FnOnce(H) -> Fut,
+    Fut: Future<Output = Result<T>>,
 {
     let generation = crate::services::STATE.generation();
+    let read_lookup = async || {
+        let registry = generation.providers.registry.read().await;
+        lookup(&registry).ok_or(ProviderCallError::NotRegistered)
+    };
+    if let ProviderLookup::Answer(answer) = read_lookup().await? {
+        return Ok(answer);
+    }
+
     let lock = {
         let mut locks = generation.providers.call_locks.clone().lock_owned().await;
         locks
@@ -158,7 +207,10 @@ where
         "provider call lock acquired"
     );
 
-    call().await
+    match read_lookup().await? {
+        ProviderLookup::Call(handler) => call(handler).await.map_err(ProviderCallError::of_handler),
+        ProviderLookup::Answer(answer) => Ok(answer),
+    }
 }
 
 /// Registered metadata providers, bucketed by the plugin that declared them.
@@ -350,6 +402,11 @@ impl ProviderRegistry {
             .and_then(|provider| provider.refresh_callbacks.get(&entity_type))
     }
 
+    pub(crate) fn has_refresh_callback(&self, provider_id: &str, entity_type: EntityType) -> bool {
+        self.get_refresh_callback(provider_id, entity_type)
+            .is_some()
+    }
+
     pub(crate) fn providers_with_refresh_handler(&self, entity_type: EntityType) -> Vec<String> {
         let mut providers = self
             .iter_states()
@@ -411,6 +468,10 @@ impl ProviderRegistry {
             .and_then(|provider| provider.cover_handlers.get(&entity_type))
     }
 
+    pub(crate) fn has_cover_handler(&self, provider_id: &str, entity_type: EntityType) -> bool {
+        self.get_cover_handler(provider_id, entity_type).is_some()
+    }
+
     /// The plugin that owns the provider's cover handler for `entity_type`,
     /// while one is registered.
     pub(crate) fn cover_handler_owner(
@@ -440,6 +501,10 @@ impl ProviderRegistry {
             .and_then(|provider| provider.similar_releases_handler.as_ref())
     }
 
+    pub(crate) fn has_similar_releases_handler(&self, provider_id: &str) -> bool {
+        self.get_similar_releases_handler(provider_id).is_some()
+    }
+
     /// The stored handler's cancel token, or `None` when the provider is not
     /// registered and nothing was stored.
     pub(crate) fn set_lyrics_handler(
@@ -458,6 +523,10 @@ impl ProviderRegistry {
     pub(crate) fn get_lyrics_handler(&self, provider_id: &str) -> Option<&ProviderLyricsSpec> {
         self.state(provider_id)
             .and_then(|provider| provider.lyrics_handler.as_ref())
+    }
+
+    pub(crate) fn has_lyrics_handler(&self, provider_id: &str) -> bool {
+        self.get_lyrics_handler(provider_id).is_some()
     }
 
     pub(crate) fn get_sync_filter_callback(
@@ -607,6 +676,16 @@ pub(crate) mod tests {
 
     use super::*;
 
+    pub(crate) async fn call_lock_count() -> usize {
+        crate::services::STATE
+            .generation()
+            .providers
+            .call_locks
+            .lock()
+            .await
+            .len()
+    }
+
     pub(crate) fn id_registration(
         registry: &ProviderRegistry,
         provider_id: &str,
@@ -631,6 +710,29 @@ pub(crate) mod tests {
             ProviderIdUrlGenerator::Template(template) => Some(template.clone()),
             ProviderIdUrlGenerator::Function { .. } => None,
         }
+    }
+
+    #[test]
+    fn a_handlers_failure_is_target_gone_anywhere_in_its_chain() {
+        #[derive(Debug, thiserror::Error)]
+        #[error("wrapped")]
+        struct Wrapped(#[source] RefreshTargetGone);
+
+        let gone = || RefreshTargetGone("gone".to_string());
+        for error in [
+            anyhow::Error::new(gone()),
+            anyhow::Error::new(Wrapped(gone())),
+            anyhow::Error::new(gone()).context("outer"),
+        ] {
+            assert!(matches!(
+                ProviderCallError::of_handler(error),
+                ProviderCallError::TargetGone(_)
+            ));
+        }
+        assert!(matches!(
+            ProviderCallError::of_handler(anyhow::anyhow!("other")),
+            ProviderCallError::Failed(_)
+        ));
     }
 
     #[test]
@@ -907,13 +1009,20 @@ pub(crate) mod tests {
         let make_call = |active: Arc<AtomicUsize>, max_active: Arc<AtomicUsize>| {
             let provider_id = provider_id.clone();
             async move {
-                with_provider_call(&provider_id, ProviderCallStage::MetadataRefresh, || async {
-                    let current = active.fetch_add(1, Ordering::SeqCst) + 1;
-                    max_active.fetch_max(current, Ordering::SeqCst);
-                    sleep(Duration::from_millis(5)).await;
-                    active.fetch_sub(1, Ordering::SeqCst);
-                })
-                .await;
+                with_provider_call(
+                    &provider_id,
+                    ProviderCallStage::MetadataRefresh,
+                    |_| Some(ProviderLookup::Call(())),
+                    |()| async {
+                        let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                        max_active.fetch_max(current, Ordering::SeqCst);
+                        sleep(Duration::from_millis(5)).await;
+                        active.fetch_sub(1, Ordering::SeqCst);
+                        Ok(())
+                    },
+                )
+                .await
+                .expect("provider call");
             }
         };
 
@@ -937,10 +1046,17 @@ pub(crate) mod tests {
         let make_call = |provider_id: String| {
             let barrier = barrier.clone();
             async move {
-                with_provider_call(&provider_id, ProviderCallStage::MetadataRefresh, || async {
-                    barrier.wait().await;
-                })
-                .await;
+                with_provider_call(
+                    &provider_id,
+                    ProviderCallStage::MetadataRefresh,
+                    |_| Some(ProviderLookup::Call(())),
+                    |()| async {
+                        barrier.wait().await;
+                        Ok(())
+                    },
+                )
+                .await
+                .expect("provider call");
             }
         };
 
@@ -971,24 +1087,131 @@ pub(crate) mod tests {
         let running = tokio::spawn({
             let (entered, release) = (entered.clone(), release.clone());
             async move {
-                with_provider_call("demo", ProviderCallStage::MetadataRefresh, || async {
-                    entered.notify_one();
-                    release.acquire().await.expect("gate").forget();
-                })
-                .await;
+                with_provider_call(
+                    "demo",
+                    ProviderCallStage::MetadataRefresh,
+                    |_| Some(ProviderLookup::Call(())),
+                    |()| async {
+                        entered.notify_one();
+                        release.acquire().await.expect("gate").forget();
+                        Ok(())
+                    },
+                )
+                .await
+                .expect("provider call");
             }
         });
         entered.notified().await;
         teardown_plugin_providers(&plugin_id).await;
 
-        let next = || with_provider_call("demo", ProviderCallStage::MetadataRefresh, || async {});
+        let next = || {
+            with_provider_call(
+                "demo",
+                ProviderCallStage::MetadataRefresh,
+                |_| Some(ProviderLookup::Call(())),
+                |()| async { Ok(()) },
+            )
+        };
         assert!(
             timeout(Duration::from_millis(50), next()).await.is_err(),
             "a call after the teardown waits for the one still running"
         );
         release.add_permits(1);
         running.await.expect("running call");
-        next().await;
+        next().await.expect("provider call");
+    }
+
+    #[tokio::test]
+    async fn a_call_without_a_handler_is_not_registered_and_runs_nothing() {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state().expect("test state");
+
+        let result = with_provider_call(
+            "unregistered",
+            ProviderCallStage::MetadataRefresh,
+            |_| None::<ProviderLookup<(), ()>>,
+            |()| async { Ok(()) },
+        )
+        .await;
+
+        assert!(matches!(result, Err(ProviderCallError::NotRegistered)));
+    }
+
+    #[tokio::test]
+    async fn a_call_with_nothing_to_do_takes_no_lock() {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state().expect("test state");
+
+        let missing = with_provider_call(
+            "unregistered",
+            ProviderCallStage::MetadataRefresh,
+            |_| None::<ProviderLookup<(), ()>>,
+            |()| async { Ok(()) },
+        )
+        .await;
+        let answered = with_provider_call(
+            "answered",
+            ProviderCallStage::MetadataRefresh,
+            |_| Some(ProviderLookup::<(), _>::Answer(7)),
+            |()| async { Ok(0) },
+        )
+        .await
+        .expect("answer");
+
+        assert!(matches!(missing, Err(ProviderCallError::NotRegistered)));
+        assert_eq!(answered, 7);
+        assert_eq!(call_lock_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn a_call_looks_its_handler_up_again_once_it_has_the_lock() {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state().expect("test state");
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Semaphore::new(0));
+        let running = tokio::spawn({
+            let (entered, release) = (entered.clone(), release.clone());
+            async move {
+                with_provider_call(
+                    "demo",
+                    ProviderCallStage::MetadataRefresh,
+                    |_| Some(ProviderLookup::Call(())),
+                    |()| async {
+                        entered.notify_one();
+                        release.acquire().await.expect("gate").forget();
+                        Ok(())
+                    },
+                )
+                .await
+            }
+        });
+        entered.notified().await;
+        let looked_up = Arc::new(AtomicUsize::new(0));
+
+        let waiting = with_provider_call(
+            "demo",
+            ProviderCallStage::MetadataRefresh,
+            {
+                let looked_up = looked_up.clone();
+                move |_: &ProviderRegistry| {
+                    looked_up.fetch_add(1, Ordering::SeqCst);
+                    Some(ProviderLookup::Call(()))
+                }
+            },
+            |()| async { Ok(()) },
+        );
+        let waiting = tokio::spawn(waiting);
+        sleep(Duration::from_millis(20)).await;
+        assert_eq!(
+            looked_up.load(Ordering::SeqCst),
+            1,
+            "the read before the lock"
+        );
+
+        release.add_permits(1);
+        running.await.expect("join").expect("running call");
+        waiting.await.expect("join").expect("waiting call");
+        assert_eq!(looked_up.load(Ordering::SeqCst), 2);
     }
 }
 

@@ -3,8 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashMap;
-
 use agdb::DbId;
 
 use crate::services::{
@@ -24,20 +22,20 @@ use crate::services::{
         SyncTotalState,
         SyncWorkDetails,
     },
-    plugin_dispatch::PluginCallbackHandle,
     providers::{
         IdSchemes,
+        ProviderCallError,
         id_schemes,
         provider_registry,
     },
 };
 
 use super::{
-    context_with_options,
-    dispatch::dispatch_refresh_callback,
-    passed_provider_options,
+    PROVIDER_NOT_REGISTERED,
+    UnregisteredProviders,
+    dispatch::dispatch_refresh,
     read_active_providers,
-    refresh_callbacks_for,
+    refresh_providers_for,
 };
 
 /// An artist a cover pass fetches the cover of, as it was listed.
@@ -62,17 +60,10 @@ impl ListedArtist {
     }
 }
 
-/// An artist refresh handler, with the options its provider gets by default.
-struct ArtistRefresher {
-    provider_id: String,
-    handler: PluginCallbackHandle,
-    options: serde_json::Map<String, serde_json::Value>,
-}
-
-/// The artist refresh handlers of the active providers `provider_filter` allows that also look
+/// The active providers `provider_filter` allows with an artist refresh handler that also look
 /// artist covers up, in provider order: the refreshes whose ids those lookups read. Other
 /// providers' artist refreshes are left to the refreshes that run them.
-async fn artist_refreshers(provider_filter: Option<&str>) -> Vec<ArtistRefresher> {
+async fn artist_refresher_ids(provider_filter: Option<&str>) -> Vec<String> {
     let providers = match read_active_providers().await {
         Ok(providers) => providers.only(provider_filter),
         Err(err) => {
@@ -85,32 +76,11 @@ async fn artist_refreshers(provider_filter: Option<&str>) -> Vec<ArtistRefresher
         providers
             .into_iter()
             .filter(|provider| {
-                registry
-                    .get_cover_handler(&provider.provider_id, EntityType::Artist)
-                    .is_some()
+                registry.has_cover_handler(&provider.provider_id, EntityType::Artist)
             })
             .collect::<Vec<_>>()
     };
-    let callbacks = refresh_callbacks_for(&providers, EntityType::Artist, false).await;
-    let options = match passed_provider_options(&callbacks, &HashMap::new()).await {
-        Ok(options) => options,
-        Err(err) => {
-            tracing::warn!(
-                error = %format_args!("{:#}", err.into_anyhow()),
-                "could not read the artist refresh handlers' options"
-            );
-            return Vec::new();
-        }
-    };
-    callbacks
-        .into_iter()
-        .zip(options)
-        .map(|(callback, options)| ArtistRefresher {
-            provider_id: callback.provider_id,
-            handler: callback.handler,
-            options,
-        })
-        .collect()
+    refresh_providers_for(&providers, EntityType::Artist).await
 }
 
 /// The listed artist as it is now, or none once it is gone or its id went to another node.
@@ -119,47 +89,65 @@ async fn current_artist(listed: &ListedArtist) -> anyhow::Result<Option<lyra_db:
     Ok(lyra_db::artists::get_by_id(&db, listed.db_id)?.filter(|artist| artist.id == listed.id))
 }
 
+struct ArtistRefreshers {
+    provider_ids: Vec<String>,
+    unregistered: UnregisteredProviders,
+}
+
+enum ArtistCoverOutcome {
+    Gone,
+    /// A provider was not registered for its refresh and no cover came from the others.
+    ProviderNotRegistered,
+    Settled {
+        got_cover: bool,
+    },
+}
+
 /// Fetches the artist's cover when an automatic sync would, after its providers refreshed it, so
 /// the cover handlers see the ids they settled on. A failing refresh leaves the stored ids to
-/// the cover handlers. Returns whether it got a cover, or none once the artist is gone; a
-/// cancelled run ends it between handlers or before the fetch, with the cancellation as its error.
+/// the cover handlers. A cancelled run ends it between handlers or before the fetch, with the
+/// cancellation as its error.
 async fn refresh_and_sync_artist_cover(
     listed: &ListedArtist,
-    refreshers: &[ArtistRefresher],
+    refreshers: &ArtistRefreshers,
     schemes: &IdSchemes,
     paths: CoverPaths<'_>,
     options: CoverSyncOptions,
     provider_filter: Option<&str>,
     progress: &SyncRunProgress,
-) -> anyhow::Result<Option<bool>> {
+) -> anyhow::Result<ArtistCoverOutcome> {
     if current_artist(listed).await?.is_none() {
-        return Ok(None);
+        return Ok(ArtistCoverOutcome::Gone);
     }
     if !artist_cover_wanted(&STATE.db.get(), listed.db_id, &listed.id, options).await? {
-        return Ok(Some(false));
+        return Ok(ArtistCoverOutcome::Settled { got_cover: false });
     }
     let context = {
         let db = STATE.db.read().await;
         if !crate::services::providers::node_is_entity(&db, listed.db_id, &listed.id)? {
-            return Ok(None);
+            return Ok(ArtistCoverOutcome::Gone);
         }
         build_entity_provider_context(&db, listed.db_id, None, schemes).map(|(_, context)| context)
     };
+    let mut provider_missing = false;
     match context {
         Ok(context) => {
-            for refresher in refreshers {
+            for provider_id in &refreshers.provider_ids {
                 progress.check_cancelled()?;
-                let context = context_with_options(context.clone(), refresher.options.clone());
-                if let Err(err) =
-                    dispatch_refresh_callback(&refresher.provider_id, refresher.handler, context)
-                        .await
-                {
-                    tracing::warn!(
-                        provider_id = %refresher.provider_id,
-                        artist_id = %listed.id,
-                        error = %format_args!("{:#}", err.into_anyhow()),
-                        "artist refresh before its cover failed"
-                    );
+                match dispatch_refresh(provider_id, EntityType::Artist, context.clone()).await {
+                    Ok(()) => {}
+                    Err(ProviderCallError::NotRegistered) => {
+                        refreshers.unregistered.note(provider_id);
+                        provider_missing = true;
+                    }
+                    Err(ProviderCallError::Failed(err) | ProviderCallError::TargetGone(err)) => {
+                        tracing::warn!(
+                            provider_id = %provider_id,
+                            artist_id = %listed.id,
+                            error = %format_args!("{err:#}"),
+                            "artist refresh before its cover failed"
+                        )
+                    }
                 }
             }
         }
@@ -171,11 +159,14 @@ async fn refresh_and_sync_artist_cover(
     }
     progress.check_cancelled()?;
     let Some(artist) = current_artist(listed).await? else {
-        return Ok(None);
+        return Ok(ArtistCoverOutcome::Gone);
     };
-    Ok(Some(
-        sync_artist_cover(&STATE.db.get(), &artist, paths, options, provider_filter).await?,
-    ))
+    let got_cover =
+        sync_artist_cover(&STATE.db.get(), &artist, paths, options, provider_filter).await?;
+    if provider_missing && !got_cover {
+        return Ok(ArtistCoverOutcome::ProviderNotRegistered);
+    }
+    Ok(ArtistCoverOutcome::Settled { got_cover })
 }
 
 /// Fetches the covers of `artists` from the providers, one after another, reporting one
@@ -198,7 +189,10 @@ pub(crate) async fn sync_artist_covers(
         )
         .await;
     progress.set_determinate().await;
-    let refreshers = artist_refreshers(provider_filter).await;
+    let refreshers = ArtistRefreshers {
+        provider_ids: artist_refresher_ids(provider_filter).await,
+        unregistered: UnregisteredProviders::default(),
+    };
     let schemes = id_schemes().await;
     let mut synced = 0;
     for listed in artists {
@@ -227,15 +221,24 @@ pub(crate) async fn sync_artist_covers(
             return Err(SyncRunControlError::Cancelled);
         }
         match result {
-            Ok(Some(got_cover)) => {
+            Ok(ArtistCoverOutcome::Settled { got_cover }) => {
                 synced += usize::from(got_cover);
                 progress
                     .complete_work(work_id, SyncStageKey::ProviderCover)
                     .await;
             }
-            Ok(None) => {
+            Ok(ArtistCoverOutcome::Gone) => {
                 progress
                     .skip_work(work_id, SyncStageKey::ProviderCover, "artist_gone")
+                    .await;
+            }
+            Ok(ArtistCoverOutcome::ProviderNotRegistered) => {
+                progress
+                    .skip_work(
+                        work_id,
+                        SyncStageKey::ProviderCover,
+                        PROVIDER_NOT_REGISTERED,
+                    )
                     .await;
             }
             Err(err) => {

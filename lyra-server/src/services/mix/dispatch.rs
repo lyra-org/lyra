@@ -12,7 +12,6 @@ use super::{
     MAX_LIMIT,
     MIX_DISPATCH_BUDGET,
     MixError,
-    MixHandlerRegistration,
     MixHandlerSpec,
     MixRequest,
     MixRequirements,
@@ -33,10 +32,10 @@ use crate::services::{
     },
 };
 
-/// A mixer able to serve a request, with the request's options for it.
+/// A mixer able to serve a request, with the request's options for it. Its handler is looked up
+/// when its turn comes, so a request running through a plugin reload reaches the current one.
 pub(super) struct Candidate {
     mixer_id: String,
-    registration: MixHandlerRegistration,
     options: serde_json::Map<String, serde_json::Value>,
 }
 
@@ -95,7 +94,6 @@ pub(super) async fn choose_mixers(
         if registration.spec.covers(requirements) {
             choice.candidates.push(Candidate {
                 mixer_id: config.mixer_id,
-                registration: registration.clone(),
                 options,
             });
         }
@@ -192,19 +190,18 @@ pub(super) struct Dispatched {
 
 /// Tries `candidates` in order; the first with visible tracks wins. Each handler gets its spec's
 /// timeout, cut to what remains of the request's budget, and the explicit seeds followed by as
-/// many history seeds as its spec takes. `Ok(None)` when none produced tracks.
+/// many history seeds as its spec takes. A candidate whose current handler no longer covers the
+/// request is passed over. `Ok(None)` when none produced tracks.
 pub(super) async fn dispatch(
     candidates: &[Candidate],
     request: &MixRequest,
+    requirements: &MixRequirements,
     seeds: &ResolvedSeeds,
     viewer: &MixViewer,
 ) -> anyhow::Result<Option<Dispatched>> {
     if candidates.is_empty() {
         return Ok(None);
     }
-    let Some(runtime) = STATE.generation().plugin_dispatch.get() else {
-        return Ok(None);
-    };
     let deadline = tokio::time::Instant::now() + MIX_DISPATCH_BUDGET;
 
     for (index, candidate) in candidates.iter().enumerate() {
@@ -217,10 +214,25 @@ pub(super) async fn dispatch(
             break;
         }
         let mixer_id = &candidate.mixer_id;
-        let timeout = (deadline - now).min(candidate.registration.timeout);
+        let registration = mix_registry()
+            .read()
+            .await
+            .handler(mixer_id, request.shape)
+            .cloned();
+        let Some(registration) =
+            registration.filter(|registration| registration.spec.covers(requirements))
+        else {
+            tracing::debug!(mixer = %mixer_id, "mixer has no handler for this mix now, trying next");
+            continue;
+        };
+        let Some(runtime) = STATE.generation().plugin_dispatch.get() else {
+            tracing::debug!(mixer = %mixer_id, "no plugin runtime to reach the mixer, trying next");
+            continue;
+        };
+        let timeout = (deadline - now).min(registration.timeout);
         let handler_request = MixHandlerRequest {
-            handler: candidate.registration.handler,
-            seeds: seeds.for_handler(candidate.registration.spec.max_seeds),
+            handler: registration.handler,
+            seeds: seeds.for_handler(registration.spec.max_seeds),
             query: request.query().map(str::to_string),
             limit: request.limit,
             options: candidate.options.clone(),
@@ -321,6 +333,7 @@ async fn tracks_from_mixer_result(entries: Vec<MixHandlerTrack>) -> anyhow::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::mix::MixHandlerRegistration;
 
     fn spec(seed_types: &[MixSeedType], max_seeds: usize, query: bool) -> MixHandlerSpec {
         MixHandlerSpec {
@@ -344,6 +357,102 @@ mod tests {
             MixError::Unsupported(message) => message,
             other => panic!("expected an unsupported mix, got {other:?}"),
         }
+    }
+
+    async fn register_mixer(
+        mixer_id: &str,
+        handler: crate::services::plugin_dispatch::PluginCallbackHandle,
+    ) -> anyhow::Result<()> {
+        let registry = mix_registry();
+        let mut registry = registry.write().await;
+        registry.register(
+            crate::services::plugin_scope::PluginId::new(format!("{mixer_id}_plugin").as_str())?,
+            mixer_id.to_string(),
+        )?;
+        registry.set_handler(
+            mixer_id,
+            MixShape::Blend,
+            MixHandlerRegistration {
+                spec: spec(&[], 5, false),
+                timeout: std::time::Duration::from_secs(5),
+                handler,
+            },
+        )?;
+        Ok(())
+    }
+
+    fn candidate(mixer_id: &str) -> Candidate {
+        Candidate {
+            mixer_id: mixer_id.to_string(),
+            options: serde_json::Map::new(),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_reload_between_mixers_reaches_the_next_mixers_new_handler() -> anyhow::Result<()> {
+        use crate::services::testing::{
+            FakePluginDispatch,
+            FakeResponse,
+            init_default_test_state,
+            runtime_test_lock,
+        };
+
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let old = FakePluginDispatch::install();
+        let gate = std::sync::Arc::new(tokio::sync::Semaphore::new(0));
+        let first = old.add(FakeResponse::Held(
+            gate.clone(),
+            Box::new(FakeResponse::Value(serde_json::json!([]))),
+        ));
+        let old_second = old.add(FakeResponse::Value(serde_json::json!([])));
+        register_mixer("first", first).await?;
+        register_mixer("second", old_second).await?;
+        let (track_public_id, seeds, viewer) = {
+            let mut db = STATE.db.write().await;
+            let track = lyra_db::fixtures::insert_track(&mut db, "Track")?;
+            let viewer = MixViewer {
+                principal: None,
+                accessible_library_ids: None,
+                playlists: Default::default(),
+            };
+            let seeds = ResolvedSeeds::resolve(&db, &MixRequest::default(), &viewer)
+                .map_err(|err| anyhow::anyhow!("seeds: {err:?}"))?;
+            let public_id = lyra_db::tracks::get_by_id(&db, track)?.expect("track").id;
+            (public_id, seeds, viewer)
+        };
+        let requirements = MixRequirements {
+            seed_types: Vec::new(),
+            seed_count: 0,
+            exclude: false,
+            query: false,
+        };
+
+        let running = tokio::spawn(async move {
+            dispatch(
+                &[candidate("first"), candidate("second")],
+                &MixRequest::default(),
+                &requirements,
+                &seeds,
+                &viewer,
+            )
+            .await
+            .map(|dispatched| dispatched.map(|dispatched| dispatched.tracks.len()))
+        });
+        old.wait_for_calls(first, 1).await;
+        super::super::registry::teardown_plugin_mixers(
+            &crate::services::plugin_scope::PluginId::new("second_plugin")?,
+        )
+        .await;
+        let new = FakePluginDispatch::install_as(2);
+        let new_second = new.add(FakeResponse::Value(serde_json::json!([track_public_id])));
+        register_mixer("second", new_second).await?;
+        gate.add_permits(1);
+
+        assert_eq!(running.await??, Some(1));
+        assert!(old.calls(old_second).is_empty());
+        assert_eq!(new.calls(new_second).len(), 1);
+        Ok(())
     }
 
     #[test]

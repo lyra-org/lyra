@@ -337,12 +337,13 @@ async fn in_vm_dispatch_is_not_wrapped_in_provider_call_lock() -> Result<()> {
         move |_runtime, request| {
             let candidate_public_id = candidate_public_id.clone();
             async move {
-                tokio::time::timeout(
+                Ok(tokio::time::timeout(
                     Duration::from_millis(250),
                     crate::services::providers::with_provider_call(
                         &request.provider_id,
                         crate::services::providers::ProviderCallStage::MetadataRefresh,
-                        || async move {
+                        |_| Some(crate::services::providers::ProviderLookup::Call(())),
+                        |()| async move {
                             Ok(SimilarReleasesDispatchResult {
                                 candidates: vec![SimilarReleaseCandidate::Local {
                                     release_id: candidate_public_id,
@@ -352,7 +353,7 @@ async fn in_vm_dispatch_is_not_wrapped_in_provider_call_lock() -> Result<()> {
                     ),
                 )
                 .await
-                .context("in-VM dispatch waited on an outer provider call lock")?
+                .context("in-VM dispatch waited on an outer provider call lock")??)
             }
         },
     )

@@ -444,6 +444,7 @@ mod fake_dispatch {
             MetadataRefreshResult,
             MixHandlerRequest,
             MixHandlerResult,
+            MixHandlerTrack,
             PluginCallbackHandle,
             PluginDispatch,
             RefreshTargetGone,
@@ -468,19 +469,29 @@ mod fake_dispatch {
 
     /// A plugin runtime that answers metadata refresh dispatches with the
     /// response added for each handler, recording every call's context.
-    #[derive(Default)]
     pub(crate) struct FakePluginDispatch {
+        vm_id: u64,
         handlers: Mutex<Vec<FakeResponse>>,
         calls: Mutex<HashMap<u64, Vec<serde_json::Value>>>,
     }
 
-    /// The runtime id of every [`FakePluginDispatch`] handle.
+    /// The runtime id of a [`FakePluginDispatch`] handle unless it was installed as another.
     const FAKE_VM_ID: u64 = u64::MAX;
 
     impl FakePluginDispatch {
         /// A fake published as the current generation's plugin dispatch.
         pub(crate) fn install() -> Arc<Self> {
-            let dispatch = Arc::new(Self::default());
+            Self::install_as(FAKE_VM_ID)
+        }
+
+        /// A fake with runtime id `vm_id` published in place of the current dispatch, as a
+        /// plugin reload publishes its new runtime.
+        pub(crate) fn install_as(vm_id: u64) -> Arc<Self> {
+            let dispatch = Arc::new(Self {
+                vm_id,
+                handlers: Mutex::default(),
+                calls: Mutex::default(),
+            });
             STATE
                 .generation()
                 .plugin_dispatch
@@ -493,7 +504,7 @@ mod fake_dispatch {
             let mut handlers = self.handlers.lock().expect("fake handlers poisoned");
             handlers.push(response);
             PluginCallbackHandle {
-                vm_id: FAKE_VM_ID,
+                vm_id: self.vm_id,
                 handler_id: handlers.len() as u64,
             }
         }
@@ -506,6 +517,19 @@ mod fake_dispatch {
                 .get(&handler.handler_id)
                 .cloned()
                 .unwrap_or_default()
+        }
+
+        pub(crate) async fn wait_for_calls(&self, handler: PluginCallbackHandle, calls: usize) {
+            for _ in 0..500 {
+                if self.calls(handler).len() >= calls {
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            panic!(
+                "handler {} was not called {calls} times",
+                handler.handler_id
+            );
         }
 
         /// Registers `provider_id` with an artist cover handler answering with `response`,
@@ -551,6 +575,15 @@ mod fake_dispatch {
                 .collect()
         }
 
+        fn record(&self, handler_id: u64, context: serde_json::Value) {
+            self.calls
+                .lock()
+                .expect("fake calls poisoned")
+                .entry(handler_id)
+                .or_default()
+                .push(context);
+        }
+
         fn response(&self, handler_id: u64) -> Option<FakeResponse> {
             let index = usize::try_from(handler_id).ok()?.checked_sub(1)?;
             self.handlers
@@ -586,16 +619,11 @@ mod fake_dispatch {
             request: MetadataRefreshRequest,
         ) -> BoxFuture<'_, Result<MetadataRefreshResult>> {
             Box::pin(async move {
-                let handler_id = request.handler.handler_id_in(FAKE_VM_ID)?;
+                let handler_id = request.handler.handler_id_in(self.vm_id)?;
                 let response = self
                     .response(handler_id)
                     .ok_or_else(|| anyhow!("metadata handler {handler_id} not found"))?;
-                self.calls
-                    .lock()
-                    .expect("fake calls poisoned")
-                    .entry(handler_id)
-                    .or_default()
-                    .push(request.context);
+                self.record(handler_id, request.context);
                 if let FakeResponse::UntilDeadline = response {
                     tokio::time::sleep_until(tokio::time::Instant::from_std(request.deadline))
                         .await;
@@ -609,9 +637,27 @@ mod fake_dispatch {
 
         fn dispatch_mix_handler(
             &self,
-            _request: MixHandlerRequest,
+            request: MixHandlerRequest,
         ) -> BoxFuture<'_, Result<MixHandlerResult>> {
-            Box::pin(async { bail!("the fake plugin dispatch has no mix handlers") })
+            Box::pin(async move {
+                let handler_id = request.handler.handler_id_in(self.vm_id)?;
+                let response = self
+                    .response(handler_id)
+                    .ok_or_else(|| anyhow!("mix handler {handler_id} not found"))?;
+                self.record(handler_id, serde_json::Value::Null);
+                let tracks = answer(response).await?;
+                let tracks = tracks
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(|track_id| MixHandlerTrack {
+                        track_id: track_id.to_string(),
+                        score: None,
+                    })
+                    .collect();
+                Ok(MixHandlerResult { tracks })
+            })
         }
 
         fn dispatch_similar_releases(

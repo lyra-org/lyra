@@ -76,11 +76,11 @@ use crate::services::{
     providers::{
         LibraryRefreshOptions,
         ListedArtist,
+        ScanRefreshPlan,
         deduplicate_after_providers,
         node_is_entity,
         refresh_library_metadata_after_others,
         refresh_release_metadata_for_scan,
-        release_refresh_provider_ids,
         sync_artist_covers,
     },
 };
@@ -474,13 +474,16 @@ pub(crate) async fn sync_library_pipeline(
         audio_folders: &audio_folders,
     };
     let stages = ReleaseArtifactStages::for_sync(options);
-    let mut provider_count = 0;
-    if stages.provider_refresh {
-        provider_count = release_refresh_provider_ids(None, false).await?.len() as u64;
+    let refresh_plan = if stages.provider_refresh {
+        Some(ScanRefreshPlan::current().await?)
+    } else {
+        None
+    };
+    if let Some(refresh_plan) = &refresh_plan {
         progress
             .add_stage_total(
                 SyncStageKey::ProviderRefresh,
-                plans.len() as u64 * provider_count,
+                plans.len() as u64 * refresh_plan.provider_count(),
                 SyncTotalState::Final,
             )
             .await;
@@ -527,13 +530,13 @@ pub(crate) async fn sync_library_pipeline(
             break;
         }
         follow_merged_releases(db, chunk).await?;
-        if stages.provider_refresh {
+        if let Some(refresh_plan) = &refresh_plan {
             let refreshed_by = refresh_changed_releases(
                 db,
                 library_db_id,
                 &library.path,
                 chunk,
-                provider_count,
+                refresh_plan,
                 &progress,
             )
             .await;
@@ -1212,7 +1215,7 @@ async fn refresh_changed_releases(
     library_db_id: DbId,
     library_path: &Path,
     plans: &[ReleaseArtifactPlan],
-    provider_count: u64,
+    refresh_plan: &ScanRefreshPlan,
     progress: &SyncRunProgress,
 ) -> HashSet<String> {
     futures::future::join_all(plans.iter().map(|plan| async move {
@@ -1222,7 +1225,7 @@ async fn refresh_changed_releases(
             skip_units(
                 progress,
                 SyncStageKey::ProviderRefresh,
-                provider_count,
+                refresh_plan.provider_count(),
                 "release_gone",
             )
             .await;
@@ -1231,13 +1234,10 @@ async fn refresh_changed_releases(
         if progress.is_cancelled() {
             return Vec::new();
         }
-        refresh_changed_release(&ReleaseArtifactContext::new(
-            db,
-            library_db_id,
-            library_path,
-            plan,
-            progress.clone(),
-        ))
+        refresh_changed_release(
+            &ReleaseArtifactContext::new(db, library_db_id, library_path, plan, progress.clone()),
+            refresh_plan,
+        )
         .await
     }))
     .await
@@ -1314,7 +1314,10 @@ async fn skip_cover_units(
     }
 }
 
-async fn refresh_changed_release(context: &ReleaseArtifactContext<'_>) -> Vec<String> {
+async fn refresh_changed_release(
+    context: &ReleaseArtifactContext<'_>,
+    refresh_plan: &ScanRefreshPlan,
+) -> Vec<String> {
     let library_db_id = context.library_db_id;
     let release_id = context.release_id;
     let run_id = &context.run_id;
@@ -1328,6 +1331,7 @@ async fn refresh_changed_release(context: &ReleaseArtifactContext<'_>) -> Vec<St
     match refresh_release_metadata_for_scan(
         library_db_id,
         release_id,
+        refresh_plan,
         context.progress.clone(),
         context.release_public_id.clone(),
         context.release_title.clone(),
@@ -2190,9 +2194,11 @@ FILE "album.flac" WAVE
         let holder = tokio::spawn(crate::services::providers::with_provider_call(
             "queued",
             crate::services::providers::ProviderCallStage::MetadataRefresh,
-            || async move {
+            |_| Some(crate::services::providers::ProviderLookup::Call(())),
+            |()| async move {
                 let _ = held.send(());
                 let _ = released.await;
+                Ok(())
             },
         ));
         is_held.await?;
@@ -2228,7 +2234,7 @@ FILE "album.flac" WAVE
             futures::future::join(sync_with(hooks.into(), &library, progress.clone()), driver),
         )
         .await?;
-        holder.await?;
+        holder.await??;
 
         let failed_units = super::super::orchestrator::get_sync_run(&run_id)
             .await?

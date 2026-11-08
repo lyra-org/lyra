@@ -42,8 +42,10 @@ use crate::{
         providers::{
             IdSchemes,
             MAX_SIMILAR_RELEASES_HANDLER_TIMEOUT,
+            ProviderRegistry,
             ProviderSimilarReleasesSpec,
             active_providers,
+            provider_registry,
             requirements_match,
         },
     },
@@ -94,18 +96,29 @@ impl Default for SimilarReleaseOptions {
     }
 }
 
-#[derive(Clone)]
-struct ProviderHandler {
-    provider_id: String,
-    spec: ProviderSimilarReleasesSpec,
+/// How release ids read under one set of provider registrations.
+struct ReleaseIdRules {
+    schemes: Arc<IdSchemes>,
+    pairs: HashSet<(String, String)>,
+    unique_pairs: HashSet<(String, String)>,
 }
 
-struct ProviderSnapshot {
+impl ReleaseIdRules {
+    fn of(registry: &ProviderRegistry) -> Self {
+        Self {
+            schemes: registry.id_schemes(),
+            pairs: registry.id_pairs(EntityType::Release),
+            unique_pairs: registry.unique_id_pairs(EntityType::Release),
+        }
+    }
+}
+
+/// A provider's handler and runtime as one registry read found them, with the id rules of that
+/// read when they differ from the ones the request holds.
+struct ResolvedProvider {
+    spec: ProviderSimilarReleasesSpec,
     runtime: Option<Arc<dyn PluginDispatch>>,
-    handlers: Vec<ProviderHandler>,
-    release_id_pairs: HashSet<(String, String)>,
-    unique_release_id_pairs: HashSet<(String, String)>,
-    id_schemes: Arc<IdSchemes>,
+    changed_id_rules: Option<ReleaseIdRules>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -116,7 +129,7 @@ struct ReleaseIdentity {
 
 struct SeedContext {
     public_id: String,
-    provider_contexts: HashMap<String, Value>,
+    provider_context: Value,
     library_ids: HashSet<String>,
 }
 
@@ -147,23 +160,9 @@ where
         return Ok(Some(Vec::new()));
     }
 
-    let generation = STATE.generation();
-    let snapshot = provider_snapshot(&generation).await?;
-    let runtime = snapshot.runtime;
-    let handlers = snapshot.handlers;
-    let seed = {
-        let db = STATE.db.read().await;
-        options.verify_viewer(&db)?;
-        build_seed_context(
-            &db,
-            seed_db_id,
-            limit,
-            &handlers,
-            &snapshot.id_schemes,
-            options.accessible_library_ids.as_ref(),
-        )?
-    };
-    let Some(seed) = seed else {
+    let provider_ids = similar_provider_ids().await?;
+    let mut id_rules = ReleaseIdRules::of(&*provider_registry().read().await);
+    let Some(mut seed) = read_seed(seed_db_id, limit, &id_rules.schemes, options).await? else {
         return Ok(None);
     };
 
@@ -172,14 +171,28 @@ where
     let mut selected_ids = HashSet::with_capacity(limit + 1);
     selected_ids.insert(seed_db_id);
 
-    for handler in handlers {
+    for provider_id in provider_ids {
         if selected.len() >= limit {
             break;
         }
-        let Some(context) = seed.provider_contexts.get(&handler.provider_id) else {
+        // Executor-dispatched handlers are already serialized by the executor, so this takes no
+        // provider call lock; holding one while waiting for it inverts the lock order with in-VM
+        // calls.
+        let Some(provider) = resolve_provider(&provider_id, &id_rules).await else {
+            tracing::debug!(provider_id, "similar releases provider is not registered");
             continue;
         };
-        if !requirements_match(context, &handler.spec.require) {
+        if let Some(changed) = provider.changed_id_rules {
+            // Stale pairs would reject a new handler's candidates in validate_external_candidates.
+            id_rules = changed;
+            let Some(rebuilt) = read_seed(seed_db_id, limit, &id_rules.schemes, options).await?
+            else {
+                return Ok(None);
+            };
+            seed = rebuilt;
+        }
+        let context = &seed.provider_context;
+        if !requirements_match(context, &provider.spec.require) {
             continue;
         }
         let Some(remaining) = DISPATCH_BUDGET.checked_sub(started.elapsed()) else {
@@ -188,14 +201,13 @@ where
         if remaining.is_zero() {
             break;
         }
-        debug_assert!(handler.spec.timeout <= MAX_SIMILAR_RELEASES_HANDLER_TIMEOUT);
-        let handler_timeout = handler.spec.timeout;
-        let provider_id = handler.provider_id.clone();
-        let callback = handler.spec.handler;
+        debug_assert!(provider.spec.timeout <= MAX_SIMILAR_RELEASES_HANDLER_TIMEOUT);
+        let handler_timeout = provider.spec.timeout;
+        let callback = provider.spec.handler;
         let context = context.clone();
         let cancellation = DispatchCancellation::default();
         let cancellation_for_call = cancellation.clone();
-        let runtime = runtime.clone();
+        let runtime = provider.runtime.clone();
         let provider_id_for_call = provider_id.clone();
         let dispatch_provider = dispatch_provider.clone();
         let request = SimilarReleasesDispatchRequest {
@@ -206,8 +218,6 @@ where
             cancellation: cancellation_for_call,
             max_candidates: MAX_PROVIDER_CANDIDATES,
         };
-        // Executor-dispatched handlers are already serialized by the executor. Holding the
-        // provider call lock while waiting for it inverts the lock order with in-VM calls.
         let dispatch = tokio::time::timeout(remaining, dispatch_provider(runtime, request)).await;
 
         let dispatch = match dispatch {
@@ -231,11 +241,8 @@ where
             }
         };
 
-        let candidates = validate_external_candidates(
-            dispatch.candidates,
-            &snapshot.release_id_pairs,
-            &provider_id,
-        );
+        let candidates =
+            validate_external_candidates(dispatch.candidates, &id_rules.pairs, &provider_id);
         let resolved = {
             let db = STATE.db.read().await;
             options.verify_viewer(&db)?;
@@ -252,7 +259,7 @@ where
                     seed_library_ids: &seed.library_ids,
                     accessible_library_ids: options.accessible_library_ids.as_ref(),
                     seed_db_id,
-                    unique_id_pairs: &snapshot.unique_release_id_pairs,
+                    unique_id_pairs: &id_rules.unique_pairs,
                 },
                 &selected_ids,
                 limit - selected.len(),
@@ -291,41 +298,52 @@ where
     Ok(Some(releases))
 }
 
-async fn provider_snapshot(
-    generation: &crate::services::state::GenerationState,
-) -> Result<ProviderSnapshot> {
+async fn similar_provider_ids() -> Result<Vec<String>> {
     let configs = {
         let db = STATE.db.read().await;
         active_providers(&db)?
     };
-
-    let registry = generation.providers.registry().read_owned().await;
-    let handlers = configs
+    let registry = provider_registry().read_owned().await;
+    Ok(configs
         .iter()
-        .filter_map(|config| {
-            registry
-                .get_similar_releases_handler(&config.provider_id)
-                .cloned()
-                .map(|spec| ProviderHandler {
-                    provider_id: config.provider_id.clone(),
-                    spec,
-                })
-        })
-        .collect();
-    Ok(ProviderSnapshot {
+        .filter(|config| registry.has_similar_releases_handler(&config.provider_id))
+        .map(|config| config.provider_id.clone())
+        .collect())
+}
+
+async fn resolve_provider(provider_id: &str, held: &ReleaseIdRules) -> Option<ResolvedProvider> {
+    let generation = STATE.generation();
+    let registry = generation.providers.registry().read_owned().await;
+    let spec = registry.get_similar_releases_handler(provider_id)?.clone();
+    Some(ResolvedProvider {
+        spec,
         runtime: generation.plugin_dispatch.get(),
-        handlers,
-        release_id_pairs: registry.id_pairs(EntityType::Release),
-        unique_release_id_pairs: registry.unique_id_pairs(EntityType::Release),
-        id_schemes: registry.id_schemes(),
+        changed_id_rules: (!Arc::ptr_eq(&registry.id_schemes(), &held.schemes))
+            .then(|| ReleaseIdRules::of(&registry)),
     })
+}
+
+async fn read_seed(
+    seed_db_id: DbId,
+    limit: usize,
+    schemes: &IdSchemes,
+    options: &SimilarReleaseOptions,
+) -> Result<Option<SeedContext>> {
+    let db = STATE.db.read().await;
+    options.verify_viewer(&db)?;
+    build_seed_context(
+        &db,
+        seed_db_id,
+        limit,
+        schemes,
+        options.accessible_library_ids.as_ref(),
+    )
 }
 
 fn build_seed_context(
     db: &DbAny,
     seed_db_id: DbId,
     limit: usize,
-    handlers: &[ProviderHandler],
     schemes: &IdSchemes,
     accessible_library_ids: Option<&HashSet<String>>,
 ) -> Result<Option<SeedContext>> {
@@ -343,7 +361,7 @@ fn build_seed_context(
         .filter(|name| !name.is_empty())
         .collect::<Vec<_>>();
     let genres = lyra_db::genres::get_names_for_release(db, seed_db_id)?.unwrap_or_default();
-    let context = serde_json::json!({
+    let provider_context = serde_json::json!({
         "id": release.id,
         "release_title": release.release_title,
         "sort_title": release.sort_title,
@@ -353,14 +371,10 @@ fn build_seed_context(
         "genres": genres,
         "limit": limit,
     });
-    let provider_contexts = handlers
-        .iter()
-        .map(|handler| (handler.provider_id.clone(), context.clone()))
-        .collect();
 
     Ok(Some(SeedContext {
         public_id: release.id,
-        provider_contexts,
+        provider_context,
         library_ids,
     }))
 }
@@ -579,6 +593,118 @@ mod tests {
         new_test_db,
     };
 
+    #[tokio::test]
+    async fn a_reload_between_providers_is_read_by_the_new_registrations_rules() -> Result<()> {
+        use crate::services::plugin_dispatch::PluginCallbackHandle;
+        use crate::services::plugin_scope::PluginId;
+        use crate::services::providers::{
+            ProviderIdSpec,
+            provider_registry,
+            teardown_plugin_providers,
+        };
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let spec = |handler_id| ProviderSimilarReleasesSpec {
+            timeout: Duration::from_secs(5),
+            require: Default::default(),
+            handler: PluginCallbackHandle {
+                vm_id: 1,
+                handler_id,
+            },
+        };
+        let (seed, candidate) = {
+            let mut db = STATE.db.write().await;
+            lyra_db::providers::register(&mut db, "first")?;
+            lyra_db::providers::register(&mut db, "second")?;
+            let seed = insert_release(&mut db, "Seed")?;
+            let candidate = insert_release(&mut db, "Candidate")?;
+            for release in [seed, candidate] {
+                lyra_db::external_ids::upsert(
+                    &mut db,
+                    release,
+                    "second",
+                    "new_id",
+                    if release == seed { "seed" } else { "similar" },
+                    lyra_db::IdSource::Manual,
+                )?;
+            }
+            (seed, candidate)
+        };
+        {
+            let registry = provider_registry();
+            let mut registry = registry.write().await;
+            for (id, handler_id) in [("first", 1), ("second", 2)] {
+                registry.register(
+                    PluginId::new(format!("{id}_plugin").as_str())?,
+                    id.to_string(),
+                    None,
+                )?;
+                registry.set_similar_releases_handler(id, spec(handler_id));
+            }
+        }
+
+        let contexts = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let releases = similar_with_dispatch(seed, &SimilarReleaseOptions::default(), {
+            let contexts = contexts.clone();
+            move |_runtime, request: SimilarReleasesDispatchRequest| {
+                let contexts = contexts.clone();
+                async move {
+                    if request.provider_id == "second" {
+                        contexts
+                            .lock()
+                            .expect("contexts")
+                            .push((request.handler.handler_id, request.context));
+                        return Ok(SimilarReleasesDispatchResult {
+                            candidates: vec![SimilarReleaseCandidate::External(
+                                SimilarReleaseExternalRef {
+                                    provider_id: "second".to_string(),
+                                    id_type: "new_id".to_string(),
+                                    id_value: "similar".to_string(),
+                                },
+                            )],
+                        });
+                    }
+                    teardown_plugin_providers(&PluginId::new("second_plugin")?).await;
+                    let registry = provider_registry();
+                    let mut registry = registry.write().await;
+                    registry.register(
+                        PluginId::new("second_plugin")?,
+                        "second".to_string(),
+                        None,
+                    )?;
+                    registry.set_similar_releases_handler("second", spec(3));
+                    registry
+                        .set_id_registration(
+                            "second",
+                            ProviderIdSpec {
+                                id_type: "new_id".to_string(),
+                                entity: EntityType::Release,
+                                unique: false,
+                                scheme: "second:new".to_string(),
+                                label: None,
+                            },
+                            || None,
+                        )
+                        .map_err(|err| anyhow!(err))?;
+                    Ok(SimilarReleasesDispatchResult {
+                        candidates: Vec::new(),
+                    })
+                }
+            }
+        })
+        .await?
+        .ok_or_else(|| anyhow!("seed missing"))?;
+
+        let contexts = contexts.lock().expect("contexts");
+        assert_eq!(contexts.len(), 1);
+        assert_eq!(contexts[0].0, 3, "the handler registered by the reload");
+        assert_eq!(contexts[0].1["external_ids"]["second:new"], "seed");
+        assert_eq!(releases.len(), 1);
+        assert_eq!(releases[0].db_id.clone().map(DbId::from), Some(candidate));
+        Ok(())
+    }
+
     #[test]
     fn representative_prefers_seed_library_then_public_id() -> Result<()> {
         let mut db = new_test_db()?;
@@ -625,15 +751,8 @@ mod tests {
         connect(&mut db, library, seed)?;
 
         assert!(
-            build_seed_context(
-                &db,
-                seed,
-                20,
-                &[],
-                &IdSchemes::default(),
-                Some(&HashSet::new())
-            )?
-            .is_none()
+            build_seed_context(&db, seed, 20, &IdSchemes::default(), Some(&HashSet::new()))?
+                .is_none()
         );
         Ok(())
     }

@@ -26,8 +26,11 @@ use crate::services::{
         CoverPaths,
         configured_covers_root,
     },
+    libraries::{
+        SyncRunProgress,
+        SyncStageKey,
+    },
     options::provider_options,
-    plugin_dispatch::PluginCallbackHandle,
     providers::provider_registry,
 };
 
@@ -49,11 +52,11 @@ pub(crate) use entity::refresh_entity_metadata;
 pub(in crate::services::providers) use entity::resolve_library_id_for_entity;
 pub(crate) use library::{
     LibraryRefreshOptions,
+    ScanRefreshPlan,
     deduplicate_after_providers,
     refresh_library_metadata,
     refresh_library_metadata_after_others,
     refresh_release_metadata_for_scan,
-    release_refresh_provider_ids,
 };
 
 use super::{
@@ -81,11 +84,43 @@ fn cover_paths<'a>(library_root: &'a Option<PathBuf>, covers_root: &'a Path) -> 
     }
 }
 
-/// A provider's refresh handler, with its sync filter when the refresh applies filters.
-struct RefreshCallback {
-    provider_id: String,
-    handler: PluginCallbackHandle,
-    filter: Option<PluginCallbackHandle>,
+const PROVIDER_NOT_REGISTERED: &str = "provider_not_registered";
+
+/// The providers a pass found without a handler, so each is logged once. They stay in the pass:
+/// during a reload every provider briefly looks unregistered.
+#[derive(Default)]
+struct UnregisteredProviders(std::sync::Mutex<HashSet<String>>);
+
+impl UnregisteredProviders {
+    fn note(&self, provider_id: &str) {
+        let first = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(provider_id.to_string());
+        if first {
+            tracing::warn!(
+                provider_id,
+                "provider has no handler registered; skipping its items until it has one"
+            );
+        }
+    }
+
+    async fn skip_not_registered(
+        &self,
+        provider_id: &str,
+        progress: &SyncRunProgress,
+        work_id: u64,
+    ) {
+        self.note(provider_id);
+        progress
+            .skip_work(
+                work_id,
+                SyncStageKey::ProviderRefresh,
+                PROVIDER_NOT_REGISTERED,
+            )
+            .await;
+    }
 }
 
 async fn read_active_providers() -> anyhow::Result<ActiveProviders> {
@@ -93,44 +128,32 @@ async fn read_active_providers() -> anyhow::Result<ActiveProviders> {
     super::active_providers(&db)
 }
 
-async fn refresh_callbacks_for(
+/// The providers with a refresh handler for `entity_type`, by id: a pass looks their handlers up
+/// at each call, so it follows them through a plugin reload.
+async fn refresh_providers_for(
     providers: impl IntoIterator<Item = &ProviderConfig>,
     entity_type: EntityType,
-    include_sync_filters: bool,
-) -> Vec<RefreshCallback> {
+) -> Vec<String> {
     let registry = provider_registry().read_owned().await;
     providers
         .into_iter()
-        .filter_map(|provider| {
-            let handler = *registry.get_refresh_callback(&provider.provider_id, entity_type)?;
-            let filter = if include_sync_filters {
-                registry
-                    .get_sync_filter_callback(&provider.provider_id, entity_type)
-                    .copied()
-            } else {
-                None
-            };
-            Some(RefreshCallback {
-                provider_id: provider.provider_id.clone(),
-                handler,
-                filter,
-            })
-        })
+        .filter(|provider| registry.has_refresh_callback(&provider.provider_id, entity_type))
+        .map(|provider| provider.provider_id.clone())
         .collect()
 }
 
-/// Each handler's provider's options, checked for every provider before any of them runs.
+/// Each provider's options, checked for every provider before any of them runs.
 async fn passed_provider_options(
-    callbacks: &[RefreshCallback],
+    provider_ids: &[String],
     passed_options: &HashMap<String, String>,
 ) -> Result<Vec<serde_json::Map<String, serde_json::Value>>, ProviderServiceError> {
     let registry = provider_registry().read_owned().await;
-    callbacks
+    provider_ids
         .iter()
-        .map(|callback| {
+        .map(|provider_id| {
             provider_options(
-                &callback.provider_id,
-                registry.get_options(&callback.provider_id),
+                provider_id,
+                registry.get_options(provider_id),
                 passed_options,
             )
             .map_err(ProviderServiceError::InvalidOption)

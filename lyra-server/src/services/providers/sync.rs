@@ -41,10 +41,7 @@ use super::{
 pub(crate) async fn run_provider_sync(provider_id: &str) -> Result<(), ProviderServiceError> {
     {
         let registry = provider_registry().read_owned().await;
-        if registry
-            .get_refresh_callback(provider_id, EntityType::Release)
-            .is_none()
-        {
+        if !registry.has_refresh_callback(provider_id, EntityType::Release) {
             return Err(ProviderServiceError::NoRefreshHandler(
                 provider_id.to_string(),
             ));
