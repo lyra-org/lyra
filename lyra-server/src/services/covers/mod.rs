@@ -86,7 +86,44 @@ pub(crate) struct CoverTransformOptions {
     pub(crate) max_height: Option<u32>,
 }
 
+/// Why a cover request's options are refused.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum CoverTransformOptionsError {
+    #[error("quality must be between 0 and 100")]
+    Quality,
+    #[error("{0} must be greater than 0")]
+    ZeroBound(&'static str),
+}
+
 impl CoverTransformOptions {
+    /// The options a cover request names: a quality of at most 100 and bounds greater than 0.
+    pub(crate) fn new(
+        format: Option<::image::ImageFormat>,
+        quality: Option<u32>,
+        max_width: Option<u32>,
+        max_height: Option<u32>,
+    ) -> Result<Self, CoverTransformOptionsError> {
+        let quality = quality
+            .map(|quality| {
+                u8::try_from(quality)
+                    .ok()
+                    .filter(|quality| *quality <= 100)
+                    .ok_or(CoverTransformOptionsError::Quality)
+            })
+            .transpose()?;
+        for (name, bound) in [("max_width", max_width), ("max_height", max_height)] {
+            if bound == Some(0) {
+                return Err(CoverTransformOptionsError::ZeroBound(name));
+            }
+        }
+        Ok(Self {
+            format,
+            quality,
+            max_width,
+            max_height,
+        })
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.format.is_none()
             && self.quality.is_none()
@@ -142,6 +179,7 @@ impl ProviderCoverSearchResult {
 
 // Re-exports for convenient access from the rest of the crate.
 pub(crate) use image::{
+    COVER_EXTENSIONS,
     MAX_COVER_BYTES,
     TransformCache,
     cover_mime_from_path,
@@ -169,3 +207,59 @@ pub(crate) use sync::{
     sync_artist_cover,
     sync_release_cover_for_tracks,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transform_options_keep_what_they_are_given() {
+        let options = CoverTransformOptions::new(
+            Some(::image::ImageFormat::WebP),
+            Some(85),
+            Some(640),
+            Some(480),
+        )
+        .expect("valid options");
+        assert_eq!(options.format, Some(::image::ImageFormat::WebP));
+        assert_eq!(options.quality, Some(85));
+        assert_eq!(
+            (options.max_width, options.max_height),
+            (Some(640), Some(480))
+        );
+        assert_eq!(
+            CoverTransformOptions::new(None, Some(100), None, None)
+                .expect("valid options")
+                .quality,
+            Some(100)
+        );
+        assert!(
+            CoverTransformOptions::new(None, None, None, None)
+                .expect("no options")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn transform_options_refuse_what_no_cover_can_be_served_as() {
+        let refused = |quality, max_width, max_height| {
+            CoverTransformOptions::new(None, quality, max_width, max_height)
+                .expect_err("refused")
+                .to_string()
+        };
+        for quality in [101, 256, u32::MAX] {
+            assert_eq!(
+                refused(Some(quality), None, None),
+                "quality must be between 0 and 100"
+            );
+        }
+        assert_eq!(
+            refused(None, Some(0), Some(320)),
+            "max_width must be greater than 0"
+        );
+        assert_eq!(
+            refused(None, Some(320), Some(0)),
+            "max_height must be greater than 0"
+        );
+    }
+}

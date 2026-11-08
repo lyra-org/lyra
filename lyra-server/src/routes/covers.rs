@@ -33,10 +33,7 @@ use serde::{
 };
 use std::{
     collections::HashMap,
-    path::{
-        Path as FsPath,
-        PathBuf,
-    },
+    path::PathBuf,
 };
 
 use agdb::{
@@ -153,47 +150,6 @@ impl CoverSearchQuery {
     }
 }
 
-pub(crate) fn parse_cover_transform_options(
-    query: &CoverQuery,
-) -> Result<Option<covers::CoverTransformOptions>, AppError> {
-    let format = match query.format.as_deref() {
-        Some(raw) => Some(covers::parse_cover_image_format(raw).ok_or_else(|| {
-            AppError::bad_request(format!(
-                "Unsupported image format: {}. Supported formats: jpg, png, webp",
-                raw
-            ))
-        })?),
-        None => None,
-    };
-
-    if let Some(quality) = query.quality
-        && quality > 100
-    {
-        return Err(AppError::bad_request("quality must be between 0 and 100"));
-    }
-
-    if query.max_width == Some(0) {
-        return Err(AppError::bad_request("max_width must be greater than 0"));
-    }
-
-    if query.max_height == Some(0) {
-        return Err(AppError::bad_request("max_height must be greater than 0"));
-    }
-
-    let options = covers::CoverTransformOptions {
-        format,
-        quality: query.quality,
-        max_width: query.max_width,
-        max_height: query.max_height,
-    };
-
-    if options.is_empty() {
-        return Ok(None);
-    }
-
-    Ok(Some(options))
-}
-
 pub(crate) fn public_cover_url(id: &str, hash: &str) -> String {
     format!("/api/covers/{id}?v={hash}")
 }
@@ -266,15 +222,37 @@ pub(crate) fn map_provider_cover_search_results(
         .collect()
 }
 
-async fn serve_public_cover_response(
-    cover: &lyra_db::Cover,
-    path: &FsPath,
-    transform_options: Option<covers::CoverTransformOptions>,
+/// The cover with public id `id`, as `options` ask and ranged as `request_headers` ask. A cover
+/// whose file is confirmed gone is removed, and reads as not found as a missing cover does.
+pub(crate) async fn serve_cover(
+    id: &str,
+    options: covers::CoverTransformOptions,
     request_headers: &HeaderMap,
 ) -> Result<Response<Body>, AppError> {
-    let content_type = match transform_options {
-        None => covers::cover_mime_from_path(path),
-        Some(options) => match covers::render_cover(path, &cover.hash, options).await? {
+    let not_found = || AppError::not_found(format!("Cover not found: {id}"));
+    let (cover, roots) = {
+        let db = STATE.db.read().await;
+        let cover = lyra_db::covers::get_by_public_id(&*db, id)?.ok_or_else(not_found)?;
+        (cover, MediaRoots::for_principal(&*db, None)?)
+    };
+    let path = PathBuf::from(&cover.path);
+    if !path.is_file() {
+        if stale::confirmed_gone(&path) {
+            stale::remove_stale_cover(&mut *STATE.db.write().await, &cover.id)?;
+        }
+        return Err(not_found());
+    }
+    let path = roots
+        .and_covers(covers::configured_covers_root())
+        .for_covers()
+        .resolve_off_thread(path)
+        .await
+        .map_err(|_| not_found())?;
+
+    let content_type = if options.is_empty() {
+        covers::cover_mime_from_path(&path)
+    } else {
+        match covers::render_cover(&path, &cover.hash, options).await? {
             covers::CoverRendition::Original { mime_type } => mime_type,
             covers::CoverRendition::Cached {
                 file,
@@ -289,10 +267,10 @@ async fn serve_public_cover_response(
                     PUBLIC_COVER_CACHE_CONTROL,
                 );
             }
-        },
+        }
     };
     file_response_with_cache_control(
-        path,
+        &path,
         content_type,
         request_headers,
         PUBLIC_COVER_CACHE_CONTROL,
@@ -305,28 +283,25 @@ async fn get_public_cover(
     Path(id): Path<String>,
     Query(query): Query<CoverQuery>,
 ) -> Result<Response<Body>, AppError> {
-    let transform_options = parse_cover_transform_options(&query)?;
-    let (cover, roots) = {
-        let db = STATE.db.read().await;
-        let cover = lyra_db::covers::get_by_public_id(&*db, &id)?
-            .ok_or_else(|| AppError::not_found(format!("Cover not found: {id}")))?;
-        (cover, MediaRoots::for_principal(&*db, None)?)
-    };
-    let path = PathBuf::from(&cover.path);
-    if !path.is_file() {
-        if stale::confirmed_gone(&path) {
-            stale::remove_stale_cover(&mut *STATE.db.write().await, &cover.id)?;
-        }
-        return Err(AppError::not_found(format!("Cover not found: {id}")));
-    }
-
-    let target = roots
-        .and_covers(covers::configured_covers_root())
-        .for_covers()
-        .resolve_off_thread(path)
-        .await
-        .map_err(|_| AppError::not_found(format!("Cover not found: {id}")))?;
-    serve_public_cover_response(&cover, &target, transform_options, &headers).await
+    let format = query
+        .format
+        .as_deref()
+        .map(|raw| {
+            covers::parse_cover_image_format(raw).ok_or_else(|| {
+                AppError::bad_request(format!(
+                    "Unsupported image format: {raw}. Supported formats: {}",
+                    covers::COVER_EXTENSIONS.join(", ")
+                ))
+            })
+        })
+        .transpose()?;
+    let options = covers::CoverTransformOptions::new(
+        format,
+        query.quality.map(u32::from),
+        query.max_width,
+        query.max_height,
+    )?;
+    serve_cover(&id, options, &headers).await
 }
 
 #[cfg(feature = "docgen")]
@@ -750,6 +725,8 @@ pub(crate) fn owner_cover_openapi_routes<K: CoverOwnerRoute>() -> aide::axum::Ap
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path as FsPath;
+
     use super::*;
 
     #[test]
@@ -1003,6 +980,27 @@ mod tests {
             .await
             .map_err(|err| anyhow::anyhow!("{err:?}"))?;
         assert_eq!(response.status(), axum::http::StatusCode::PARTIAL_CONTENT);
+
+        for invalid in [
+            CoverQuery {
+                quality: Some(101),
+                ..query()
+            },
+            CoverQuery {
+                format: Some("gif".to_string()),
+                ..query()
+            },
+        ] {
+            let refused =
+                get_public_cover(HeaderMap::new(), Path(cover_id.clone()), Query(invalid))
+                    .await
+                    .map(|_| ())
+                    .expect_err("invalid options are refused");
+            assert_eq!(
+                axum::response::IntoResponse::into_response(refused).status(),
+                axum::http::StatusCode::BAD_REQUEST
+            );
+        }
 
         std::fs::remove_file(&path)?;
         let gone = get_public_cover(HeaderMap::new(), Path(cover_id), Query(query())).await;

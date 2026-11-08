@@ -52,13 +52,9 @@ use super::{
 pub(crate) const COVER_EXTENSIONS: [&str; 4] = ["jpg", "jpeg", "png", "webp"];
 
 fn normalize_extension(ext: &str) -> Option<&'static str> {
-    match ext.to_ascii_lowercase().as_str() {
-        "jpg" => Some("jpg"),
-        "jpeg" => Some("jpeg"),
-        "png" => Some("png"),
-        "webp" => Some("webp"),
-        _ => None,
-    }
+    COVER_EXTENSIONS
+        .into_iter()
+        .find(|known| known.eq_ignore_ascii_case(ext))
 }
 
 fn image_format_from_extension(ext: &str) -> Option<image::ImageFormat> {

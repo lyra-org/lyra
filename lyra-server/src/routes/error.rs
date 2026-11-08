@@ -297,6 +297,12 @@ impl From<crate::services::covers::CoverSyncOptionsError> for AppError {
     }
 }
 
+impl From<crate::services::covers::CoverTransformOptionsError> for AppError {
+    fn from(err: crate::services::covers::CoverTransformOptionsError) -> Self {
+        Self::bad_request(err.to_string())
+    }
+}
+
 impl From<crate::services::covers::CoverTransformError> for AppError {
     fn from(err: crate::services::covers::CoverTransformError) -> Self {
         use crate::services::covers::CoverTransformError;
