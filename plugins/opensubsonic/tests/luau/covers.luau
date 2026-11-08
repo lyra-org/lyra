@@ -47,34 +47,33 @@ assert(listed_art[ids.album] == album_art and listed_art[ids.bare] == nil, "getA
 local xml = call.raw("getSong", { apiKey = key, id = ids.a1 }).body
 assert(string.find(xml, `coverArt="{album_art}"`, 1, true), xml)
 
--- The image as stored, with its own content type.
+-- The image as stored.
 local served = cover_art({ id = album_art })
 local cover = covers.get({ ids.album })[ids.album]
-assert(served.kind == "file", `getCoverArt answered {served.kind}`)
-assert(served.path == cover.path and served.status == 200, served.path)
-assert(served.headers["content-type"] == cover.mime_type, served.headers["content-type"])
-assert(served.transform == nil, "no size serves the file as it is")
+assert(served.kind == "cover", `getCoverArt answered {served.kind}`)
+assert(served.cover_id == cover.id, served.cover_id)
+assert(served.options == nil, "no size serves the image as it is")
 -- A file the host fails to serve answers with a Subsonic error in XML, not the host's.
 assert(served.fallback.kind == "text" and string.find(served.fallback.body, '<error code="0"', 1, true))
 assert(string.find(served.fallback.headers["content-type"], "^text/xml"), "a fallback in XML")
-assert(cover_art({ id = album_art, size = "0" }).transform == nil, "size 0 is the stored image")
-assert(cover_art({ id = album_art, size = "-5" }).transform == nil, "a negative size too")
+assert(cover_art({ id = album_art, size = "0" }).options == nil, "size 0 is the stored image")
+assert(cover_art({ id = album_art, size = "-5" }).options == nil, "a negative size too")
 
 -- `size` scales the image down to fit both sides, keeping its format.
 local resized = cover_art({ id = album_art, size = "300" })
-assert(resized.kind == "file" and resized.path == cover.path, `resized {resized.kind}`)
-local transform = resized.transform
-assert(transform.max_width == 300 and transform.max_height == 300, "fits both sides")
-assert(transform.format == "png", `keeps PNG, got {transform.format}`)
+assert(resized.kind == "cover" and resized.cover_id == cover.id, `resized {resized.kind}`)
+local options = resized.options
+assert(options.max_width == 300 and options.max_height == 300, "fits both sides")
+assert(options.format == nil, "the host keeps the stored format")
 assert(resized.headers == nil, "the host types the resized image")
 assert(resized.fallback ~= nil, "a resized image fails as the stored one does")
-local huge = cover_art({ id = album_art, size = "99999999999" }).transform
-assert(huge.max_width == 4294967295, `a size past the host's bound, got {huge.max_width}`)
+local huge = cover_art({ id = album_art, size = "99999999999" }).options
+assert(huge.max_width == 99999999999, `the host caps a size past its bound, got {huge.max_width}`)
 
 -- A bare item id, or one with a stale hash, names the item's current cover.
-assert(cover_art({ id = ids.album }).path == cover.path, "an album id")
-assert(cover_art({ id = ids.a1 }).path == cover.path, "a song id shows its album's")
-assert(cover_art({ id = `{ids.album}.00000000` }).path == cover.path, "a stale hash")
+assert(cover_art({ id = ids.album }).cover_id == cover.id, "an album id")
+assert(cover_art({ id = ids.a1 }).cover_id == cover.id, "a song id shows its album's")
+assert(cover_art({ id = `{ids.album}.00000000` }).cover_id == cover.id, "a stale hash")
 
 -- Playlists show the cover of a release in them, or none without one, in every response.
 local function listed_playlist_art(): { [string]: string }
@@ -95,7 +94,7 @@ local created = call.ok("createPlaylist", key, { name = "New", songId = ids.a1 }
 assert(created.coverArt == album_art, `createPlaylist coverArt {created.coverArt}`)
 local emptied = call.ok("createPlaylist", key, { playlistId = created.id }).playlist
 assert(emptied.coverArt == nil, "a playlist emptied of its songs has no art")
-assert(cover_art({ id = ids.mine }).path == cover.path, "a playlist id names its cover")
+assert(cover_art({ id = ids.mine }).cover_id == cover.id, "a playlist id names its cover")
 
 -- A playlist's own cover is named by the playlist's id.
 local own_cover = covers.get({ ids.own })[ids.own]
@@ -103,7 +102,7 @@ assert(own_cover.owner_id == ids.own, "the playlist owns its cover")
 local own_art = call.ok("getPlaylist", key, { id = ids.own }).playlist.coverArt
 assert(own_art == expected_id(ids.own) and string.sub(own_art, 1, #ids.own + 1) == `{ids.own}.`, own_art)
 local own = cover_art({ id = own_art })
-assert(own.kind == "file" and own.path == own_cover.path, "the playlist's own cover")
+assert(own.kind == "cover" and own.cover_id == own_cover.id, "the playlist's own cover")
 
 -- Artists show their own cover; one without a cover leaves coverArt out.
 local function artist_art(name: string): string?
@@ -115,13 +114,13 @@ local amy_cover = covers.get({ ids.amy })[ids.amy]
 local amy_art = artist_art("Amy")
 assert(amy_art == `{ids.amy}.{string.sub(amy_cover.hash, 1, 8)}`, `artist coverArt {amy_art}`)
 local amy = cover_art({ id = amy_art :: string })
-assert(amy.kind == "file" and amy.headers["content-type"] == "image/png", `artist {amy.kind}`)
+assert(amy.kind == "cover" and amy.cover_id == amy_cover.id, `artist {amy.kind}`)
 
 -- The id's suffix is the start of the hash the host reports, which changes with the image.
 assert(string.match(amy_art :: string, "%.(.*)$") == string.sub(amy_cover.hash, 1, 8), "an artist's suffix")
 assert(string.match(own_art, "%.(.*)$") == string.sub(own_cover.hash, 1, 8), "a playlist's suffix")
-assert(cover_art({ id = `{ids.amy}.00000000` }).path == amy_cover.path, "a stale hash serves the current cover")
-assert(cover_art({ id = ids.own }).path == own_cover.path, "so does a bare playlist id")
+assert(cover_art({ id = `{ids.amy}.00000000` }).cover_id == amy_cover.id, "a stale hash serves the current cover")
+assert(cover_art({ id = ids.own }).cover_id == own_cover.id, "so does a bare playlist id")
 
 -- Missing art, bad ids and what the caller can't see are not found.
 assert(cover_art_error({ id = ids.bare }) == 70, "an album without a cover")

@@ -20,7 +20,6 @@ type ApiQueryParams = api.ApiQueryParams
 type ApiResponse = api.ApiResponse
 type EntityProjectionInfo = entities.EntityProjectionInfo
 type HlsServeOptions = api.HlsServeOptions
-type ImageTransformOptions = api.ImageTransformOptions
 type LyricsInfo = lyrics.LyricsInfo
 type Request = request.Request
 type Track = tracks.Track
@@ -219,19 +218,6 @@ end
 
 local COVER_FAILED = "The cover art can't be served"
 
--- The largest bound the host takes; no image is that large, and none is scaled up.
-local MAX_IMAGE_SIZE = 4294967295
-
--- Resized images keep their format; anything but PNG and WebP becomes a JPEG.
-local function image_format(mime_type: string): string
-	if mime_type == "image/png" then
-		return "png"
-	elseif mime_type == "image/webp" then
-		return "webp"
-	end
-	return "jpg"
-end
-
 -- Methods that answer every error in XML, whatever format the request asks for.
 module.xml_errors = {
 	download = true,
@@ -302,12 +288,9 @@ module.methods = {
 			return request.not_found("Cover art")
 		end
 		if size and size > 0 then
-			local bound = math.min(size, MAX_IMAGE_SIZE)
-			local transform: ImageTransformOptions =
-				{ format = image_format(cover.mime_type), max_width = bound, max_height = bound }
-			return or_failed(api.response.file(200, cover.path, nil, transform), COVER_FAILED)
+			return or_failed(api.response.cover(cover.id, { max_width = size, max_height = size }), COVER_FAILED)
 		end
-		return or_failed(api.response.file(200, cover.path, { ["content-type"] = cover.mime_type }), COVER_FAILED)
+		return or_failed(api.response.cover(cover.id), COVER_FAILED)
 	end,
 
 	-- Every lyrics entry the caller sees, in rank order.
