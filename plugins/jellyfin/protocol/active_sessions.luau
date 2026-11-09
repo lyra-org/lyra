@@ -25,6 +25,12 @@ type ActivePlayback = playback_sessions.ActivePlaybackInfo
 type Connection = playback_sessions.ConnectionInfo
 type Principal = session.Principal
 
+-- The items whose user data changed since their socket was last told: the oldest first, each once.
+export type ChangedItems = {
+	queue: { string },
+	queued: { [string]: boolean },
+}
+
 export type SessionEntry = {
 	sender: api.ApiWebSocketSender,
 	session_id: string,
@@ -45,6 +51,7 @@ export type SessionEntry = {
 	connection_order: number,
 	-- Closed by the cap. Its sender reads as open until the host acts on the close.
 	evicted: boolean,
+	changed_items: ChangedItems,
 }
 
 -- Per-listing state: the NowPlayingItem tables whose track names are filled in one batched lookup

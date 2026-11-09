@@ -68,6 +68,7 @@ local statics = require("@self/protocol/statics")
 local syncplay = require("@self/routes/syncplay")
 local system_info = require("@self/protocol/system_info")
 local user_data = require("@self/protocol/items/user_data")
+local user_data_changes = require("@self/protocol/user_data_changes")
 local user_data_routes = require("@self/routes/user_data")
 
 local SERVER_ID = constants.SERVER_ID
@@ -110,6 +111,7 @@ local sessions = active_sessions.entries
 local get_owned_session = active_sessions.get_owned
 
 socket_routes.register()
+user_data_changes.subscribe()
 
 local AUTH_PROVIDER_ID = "Lyra"
 

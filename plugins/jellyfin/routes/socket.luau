@@ -15,6 +15,7 @@ local constants = require("../constants")
 local playback = require("../protocol/items/playback")
 local session = require("../protocol/session")
 local syncplay = require("./syncplay")
+local user_data_changes = require("../protocol/user_data_changes")
 local websocket = require("../protocol/websocket")
 
 local P = constants.ROUTE_PREFIX
@@ -65,6 +66,7 @@ function module.handle(reader: api.ApiWebSocketReader, sender: api.ApiWebSocketS
 		last_keep_alive_s = os.clock(),
 		connection_order = active_sessions.next_connection_order(),
 		evicted = false,
+		changed_items = { queue = {}, queued = {} },
 	}
 
 	local existing = sessions[session_id]
@@ -151,6 +153,8 @@ function module.handle(reader: api.ApiWebSocketReader, sender: api.ApiWebSocketS
 		end
 	end)
 
+	local user_data_thread = user_data_changes.watch(entry)
+
 	-- Keep cleanup reachable on handler throw.
 	xpcall(function()
 		while true do
@@ -221,6 +225,7 @@ function module.handle(reader: api.ApiWebSocketReader, sender: api.ApiWebSocketS
 
 	task.cancel(reauth_thread)
 	task.cancel(sessions_thread)
+	task.cancel(user_data_thread)
 	task.cancel(keep_alive_thread)
 
 	-- Only the handler releases its slot. A concurrent reconnect may have replaced the slot; its

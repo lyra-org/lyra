@@ -10,7 +10,6 @@
 
 local api = require("@lyra/api")
 local bookmarks = require("@lyra/bookmarks")
-local listens = require("@lyra/listens")
 local ratings = require("@lyra/ratings")
 
 local catalog = require("../protocol/items/catalog")
@@ -21,6 +20,7 @@ local requests = require("../protocol/items/requests")
 local responses = require("../protocol/items/responses")
 local session = require("../protocol/session")
 local user_data = require("../protocol/items/user_data")
+local user_data_changes = require("../protocol/user_data_changes")
 
 local P = constants.ROUTE_PREFIX
 local TICKS_PER_MS = 10000
@@ -49,48 +49,6 @@ local function resolve_item(ctx: ApiContext, principal: Principal): (string?, It
 		return nil, nil, responses.not_found("item not found")
 	end
 	return item_id, item, nil
-end
-
-local function user_data_key(item: ItemInfo, item_hex_id: string?): string?
-	local item_name = requests.trim(item.Name)
-	local item_type = requests.trim(item.Type)
-	if item_type == "MusicArtist" then
-		return `Artist-{item_name or ""}`
-	elseif item_type == "MusicAlbum" then
-		return `{requests.trim(item.AlbumArtist) or ""}-{item_name or ""}`
-	elseif item_type == "Audio" then
-		return `{item.ParentIndexNumber or 0}-{item.IndexNumber or 0}{item_name or ""}`
-	elseif item_type == "Playlist" then
-		return `Playlist-{item_name or ""}`
-	elseif item_type == "MusicGenre" then
-		return `MusicGenre-{item_name or ""}`
-	end
-	return item_hex_id
-end
-
--- The caller's `UserItemDataDto` of the item, read afresh.
-local function user_data_json(item_id: string, item: ItemInfo, principal: Principal): JsonObject
-	local item_hex_id = item_ids.encode(item_id)
-	local is_track = requests.trim(item.Type) == "Audio"
-	local last_played: { [string]: number } = {}
-	if is_track then
-		local stats = listens.get({ item_id })[item_id]
-		if stats and stats.last_played_at_ms ~= nil then
-			last_played[item_id] = stats.last_played_at_ms
-		end
-	end
-	return user_data.user_data_to_json(user_data.get_user_data({
-		item_id = item_id,
-		user_id = principal.user_id,
-		item_hex_id = item_hex_id,
-		key = user_data_key(item, item_hex_id),
-		include_favorite = true,
-		include_play_count = is_track,
-		include_position = is_track,
-		include_rating = true,
-		last_played_lookup = last_played,
-		run_time_ticks = item.RunTimeTicks,
-	}))
 end
 
 -- The value of the body's field, its name matched without case as upstream's binder does.
@@ -139,7 +97,7 @@ function module.handle_get(ctx: ApiContext): ApiResponse
 	if item_user_data then
 		return api.response.json(200, user_data.user_data_to_json(item_user_data))
 	end
-	return api.response.json(200, user_data_json(item_id, item, principal))
+	return api.response.json(200, user_data_changes.user_data_json(item_id, item, principal.user_id))
 end
 
 -- As upstream, only the fields a body sets change. `PlaybackPositionTicks` moves a track's
@@ -220,7 +178,7 @@ function module.handle_post(ctx: ApiContext): ApiResponse
 		end
 	end
 
-	return api.response.json(200, user_data_json(item_id, item, principal))
+	return api.response.json(200, user_data_changes.user_data_json(item_id, item, principal.user_id))
 end
 
 local function handle_favorite(ctx: ApiContext, should_favorite: boolean): ApiResponse
@@ -242,7 +200,7 @@ local function handle_favorite(ctx: ApiContext, should_favorite: boolean): ApiRe
 		return responses.bad_request(if should_favorite then "failed to add favorite" else "failed to remove favorite")
 	end
 
-	return api.response.json(200, user_data_json(item_id, item, principal))
+	return api.response.json(200, user_data_changes.user_data_json(item_id, item, principal.user_id))
 end
 
 -- `likes` saves a like or dislike, and no `likes` clears the rating, as upstream. Like Navidrome,
@@ -287,7 +245,7 @@ local function handle_rating(ctx: ApiContext, clear: boolean): ApiResponse
 		return responses.bad_request("item cannot be rated")
 	end
 
-	return api.response.json(200, user_data_json(item_id, item, principal))
+	return api.response.json(200, user_data_changes.user_data_json(item_id, item, principal.user_id))
 end
 
 function module.handle_rate(ctx: ApiContext): ApiResponse

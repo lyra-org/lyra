@@ -1,0 +1,326 @@
+run_as = "listener"
+
+# The listener and the other user are granted "Music", whose "Album" by Amy holds Song, and the
+# listener owns the playlist "Mix". "Music" also holds the releases "Bulk 01" to "Bulk 26", each
+# with the one track "Bulk track 01" to "Bulk track 26". The listener is not granted "Closed",
+# whose "Hidden" holds Secret, a favorite of the listener's from before.
+
+[[users]]
+key = "listener"
+
+[[users]]
+key = "other"
+
+[[api_keys]]
+key = "phone"
+user = "listener"
+
+[[api_keys]]
+key = "tablet"
+user = "other"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener", "other"]
+
+[[libraries]]
+key = "closed"
+name = "Closed"
+
+[[artists]]
+key = "amy"
+name = "Amy"
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+artists = ["amy"]
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+duration_ms = 200000
+artists = ["amy"]
+
+[[playlists]]
+key = "mix"
+owner = "listener"
+name = "Mix"
+tracks = ["song"]
+
+[[releases]]
+key = "hidden"
+title = "Hidden"
+library = "closed"
+
+[[tracks]]
+key = "secret"
+title = "Secret"
+release = "hidden"
+
+[[favorites]]
+user = "listener"
+target = "secret"
+
+[[releases]]
+key = "bulk_release_01"
+title = "Bulk 01"
+library = "music"
+
+[[tracks]]
+key = "bulk_track_01"
+title = "Bulk track 01"
+release = "bulk_release_01"
+
+[[releases]]
+key = "bulk_release_02"
+title = "Bulk 02"
+library = "music"
+
+[[tracks]]
+key = "bulk_track_02"
+title = "Bulk track 02"
+release = "bulk_release_02"
+
+[[releases]]
+key = "bulk_release_03"
+title = "Bulk 03"
+library = "music"
+
+[[tracks]]
+key = "bulk_track_03"
+title = "Bulk track 03"
+release = "bulk_release_03"
+
+[[releases]]
+key = "bulk_release_04"
+title = "Bulk 04"
+library = "music"
+
+[[tracks]]
+key = "bulk_track_04"
+title = "Bulk track 04"
+release = "bulk_release_04"
+
+[[releases]]
+key = "bulk_release_05"
+title = "Bulk 05"
+library = "music"
+
+[[tracks]]
+key = "bulk_track_05"
+title = "Bulk track 05"
+release = "bulk_release_05"
+
+[[releases]]
+key = "bulk_release_06"
+title = "Bulk 06"
+library = "music"
+
+[[tracks]]
+key = "bulk_track_06"
+title = "Bulk track 06"
+release = "bulk_release_06"
+
+[[releases]]
+key = "bulk_release_07"
+title = "Bulk 07"
+library = "music"
+
+[[tracks]]
+key = "bulk_track_07"
+title = "Bulk track 07"
+release = "bulk_release_07"
+
+[[releases]]
+key = "bulk_release_08"
+title = "Bulk 08"
+library = "music"
+
+[[tracks]]
+key = "bulk_track_08"
+title = "Bulk track 08"
+release = "bulk_release_08"
+
+[[releases]]
+key = "bulk_release_09"
+title = "Bulk 09"
+library = "music"
+
+[[tracks]]
+key = "bulk_track_09"
+title = "Bulk track 09"
+release = "bulk_release_09"
+
+[[releases]]
+key = "bulk_release_10"
+title = "Bulk 10"
+library = "music"
+
+[[tracks]]
+key = "bulk_track_10"
+title = "Bulk track 10"
+release = "bulk_release_10"
+
+[[releases]]
+key = "bulk_release_11"
+title = "Bulk 11"
+library = "music"
+
+[[tracks]]
+key = "bulk_track_11"
+title = "Bulk track 11"
+release = "bulk_release_11"
+
+[[releases]]
+key = "bulk_release_12"
+title = "Bulk 12"
+library = "music"
+
+[[tracks]]
+key = "bulk_track_12"
+title = "Bulk track 12"
+release = "bulk_release_12"
+
+[[releases]]
+key = "bulk_release_13"
+title = "Bulk 13"
+library = "music"
+
+[[tracks]]
+key = "bulk_track_13"
+title = "Bulk track 13"
+release = "bulk_release_13"
+
+[[releases]]
+key = "bulk_release_14"
+title = "Bulk 14"
+library = "music"
+
+[[tracks]]
+key = "bulk_track_14"
+title = "Bulk track 14"
+release = "bulk_release_14"
+
+[[releases]]
+key = "bulk_release_15"
+title = "Bulk 15"
+library = "music"
+
+[[tracks]]
+key = "bulk_track_15"
+title = "Bulk track 15"
+release = "bulk_release_15"
+
+[[releases]]
+key = "bulk_release_16"
+title = "Bulk 16"
+library = "music"
+
+[[tracks]]
+key = "bulk_track_16"
+title = "Bulk track 16"
+release = "bulk_release_16"
+
+[[releases]]
+key = "bulk_release_17"
+title = "Bulk 17"
+library = "music"
+
+[[tracks]]
+key = "bulk_track_17"
+title = "Bulk track 17"
+release = "bulk_release_17"
+
+[[releases]]
+key = "bulk_release_18"
+title = "Bulk 18"
+library = "music"
+
+[[tracks]]
+key = "bulk_track_18"
+title = "Bulk track 18"
+release = "bulk_release_18"
+
+[[releases]]
+key = "bulk_release_19"
+title = "Bulk 19"
+library = "music"
+
+[[tracks]]
+key = "bulk_track_19"
+title = "Bulk track 19"
+release = "bulk_release_19"
+
+[[releases]]
+key = "bulk_release_20"
+title = "Bulk 20"
+library = "music"
+
+[[tracks]]
+key = "bulk_track_20"
+title = "Bulk track 20"
+release = "bulk_release_20"
+
+[[releases]]
+key = "bulk_release_21"
+title = "Bulk 21"
+library = "music"
+
+[[tracks]]
+key = "bulk_track_21"
+title = "Bulk track 21"
+release = "bulk_release_21"
+
+[[releases]]
+key = "bulk_release_22"
+title = "Bulk 22"
+library = "music"
+
+[[tracks]]
+key = "bulk_track_22"
+title = "Bulk track 22"
+release = "bulk_release_22"
+
+[[releases]]
+key = "bulk_release_23"
+title = "Bulk 23"
+library = "music"
+
+[[tracks]]
+key = "bulk_track_23"
+title = "Bulk track 23"
+release = "bulk_release_23"
+
+[[releases]]
+key = "bulk_release_24"
+title = "Bulk 24"
+library = "music"
+
+[[tracks]]
+key = "bulk_track_24"
+title = "Bulk track 24"
+release = "bulk_release_24"
+
+[[releases]]
+key = "bulk_release_25"
+title = "Bulk 25"
+library = "music"
+
+[[tracks]]
+key = "bulk_track_25"
+title = "Bulk track 25"
+release = "bulk_release_25"
+
+[[releases]]
+key = "bulk_release_26"
+title = "Bulk 26"
+library = "music"
+
+[[tracks]]
+key = "bulk_track_26"
+title = "Bulk track 26"
+release = "bulk_release_26"
