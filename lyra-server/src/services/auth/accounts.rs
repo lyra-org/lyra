@@ -255,7 +255,8 @@ fn authorize_create(
     Ok(role)
 }
 
-/// Checks the caller as the database has it now, like [`authorize_create`].
+/// Checks the caller as the database has it now, like [`authorize_create`]. The caller's own
+/// password changes through [`change_own_password`], which proves the current one.
 fn authorize_set_password(
     db: &DbAny,
     principal: &Principal,
@@ -266,6 +267,11 @@ fn authorize_set_password(
         .ok_or_else(|| AuthError::NotFound(format!("user not found: {user_public_id}")))?
         .db_id
         .ok_or_else(|| AuthError::NotFound(format!("user has no db_id: {user_public_id}")))?;
+    if user_db_id == caller.user_db_id {
+        return Err(AccountError::InvalidRequest(
+            "cannot set your own password through this route".to_string(),
+        ));
+    }
     if !owners::holds_permissions_of(db, &caller, user_db_id)? {
         return Err(AuthError::Forbidden(
             "cannot set the password of a user with permissions you do not hold".to_string(),
@@ -427,6 +433,21 @@ mod tests {
         grant_library(caller_db_id, library_db_id).await?;
         let caller = user_principal(caller_db_id).await?;
         set_password(&caller, &target_id, "long-enough-password").await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn setting_your_own_password_this_way_is_refused_before_hashing() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let (caller_db_id, caller_id) =
+            insert_user_with_permissions("manager", vec![Permission::ManageUsers]).await?;
+        let caller = user_principal(caller_db_id).await?;
+
+        let result =
+            without_hashing(set_password(&caller, &caller_id, "long-enough-password")).await;
+
+        assert!(matches!(result, Err(AccountError::InvalidRequest(_))));
         Ok(())
     }
 

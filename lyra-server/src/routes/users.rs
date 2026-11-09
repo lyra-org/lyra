@@ -564,9 +564,10 @@ fn delete_user_docs(op: TransformOperation) -> TransformOperation {
 fn update_password_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Update user password")
         .description(
-            "Updates a user's password and revokes all their sessions. Requires ManageUsers \
-             permission, every permission the user holds, and access to every library they can \
-             access.",
+            "Updates another user's password and revokes all their sessions. Requires \
+             ManageUsers permission, every permission the user holds, and access to every \
+             library they can access. Callers change their own password through the current \
+             user endpoint.",
         )
         .response::<204, ()>()
 }
