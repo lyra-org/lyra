@@ -4,20 +4,14 @@
 -- You can obtain one here:
 -- www.meshiplaw.com/lyra.
 
--- Jellyfin-compatible hex encoding for Lyra nanoids.
--- This is the same bitstream algorithm used by the Jellyfin plugin
--- (plugins/jellyfin/protocol/items/common.luau) to encode nanoid strings
--- as 32-character hex IDs. AudioMuse stores these hex IDs during
--- Jellyfin-compat library analysis.
+-- The GUIDs Lyra's Jellyfin plugin knows Lyra ids by, which AudioMuse stores when it analyses Lyra
+-- as a Jellyfin server. Kept the same as `plugins/jellyfin/protocol/items/identifiers.luau`.
 --
--- Nanoid uses a 64-character URL-safe alphabet (6 bits per char).
--- 21 chars × 6 bits = 126 bits, which fits in 32 hex chars (128 bits)
--- with 2 bits of zero padding at the front.
-
+-- A Lyra id is 21 characters of 6 bits, 126 bits, which fit a GUID's 32 hex digits with two zero
+-- bits in front.
 local NANOID_ALPHABET = "_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 local NANOID_LENGTH = 21
-local ITEM_ID_HEX_LENGTH = 32
-local HEX_ENCODE = "0123456789abcdef"
+local GUID_HEX_LENGTH = 32
 
 local nanoid_char_to_index: { [number]: number } = {}
 local nanoid_index_to_byte: { [number]: number } = {}
@@ -27,6 +21,7 @@ for i = 1, 64 do
 	nanoid_index_to_byte[i - 1] = byte
 end
 
+local HEX_ENCODE = "0123456789abcdef"
 local hex_char_to_value: { [number]: number } = {}
 for i = 0, 15 do
 	hex_char_to_value[string.byte(HEX_ENCODE, i + 1)] = i
@@ -35,16 +30,14 @@ for i = 0, 5 do
 	hex_char_to_value[string.byte("ABCDEF", i + 1)] = 10 + i
 end
 
-local module = {}
-
-function module.nanoid_to_hex(nanoid: string): string?
+local function nanoid_to_hex(nanoid: string): string?
 	if #nanoid ~= NANOID_LENGTH then
 		return nil
 	end
 
 	local hex_parts: { string } = {}
 	local acc = 0
-	local bits = 2 -- 2 zero padding bits to fill 128 bits
+	local bits = 2
 
 	for i = 1, NANOID_LENGTH do
 		local index = nanoid_char_to_index[string.byte(nanoid, i)]
@@ -63,18 +56,17 @@ function module.nanoid_to_hex(nanoid: string): string?
 	return table.concat(hex_parts)
 end
 
-function module.hex_to_nanoid(hex_id: string): string?
-	local normalized = string.gsub(string.lower(hex_id), "-", "")
-	if #normalized ~= ITEM_ID_HEX_LENGTH then
+local function hex_to_nanoid(hex: string): string?
+	if #hex ~= GUID_HEX_LENGTH then
 		return nil
 	end
 
 	local nanoid_parts: { string } = {}
-	local acc = bit32.band(hex_char_to_value[string.byte(normalized, 1)] or 0, 0x3) -- skip 2 padding bits
+	local acc = bit32.band(hex_char_to_value[string.byte(hex, 1)] or 0, 0x3)
 	local bits = 2
 
-	for i = 2, ITEM_ID_HEX_LENGTH do
-		local nibble = hex_char_to_value[string.byte(normalized, i)]
+	for i = 2, GUID_HEX_LENGTH do
+		local nibble = hex_char_to_value[string.byte(hex, i)]
 		if nibble == nil then
 			return nil
 		end
@@ -96,6 +88,22 @@ function module.hex_to_nanoid(hex_id: string): string?
 	end
 
 	return table.concat(nanoid_parts)
+end
+
+local module = {}
+
+-- The GUID a Lyra id is known by: 32 lowercase hex digits without dashes.
+function module.encode(id: string): string?
+	return nanoid_to_hex(id)
+end
+
+-- The Lyra id a GUID encodes, read dashed or not and in either case.
+function module.decode(guid: string): string?
+	local normalized = string.lower((string.gsub(guid, "-", "")))
+	if #normalized ~= GUID_HEX_LENGTH or not string.match(normalized, "^[0-9a-f]+$") then
+		return nil
+	end
+	return hex_to_nanoid(normalized)
 end
 
 return module

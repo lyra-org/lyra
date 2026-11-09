@@ -72,7 +72,7 @@ local function passthrough_id(id: string): string?
 	return id
 end
 local ids: mixes.TrackIds = if MEDIA_SERVER == "jellyfin"
-	then { encode = jellyfin_hex.nanoid_to_hex, decode = jellyfin_hex.hex_to_nanoid }
+	then jellyfin_hex
 	else { encode = passthrough_id, decode = passthrough_id }
 
 local mixer = mix.Mixer.new("audiomuse", { display_name = "AudioMuse AI" })

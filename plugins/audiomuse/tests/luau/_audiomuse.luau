@@ -56,14 +56,14 @@ end
 function module.register(clap: boolean)
 	module.configure()
 	mixes.register(mix.Mixer.new("audiomuse"), {
-		ids = { encode = jellyfin_hex.nanoid_to_hex, decode = jellyfin_hex.hex_to_nanoid },
+		ids = jellyfin_hex,
 		clap = clap,
 	})
 end
 
 -- The item id AudioMuse knows a Lyra track by.
 function module.item(track_id: string): string
-	return assert(jellyfin_hex.nanoid_to_hex(track_id))
+	return assert(jellyfin_hex.encode(track_id))
 end
 
 -- AudioMuse result rows for the tracks, in order.
