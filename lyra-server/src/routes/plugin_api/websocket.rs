@@ -119,7 +119,7 @@ pub(super) async fn dispatch_websocket_route(
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
 
-    let Some(runtime) = crate::plugins::STATE.generation().runtime.get() else {
+    let Some(runtime) = crate::plugins::STATE.runtime() else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             "plugin runtime is not ready",

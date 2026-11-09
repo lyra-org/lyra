@@ -317,12 +317,12 @@ async fn similar_provider_ids() -> Result<Vec<String>> {
 }
 
 async fn resolve_provider(provider_id: &str, held: &ReleaseIdRules) -> Option<ResolvedProvider> {
-    let generation = STATE.generation();
-    let registry = generation.providers.registry().read_owned().await;
+    let scope = STATE.generation().latest()?;
+    let registry = scope.providers().registry().read_owned().await;
     let spec = registry.get_similar_releases_handler(provider_id)?.clone();
     Some(ResolvedProvider {
         spec,
-        runtime: generation.plugin_dispatch.get(),
+        runtime: Some(scope.dispatch().clone()),
         changed_id_rules: (!Arc::ptr_eq(&registry.id_schemes(), &held.schemes))
             .then(|| ReleaseIdRules::of(&registry)),
     })

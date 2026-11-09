@@ -76,6 +76,7 @@ use harmony_core::{
 
 pub(crate) struct PluginExecutor {
     runtime: Runtime,
+    scope: crate::plugins::state::VmScope,
     websocket_tasks: RefCell<HashMap<TaskIdKey, Arc<WebSocketState>>>,
     callback_tasks: RefCell<Vec<callbacks::PendingCallbackTask>>,
 }

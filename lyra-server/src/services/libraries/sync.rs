@@ -2121,7 +2121,8 @@ FILE "album.flac" WAVE
             )?;
         assert!(errors.is_empty(), "{errors:?}");
         runtime.exec_plugin(id).await?;
-        crate::plugins::STATE.publish_runtime(runtime.clone());
+        crate::plugins::STATE
+            .publish_runtime(&crate::services::STATE.generation(), runtime.clone());
         Ok((runtime, plugins))
     }
 
@@ -2195,7 +2196,7 @@ FILE "album.flac" WAVE
             "queued",
             crate::services::providers::ProviderCallStage::MetadataRefresh,
             |_| Some(crate::services::providers::ProviderLookup::Call(())),
-            |()| async move {
+            |(), _scope| async move {
                 let _ = held.send(());
                 let _ = released.await;
                 Ok(())

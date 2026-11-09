@@ -106,14 +106,31 @@ pub(crate) struct MixHandlerRegistration {
     pub(crate) handler: PluginCallbackHandle,
 }
 
-/// Generation-owned mix state: registered mixers bucketed by plugin.
-#[derive(Default)]
+/// The mix state of one plugin runtime: registered mixers bucketed by plugin.
+#[derive(Clone, Default)]
 pub(crate) struct MixRegistries {
     registry: Arc<RwLock<MixRegistry>>,
 }
 
+impl MixRegistries {
+    pub(crate) fn registry(&self) -> Arc<RwLock<MixRegistry>> {
+        self.registry.clone()
+    }
+
+    pub(crate) async fn teardown_plugin(&self, plugin_id: &PluginId) {
+        let Self { registry } = self;
+        ScopedRegistry::from_shared(registry.clone())
+            .teardown(plugin_id)
+            .await;
+    }
+}
+
+/// The published scope's registry; an empty one before any scope is published.
 pub(crate) fn mix_registry() -> Arc<RwLock<MixRegistry>> {
-    crate::services::STATE.generation().mix.registry.clone()
+    crate::services::STATE
+        .generation()
+        .latest()
+        .map_or_else(Default::default, |scope| scope.mix().registry())
 }
 
 /// Registered mixers, bucketed by the plugin that declared them.
@@ -239,10 +256,14 @@ impl PluginScopedInner for MixRegistry {
     }
 }
 
+/// Empties the plugin's bucket in the published scope.
+#[cfg(test)]
 pub(crate) async fn teardown_plugin_mixers(plugin_id: &PluginId) {
-    ScopedRegistry::from_shared(mix_registry())
-        .teardown(plugin_id)
-        .await;
+    let scope = crate::services::STATE
+        .generation()
+        .latest()
+        .expect("published test scope");
+    scope.mix().teardown_plugin(plugin_id).await;
 }
 
 #[cfg(test)]

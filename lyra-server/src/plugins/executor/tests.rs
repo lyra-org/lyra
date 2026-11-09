@@ -64,7 +64,7 @@ impl PluginExecutor {
             manifests,
             server_info,
             default_auth_capabilities(),
-            stores::PluginModuleStores::with_db(db),
+            stores::PluginModuleStores::with_db(db).sharing_published_scope(),
             MemorySourceLoader::new(),
         )
     }
@@ -2540,8 +2540,8 @@ fn plugin_executor_handle_shutdown_stops_lua_and_the_executor_thread() -> Result
     )?;
     assert!(errors.is_empty(), "{errors:?}");
     futures::executor::block_on(runtime.exec_all())?;
-    let handler = futures::executor::block_on(crate::plugins::api::tests::registered_handler(
-        "GET", "/socket",
+    let handler = futures::executor::block_on(crate::plugins::api::tests::registered_handler_of(
+        &runtime, "GET", "/socket",
     ))
     .context("registered websocket handler")?;
     let (request, _inbound_tx, mut outbound_rx) = websocket_request(handler, "/socket");

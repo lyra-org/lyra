@@ -232,7 +232,7 @@ pub(crate) fn dispatch_recorded(user_public_id: &str, listens: impl IntoIterator
     if listens.is_empty() {
         return;
     }
-    let Some(runtime) = super::STATE.generation().plugin_dispatch.get() else {
+    let Some(scope) = super::STATE.generation().latest() else {
         return;
     };
     let payload = ListenUpdatePayload {
@@ -240,7 +240,7 @@ pub(crate) fn dispatch_recorded(user_public_id: &str, listens: impl IntoIterator
         user_id: user_public_id.to_string(),
         listens,
     };
-    if let Err(error) = runtime.dispatch_listen_update(payload) {
+    if let Err(error) = scope.dispatch().dispatch_listen_update(payload) {
         if DispatchNotStarted::caused(&error) {
             tracing::debug!("dropped plugin listen on_update dispatch during a reload");
         } else {

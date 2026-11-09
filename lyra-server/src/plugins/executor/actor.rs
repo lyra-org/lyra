@@ -211,6 +211,7 @@ pub(crate) struct PluginExecutorHandle {
     /// Ends the entrypoint runs of a runtime asked to shut down, which hold its thread.
     entrypoints: Arc<std::sync::atomic::AtomicBool>,
     exit: ExecutorExit,
+    scope: crate::plugins::state::VmScope,
 }
 
 impl PluginExecutorHandle {
@@ -250,10 +251,14 @@ impl PluginExecutorHandle {
                 match build().and_then(|(runtime, errors)| {
                     let streams = super::stream::stream_stops(&runtime.vm)?;
                     let entrypoints = runtime.entrypoint_cancellation();
-                    Ok((runtime, errors, streams, entrypoints))
+                    let scope = runtime.scope.clone();
+                    Ok((runtime, errors, streams, entrypoints, scope))
                 }) {
-                    Ok((runtime, errors, streams, entrypoints)) => {
-                        if ready_tx.send(Ok((errors, streams, entrypoints))).is_err() {
+                    Ok((runtime, errors, streams, entrypoints, scope)) => {
+                        if ready_tx
+                            .send(Ok((errors, streams, entrypoints, scope)))
+                            .is_err()
+                        {
                             return;
                         }
                         run_plugin_executor_thread(runtime, rx, crashed);
@@ -265,7 +270,7 @@ impl PluginExecutorHandle {
             })
             .context("spawn plugin executor thread")?;
 
-        let (errors, streams, entrypoints) = ready_rx
+        let (errors, streams, entrypoints, scope) = ready_rx
             .recv()
             .context("plugin executor thread exited during startup")??;
         Ok((
@@ -274,6 +279,7 @@ impl PluginExecutorHandle {
                 streams,
                 entrypoints,
                 exit,
+                scope,
             },
             errors,
         ))
@@ -285,6 +291,11 @@ impl PluginExecutorHandle {
 
     pub(crate) fn exit(&self) -> ExecutorExit {
         self.exit.clone()
+    }
+
+    /// The registries this runtime's plugins register into.
+    pub(crate) fn scope(&self) -> &crate::plugins::state::VmScope {
+        &self.scope
     }
 
     pub(crate) async fn plugin_manifests(&self) -> Result<Vec<PluginManifest>> {
@@ -666,6 +677,7 @@ mod tests {
                 streams: Default::default(),
                 entrypoints: Default::default(),
                 exit: exit_channel().1,
+                scope: Default::default(),
             },
             rx,
         )

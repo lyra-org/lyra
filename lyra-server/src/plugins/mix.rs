@@ -200,13 +200,15 @@ impl Mixer {
         self.ensure_owner(vm, context)?;
         let option = parse_option_declaration(&config)?;
         let mixer = self.clone();
+        let scope = crate::plugins::state::VmScope::of(vm)?;
         Ok(luau::ScheduledFuture::new(async move {
             let generation = crate::plugins::STATE.generation();
             let _registration = generation
                 .registries
                 .ensure_registrations_open(&mixer.plugin_id)
                 .await?;
-            mix_service::mix_registry()
+            scope
+                .mix_for(&mixer.plugin_id)
                 .write_owned()
                 .await
                 .declare_option(&mixer.id, option)
@@ -234,7 +236,8 @@ impl Mixer {
                 .registries
                 .ensure_registrations_open(&mixer.plugin_id)
                 .await?;
-            let mut registry = mix_service::mix_registry().write_owned().await;
+            let scope = crate::plugins::state::VmScope::of(&vm)?;
+            let mut registry = scope.mix_for(&mixer.plugin_id).write_owned().await;
             let handlers = vm.data().get::<MixCallbackRegistry>()?;
             let handler = handlers.register(mixer.id.clone(), function, context);
             let registration = MixHandlerRegistration {
@@ -357,7 +360,8 @@ impl MixModule {
             .registries
             .ensure_registrations_open(&plugin_id)
             .await?;
-        mix_service::mix_registry()
+        crate::plugins::state::VmScope::of(&vm)?
+            .mix_for(&plugin_id)
             .write_owned()
             .await
             .register(plugin_id.clone(), id.clone())?;

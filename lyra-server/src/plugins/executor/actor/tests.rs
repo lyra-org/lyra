@@ -132,6 +132,7 @@ fn test_executor() -> Result<TestExecutor> {
             streams: Default::default(),
             entrypoints: Default::default(),
             exit,
+            scope: Default::default(),
         },
         slow,
         fast,
@@ -411,7 +412,7 @@ async fn a_drain_waits_for_the_running_call_and_fails_the_one_behind_it() -> Res
                 "dispatch-fast",
                 ProviderCallStage::MetadataRefresh,
                 |_| Some(ProviderLookup::Call(())),
-                |()| async move { handle.dispatch_metadata_refresh(request).await },
+                |(), _| async move { handle.dispatch_metadata_refresh(request).await },
             )
             .await
         }

@@ -38,7 +38,10 @@ pub(crate) fn initialize_state(
             .unshared_mut()
             .ok_or_else(|| anyhow::anyhow!("database was shared before it was seeded"))?,
     )?;
-    services::STATE.initialize(boot, created, resolved)
+    services::STATE.initialize(boot, created, resolved)?;
+    #[cfg(test)]
+    plugins::STATE.publish_idle(Default::default());
+    Ok(())
 }
 
 /// [`services::testing::start_runtime`] plus the outbound user agent.
@@ -51,11 +54,7 @@ pub(crate) async fn start_runtime() -> anyhow::Result<()> {
 #[cfg(test)]
 pub(crate) fn published_runtime() -> anyhow::Result<plugins::bootstrap::PluginRuntime> {
     use anyhow::Context;
-    plugins::STATE
-        .generation()
-        .runtime
-        .get()
-        .context("published plugin runtime")
+    plugins::STATE.runtime().context("published plugin runtime")
 }
 
 /// Writes a plugin `id` with `scopes` whose entrypoint is `init` into `directory`.

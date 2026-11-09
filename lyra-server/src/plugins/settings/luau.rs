@@ -258,7 +258,8 @@ pub(crate) async fn declare_settings(
     )?;
     let config = build_config_table(&schema.groups, &builder)?;
 
-    super::settings_registry()
+    crate::plugins::state::VmScope::of(&vm)?
+        .settings_for(&plugin_id)
         .write_owned()
         .await
         .register_schema(plugin_id, SettingsScope::Global, schema)?;
@@ -286,7 +287,8 @@ pub(crate) async fn declare_user_settings(
     let groups = take_groups(&builder)?;
     let schema = Schema { groups };
 
-    super::settings_registry()
+    crate::plugins::state::VmScope::of(&vm)?
+        .settings_for(&plugin_id)
         .write_owned()
         .await
         .register_schema(plugin_id.clone(), SettingsScope::User, schema.clone())?;

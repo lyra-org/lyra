@@ -41,11 +41,11 @@ pub(crate) use registry::{
     MixHandlerRegistration,
     MixHandlerSpec,
     MixRegistries,
+    MixRegistry,
     MixRequirements,
     MixSeedType,
     MixShape,
     mix_registry,
-    teardown_plugin_mixers,
 };
 use request::ResolvedSeeds;
 pub(crate) use request::{

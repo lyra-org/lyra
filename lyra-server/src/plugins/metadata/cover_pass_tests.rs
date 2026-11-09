@@ -147,7 +147,7 @@ async fn publish_test_runtime(plugin: &TempPluginDir) -> Result<PluginExecutorHa
     )?;
     assert!(errors.is_empty(), "{errors:?}");
     runtime.exec_plugin(PLUGIN_ID).await?;
-    crate::plugins::STATE.publish_runtime(runtime.clone());
+    crate::plugins::STATE.publish_runtime(&crate::services::STATE.generation(), runtime.clone());
     Ok(runtime)
 }
 

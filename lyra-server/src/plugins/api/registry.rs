@@ -43,7 +43,11 @@ impl ApiRouteStore {
         }
     }
 
-    pub(super) fn register(&self, registration: ApiRouteRegistration) -> luau::runtime::Result<()> {
+    pub(super) fn register(
+        &self,
+        registry: Arc<tokio::sync::RwLock<ApiRouteRegistry>>,
+        registration: ApiRouteRegistration,
+    ) -> luau::runtime::Result<()> {
         let ApiRouteRegistration {
             plugin_id,
             method,
@@ -66,7 +70,7 @@ impl ApiRouteStore {
             .handlers
             .insert(ApiHandlerRegistration { handler, context });
         futures::executor::block_on(async {
-            api_route_registry()
+            registry
                 .write_owned()
                 .await
                 .register(RegisteredRoute {
@@ -85,6 +89,7 @@ impl ApiRouteStore {
 
     pub(super) fn register_websocket(
         &self,
+        registry: Arc<tokio::sync::RwLock<ApiRouteRegistry>>,
         plugin_id: Arc<str>,
         path: String,
         handler: luau::Function,
@@ -99,7 +104,7 @@ impl ApiRouteStore {
             .handlers
             .insert(ApiHandlerRegistration { handler, context });
         futures::executor::block_on(async {
-            api_route_registry()
+            registry
                 .write_owned()
                 .await
                 .register(RegisteredRoute {
@@ -142,15 +147,62 @@ impl PluginCallback for ApiHandlerRegistration {
     }
 }
 
-/// Generation-owned plugin API routes: the registered routes, their freeze state, and the host
-/// that serves them.
-#[derive(Default)]
+/// The plugin API routes of one runtime and their freeze state.
+#[derive(Clone, Default)]
 pub(crate) struct ApiRouteRegistries {
     registry: Arc<tokio::sync::RwLock<ApiRouteRegistry>>,
 }
 
+impl ApiRouteRegistries {
+    pub(crate) fn registry(&self) -> Arc<tokio::sync::RwLock<ApiRouteRegistry>> {
+        self.registry.clone()
+    }
+
+    pub(crate) async fn teardown_plugin(
+        &self,
+        plugin_id: &crate::services::plugin_scope::PluginId,
+    ) {
+        let Self { registry } = self;
+        registry.write().await.clear_bucket(plugin_id);
+    }
+
+    pub(crate) async fn freeze(&self) {
+        self.registry.write().await.freeze();
+    }
+
+    pub(crate) async fn unfreeze_plugin(&self, plugin_id: crate::services::plugin_scope::PluginId) {
+        self.registry.write().await.unfreeze_plugin(plugin_id);
+    }
+
+    pub(crate) async fn refreeze_plugin(
+        &self,
+        plugin_id: &crate::services::plugin_scope::PluginId,
+    ) {
+        self.registry.write().await.refreeze_plugin(plugin_id);
+    }
+}
+
+/// How the routes of every runtime in a generation are served: the paths reserved for the server's
+/// own routes and the host that installs the rest.
+#[derive(Default)]
+pub(crate) struct ApiRouteHost {
+    core_routes: crate::services::state::SwapHandle<Arc<HashSet<RouteKey>>>,
+    host: crate::services::state::SwapHandle<Option<Arc<dyn RouteHost>>>,
+}
+
+impl ApiRouteHost {
+    pub(super) fn host(&self) -> Option<Arc<dyn RouteHost>> {
+        self.host.get()
+    }
+}
+
+/// The published scope's routes; empty before any scope is published.
 pub(super) fn api_route_registry() -> Arc<tokio::sync::RwLock<ApiRouteRegistry>> {
-    crate::plugins::STATE.generation().api.registry.clone()
+    crate::plugins::STATE
+        .scope()
+        .map_or_else(Default::default, |scope| {
+            scope.vm_scope.plugin.api.registry()
+        })
 }
 
 #[harmony_macros::string_enum(
@@ -221,28 +273,20 @@ pub(super) enum FreezeState {
 }
 
 #[derive(Default)]
-pub(super) struct ApiRouteRegistry {
-    core_routes: HashSet<RouteKey>,
+pub(crate) struct ApiRouteRegistry {
     routes: HashMap<crate::services::plugin_scope::PluginId, HashMap<RouteKey, RegisteredRoute>>,
     ci_router: CaseInsensitiveRouter,
     state: FreezeState,
-    host: Option<Arc<dyn RouteHost>>,
 }
 
 impl ApiRouteRegistry {
-    fn reset(&mut self, core_routes: HashSet<RouteKey>, host: Option<Arc<dyn RouteHost>>) {
-        self.core_routes = core_routes;
-        self.host = host;
+    fn reset(&mut self) {
         self.routes.clear();
         self.ci_router = CaseInsensitiveRouter::new();
         self.state = FreezeState::Open;
     }
 
-    pub(super) fn host(&self) -> Option<Arc<dyn RouteHost>> {
-        self.host.clone()
-    }
-
-    fn freeze(&mut self) {
+    pub(super) fn freeze(&mut self) {
         self.state = FreezeState::Frozen {
             exemptions: HashSet::new(),
         };
@@ -276,13 +320,14 @@ impl ApiRouteRegistry {
     }
 
     pub(super) fn register(&mut self, route: RegisteredRoute) -> Result<()> {
+        let core_routes = crate::plugins::STATE.generation().api.core_routes.get();
         if !self.writes_allowed(&route.plugin_id) {
             bail!(
                 "lyra/api route registry is frozen for plugin '{}'",
                 route.plugin_id
             );
         }
-        if self.core_routes.contains(&route.key) {
+        if core_routes.contains(&route.key) {
             bail!(
                 "plugin route conflicts with core route: {} {}",
                 route.key.method,
@@ -390,10 +435,10 @@ pub(crate) async fn initialize_registry(
     core_routes: HashSet<RouteKey>,
     host: Option<Arc<dyn RouteHost>>,
 ) {
-    api_route_registry()
-        .write_owned()
-        .await
-        .reset(core_routes, host);
+    let generation = crate::plugins::STATE.generation();
+    generation.api.core_routes.replace(Arc::new(core_routes));
+    generation.api.host.replace(host);
+    api_route_registry().write_owned().await.reset();
 }
 
 /// The registered routes ordered by path then method, with their
@@ -401,8 +446,4 @@ pub(crate) async fn initialize_registry(
 pub(crate) async fn registered_routes() -> (Vec<RegisteredRoute>, CaseInsensitiveRouter) {
     let registry = api_route_registry().read_owned().await;
     (registry.snapshot(), registry.ci_router_snapshot())
-}
-
-pub(super) async fn freeze_registry() {
-    api_route_registry().write_owned().await.freeze();
 }

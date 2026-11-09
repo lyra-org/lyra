@@ -25,7 +25,6 @@ use crate::services::{
         ProviderIdUrlGenerator,
         ProviderLyricsSpec,
         ProviderSimilarReleasesSpec,
-        provider_registry,
     },
 };
 
@@ -77,7 +76,8 @@ pub(super) async fn provider_new(
         .registries
         .ensure_registrations_open(&plugin_id)
         .await?;
-    let mut registry = provider_registry().write_owned().await;
+    let scope = crate::plugins::state::VmScope::of(&vm)?;
+    let mut registry = scope.providers_for(&plugin_id).write_owned().await;
     registry.register(plugin_id.clone(), provider_id.clone(), display_name)?;
     drop(registry);
 
@@ -235,13 +235,14 @@ fn provider_id_callback(
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
     let context = context.clone();
     let provider = provider.clone();
+    let scope = crate::plugins::state::VmScope::of(vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let generation = crate::plugins::STATE.generation();
         let _registration = generation
             .registries
             .ensure_registrations_open(&provider.plugin_id)
             .await?;
-        let mut registry = provider_registry().write_owned().await;
+        let mut registry = scope.providers_for(&provider.plugin_id).write_owned().await;
         let entity = id_spec.entity;
         let replaced = registry
             .set_id_registration(&provider.provider_id, id_spec, || {
@@ -275,13 +276,14 @@ fn declare_option_callback(
     let option = crate::plugins::options::parse_option_declaration(&config)?;
 
     let provider = provider.clone();
+    let scope = crate::plugins::state::VmScope::of(vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let generation = crate::plugins::STATE.generation();
         let _registration = generation
             .registries
             .ensure_registrations_open(&provider.plugin_id)
             .await?;
-        let mut registry = provider_registry().write_owned().await;
+        let mut registry = scope.providers_for(&provider.plugin_id).write_owned().await;
         registry
             .declare_option(&provider.provider_id, option)
             .map_err(crate::plugins::runtime_error)?;
@@ -300,13 +302,14 @@ fn search_callback(
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
     let context = context.clone();
     let provider = provider.clone();
+    let scope = crate::plugins::state::VmScope::of(vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let generation = crate::plugins::STATE.generation();
         let _registration = generation
             .registries
             .ensure_registrations_open(&provider.plugin_id)
             .await?;
-        let mut registry = provider_registry().write_owned().await;
+        let mut registry = scope.providers_for(&provider.plugin_id).write_owned().await;
         let handler =
             handlers.register(provider.provider_id.clone(), entity_type, handler, context);
 
@@ -347,6 +350,7 @@ fn cover_callback(
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
     let context = context.clone();
     let provider = provider.clone();
+    let scope = crate::plugins::state::VmScope::of(vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let generation = crate::plugins::STATE.generation();
         let _registration = generation
@@ -359,7 +363,7 @@ fn cover_callback(
                 provider.plugin_id
             )));
         }
-        let mut registry = provider_registry().write_owned().await;
+        let mut registry = scope.providers_for(&provider.plugin_id).write_owned().await;
         let handler =
             handlers.register(provider.provider_id.clone(), entity_type, handler, context);
 
@@ -389,6 +393,7 @@ fn lyrics_callback(
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
     let context = context.clone();
     let provider = provider.clone();
+    let scope = crate::plugins::state::VmScope::of(vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let generation = crate::plugins::STATE.generation();
         let _registration = generation
@@ -408,6 +413,7 @@ fn lyrics_callback(
             context,
         );
         lyrics_dispatcher::register_handler(
+            &scope.providers_for(&provider.plugin_id),
             &provider.provider_id,
             ProviderLyricsSpec::new(timeout, require, handler),
         )
@@ -428,13 +434,14 @@ fn similar_releases_callback(
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
     let context = context.clone();
     let provider = provider.clone();
+    let scope = crate::plugins::state::VmScope::of(vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let generation = crate::plugins::STATE.generation();
         let _registration = generation
             .registries
             .ensure_registrations_open(&provider.plugin_id)
             .await?;
-        let mut registry = provider_registry().write_owned().await;
+        let mut registry = scope.providers_for(&provider.plugin_id).write_owned().await;
         let handler = handlers.register(
             provider.provider_id.clone(),
             EntityType::Release,
@@ -466,13 +473,14 @@ fn refresh_callback(
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
     let context = context.clone();
     let provider = provider.clone();
+    let scope = crate::plugins::state::VmScope::of(vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let generation = crate::plugins::STATE.generation();
         let _registration = generation
             .registries
             .ensure_registrations_open(&provider.plugin_id)
             .await?;
-        let mut registry = provider_registry().write_owned().await;
+        let mut registry = scope.providers_for(&provider.plugin_id).write_owned().await;
         let handler = handlers.register(
             provider.provider_id.clone(),
             entity_type,
@@ -507,10 +515,12 @@ fn ensure_artist_callback(
         description: optional_table_string(&request, "description", "provider:ensure_artist")?,
     };
     let provider_id = provider.provider_id.clone();
+    let plugin_id = provider.plugin_id.clone();
     let db = db::get_optional(vm)?;
+    let scope = crate::plugins::state::VmScope::of(vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let is_registered_artist_id = {
-            let registry = provider_registry().read_owned().await;
+            let registry = scope.providers_for(&plugin_id).read_owned().await;
             registry.id_spec_matches_entity(&provider_id, &artist.id_type, EntityType::Artist)
         };
         if !is_registered_artist_id {
@@ -569,6 +579,8 @@ fn mark_unmatched_callback(
     }
 
     let db = db::get_optional(vm)?;
+    let plugin_id = provider.plugin_id.clone();
+    let scope = crate::plugins::state::VmScope::of(vm)?;
     Ok(luau::ScheduledFuture::new(async move {
         let Some(db) = db else {
             return Err(crate::plugins::runtime_error(
@@ -576,7 +588,7 @@ fn mark_unmatched_callback(
             ));
         };
         let registered_entities = {
-            let registry = provider_registry().read_owned().await;
+            let registry = scope.providers_for(&plugin_id).read_owned().await;
             normalized_id_types
                 .iter()
                 .map(|id_type| registry.id_spec_entities(&provider_id, id_type))
@@ -773,7 +785,8 @@ mod tests {
             )?;
         assert!(errors.is_empty(), "{errors:?}");
         runtime.exec_plugin("gonetest").await?;
-        crate::plugins::STATE.publish_runtime(runtime.clone());
+        crate::plugins::STATE
+            .publish_runtime(&crate::services::STATE.generation(), runtime.clone());
 
         let (library, target_gone, artist_gone) = {
             let mut db = STATE.db.write().await;
@@ -842,7 +855,8 @@ mod tests {
             )?;
         assert!(errors.is_empty(), "{errors:?}");
         runtime.exec_plugin("searchtest").await?;
-        crate::plugins::STATE.publish_runtime(runtime.clone());
+        crate::plugins::STATE
+            .publish_runtime(&crate::services::STATE.generation(), runtime.clone());
 
         let results = search_provider(ProviderSearchRequest {
             provider_id: "searchtest",

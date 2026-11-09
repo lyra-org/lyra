@@ -322,8 +322,8 @@ where
 {
     let cache = crate::services::STATE
         .generation()
-        .providers
-        .id_link_cache();
+        .latest()
+        .map_or_else(Default::default, |scope| scope.providers().id_link_cache());
     resolve_with_cache(&cache, targets, generators, dispatch).await
 }
 

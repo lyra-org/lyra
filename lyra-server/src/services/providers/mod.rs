@@ -132,6 +132,8 @@ pub(crate) use refresh::{
     sync_artist_covers,
 };
 #[cfg(test)]
+pub(crate) use registry::teardown_plugin_providers;
+#[cfg(test)]
 pub(crate) use registry::tests as registry_tests;
 pub(crate) use registry::{
     DEFAULT_SIMILAR_RELEASES_HANDLER_TIMEOUT,
@@ -143,11 +145,12 @@ pub(crate) use registry::{
     ProviderCoverSpec,
     ProviderIdSpec,
     ProviderIdUrlGenerator,
+    ProviderLocks,
     ProviderLookup,
     ProviderLyricsSpec,
-    ProviderRegistries,
     ProviderRegistry,
     ProviderRequireSpec,
+    ProviderRuntimeState,
     ProviderSimilarReleasesSpec,
     declared_artist_ids,
     id_schemes,
@@ -155,7 +158,6 @@ pub(crate) use registry::{
     lyrics_in_flight,
     provider_registry,
     sync_locks,
-    teardown_plugin_providers,
     with_provider_call,
 };
 pub(crate) use requirements::{

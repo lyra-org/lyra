@@ -384,11 +384,12 @@ pub async fn exec_plugins(
         anyhow::bail!("plugin discovery failed: {details}");
     }
 
-    crate::plugins::STATE
-        .generation()
+    runtime
+        .scope()
+        .plugin
         .manifests
         .replace(Arc::from(runtime.plugin_manifests().await?));
-    crate::plugins::STATE.publish_runtime(runtime.clone());
+    crate::plugins::STATE.publish_runtime(&crate::services::STATE.generation(), runtime.clone());
     runtime.exec_all().await?;
 
     let mut db = STATE.db.write().await;
@@ -516,7 +517,7 @@ pub async fn run_luau_plugin_test_file(
         )?;
         Ok((runtime, Vec::new()))
     })?;
-    crate::plugins::STATE.publish_runtime(runtime.clone());
+    crate::plugins::STATE.publish_runtime(&crate::services::STATE.generation(), runtime.clone());
     let mut seeded = seeded;
     let connections = match seeded.as_mut() {
         Some(seeded) => match seeded.register().await {
@@ -897,12 +898,9 @@ mod tests {
             .get_refresh_callback("source-lifetime", services::EntityType::Release)
             .copied()
             .context("refresh callback")?;
-        let runtime = STATE
-            .generation()
-            .plugin_dispatch
-            .get()
-            .context("plugin runtime")?;
-        let result = runtime
+        let scope = STATE.generation().latest().context("plugin runtime")?;
+        let result = scope
+            .dispatch()
             .dispatch_metadata_refresh(MetadataRefreshRequest {
                 handler,
                 context: serde_json::json!({}),

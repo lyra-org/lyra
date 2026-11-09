@@ -36,6 +36,7 @@ use crate::{
         upload,
     },
     services::plugin_dispatch::MetadataRefreshRequest,
+    services::plugin_scope::RuntimeScope,
     services::providers::{
         ExternalIdsByScheme,
         LyricsInFlight,
@@ -176,12 +177,12 @@ impl Drop for InFlightGuard {
 }
 
 /// Spawns a startup rescan sharing the handler's cancel token.
-pub(crate) async fn register_handler(provider_id: &str, spec: ProviderLyricsSpec) {
-    let Some(cancel) = provider_registry()
-        .write()
-        .await
-        .set_lyrics_handler(provider_id, spec)
-    else {
+pub(crate) async fn register_handler(
+    registry: &tokio::sync::RwLock<crate::services::providers::ProviderRegistry>,
+    provider_id: &str,
+    spec: ProviderLyricsSpec,
+) {
+    let Some(cancel) = registry.write().await.set_lyrics_handler(provider_id, spec) else {
         return;
     };
 
@@ -199,12 +200,7 @@ pub(crate) async fn register_handler(provider_id: &str, spec: ProviderLyricsSpec
 
 async fn wait_for_plugin_dispatch(cancel: &CancellationToken) -> bool {
     loop {
-        if crate::services::STATE
-            .generation()
-            .plugin_dispatch
-            .get()
-            .is_some()
-        {
+        if crate::services::STATE.generation().latest().is_some() {
             return true;
         }
         tokio::select! {
@@ -324,12 +320,12 @@ async fn dispatch_one(
                 ProviderLookup::Answer(None)
             })
         },
-        |spec| async move {
+        |spec, scope| async move {
             let answered = unless_cancelled(
                 &spec.cancel,
                 provider_id,
                 track_db_id,
-                call_lyrics_handler(&spec, context, track_db_id, track_public_id),
+                call_lyrics_handler(&scope, &spec, context, track_db_id, track_public_id),
             )
             .await
             .transpose()?
@@ -383,6 +379,7 @@ async fn unless_cancelled<T>(
 }
 
 async fn call_lyrics_handler(
+    scope: &RuntimeScope,
     spec: &ProviderLyricsSpec,
     context: &LyricsTrackContext,
     track_db_id: DbId,
@@ -401,17 +398,12 @@ async fn call_lyrics_handler(
             return Ok(None);
         }
     }
-    let runtime = STATE
-        .generation()
-        .plugin_dispatch
-        .get()
-        .context("plugin runtime is not initialized")?;
     let request = MetadataRefreshRequest {
         handler: spec.handler,
         context: track_context_to_json(context),
         deadline: std::time::Instant::now() + timeout,
     };
-    let result = tokio::time::timeout(timeout, runtime.dispatch_metadata_refresh(request))
+    let result = tokio::time::timeout(timeout, scope.dispatch().dispatch_metadata_refresh(request))
         .await
         .map_err(|_| {
             anyhow::anyhow!("lyrics handler timed out after {} ms", timeout.as_millis())
@@ -1134,7 +1126,7 @@ mod tests {
                     "test_waiting",
                     ProviderCallStage::Lyrics,
                     |_| Some(ProviderLookup::Call(())),
-                    |()| async {
+                    |(), _| async {
                         entered.notify_one();
                         release.acquire().await.expect("gate").forget();
                         Ok(())

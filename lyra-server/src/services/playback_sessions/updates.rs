@@ -240,8 +240,8 @@ pub(crate) fn dispatch_update_for_caller(
         return;
     }
 
-    if let Some(runtime) = generation.plugin_dispatch.get()
-        && let Err(error) = runtime.dispatch_playback_update(payload)
+    if let Some(scope) = generation.latest()
+        && let Err(error) = scope.dispatch().dispatch_playback_update(payload)
     {
         if DispatchNotStarted::caused(&error) {
             tracing::debug!("dropped plugin playback on_update dispatch during a reload");

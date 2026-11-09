@@ -1273,7 +1273,7 @@ fn build_status(
 
 async fn list_plugins(headers: HeaderMap) -> Result<Json<Vec<PluginManifestResponse>>, AppError> {
     let _principal = require_manage_plugins(bearer_credential(&headers)).await?;
-    let manifests = crate::plugins::STATE.generation().manifests.get();
+    let manifests = crate::plugins::STATE.manifests();
     let plugins_dir = STATE.boot.get().plugins_dir.clone();
     let subscriptions = repositories_service::list_subscriptions()
         .await
@@ -1301,7 +1301,7 @@ impl SettingsOwner<'_> {
 async fn collect_settings_entries(
     owner: SettingsOwner<'_>,
 ) -> Result<Vec<PluginSettingsEntry>, AppError> {
-    let manifests = crate::plugins::STATE.generation().manifests.get();
+    let manifests = crate::plugins::STATE.manifests();
     let registry = plugin_settings_registry::settings_registry()
         .read_owned()
         .await;

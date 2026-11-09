@@ -173,7 +173,7 @@ async fn a_crash_of_a_replaced_runtime_is_not_restarted() -> anyhow::Result<()> 
     let plugins_dir = tempfile::tempdir()?;
     let replaced = start_plugins(plugins_dir.path()).await?;
     let current = crate::plugins::bootstrap::initialize_harmony().await?;
-    crate::plugins::STATE.publish_runtime(current.clone());
+    crate::plugins::STATE.publish_runtime(&crate::services::STATE.generation(), current.clone());
 
     crash(&replaced).await?;
     let outcome = supervisor(&CancellationToken::new())
@@ -199,7 +199,7 @@ async fn a_crash_reported_while_a_reload_holds_the_lock_defers_to_it() -> anyhow
     tokio::task::yield_now().await;
     // What a reload does under the lock: publish a fresh runtime.
     let reloaded = crate::plugins::bootstrap::initialize_harmony().await?;
-    crate::plugins::STATE.publish_runtime(reloaded.clone());
+    crate::plugins::STATE.publish_runtime(&crate::services::STATE.generation(), reloaded.clone());
     drop(held);
 
     assert_eq!(restart.await?, CrashOutcome::Replaced);

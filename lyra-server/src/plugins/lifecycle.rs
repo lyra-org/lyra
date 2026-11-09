@@ -10,9 +10,12 @@ use std::{
 };
 
 use crate::{
-    plugins::executor::{
-        DrainOutcome,
-        ExecutorId,
+    plugins::{
+        executor::{
+            DrainOutcome,
+            ExecutorId,
+        },
+        state::VmScope,
     },
     services::plugin_scope::PluginId,
 };
@@ -98,7 +101,12 @@ impl PluginRegistries {
         Ok(PluginRegistrationGuard { _guard: guard })
     }
 
-    pub(crate) async fn teardown_plugin(&self, plugin_id: &PluginId, reopen_registrations: bool) {
+    pub(crate) async fn teardown_plugin(
+        &self,
+        scope: &VmScope,
+        plugin_id: &PluginId,
+        reopen_registrations: bool,
+    ) {
         let _teardown = self.teardown_lock.lock().await;
 
         {
@@ -106,13 +114,13 @@ impl PluginRegistries {
             teardown_in_progress.insert(plugin_id.clone());
         }
 
-        crate::plugins::api::refreeze_plugin_routes(plugin_id).await;
-        crate::plugins::settings::refreeze_plugin_settings(plugin_id).await;
+        scope.plugin.api.refreeze_plugin(plugin_id).await;
+        scope.plugin.settings.refreeze_plugin(plugin_id).await;
 
-        crate::plugins::api::teardown_plugin_routes(plugin_id).await;
-        crate::services::providers::teardown_plugin_providers(plugin_id).await;
-        crate::services::mix::teardown_plugin_mixers(plugin_id).await;
-        crate::plugins::settings::teardown_plugin_settings(plugin_id).await;
+        scope.teardown_plugin(plugin_id).await;
+        crate::plugins::api::rebuild_registered_routes()
+            .await
+            .unwrap_or_else(|err| panic!("router rebuild must not fail post-teardown: {err}"));
         // A plugin about to run again keeps its HTTP limits in force until
         // that run has set its own; `sweep_stale_http_limits` drops the rest.
         harmony_http::mark_plugin_limits_stale(plugin_id.as_str()).await;
@@ -122,8 +130,12 @@ impl PluginRegistries {
         }
 
         if reopen_registrations {
-            crate::plugins::api::unfreeze_plugin_routes(plugin_id.clone()).await;
-            crate::plugins::settings::unfreeze_plugin_settings(plugin_id.clone()).await;
+            scope.plugin.api.unfreeze_plugin(plugin_id.clone()).await;
+            scope
+                .plugin
+                .settings
+                .unfreeze_plugin(plugin_id.clone())
+                .await;
         }
 
         self.teardown_in_progress.write().await.remove(plugin_id);
@@ -143,7 +155,7 @@ impl PluginRegistries {
             stop_unpublished(&runtime).await;
             return Ok(PublishOutcome::ShuttingDown);
         };
-        let outcome = if crate::plugins::STATE.generation().runtime.get().is_some() {
+        let outcome = if crate::plugins::STATE.runtime().is_some() {
             runtime.shutdown().await?;
             PublishOutcome::Replaced
         } else {
@@ -154,7 +166,7 @@ impl PluginRegistries {
                     error = %format!("{error:#}"),
                     "plugin runtime stopped while running startup entrypoints"
                 ),
-                Some(Ok(failed)) => self.teardown_failed_plugins(&failed).await,
+                Some(Ok(failed)) => self.teardown_failed_plugins(runtime.scope(), &failed).await,
             }
             PublishOutcome::Published
         };
@@ -179,12 +191,12 @@ impl PluginRegistries {
     }
 
     /// Their failed entrypoints already ended their runs.
-    async fn teardown_failed_plugins(&self, failed: &[String]) {
+    async fn teardown_failed_plugins(&self, scope: &VmScope, failed: &[String]) {
         for plugin_id in failed
             .iter()
             .filter_map(|id| PluginId::new(id.clone()).ok())
         {
-            self.teardown_plugin(&plugin_id, false).await;
+            self.teardown_plugin(scope, &plugin_id, false).await;
         }
     }
 
@@ -249,36 +261,22 @@ impl PluginRegistries {
         // matches the one published since.
         if let Some(expected) = expected
             && crate::plugins::STATE
-                .generation()
-                .runtime
-                .get()
+                .runtime()
                 .is_none_or(|published| published.id() != expected)
         {
             return Ok(PublishOutcome::Replaced);
         }
 
-        let old_ids: Vec<PluginId> = crate::plugins::STATE
-            .generation()
-            .manifests
-            .get()
-            .iter()
-            .filter_map(|manifest| PluginId::new(manifest.id.clone()).ok())
-            .collect();
+        let old_ids = plugin_ids(&crate::plugins::STATE.manifests());
+        let old_scope = crate::plugins::STATE.vm_scope();
 
-        // Fresh discovery from disk; replaces crate::plugins::STATE.generation().manifests.
+        // Fresh discovery from disk, built aside from what is live.
         let runtime = crate::plugins::bootstrap::initialize_harmony().await?;
-        let new_ids: Vec<PluginId> = crate::plugins::STATE
-            .generation()
-            .manifests
-            .get()
-            .iter()
-            .filter_map(|manifest| PluginId::new(manifest.id.clone()).ok())
-            .collect();
+        let new_ids = plugin_ids(&runtime.scope().plugin.manifests.get());
 
-        // The replaced runtime must run no more Lua, so none of its tasks
-        // can register once teardown reopens registrations. A failed shutdown
-        // means its thread had already exited, which leaves it just as stopped.
-        if let Some(old_runtime) = crate::plugins::STATE.generation().runtime.get() {
+        // The replaced runtime must run no more Lua. A failed shutdown means its thread had
+        // already exited, which leaves it just as stopped.
+        if let Some(old_runtime) = crate::plugins::STATE.runtime() {
             if old_runtime.drain(RELOAD_DRAIN_LIMIT, &shutdown).await == DrainOutcome::TimedOut {
                 tracing::warn!(
                     limit_ms = RELOAD_DRAIN_LIMIT.as_millis() as u64,
@@ -292,18 +290,16 @@ impl PluginRegistries {
                 );
             }
         }
+        if let Some(old_scope) = &old_scope {
+            old_scope.services.providers.cancel_lyrics_handlers().await;
+        }
         for plugin_id in &old_ids {
-            self.teardown_plugin(plugin_id, true).await;
+            // A plugin about to run again keeps its HTTP limits in force until that run has set
+            // its own; the sweep below drops the rest.
+            harmony_http::mark_plugin_limits_stale(plugin_id.as_str()).await;
+            harmony_http::clear_plugin_cache(plugin_id.as_str());
             if !new_ids.contains(plugin_id) {
                 sweep_stale_http_limits(plugin_id).await;
-            }
-        }
-        // Brand-new plugins were never frozen open; exempt them so their
-        // first registrations are accepted.
-        for plugin_id in &new_ids {
-            if !old_ids.contains(plugin_id) {
-                crate::plugins::api::unfreeze_plugin_routes(plugin_id.clone()).await;
-                crate::plugins::settings::unfreeze_plugin_settings(plugin_id.clone()).await;
             }
         }
 
@@ -311,12 +307,10 @@ impl PluginRegistries {
             return Ok(PublishOutcome::ShuttingDown);
         };
 
-        for plugin_id in old_ids.iter().chain(&new_ids) {
-            refreeze_plugin_registration_exemptions(plugin_id).await;
-        }
         if let Ok(failed) = &exec_result {
-            self.teardown_failed_plugins(failed).await;
+            self.teardown_failed_plugins(runtime.scope(), failed).await;
         }
+        runtime.scope().plugin.freeze().await;
         for plugin_id in &old_ids {
             sweep_stale_http_limits(plugin_id).await;
         }
@@ -367,10 +361,9 @@ impl PluginRegistries {
         let _restart = self.restart_lock.lock().await;
         // Read under the lock: a reload ahead of this restart replaces it.
         let runtime = crate::plugins::STATE
-            .generation()
-            .runtime
-            .get()
+            .runtime()
             .ok_or(PluginRestartError::RuntimeNotReady)?;
+        let scope = runtime.scope();
 
         let has_plugin = runtime
             .has_plugin(plugin_id.as_str())
@@ -399,10 +392,7 @@ impl PluginRegistries {
                     plugin_id: plugin_id.clone(),
                     source: err.context("failed to read plugin manifests"),
                 })?;
-        crate::plugins::STATE
-            .generation()
-            .manifests
-            .replace(Arc::from(manifests));
+        scope.plugin.manifests.replace(Arc::from(manifests));
 
         // Stop the old run before teardown reopens registrations, so none of
         // its tasks can register into the restarted plugin.
@@ -413,13 +403,13 @@ impl PluginRegistries {
                 plugin_id: plugin_id.clone(),
                 source: err.context("failed to stop plugin"),
             })?;
-        self.teardown_plugin(plugin_id, true).await;
+        self.teardown_plugin(scope, plugin_id, true).await;
 
         // Caches are dropped on the VM thread right before the entrypoint
         // re-runs, after teardown, so no old-plugin work can repopulate them.
         match runtime.restart_plugin(plugin_id.as_str()).await {
             Ok(()) => {
-                refreeze_plugin_registration_exemptions(plugin_id).await;
+                refreeze_plugin_registration_exemptions(scope, plugin_id).await;
                 sweep_stale_http_limits(plugin_id).await;
                 if let Err(err) = crate::plugins::api::rebuild_registered_routes().await {
                     if let Err(error) = runtime.stop_plugin(plugin_id.as_str()).await {
@@ -429,7 +419,7 @@ impl PluginRegistries {
                             "failed to stop plugin after its routes failed to rebuild"
                         );
                     }
-                    self.teardown_plugin(plugin_id, false).await;
+                    self.teardown_plugin(scope, plugin_id, false).await;
                     return Err(PluginRestartError::Failed {
                         plugin_id: plugin_id.clone(),
                         source: err.context("failed to rebuild plugin API routes"),
@@ -439,8 +429,8 @@ impl PluginRegistries {
             }
             // The failed entrypoint already ended its run.
             Err(err) => {
-                refreeze_plugin_registration_exemptions(plugin_id).await;
-                self.teardown_plugin(plugin_id, false).await;
+                refreeze_plugin_registration_exemptions(scope, plugin_id).await;
+                self.teardown_plugin(scope, plugin_id, false).await;
                 Err(PluginRestartError::Failed {
                     plugin_id: plugin_id.clone(),
                     source: err.context("plugin execution failed"),
@@ -460,7 +450,8 @@ async fn publish_and_run(
     shutdown: &CancellationToken,
 ) -> Option<Result<Vec<String>>> {
     let published = crate::services::shutdown::unless_cancelled(shutdown, || {
-        crate::plugins::STATE.publish_runtime(runtime.clone());
+        crate::plugins::STATE
+            .publish_runtime(&crate::services::STATE.generation(), runtime.clone());
     });
     if published.is_none() {
         stop_unpublished(runtime).await;
@@ -491,9 +482,16 @@ async fn sweep_stale_http_limits(plugin_id: &PluginId) {
     harmony_http::remove_stale_plugin_limits(plugin_id.as_str()).await;
 }
 
-async fn refreeze_plugin_registration_exemptions(plugin_id: &PluginId) {
-    crate::plugins::api::refreeze_plugin_routes(plugin_id).await;
-    crate::plugins::settings::refreeze_plugin_settings(plugin_id).await;
+async fn refreeze_plugin_registration_exemptions(scope: &VmScope, plugin_id: &PluginId) {
+    scope.plugin.api.refreeze_plugin(plugin_id).await;
+    scope.plugin.settings.refreeze_plugin(plugin_id).await;
+}
+
+fn plugin_ids(manifests: &[harmony_core::plugin::PluginManifest]) -> Vec<PluginId> {
+    manifests
+        .iter()
+        .filter_map(|manifest| PluginId::new(manifest.id.clone()).ok())
+        .collect()
 }
 
 #[cfg(test)]
@@ -701,8 +699,10 @@ mod tests {
         tokio::task::yield_now().await;
         // What a reload does under the lock: stop the old runtime and publish a new one.
         first.shutdown().await?;
-        crate::plugins::STATE
-            .publish_runtime(crate::plugins::bootstrap::initialize_harmony().await?);
+        crate::plugins::STATE.publish_runtime(
+            &crate::services::STATE.generation(),
+            crate::plugins::bootstrap::initialize_harmony().await?,
+        );
         drop(held);
 
         let error = queued
@@ -858,7 +858,7 @@ mod tests {
     async fn reload_sweeps_the_limits_of_an_uninstalled_plugin() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         publish_startup_runtime().await?;
-        let mut gone = crate::plugins::STATE.generation().manifests.get().to_vec();
+        let mut gone = crate::plugins::STATE.manifests().to_vec();
         gone.push(harmony_core::plugin::PluginManifest {
             schema_version: 1,
             id: "uninstalled".to_string(),
@@ -871,7 +871,10 @@ mod tests {
             dependencies: Default::default(),
         });
         crate::plugins::STATE
-            .generation()
+            .scope()
+            .context("published scope")?
+            .vm_scope
+            .plugin
             .manifests
             .replace(Arc::from(gone));
         harmony_http::test_seed_rate_limit("uninstalled.example", "uninstalled").await;

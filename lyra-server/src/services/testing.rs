@@ -19,6 +19,8 @@ use std::{
     },
 };
 
+#[cfg(test)]
+use futures::future::BoxFuture;
 use lyra_db::bootstrap::{
     DbConfig,
     DbKind,
@@ -27,6 +29,18 @@ use tempfile::TempDir;
 use tokio::sync::{
     Mutex,
     MutexGuard,
+};
+
+#[cfg(test)]
+use crate::services::plugin_dispatch::{
+    DispatchNotStarted,
+    MetadataRefreshRequest,
+    MetadataRefreshResult,
+    MixHandlerRequest,
+    MixHandlerResult,
+    PluginDispatch,
+    SimilarReleasesDispatchRequest,
+    SimilarReleasesDispatchResult,
 };
 
 #[cfg(test)]
@@ -90,6 +104,59 @@ pub(crate) async fn merge_entities(winner_id: &str, loser_id: &str) -> anyhow::R
     let merge = db.transaction_mut(|t| merge_into(t, kind, winner, loser))?;
     STATE.generation().merge_journal.record(merge);
     Ok(())
+}
+
+/// The dispatcher of a scope with no runtime behind it: nothing it is asked to run starts.
+#[cfg(test)]
+pub(crate) struct IdleDispatch;
+
+#[cfg(test)]
+impl PluginDispatch for IdleDispatch {
+    fn dispatch_metadata_refresh(
+        &self,
+        _request: MetadataRefreshRequest,
+    ) -> BoxFuture<'_, anyhow::Result<MetadataRefreshResult>> {
+        Box::pin(async { Err(DispatchNotStarted.into()) })
+    }
+
+    fn dispatch_mix_handler(
+        &self,
+        _request: MixHandlerRequest,
+    ) -> BoxFuture<'_, anyhow::Result<MixHandlerResult>> {
+        Box::pin(async { Err(DispatchNotStarted.into()) })
+    }
+
+    fn dispatch_similar_releases(
+        &self,
+        _request: SimilarReleasesDispatchRequest,
+    ) -> BoxFuture<'_, anyhow::Result<SimilarReleasesDispatchResult>> {
+        Box::pin(async { Err(DispatchNotStarted.into()) })
+    }
+
+    fn dispatch_playback_update(
+        &self,
+        _payload: crate::services::playback_sessions::PlaybackUpdatePayload,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn dispatch_listen_update(
+        &self,
+        _payload: crate::services::listens::ListenUpdatePayload,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+/// Publishes `dispatch` with fresh registries of its own, as a plugin reload publishes a new
+/// runtime.
+#[cfg(test)]
+pub(crate) fn publish_dispatch(dispatch: std::sync::Arc<dyn PluginDispatch>) {
+    let generation = STATE.generation();
+    let current = generation.latest().expect("published test scope");
+    generation
+        .runtime
+        .replace(Some(std::sync::Arc::new(current.republished(dispatch))));
 }
 
 static RUNTIME_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -224,7 +291,14 @@ mod test_state {
 
     fn initialize_state(library: Option<super::LibraryConfig>) -> anyhow::Result<()> {
         let (boot, created, resolved) = open_memory_state(library, Default::default())?;
-        STATE.initialize(boot, created, resolved)
+        STATE.initialize(boot, created, resolved)?;
+        STATE.generation().runtime.replace(Some(Arc::new(
+            crate::services::plugin_scope::RuntimeScope::without_plugin_layer(
+                Arc::new(super::IdleDispatch),
+                Default::default(),
+            ),
+        )));
+        Ok(())
     }
 
     /// Minimal services state init for tests that exercise application state without a
@@ -302,10 +376,7 @@ mod test_state {
     /// Installs a [`RecordingDispatch`] as this generation's plugin runtime.
     pub(crate) fn record_plugin_dispatch() -> Arc<RecordingDispatch> {
         let dispatch = Arc::new(RecordingDispatch::default());
-        STATE
-            .generation()
-            .plugin_dispatch
-            .replace(Some(dispatch.clone()));
+        super::publish_dispatch(dispatch.clone());
         dispatch
     }
 
@@ -492,10 +563,7 @@ mod fake_dispatch {
                 handlers: Mutex::default(),
                 calls: Mutex::default(),
             });
-            STATE
-                .generation()
-                .plugin_dispatch
-                .replace(Some(dispatch.clone()));
+            crate::services::testing::publish_dispatch(dispatch.clone());
             dispatch
         }
 

@@ -34,15 +34,14 @@ use crate::services::{
     hls::cleanup::HlsCleanupState,
     libraries::LibraryConfig,
     libraries::LibrarySyncRegistries,
-    mix::MixRegistries,
     pagination::SnapshotRegistry,
     playback_sessions::PlaybackUpdateRegistries,
     playbacks::{
         bindings::ConnectionBindings,
         socket_claims::SocketClaims,
     },
-    plugin_dispatch::PluginDispatch,
-    providers::ProviderRegistries,
+    plugin_scope::RuntimeScope,
+    providers::ProviderLocks,
     settings::server::{
         self as server_settings,
         Config,
@@ -125,7 +124,7 @@ impl DbHandle {
 
 pub(crate) type BootHandle = SwapHandle<Arc<Boot>>;
 pub(crate) type SettingsHandle = SwapHandle<Arc<ResolvedSettings>>;
-pub(crate) type PluginDispatchHandle = SwapHandle<Option<Arc<dyn PluginDispatch>>>;
+pub(crate) type RuntimeScopeHandle = SwapHandle<Option<Arc<RuntimeScope>>>;
 
 /// Auth bookkeeping derived from the current database. Lives on
 /// [`GenerationState`] instead of module statics so a DB swap cannot carry
@@ -146,13 +145,13 @@ pub(crate) struct AuthCaches {
 /// generation, swapped by the same reset.
 #[derive(Default)]
 pub(crate) struct GenerationState {
-    pub(crate) plugin_dispatch: PluginDispatchHandle,
+    /// The published plugin runtime, with everything derived from it.
+    pub(crate) runtime: RuntimeScopeHandle,
     /// Generation state of the layers above services, swapped with this one.
     pub(crate) layers: LayerStates,
     pub(crate) auth_caches: AuthCaches,
-    pub(crate) providers: ProviderRegistries,
+    pub(crate) providers: ProviderLocks,
     pub(crate) merge_journal: crate::services::metadata::merge_journal::MergeJournal,
-    pub(crate) mix: MixRegistries,
     pub(crate) pagination: SnapshotRegistry,
     pub(crate) playback_updates: PlaybackUpdateRegistries,
     pub(crate) connection_bindings: ConnectionBindings,
@@ -162,6 +161,13 @@ pub(crate) struct GenerationState {
     pub(crate) hls_cleanup: HlsCleanupState,
     pub(crate) transcode_cache: Arc<crate::services::transcoding::cache::TranscodeCache>,
     pub(crate) cover_transforms: OnceLock<Arc<crate::services::covers::TransformCache>>,
+}
+
+impl GenerationState {
+    /// The published runtime scope, without waiting for anything.
+    pub(crate) fn latest(&self) -> Option<Arc<RuntimeScope>> {
+        self.runtime.get()
+    }
 }
 
 /// Per-generation state owned by layers above services, keyed by type. Each

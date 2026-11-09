@@ -265,7 +265,8 @@ async fn a_route_handler_gets_the_callers_base_url() -> Result<()> {
 
     let _guard = crate::services::testing::runtime_test_lock().await;
     let server = serve().await?;
-    crate::plugins::STATE.publish_runtime(server.handle.clone());
+    crate::plugins::STATE
+        .publish_runtime(&crate::services::STATE.generation(), server.handle.clone());
     let route = crate::plugins::api::RegisteredRoute {
         key: crate::plugins::api::RouteKey::new("GET", "/base-url")?,
         plugin_id: crate::services::plugin_scope::PluginId::new(PLUGIN_ID)?,
@@ -487,7 +488,14 @@ async fn a_restarted_plugin_streams_again() -> Result<()> {
     // As the lifecycle restarts a plugin: stop, tear its routes down, start its next run.
     server.handle.stop_plugin(PLUGIN_ID).await?;
     let plugin_id = crate::services::plugin_scope::PluginId::new(PLUGIN_ID)?;
-    crate::plugins::api::teardown_plugin_routes(&plugin_id).await;
+    server
+        .handle
+        .scope()
+        .plugin
+        .api
+        .teardown_plugin(&plugin_id)
+        .await;
+    crate::plugins::api::rebuild_registered_routes().await?;
     server.handle.restart_plugin(PLUGIN_ID).await?;
     let mut rest = Vec::new();
     tokio::time::timeout(Duration::from_secs(10), stream.read_to_end(&mut rest))

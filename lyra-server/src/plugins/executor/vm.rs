@@ -76,7 +76,7 @@ impl PluginExecutor {
             plugins_dir,
             server_info,
             auth_capabilities,
-            PluginModuleStores::with_db(db),
+            PluginModuleStores::with_db(db).sharing_published_scope(),
             module_overrides,
         )
     }
@@ -145,6 +145,7 @@ impl PluginExecutor {
     where
         L: SourceLoader + 'static,
     {
+        let scope = stores.scope();
         let runtime = RuntimeBuilder::new(loader, manifests.clone())
             .plugins(plugins)
             .modules(generic_modules(module_overrides)?)
@@ -172,6 +173,7 @@ impl PluginExecutor {
 
         Ok(Self {
             runtime,
+            scope,
             websocket_tasks: RefCell::new(HashMap::<TaskIdKey, Arc<WebSocketState>>::new()),
             callback_tasks: RefCell::new(Vec::new()),
         })

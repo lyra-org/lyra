@@ -142,7 +142,7 @@ async fn serve(capture: Option<CaptureArgs>, listener: TcpListener) -> Result<()
     if let Some(capture) = capture {
         // sync_library dispatches handlers through the published runtime; publish first.
         plugin_bootstrap::exec_for_capture(plugin_runtime.clone()).await?;
-        crate::plugins::STATE.publish_runtime(plugin_runtime);
+        crate::plugins::STATE.publish_runtime(&crate::services::STATE.generation(), plugin_runtime);
         let library = services::libraries::prepare_capture_library(capture.library_path).await?;
         let library_db_id = library
             .db_id
@@ -154,7 +154,6 @@ async fn serve(capture: Option<CaptureArgs>, listener: TcpListener) -> Result<()
     let plugin_supervisor = plugins::supervisor::spawn(services::shutdown::token())?;
     services::catalog::index::warm();
     let core_api = routes::build_core_api()?;
-    crate::plugins::settings::initialize_registry().await;
 
     let app = routes::plugin_api::install(core_api.router, core_api.reservations).await?;
     let app = app.layer(axum::middleware::from_fn(routes::reingest_request_gate));

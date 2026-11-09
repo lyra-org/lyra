@@ -215,7 +215,13 @@ pub(super) async fn dispatch(
             break;
         }
         let mixer_id = &candidate.mixer_id;
-        let registration = mix_registry()
+        let Some(scope) = STATE.generation().latest() else {
+            tracing::debug!(mixer = %mixer_id, "no plugin runtime to reach the mixer, trying next");
+            continue;
+        };
+        let registration = scope
+            .mix()
+            .registry()
             .read()
             .await
             .handler(mixer_id, request.shape)
@@ -224,10 +230,6 @@ pub(super) async fn dispatch(
             registration.filter(|registration| registration.spec.covers(requirements))
         else {
             tracing::debug!(mixer = %mixer_id, "mixer has no handler for this mix now, trying next");
-            continue;
-        };
-        let Some(runtime) = STATE.generation().plugin_dispatch.get() else {
-            tracing::debug!(mixer = %mixer_id, "no plugin runtime to reach the mixer, trying next");
             continue;
         };
         let timeout = (deadline - now).min(registration.timeout);
@@ -240,7 +242,7 @@ pub(super) async fn dispatch(
         };
         let entries = match tokio::time::timeout(
             timeout,
-            runtime.dispatch_mix_handler(handler_request),
+            scope.dispatch().dispatch_mix_handler(handler_request),
         )
         .await
         {

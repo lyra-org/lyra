@@ -24,7 +24,6 @@ use serde_json::Value;
 use std::sync::LazyLock;
 
 use crate::{
-    services::STATE,
     services::plugin_dispatch::MetadataRefreshRequest,
     services::providers::{
         ExternalIdsByScheme,
@@ -313,13 +312,9 @@ pub(crate) async fn search_provider(
                 .copied()
                 .map(ProviderLookup::Call)
         },
-        |handler| async move {
-            let runtime = STATE
-                .generation()
-                .plugin_dispatch
-                .get()
-                .context("plugin runtime is not initialized")?;
-            runtime
+        |handler, scope| async move {
+            scope
+                .dispatch()
                 .dispatch_metadata_refresh(MetadataRefreshRequest {
                     handler,
                     context: serde_json::Value::String(query),
@@ -752,20 +747,17 @@ async fn search_provider_cover(
                 ProviderLookup::Answer(None)
             })
         },
-        |spec| async move {
-            let runtime = STATE
-                .generation()
-                .plugin_dispatch
-                .get()
-                .context("plugin runtime is not initialized")?;
+        |spec, scope| async move {
             let timeout = spec.timeout;
             tokio::time::timeout(
                 timeout,
-                runtime.dispatch_metadata_refresh(MetadataRefreshRequest {
-                    handler: spec.handler,
-                    context: handler_context,
-                    deadline: std::time::Instant::now() + timeout,
-                }),
+                scope
+                    .dispatch()
+                    .dispatch_metadata_refresh(MetadataRefreshRequest {
+                        handler: spec.handler,
+                        context: handler_context,
+                        deadline: std::time::Instant::now() + timeout,
+                    }),
             )
             .await
             .with_context(|| {

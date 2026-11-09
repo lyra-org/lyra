@@ -22,14 +22,44 @@ use crate::services::plugin_scope::{
 
 use super::Schema;
 
-/// Generation-owned plugin settings state: declared schemas plus freeze state.
-#[derive(Default)]
+/// The plugin settings of one runtime: declared schemas plus freeze state.
+#[derive(Clone, Default)]
 pub(crate) struct SettingsRegistries {
     registry: Arc<RwLock<Registry>>,
 }
 
+impl SettingsRegistries {
+    pub(crate) fn registry(&self) -> Arc<RwLock<Registry>> {
+        self.registry.clone()
+    }
+
+    pub(crate) async fn teardown_plugin(&self, plugin_id: &PluginId) {
+        let Self { registry } = self;
+        ScopedRegistry::from_shared(registry.clone())
+            .teardown(plugin_id)
+            .await;
+    }
+
+    pub(crate) async fn freeze(&self) {
+        self.registry.write().await.freeze();
+    }
+
+    pub(crate) async fn unfreeze_plugin(&self, plugin_id: PluginId) {
+        self.registry.write().await.unfreeze_plugin(plugin_id);
+    }
+
+    pub(crate) async fn refreeze_plugin(&self, plugin_id: &PluginId) {
+        self.registry.write().await.refreeze_plugin(plugin_id);
+    }
+}
+
+/// The published scope's settings; empty before any scope is published.
 pub(crate) fn settings_registry() -> Arc<RwLock<Registry>> {
-    crate::plugins::STATE.generation().settings.registry.clone()
+    crate::plugins::STATE
+        .scope()
+        .map_or_else(Default::default, |scope| {
+            scope.vm_scope.plugin.settings.registry()
+        })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -58,6 +88,7 @@ pub(crate) struct Registry {
 }
 
 impl Registry {
+    #[cfg(test)]
     pub(crate) fn clear(&mut self) {
         self.schemas.clear();
         self.state = FreezeState::Open;
@@ -142,32 +173,13 @@ impl PluginScopedInner for Registry {
     }
 }
 
+#[cfg(test)]
 pub(crate) async fn initialize_registry() {
     settings_registry().write_owned().await.clear();
 }
 
 pub(crate) async fn freeze_registry() {
     settings_registry().write_owned().await.freeze();
-}
-
-pub(crate) async fn unfreeze_plugin_settings(plugin_id: PluginId) {
-    settings_registry()
-        .write_owned()
-        .await
-        .unfreeze_plugin(plugin_id);
-}
-
-pub(crate) async fn refreeze_plugin_settings(plugin_id: &PluginId) {
-    settings_registry()
-        .write_owned()
-        .await
-        .refreeze_plugin(plugin_id);
-}
-
-pub(crate) async fn teardown_plugin_settings(plugin_id: &PluginId) {
-    ScopedRegistry::from_shared(settings_registry())
-        .teardown(plugin_id)
-        .await;
 }
 
 #[cfg(test)]

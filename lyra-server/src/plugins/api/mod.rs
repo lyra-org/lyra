@@ -9,13 +9,10 @@ mod route_key;
 mod route_options;
 mod types;
 
-use self::registry::{
-    ApiRouteRegistration,
-    api_route_registry,
-    freeze_registry,
-};
 pub(crate) use self::registry::{
+    ApiRouteHost,
     ApiRouteRegistries,
+    ApiRouteRegistry,
     ApiRouteStore,
     CaseInsensitiveRouter,
     RegisteredRoute,
@@ -24,6 +21,10 @@ pub(crate) use self::registry::{
     RouteKind,
     initialize_registry,
     registered_routes,
+};
+use self::registry::{
+    ApiRouteRegistration,
+    api_route_registry,
 };
 use self::route_key::lowercase_literal_segments;
 pub(crate) use self::route_key::{
@@ -99,42 +100,18 @@ use crate::plugins::auth::{
     Principal as AuthPrincipal,
 };
 pub(crate) async fn finalize() -> anyhow::Result<()> {
-    freeze_registry().await;
+    api_route_registry().write_owned().await.freeze();
     rebuild_registered_routes().await
 }
 
 /// Rebuilds the installed HTTP routes from the registry; a no-op until a
 /// host installs them.
 pub(crate) async fn rebuild_registered_routes() -> anyhow::Result<()> {
-    let host = api_route_registry().read_owned().await.host();
+    let host = crate::plugins::STATE.generation().api.host();
     match host {
         Some(host) => host.rebuild().await,
         None => Ok(()),
     }
-}
-
-pub(crate) async fn unfreeze_plugin_routes(plugin_id: crate::services::plugin_scope::PluginId) {
-    api_route_registry()
-        .write_owned()
-        .await
-        .unfreeze_plugin(plugin_id);
-}
-
-pub(crate) async fn refreeze_plugin_routes(plugin_id: &crate::services::plugin_scope::PluginId) {
-    api_route_registry()
-        .write_owned()
-        .await
-        .refreeze_plugin(plugin_id);
-}
-
-pub(crate) async fn teardown_plugin_routes(plugin_id: &crate::services::plugin_scope::PluginId) {
-    api_route_registry()
-        .write_owned()
-        .await
-        .clear_bucket(plugin_id);
-    rebuild_registered_routes()
-        .await
-        .unwrap_or_else(|err| panic!("router rebuild must not fail post-teardown: {err}"));
 }
 
 /// An HTTP status code argument.
@@ -380,7 +357,10 @@ impl ApiModule {
         })?;
         harmony_core::ensure_current_plugin_run(vm, context)?;
         let routes = vm.data().get::<ApiRouteStore>()?;
+        let plugin = crate::plugins::current_plugin(vm, context, "api.websocket")?;
+        let registry = crate::plugins::state::VmScope::of(vm)?.routes_for(&plugin);
         routes.register_websocket(
+            registry,
             plugin_id,
             path,
             handler,
@@ -724,16 +704,21 @@ fn register_route(
     })?;
     harmony_core::ensure_current_plugin_run(vm, context)?;
     let routes = vm.data().get::<ApiRouteStore>()?;
-    routes.register(ApiRouteRegistration {
-        plugin_id,
-        method,
-        path,
-        handler,
-        auth_mode: options.auth,
-        case_insensitive: options.case_insensitive,
-        max_body_bytes: options.max_body_bytes,
-        context: context.clone(),
-    })
+    let plugin = crate::plugins::current_plugin(vm, context, "api.route")?;
+    let registry = crate::plugins::state::VmScope::of(vm)?.routes_for(&plugin);
+    routes.register(
+        registry,
+        ApiRouteRegistration {
+            plugin_id,
+            method,
+            path,
+            handler,
+            auth_mode: options.auth,
+            case_insensitive: options.case_insensitive,
+            max_body_bytes: options.max_body_bytes,
+            context: context.clone(),
+        },
+    )
 }
 
 /// The kind of the response table `table`, which `what` names in the error raised for one that
@@ -1301,7 +1286,23 @@ pub(crate) mod tests {
         method: &str,
         path: &str,
     ) -> Option<crate::services::plugin_dispatch::PluginCallbackHandle> {
-        let registry = api_route_registry().read_owned().await;
+        handler_in(api_route_registry(), method, path).await
+    }
+
+    pub(crate) async fn registered_handler_of(
+        runtime: &crate::plugins::bootstrap::PluginRuntime,
+        method: &str,
+        path: &str,
+    ) -> Option<crate::services::plugin_dispatch::PluginCallbackHandle> {
+        handler_in(runtime.scope().plugin.api.registry(), method, path).await
+    }
+
+    async fn handler_in(
+        registry: Arc<tokio::sync::RwLock<ApiRouteRegistry>>,
+        method: &str,
+        path: &str,
+    ) -> Option<crate::services::plugin_dispatch::PluginCallbackHandle> {
+        let registry = registry.read_owned().await;
         registry
             .snapshot()
             .into_iter()

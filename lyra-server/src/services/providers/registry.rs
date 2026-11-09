@@ -44,6 +44,7 @@ use crate::services::plugin_dispatch::{
 use crate::services::plugin_scope::{
     PluginId,
     PluginScopedInner,
+    RuntimeScope,
     ScopedRegistry,
 };
 
@@ -54,20 +55,25 @@ pub(crate) const MAX_SIMILAR_RELEASES_HANDLER_TIMEOUT: Duration = Duration::from
 pub(crate) type LyricsInFlightKey = (i64, Arc<str>);
 pub(crate) type LyricsInFlight = Arc<std::sync::Mutex<HashSet<LyricsInFlightKey>>>;
 
-/// Generation-owned provider state: the registry itself plus the in-flight
-/// sync/refresh/call locks keyed by provider and library ids, and the
-/// in-flight lyrics dispatches keyed by track and provider.
+/// Generation-owned provider locks, keyed by provider and library ids. They belong to the passes
+/// holding them, which outlive any one runtime.
 #[derive(Default)]
-pub(crate) struct ProviderRegistries {
-    registry: Arc<RwLock<ProviderRegistry>>,
+pub(crate) struct ProviderLocks {
     sync_locks: Arc<std::sync::Mutex<HashSet<String>>>,
     library_refresh_locks: Arc<tokio::sync::Mutex<HashSet<agdb::DbId>>>,
     call_locks: Arc<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+}
+
+/// The provider state of one plugin runtime: the registry, the links its generators produced, and
+/// the lyrics dispatches in flight keyed by track and provider.
+#[derive(Clone, Default)]
+pub(crate) struct ProviderRuntimeState {
+    registry: Arc<RwLock<ProviderRegistry>>,
     id_links: Arc<std::sync::Mutex<IdLinkCache>>,
     lyrics_in_flight: LyricsInFlight,
 }
 
-impl ProviderRegistries {
+impl ProviderRuntimeState {
     pub(crate) fn registry(&self) -> Arc<RwLock<ProviderRegistry>> {
         self.registry.clone()
     }
@@ -75,10 +81,37 @@ impl ProviderRegistries {
     pub(crate) fn id_link_cache(&self) -> Arc<std::sync::Mutex<IdLinkCache>> {
         self.id_links.clone()
     }
+
+    /// The link cache and in-flight lyrics stay: both are keyed by handler or track, not plugin,
+    /// and entries of a removed handler are never read again.
+    pub(crate) async fn teardown_plugin(&self, plugin_id: &PluginId) {
+        let Self {
+            registry,
+            id_links: _,
+            lyrics_in_flight: _,
+        } = self;
+        ScopedRegistry::from_shared(registry.clone())
+            .teardown(plugin_id)
+            .await;
+    }
+
+    /// Ends the lyrics work of a scope that is being replaced. Dropping the registry would too,
+    /// but calls still holding the scope keep it alive.
+    pub(crate) async fn cancel_lyrics_handlers(&self) {
+        self.registry
+            .read()
+            .await
+            .iter_states()
+            .for_each(|(_, state)| state.cancel_lyrics_handler());
+    }
 }
 
+/// The published scope's registry; an empty one before any scope is published.
 pub(crate) fn provider_registry() -> Arc<RwLock<ProviderRegistry>> {
-    crate::services::STATE.generation().providers.registry()
+    crate::services::STATE
+        .generation()
+        .latest()
+        .map_or_else(Default::default, |scope| scope.providers().registry())
 }
 
 pub(crate) async fn id_schemes() -> Arc<IdSchemes> {
@@ -111,9 +144,10 @@ pub(crate) fn library_refresh_locks() -> Arc<tokio::sync::Mutex<HashSet<agdb::Db
 pub(crate) fn lyrics_in_flight() -> LyricsInFlight {
     crate::services::STATE
         .generation()
-        .providers
-        .lyrics_in_flight
-        .clone()
+        .latest()
+        .map_or_else(Default::default, |scope| {
+            scope.providers().lyrics_in_flight.clone()
+        })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -164,8 +198,9 @@ pub(crate) enum ProviderLookup<H, T> {
     Answer(T),
 }
 
-/// Runs `call` with the handler `lookup` copies out of the registry, under the provider's call
-/// lock. The registry lock is released before `call`: a running handler can register others.
+/// Runs `call` with the handler `lookup` copies out of the registry and the scope that holds it,
+/// under the provider's call lock. The registry lock is released before `call`: a running handler
+/// can register others.
 ///
 /// `lookup` runs before the lock too, so a provider with nothing to call neither waits behind
 /// its other calls nor gets a lock entry, keeping those to providers that had a handler. The read
@@ -178,15 +213,21 @@ pub(crate) async fn with_provider_call<H, T, L, F, Fut>(
 ) -> Result<T, ProviderCallError>
 where
     L: Fn(&ProviderRegistry) -> Option<ProviderLookup<H, T>>,
-    F: FnOnce(H) -> Fut,
+    F: FnOnce(H, Arc<RuntimeScope>) -> Fut,
     Fut: Future<Output = Result<T>>,
 {
     let generation = crate::services::STATE.generation();
     let read_lookup = async || {
-        let registry = generation.providers.registry.read().await;
-        lookup(&registry).ok_or(ProviderCallError::NotRegistered)
+        let scope = generation
+            .latest()
+            .ok_or(ProviderCallError::NotRegistered)?;
+        let found = {
+            let registry = scope.providers().registry.read().await;
+            lookup(&registry).ok_or(ProviderCallError::NotRegistered)?
+        };
+        Ok::<_, ProviderCallError>((found, scope))
     };
-    if let ProviderLookup::Answer(answer) = read_lookup().await? {
+    if let (ProviderLookup::Answer(answer), _) = read_lookup().await? {
         return Ok(answer);
     }
 
@@ -209,8 +250,9 @@ where
         "provider call lock acquired"
     );
 
-    match read_lookup().await? {
-        ProviderLookup::Call(handler) => call(handler).await.map_err(|error| {
+    let (found, scope) = read_lookup().await?;
+    match found {
+        ProviderLookup::Call(handler) => call(handler, scope).await.map_err(|error| {
             if DispatchNotStarted::caused(&error) {
                 ProviderCallError::NotRegistered
             } else {
@@ -1033,7 +1075,7 @@ pub(crate) mod tests {
                     &provider_id,
                     ProviderCallStage::MetadataRefresh,
                     |_| Some(ProviderLookup::Call(())),
-                    |()| async {
+                    |(), _| async {
                         let current = active.fetch_add(1, Ordering::SeqCst) + 1;
                         max_active.fetch_max(current, Ordering::SeqCst);
                         sleep(Duration::from_millis(5)).await;
@@ -1070,7 +1112,7 @@ pub(crate) mod tests {
                     &provider_id,
                     ProviderCallStage::MetadataRefresh,
                     |_| Some(ProviderLookup::Call(())),
-                    |()| async {
+                    |(), _| async {
                         barrier.wait().await;
                         Ok(())
                     },
@@ -1111,7 +1153,7 @@ pub(crate) mod tests {
                     "demo",
                     ProviderCallStage::MetadataRefresh,
                     |_| Some(ProviderLookup::Call(())),
-                    |()| async {
+                    |(), _| async {
                         entered.notify_one();
                         release.acquire().await.expect("gate").forget();
                         Ok(())
@@ -1129,7 +1171,7 @@ pub(crate) mod tests {
                 "demo",
                 ProviderCallStage::MetadataRefresh,
                 |_| Some(ProviderLookup::Call(())),
-                |()| async { Ok(()) },
+                |(), _| async { Ok(()) },
             )
         };
         assert!(
@@ -1150,7 +1192,7 @@ pub(crate) mod tests {
             "unregistered",
             ProviderCallStage::MetadataRefresh,
             |_| None::<ProviderLookup<(), ()>>,
-            |()| async { Ok(()) },
+            |(), _| async { Ok(()) },
         )
         .await;
 
@@ -1166,14 +1208,14 @@ pub(crate) mod tests {
             "unregistered",
             ProviderCallStage::MetadataRefresh,
             |_| None::<ProviderLookup<(), ()>>,
-            |()| async { Ok(()) },
+            |(), _| async { Ok(()) },
         )
         .await;
         let answered = with_provider_call(
             "answered",
             ProviderCallStage::MetadataRefresh,
             |_| Some(ProviderLookup::<(), _>::Answer(7)),
-            |()| async { Ok(0) },
+            |(), _| async { Ok(0) },
         )
         .await
         .expect("answer");
@@ -1196,7 +1238,7 @@ pub(crate) mod tests {
                     "demo",
                     ProviderCallStage::MetadataRefresh,
                     |_| Some(ProviderLookup::Call(())),
-                    |()| async {
+                    |(), _| async {
                         entered.notify_one();
                         release.acquire().await.expect("gate").forget();
                         Ok(())
@@ -1218,7 +1260,7 @@ pub(crate) mod tests {
                     Some(ProviderLookup::Call(()))
                 }
             },
-            |()| async { Ok(()) },
+            |(), _| async { Ok(()) },
         );
         let waiting = tokio::spawn(waiting);
         sleep(Duration::from_millis(20)).await;
@@ -1285,11 +1327,12 @@ impl Drop for ProviderRegistry {
     }
 }
 
-/// The provider's call and sync locks stay: they are keyed by provider id and
-/// belong to the passes holding them, which can outlive the plugin.
+/// Empties the plugin's bucket in the published scope.
+#[cfg(test)]
 pub(crate) async fn teardown_plugin_providers(plugin_id: &PluginId) {
-    let generation = crate::services::STATE.generation();
-    ScopedRegistry::from_shared(generation.providers.registry.clone())
-        .teardown(plugin_id)
-        .await;
+    let scope = crate::services::STATE
+        .generation()
+        .latest()
+        .expect("published test scope");
+    scope.providers().teardown_plugin(plugin_id).await;
 }

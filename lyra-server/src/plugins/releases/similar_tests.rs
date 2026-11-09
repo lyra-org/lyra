@@ -125,7 +125,7 @@ async fn publish_test_runtime(plugin: &TempSimilarPluginDir) -> Result<PluginExe
     )?;
     assert!(errors.is_empty(), "{errors:?}");
     runtime.exec_plugin("similartest").await?;
-    crate::plugins::STATE.publish_runtime(runtime.clone());
+    crate::plugins::STATE.publish_runtime(&crate::services::STATE.generation(), runtime.clone());
     Ok(runtime)
 }
 
@@ -343,7 +343,7 @@ async fn in_vm_dispatch_is_not_wrapped_in_provider_call_lock() -> Result<()> {
                         &request.provider_id,
                         crate::services::providers::ProviderCallStage::MetadataRefresh,
                         |_| Some(crate::services::providers::ProviderLookup::Call(())),
-                        |()| async move {
+                        |(), _| async move {
                             Ok(SimilarReleasesDispatchResult {
                                 candidates: vec![SimilarReleaseCandidate::Local {
                                     release_id: candidate_public_id,

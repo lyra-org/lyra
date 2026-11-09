@@ -5,16 +5,14 @@
 
 use std::time::Duration;
 
-use anyhow::Context;
-
 use crate::services::{
     EntityType,
-    STATE,
     plugin_dispatch::{
         MetadataRefreshRequest,
         MetadataRefreshResult,
         PluginCallbackHandle,
     },
+    plugin_scope::RuntimeScope,
     providers::{
         ProviderCallError,
         ProviderCallStage,
@@ -33,21 +31,19 @@ const METADATA_REFRESH_DEADLINE_GRACE: Duration = Duration::from_secs(5);
 
 async fn run_metadata_handler(
     role: &str,
+    scope: &RuntimeScope,
     handler: PluginCallbackHandle,
     context: serde_json::Value,
 ) -> anyhow::Result<MetadataRefreshResult> {
-    let runtime = STATE
-        .generation()
-        .plugin_dispatch
-        .get()
-        .context("plugin runtime is not initialized")?;
     tokio::time::timeout(
         DEFAULT_METADATA_REFRESH_TIMEOUT + METADATA_REFRESH_DEADLINE_GRACE,
-        runtime.dispatch_metadata_refresh(MetadataRefreshRequest {
-            handler,
-            context,
-            deadline: std::time::Instant::now() + DEFAULT_METADATA_REFRESH_TIMEOUT,
-        }),
+        scope
+            .dispatch()
+            .dispatch_metadata_refresh(MetadataRefreshRequest {
+                handler,
+                context,
+                deadline: std::time::Instant::now() + DEFAULT_METADATA_REFRESH_TIMEOUT,
+            }),
     )
     .await
     .map_err(|_| {
@@ -72,8 +68,8 @@ pub(super) async fn dispatch_refresh(
                 .copied()
                 .map(ProviderLookup::Call)
         },
-        |handler| async move {
-            run_metadata_handler("metadata refresh", handler, context)
+        |handler, scope| async move {
+            run_metadata_handler("metadata refresh", &scope, handler, context)
                 .await
                 .map(|_| ())
         },
@@ -102,8 +98,9 @@ pub(super) async fn dispatch_sync_filter(
                 .has_refresh_callback(provider_id, entity_type)
                 .then_some(ProviderLookup::Answer(true))
         },
-        |handler| async move {
-            let result = run_metadata_handler("sync filter", handler, context.clone()).await?;
+        |handler, scope| async move {
+            let result =
+                run_metadata_handler("sync filter", &scope, handler, context.clone()).await?;
             Ok(result
                 .values
                 .first()
