@@ -89,6 +89,7 @@ fn test_executor() -> Result<TestExecutor> {
                     "lyra.api".into(),
                     "test.gate".into(),
                 ],
+                scope_reasons: Default::default(),
                 dependencies: Default::default(),
             }]))?;
             runtime

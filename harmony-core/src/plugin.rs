@@ -76,6 +76,7 @@ pub const PLUGIN_SCHEMA_VERSION: u32 = 1;
 /// Prevents a hostile or malformed plugin config from OOMing `discover_plugins`.
 pub const PLUGIN_CONFIG_MAX_BYTES: u64 = 64 * 1024;
 pub(crate) const PLUGIN_CONFIG_MAX_SCOPE_LEN: usize = 128;
+pub(crate) const PLUGIN_CONFIG_MAX_SCOPE_REASON_CHARS: usize = 200;
 pub(crate) const PLUGIN_CONFIG_MAX_DEPENDENCIES: usize = 32;
 
 /// The fixed top-level fields of `plugin.json` and of the release entries
@@ -201,6 +202,9 @@ pub struct PluginManifest {
     /// the plugin `require`s must have its scope id listed here.
     /// Required on `schema_version: 1`.
     pub scopes: Vec<String>,
+    /// What the plugin's author says each scope is for, by scope id, holding
+    /// only the scopes given a reason. Unverified text, for hosts to show.
+    pub scope_reasons: BTreeMap<String, String>,
     /// Keyed by plugin id.
     pub dependencies: BTreeMap<String, Dependency>,
 }
@@ -218,7 +222,7 @@ impl PluginManifest {
             version: Version,
             description: String,
             entrypoint: Option<String>,
-            scopes: Vec<String>,
+            scopes: Vec<ScopeEntry>,
             #[serde(default, deserialize_with = "deserialize_dependencies")]
             dependencies: BTreeMap<String, Dependency>,
             #[serde(flatten, deserialize_with = "deserialize_other_fields")]
@@ -237,6 +241,7 @@ impl PluginManifest {
                 )));
             }
         };
+        let (scopes, scope_reasons) = declared_scopes(&fields.id, fields.scopes)?;
         Ok(Self {
             schema_version: fields.schema_version,
             id: fields.id,
@@ -245,7 +250,8 @@ impl PluginManifest {
             host_requirement,
             description: fields.description,
             entrypoint: fields.entrypoint,
-            scopes: fields.scopes,
+            scopes,
+            scope_reasons,
             dependencies: fields.dependencies,
         })
     }
@@ -279,6 +285,104 @@ fn deserialize_other_fields<'de, D: Deserializer<'de>>(
     }
 
     deserializer.deserialize_map(OtherFieldsVisitor)
+}
+
+/// One entry of a manifest's `scopes`: a bare scope id, or
+/// `{ "id": "<scope>", "reason": "<why the plugin needs it>" }`.
+struct ScopeEntry {
+    id: String,
+    reason: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for ScopeEntry {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ScopeEntryVisitor;
+
+        impl<'de> Visitor<'de> for ScopeEntryVisitor {
+            type Value = ScopeEntry;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a scope id or an object with `id` and `reason`")
+            }
+
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<ScopeEntry, E> {
+                Ok(ScopeEntry {
+                    id: value.to_string(),
+                    reason: None,
+                })
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<ScopeEntry, A::Error> {
+                #[derive(Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct Table {
+                    id: String,
+                    reason: String,
+                }
+
+                let table = Table::deserialize(de::value::MapAccessDeserializer::new(map))?;
+                Ok(ScopeEntry {
+                    id: table.id,
+                    reason: Some(table.reason),
+                })
+            }
+        }
+
+        deserializer.deserialize_any(ScopeEntryVisitor)
+    }
+}
+
+/// Splits plugin `plugin_id`'s `scopes` into the scope ids, in the author's
+/// order, and the reasons given for some of them. Checked here so no parsed
+/// manifest carries a reason that isn't fit to show.
+fn declared_scopes<E: de::Error>(
+    plugin_id: &str,
+    entries: Vec<ScopeEntry>,
+) -> Result<(Vec<String>, BTreeMap<String, String>), E> {
+    let plugin = truncate_for_error(plugin_id);
+    let mut scopes = Vec::with_capacity(entries.len());
+    let mut reasons = BTreeMap::new();
+    let mut listed = HashSet::with_capacity(entries.len());
+    for ScopeEntry { id, reason } in entries {
+        let scope = truncate_for_error(&id);
+        if !listed.insert(id.clone()) {
+            return Err(E::custom(format!(
+                "plugin '{plugin}' lists scope '{scope}' more than once"
+            )));
+        }
+        if let Some(reason) = reason {
+            if let Some(problem) = scope_reason_problem(&reason) {
+                return Err(E::custom(format!(
+                    "plugin '{plugin}' gives scope '{scope}' an invalid reason: {problem}"
+                )));
+            }
+            reasons.insert(id.clone(), reason);
+        }
+        scopes.push(id);
+    }
+    Ok((scopes, reasons))
+}
+
+fn scope_reason_problem(reason: &str) -> Option<String> {
+    if reason.trim().is_empty() {
+        return Some("it is empty".to_string());
+    }
+    if reason.chars().any(breaks_single_line_text) {
+        return Some("it contains a control character or line break".to_string());
+    }
+    (reason.chars().count() > PLUGIN_CONFIG_MAX_SCOPE_REASON_CHARS)
+        .then(|| format!("it is longer than {PLUGIN_CONFIG_MAX_SCOPE_REASON_CHARS} characters"))
+}
+
+/// Control characters, including Unicode's line separators and
+/// bidirectional overrides, which could disturb the text displayed around
+/// a reason.
+fn breaks_single_line_text(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{2028}' | '\u{2029}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+        )
 }
 
 /// Written as a bare version requirement, or as
@@ -1859,6 +1963,7 @@ mod tests {
             description: String::new(),
             entrypoint: Some("init.luau".to_string()),
             scopes: scopes.iter().map(|scope| scope.to_string()).collect(),
+            scope_reasons: BTreeMap::new(),
             dependencies: BTreeMap::new(),
         }
     }
@@ -3606,6 +3711,170 @@ mod tests {
             error.to_string(),
             "plugin 'demo' declares scope 'net.all' without 'net', the scope it narrows"
         );
+    }
+
+    fn load_scopes(scopes: serde_json::Value) -> Result<LoadedManifest, PluginLoadError> {
+        let host = PluginHost::new(
+            "host",
+            Version::new(0, 0, 1),
+            HashSet::from([
+                Arc::<str>::from("net"),
+                Arc::<str>::from("net.all"),
+                Arc::<str>::from("dns"),
+            ]),
+        )
+        .unwrap()
+        .with_scope_parents([("net.all", "net")]);
+        let json = manifest_json("demo", "").replace(r#"["net"]"#, &scopes.to_string());
+        PluginManager::load_manifest(std::path::Path::new("plugin.json"), json.as_bytes(), &host)
+    }
+
+    fn scope_parse_error(scopes: serde_json::Value) -> String {
+        match load_scopes(scopes) {
+            Err(PluginLoadError::ConfigParseError { error, .. }) => error,
+            other => panic!("expected a parse error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn scopes_are_plain_ids_or_objects_with_a_reason_in_the_order_written() {
+        let plain = load_scopes(serde_json::json!(["net", "dns"]))
+            .unwrap()
+            .manifest;
+        assert_eq!(plain.scopes, ["net", "dns"]);
+        assert!(plain.scope_reasons.is_empty());
+
+        let objects = load_scopes(serde_json::json!([
+            { "id": "net", "reason": "Fetches things." },
+            { "id": "dns", "reason": "Resolves things." },
+        ]))
+        .unwrap();
+        assert_eq!(objects.manifest.scopes, ["net", "dns"]);
+        assert_eq!(objects.manifest.scope_reasons.len(), 2);
+        assert!(objects.declared_scopes.contains("dns"));
+
+        let mixed = load_scopes(serde_json::json!([
+            "net.all",
+            { "id": "dns", "reason": "Resolves things." },
+            "net",
+        ]))
+        .unwrap()
+        .manifest;
+        assert_eq!(mixed.scopes, ["net.all", "dns", "net"]);
+        assert_eq!(
+            mixed.scope_reasons,
+            BTreeMap::from([("dns".to_string(), "Resolves things.".to_string())])
+        );
+    }
+
+    #[test]
+    fn scope_objects_hold_exactly_a_string_id_and_reason() {
+        for (scopes, expected) in [
+            (
+                serde_json::json!([{ "id": "net", "reason": "r", "extra": 1 }]),
+                "unknown field `extra`",
+            ),
+            (
+                serde_json::json!([{ "id": "net" }]),
+                "missing field `reason`",
+            ),
+            (serde_json::json!([{ "reason": "r" }]), "missing field `id`"),
+            (
+                serde_json::json!([{ "id": 1, "reason": "r" }]),
+                "invalid type",
+            ),
+            (
+                serde_json::json!([{ "id": "net", "reason": 1 }]),
+                "invalid type",
+            ),
+            (
+                serde_json::json!([{ "id": "net", "reason": null }]),
+                "invalid type",
+            ),
+            (serde_json::json!([1]), "a scope id or an object"),
+            (
+                serde_json::json!(["net", ["dns"]]),
+                "a scope id or an object",
+            ),
+            (serde_json::json!("net"), "invalid type"),
+        ] {
+            let error = scope_parse_error(scopes.clone());
+            assert!(error.contains(expected), "{scopes}: {error}");
+        }
+        let missing = manifest_json("demo", "").replace(r#""scopes":["net"]"#, r#""z":0"#);
+        assert!(matches!(
+            load_manifest(missing.as_bytes()),
+            Err(PluginLoadError::ConfigParseError { error, .. }) if error.contains("scopes")
+        ));
+    }
+
+    #[test]
+    fn scope_reasons_are_short_single_lines_of_text() {
+        let reason = |reason: &str| serde_json::json!([{ "id": "net", "reason": reason }]);
+        for bad in [
+            "",
+            "   ",
+            "first\nsecond",
+            "tab\there",
+            "bell\u{7}",
+            "delete\u{7f}",
+            "next line\u{85}",
+            "line\u{2028}separator",
+            "paragraph\u{2029}separator",
+            "\u{202e}reversed",
+            "\u{2067}isolated",
+        ] {
+            let error = scope_parse_error(reason(bad));
+            assert!(
+                error.contains("plugin 'demo' gives scope 'net' an invalid reason"),
+                "{bad:?}: {error}"
+            );
+        }
+        assert!(
+            scope_parse_error(reason(&"x".repeat(201)))
+                .ends_with("an invalid reason: it is longer than 200 characters")
+        );
+
+        for accepted in ["x".repeat(200), "é".repeat(200)] {
+            let manifest = load_scopes(reason(&accepted)).unwrap().manifest;
+            assert_eq!(manifest.scope_reasons["net"], accepted);
+        }
+    }
+
+    #[test]
+    fn a_scope_may_be_listed_once_in_either_form() {
+        let object = serde_json::json!({ "id": "net", "reason": "Fetches things." });
+        for scopes in [
+            serde_json::json!(["net", "net"]),
+            serde_json::json!(["net", object]),
+            serde_json::json!([object, "net"]),
+            serde_json::json!([object, object]),
+        ] {
+            assert_eq!(
+                scope_parse_error(scopes),
+                "plugin 'demo' lists scope 'net' more than once"
+            );
+        }
+    }
+
+    #[test]
+    fn scope_objects_pass_the_same_checks_as_plain_ids() {
+        let explained = |id: &str| serde_json::json!([{ "id": id, "reason": "Needs it." }]);
+        assert!(matches!(
+            load_scopes(explained("fs")),
+            Err(PluginLoadError::UnknownScope { scope, .. }) if scope == "fs"
+        ));
+        assert!(matches!(
+            load_scopes(explained("net.all")),
+            Err(PluginLoadError::ScopeWithoutParent { scope, parent, .. })
+                if scope == "net.all" && parent == "net"
+        ));
+        assert!(matches!(
+            load_scopes(explained(
+                &"s".repeat(super::PLUGIN_CONFIG_MAX_SCOPE_LEN + 1)
+            )),
+            Err(PluginLoadError::ScopeEntryTooLong { .. })
+        ));
     }
 
     #[test]

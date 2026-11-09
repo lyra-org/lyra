@@ -15,6 +15,7 @@ fn manifest(id: &str, scopes: &[&str]) -> harmony_core::plugin::PluginManifest {
         description: "Test manifest".to_string(),
         entrypoint: Some("init.luau".to_string()),
         scopes: scopes.iter().map(|scope| scope.to_string()).collect(),
+        scope_reasons: Default::default(),
         dependencies: Default::default(),
     }
 }
@@ -32,6 +33,7 @@ fn plugins_manifest_access_reads_vm_context_store() -> Result<()> {
             description: "Other manifest".to_string(),
             entrypoint: Some("main.luau".to_string()),
             scopes: Vec::new(),
+            scope_reasons: Default::default(),
             dependencies: Default::default(),
         },
     ]))?;

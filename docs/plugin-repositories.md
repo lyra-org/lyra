@@ -23,7 +23,10 @@ Every plugin directory contains a `plugin.json`:
   "lyra": "0.0.1",
   "description": "Matches local albums to MusicBrainz releases",
   "entrypoint": "init.luau",
-  "scopes": ["harmony.http", "lyra.metadata"],
+  "scopes": [
+    "harmony.serde",
+    { "id": "harmony.http", "reason": "Looks up your albums on MusicBrainz." }
+  ],
   "dependencies": {
     "shared-helper": "0.2",
     "fanart": { "version": "0.1", "optional": true }
@@ -65,7 +68,16 @@ changing it needs the module's `.manage` scope, such as
 own, such as `lyra.libraries.manage` for `libraries.sync`. A plugin
 declaring only the module's scope gets each such function as a stub
 raising an error that names the scope it lacks. Declaring a narrow scope
-without its module's fails to load.
+without its module's fails to load. Each scope may be listed once.
+
+An entry of `scopes` is either a scope id, or an object with exactly `id`
+and `reason` saying why the plugin needs that scope. A scope without a
+reason is written as a plain id. A reason is one line of plain text of up
+to 200 characters, without control characters; a manifest breaking any of
+these rules fails to load. A reason changes nothing about what a plugin can
+do and never causes an update to be held. Previews and held updates show
+it only on the effects a scope gives, so a reason on a scope with no effect
+is not returned.
 
 ## Releases
 

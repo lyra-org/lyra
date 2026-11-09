@@ -192,6 +192,7 @@ mod tests {
             description: String::new(),
             entrypoint: Some("init.luau".to_string()),
             scopes: scopes.iter().map(ToString::to_string).collect(),
+            scope_reasons: BTreeMap::new(),
             dependencies: dependencies
                 .iter()
                 .map(|(id, optional)| {

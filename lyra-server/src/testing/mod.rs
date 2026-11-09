@@ -353,6 +353,7 @@ fn library_manifest(
         description: "Luau tests for server-provided plugin modules".to_string(),
         entrypoint: None,
         scopes,
+        scope_reasons: BTreeMap::new(),
         dependencies: BTreeMap::new(),
     })
 }

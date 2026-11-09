@@ -598,6 +598,7 @@ mod tests {
             description: String::new(),
             entrypoint: None,
             scopes: Vec::new(),
+            scope_reasons: std::collections::BTreeMap::new(),
             dependencies: dependencies(requires),
         }
     }
