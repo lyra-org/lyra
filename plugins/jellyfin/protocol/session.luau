@@ -1151,15 +1151,7 @@ function module.build_session_id(principal: Principal, identity: ClientIdentity)
 		#identity.device_id,
 		identity.device_id
 	)
-	local hex = crypt.hash("xxh3_128", material)
-	return string.format(
-		"%s-%s-%s-%s-%s",
-		hex:sub(1, 8),
-		hex:sub(9, 12),
-		hex:sub(13, 16),
-		hex:sub(17, 20),
-		hex:sub(21, 32)
-	)
+	return crypt.hash("xxh3_128", material)
 end
 
 function module.build_session_info(

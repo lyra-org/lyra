@@ -6,7 +6,6 @@
 
 local api = require("@lyra/api")
 
-local crypt = require("@harmony/crypt")
 local task = require("@harmony/task")
 
 local active_sessions = require("../protocol/active_sessions")
@@ -74,12 +73,10 @@ type SyncPlayGroup = {
 local syncplay_groups: { [string]: SyncPlayGroup } = {}
 local syncplay_session_to_group: { [string]: SyncPlayGroup } = {}
 local syncplay_active_users: { [string]: number } = {}
-local syncplay_guid_counter = 0
 local sessions: { [string]: SessionEntry } = {}
 local get_owned_session: OwnedSessionResolver = function()
 	return nil
 end
-local SYNCPLAY_EMPTY_GUID = "00000000-0000-0000-0000-000000000000"
 local SYNCPLAY_DEFAULT_GROUP_NAME = "SyncPlay Group"
 local SYNCPLAY_QUEUE_MODES = { "Queue", "QueueNext" }
 local SYNCPLAY_REPEAT_MODES = { "RepeatOne", "RepeatAll", "RepeatNone" }
@@ -173,48 +170,8 @@ function module.parse_timestamp(value: JsonValue?): number?
 	return seconds * 1000 + fraction_ms
 end
 
-local function syncplay_format_guid(hex: string): string
-	local stripped = string.gsub(hex, "-", "")
-	local normalized = string.lower(stripped)
-	if #normalized < 32 then
-		normalized ..= string.rep("0", 32 - #normalized)
-	end
-	normalized = string.sub(normalized, 1, 32)
-	return string.format(
-		"%s-%s-%s-%s-%s",
-		string.sub(normalized, 1, 8),
-		string.sub(normalized, 9, 12),
-		string.sub(normalized, 13, 16),
-		string.sub(normalized, 17, 20),
-		string.sub(normalized, 21, 32)
-	)
-end
-
-local function syncplay_new_guid(): string
-	local ok, random_hex = pcall(crypt.random, 16)
-	if ok and type(random_hex) == "string" then
-		return syncplay_format_guid(random_hex)
-	end
-
-	syncplay_guid_counter += 1
-	local fallback = crypt.hash("xxh3_128", `{os.time()}:{syncplay_guid_counter}`)
-	return syncplay_format_guid(fallback)
-end
-
 local function syncplay_normalize_guid(value: JsonValue?): string?
-	if type(value) ~= "string" then
-		return nil
-	end
-	local text = requests.trim(value)
-	if not text then
-		return nil
-	end
-	local stripped = string.gsub(text, "-", "")
-	local normalized = string.lower(stripped)
-	if #normalized ~= 32 or not string.match(normalized, "^[0-9a-f]+$") then
-		return nil
-	end
-	return syncplay_format_guid(normalized)
+	return if type(value) == "string" then item_ids.normalize_guid(value) else nil
 end
 
 local function syncplay_body(ctx: ApiContext?): JsonObject
@@ -325,7 +282,7 @@ local function syncplay_parse_queue_items(
 		end
 		table.insert(result, {
 			ItemId = item_id,
-			PlaylistItemId = syncplay_new_guid(),
+			PlaylistItemId = item_ids.new_guid(),
 		})
 	end
 	return result, nil
@@ -537,7 +494,7 @@ end
 
 local function syncplay_current_playlist_item_id(group: SyncPlayGroup): string
 	local item = syncplay_current_item(group)
-	return if item then item.PlaylistItemId else SYNCPLAY_EMPTY_GUID
+	return if item then item.PlaylistItemId else item_ids.EMPTY_GUID
 end
 
 -- How long the current item runs, in ticks, when Lyra knows it.
@@ -773,7 +730,7 @@ local function syncplay_leave_entry(entry: SessionEntry, notify: boolean)
 	local group = syncplay_session_to_group[entry.session_id]
 	if not group then
 		if notify then
-			syncplay_send_group_update_entry(entry, SYNCPLAY_EMPTY_GUID, "NotInGroup", "")
+			syncplay_send_group_update_entry(entry, item_ids.EMPTY_GUID, "NotInGroup", "")
 		end
 		return
 	end
@@ -832,7 +789,7 @@ local function syncplay_new_group(entry: SessionEntry, group_name: string?): Syn
 	end
 
 	local now = syncplay_now()
-	local id = syncplay_new_guid()
+	local id = item_ids.new_guid()
 	local group: SyncPlayGroup = {
 		id = id,
 		name = group_name or SYNCPLAY_DEFAULT_GROUP_NAME,
@@ -877,7 +834,7 @@ local function syncplay_find_playlist_item(group: SyncPlayGroup, playlist_item_i
 end
 
 local function syncplay_known_current_item(group: SyncPlayGroup, playlist_item_id: string?): boolean
-	if not playlist_item_id or playlist_item_id == SYNCPLAY_EMPTY_GUID then
+	if not playlist_item_id or playlist_item_id == item_ids.EMPTY_GUID then
 		return true
 	end
 	return playlist_item_id == syncplay_current_playlist_item_id(group)
@@ -937,7 +894,7 @@ local function syncplay_require_group(
 	end
 	local group = syncplay_session_to_group[(entry :: SessionEntry).session_id]
 	if not group then
-		syncplay_send_group_update_entry(entry :: SessionEntry, SYNCPLAY_EMPTY_GUID, "NotInGroup", "")
+		syncplay_send_group_update_entry(entry :: SessionEntry, item_ids.EMPTY_GUID, "NotInGroup", "")
 		return principal, entry, nil, api.response.empty(204)
 	end
 	return principal, entry, group, nil
@@ -1033,7 +990,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 
 		local group = syncplay_groups[group_id]
 		if not group then
-			syncplay_send_group_update_entry(entry :: SessionEntry, SYNCPLAY_EMPTY_GUID, "GroupDoesNotExist", "")
+			syncplay_send_group_update_entry(entry :: SessionEntry, item_ids.EMPTY_GUID, "GroupDoesNotExist", "")
 			return api.response.empty(204)
 		end
 		if not syncplay_group_accessible(principal, group) then
