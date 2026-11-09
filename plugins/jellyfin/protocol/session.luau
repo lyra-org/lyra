@@ -704,7 +704,7 @@ function module.handle_delete_item_route(ctx: ApiContext): ApiResponse
 	if not playlist or not playlist_access.can_view(playlist, principal.user_id) then
 		return responses.not_found("item not found")
 	end
-	if not playlist_access.can_edit(playlist, principal.user_id) and not module.is_admin(principal) then
+	if not playlist_access.can_delete(playlist, principal.user_id, module.is_admin(principal)) then
 		return module.unauthorized()
 	end
 	local ok, deleted = pcall(playlists.delete, playlist.id)

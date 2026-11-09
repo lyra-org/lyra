@@ -52,6 +52,11 @@ function module.can_edit(playlist: Playlist?, user_id: string?): boolean
 	return playlist ~= nil and playlist.owner_id == user_id
 end
 
+-- As upstream, a playlist is deleted by its owner or an admin.
+function module.can_delete(playlist: Playlist?, user_id: string?, is_admin: boolean): boolean
+	return playlist ~= nil and (playlist.owner_id == user_id or is_admin)
+end
+
 function module.can_view(playlist: Playlist?, user_id: string?): boolean
 	return playlist ~= nil and (playlist.owner_id == user_id or playlist.is_public)
 end

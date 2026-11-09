@@ -117,7 +117,11 @@ function module.handle_resume(ctx: ApiContext): ApiResponse
 		return responses.bad_request(`The value '{invalid}' is not valid for ExcludeActiveSessions.`)
 	end
 
-	local options = items_options.for_user(items_options.parse(listing_query(query)), principal.user_id)
+	local options = items_options.for_user(
+		items_options.parse(listing_query(query)),
+		principal.user_id,
+		session.is_admin(principal)
+	)
 	if not items_options.wants_item_type(options, "audio") then
 		return api.response.json(200, catalog.build_item_query_result({}, 0, options.start_index))
 	end

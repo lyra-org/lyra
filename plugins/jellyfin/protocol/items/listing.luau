@@ -782,6 +782,9 @@ function module.each_genre_batch(options: ItemsQueryOptions, emit: Emit): (numbe
 			cover_infos[genre.id]
 		)
 		if item then
+			if options.include_can_delete then
+				item.CanDelete = false
+			end
 			table.insert(items, item)
 		end
 	end
@@ -1026,8 +1029,9 @@ function module.find_genre_by_name(name: string, user_id: string): ItemInfo?
 	end)
 end
 
--- `with_provider_ids` adds ProviderIds and ExternalUrls, as single-item responses carry.
-function module.find_item_by_id(item_id: string?, user_id: string?, with_provider_ids: boolean?): ItemInfo?
+-- `response` asks for the item as single-item responses carry it, with every field: ProviderIds,
+-- ExternalUrls and CanDelete, which depends on whether the caller is an admin.
+function module.find_item_by_id(item_id: string?, user_id: string?, response: { is_admin: boolean }?): ItemInfo?
 	local item_hex_id = item_ids.encode(item_id)
 	if not item_hex_id then
 		return nil
@@ -1041,8 +1045,10 @@ function module.find_item_by_id(item_id: string?, user_id: string?, with_provide
 	options.include_people = true
 	options.include_overview = true
 	options.include_parent_id = true
-	options.include_provider_ids = with_provider_ids == true
-	options.include_external_urls = with_provider_ids == true
+	options.include_provider_ids = response ~= nil
+	options.include_external_urls = response ~= nil
+	options.include_can_delete = response ~= nil
+	options.is_admin = response ~= nil and response.is_admin
 	options.group_items = false
 	options.user_id = user_id
 	return (module.list_items(options))[1]

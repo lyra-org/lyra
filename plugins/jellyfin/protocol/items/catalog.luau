@@ -2049,6 +2049,13 @@ function helpers.build_realization_context(stubs: { ItemInfo }, options: ItemsQu
 	return context
 end
 
+-- Whether the caller may delete the stub's item, as the item delete route decides: only playlists
+-- delete.
+function helpers.can_delete(stub: ItemInfo, options: ItemsQueryOptions): boolean
+	return stub._type == "playlist"
+		and playlist_access.can_delete(helpers.playlist_info_from_raw(stub._raw), options.user_id, options.is_admin)
+end
+
 function helpers.realize_stubs(stubs: { ItemInfo }, options: ItemsQueryOptions): { ItemInfo }
 	local items: { ItemInfo } = {}
 	local user_id = options.user_id
@@ -2084,6 +2091,9 @@ function helpers.realize_stubs(stubs: { ItemInfo }, options: ItemsQueryOptions):
 		if item then
 			if context.item_provider_ids then
 				provider_ids.apply(item, context.item_provider_ids)
+			end
+			if options.include_can_delete then
+				item.CanDelete = helpers.can_delete(stub, options)
 			end
 			table.insert(items, item)
 		end

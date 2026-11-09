@@ -72,11 +72,14 @@ export type ItemsQueryOptions = {
 	include_child_count: boolean,
 	include_provider_ids: boolean,
 	include_external_urls: boolean,
+	include_can_delete: boolean,
 	group_items: boolean,
 	-- Resume listings: only the items holding a resume position, the most recently saved first,
 	-- whatever `SortBy` asks.
 	resume: boolean,
 	user_id: string?,
+	-- Whether that user is an admin, who deletes any playlist it sees.
+	is_admin: boolean,
 	_favorite_id_lookup: FavoriteLookup?,
 	_genre_infos_by_release_id: { [string]: { genres.GenreInfo } }?,
 	_tag_infos_by_item_id: TagInfoMap?,
@@ -255,18 +258,21 @@ function module.parse(query: ApiQueryParams?): ItemsQueryOptions
 		include_child_count = requests_field(fields, "childcount"),
 		include_provider_ids = requests_field(fields, "providerids"),
 		include_external_urls = requests_field(fields, "externalurls"),
+		include_can_delete = requests_field(fields, "candelete"),
 		group_items = parse_bool(query, { "GroupItems" }, true) ~= false,
 		resume = false,
 		user_id = nil,
+		is_admin = false,
 		_favorite_id_lookup = nil,
 		_genre_infos_by_release_id = nil,
 		_tag_infos_by_item_id = nil,
 	}
 end
 
-function module.for_user(options: ItemsQueryOptions, user_id: string): ItemsQueryOptions
+function module.for_user(options: ItemsQueryOptions, user_id: string, is_admin: boolean?): ItemsQueryOptions
 	local scoped = table.clone(options)
 	scoped.user_id = user_id
+	scoped.is_admin = is_admin == true
 	return scoped
 end
 

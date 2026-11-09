@@ -26,7 +26,7 @@ local module = {}
 
 local function listing_options(ctx: ApiContext, principal: session.Principal): items_options.ItemsQueryOptions
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	return items_options.for_user(items_options.parse(query), principal.user_id)
+	return items_options.for_user(items_options.parse(query), principal.user_id, session.is_admin(principal))
 end
 
 -- `/Artists` lists artists credited in any role.

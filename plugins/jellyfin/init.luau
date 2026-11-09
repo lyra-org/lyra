@@ -136,6 +136,7 @@ local function root_folder_json(user_id: string): JsonObject
 		IsFolder = true,
 		ServerId = SERVER_ID,
 		ChildCount = #views,
+		CanDelete = false,
 		LocationType = "FileSystem",
 		MediaType = "Unknown",
 		UserData = user_data.user_data_to_json(user_data.get_user_data({
@@ -146,6 +147,13 @@ local function root_folder_json(user_id: string): JsonObject
 			include_play_count = false,
 		})),
 	}
+end
+
+-- A single-item response carries every field, `CanDelete` among them.
+local function playlists_folder_json(): JsonObject
+	local folder = catalog.playlists_folder_item(nil)
+	folder.CanDelete = false
+	return catalog.item_to_json(folder)
 end
 
 local function empty_query_result(): JsonObject
@@ -434,7 +442,7 @@ api.get(P .. "/Users/Me", function(ctx: ApiContext)
 end, { auth = "public", case_insensitive = true })
 local function respond_with_user_views(ctx: ApiContext, principal: session.Principal): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = items_options.for_user(items_options.parse(query), principal.user_id)
+	local options = items_options.for_user(items_options.parse(query), principal.user_id, session.is_admin(principal))
 	-- Upstream's views take no `SortBy`; they come in the caller's order.
 	options.sort_by = {}
 	local include_hidden = string.lower(
@@ -503,7 +511,7 @@ api.get(P .. "/Items/Root", handle_root_folder_route, { auth = "public", case_in
 api.get(P .. "/Users/{userId}/Items/Root", handle_root_folder_route, { auth = "public", case_insensitive = true })
 local function respond_with_items_listing(ctx: ApiContext, principal: session.Principal): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = items_options.for_user(items_options.parse(query), principal.user_id)
+	local options = items_options.for_user(items_options.parse(query), principal.user_id, session.is_admin(principal))
 	if items_options.has_conflicting_filters(options) then
 		return responses.bad_request("Conflicting filters")
 	end
@@ -576,7 +584,7 @@ local function respond_with_instant_mix(ctx: ApiContext, raw_item_id: string?): 
 	end
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = items_options.for_user(items_options.parse(query), principal.user_id)
+	local options = items_options.for_user(items_options.parse(query), principal.user_id, session.is_admin(principal))
 	local items, total_count, start_index, found = instant_mix.list_instant_mix_audio(item_id, options)
 	if not found then
 		return responses.not_found("item not found")
@@ -613,7 +621,7 @@ local function handle_instant_mix_genre_name_route(ctx: ApiContext): ApiResponse
 	end
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = items_options.for_user(items_options.parse(query), principal.user_id)
+	local options = items_options.for_user(items_options.parse(query), principal.user_id, session.is_admin(principal))
 	local items, total_count, start_index, found = instant_mix.list_instant_mix_audio_from_genre_name(name, options)
 	if not found then
 		return responses.not_found("genre not found")
@@ -651,10 +659,14 @@ api.get(P .. "/Users/{userId}/Items/{itemId}", function(ctx: ApiContext)
 		return responses.bad_request("missing item id")
 	end
 	if constants.is_playlists_folder_id(raw_item_id) then
-		return api.response.json(200, catalog.item_to_json(catalog.playlists_folder_item(nil)))
+		return api.response.json(200, playlists_folder_json())
 	end
 
-	local item = listing.find_item_by_id(item_ids.decode(raw_item_id), principal.user_id, true)
+	local item = listing.find_item_by_id(
+		item_ids.decode(raw_item_id),
+		principal.user_id,
+		{ is_admin = session.is_admin(principal) }
+	)
 	if not item then
 		return responses.not_found("item not found")
 	end
@@ -679,10 +691,11 @@ api.get(P .. "/Items/{id}", function(ctx: ApiContext)
 		return api.response.json(200, root_folder_json(principal.user_id))
 	end
 	if constants.is_playlists_folder_id(raw_id) then
-		return api.response.json(200, catalog.item_to_json(catalog.playlists_folder_item(nil)))
+		return api.response.json(200, playlists_folder_json())
 	end
 
-	local item = listing.find_item_by_id(item_ids.decode(raw_id), principal.user_id, true)
+	local item =
+		listing.find_item_by_id(item_ids.decode(raw_id), principal.user_id, { is_admin = session.is_admin(principal) })
 	if not item then
 		return responses.not_found("item not found")
 	end
@@ -859,7 +872,7 @@ local function handle_studios_route(ctx: ApiContext): ApiResponse
 	end
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = items_options.for_user(items_options.parse(query), principal.user_id)
+	local options = items_options.for_user(items_options.parse(query), principal.user_id, session.is_admin(principal))
 	local empty_items = {}
 	return api.response.json(200, catalog.build_item_query_result(empty_items, 0, options.start_index))
 end
@@ -1133,7 +1146,7 @@ local function respond_with_filters(ctx: ApiContext, legacy: boolean): ApiRespon
 	end
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options = items_options.for_user(items_options.parse(query), principal.user_id)
+	local options = items_options.for_user(items_options.parse(query), principal.user_id, session.is_admin(principal))
 	local values = filters.collect(options)
 	return api.response.json(
 		200,
