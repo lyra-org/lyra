@@ -28,7 +28,13 @@ use crate::services::{
     STATE,
     libraries::MediaRoots,
 };
-use lyra_db::Track;
+use lyra_db::{
+    Track,
+    covers::{
+        CoverSource,
+        SourcedCover,
+    },
+};
 
 use super::{
     folders::{
@@ -57,13 +63,21 @@ pub(crate) fn configured_cover_dir_for_playlist(covers_root: &Path, playlist_id:
         .join(playlist_id.0.to_string())
 }
 
-/// The files of the owner's stored covers, for [`any_cover_file`] once the read is over.
+/// Whether the stored cover is the local one at `rejected_local`, which is not to count.
+fn is_rejected_local(sourced: &SourcedCover, rejected_local: Option<&Path>) -> bool {
+    sourced.source == CoverSource::Local && rejected_local == Some(Path::new(&sourced.cover.path))
+}
+
+/// The files of the owner's stored covers, for [`any_cover_file`] once the read is over, leaving
+/// out a local cover known not to be the owner's.
 pub(crate) fn stored_cover_files(
     db: &impl lyra_db::DbAccess,
     owner_db_id: DbId,
+    rejected_local: Option<&Path>,
 ) -> Result<Vec<PathBuf>> {
     Ok(lyra_db::covers::sources(db, owner_db_id)?
         .into_iter()
+        .filter(|sourced| !is_rejected_local(sourced, rejected_local))
         .map(|sourced| PathBuf::from(sourced.cover.path))
         .collect())
 }
@@ -79,10 +93,16 @@ pub(crate) async fn search_cover_files(files: Vec<PathBuf>) -> Result<bool> {
         .context("cover file search task panicked")
 }
 
-/// Whether the owner has a stored cover from any source whose file is there.
-pub(crate) fn has_stored_cover(db: &impl lyra_db::DbAccess, owner_db_id: DbId) -> Result<bool> {
+/// Whether the owner has a stored cover from any source whose file is there, other than a local
+/// cover known not to be the owner's.
+pub(crate) fn has_stored_cover(
+    db: &impl lyra_db::DbAccess,
+    owner_db_id: DbId,
+    rejected_local: Option<&Path>,
+) -> Result<bool> {
     Ok(lyra_db::covers::sources(db, owner_db_id)?
         .iter()
+        .filter(|sourced| !is_rejected_local(sourced, rejected_local))
         .any(|sourced| Path::new(&sourced.cover.path).is_file()))
 }
 

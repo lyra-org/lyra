@@ -308,6 +308,50 @@ struct ProviderSyncBasis {
     owner_public_id: String,
     /// The stored provider cover's file, which a user's choice made meanwhile would change.
     provider_cover: Option<String>,
+    /// A stored local cover that didn't stand in for a cover when the sync decided to fetch.
+    discounted_local: Option<DiscountedLocal>,
+}
+
+impl ProviderSyncBasis {
+    fn discounting_local(mut self, discounted_local: Option<DiscountedLocal>) -> Self {
+        self.discounted_local = discounted_local;
+        self
+    }
+}
+
+/// A local cover rejected when a provider sync started, with what it takes to judge it again once
+/// the download is in, as a merge meanwhile can make it the release's after all.
+#[derive(Clone)]
+struct DiscountedLocal {
+    path: PathBuf,
+    folders: Arc<AudioFolders>,
+    library_root: Option<PathBuf>,
+}
+
+impl DiscountedLocal {
+    fn of(
+        path: Option<PathBuf>,
+        folders: &Arc<AudioFolders>,
+        library_root: Option<&Path>,
+    ) -> Option<Self> {
+        path.map(|path| Self {
+            path,
+            folders: folders.clone(),
+            library_root: library_root.map(Path::to_path_buf),
+        })
+    }
+
+    fn still_rejected(&self, db: &agdb::DbAny, owner_id: DbId) -> Result<bool> {
+        let tracks = lyra_db::tracks::get_direct(db, owner_id)?;
+        let dirs = cover_dirs_for_release(
+            db,
+            &self.folders,
+            owner_id,
+            &tracks,
+            self.library_root.as_deref(),
+        )?;
+        Ok(dirs.rejects(&self.folders, &self.path))
+    }
 }
 
 /// The basis on which an automatic provider sync may fetch a cover for the owner: never for a
@@ -334,6 +378,7 @@ fn provider_sync_basis(
         owner_public_id: owner_public_id.to_string(),
         provider_cover: lyra_db::covers::get_source(db, owner_id, CoverSource::Provider)?
             .map(|cover| cover.path),
+        discounted_local: None,
     }))
 }
 
@@ -345,7 +390,7 @@ pub(crate) async fn artist_cover_wanted(
     artist_public_id: &str,
     options: CoverSyncOptions,
 ) -> Result<bool> {
-    let files = stored_cover_files(&*db.read().await, artist_id)?;
+    let files = stored_cover_files(&*db.read().await, artist_id, None)?;
     let has_cover = search_cover_files(files).await?;
     let db_read = db.read().await;
     Ok(provider_sync_basis(&db_read, artist_id, artist_public_id, has_cover, options)?.is_some())
@@ -360,8 +405,16 @@ fn provider_sync_still_allowed(db: &agdb::DbAny, basis: &ProviderSyncBasis) -> R
         return Ok(false);
     }
     // Under the write guard, since a cover arriving during the download must win.
-    if basis.options.update != CoverUpdate::Replace && has_stored_cover(db, basis.owner_id)? {
-        return Ok(false);
+    if basis.options.update != CoverUpdate::Replace {
+        let rejected_local = match &basis.discounted_local {
+            Some(discounted) if discounted.still_rejected(db, basis.owner_id)? => {
+                Some(discounted.path.as_path())
+            }
+            _ => None,
+        };
+        if has_stored_cover(db, basis.owner_id, rejected_local)? {
+            return Ok(false);
+        }
     }
     let provider_cover = lyra_db::covers::get_source(db, basis.owner_id, CoverSource::Provider)?
         .map(|cover| cover.path);
@@ -397,7 +450,7 @@ async fn save_provider_cover(
 
 pub(crate) async fn sync_release_cover_for_tracks(
     db: &lyra_db::DbAsync,
-    folders: &AudioFolders,
+    folders: &Arc<AudioFolders>,
     tracks: &[Track],
     release: &Release,
     artists: &[Artist],
@@ -409,12 +462,16 @@ pub(crate) async fn sync_release_cover_for_tracks(
     };
 
     let schemes = id_schemes().await;
-    let (dirs, files, roots) = {
+    let (dirs, files, rejected_local, roots) = {
         let db_read = db.read().await;
+        let dirs =
+            cover_dirs_for_release(&db_read, folders, release_id, tracks, paths.library_root)?;
+        let rejected_local = rejected_local_file(&*db_read, release_id, &dirs, folders)?;
+        let files = stored_cover_files(&*db_read, release_id, rejected_local.as_deref())?;
         (
-            cover_dirs_for_release(&db_read, folders, release_id, tracks, paths.library_root)?
-                .owned,
-            stored_cover_files(&*db_read, release_id)?,
+            dirs.owned,
+            files,
+            rejected_local,
             MediaRoots::for_principal(&*db_read, None)?.for_covers(),
         )
     };
@@ -425,7 +482,14 @@ pub(crate) async fn sync_release_cover_for_tracks(
         let sorted_providers = active_providers(&db_read)?;
         let library = library_for_release(&db_read, release_id)?;
         let external_ids = cover_external_ids(&db_read, release_id, &schemes)?;
-        let basis = provider_sync_basis(&db_read, release_id, &release.id, has_cover, options)?;
+        let basis = provider_sync_basis(&db_read, release_id, &release.id, has_cover, options)?
+            .map(|basis| {
+                basis.discounting_local(DiscountedLocal::of(
+                    rejected_local,
+                    folders,
+                    paths.library_root,
+                ))
+            });
 
         let release_context =
             release_context_value(release, tracks, artists, &external_ids, library.as_ref())?;
@@ -514,7 +578,7 @@ pub(crate) async fn sync_artist_cover(
     };
 
     let schemes = id_schemes().await;
-    let files = stored_cover_files(&*db.read().await, artist_id)?;
+    let files = stored_cover_files(&*db.read().await, artist_id, None)?;
     let has_cover = search_cover_files(files).await?;
     let (basis, provider_contexts) = {
         let db_read = db.read().await;
@@ -698,6 +762,20 @@ struct ResolvedCovers {
 struct RejectedLocalCover {
     stored: StoredCover,
     evidence: Vec<PathBuf>,
+}
+
+/// The file of the release's stored local cover, if `dirs` rejects it.
+fn rejected_local_file(
+    db: &impl lyra_db::DbAccess,
+    release_id: DbId,
+    dirs: &CoverDirs,
+    folders: &AudioFolders,
+) -> Result<Option<PathBuf>> {
+    Ok(
+        lyra_db::covers::get_source(db, release_id, CoverSource::Local)?
+            .map(|cover| PathBuf::from(cover.path))
+            .filter(|path| dirs.rejects(folders, path)),
+    )
 }
 
 impl RejectedLocalCover {
@@ -943,14 +1021,14 @@ pub(crate) async fn sync_release_covers_for_library(
     cancel: &CancellationToken,
 ) -> Result<usize> {
     let schemes = id_schemes().await;
-    let (sorted_providers, searches, roots) = {
+    let (sorted_providers, searches, roots, folders) = {
         let db_read = db.read().await;
         let sorted_providers = active_providers(&db_read)?.only(provider_filter);
         if sorted_providers.is_empty() {
             return Ok(0);
         }
 
-        let folders = AudioFolders::of_library(&*db_read, library_id)?;
+        let folders = Arc::new(AudioFolders::of_library(&*db_read, library_id)?);
         let mut searches = Vec::new();
         for release in lyra_db::releases::get(&db_read, library_id)? {
             let Some(release_id) = release.db_id.map(Into::<DbId>::into) else {
@@ -964,22 +1042,25 @@ pub(crate) async fn sync_release_covers_for_library(
             else {
                 continue;
             };
-            let files = stored_cover_files(&*db_read, release_id)?;
-            searches.push(((release_id, release.id, files), dirs.owned));
+            let rejected_local = rejected_local_file(&*db_read, release_id, &dirs, &folders)?;
+            let files = stored_cover_files(&*db_read, release_id, rejected_local.as_deref())?;
+            searches.push(((release_id, release.id, files, rejected_local), dirs.owned));
         }
 
         let roots = MediaRoots::for_principal(&*db_read, None)?.for_covers();
-        (sorted_providers, searches, roots)
+        (sorted_providers, searches, roots, folders)
     };
     let searched = search_local_covers(searches, roots).await?;
     let searched = tokio::task::spawn_blocking(move || {
         searched
             .into_par_iter()
-            .filter_map(|((release_id, public_id, files), local_cover)| {
-                let local_cover = local_cover.ok()?;
-                let has_cover = local_cover.is_some() || any_cover_file(&files);
-                Some((release_id, public_id, has_cover))
-            })
+            .filter_map(
+                |((release_id, public_id, files, rejected_local), local_cover)| {
+                    let local_cover = local_cover.ok()?;
+                    let has_cover = local_cover.is_some() || any_cover_file(&files);
+                    Some((release_id, public_id, has_cover, rejected_local))
+                },
+            )
             .collect::<Vec<_>>()
     })
     .await
@@ -988,14 +1069,22 @@ pub(crate) async fn sync_release_covers_for_library(
     let resolve_contexts = {
         let db_read = db.read().await;
         let mut contexts = Vec::new();
-        for (release_id, public_id, has_cover) in searched {
+        for (release_id, public_id, has_cover, rejected_local) in searched {
             let Some(release) = lyra_db::releases::get_by_id(&db_read, release_id)?
                 .filter(|release| release.id == public_id)
             else {
                 continue;
             };
             let Some(basis) =
-                provider_sync_basis(&db_read, release_id, &release.id, has_cover, options)?
+                provider_sync_basis(&db_read, release_id, &release.id, has_cover, options)?.map(
+                    |basis| {
+                        basis.discounting_local(DiscountedLocal::of(
+                            rejected_local,
+                            &folders,
+                            paths.library_root,
+                        ))
+                    },
+                )
             else {
                 continue;
             };
@@ -1624,7 +1713,7 @@ mod tests {
 
         let synced = sync_release_cover_for_tracks(
             &db,
-            &AudioFolders::default(),
+            &Arc::default(),
             &[],
             &release,
             &[],
@@ -2390,6 +2479,138 @@ mod tests {
                 "a folder this library has no entries for is no evidence"
             );
         }
+        Ok(())
+    }
+
+    /// Two releases sharing `Mix`, the winner with a local cover from it, which the folders reject.
+    struct DisputedCover {
+        db: lyra_db::DbAsync,
+        root: tempfile::TempDir,
+        library: DbId,
+        winner: DbId,
+        loser: DbId,
+        public_id: String,
+        cover: PathBuf,
+    }
+
+    impl DisputedCover {
+        async fn new() -> anyhow::Result<Self> {
+            let db = lyra_db::DbAsync::new(new_test_db()?);
+            let root = tempfile::tempdir()?;
+            let cover = root.path().join("Mix/cover.png");
+            std_fs::create_dir_all(cover.parent().expect("parent"))?;
+            std_fs::write(&cover, PNG_1X1)?;
+            let (library, winner, loser) = {
+                let mut db_write = db.write().await;
+                let library = lyra_db::test_db::insert_library(
+                    &mut db_write,
+                    "Music",
+                    root.path().to_str().expect("UTF-8 temp path"),
+                )?;
+                let winner = insert_release(&mut db_write, "Winner")?;
+                let loser = insert_release(&mut db_write, "Loser")?;
+                for (release, name) in [(winner, "one.flac"), (loser, "two.flac")] {
+                    lyra_db::fixtures::connect(&mut db_write, library, release)?;
+                    insert_library_track(
+                        &mut db_write,
+                        library,
+                        release,
+                        &root.path().join("Mix").join(name),
+                    )?;
+                }
+                (library, winner, loser)
+            };
+            let public_id = release_public_id(&db, winner).await?;
+            upsert_local_cover_metadata(&db, winner, &public_id, &cover).await?;
+            Ok(Self {
+                db,
+                root,
+                library,
+                winner,
+                loser,
+                public_id,
+                cover,
+            })
+        }
+
+        /// What a sync decides on before downloading, discounting the cover if the folders do.
+        async fn basis(&self) -> anyhow::Result<ProviderSyncBasis> {
+            let db_read = self.db.read().await;
+            let folders = Arc::new(AudioFolders::of_library(&*db_read, self.library)?);
+            let tracks = lyra_db::tracks::get_direct(&db_read, self.winner)?;
+            let root = Some(self.root.path());
+            let dirs = cover_dirs_for_release(&db_read, &folders, self.winner, &tracks, root)?;
+            let rejected = rejected_local_file(&*db_read, self.winner, &dirs, &folders)?;
+            assert_eq!(rejected.as_deref(), Some(self.cover.as_path()));
+            Ok(provider_sync_basis(
+                &db_read,
+                self.winner,
+                &self.public_id,
+                false,
+                CoverSyncOptions::default(),
+            )?
+            .expect("no cover seen")
+            .discounting_local(DiscountedLocal::of(rejected, &folders, root)))
+        }
+
+        async fn save(&self, basis: &ProviderSyncBasis) -> anyhow::Result<Option<PathBuf>> {
+            let covers_root = self.root.path().join("covers");
+            save_provider_cover(
+                &self.db,
+                &covers_root,
+                basis,
+                &configured_cover_dir_for_release(&covers_root, self.winner),
+                "provider",
+                "png",
+                PNG_1X1,
+            )
+            .await
+        }
+
+        async fn merge(&self) -> anyhow::Result<()> {
+            self.db.write().await.transaction_mut(|t| {
+                crate::services::providers::merge_release_into_inside_tx(t, self.winner, self.loser)
+            })?;
+            Ok(())
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_rejected_local_cover_gives_way_to_a_provider_download() -> anyhow::Result<()> {
+        let disputed = DisputedCover::new().await?;
+        let mut undiscounted = disputed.basis().await?;
+        undiscounted.discounted_local = None;
+        assert!(
+            disputed.save(&undiscounted).await?.is_none(),
+            "a local cover not discounted wins over the download"
+        );
+
+        let basis = disputed.basis().await?;
+        assert!(disputed.save(&basis).await?.is_some());
+        assert!(
+            disputed.save(&basis).await?.is_none(),
+            "the provider cover now stored still counts"
+        );
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_merge_during_a_download_makes_the_local_cover_count_again() -> anyhow::Result<()> {
+        let disputed = DisputedCover::new().await?;
+        let basis = disputed.basis().await?;
+
+        disputed.merge().await?;
+        let saved = disputed.save(&basis).await?;
+
+        assert!(saved.is_none(), "the local cover is valid again");
+        assert!(
+            lyra_db::covers::get_source(
+                &*disputed.db.read().await,
+                disputed.winner,
+                CoverSource::Provider
+            )?
+            .is_none()
+        );
         Ok(())
     }
 

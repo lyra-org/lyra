@@ -152,7 +152,7 @@ async fn sync_cover_for_refreshed_entity(
                 release.zip(folders).map(|(release, folders)| {
                     let tracks = lyra_db::tracks::get_direct(&db, node_id).unwrap_or_default();
                     let artists = lyra_db::artists::get(&db, node_id).unwrap_or_default();
-                    (release, tracks, artists, folders)
+                    (release, tracks, artists, std::sync::Arc::new(folders))
                 })
             }) else {
                 return Ok(());

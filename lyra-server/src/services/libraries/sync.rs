@@ -466,6 +466,7 @@ pub(crate) async fn sync_library_pipeline(
     } else {
         AudioFolders::of_libraries(&*db.read().await, std::slice::from_ref(library))?
     };
+    let audio_folders = Arc::new(audio_folders);
     let artifact_scope = ArtifactScope {
         db,
         library_db_id,
@@ -1070,7 +1071,7 @@ struct ArtifactScope<'a> {
     db: &'a DbAsync,
     library_db_id: DbId,
     library_path: &'a Path,
-    audio_folders: &'a AudioFolders,
+    audio_folders: &'a Arc<AudioFolders>,
 }
 
 struct ReleaseArtifactContext<'a> {
@@ -1459,7 +1460,7 @@ async fn dispatch_release_lyrics(
 
 async fn sync_provider_release_cover(
     context: &ReleaseArtifactContext<'_>,
-    audio_folders: &AudioFolders,
+    audio_folders: &Arc<AudioFolders>,
     options: CoverSyncOptions,
 ) {
     let started = Instant::now();
@@ -3373,6 +3374,140 @@ FILE "album.flac" WAVE
         assert_eq!(local_cover_of(&first, &kept).await?, expected, "the scan");
         let _ = std::fs::remove_dir_all(first_root);
         let _ = std::fs::remove_dir_all(second_root);
+        Ok(())
+    }
+
+    /// Serves a decodable image to every request until aborted, and returns its URL.
+    async fn cover_server() -> anyhow::Result<(String, tokio::task::JoinHandle<()>)> {
+        use tokio::io::{
+            AsyncReadExt,
+            AsyncWriteExt,
+        };
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let url = format!("http://{}/cover.png", listener.local_addr()?);
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::RgbImage::from_pixel(2, 2, image::Rgb([200, 0, 0]))
+            .write_to(&mut png, image::ImageFormat::Png)?;
+        let png = png.into_inner();
+        let server = tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut request = vec![0; 4096];
+                let _ = socket.read(&mut request).await;
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    png.len()
+                );
+                let _ = socket.write_all(head.as_bytes()).await;
+                let _ = socket.write_all(&png).await;
+            }
+        });
+        Ok((url, server))
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_rejected_local_cover_makes_way_for_the_provider_s_in_one_pass() -> anyhow::Result<()>
+    {
+        use crate::services::{
+            providers::{
+                ProviderCoverSpec,
+                provider_registry,
+            },
+            testing::{
+                FakePluginDispatch,
+                FakeResponse,
+            },
+        };
+        use lyra_db::covers::CoverSource;
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cover-provider-asked").await?;
+        let (one, two, manual) = (
+            root.join("Mix/one.flac"),
+            root.join("Mix/two.flac"),
+            root.join("Mix/three.flac"),
+        );
+        tagged_file(&one, &("One", 1, None, None))?;
+        tagged_file(&two, &("Two", 1, None, None))?;
+        tagged_file(&manual, &("Three", 1, None, None))?;
+        let wrong = root.join("Mix/cover.png");
+        std::fs::write(&wrong, PNG_1X1)?;
+        sync(&library).await?;
+        let (first, second, third) = (
+            sole_release_of(&library, &one).await?,
+            sole_release_of(&library, &two).await?,
+            sole_release_of(&library, &manual).await?,
+        );
+        let elsewhere = tempfile::tempdir()?;
+        let manual_file = elsewhere.path().join("manual.png");
+        std::fs::write(&manual_file, PNG_1X1)?;
+        store_cover(third, CoverSource::Manual, &manual_file).await?;
+        for release in [first, second, third] {
+            store_cover(release, CoverSource::Local, &wrong).await?;
+        }
+
+        let (url, server) = cover_server().await?;
+        let dispatch = FakePluginDispatch::install();
+        let handler = dispatch
+            .register_artist_cover_handler(
+                "release_covers",
+                FakeResponse::Value(serde_json::json!({ "url": url })),
+            )
+            .await?;
+        provider_registry().write().await.set_cover_handler(
+            "release_covers",
+            crate::services::EntityType::Release,
+            ProviderCoverSpec {
+                timeout: Duration::from_secs(5),
+                require: Default::default(),
+                handler,
+            },
+        );
+        let provider_cover = async |release: DbId| -> anyhow::Result<bool> {
+            let db = STATE.db.read().await;
+            Ok(lyra_db::covers::get_source(&*db, release, CoverSource::Provider)?.is_some())
+        };
+
+        let covers_root = configured_covers_root();
+        let paths = CoverPaths {
+            library_root: Some(&library.path),
+            covers_root: &covers_root,
+        };
+        let (found, tracks, folders) = {
+            let db = STATE.db.read().await;
+            (
+                lyra_db::releases::get_by_id(&db, first)?.expect("release"),
+                lyra_db::tracks::get_direct(&db, first)?,
+                Arc::new(AudioFolders::of_release(&*db, first)?),
+            )
+        };
+        let synced = sync_release_cover_for_tracks(
+            &STATE.db.get(),
+            &folders,
+            &tracks,
+            &found,
+            &[],
+            paths,
+            CoverSyncOptions::default(),
+        )
+        .await?;
+        assert!(synced, "the single release's cover is downloaded");
+        assert!(provider_cover(first).await?);
+
+        refresh_release_covers(&library).await?;
+        server.abort();
+        assert!(provider_cover(second).await?, "the whole-library pass");
+        assert_eq!(
+            local_cover_of(&library, &two).await?,
+            None,
+            "dropped in the same pass, leaving no gap"
+        );
+        assert!(
+            !provider_cover(third).await?,
+            "a manual cover still counts as having one"
+        );
+        let _ = std::fs::remove_dir_all(root);
         Ok(())
     }
 
