@@ -25,7 +25,7 @@ local function served_hash(id: string, api_key: string?): string?
 			query = if api_key then { api_key = { api_key } } else {},
 			body_raw = "",
 		},
-		params = { imageId = item_ids.encode_jellyfin_item_id(id) },
+		params = { imageId = item_ids.encode(id) },
 	} :: any) :: any
 	return if response.kind == "cover" then hash_by_id[response.cover_id] else nil
 end

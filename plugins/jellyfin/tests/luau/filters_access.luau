@@ -4,9 +4,9 @@ local filters = require("../../protocol/items/filters")
 local item_ids = require("../../protocol/items/identifiers")
 local options = require("../../protocol/items/options")
 
-local open_library = item_ids.nanoid_to_hex(fixture.libraries.open) :: string
-local closed_library = item_ids.nanoid_to_hex(fixture.libraries.closed) :: string
-local unknown_item = item_ids.nanoid_to_hex("NoSuchItemAnywhere000") :: string
+local open_library = item_ids.encode(fixture.libraries.open) :: string
+local closed_library = item_ids.encode(fixture.libraries.closed) :: string
+local unknown_item = item_ids.encode("NoSuchItemAnywhere000") :: string
 
 local function collect(params: { [string]: string }): filters.FilterValues?
 	local raw: { [string]: { string } } = {}

@@ -5,7 +5,7 @@ local item_ids = require("../../protocol/items/identifiers")
 local ids = fixture.ids
 
 local function request(method: string, id: string, body: string?, file_name: string?): any
-	local item_id = item_ids.encode_jellyfin_item_id(id)
+	local item_id = item_ids.encode(id)
 	local query: { [string]: { string } } = { api_key = { fixture.api_keys.phone } }
 	if file_name then
 		query.fileName = { file_name }

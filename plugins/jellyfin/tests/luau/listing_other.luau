@@ -10,7 +10,7 @@ local options = require("../../protocol/items/options")
 local ids = fixture.ids
 
 local function hex(id: string): string
-	return item_ids.encode_jellyfin_item_id(id)
+	return item_ids.encode(id)
 end
 
 -- `Name:Type` for each item `/Items` returns, then its total.

@@ -11,7 +11,7 @@ type Params = { [string]: string }
 local ids = fixture.ids
 
 local function hex(id: string): string
-	return item_ids.encode_jellyfin_item_id(id)
+	return item_ids.encode(id)
 end
 
 local function parsed(params: Params): options.ItemsQueryOptions

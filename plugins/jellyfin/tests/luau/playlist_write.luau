@@ -8,11 +8,11 @@ local session = require("../../protocol/session")
 
 local ids = fixture.ids
 local function hex(id: string): string
-	return item_ids.encode_jellyfin_item_id(id) :: string
+	return item_ids.encode(id) :: string
 end
 local s1, s2, h1, album = hex(ids.s1), hex(ids.s2), hex(ids.h1), hex(ids.solo)
 local nothing = string.rep("a", 32)
-assert(item_ids.decode_jellyfin_item_id(nothing) ~= nil, "a well-formed id")
+assert(item_ids.decode(nothing) ~= nil, "a well-formed id")
 
 local function context(params: { [string]: string }, query: { [string]: { string } }, body: { [string]: any }?): any
 	return {
@@ -45,7 +45,7 @@ end
 
 local function create(requested: { string }): (number, string?, string?)
 	local response = session.handle_create_playlist_route(context({}, {}, { Name = "New", Ids = requested })) :: any
-	local id = if response.status == 200 then item_ids.decode_jellyfin_item_id(response.body.Id) else nil
+	local id = if response.status == 200 then item_ids.decode(response.body.Id) else nil
 	return response.status, if id then tracks_of(id) else nil, if response.body then response.body.Message else nil
 end
 

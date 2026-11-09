@@ -24,7 +24,7 @@ local function image_status(id: number): number
 	local response = session.handle_primary_image_request({
 		plugin_id = "jellyfin",
 		request = { method = "GET", path = "/", headers = {}, query = {}, body_raw = "" },
-		params = { imageId = item_ids.encode_jellyfin_item_id(id) },
+		params = { imageId = item_ids.encode(id) },
 	} :: any)
 	return if response.kind == "cover" then 200 else response.status
 end
@@ -56,7 +56,7 @@ assert(genre_image_status("Jazz") == 404, "by name either")
 
 local by_id = list(listing.list_items, {
 	IncludeItemTypes = "MusicGenre",
-	Ids = item_ids.encode_jellyfin_item_id(fixture.ids.rock) :: string,
+	Ids = item_ids.encode(fixture.ids.rock) :: string,
 })
 assert_covered(by_id.Rock, "a genre looked up by id")
 

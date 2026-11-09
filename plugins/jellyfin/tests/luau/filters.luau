@@ -42,11 +42,11 @@ check(values({ IncludeItemTypes = "MusicAlbum" }), "Blues,jazz,Rock|Favourite|",
 check(values({ IncludeItemTypes = "Audio" }), "Blues,jazz,Rock|Vinyl,favourite|2001,2009", "tags order ordinally")
 check(values({ IncludeItemTypes = "MusicArtist" }), "|Band|", "artists carry tags only")
 check(
-	values({ IncludeItemTypes = "Audio", ParentId = item_ids.encode_jellyfin_item_id(ids.solo) }),
+	values({ IncludeItemTypes = "Audio", ParentId = item_ids.encode(ids.solo) }),
 	"jazz,Rock|favourite|2001",
 	"under an album"
 )
-check(values({ ParentId = item_ids.encode_jellyfin_item_id(ids.s1) }), "none", "a track is no folder")
+check(values({ ParentId = item_ids.encode(ids.s1) }), "none", "a track is no folder")
 check(values({ IncludeItemTypes = "Playlist" }), "||", "no music item type")
 
 -- The legacy route answers names; the newer one gives genres their ids, for one music type only.
@@ -61,7 +61,7 @@ do
 
 	local albums = filters.to_json(collect({ IncludeItemTypes = { "MusicAlbum" } }), { "MusicAlbum" }) :: any
 	check(albums.Genres[1].Name, "Blues", "the first genre")
-	check(albums.Genres[1].Id, item_ids.encode_jellyfin_item_id(ids.blues), "a genre's id")
+	check(albums.Genres[1].Id, item_ids.encode(ids.blues), "a genre's id")
 	local mixed = filters.to_json(collect({}), {}) :: any
 	assert(#mixed.Genres == 0, "no music genres without a single music type")
 	check(table.concat(mixed.Tags, ","), "Band,Favourite,Vinyl", "tags")

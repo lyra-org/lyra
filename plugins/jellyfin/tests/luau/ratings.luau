@@ -13,7 +13,7 @@ local ids = fixture.ids
 local AUTHORIZATION = `MediaBrowser Token="{fixture.api_keys.phone}"`
 
 local function hex(id: string): string
-	return item_ids.encode_jellyfin_item_id(id) :: string
+	return item_ids.encode(id) :: string
 end
 
 local function context(method: string, key: string, query: { [string]: string }?, body: any?): any

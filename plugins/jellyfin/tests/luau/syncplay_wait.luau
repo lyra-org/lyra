@@ -76,7 +76,7 @@ received("a")
 received("b")
 
 -- A group resuming playback starts without the members that never report ready.
-post("a", "SetNewQueue", { PlayingQueue = { item_ids.encode_jellyfin_item_id(fixture.ids.song) } })
+post("a", "SetNewQueue", { PlayingQueue = { item_ids.encode(fixture.ids.song) } })
 post("a", "Ready", { IsPlaying = true })
 received("a")
 received("b")
@@ -200,7 +200,7 @@ check(received("a") .. received("b"), "", "a disbanded group is silent")
 group_id = post("a", "New", { GroupName = "Party" }).body.GroupId
 post("b", "Join", { GroupId = group_id })
 post("a", "SetNewQueue", {
-	PlayingQueue = { item_ids.encode_jellyfin_item_id(fixture.ids.song) },
+	PlayingQueue = { item_ids.encode(fixture.ids.song) },
 	StartPositionTicks = 100 * 10000000,
 })
 received("a")
@@ -217,7 +217,7 @@ received("b")
 -- A group paused while its first queue loads tells the members once everyone is ready.
 group_id = post("a", "New", { GroupName = "Party" }).body.GroupId
 post("b", "Join", { GroupId = group_id })
-post("a", "SetNewQueue", { PlayingQueue = { item_ids.encode_jellyfin_item_id(fixture.ids.song) } })
+post("a", "SetNewQueue", { PlayingQueue = { item_ids.encode(fixture.ids.song) } })
 post("a", "Pause")
 received("a")
 received("b")

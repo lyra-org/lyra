@@ -48,7 +48,7 @@ function module.resolve_audio_item(ctx: ApiContext): (string?, catalog.ItemInfo?
 		return nil, nil, responses.bad_request("missing item id")
 	end
 
-	local track_id = item_ids.decode_jellyfin_item_id(raw_item_id)
+	local track_id = item_ids.decode(raw_item_id)
 	local item = listing.find_item_by_id(track_id, principal.user_id)
 	if not item or item.Type ~= "Audio" then
 		return nil, nil, responses.not_found("item not found")

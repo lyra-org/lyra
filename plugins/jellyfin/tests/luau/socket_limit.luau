@@ -118,7 +118,7 @@ local oldest = all[1]
 local stranger = connect("stranger", fixture.api_keys.other_phone)
 
 -- What the oldest session does must end with it.
-local report_body = { ItemId = item_ids.encode_jellyfin_item_id(fixture.ids.song), PositionTicks = 0 }
+local report_body = { ItemId = item_ids.encode(fixture.ids.song), PositionTicks = 0 }
 local report_context = context(oldest.device, fixture.api_keys.phone, report_body)
 check(session.handle_playback_report_route(report_context, "started").status, 204, "the oldest reports playback")
 local group_context = context(oldest.device, fixture.api_keys.phone, { GroupName = "Room" })

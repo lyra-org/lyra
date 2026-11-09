@@ -47,7 +47,7 @@ function module.scope(item_id: string?): Scope
 	if constants.is_root_item_id(item_id) or constants.is_playlists_folder_id(item_id) then
 		return {}
 	end
-	local id = if item_id then item_ids.decode_jellyfin_item_id(item_id) else nil
+	local id = if item_id then item_ids.decode(item_id) else nil
 	return { id = id, entity_type = module.scope_entity_type(id) }
 end
 

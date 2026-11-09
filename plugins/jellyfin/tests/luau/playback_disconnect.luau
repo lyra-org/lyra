@@ -30,7 +30,7 @@ end
 
 local function report(event: string, position_ticks: number, track: string?, start_ticks: number?): number
 	local body = {
-		ItemId = item_ids.encode_jellyfin_item_id(fixture.ids[track or "song"]),
+		ItemId = item_ids.encode(fixture.ids[track or "song"]),
 		PositionTicks = position_ticks,
 		PlaybackStartTimeTicks = start_ticks,
 	}
@@ -68,7 +68,7 @@ assert(
 	reporting and reporting.DeviceId == "phone",
 	`the device is listed, got {if reporting then reporting.DeviceId else nil}`
 )
-assert(reporting.NowPlayingItem.Id == item_ids.encode_jellyfin_item_id(fixture.ids.song))
+assert(reporting.NowPlayingItem.Id == item_ids.encode(fixture.ids.song))
 assert(reporting.PlayState.IsPaused == false)
 assert(reporting.SupportsRemoteControl == false, "a session without a socket takes no commands")
 local session_key = reporting.Id

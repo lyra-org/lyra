@@ -35,16 +35,11 @@ local function request(method: string, id: string, body: string?, content_type: 
 end
 
 local function upload(id: string, image: string?): number
-	return request(
-		"POST",
-		item_ids.encode_jellyfin_item_id(id) :: string,
-		crypt.base64.encode(image or PNG),
-		"image/png"
-	)
+	return request("POST", item_ids.encode(id) :: string, crypt.base64.encode(image or PNG), "image/png")
 end
 
 local function delete(id: string): number
-	return request("DELETE", item_ids.encode_jellyfin_item_id(id) :: string)
+	return request("DELETE", item_ids.encode(id) :: string)
 end
 
 local function hash(id: string): string?
@@ -78,7 +73,7 @@ assert(upload(ids.private) == 404, "another user's private playlist is missing")
 assert(upload(string.rep("a", 21)) == 404)
 assert(upload(ids.song) == 404, "a track shows its album's image")
 assert(request("POST", "not-an-item-id", crypt.base64.encode(PNG), "image/png") == 404)
-local album = item_ids.encode_jellyfin_item_id(ids.album) :: string
+local album = item_ids.encode(ids.album) :: string
 assert(request("POST", album, crypt.base64.encode(PNG), "application/json") == 400, "the Content-Type must be an image")
 assert(request("POST", album, crypt.base64.encode(PNG)) == 400, "a Content-Type is required")
 assert(request("POST", album, "not base64!", "image/png") == 400)

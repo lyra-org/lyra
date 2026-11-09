@@ -14,12 +14,12 @@ local function request(handler, id: string, api_key: string?, query: { [string]:
 		plugin_id = "jellyfin",
 		request = {
 			method = method or "GET",
-			path = `/Audio/{item_ids.encode_jellyfin_item_id(id)}/stream`,
+			path = `/Audio/{item_ids.encode(id)}/stream`,
 			headers = {},
 			query = params,
 			body_raw = "",
 		},
-		params = { itemId = item_ids.encode_jellyfin_item_id(id) },
+		params = { itemId = item_ids.encode(id) },
 	} :: any)
 end
 

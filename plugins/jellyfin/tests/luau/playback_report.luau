@@ -25,7 +25,7 @@ local function report(item_id: string?, event: string?): number
 	return response.status
 end
 
-local hidden_id = item_ids.encode_jellyfin_item_id(fixture.ids.hidden)
+local hidden_id = item_ids.encode(fixture.ids.hidden)
 for _, event in { "started", "progress", "stopped" } do
 	local hidden = report(hidden_id, event)
 	assert(hidden == 204, `{event}: a track the caller can't see is accepted, got {hidden}`)

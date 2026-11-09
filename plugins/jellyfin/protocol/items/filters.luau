@@ -198,7 +198,7 @@ function module.to_json(values: FilterValues?, include_item_types: { string }): 
 	if values then
 		if #include_item_types == 1 and MUSIC_TYPES[string.lower(include_item_types[1])] then
 			for _, genre in values.genres do
-				local pair: JsonObject = { Name = genre.name, Id = item_ids.nanoid_to_hex(genre.id) }
+				local pair: JsonObject = { Name = genre.name, Id = item_ids.encode(genre.id) }
 				table.insert(genre_pairs, pair)
 			end
 		end

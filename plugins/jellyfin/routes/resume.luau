@@ -57,7 +57,7 @@ end
 local function now_playing_ids(): { string }
 	local hex_ids: { string } = {}
 	for _, playing in playback_sessions.list_playbacks() do
-		local hex_id = item_ids.encode_jellyfin_item_id(playing.track_id)
+		local hex_id = item_ids.encode(playing.track_id)
 		if hex_id and not table.find(hex_ids, hex_id) then
 			table.insert(hex_ids, hex_id)
 		end
@@ -69,7 +69,7 @@ end
 local function bookmarked_in(libraries: { catalog.ItemInfo }): { string }
 	local track_ids: { string } = {}
 	for _, library in libraries do
-		local library_id = item_ids.decode_jellyfin_item_id(library.Id)
+		local library_id = item_ids.decode(library.Id)
 		if library_id then
 			for _, track in tracks.query({ library_id = library_id, bookmarked = true, available = true }).items do
 				table.insert(track_ids, track.id)
@@ -93,7 +93,7 @@ local function excluded_library_track_ids(user_id: string): { string }
 	end
 	for _, track_id in bookmarked_in(excluded) do
 		if not in_kept[track_id] then
-			table.insert(hex_ids, item_ids.encode_jellyfin_item_id(track_id) :: string)
+			table.insert(hex_ids, item_ids.encode(track_id) :: string)
 		end
 	end
 	return hex_ids

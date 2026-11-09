@@ -23,7 +23,7 @@ local function request(api_key: string, json: any?): any
 	}
 end
 
-local body = { ItemId = item_ids.encode_jellyfin_item_id(fixture.ids.song), PositionTicks = 0 }
+local body = { ItemId = item_ids.encode(fixture.ids.song), PositionTicks = 0 }
 local reported = session.handle_playback_report_route(request(fixture.api_keys.phone, body), "started")
 assert(reported.status == 204, `the listener's report is accepted, got {reported.status}`)
 
@@ -37,11 +37,11 @@ local function sessions_of(api_key: string, controllable_user_id: string?): { [s
 	return by_device
 end
 
-local listener_id = item_ids.encode_jellyfin_item_id(fixture.users.listener)
+local listener_id = item_ids.encode(fixture.users.listener)
 local admin_view = sessions_of(fixture.api_keys.admin_key)
 local phone = admin_view.phone
 assert(phone and phone.UserId == listener_id, "the admin sees the listener's player")
-assert(phone.NowPlayingItem.Id == item_ids.encode_jellyfin_item_id(fixture.ids.song))
+assert(phone.NowPlayingItem.Id == item_ids.encode(fixture.ids.song))
 assert(phone.NowPlayingItem.Name == "Song")
 local speaker = admin_view.speaker
 assert(speaker and speaker.Id == fixture.connections.speaker and speaker.UserId == listener_id)

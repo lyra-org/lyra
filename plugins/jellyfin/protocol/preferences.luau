@@ -8,6 +8,7 @@ local api = require("@lyra/api")
 local datastore = require("@lyra/datastore")
 
 local constants = require("../constants")
+local item_ids = require("./items/identifiers")
 local requests = require("./items/requests")
 local responses = require("./items/responses")
 
@@ -194,7 +195,7 @@ local function parse_user_configuration(body: JsonObject): JsonObject?
 		end
 		local ids: { JsonValue } = {}
 		for _, raw in value :: { JsonValue } do
-			local id = constants.normalize_item_id(if type(raw) == "string" then raw else nil)
+			local id = item_ids.normalize_guid(if type(raw) == "string" then raw else nil)
 			if not id then
 				return nil
 			end

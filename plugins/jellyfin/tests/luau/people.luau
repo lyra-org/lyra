@@ -23,7 +23,7 @@ local function persons(params: { [string]: string }): string
 end
 
 local function people(id: string): string
-	local items = listing.list_items(parse({ Ids = item_ids.encode_jellyfin_item_id(id), Fields = "People" }))
+	local items = listing.list_items(parse({ Ids = item_ids.encode(id), Fields = "People" }))
 	local names = {}
 	for _, person in items[1].People do
 		table.insert(names, `{person.Name}:{person.Type}`)
@@ -57,7 +57,7 @@ check(
 	"an excluded type drops only those holding no other credit"
 )
 check(
-	persons({ AppearsInItemId = item_ids.encode_jellyfin_item_id(ids.song) }),
+	persons({ AppearsInItemId = item_ids.encode(ids.song) }),
 	"Comp:Person,Singer:Person (2)",
 	"people credited on a track"
 )
@@ -71,4 +71,4 @@ check(people(ids.album), "Band:AlbumArtist,Prod:Producer", "a release's credits"
 local band = listing.find_person_by_name("band", fixture.users.admin)
 assert(band, "Band resolves by name")
 check(`{band.Name}:{band.Type}`, "Band:Person", "an artist found by name")
-check(band.Id, item_ids.encode_jellyfin_item_id(ids.band), "a person's id is the artist's")
+check(band.Id, item_ids.encode(ids.band), "a person's id is the artist's")

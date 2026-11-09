@@ -43,7 +43,7 @@ local function resolve_item(ctx: ApiContext, principal: Principal): (string?, It
 		return nil, nil, responses.bad_request("missing item id")
 	end
 
-	local item_id = item_ids.decode_jellyfin_item_id(raw_item_id)
+	local item_id = item_ids.decode(raw_item_id)
 	local item = if item_id then listing.find_item_by_id(item_id, principal.user_id) else nil
 	if not item_id or not item then
 		return nil, nil, responses.not_found("item not found")
@@ -70,7 +70,7 @@ end
 
 -- The caller's `UserItemDataDto` of the item, read afresh.
 local function user_data_json(item_id: string, item: ItemInfo, principal: Principal): JsonObject
-	local item_hex_id = item_ids.encode_jellyfin_item_id(item_id)
+	local item_hex_id = item_ids.encode(item_id)
 	local is_track = requests.trim(item.Type) == "Audio"
 	local last_played: { [string]: number } = {}
 	if is_track then

@@ -71,7 +71,7 @@ assert(table.concat(order, ",") == "phone@listener,web@admin,tablet@listener,pho
 
 local phone = body.Items[1]
 assert(phone.Name == "Pixel" and phone.AppName == "Finamp" and phone.AppVersion == "0.9.1")
-assert(phone.LastUserId == item_ids.encode_jellyfin_item_id(listener_id))
+assert(phone.LastUserId == item_ids.encode(listener_id))
 assert(phone.DateLastActivity == "1970-01-01T00:05:00Z")
 assert(phone.CustomName == "Kitchen")
 assert(body.Items[2].CustomName == nil and body.Items[3].CustomName == nil)

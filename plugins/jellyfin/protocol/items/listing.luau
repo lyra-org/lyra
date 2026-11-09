@@ -121,12 +121,12 @@ local function playlist_source(options: ItemsQueryOptions, scope: Scope): Source
 	local wanted: { [string]: boolean }? = nil
 	if #options.ids > 0 then
 		wanted = {}
-		for _, id in item_ids.parse_jellyfin_ids_array(options.ids) do
+		for _, id in item_ids.decode_list(options.ids) do
 			(wanted :: { [string]: boolean })[id] = true
 		end
 	end
 	local excluded: { [string]: boolean } = {}
-	for _, id in item_ids.parse_jellyfin_ids_array(options.exclude_item_ids) do
+	for _, id in item_ids.decode_list(options.exclude_item_ids) do
 		excluded[id] = true
 	end
 	local favorite: { [string]: boolean }? = nil
@@ -327,7 +327,7 @@ local function in_request_order(
 	-- Views without an entity of their own match by their item id.
 	local found_views: { [string]: ItemInfo } = {}
 	for _, extra in extras do
-		local id = item_ids.decode_jellyfin_item_id(extra.Id)
+		local id = item_ids.decode(extra.Id)
 		if id then
 			found[id] = extra
 		elseif extra.Id then
@@ -338,8 +338,8 @@ local function in_request_order(
 	local ordered: { ItemInfo } = {}
 	local seen: { [ItemInfo]: boolean } = {}
 	for _, raw_id in options.ids do
-		local id = item_ids.decode_jellyfin_item_id(raw_id)
-		local view_id = constants.normalize_item_id(raw_id)
+		local id = item_ids.decode(raw_id)
+		local view_id = item_ids.normalize_guid(raw_id)
 		local stub = if id then found[id] elseif view_id then found_views[view_id] else nil
 		if stub and not seen[stub] then
 			seen[stub] = true
@@ -392,7 +392,7 @@ local function named_extras(options: ItemsQueryOptions, scope: Scope): { ItemInf
 		return extras
 	end
 	if options_module.wants_item_type(options, "musicgenre") then
-		local ids = item_ids.parse_jellyfin_ids_array(options.ids)
+		local ids = item_ids.decode_list(options.ids)
 		local found = genres.get(ids)
 		local cover_infos = artwork.get_artwork_infos(ids)
 		for _, id in ids do
@@ -406,7 +406,10 @@ local function named_extras(options: ItemsQueryOptions, scope: Scope): { ItemInf
 	if options_module.wants_item_type(options, "collectionfolder") then
 		local wanted: { [string]: boolean } = {}
 		for _, id in options.ids do
-			wanted[string.lower((string.gsub(id, "-", "")))] = true
+			local guid = item_ids.normalize_guid(id)
+			if guid then
+				wanted[guid] = true
+			end
 		end
 		for _, view in catalog.to_music_view_items(options.include_child_count) do
 			if view.Id and wanted[view.Id] then
@@ -445,13 +448,13 @@ local function playlist_children(options: ItemsQueryOptions, scope: Scope): Item
 	local wanted: { [string]: boolean }? = nil
 	if #options.ids > 0 then
 		wanted = {}
-		for _, id in item_ids.parse_jellyfin_ids_array(options.ids) do
+		for _, id in item_ids.decode_list(options.ids) do
 			(wanted :: { [string]: boolean })[id] = true
 		end
 	end
 	local ids: { string } = {}
 	for _, track_id in playlist_access.track_ids(playlist) do
-		local hex_id = item_ids.encode_jellyfin_item_id(track_id)
+		local hex_id = item_ids.encode(track_id)
 		if hex_id and (wanted == nil or wanted[track_id]) then
 			table.insert(ids, hex_id)
 		end
@@ -810,7 +813,7 @@ function module.playable_track_ids(item_id: string, user_id: string): { string }
 		return {}
 	end
 	if kind == "Track" then
-		return { item_ids.encode_jellyfin_item_id(scope.id) :: string }
+		return { item_ids.encode(scope.id) :: string }
 	end
 
 	local options = options_module.for_user(options_module.parse(nil), user_id)
@@ -831,7 +834,7 @@ function module.playable_track_ids(item_id: string, user_id: string): { string }
 
 	local result: { string } = {}
 	for _, track in tracks.query(built).items do
-		local hex_id = item_ids.encode_jellyfin_item_id(track.id)
+		local hex_id = item_ids.encode(track.id)
 		if hex_id then
 			table.insert(result, hex_id)
 		end
@@ -851,8 +854,7 @@ function module.remote_play_queue(
 	if play_command == "PlayInstantMix" then
 		local options = options_module.for_user(options_module.parse(nil), user_id)
 		for _, requested_id in requested_ids do
-			local mix_items =
-				instant_mix.list_instant_mix_audio(item_ids.decode_jellyfin_item_id(requested_id), options)
+			local mix_items = instant_mix.list_instant_mix_audio(item_ids.decode(requested_id), options)
 			for _, item in mix_items do
 				if item.Id then
 					table.insert(queue, item.Id)
@@ -922,7 +924,7 @@ end
 
 -- `with_provider_ids` adds ProviderIds and ExternalUrls, as single-item responses carry.
 function module.find_item_by_id(item_id: string?, user_id: string?, with_provider_ids: boolean?): ItemInfo?
-	local item_hex_id = item_ids.encode_jellyfin_item_id(item_id)
+	local item_hex_id = item_ids.encode(item_id)
 	if not item_hex_id then
 		return nil
 	end
@@ -954,7 +956,7 @@ function module.ancestors_chain(item_id: string, user_id: string): ({ ItemInfo }
 
 	local visited: { [string]: boolean } = { [item_id] = true }
 	while current and #chain < ANCESTORS_MAX_DEPTH do
-		local parent_id = item_ids.decode_jellyfin_item_id(current.ParentId)
+		local parent_id = item_ids.decode(current.ParentId)
 		if not parent_id or visited[parent_id] then
 			break
 		end

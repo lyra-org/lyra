@@ -65,9 +65,9 @@ function module.list_similar_items(
 	if kind == nil then
 		return {}, 0, 0, false
 	end
-	local exclude_ids = item_ids.parse_jellyfin_ids_array(options.exclude_item_ids)
+	local exclude_ids = item_ids.decode_list(options.exclude_item_ids)
 	table.insert(exclude_ids, item_id)
-	local exclude_artist_ids = item_ids.parse_jellyfin_ids_array(options.exclude_artist_ids)
+	local exclude_artist_ids = item_ids.decode_list(options.exclude_artist_ids)
 	local seed = math.random(1, 2147483647)
 	local limit = options.limit or DEFAULT_LIMIT
 	local stubs: { ItemInfo } = {}

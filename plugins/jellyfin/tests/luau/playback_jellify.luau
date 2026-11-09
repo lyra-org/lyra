@@ -32,7 +32,7 @@ local function send(path: string, event: string, body: { [string]: any }): numbe
 end
 
 local function item(track: string): string
-	return item_ids.encode_jellyfin_item_id(fixture.ids[track])
+	return item_ids.encode(fixture.ids[track])
 end
 
 local function start(track: string)

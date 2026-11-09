@@ -8,6 +8,7 @@ local api = require("@lyra/api")
 local auth = require("@lyra/auth")
 local playlists = require("@lyra/playlists")
 local server = require("@lyra/server")
+local tracks = require("@lyra/tracks")
 
 local crypt = require("@harmony/crypt")
 
@@ -250,7 +251,7 @@ end
 
 function module.to_jellyfin_user(user: UserIdentity): JsonValue
 	return {
-		Id = item_ids.encode_jellyfin_item_id(user.user_id),
+		Id = item_ids.encode(user.user_id),
 		Name = user.username,
 		ServerId = SERVER_ID,
 		HasPassword = true,
@@ -323,7 +324,7 @@ local function resolve_jellyfin_auth(ctx: ApiContext?): (ResolvedAuth?, string?)
 	local principal = resolved_auth.principal
 
 	if requested_user_id then
-		local decoded_user_id = item_ids.decode_jellyfin_item_id(requested_user_id)
+		local decoded_user_id = item_ids.decode(requested_user_id)
 		if decoded_user_id ~= principal.user_id then
 			return nil, token
 		end
@@ -551,13 +552,13 @@ end
 function module.require_matching_user_scope(ctx: ApiContext?, principal: Principal): boolean
 	local params = if ctx then ctx.params else nil
 	local path_user_id = if params then requests.trim(params.userId) else nil
-	if path_user_id and item_ids.decode_jellyfin_item_id(path_user_id) ~= principal.user_id then
+	if path_user_id and item_ids.decode(path_user_id) ~= principal.user_id then
 		return false
 	end
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
 	local query_user_id = requests.parse_query_string(query, { "userId", "UserId", "userid" }, nil)
-	if query_user_id and item_ids.decode_jellyfin_item_id(query_user_id) ~= principal.user_id then
+	if query_user_id and item_ids.decode(query_user_id) ~= principal.user_id then
 		return false
 	end
 
@@ -567,7 +568,7 @@ end
 function module.require_matching_user_scope_from_id_param(ctx: ApiContext?, principal: Principal): boolean
 	local params = if ctx then ctx.params else nil
 	local path_user_id = if params then requests.trim(params.id) else nil
-	if path_user_id and item_ids.decode_jellyfin_item_id(path_user_id) ~= principal.user_id then
+	if path_user_id and item_ids.decode(path_user_id) ~= principal.user_id then
 		return false
 	end
 
@@ -617,9 +618,24 @@ function module.parse_playlist_request_body(ctx: ApiContext?): (PlaylistRouteReq
 		nil
 end
 
+-- Of these track ids, the ones the caller can see, in order.
+local function visible_track_ids(track_ids: { string }): { string }
+	if #track_ids == 0 then
+		return {}
+	end
+	local found = tracks.get(track_ids)
+	local result: { string } = {}
+	for _, id in track_ids do
+		if found[id] then
+			table.insert(result, id)
+		end
+	end
+	return result
+end
+
 function module.parse_playlist_query_track_ids(query: ApiQueryParams?): { string }
 	local raw_ids = requests.parse_query_string(query, { "ids", "Ids" }, nil)
-	return item_ids.visible_track_ids(item_ids.parse_jellyfin_ids_csv(raw_ids))
+	return visible_track_ids(item_ids.decode_list(raw_ids))
 end
 
 function module.parse_playlist_query_entry_ids(query: ApiQueryParams?, playlist: Playlist): { string }
@@ -635,7 +651,7 @@ function module.parse_playlist_query_entry_ids(query: ApiQueryParams?, playlist:
 end
 
 function module.ensure_user_scope_matches_principal(requested_user_id: string?, principal: Principal): boolean
-	if requested_user_id and item_ids.decode_jellyfin_item_id(requested_user_id) ~= principal.user_id then
+	if requested_user_id and item_ids.decode(requested_user_id) ~= principal.user_id then
 		return false
 	end
 
@@ -649,7 +665,7 @@ function module.resolve_playlist_for_route(ctx: ApiContext?): (Playlist?, ApiRes
 		return nil, responses.bad_request("missing playlist id")
 	end
 
-	local playlist = playlist_access.find(item_ids.decode_jellyfin_item_id(playlist_id))
+	local playlist = playlist_access.find(item_ids.decode(playlist_id))
 	if not playlist then
 		return nil, responses.not_found("playlist not found")
 	end
@@ -684,7 +700,7 @@ function module.handle_delete_item_route(ctx: ApiContext): ApiResponse
 		return module.unauthorized()
 	end
 
-	local playlist = playlist_access.find(item_ids.decode_jellyfin_item_id(ctx.params.id))
+	local playlist = playlist_access.find(item_ids.decode(ctx.params.id))
 	if not playlist or not playlist_access.can_view(playlist, principal.user_id) then
 		return responses.not_found("item not found")
 	end
@@ -721,7 +737,7 @@ function module.handle_create_playlist_route(ctx: ApiContext): ApiResponse
 		is_public = if request_payload.is_public ~= nil then request_payload.is_public else false,
 		created_at_ms = module.current_unix_ms(),
 		updated_at_ms = module.current_unix_ms(),
-		track_ids = item_ids.visible_track_ids(item_ids.parse_jellyfin_ids_array(request_payload.requested_ids)),
+		track_ids = visible_track_ids(item_ids.decode_list(request_payload.requested_ids)),
 	}
 
 	local ok, created = pcall(playlists.create, create_request)
@@ -729,7 +745,7 @@ function module.handle_create_playlist_route(ctx: ApiContext): ApiResponse
 		return responses.bad_request("failed to create playlist")
 	end
 
-	local jellyfin_playlist_id = item_ids.encode_jellyfin_item_id(created.id)
+	local jellyfin_playlist_id = item_ids.encode(created.id)
 	if not jellyfin_playlist_id then
 		return responses.bad_request("failed to encode playlist id")
 	end
@@ -809,7 +825,7 @@ function module.handle_update_playlist_route(ctx: ApiContext): ApiResponse
 	}
 	local ok, updated
 	if request_payload.requested_ids ~= nil then
-		local replacement_ids = item_ids.decode_jellyfin_ids_exact(request_payload.requested_ids)
+		local replacement_ids = item_ids.decode_list_exact(request_payload.requested_ids)
 		if replacement_ids == nil then
 			return responses.bad_request("invalid playlist item ids")
 		end
@@ -826,7 +842,7 @@ end
 local function playlist_item_ids(playlist: Playlist): { string }
 	local encoded_ids: { string } = {}
 	for _, track_ref: PlaylistEntry in playlist_access.track_refs(playlist) do
-		local item_id = item_ids.encode_jellyfin_item_id(track_ref.track_id)
+		local item_id = item_ids.encode(track_ref.track_id)
 		if item_id then
 			table.insert(encoded_ids, item_id)
 		end
@@ -840,7 +856,7 @@ function module.to_playlist_info(playlist: Playlist): PlaylistResponseInfo
 	local shares: { PlaylistUserPermission } = {}
 	if owner_id then
 		table.insert(shares, {
-			UserId = item_ids.encode_jellyfin_item_id(owner_id) or "",
+			UserId = item_ids.encode(owner_id) or "",
 			CanEdit = true,
 		})
 	end
@@ -883,7 +899,7 @@ end
 function module.to_playlist_user_permission(playlist: Playlist, user_id: string): PlaylistUserPermission
 	local owner_id = playlist_access.owner_id(playlist)
 	return {
-		UserId = item_ids.encode_jellyfin_item_id(user_id) or "",
+		UserId = item_ids.encode(user_id) or "",
 		CanEdit = owner_id ~= nil and owner_id == user_id,
 	}
 end
@@ -954,7 +970,7 @@ function module.handle_primary_image_request(ctx: ApiContext?): ApiResponse
 		return responses.bad_request("missing image id")
 	end
 
-	local item_id = item_ids.decode_jellyfin_item_id(image_id)
+	local item_id = item_ids.decode(image_id)
 	if not item_id then
 		return responses.not_found("image not found")
 	end
@@ -1154,7 +1170,7 @@ function module.build_session_info(
 ): JsonObject
 	return {
 		Id = session_id,
-		UserId = item_ids.encode_jellyfin_item_id(principal.user_id),
+		UserId = item_ids.encode(principal.user_id),
 		UserName = principal.username,
 		Client = identity.client,
 		DeviceName = identity.device,
@@ -1213,7 +1229,7 @@ local function to_device_info(entry: auth.SessionInfo): JsonObject?
 		CustomName = preferences.device_custom_name(device_id),
 		AppName = saved_text(fields, "client"),
 		AppVersion = saved_text(fields, "version"),
-		LastUserId = item_ids.encode_jellyfin_item_id(entry.user_id),
+		LastUserId = item_ids.encode(entry.user_id),
 		LastUserName = entry.username,
 		DateLastActivity = iso_timestamp(entry.last_seen_at_ms // 1000),
 	}
@@ -1343,7 +1359,7 @@ local function resolve_item_file_track_id(ctx: ApiContext?): (string?, ApiRespon
 		return nil, responses.bad_request("missing item id")
 	end
 
-	local track = playback.resolve_track_for_playback(item_ids.decode_jellyfin_item_id(item_id))
+	local track = playback.resolve_track_for_playback(item_ids.decode(item_id))
 	if not track then
 		return nil, responses.not_found("item not found")
 	end

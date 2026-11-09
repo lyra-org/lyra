@@ -49,14 +49,14 @@ check(
 	"filtered albums under the root"
 )
 check(
-	items({ ParentId = constants.EMPTY_ITEM_ID, Recursive = "true", IncludeItemTypes = "Audio" }),
+	items({ ParentId = item_ids.EMPTY_GUID, Recursive = "true", IncludeItemTypes = "Audio" }),
 	"S1:Audio (1)",
 	"recursive tracks under the empty id, which names the root"
 )
 check(genres({ ParentId = root }), "Rock", "filters under the root")
 check(genres({ ParentId = constants.PLAYLISTS_FOLDER_ID }), "Rock", "filters under the playlists view")
 
-local unknown = item_ids.nanoid_to_hex("NoSuchItemAnywhere000") :: string
+local unknown = item_ids.encode("NoSuchItemAnywhere000") :: string
 check(
 	items({ ParentId = unknown, Recursive = "true", IncludeItemTypes = "Audio" }),
 	" (0)",

@@ -15,7 +15,7 @@ local function primary_image(query: { [string]: string }, headers: { [string]: s
 	return session.handle_primary_image_request({
 		plugin_id = "jellyfin",
 		request = { method = "GET", path = "/", headers = headers or {}, query = params, body_raw = "" },
-		params = { imageId = item_ids.encode_jellyfin_item_id(album) },
+		params = { imageId = item_ids.encode(album) },
 	} :: any)
 end
 

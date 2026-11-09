@@ -119,7 +119,7 @@ assert(ranged.search == "x" and ranged.credit_role == "release")
 
 -- Ids that name no item match nothing rather than everything: the filter keeps them.
 local unknown_hex = "0123456789abcdef0123456789abcdef"
-local unknown_id = item_ids.decode_jellyfin_item_id(unknown_hex)
+local unknown_id = item_ids.decode(unknown_hex)
 local by_artist_id = query.tracks(parse({ ArtistIds = unknown_hex }), root)
 assert(by_artist_id ~= nil and by_artist_id.artist_ids ~= nil and by_artist_id.artist_ids[1] == unknown_id)
 local by_genre_id = query.tracks(parse({ GenreIds = unknown_hex }), root)

@@ -15,9 +15,8 @@ local plugins = require("@lyra/plugins")
 local server = require("@lyra/server")
 local users = require("@lyra/users")
 
-local crypt = require("@harmony/crypt")
-
 local constants = require("@self/constants")
+local item_ids = require("@self/protocol/items/identifiers")
 local config = plugins.declare_settings(constants.declare_settings)
 local server_info = server.info()
 constants.configure_settings(config)
@@ -26,34 +25,17 @@ constants.configure_server_id(server_info.id)
 local ROOT_ID_STORE_NAME = "identity"
 local ROOT_ITEM_ID_KEY = "root_item_id"
 
-local function generate_root_item_id(): string
-	local ok, random_hex = pcall(crypt.random, 16)
-	if ok and type(random_hex) == "string" then
-		local normalized = constants.normalize_item_id(random_hex)
-		if normalized and not constants.is_root_item_id(normalized) then
-			return normalized
-		end
-	end
-
-	local fallback = crypt.hash("xxh3_128", `{server_info.id}:{os.time()}`)
-	local normalized_fallback = constants.normalize_item_id(fallback)
-	if normalized_fallback and normalized_fallback ~= constants.EMPTY_ITEM_ID then
-		return normalized_fallback
-	end
-	error("failed to generate Jellyfin root item id")
-end
-
 local function resolve_root_item_id(): string
 	local identity_store = datastore.get_or_create(ROOT_ID_STORE_NAME)
 	local stored = identity_store:get(ROOT_ITEM_ID_KEY)
 	if type(stored) == "string" then
-		local normalized = constants.normalize_item_id(stored)
-		if normalized and normalized ~= constants.EMPTY_ITEM_ID then
+		local normalized = item_ids.normalize_guid(stored)
+		if normalized and normalized ~= item_ids.EMPTY_GUID then
 			return normalized
 		end
 	end
 
-	local generated = generate_root_item_id()
+	local generated = item_ids.new_guid()
 	identity_store:set(ROOT_ITEM_ID_KEY, generated)
 	return generated
 end
@@ -68,7 +50,6 @@ local discovery = require("@self/protocol/discovery")
 local filters = require("@self/protocol/items/filters")
 local image_routes = require("@self/routes/images")
 local instant_mix = require("@self/protocol/items/instant_mix")
-local item_ids = require("@self/protocol/items/identifiers")
 local item_refresh = require("@self/routes/item_refresh")
 local items_options = require("@self/protocol/items/options")
 local listing = require("@self/protocol/items/listing")
@@ -269,7 +250,7 @@ api.get(P .. "/Users/{id}", function(ctx: ApiContext): ApiResponse
 
 	local params = if ctx then ctx.params else nil
 	local raw_user_id = if params then params.id else nil
-	local user_id = item_ids.decode_jellyfin_item_id(raw_user_id)
+	local user_id = item_ids.decode(raw_user_id)
 	if not user_id then
 		return responses.not_found("user not found")
 	end
@@ -296,7 +277,7 @@ local function handle_user_configuration_post(ctx: ApiContext, raw_user_id: stri
 
 	local user_id = principal.user_id
 	if raw_user_id then
-		local decoded = item_ids.decode_jellyfin_item_id(raw_user_id)
+		local decoded = item_ids.decode(raw_user_id)
 		if not decoded then
 			return responses.not_found("user not found")
 		end
@@ -429,7 +410,7 @@ api.get(P .. "/Library/VirtualFolders", function(ctx: ApiContext)
 
 	local folders: { JsonValue } = {}
 	for _, lib in libs do
-		local hex_id = item_ids.nanoid_to_hex(lib.id)
+		local hex_id = item_ids.encode(lib.id)
 		if hex_id then
 			local locations = if lib.path then { lib.path } else {}
 			local folder: JsonValue = {
@@ -609,7 +590,7 @@ local function respond_with_instant_mix(ctx: ApiContext, raw_item_id: string?): 
 		return responses.bad_request("missing item id")
 	end
 
-	local item_id = item_ids.decode_jellyfin_item_id(raw_item_id)
+	local item_id = item_ids.decode(raw_item_id)
 	if not item_id then
 		return responses.not_found("item not found")
 	end
@@ -693,7 +674,7 @@ api.get(P .. "/Users/{userId}/Items/{itemId}", function(ctx: ApiContext)
 		return api.response.json(200, catalog.item_to_json(catalog.playlists_folder_item(nil)))
 	end
 
-	local item = listing.find_item_by_id(item_ids.decode_jellyfin_item_id(raw_item_id), principal.user_id, true)
+	local item = listing.find_item_by_id(item_ids.decode(raw_item_id), principal.user_id, true)
 	if not item then
 		return responses.not_found("item not found")
 	end
@@ -721,7 +702,7 @@ api.get(P .. "/Items/{id}", function(ctx: ApiContext)
 		return api.response.json(200, catalog.item_to_json(catalog.playlists_folder_item(nil)))
 	end
 
-	local item = listing.find_item_by_id(item_ids.decode_jellyfin_item_id(raw_id), principal.user_id, true)
+	local item = listing.find_item_by_id(item_ids.decode(raw_id), principal.user_id, true)
 	if not item then
 		return responses.not_found("item not found")
 	end
@@ -850,7 +831,7 @@ api.get(P .. "/Playlists/{playlistId}/Users/{userId}", function(ctx: ApiContext)
 		return responses.bad_request("missing user id")
 	end
 
-	local target_user_id = item_ids.decode_jellyfin_item_id(requested_user_id)
+	local target_user_id = item_ids.decode(requested_user_id)
 	if not target_user_id then
 		return responses.not_found("user not found")
 	end
@@ -1132,7 +1113,7 @@ api.get(P .. "/Sessions", function(ctx: ApiContext)
 	local request = if ctx then ctx.request else nil
 	local query = if request then request.query else nil
 	local controllable = requests.parse_query_string(query, { "controllableByUserId", "ControllableByUserId" }, nil)
-	local controllable_user_id = if controllable then item_ids.decode_jellyfin_item_id(controllable) else nil
+	local controllable_user_id = if controllable then item_ids.decode(controllable) else nil
 	if controllable and not controllable_user_id then
 		return api.response.json(200, {})
 	end
@@ -1246,7 +1227,7 @@ api.post(P .. "/Sessions/{sessionId}/Command/{command}", function(ctx: ApiContex
 		websocket.encode("GeneralCommand", {
 			Name = command,
 			Arguments = {} :: JsonObject,
-			ControllingUserId = item_ids.encode_jellyfin_item_id(principal.user_id),
+			ControllingUserId = item_ids.encode(principal.user_id),
 		})
 	)
 	if ws_response then
@@ -1289,7 +1270,7 @@ api.post(P .. "/Sessions/{sessionId}/Command", function(ctx: ApiContext)
 		websocket.encode("GeneralCommand", {
 			Name = command_name,
 			Arguments = arguments,
-			ControllingUserId = item_ids.encode_jellyfin_item_id(principal.user_id),
+			ControllingUserId = item_ids.encode(principal.user_id),
 		})
 	)
 	if ws_response then
@@ -1449,10 +1430,7 @@ api.post(P .. "/Items/{id}/PlaybackInfo", function(ctx: ApiContext)
 	local request_object = if type(request_json) == "table" then request_json :: JsonObject else nil
 
 	local requested_user_id = if request_object then request_object.UserId else nil
-	if
-		type(requested_user_id) == "string"
-		and item_ids.decode_jellyfin_item_id(requested_user_id) ~= principal.user_id
-	then
+	if type(requested_user_id) == "string" and item_ids.decode(requested_user_id) ~= principal.user_id then
 		return session.unauthorized()
 	end
 
@@ -1572,7 +1550,7 @@ api.get(P .. "/Items/{id}/Ancestors", function(ctx: ApiContext)
 	if not raw_id then
 		return responses.bad_request("missing item id")
 	end
-	local item_id = item_ids.decode_jellyfin_item_id(raw_id)
+	local item_id = item_ids.decode(raw_id)
 	if not item_id then
 		return responses.not_found("item not found")
 	end
@@ -1608,7 +1586,7 @@ api.get(P .. "/Items/{itemId}/Collections", function(ctx: ApiContext)
 
 	local params = if ctx then ctx.params else nil
 	local raw_item_id = if params then params.itemId else nil
-	local item_id = if raw_item_id then item_ids.decode_jellyfin_item_id(raw_item_id) else nil
+	local item_id = if raw_item_id then item_ids.decode(raw_item_id) else nil
 	if not item_id or not listing.find_item_by_id(item_id, principal.user_id) then
 		return responses.not_found("item not found")
 	end

@@ -151,7 +151,7 @@ function module.handle_similar(ctx: ApiContext): ApiResponse
 		return responses.bad_request("missing item id")
 	end
 
-	local item_id = item_ids.decode_jellyfin_item_id(raw_item_id)
+	local item_id = item_ids.decode(raw_item_id)
 	if not item_id then
 		return responses.not_found("item not found")
 	end

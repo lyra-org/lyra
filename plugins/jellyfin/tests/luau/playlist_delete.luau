@@ -16,7 +16,7 @@ local function delete(id: string): number
 			body_raw = "",
 			json = nil,
 		},
-		params = { id = item_ids.encode_jellyfin_item_id(id) },
+		params = { id = item_ids.encode(id) },
 	} :: any)
 	return response.status
 end

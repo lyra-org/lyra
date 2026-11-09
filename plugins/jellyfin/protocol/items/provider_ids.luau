@@ -7,7 +7,7 @@
 local artists = require("@lyra/artists")
 local entities = require("@lyra/entities")
 
-local encoding = require("../../encoding")
+local item_ids = require("./identifiers")
 local item_types = require("./types")
 
 type Artist = artists.Artist
@@ -124,7 +124,7 @@ function module.fetch(
 	end
 
 	for _, projection: EntityProjectionInfo in projections do
-		local item_id = encoding.nanoid_to_hex(projection.entity.id)
+		local item_id = item_ids.encode(projection.entity.id)
 		if item_id == nil then
 			continue
 		end

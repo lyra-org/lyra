@@ -42,7 +42,7 @@ local function refresh(id: string, query: { [string]: { string } }?, key: string
 end
 
 local function item(id: string): string
-	return item_ids.encode_jellyfin_item_id(id) :: string
+	return item_ids.encode(id) :: string
 end
 
 local function wait_for(done: () -> boolean, what: string)

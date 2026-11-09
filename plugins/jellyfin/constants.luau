@@ -8,7 +8,7 @@ local plugins = require("@lyra/plugins")
 
 local crypt = require("@harmony/crypt")
 
-local encoding = require("./encoding")
+local item_ids = require("./protocol/items/identifiers")
 
 type SettingsBuilder = plugins.SettingsBuilder
 type SettingsConfig = plugins.SettingsConfig
@@ -16,9 +16,6 @@ type SettingsConfig = plugins.SettingsConfig
 local module = {
 	SERVER_ID = "",
 	JELLYFIN_PLUGIN_ID = "jellyfin",
-	ITEM_ID_HEX_LENGTH = 32,
-	ITEM_ID_HEX_PATTERN = "^[0-9a-f]+$",
-	EMPTY_ITEM_ID = string.rep("0", 32),
 	ROOT_ITEM_ID = "",
 	PLAYLISTS_FOLDER_ID = "",
 	DEFAULT_ITEMS_FIELDS = {
@@ -39,43 +36,26 @@ local module = {
 	ACCEPT_LEGACY_AUTH_HEADERS = true,
 }
 
-local EMPTY_ITEM_ID = module.EMPTY_ITEM_ID
-
-function module.normalize_item_id(value: string?): string?
-	if type(value) ~= "string" then
-		return nil
-	end
-
-	local normalized = string.gsub(string.lower(value), "-", "")
-	if #normalized ~= module.ITEM_ID_HEX_LENGTH then
-		return nil
-	end
-	if not string.match(normalized, module.ITEM_ID_HEX_PATTERN) then
-		return nil
-	end
-	return normalized
-end
-
 function module.configure_root_item_id(value: string)
-	local normalized = module.normalize_item_id(value)
+	local normalized = item_ids.normalize_guid(value)
 	if normalized == nil then
 		error("invalid Jellyfin root item id")
 	end
-	if normalized == EMPTY_ITEM_ID then
+	if normalized == item_ids.EMPTY_GUID then
 		error("Jellyfin root item id cannot be the empty GUID")
 	end
 	module.ROOT_ITEM_ID = normalized
 	-- The playlists view has no entity of its own; its id follows the root's.
-	module.PLAYLISTS_FOLDER_ID = module.normalize_item_id(crypt.hash("xxh3_128", `{normalized}:playlists`)) or ""
+	module.PLAYLISTS_FOLDER_ID = item_ids.normalize_guid(crypt.hash("xxh3_128", `{normalized}:playlists`)) or ""
 end
 
 function module.is_root_item_id(value: string?): boolean
-	local normalized = module.normalize_item_id(value)
-	return normalized == module.ROOT_ITEM_ID or normalized == EMPTY_ITEM_ID
+	local normalized = item_ids.normalize_guid(value)
+	return normalized == module.ROOT_ITEM_ID or normalized == item_ids.EMPTY_GUID
 end
 
 function module.is_playlists_folder_id(value: string?): boolean
-	local normalized = module.normalize_item_id(value)
+	local normalized = item_ids.normalize_guid(value)
 	return normalized ~= nil and normalized == module.PLAYLISTS_FOLDER_ID
 end
 
@@ -116,7 +96,7 @@ function module.declare_settings(builder: SettingsBuilder)
 end
 
 function module.configure_server_id(server_id: string)
-	module.SERVER_ID = encoding.nanoid_to_hex(server_id) or server_id
+	module.SERVER_ID = item_ids.encode(server_id) or server_id
 end
 
 local function string_setting(config: SettingsConfig, key: string, default_value: string): string

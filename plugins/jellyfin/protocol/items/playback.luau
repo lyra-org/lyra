@@ -148,12 +148,10 @@ end
 
 local module = {}
 module.trim = requests.trim
-module.decode_jellyfin_item_id = item_ids.decode_jellyfin_item_id
 module.bad_request = responses.bad_request
 module.not_found = responses.not_found
 module.parse_query_string = requests.parse_query_string
 module.resolve_playback_source_for_track = media.resolve_playback_source_for_track
-module.encode_jellyfin_item_id = item_ids.encode_jellyfin_item_id
 
 local function ticks_to_ms(value: number | string?): number?
 	local ticks = tonumber(value)
@@ -728,8 +726,7 @@ type UrlContext = {
 -- A device profile's id as upstream formats a Guid for URLs: 32 lowercase hex digits.
 local function device_profile_id(device_profile: JsonObject?): string?
 	local raw = device_profiles.string_field(device_profile, "Id")
-	local digits = if raw then string.lower((string.gsub(raw, "[{}%-]", ""))) else nil
-	return if digits and string.match(digits, "^%x+$") and #digits == 32 then digits else nil
+	return if raw then item_ids.normalize_guid((string.gsub(raw, "[{}]", ""))) else nil
 end
 
 -- Builds the URL as upstream's `StreamInfo.ToUrl` does, in its order and casing: relative to the
@@ -883,7 +880,7 @@ local function build_media_info(
 	has_lyrics: boolean?
 ): ({ MediaSource }, { MediaStream }, string?)
 	local entry: EntryInfo? = if source and type(source.entry) == "table" then source.entry else nil
-	local media_item_id = module.encode_jellyfin_item_id(item_id)
+	local media_item_id = item_ids.encode(item_id)
 	local container = media.probed_container(source)
 	local codec = media.jellyfin_codec(source)
 	local trimmed = media.is_trimmed(source)
@@ -1026,7 +1023,7 @@ end
 function module.ensure_payload_user_matches(auth_context: AuthContext, payload: PlaybackPayload?): boolean
 	local raw_user_id = scalar_field(payload, "UserId")
 	local payload_user_id = if type(raw_user_id) == "string" then module.trim(raw_user_id) else nil
-	if payload_user_id and item_ids.decode_jellyfin_item_id(payload_user_id) ~= auth_context.principal.user_id then
+	if payload_user_id and item_ids.decode(payload_user_id) ~= auth_context.principal.user_id then
 		return false
 	end
 
@@ -1072,7 +1069,7 @@ function module.report_playback_event(
 	end
 
 	local raw_item_id = scalar_field(payload, "ItemId")
-	local item_id = item_ids.decode_jellyfin_item_id(if type(raw_item_id) == "string" then raw_item_id else nil)
+	local item_id = item_ids.decode(if type(raw_item_id) == "string" then raw_item_id else nil)
 	-- As upstream, a report naming no item records nothing and still succeeds. A track the caller
 	-- can't see reads as one that doesn't exist.
 	local track = module.resolve_track_for_playback(item_id)
@@ -1143,7 +1140,7 @@ function module.resolve_playback_info_item(ctx: ApiContext?): (string?, Track?, 
 		return nil, nil, module.bad_request("missing item id")
 	end
 
-	local track = module.resolve_track_for_playback(module.decode_jellyfin_item_id(raw_item_id))
+	local track = module.resolve_track_for_playback(item_ids.decode(raw_item_id))
 	if not track then
 		return nil, nil, module.not_found("item not found")
 	end

@@ -8,7 +8,7 @@ local options = require("../../protocol/items/options")
 local ids = fixture.ids
 
 local function overview(release_id: string, fields: string?): string?
-	local raw: { [string]: { string } } = { Ids = { item_ids.encode_jellyfin_item_id(release_id) } }
+	local raw: { [string]: { string } } = { Ids = { item_ids.encode(release_id) } }
 	if fields then
 		raw.Fields = { fields }
 	end

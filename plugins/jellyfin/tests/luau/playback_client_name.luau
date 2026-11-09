@@ -50,7 +50,7 @@ assert(deviceless == "Finamp", `got {deviceless}`)
 local _, anonymous = session.login_metadata(context(`MediaBrowser DeviceId="phone"`))
 assert(anonymous == nil, `got {anonymous}`)
 
-local body = { ItemId = item_ids.encode_jellyfin_item_id(fixture.ids.song), PositionTicks = 0 }
+local body = { ItemId = item_ids.encode(fixture.ids.song), PositionTicks = 0 }
 for _, device in { "Pixel 8", string.rep("x", 129), "Pixel\n8", "Pixel\u{85}8" } do
 	local response =
 		session.handle_playback_report_route(context(header(device, key), "/Sessions/Playing", body), "started")

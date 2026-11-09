@@ -161,8 +161,8 @@ function module.handle_refresh_item(ctx: ApiContext): ApiResponse
 	-- Upstream binds the id as a Guid, so one that isn't one is a bad request, as is the empty one,
 	-- which it refuses to look up.
 	local raw_id = ctx.params.itemId
-	local normalized = constants.normalize_item_id(raw_id)
-	if normalized == constants.EMPTY_ITEM_ID then
+	local normalized = item_ids.normalize_guid(raw_id)
+	if normalized == item_ids.EMPTY_GUID then
 		return responses.bad_request("Guid can't be empty")
 	end
 	if constants.is_root_item_id(raw_id) then
@@ -172,7 +172,7 @@ function module.handle_refresh_item(ctx: ApiContext): ApiResponse
 	if constants.is_playlists_folder_id(raw_id) then
 		return api.response.empty(204)
 	end
-	local item_id = item_ids.decode_jellyfin_item_id(raw_id)
+	local item_id = item_ids.decode(raw_id)
 	if not item_id then
 		return responses.bad_request(`The value '{raw_id or ""}' is not valid.`)
 	end

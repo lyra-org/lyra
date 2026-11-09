@@ -7,8 +7,8 @@ local preferences = require("../../protocol/preferences")
 
 local user_id = fixture.users.admin
 
-local zed_library = item_ids.nanoid_to_hex(fixture.libraries.zed) :: string
-local alpha_library = item_ids.nanoid_to_hex(fixture.libraries.alpha) :: string
+local zed_library = item_ids.encode(fixture.libraries.zed) :: string
+local alpha_library = item_ids.encode(fixture.libraries.alpha) :: string
 constants.configure_root_item_id(string.rep("1", 32))
 local playlists = constants.PLAYLISTS_FOLDER_ID
 

@@ -24,7 +24,7 @@ local function report(event: string, track: string, position_ms: number, start_t
 		else "/Sessions/Playing/Progress"
 	local body = {
 		CanSeek = true,
-		ItemId = item_ids.encode_jellyfin_item_id(fixture.ids[track]),
+		ItemId = item_ids.encode(fixture.ids[track]),
 		PlaySessionId = `play-{track}`,
 		SessionId = "dev1",
 		IsPaused = paused == true,

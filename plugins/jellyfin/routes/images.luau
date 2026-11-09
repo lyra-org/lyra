@@ -32,7 +32,7 @@ local function resolve_item(ctx: ApiContext): (string?, ApiResponse?)
 	if not principal then
 		return nil, session.unauthorized()
 	end
-	local item_id = item_ids.decode_jellyfin_item_id(ctx.params.imageId)
+	local item_id = item_ids.decode(ctx.params.imageId)
 	if not item_id then
 		return nil, responses.not_found("item not found")
 	end

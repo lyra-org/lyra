@@ -10,7 +10,7 @@ type Params = { [string]: string }
 local ids = fixture.ids
 
 local function hex(id: string): string
-	return item_ids.encode_jellyfin_item_id(id)
+	return item_ids.encode(id)
 end
 
 -- `Name:Type` for each item a listing returns, then its total when it has one.

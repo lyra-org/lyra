@@ -294,7 +294,7 @@ local function syncplay_mark_queue_updated(group: SyncPlayGroup)
 end
 
 local function syncplay_item_accessible(_principal: session.Principal, item_id: string): boolean
-	return playback.resolve_track_for_playback(item_ids.decode_jellyfin_item_id(item_id)) ~= nil
+	return playback.resolve_track_for_playback(item_ids.decode(item_id)) ~= nil
 end
 
 local function syncplay_group_accessible(principal: session.Principal, group: SyncPlayGroup): boolean
@@ -543,9 +543,7 @@ end
 -- How long the current item runs, in ticks, when Lyra knows it.
 local function syncplay_current_run_time(group: SyncPlayGroup): number?
 	local item = syncplay_current_item(group)
-	local track = if item
-		then playback.resolve_track_for_playback(item_ids.decode_jellyfin_item_id(item.ItemId))
-		else nil
+	local track = if item then playback.resolve_track_for_playback(item_ids.decode(item.ItemId)) else nil
 	local duration_ms = if track then track.duration_ms else nil
 	return if duration_ms then duration_ms * TICKS_PER_MILLISECOND else nil
 end

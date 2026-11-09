@@ -164,7 +164,7 @@ local function decode(raw_ids: { string }): ({ string }?, boolean)
 	if #raw_ids == 0 then
 		return nil, true
 	end
-	local decoded = item_ids.parse_jellyfin_ids_array(raw_ids)
+	local decoded = item_ids.decode_list(raw_ids)
 	if #decoded == 0 then
 		return nil, false
 	end
@@ -272,7 +272,7 @@ local function common(options: ItemsQueryOptions): Common?
 	end
 
 	local ids, ids_ok = decode(options.ids)
-	local exclude_ids = item_ids.parse_jellyfin_ids_array(options.exclude_item_ids)
+	local exclude_ids = item_ids.decode_list(options.exclude_item_ids)
 	local genre_ids, genres_ok = decode(options.genre_ids)
 	if not ids_ok or not genres_ok then
 		return nil

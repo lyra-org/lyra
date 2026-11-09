@@ -36,7 +36,7 @@ function module.normalize_cover_info(raw_cover: covers.Cover?): ResolvedCoverInf
 		id = id,
 		hash = hash,
 		blurhash = requests.trim(raw_cover.blurhash),
-		owner_id = identifiers.encode_jellyfin_item_id(raw_cover.owner_id),
+		owner_id = identifiers.encode(raw_cover.owner_id),
 	}
 end
 

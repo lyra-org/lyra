@@ -98,7 +98,7 @@ local group_id = post("a", "New", { GroupName = "Party" }).body.GroupId
 check(commands("a"), "Stop+0", "a new group has nothing to play")
 post("b", "Join", { GroupId = group_id })
 check(commands("b"), "Stop+0", "nor for a member that joins it")
-post("a", "SetNewQueue", { PlayingQueue = { item_ids.encode_jellyfin_item_id(fixture.ids.song) } })
+post("a", "SetNewQueue", { PlayingQueue = { item_ids.encode(fixture.ids.song) } })
 post("a", "Ready", { IsPlaying = false, PositionTicks = 0 })
 check(commands("a", true), "Pause@0+0", "a ready member pauses until the others are")
 commands("b")
@@ -211,7 +211,7 @@ check(commands("a"), "Unpause+1000", "the timed out group starts ahead")
 
 -- The group keeps a clock that runs while it plays.
 do
-	local song = item_ids.encode_jellyfin_item_id(fixture.ids.song)
+	local song = item_ids.encode(fixture.ids.song)
 	local clock_group = post("c", "New", { GroupName = "Clock" }).body.GroupId
 	post("d", "Join", { GroupId = clock_group })
 	post("c", "SetNewQueue", { PlayingQueue = { song } })

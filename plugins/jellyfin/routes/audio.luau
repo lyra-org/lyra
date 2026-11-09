@@ -270,7 +270,7 @@ function module.handle_universal_route(ctx: ApiContext): ApiResponse
 		return responses.not_found("media source not found")
 	end
 
-	local track = playback.resolve_track_for_playback(item_ids.decode_jellyfin_item_id(item_id))
+	local track = playback.resolve_track_for_playback(item_ids.decode(item_id))
 	if not track then
 		return responses.not_found("item not found")
 	end
@@ -430,7 +430,7 @@ function module.handle_stream_route(ctx: ApiContext): ApiResponse
 	if not requested_media_source_matches_item(request, item_id) then
 		return responses.not_found("media source not found")
 	end
-	local track = playback.resolve_track_for_public_stream(item_ids.decode_jellyfin_item_id(item_id))
+	local track = playback.resolve_track_for_public_stream(item_ids.decode(item_id))
 	if track == nil then
 		return responses.not_found("item not found")
 	end
@@ -640,7 +640,7 @@ local function resolve_audio_hls_playlist_request(ctx: ApiContext): (ResolvedAud
 		return nil, responses.not_found("media source not found")
 	end
 
-	local track = playback.resolve_track_for_playback(item_ids.decode_jellyfin_item_id(item_id))
+	local track = playback.resolve_track_for_playback(item_ids.decode(item_id))
 	if not track then
 		return nil, responses.not_found("item not found")
 	end
@@ -756,7 +756,7 @@ function module.handle_lyrics_delete_route(ctx: ApiContext): ApiResponse
 
 	local params = if ctx then ctx.params else nil
 	local raw_item_id = if params then params.itemId else nil
-	local track_id = item_ids.decode_jellyfin_item_id(raw_item_id)
+	local track_id = item_ids.decode(raw_item_id)
 	if track_id == nil then
 		return api.response.empty(204)
 	end

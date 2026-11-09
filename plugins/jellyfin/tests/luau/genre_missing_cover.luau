@@ -21,7 +21,7 @@ local function image_status(): number
 	local response = session.handle_primary_image_request({
 		plugin_id = "jellyfin",
 		request = { method = "GET", path = "/", headers = {}, query = {}, body_raw = "" },
-		params = { imageId = item_ids.encode_jellyfin_item_id(fixture.ids.rock) },
+		params = { imageId = item_ids.encode(fixture.ids.rock) },
 	} :: any)
 	return if response.kind == "cover" then 200 else response.status
 end

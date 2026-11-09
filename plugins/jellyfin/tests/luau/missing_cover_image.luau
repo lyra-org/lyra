@@ -16,7 +16,7 @@ local function image_status(id: string, api_key: string?): number
 			query = if api_key then { api_key = { api_key } } else {},
 			body_raw = "",
 		},
-		params = { imageId = item_ids.encode_jellyfin_item_id(id) },
+		params = { imageId = item_ids.encode(id) },
 	} :: any) :: any
 	return if response.kind == "cover" then 200 else response.status
 end

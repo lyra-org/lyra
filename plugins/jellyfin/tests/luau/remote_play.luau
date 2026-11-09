@@ -5,11 +5,11 @@ local listing = require("../../protocol/items/listing")
 local ids = fixture.ids
 local names: { [string]: string } = {}
 for key, id in ids do
-	names[item_ids.encode_jellyfin_item_id(id) :: string] = key
+	names[item_ids.encode(id) :: string] = key
 end
 
 local function hex(key: string): string
-	return item_ids.encode_jellyfin_item_id(ids[key]) :: string
+	return item_ids.encode(ids[key]) :: string
 end
 
 -- The fixture keys of what a remote play of `keys` queues, then the command it sends on.

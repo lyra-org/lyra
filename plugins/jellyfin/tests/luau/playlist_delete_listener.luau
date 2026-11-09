@@ -15,7 +15,7 @@ local response = session.handle_delete_item_route({
 		body_raw = "",
 		json = nil,
 	},
-	params = { id = item_ids.encode_jellyfin_item_id(fixture.ids.shared) },
+	params = { id = item_ids.encode(fixture.ids.shared) },
 } :: any)
 assert(response.status == 401, `unauthorized, as upstream, got {response.status}`)
 assert(playlist_access.find(fixture.ids.shared) ~= nil, "and the playlist is kept")

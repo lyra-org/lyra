@@ -11,14 +11,13 @@ local genres = require("@lyra/genres")
 local tags_module = require("@lyra/tags")
 
 local constants = require("../../constants")
+local item_ids = require("./identifiers")
 local requests = require("./requests")
 
 type ApiQueryParams = api.ApiQueryParams
 type TagInfoMap = { [string]: { tags_module.TagInfo } }
 
 local DEFAULT_ITEMS_FIELDS = constants.DEFAULT_ITEMS_FIELDS
-local ITEM_ID_HEX_LENGTH = constants.ITEM_ID_HEX_LENGTH
-local ITEM_ID_HEX_PATTERN = constants.ITEM_ID_HEX_PATTERN
 
 export type FavoriteLookup = { [string]: boolean }
 
@@ -164,12 +163,8 @@ local function parse_item_ids(query: ApiQueryParams?, keys: { string }): { strin
 	local ids: { string } = {}
 	local seen: { [string]: boolean } = {}
 	for _, raw_id in parse_csv(query, keys) do
-		local normalized = string.lower((string.gsub(raw_id, "-", "")))
-		if
-			#normalized == ITEM_ID_HEX_LENGTH
-			and string.match(normalized, ITEM_ID_HEX_PATTERN)
-			and not seen[normalized]
-		then
+		local normalized = item_ids.normalize_guid(raw_id)
+		if normalized and not seen[normalized] then
 			seen[normalized] = true
 			table.insert(ids, normalized)
 		end

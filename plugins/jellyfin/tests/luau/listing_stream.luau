@@ -23,8 +23,8 @@ for _, params in
 		{ Recursive = "true" },
 		{ Recursive = "true", IncludeItemTypes = "Audio", StartIndex = "1", Limit = "1" },
 		{ Recursive = "true", IncludeItemTypes = "Audio,MusicAlbum,Playlist", SortBy = "SortName" },
-		{ ParentId = item_ids.encode_jellyfin_item_id(ids.mix) },
-		{ Ids = `{item_ids.encode_jellyfin_item_id(ids.s2)},{item_ids.encode_jellyfin_item_id(ids.s1)}` },
+		{ ParentId = item_ids.encode(ids.mix) },
+		{ Ids = `{item_ids.encode(ids.s2)},{item_ids.encode(ids.s1)}` },
 		{ Recursive = "true", IncludeItemTypes = "MusicArtist", StartIndex = "50" },
 	} :: { { [string]: string } }
 do

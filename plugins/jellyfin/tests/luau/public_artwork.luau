@@ -16,7 +16,7 @@ local function primary_image(id: string, api_key: string?)
 			query = if api_key then { api_key = { api_key } } else {},
 			body_raw = "",
 		},
-		params = { imageId = item_ids.encode_jellyfin_item_id(id) },
+		params = { imageId = item_ids.encode(id) },
 	} :: any)
 end
 

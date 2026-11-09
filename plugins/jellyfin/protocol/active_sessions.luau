@@ -166,7 +166,7 @@ end
 
 local function set_now_playing(listing: Listing, dto: JsonObject, playing: ActivePlayback)
 	local now_playing: JsonObject = {
-		Id = item_ids.encode_jellyfin_item_id(playing.track_id),
+		Id = item_ids.encode(playing.track_id),
 		Name = "",
 		Type = "Audio",
 	}
@@ -208,7 +208,7 @@ local function connection_dto(conn: Connection): JsonObject
 	end
 	return {
 		Id = conn.id,
-		UserId = item_ids.encode_jellyfin_item_id(conn.user_id),
+		UserId = item_ids.encode(conn.user_id),
 		UserName = conn.username,
 		DeviceId = conn.session_key,
 		DeviceName = conn.client_name or conn.session_key,
@@ -237,7 +237,7 @@ local function playback_dto(playing: ActivePlayback): JsonObject
 		local device = playing.session_key or playing.id
 		dto = {
 			Id = device,
-			UserId = item_ids.encode_jellyfin_item_id(playing.user_id),
+			UserId = item_ids.encode(playing.user_id),
 			UserName = playing.username,
 			DeviceId = device,
 			DeviceName = playing.client_name or device,

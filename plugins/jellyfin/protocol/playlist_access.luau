@@ -108,7 +108,7 @@ end
 function module.entries_of_items(playlist: Playlist, raw_ids: { string }): { string }
 	local wanted: { [string]: boolean } = {}
 	for _, raw_id in raw_ids do
-		local track_id = item_ids.decode_jellyfin_item_id(raw_id)
+		local track_id = item_ids.decode(raw_id)
 		if track_id then
 			wanted[track_id] = true
 		end
