@@ -8,6 +8,7 @@ use std::{
     collections::{
         BTreeMap,
         HashMap,
+        HashSet,
     },
     future::Future,
     sync::{
@@ -971,6 +972,8 @@ fn failure_record(
 
 const SYNC_EVENT_BROADCAST_CAPACITY: usize = 512;
 
+/// The most runs a library's run list returns.
+const LISTED_RUNS: usize = 50;
 /// The newest runs of a library kept when another starts, on top of each kind's latest finished
 /// run.
 const RUNS_KEPT_AT_START: usize = 49;
@@ -1502,6 +1505,48 @@ async fn filtered_run_for_library(
         return record_to_summary(record).map(Some);
     }
     Ok(None)
+}
+
+/// The library's newest runs, newest first, each as its live state when it has one.
+pub(crate) async fn recent_runs_for_library(
+    library_id: &str,
+) -> anyhow::Result<Vec<SyncRunSummary>> {
+    let db = STATE.db.get();
+    reconcile_interrupted_runs(&db).await?;
+    // Holding the database across both reads keeps a run's end and its successor's start from
+    // falling between them. A run's live state is then at least as new as its stored record.
+    let db_read = db.read().await;
+    let live: Vec<SyncRunSummary> = sync_run_states()
+        .read_owned()
+        .await
+        .values()
+        .filter(|state| state.library_id == library_id)
+        .map(SyncRunState::summary)
+        .collect();
+    let stored = lyra_db::sync_runs::list_for_library(&db_read, library_id)?
+        .into_iter()
+        .take(LISTED_RUNS)
+        .map(record_to_summary)
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(listed_runs(stored, live))
+}
+
+/// `stored`, newest first, with `live` in place of the records of the same runs, in order and
+/// limited to [`LISTED_RUNS`].
+fn listed_runs(stored: Vec<SyncRunSummary>, live: Vec<SyncRunSummary>) -> Vec<SyncRunSummary> {
+    let live_ids: HashSet<Option<String>> = live.iter().map(|run| run.run.id.clone()).collect();
+    let mut runs: Vec<SyncRunSummary> = stored
+        .into_iter()
+        .filter(|run| !live_ids.contains(&run.run.id))
+        .chain(live)
+        .collect();
+    runs.sort_by(|a, b| {
+        b.sequence
+            .cmp(&a.sequence)
+            .then(b.run.started_at_ms.cmp(&a.run.started_at_ms))
+    });
+    runs.truncate(LISTED_RUNS);
+    runs
 }
 
 /// The stored failures of the run `run_id` names, oldest first.
@@ -2090,6 +2135,63 @@ mod tests {
                 .fail_work(work, SyncStageKey::MetadataParse, details, message)
                 .await;
         }
+    }
+
+    fn stored_summary(id: &str, sequence: u64) -> anyhow::Result<SyncRunSummary> {
+        record_to_summary(stored_run("lib", id, SyncRunKind::Sync, sequence)?)
+    }
+
+    fn live_summary(id: &str, status: SyncRunStatus, sequence: u64) -> SyncRunSummary {
+        let mut state = SyncRunState::new(SyncRunKind::Sync, "lib".to_string(), sequence, sequence);
+        state.run_id = id.to_string();
+        state.status = status;
+        state.summary()
+    }
+
+    #[test]
+    fn a_run_ended_but_not_yet_stored_lists_behind_its_successor() -> anyhow::Result<()> {
+        let runs = listed_runs(
+            vec![
+                stored_summary("successor", 10)?,
+                stored_summary("ended", 5)?,
+            ],
+            vec![live_summary("ended", SyncRunStatus::Failed, 6)],
+        );
+
+        let listed: Vec<_> = runs
+            .iter()
+            .map(|run| (run.run.id.as_deref(), run.run.status))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                (Some("successor"), SyncRunStatus::Succeeded),
+                (Some("ended"), SyncRunStatus::Failed),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_live_run_missing_from_storage_lists_first_within_the_limit() -> anyhow::Result<()> {
+        let stored = (0..LISTED_RUNS as u64)
+            .rev()
+            .map(|sequence| stored_summary(&format!("run-{sequence}"), sequence))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        let runs = listed_runs(
+            stored,
+            vec![live_summary(
+                "live",
+                SyncRunStatus::Running,
+                LISTED_RUNS as u64,
+            )],
+        );
+
+        assert_eq!(runs.len(), LISTED_RUNS);
+        assert_eq!(runs[0].run.id.as_deref(), Some("live"));
+        assert_eq!(runs[LISTED_RUNS - 1].run.id.as_deref(), Some("run-1"));
+        Ok(())
     }
 
     #[tokio::test]

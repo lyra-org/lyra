@@ -379,6 +379,7 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("POST", "/api/libraries/{id}/purge"),
     ("GET", "/api/libraries/{id}/sync"),
     ("POST", "/api/libraries/{id}/sync"),
+    ("GET", "/api/libraries/{id}/sync/runs"),
     ("GET", "/api/libraries/{id}/access"),
     ("POST", "/api/libraries/{id}/access"),
     ("DELETE", "/api/libraries/{id}/access/{user_id}"),

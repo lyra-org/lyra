@@ -552,6 +552,17 @@ async fn get_library_sync_status(
     .ok_or_else(|| library_not_found(&id))
 }
 
+async fn list_library_sync_runs(
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<crate::services::LibrarySyncStatus>>, AppError> {
+    let principal = require_authenticated(bearer_credential(&headers)).await?;
+    control::recent_sync_runs(&principal, &id)
+        .await?
+        .map(Json)
+        .ok_or_else(|| library_not_found(&id))
+}
+
 async fn start_library_sync_for_library(
     headers: HeaderMap,
     Path(id): Path<String>,
@@ -607,6 +618,13 @@ fn purge_library_docs(op: TransformOperation) -> TransformOperation {
 fn get_library_sync_status_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get library sync status").description(
         "Returns a compact sync status for a library, including run state, aggregate progress, current work, active-unit count, and failure count: the active run, else the latest, else an idle status for a library that never ran. Requires library access. `run.error` and `current.subject` are null unless the caller has ManageLibraries.",
+    )
+}
+
+#[cfg(feature = "docgen")]
+fn list_library_sync_runs_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("List library sync runs").description(
+        "Returns the library's newest 50 sync, refresh and purge runs, newest first, as a bare array of the summaries `GET /api/sync/runs/{run_id}` returns; each carries `run.kind`. An active run appears once with its live state. A library that never ran returns an empty array. Older runs are removed when another starts: a library keeps its newest 50 runs and the latest finished run of each kind. Requires library access; a missing or hidden library is 404. `run.error` and `current.subject` are null unless the caller has ManageLibraries.",
     )
 }
 
@@ -764,6 +782,7 @@ pub fn library_routes() -> Router {
             "/{id}/sync",
             get(get_library_sync_status).post(start_library_sync_for_library),
         )
+        .route("/{id}/sync/runs", get(list_library_sync_runs))
         .route(
             "/{id}/access",
             get(list_library_access).post(grant_library_access),
@@ -800,6 +819,10 @@ pub(crate) fn library_openapi_routes() -> aide::axum::ApiRouter {
             "/{id}/sync",
             get_with(get_library_sync_status, get_library_sync_status_docs)
                 .post_with(start_library_sync_for_library, start_library_sync_docs),
+        )
+        .api_route(
+            "/{id}/sync/runs",
+            get_with(list_library_sync_runs, list_library_sync_runs_docs),
         )
         .api_route(
             "/{id}/access",
@@ -967,6 +990,164 @@ mod tests {
 
     async fn setup_route_test() -> anyhow::Result<()> {
         crate::plugins::testing::init_library_test_state(std::path::PathBuf::from(".")).await
+    }
+
+    fn finished_run(
+        library_id: &str,
+        id: &str,
+        sequence: u64,
+    ) -> lyra_db::sync_runs::SyncRunRecord {
+        lyra_db::sync_runs::SyncRunRecord {
+            db_id: None,
+            id: id.to_string(),
+            library_id: library_id.to_string(),
+            kind: "library_sync".into(),
+            status: "failed".into(),
+            started_at_ms: sequence,
+            updated_at_ms: sequence,
+            finished_at_ms: Some(sequence),
+            error: Some("cannot read /secret".into()),
+            cancellation_requested: false,
+            sequence,
+            progress_mode: "determinate".into(),
+            total_state: "final".into(),
+            completed_units: 0,
+            failed_units: 0,
+            skipped_units: 0,
+            total_units: 0,
+            current_stage: None,
+            current_subject: None,
+            active_units: 0,
+            failure_count: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn the_run_list_is_limited_redacted_and_shows_an_active_run_once() -> anyhow::Result<()> {
+        use crate::services::libraries::{
+            SyncRunStatus,
+            SyncStageKey,
+            SyncWorkDetails,
+            begin_test_run,
+            end_test_run,
+        };
+        use axum::response::IntoResponse;
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        setup_route_test().await?;
+        let (manager, listener, shown, hidden, idle) = {
+            let mut db = STATE.db.write().await;
+            let manager = create_user_with_permissions(
+                &mut db,
+                "manager",
+                vec![Permission::ManageLibraries],
+            )?;
+            let listener = create_user_with_permissions(&mut db, "listener", vec![])?;
+            let shown = lyra_db::test_db::insert_library(&mut db, "Shown", "/runs/shown")?;
+            let hidden = lyra_db::test_db::insert_library(&mut db, "Hidden", "/runs/hidden")?;
+            let idle = lyra_db::test_db::insert_library(&mut db, "Idle", "/runs/idle")?;
+            for user in [manager, listener] {
+                for library in [shown, idle] {
+                    lyra_db::libraries::grant_access(
+                        &mut db,
+                        user,
+                        library,
+                        lyra_db::libraries::AccessKind::ReadWrite,
+                    )?;
+                }
+            }
+            let [shown, hidden, idle] = [shown, hidden, idle].map(|library| {
+                lyra_db::libraries::get_by_id(&db, library)
+                    .expect("library reads")
+                    .expect("library exists")
+            });
+            for sequence in 1..=60 {
+                lyra_db::sync_runs::create(
+                    &mut db,
+                    &finished_run(&shown.id, &format!("run-{sequence}"), sequence),
+                )?;
+            }
+            (manager, listener, shown, hidden, idle)
+        };
+        let manager_headers = bearer_headers(
+            &crate::services::testing::create_session(manager, Default::default())
+                .await?
+                .token,
+        );
+        let listener_headers = bearer_headers(
+            &crate::services::testing::create_session(listener, Default::default())
+                .await?
+                .token,
+        );
+        let list = |headers: &HeaderMap, id: &str| {
+            list_library_sync_runs(headers.clone(), Path(id.to_string()))
+        };
+        let status_of = |result: Result<Json<Vec<_>>, AppError>| {
+            result
+                .map(|_| StatusCode::OK)
+                .unwrap_or_else(|error| error.into_response().status())
+        };
+        let ok = |result: Result<Json<Vec<crate::services::LibrarySyncStatus>>, AppError>| {
+            result.map(|Json(runs)| runs).map_err(|e| anyhow!("{e}"))
+        };
+
+        let managed = ok(list(&manager_headers, &shown.id).await)?;
+        assert_eq!(managed.len(), 50, "bounded before any pruning happened");
+        assert_eq!(managed[0].run.id.as_deref(), Some("run-60"));
+        assert_eq!(managed[49].run.id.as_deref(), Some("run-11"));
+        assert!(managed[0].run.error.is_some());
+        let listened = ok(list(&listener_headers, &shown.id).await)?;
+        assert_eq!(listened.len(), 50);
+        assert!(listened.iter().all(|run| run.run.error.is_none()));
+
+        assert!(ok(list(&listener_headers, &idle.id).await)?.is_empty());
+        assert_eq!(
+            status_of(list(&listener_headers, &hidden.id).await),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            status_of(list(&listener_headers, "missing").await),
+            StatusCode::NOT_FOUND
+        );
+
+        let active = begin_test_run(&shown).await;
+        let runs = ok(list(&manager_headers, &shown.id).await)?;
+        assert_eq!(runs.len(), 50);
+        assert_eq!(runs[0].run.id.as_deref(), Some(active.run_id()));
+        assert_eq!(runs[0].run.status, SyncRunStatus::Queued);
+
+        active.set_status(SyncRunStatus::Running).await;
+        let runs = ok(list(&manager_headers, &shown.id).await)?;
+        assert_eq!(runs.len(), 50);
+        assert_eq!(
+            runs.iter()
+                .filter(|run| run.run.id.as_deref() == Some(active.run_id()))
+                .count(),
+            1,
+            "an active run's stored record doesn't list it twice"
+        );
+        assert_eq!(runs[0].run.id.as_deref(), Some(active.run_id()));
+        assert_eq!(runs[0].run.status, SyncRunStatus::Running);
+
+        active
+            .start_work(
+                SyncStageKey::EntrySync,
+                SyncWorkDetails::new("entry_group_sync").source_dir(Some("/secret".to_string())),
+            )
+            .await;
+        let subject = |runs: &[crate::services::LibrarySyncStatus]| {
+            runs[0]
+                .current
+                .as_ref()
+                .expect("current work")
+                .subject
+                .clone()
+        };
+        let managed = ok(list(&manager_headers, &shown.id).await)?;
+        assert_eq!(subject(&managed).as_deref(), Some("/secret"));
+        let listened = ok(list(&listener_headers, &shown.id).await)?;
+        assert_eq!(subject(&listened), None);
+        end_test_run(&active).await;
+        Ok(())
     }
 
     #[tokio::test]

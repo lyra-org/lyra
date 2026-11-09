@@ -281,6 +281,24 @@ pub(crate) async fn sync_run(
     Ok(SyncReader::of(Some(principal)).await?.read(summary))
 }
 
+/// The library's newest runs, newest first, as [`SyncReader`] reads them for the principal; `None`
+/// when it is missing or hidden.
+pub(crate) async fn recent_sync_runs(
+    principal: &Principal,
+    library_id: &str,
+) -> Result<Option<Vec<SyncRunSummary>>, LibraryControlError> {
+    let reader = SyncReader::of(Some(principal)).await?;
+    if !reader.sees(library_id) {
+        return Ok(None);
+    }
+    let runs = orchestrator::recent_runs_for_library(library_id).await?;
+    Ok(Some(
+        runs.into_iter()
+            .filter_map(|summary| reader.read(summary))
+            .collect(),
+    ))
+}
+
 /// Cancels the library's active run and returns its summary; without one, returns what
 /// [`sync_status`] does for the library.
 pub(crate) async fn cancel_sync(
