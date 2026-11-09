@@ -14,6 +14,7 @@ pub(crate) mod layers;
 pub(crate) mod lyrics;
 pub(crate) mod mapping;
 pub(crate) mod mapping_admin;
+pub(crate) mod merge_journal;
 pub(crate) mod merging;
 mod model;
 pub(crate) mod remap;

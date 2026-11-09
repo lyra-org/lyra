@@ -23,6 +23,10 @@ use super::id_links::{
     provider_ranks,
 };
 use super::layers::MANUAL_SOURCE_ID;
+use super::merge_journal::{
+    Merge,
+    MergeJournal,
+};
 use lyra_db::graph::RetargetLookup;
 use lyra_db::roots::{
     self,
@@ -237,6 +241,7 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
 pub(crate) fn deduplicate_artists_by_external_id(
     db: &mut DbAny,
     declared: &DeclaredIds,
+    journal: &MergeJournal,
 ) -> anyhow::Result<u32> {
     if !declared.has_unique() {
         return Ok(0);
@@ -270,11 +275,12 @@ pub(crate) fn deduplicate_artists_by_external_id(
                 external_ids = ?component.keys,
                 "merging duplicate artist"
             );
-            db.transaction_mut(|t| {
+            let merge = db.transaction_mut(|t| {
                 migrate_metadata(t, winner, loser)?;
                 lyra_db::external_ids::absorb_inside_tx(t, winner, loser)?;
                 merge_artist_into(t, winner, loser)
             })?;
+            journal.record([merge]);
             merged_count += 1;
         }
     }
@@ -341,7 +347,8 @@ pub(super) fn merge_artist_into(
     db: &mut DbAnyTransactionMut<'_>,
     winner: DbId,
     loser: DbId,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Merge> {
+    let merge = Merge::of(db, winner, loser)?;
     let outgoing_relations = lyra_db::artists::relations::get_relations_from(db, loser, None)?;
 
     // Layers own the incoming relations; re-applying the winner below rebuilds
@@ -419,7 +426,8 @@ pub(super) fn merge_artist_into(
             db, owner_id,
         )?;
     }
-    crate::services::metadata::merging::apply_merged_metadata_to_entity_inside_tx(db, winner)
+    crate::services::metadata::merging::apply_merged_metadata_to_entity_inside_tx(db, winner)?;
+    Ok(merge)
 }
 
 /// Whether a lock keeps a release's or track's stored credits.
@@ -485,6 +493,95 @@ mod tests {
         IdSource,
         test_db,
     };
+
+    fn deduplicate_artists_by_external_id(
+        db: &mut DbAny,
+        declared: &DeclaredIds,
+    ) -> anyhow::Result<u32> {
+        super::deduplicate_artists_by_external_id(db, declared, &MergeJournal::default())
+    }
+
+    #[test]
+    fn merges_committed_before_a_later_failure_stay_recorded() -> anyhow::Result<()> {
+        let mut db = test_db::new_test_db()?;
+        let winner = lyra_db::fixtures::insert_artist(&mut db, "Radiohead")?;
+        for _ in 0..3 {
+            let release = lyra_db::fixtures::insert_release(&mut db, "Release")?;
+            test_db::connect_artist(&mut db, release, winner)?;
+        }
+        // Merged in id order, so the broken one fails after the first has committed.
+        let merged = lyra_db::fixtures::insert_artist(&mut db, "Radiohead")?;
+        let broken = lyra_db::fixtures::insert_artist(&mut db, "Radiohead")?;
+        let mut public_ids = Vec::new();
+        for artist in [winner, merged, broken] {
+            lyra_db::external_ids::upsert(
+                &mut db,
+                artist,
+                "provider-a",
+                "artist_id",
+                "shared",
+                IdSource::Resolved,
+            )?;
+            public_ids.push(lyra_db::lookup::find_id_by_db_id(&db, artist)?.expect("public id"));
+        }
+        let malformed_layer = db
+            .exec_mut(
+                QueryBuilder::insert()
+                    .nodes()
+                    .values([[("db_element_id", "ArtistLayer").into()]])
+                    .query(),
+            )?
+            .ids()[0];
+        db.exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from(broken)
+                .to(malformed_layer)
+                .query(),
+        )?;
+        let journal = MergeJournal::default();
+
+        let result =
+            super::deduplicate_artists_by_external_id(&mut db, &unique_artist_ids(), &journal);
+
+        assert!(result.is_err(), "the broken artist's merge fails");
+        assert_eq!(
+            journal.resolve(&public_ids[1]).as_deref(),
+            Some(public_ids[0].as_str()),
+            "the merge before it stays recorded"
+        );
+        assert_eq!(journal.resolve(&public_ids[2]), None);
+        assert!(lyra_db::artists::get_by_id(&db, broken)?.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn a_committed_artist_deduplication_records_each_loser() -> anyhow::Result<()> {
+        let mut db = test_db::new_test_db()?;
+        let public_id = |artist: DbId, db: &mut DbAny| -> anyhow::Result<String> {
+            lyra_db::external_ids::upsert(
+                db,
+                artist,
+                "provider-a",
+                "artist_id",
+                "shared",
+                IdSource::Resolved,
+            )?;
+            Ok(lyra_db::lookup::find_id_by_db_id(&*db, artist)?.expect("public id"))
+        };
+        let winner = lyra_db::fixtures::insert_artist(&mut db, "Radiohead")?;
+        let release = lyra_db::fixtures::insert_release(&mut db, "Release")?;
+        test_db::connect_artist(&mut db, release, winner)?;
+        let loser = lyra_db::fixtures::insert_artist(&mut db, "Radiohead")?;
+        let (winner_id, loser_id) = (public_id(winner, &mut db)?, public_id(loser, &mut db)?);
+        let journal = MergeJournal::default();
+
+        super::deduplicate_artists_by_external_id(&mut db, &unique_artist_ids(), &journal)?;
+
+        assert_eq!(journal.resolve(&loser_id), Some(winner_id));
+        assert_eq!(lyra_db::lookup::find_node_id_by_id(&db, &loser_id)?, None);
+        Ok(())
+    }
 
     #[test]
     fn a_merged_artists_favorites_ratings_and_tags_move_to_the_winner() -> anyhow::Result<()> {

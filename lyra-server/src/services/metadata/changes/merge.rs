@@ -49,6 +49,7 @@ use crate::services::{
             MANUAL_SOURCE_ID,
             json::value_json,
         },
+        merge_journal::Merge,
         merging::{
             LayerKeys,
             apply_merged_metadata_to_entity_inside_tx,
@@ -251,6 +252,7 @@ pub(super) fn apply(
     winner_id: &str,
     loser_ids: &[String],
     expected: &[ManualFill],
+    merges: &mut Vec<Merge>,
 ) -> Result<MergeOutcome, ChangeError> {
     let targets = targets(t, context, winner_id, loser_ids)?;
     let fills = manual_fills(t, &targets)?;
@@ -263,7 +265,7 @@ pub(super) fn apply(
     check_merge(t, context, &targets)?;
     let counts = counts(t, &targets)?;
     for &loser in &targets.losers {
-        merge_into(t, targets.kind, targets.winner, loser)?;
+        merges.extend(merge_into(t, targets.kind, targets.winner, loser)?);
     }
     Ok(MergeOutcome {
         winner_id: winner_id.to_string(),
@@ -374,16 +376,16 @@ fn merge_into(
     kind: MergeKind,
     winner: DbId,
     loser: DbId,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<Merge>> {
     match kind {
         MergeKind::Artist => {
             migrate_metadata(t, winner, loser)?;
             lyra_db::external_ids::absorb_inside_tx(t, winner, loser)?;
-            merge_artist_into(t, winner, loser)
+            merge_artist_into(t, winner, loser).map(Some)
         }
         MergeKind::Release => merge_release_into_inside_tx(t, winner, loser),
-        MergeKind::Genre => merge_genre_into(t, winner, loser),
-        MergeKind::Label => merge_label_into(t, winner, loser),
+        MergeKind::Genre => merge_genre_into(t, winner, loser).map(|()| None),
+        MergeKind::Label => merge_label_into(t, winner, loser).map(|()| None),
     }
 }
 

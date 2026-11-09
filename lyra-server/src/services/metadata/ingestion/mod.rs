@@ -1545,6 +1545,7 @@ mod tests {
                     "musicbrainz",
                     "artist_id"
                 )]),
+                &crate::services::metadata::merge_journal::MergeJournal::default(),
             )?,
             1
         );
@@ -1605,6 +1606,7 @@ mod tests {
                 "musicbrainz",
                 "artist_id",
             )]),
+            &crate::services::metadata::merge_journal::MergeJournal::default(),
         )?;
 
         let local_name = |db: &DbAny| -> anyhow::Result<Option<Option<FieldValue>>> {

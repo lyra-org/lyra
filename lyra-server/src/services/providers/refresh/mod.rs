@@ -179,6 +179,7 @@ fn deduplicate_release_scope_locked(
         &declared_release_ids,
         &unique_track_id_pairs,
         Some(provider_scope),
+        &STATE.generation().merge_journal,
     ) {
         Ok(merged) => merged > 0,
         Err(err) => {

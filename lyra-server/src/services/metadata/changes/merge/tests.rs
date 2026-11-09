@@ -1302,7 +1302,11 @@ async fn a_new_artist_holding_a_kept_id_links_to_its_holder() -> anyhow::Result<
     )?;
 
     assert_eq!(
-        deduplicate_artists_by_external_id(&mut db, &artist_ids_declared())?,
+        deduplicate_artists_by_external_id(
+            &mut db,
+            &artist_ids_declared(),
+            &crate::services::metadata::merge_journal::MergeJournal::default(),
+        )?,
         1
     );
 
@@ -1360,7 +1364,11 @@ async fn a_manual_value_still_keeps_a_new_artist_from_a_kept_id() -> anyhow::Res
     )?;
 
     assert_eq!(
-        deduplicate_artists_by_external_id(&mut db, &artist_ids_declared())?,
+        deduplicate_artists_by_external_id(
+            &mut db,
+            &artist_ids_declared(),
+            &crate::services::metadata::merge_journal::MergeJournal::default(),
+        )?,
         0
     );
     Ok(())

@@ -1093,3 +1093,61 @@ async fn a_set_without_a_merge_leaves_the_provider_registry_alone() -> anyhow::R
     drop(held);
     Ok(())
 }
+
+async fn insert_artists(names: [&str; 2]) -> anyhow::Result<[String; 2]> {
+    let mut db = STATE.db.write().await;
+    let [first, second] = names;
+    let first = lyra_db::fixtures::insert_artist(&mut db, first)?;
+    let second = lyra_db::fixtures::insert_artist(&mut db, second)?;
+    Ok([public_id(&db, first), public_id(&db, second)])
+}
+
+#[tokio::test]
+async fn a_committed_merge_records_the_loser_for_late_writes() -> anyhow::Result<()> {
+    let _guard = runtime_test_lock().await;
+    init_default_test_state()?;
+    let admin = admin().await?;
+    let [winner, loser] = insert_artists(["Winner", "Loser"]).await?;
+
+    apply(&admin, &[merge(&winner, &[&loser], Vec::new())])
+        .await
+        .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+
+    assert_eq!(
+        STATE.generation().merge_journal.resolve(&loser).as_deref(),
+        Some(winner.as_str())
+    );
+    let db = STATE.db.read().await;
+    assert_eq!(
+        lyra_db::lookup::find_node_id_by_id(&*db, &loser)?,
+        None,
+        "lookups stay exact"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_rolled_back_merge_records_nothing() -> anyhow::Result<()> {
+    let _guard = runtime_test_lock().await;
+    init_default_test_state()?;
+    let admin = admin().await?;
+    let [winner, loser] = insert_artists(["Winner", "Loser"]).await?;
+
+    let failed = apply(
+        &admin,
+        &[
+            merge(&winner, &[&loser], Vec::new()),
+            merge("no-such-winner", &[&winner], Vec::new()),
+        ],
+    )
+    .await;
+
+    assert!(failed.is_err(), "the set fails on its second change");
+    assert_eq!(STATE.generation().merge_journal.resolve(&loser), None);
+    let db = STATE.db.read().await;
+    assert!(
+        lyra_db::lookup::find_node_id_by_id(&*db, &loser)?.is_some(),
+        "the merge rolled back"
+    );
+    Ok(())
+}

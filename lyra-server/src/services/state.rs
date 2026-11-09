@@ -151,6 +151,7 @@ pub(crate) struct GenerationState {
     pub(crate) layers: LayerStates,
     pub(crate) auth_caches: AuthCaches,
     pub(crate) providers: ProviderRegistries,
+    pub(crate) merge_journal: crate::services::metadata::merge_journal::MergeJournal,
     pub(crate) mix: MixRegistries,
     pub(crate) pagination: SnapshotRegistry,
     pub(crate) playback_updates: PlaybackUpdateRegistries,

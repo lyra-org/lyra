@@ -25,6 +25,10 @@ use crate::services::metadata::id_links::{
     provider_ranks,
 };
 use crate::services::metadata::layers::MANUAL_SOURCE_ID;
+use crate::services::metadata::merge_journal::{
+    Merge,
+    MergeJournal,
+};
 use lyra_db::graph::RetargetLookup;
 
 pub(super) fn select_release_merge_winner(
@@ -70,18 +74,17 @@ pub(super) fn select_release_merge_winner(
     Ok(winner)
 }
 
-fn merge_release_into(db: &mut DbAny, winner: DbId, loser: DbId) -> anyhow::Result<()> {
-    db.transaction_mut(|transaction| merge_release_into_inside_tx(transaction, winner, loser))
-}
-
+/// Merges `loser` into `winner`, returning the merge for the transaction's owner to record once
+/// it has committed; `None` when they are one release.
 pub(crate) fn merge_release_into_inside_tx(
     db: &mut DbAnyTransactionMut<'_>,
     winner: DbId,
     loser: DbId,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<Merge>> {
     if winner == loser {
-        return Ok(());
+        return Ok(None);
     }
+    let merge = Merge::of(db, winner, loser)?;
 
     for library in lyra_db::libraries::get_by_release(db, loser)? {
         let Some(library_db_id) = library.db_id else {
@@ -136,7 +139,7 @@ pub(crate) fn merge_release_into_inside_tx(
         lyra_db::metadata::cascade_remove_entities_in_txn(db, &[loser])?,
     );
 
-    Ok(())
+    Ok(Some(merge))
 }
 
 pub(crate) fn collect_track_unique_ids(
@@ -179,6 +182,7 @@ pub(super) fn deduplicate_releases_by_external_id(
     declared: &DeclaredIds,
     unique_track_id_pairs: &HashSet<(String, String)>,
     provider_scope: Option<&HashSet<String>>,
+    journal: &MergeJournal,
 ) -> anyhow::Result<u32> {
     if !declared.has_unique() {
         return Ok(0);
@@ -252,7 +256,9 @@ pub(super) fn deduplicate_releases_by_external_id(
                 unique_ids = ?component.keys,
                 "merging releases by provider unique id"
             );
-            merge_release_into(db, winner, loser)?;
+            journal.record(db.transaction_mut(|transaction| {
+                merge_release_into_inside_tx(transaction, winner, loser)
+            })?);
             if let Some(l_ids) = track_ids_cache.remove(&loser) {
                 track_ids_cache.entry(winner).or_default().extend(l_ids);
             }
@@ -284,6 +290,12 @@ mod tests {
         Library,
         entries::EntryKind,
     };
+
+    fn merge_release_into(db: &mut DbAny, winner: DbId, loser: DbId) -> anyhow::Result<()> {
+        db.transaction_mut(|transaction| {
+            merge_release_into_inside_tx(transaction, winner, loser).map(|_| ())
+        })
+    }
 
     #[test]
     fn release_merge_combines_manual_layers() -> anyhow::Result<()> {

@@ -42,6 +42,7 @@ use super::editing::{
     self,
     MetadataEditingError,
 };
+use super::merge_journal::Merge;
 use crate::services::{
     STATE,
     auth::{
@@ -371,6 +372,7 @@ fn apply_change(
     t: &mut DbAnyTransactionMut<'_>,
     context: &ChangeContext,
     change: &MetadataChange,
+    merges: &mut Vec<Merge>,
 ) -> Result<ChangeResult, ChangeError> {
     Ok(match change {
         MetadataChange::EditMetadata {
@@ -446,7 +448,9 @@ fn apply_change(
             expected,
         } => {
             let expected = require_expected(expected.as_deref())?;
-            ChangeResult::Merge(merge::apply(t, context, winner_id, loser_ids, expected)?)
+            ChangeResult::Merge(merge::apply(
+                t, context, winner_id, loser_ids, expected, merges,
+            )?)
         }
         MetadataChange::RenameGenre {
             genre_id,
@@ -509,16 +513,19 @@ pub(crate) async fn apply(
         unique_track_ids,
         runs,
     };
-    db.transaction_mut(|t| {
+    let mut merges = Vec::new();
+    let results = db.transaction_mut(|t| {
         changes
             .iter()
             .enumerate()
             .map(|(index, change)| {
-                apply_change(t, &context, change)
+                apply_change(t, &context, change, &mut merges)
                     .map_err(|error| ChangeSetError::Failed { index, error })
             })
-            .collect()
-    })
+            .collect::<Result<Vec<_>, _>>()
+    })?;
+    STATE.generation().merge_journal.record(merges);
+    Ok(results)
 }
 
 #[cfg(test)]

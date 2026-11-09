@@ -441,18 +441,21 @@ pub(crate) async fn deduplicate_after_providers(
     }
     let declared_artist_ids = declared_artist_ids().await;
     let mut db_write = STATE.db.write().await;
-    let artists_merged =
-        match deduplicate_artists_by_external_id(&mut db_write, &declared_artist_ids) {
-            Ok(merged) => merged > 0,
-            Err(err) => {
-                tracing::warn!(
-                    ?provider_ids,
-                    error = %format_args!("{err:#}"),
-                    "artist deduplication failed during metadata refresh"
-                );
-                true
-            }
-        };
+    let artists_merged = match deduplicate_artists_by_external_id(
+        &mut db_write,
+        &declared_artist_ids,
+        &STATE.generation().merge_journal,
+    ) {
+        Ok(merged) => merged > 0,
+        Err(err) => {
+            tracing::warn!(
+                ?provider_ids,
+                error = %format_args!("{err:#}"),
+                "artist deduplication failed during metadata refresh"
+            );
+            true
+        }
+    };
     deduplicate_release_scope_locked(&mut db_write, library_db_id, provider_ids) || artists_merged
 }
 

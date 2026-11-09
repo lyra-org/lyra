@@ -248,6 +248,7 @@ mod tests {
     };
     use super::refresh::resolve_library_id_for_entity;
     use crate::services::metadata::id_links::DeclaredIds;
+    use crate::services::metadata::merge_journal::MergeJournal;
     use agdb::{
         DbAny,
         DbId,
@@ -399,6 +400,7 @@ mod tests {
             &unique_pairs,
             &HashSet::new(),
             None,
+            &MergeJournal::default(),
         )?;
         assert_eq!(merged, 1);
 
@@ -459,6 +461,7 @@ mod tests {
             &DeclaredIds::unique([("musicbrainz", "release_id")]),
             &HashSet::new(),
             None,
+            &MergeJournal::default(),
         )?;
         assert_eq!(merged, 1);
         let [winner] = release_ids_for_library(&db, library_db_id)?[..] else {
@@ -522,6 +525,7 @@ mod tests {
             declared,
             &HashSet::new(),
             None,
+            &MergeJournal::default(),
         )?;
         Ok((db, releases[0], merged))
     }
@@ -611,6 +615,7 @@ mod tests {
                 &unique_pairs,
                 &HashSet::new(),
                 None,
+                &MergeJournal::default(),
             )?,
             1
         );
@@ -675,6 +680,7 @@ mod tests {
                 &unique_pairs,
                 &HashSet::new(),
                 None,
+                &MergeJournal::default(),
             )?,
             0
         );
@@ -685,6 +691,7 @@ mod tests {
                 &unique_pairs,
                 &HashSet::new(),
                 None,
+                &MergeJournal::default(),
             )?,
             0
         );
@@ -724,6 +731,7 @@ mod tests {
                     &DeclaredIds::unique([("provider", "release_id")]),
                     &HashSet::new(),
                     None,
+                    &MergeJournal::default(),
                 )?,
                 0
             );
@@ -774,6 +782,7 @@ mod tests {
                 &unique,
                 &HashSet::new(),
                 None,
+                &MergeJournal::default(),
             )?,
             1
         );
@@ -784,6 +793,7 @@ mod tests {
                 &unique,
                 &HashSet::new(),
                 None,
+                &MergeJournal::default(),
             )?,
             0
         );
@@ -820,6 +830,7 @@ mod tests {
                 &DeclaredIds::unique([("provider", "release_id")]),
                 &HashSet::new(),
                 None,
+                &MergeJournal::default(),
             )?,
             1
         );
@@ -889,6 +900,7 @@ mod tests {
             &release_pairs,
             &track_pairs,
             None,
+            &MergeJournal::default(),
         )?;
         assert_eq!(merged, 0);
         assert_eq!(release_ids_for_library(&db, library_db_id)?.len(), 2);
@@ -947,6 +959,7 @@ mod tests {
             &release_pairs,
             &track_pairs,
             None,
+            &MergeJournal::default(),
         )?;
         assert_eq!(merged, 1);
         assert_eq!(release_ids_for_library(&db, library_db_id)?.len(), 1);
@@ -1026,7 +1039,14 @@ mod tests {
                 .map(|provider_id| (provider_id, "release_id")),
         );
         let track_pairs = HashSet::from([("musicbrainz".to_string(), "recording_id".to_string())]);
-        deduplicate_releases_by_external_id(db, library_db_id, &release_pairs, &track_pairs, None)
+        deduplicate_releases_by_external_id(
+            db,
+            library_db_id,
+            &release_pairs,
+            &track_pairs,
+            None,
+            &MergeJournal::default(),
+        )
     }
 
     #[test]
@@ -1223,6 +1243,7 @@ mod tests {
                 &release_pairs,
                 &HashSet::new(),
                 Some(&scope),
+                &MergeJournal::default(),
             )?;
 
             assert_eq!(merged, 1, "{odd}");
