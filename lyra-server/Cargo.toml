@@ -34,6 +34,8 @@ agdb = { version = "0.15.0", features = ["serde"] }
 anyhow = { workspace = true }
 argon2 = { version = "0.5", features = ["std", "password-hash"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio", "macros", "tracing", "ws"] }
+hyper = { version = "1.8", default-features = false, features = ["http1", "server"] }
+hyper-util = { version = "0.1", default-features = false, features = ["service", "tokio"] }
 bytes = "1"
 base64 = { workspace = true }
 matchit = "0.8" # pinned to axum's transitive version to avoid a duplicate
@@ -55,7 +57,7 @@ tokio-stream = { version = "0.1", default-features = false }
 tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
 futures = { version = "0.3", default-features = false, features = ["std", "async-await", "executor"] }
 tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.6", features = ["trace", "fs", "cors"] }
+tower-http = { version = "0.6", features = ["trace", "fs", "cors", "timeout"] }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["ansi", "env-filter", "fmt", "registry", "std"] }
 tracing-appender = { version = "0.2", default-features = false }

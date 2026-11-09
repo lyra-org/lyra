@@ -16,6 +16,7 @@ mod favorites;
 mod genres;
 mod labels;
 mod libraries;
+mod listener;
 mod listens;
 mod metadata;
 mod metadata_changes;

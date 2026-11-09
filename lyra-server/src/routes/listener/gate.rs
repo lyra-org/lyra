@@ -1,0 +1,448 @@
+// This Source Code Form is subject to the terms of the Lyra Public License,
+// v1.0. If a copy of the Lyra Public License was not distributed with this file,
+// You can obtain one here:
+// www.meshiplaw.com/lyra.
+
+//! Who may hold a connection.
+
+use std::{
+    collections::{
+        BTreeMap,
+        HashMap,
+        HashSet,
+    },
+    net::IpAddr,
+    sync::{
+        Arc,
+        Mutex,
+        MutexGuard,
+        PoisonError,
+        atomic::{
+            AtomicBool,
+            Ordering,
+        },
+    },
+    time::{
+        Duration,
+        Instant,
+    },
+};
+
+use tokio_util::sync::CancellationToken;
+
+use crate::services::auth::caller::ClientAddress;
+
+const WARNING_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Counts connections against a cap per peer and a cap on them all. Trusted peers, whose
+/// connections carry many clients, count only toward the latter.
+///
+/// When the global cap is full, a newcomer takes the place of the oldest connection that has yet
+/// to deliver a request head, so idle sockets can't lock everyone else out.
+pub(super) struct ConnectionGate {
+    per_peer: usize,
+    global: usize,
+    trusted_peers: HashSet<IpAddr>,
+    held: Mutex<Held>,
+}
+
+#[derive(Default)]
+struct Held {
+    total: usize,
+    by_peer: HashMap<ClientAddress, usize>,
+    /// Connections yet to deliver a request head, oldest first. Bounded by the global cap.
+    unproven: BTreeMap<u64, Unproven>,
+    next_id: u64,
+    global_warnings: WarningThrottle,
+    per_peer_warnings: WarningThrottle,
+}
+
+struct Unproven {
+    peer: Option<ClientAddress>,
+    evicted: CancellationToken,
+}
+
+#[derive(Default)]
+struct WarningThrottle {
+    last: Option<Instant>,
+}
+
+/// A connection's place against the caps, given back when the connection's socket closes.
+pub(super) struct ConnectionPermit {
+    standing: Arc<ConnectionStanding>,
+}
+
+/// What a connection's task and its service know of its place at the gate.
+pub(super) struct ConnectionStanding {
+    gate: Arc<ConnectionGate>,
+    id: u64,
+    peer: Option<ClientAddress>,
+    evicted: CancellationToken,
+    protected: AtomicBool,
+}
+
+impl ConnectionGate {
+    pub(super) fn new(
+        per_peer: usize,
+        global: usize,
+        trusted_peers: impl IntoIterator<Item = IpAddr>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            per_peer,
+            global,
+            trusted_peers: trusted_peers
+                .into_iter()
+                .map(|peer| peer.to_canonical())
+                .collect(),
+            held: Mutex::default(),
+        })
+    }
+
+    /// A permit for a connection from `peer`, or `None` when it is over a cap and no connection
+    /// can make way for it.
+    pub(super) fn admit(self: &Arc<Self>, peer: IpAddr) -> Option<ConnectionPermit> {
+        let client =
+            (!self.trusted_peers.contains(&peer.to_canonical())).then(|| ClientAddress::new(peer));
+        let mut held = self.held();
+        if let Some(client) = client
+            && held.by_peer.get(&client).copied().unwrap_or_default() >= self.per_peer
+        {
+            let warn = held.per_peer_warnings.allows(Instant::now());
+            drop(held);
+            if warn {
+                tracing::warn!(
+                    %client,
+                    cap = self.per_peer,
+                    "a peer hit the connection cap and was refused; a reverse proxy in front of \
+                     the server must be listed in rate_limit.trusted_proxies"
+                );
+            }
+            return None;
+        }
+
+        let full = held.total >= self.global;
+        if full && !held.evict_oldest_unproven() {
+            self.warn_global_cap(held, "refusing a connection");
+            return None;
+        }
+        held.total += 1;
+        if let Some(client) = client {
+            *held.by_peer.entry(client).or_default() += 1;
+        }
+        let id = held.next_id;
+        held.next_id += 1;
+        let evicted = CancellationToken::new();
+        held.unproven.insert(
+            id,
+            Unproven {
+                peer: client,
+                evicted: evicted.clone(),
+            },
+        );
+        if full {
+            self.warn_global_cap(
+                held,
+                "closing the oldest connection that has sent no request",
+            );
+        }
+        Some(ConnectionPermit {
+            standing: Arc::new(ConnectionStanding {
+                gate: Arc::clone(self),
+                id,
+                peer: client,
+                evicted,
+                protected: AtomicBool::new(false),
+            }),
+        })
+    }
+
+    fn warn_global_cap(&self, mut held: MutexGuard<'_, Held>, outcome: &str) {
+        let warn = held.global_warnings.allows(Instant::now());
+        drop(held);
+        if warn {
+            tracing::warn!(
+                cap = self.global,
+                "the global connection cap is full; {outcome}"
+            );
+        }
+    }
+
+    fn held(&self) -> MutexGuard<'_, Held> {
+        self.held.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl Held {
+    fn evict_oldest_unproven(&mut self) -> bool {
+        let Some((_, oldest)) = self.unproven.pop_first() else {
+            return false;
+        };
+        // Its socket closes when its task next runs, so descriptors can briefly pass the cap,
+        // within the headroom the cap leaves.
+        oldest.evicted.cancel();
+        self.release(oldest.peer);
+        true
+    }
+
+    fn release(&mut self, peer: Option<ClientAddress>) {
+        self.total -= 1;
+        if let Some(peer) = peer
+            && let Some(count) = self.by_peer.get_mut(&peer)
+        {
+            *count -= 1;
+            if *count == 0 {
+                self.by_peer.remove(&peer);
+            }
+        }
+    }
+}
+
+impl WarningThrottle {
+    fn allows(&mut self, now: Instant) -> bool {
+        if self
+            .last
+            .is_some_and(|last| now.duration_since(last) < WARNING_INTERVAL)
+        {
+            return false;
+        }
+        self.last = Some(now);
+        true
+    }
+}
+
+impl ConnectionPermit {
+    pub(super) fn standing(&self) -> Arc<ConnectionStanding> {
+        Arc::clone(&self.standing)
+    }
+}
+
+impl ConnectionStanding {
+    /// Records that the connection delivered a request head, which keeps it from being evicted,
+    /// or returns `false` when eviction got there first and the request must not be served.
+    pub(super) fn protect(&self) -> bool {
+        if self.protected.load(Ordering::Relaxed) {
+            return true;
+        }
+        if self.gate.held().unproven.remove(&self.id).is_none() {
+            return false;
+        }
+        self.protected.store(true, Ordering::Relaxed);
+        true
+    }
+
+    /// Resolves once the connection has been evicted and its task should end.
+    pub(super) async fn evicted(&self) {
+        self.evicted.cancelled().await;
+    }
+}
+
+impl Drop for ConnectionPermit {
+    fn drop(&mut self) {
+        let standing = &self.standing;
+        let mut held = standing.gate.held();
+        // Eviction already released this connection's place.
+        if standing.evicted.is_cancelled() {
+            return;
+        }
+        held.unproven.remove(&standing.id);
+        held.release(standing.peer);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ip(raw: &str) -> IpAddr {
+        raw.parse().expect("valid ip")
+    }
+
+    fn admitted(gate: &Arc<ConnectionGate>, peer: &str) -> ConnectionPermit {
+        gate.admit(ip(peer)).expect("admitted")
+    }
+
+    fn proven(gate: &Arc<ConnectionGate>, peer: &str) -> ConnectionPermit {
+        let permit = admitted(gate, peer);
+        assert!(permit.standing().protect());
+        permit
+    }
+
+    fn is_evicted(permit: &ConnectionPermit) -> bool {
+        permit.standing.evicted.is_cancelled()
+    }
+
+    fn assert_empty(gate: &Arc<ConnectionGate>) {
+        let held = gate.held();
+        assert_eq!(held.total, 0);
+        assert!(held.by_peer.is_empty());
+        assert!(held.unproven.is_empty());
+    }
+
+    #[test]
+    fn a_peer_gets_its_place_back_when_a_permit_drops() {
+        let gate = ConnectionGate::new(2, 8, []);
+        let first = admitted(&gate, "203.0.113.1");
+        let _second = admitted(&gate, "203.0.113.1");
+        assert!(gate.admit(ip("203.0.113.1")).is_none());
+        assert!(gate.admit(ip("203.0.113.2")).is_some());
+
+        drop(first);
+        assert!(gate.admit(ip("203.0.113.1")).is_some());
+    }
+
+    #[test]
+    fn counted_peers_leave_nothing_behind() {
+        let gate = ConnectionGate::new(2, 8, []);
+        drop(gate.admit(ip("203.0.113.1")));
+        drop(proven(&gate, "203.0.113.1"));
+        assert_empty(&gate);
+    }
+
+    #[test]
+    fn peers_are_grouped_as_the_limiters_count_them() {
+        let gate = ConnectionGate::new(1, 8, []);
+        let _v6 = admitted(&gate, "2001:db8:1:2::1");
+        assert!(gate.admit(ip("2001:db8:1:2:ffff::2")).is_none());
+        assert!(gate.admit(ip("2001:db8:1:3::1")).is_some());
+
+        let _v4 = admitted(&gate, "203.0.113.1");
+        assert!(gate.admit(ip("::ffff:203.0.113.1")).is_none());
+    }
+
+    #[test]
+    fn trusted_peers_skip_the_per_peer_cap_but_not_the_global_one() {
+        let gate = ConnectionGate::new(1, 3, [ip("127.0.0.1")]);
+        let _permits = [
+            proven(&gate, "127.0.0.1"),
+            proven(&gate, "::ffff:127.0.0.1"),
+            proven(&gate, "127.0.0.1"),
+        ];
+        assert!(gate.admit(ip("127.0.0.1")).is_none());
+    }
+
+    #[test]
+    fn a_trusted_peer_may_be_configured_in_its_mapped_form() {
+        let gate = ConnectionGate::new(1, 8, [ip("::ffff:127.0.0.1")]);
+        let _first = admitted(&gate, "127.0.0.1");
+        assert!(gate.admit(ip("127.0.0.1")).is_some());
+    }
+
+    #[test]
+    fn a_full_cap_evicts_the_oldest_unproven_connection() {
+        let gate = ConnectionGate::new(8, 3, []);
+        let oldest = admitted(&gate, "203.0.113.1");
+        let protected = proven(&gate, "203.0.113.2");
+        let next = admitted(&gate, "203.0.113.3");
+
+        let newcomer = admitted(&gate, "203.0.113.4");
+
+        assert!(is_evicted(&oldest));
+        assert!(!is_evicted(&protected));
+        assert!(!is_evicted(&next));
+        assert_eq!(gate.held().total, 3);
+        assert!(
+            !gate
+                .held()
+                .by_peer
+                .contains_key(&ClientAddress::new(ip("203.0.113.1")))
+        );
+
+        drop(oldest);
+        assert_eq!(gate.held().total, 3, "its place went to the newcomer");
+        drop((protected, next, newcomer));
+        assert_empty(&gate);
+    }
+
+    #[test]
+    fn protected_connections_are_never_evicted() {
+        let gate = ConnectionGate::new(8, 2, []);
+        let first = proven(&gate, "203.0.113.1");
+        let second = proven(&gate, "203.0.113.2");
+
+        assert!(gate.admit(ip("203.0.113.3")).is_none());
+
+        assert!(!is_evicted(&first));
+        assert!(!is_evicted(&second));
+        assert_eq!(gate.held().total, 2);
+    }
+
+    #[test]
+    fn a_peer_at_its_cap_evicts_nothing() {
+        let gate = ConnectionGate::new(1, 2, []);
+        let same = admitted(&gate, "203.0.113.1");
+        let other = admitted(&gate, "203.0.113.2");
+
+        assert!(gate.admit(ip("203.0.113.1")).is_none());
+
+        assert!(!is_evicted(&same));
+        assert!(!is_evicted(&other));
+        assert_eq!(gate.held().total, 2);
+    }
+
+    #[test]
+    fn a_request_arriving_after_eviction_changes_nothing() {
+        let gate = ConnectionGate::new(8, 1, []);
+        let evicted = admitted(&gate, "203.0.113.1");
+        let newcomer = admitted(&gate, "203.0.113.2");
+
+        assert!(!evicted.standing().protect());
+        assert!(is_evicted(&evicted));
+        assert_eq!(
+            gate.held().unproven.len(),
+            1,
+            "the newcomer stays evictable"
+        );
+
+        drop(evicted);
+        assert_eq!(gate.held().total, 1);
+        drop(newcomer);
+        assert_empty(&gate);
+    }
+
+    #[test]
+    fn protection_stays_settled_for_later_requests() {
+        let gate = ConnectionGate::new(8, 1, []);
+        let permit = admitted(&gate, "203.0.113.1");
+        assert!(permit.standing().protect());
+        assert!(permit.standing().protect());
+        assert!(gate.admit(ip("203.0.113.2")).is_none());
+    }
+
+    #[test]
+    fn the_total_never_exceeds_the_cap_under_contention() {
+        const CAP: usize = 4;
+        let gate = ConnectionGate::new(16, CAP, []);
+        std::thread::scope(|scope| {
+            for thread in 0..8 {
+                let gate = &gate;
+                scope.spawn(move || {
+                    let peer = format!("203.0.113.{thread}");
+                    let mut permits = std::collections::VecDeque::new();
+                    for round in 0..2000 {
+                        if let Some(permit) = gate.admit(ip(&peer)) {
+                            if round % 5 == 0 {
+                                let _ = permit.standing().protect();
+                            }
+                            permits.push_back(permit);
+                        }
+                        if permits.len() > 2 {
+                            permits.pop_front();
+                        }
+                        assert!(gate.held().total <= CAP);
+                    }
+                });
+            }
+        });
+        assert_empty(&gate);
+    }
+
+    #[test]
+    fn warnings_are_held_to_one_per_interval() {
+        let mut throttle = WarningThrottle::default();
+        let start = Instant::now();
+        assert!(throttle.allows(start));
+        assert!(!throttle.allows(start + WARNING_INTERVAL - Duration::from_secs(1)));
+        assert!(throttle.allows(start + WARNING_INTERVAL));
+        assert!(!throttle.allows(start + WARNING_INTERVAL));
+    }
+}

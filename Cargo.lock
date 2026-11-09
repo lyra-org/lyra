@@ -1554,6 +1554,8 @@ dependencies = [
  "harmony-repository",
  "harmony-serde",
  "harmony-task",
+ "hyper",
+ "hyper-util",
  "image",
  "isolang",
  "lofty",

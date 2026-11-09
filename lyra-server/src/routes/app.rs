@@ -3,12 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::{
-    collections::HashSet,
-    future::IntoFuture,
-    net::SocketAddr,
-    time::Duration,
-};
+use std::collections::HashSet;
 
 #[cfg(feature = "docgen")]
 use aide::openapi::{
@@ -22,18 +17,13 @@ use axum::{
     extract::DefaultBodyLimit,
     routing::get,
 };
-use tokio::{
-    net::TcpListener,
-    time::timeout,
-};
+use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     plugins::api::RouteKey,
     services::settings::server::Config,
 };
-
-const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(crate) struct CoreApi {
     pub(crate) router: Router,
@@ -196,32 +186,14 @@ pub(crate) async fn serve_app(
         signal_token.cancel();
     });
 
-    let server = axum::serve(
+    super::listener::serve(
         listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
+        app,
+        super::listener::ConnectionLimits::for_process(),
+        config.rate_limit.trusted_proxies.iter().copied(),
+        shutdown_token,
     )
-    .with_graceful_shutdown(shutdown_token.clone().cancelled_owned())
-    .into_future();
-    tokio::pin!(server);
-
-    tokio::select! {
-        result = &mut server => {
-            signal_handle.abort();
-            result?;
-            return Ok(());
-        }
-        _ = shutdown_token.cancelled() => {}
-    }
-
-    match timeout(GRACEFUL_SHUTDOWN_TIMEOUT, &mut server).await {
-        Ok(result) => result?,
-        Err(_) => {
-            tracing::warn!(
-                timeout_ms = GRACEFUL_SHUTDOWN_TIMEOUT.as_millis() as u64,
-                "server graceful drain deadline elapsed; forcing shutdown"
-            );
-        }
-    }
+    .await;
     signal_handle.abort();
 
     Ok(())
