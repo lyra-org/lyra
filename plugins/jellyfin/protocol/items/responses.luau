@@ -26,4 +26,10 @@ function module.forbidden(message: string?): api.ApiResponse
 	})
 end
 
+function module.conflict(message: string?): api.ApiResponse
+	return api.response.json(409, {
+		Message = message or "Conflict",
+	})
+end
+
 return module

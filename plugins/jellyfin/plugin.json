@@ -39,6 +39,7 @@
     "lyra.server",
     { "id": "lyra.tags", "reason": "Shows a user's tags on items in Jellyfin apps." },
     "lyra.tracks",
+    { "id": "lyra.tracks.all", "reason": "Limits remote play on another user's session to what that user can see." },
     { "id": "lyra.users", "reason": "Lists accounts for Jellyfin's user endpoints and sign-in screen." }
   ]
 }

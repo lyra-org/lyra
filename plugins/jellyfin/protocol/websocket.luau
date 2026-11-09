@@ -9,6 +9,8 @@ local serde = require("@harmony/serde")
 local task = require("@harmony/task")
 local json = serde.json
 
+local item_ids = require("./items/identifiers")
+
 type JsonValue = api.JsonValue
 type JsonObject = { [string]: JsonValue }
 
@@ -54,15 +56,14 @@ function module.decode(text: string): Envelope?
 	}
 end
 
+-- As upstream, every message carries an id.
 function module.encode(message_type: string, data: JsonValue, message_id: string?): string
 	local envelope: JsonObject = {
 		MessageType = message_type,
+		MessageId = message_id or item_ids.new_guid(),
 	}
 	if data ~= nil then
 		envelope.Data = data
-	end
-	if message_id ~= nil then
-		envelope.MessageId = message_id
 	end
 	return json.encode(envelope)
 end

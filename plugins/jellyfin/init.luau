@@ -7,9 +7,7 @@
 local api = require("@lyra/api")
 local auth = require("@lyra/auth")
 local datastore = require("@lyra/datastore")
-local errors = require("@lyra/errors")
 local libraries = require("@lyra/libraries")
-local playback_sessions = require("@lyra/playback_sessions")
 local playlists = require("@lyra/playlists")
 local plugins = require("@lyra/plugins")
 local server = require("@lyra/server")
@@ -58,6 +56,7 @@ local listing_routes = require("@self/routes/listings")
 local playback = require("@self/protocol/items/playback")
 local playlist_access = require("@self/protocol/playlist_access")
 local preferences = require("@self/protocol/preferences")
+local remote_control = require("@self/routes/remote_control")
 local requests = require("@self/protocol/items/requests")
 local responses = require("@self/protocol/items/responses")
 local resume_routes = require("@self/routes/resume")
@@ -69,7 +68,6 @@ local syncplay = require("@self/routes/syncplay")
 local system_info = require("@self/protocol/system_info")
 local user_data = require("@self/protocol/items/user_data")
 local user_data_routes = require("@self/routes/user_data")
-local websocket = require("@self/protocol/websocket")
 
 local SERVER_ID = constants.SERVER_ID
 local P = constants.ROUTE_PREFIX
@@ -928,110 +926,6 @@ end, { auth = "public", case_insensitive = true })
 api.post(P .. "/Sessions/Capabilities/Full", function(ctx: ApiContext)
 	return capability_routes.handle(ctx, true)
 end, { auth = "public", case_insensitive = true })
-local function handle_send_command_error(err: unknown): ApiResponse
-	local kind = errors.kind(err)
-	if kind == "not_found" then
-		return responses.not_found("session not found")
-	end
-	if kind == "forbidden" then
-		return responses.forbidden()
-	end
-	return api.response.empty(500)
-end
-
--- Remote-control commands aren't idempotent, so scope mismatch surfaces as
--- 403 and send failure as 404 rather than collapsing to 204.
-local function resolve_ws_entry_for_dispatch(
-	principal: session.Principal,
-	session_id: string?
-): (SessionEntry?, ApiResponse?)
-	if not session_id then
-		return nil, nil
-	end
-	local entry = sessions[session_id]
-	if not entry or entry.sender:is_closed() then
-		return nil, nil
-	end
-	if not session.can_control_user(principal, entry.user_id) then
-		warn(`dispatch scope mismatch: principal={principal.user_id}, entry={entry.user_id}, session_id={session_id}`)
-		return nil, responses.forbidden()
-	end
-	return entry, nil
-end
-
-local function dispatch_to_ws(principal: session.Principal, session_id: string?, envelope_text: string): ApiResponse?
-	local entry, resolve_err = resolve_ws_entry_for_dispatch(principal, session_id)
-	if resolve_err then
-		return resolve_err
-	end
-	if not entry then
-		return nil
-	end
-	local ok = pcall(function()
-		entry.sender:send(envelope_text)
-	end)
-	if not ok then
-		-- Closing ends the socket's handler, which releases the session.
-		pcall(function()
-			entry.sender:close()
-		end)
-		return responses.not_found("session not found")
-	end
-	return api.response.empty(204)
-end
-
-local function resolve_native_target(
-	principal: session.Principal,
-	session_id: string,
-	ws_entry: SessionEntry?
-): (playback_sessions.ConnectionInfo?, ApiResponse?)
-	if ws_entry and not session.can_control_user(principal, ws_entry.user_id) then
-		return nil, responses.forbidden()
-	end
-	if ws_entry and ws_entry.user_id ~= principal.user_id then
-		return nil, nil
-	end
-
-	local session_key = if ws_entry then ws_entry.session_id else nil
-	for _, conn in playback_sessions.list_connections() do
-		if conn.id == session_id or (session_key ~= nil and conn.session_key == session_key) then
-			return conn, nil
-		end
-	end
-	return nil, nil
-end
-
-local function dispatch_to_native(
-	principal: session.Principal,
-	session_id: string,
-	action: playback_sessions.RemoteAction,
-	position_ms: number?,
-	level: number?
-): ApiResponse
-	local target, target_err = resolve_native_target(principal, session_id, nil)
-	if target_err then
-		return target_err
-	end
-	if not target then
-		return responses.not_found("session not found")
-	end
-
-	local cmd_request: playback_sessions.SendCommandRequest = {
-		connection_id = target.id,
-		action = action,
-	}
-	if position_ms ~= nil then
-		cmd_request.position_ms = position_ms
-	end
-	if level ~= nil then
-		cmd_request.level = level
-	end
-	local ok, err = pcall(playback_sessions.send_command, cmd_request)
-	if not ok then
-		return handle_send_command_error(err)
-	end
-	return api.response.empty(204)
-end
 
 api.get(P .. "/Sessions", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
@@ -1051,238 +945,22 @@ api.get(P .. "/Sessions", function(ctx: ApiContext)
 end, { auth = "public", case_insensitive = true })
 
 syncplay.register(sessions, get_owned_session)
--- Jellyfin clients handle Pause/Unpause, not toggle — resolve PlayPause
--- against last-known state. Nil means nothing to toggle; caller should 204.
-local function resolve_play_pause(principal: session.Principal, session_id: string): (string?, ApiResponse?)
-	local entry, entry_err = resolve_ws_entry_for_dispatch(principal, session_id)
-	if entry_err then
-		return nil, entry_err
-	end
-	local target, target_err = resolve_native_target(principal, session_id, entry)
-	if target_err then
-		return nil, target_err
-	end
-	local playback_info = if target then target.playback else nil
-	if playback_info then
-		local resolved = if playback_info.state == "paused" then "Unpause" else "Pause"
-		return resolved, nil
-	end
-
-	return nil, nil
-end
-
-api.post(P .. "/Sessions/{sessionId}/Playing/{command}", function(ctx: ApiContext)
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-
-	local params = if ctx then ctx.params else nil
-	local session_id = if params then params.sessionId else nil
-	local command = if params then params.command else nil
-	if not session_id or not command then
-		return responses.bad_request("missing session id or command")
-	end
-
-	local request = if ctx then ctx.request else nil
-	local query = if request then request.query else nil
-
-	local resolved_command = command
-	local seek_ticks: number? = nil
-	if command == "PlayPause" then
-		local resolved, resolve_err = resolve_play_pause(principal, session_id)
-		if resolve_err then
-			return resolve_err
-		end
-		if not resolved then
-			-- Nothing to toggle; avoid sending a spurious Pause on a stopped player.
-			return api.response.empty(204)
-		end
-		resolved_command = resolved
-	elseif command == "Seek" then
-		local raw_ticks = requests.parse_query_string(query, { "seekPositionTicks", "SeekPositionTicks" }, nil)
-		seek_ticks = if raw_ticks then tonumber(raw_ticks) else nil
-		if not seek_ticks then
-			return responses.bad_request("seekPositionTicks is required for Seek")
-		end
-	end
-
-	local data: JsonObject = { Command = resolved_command }
-	if seek_ticks then
-		data.SeekPositionTicks = seek_ticks
-	end
-	local ws_response = dispatch_to_ws(principal, session_id, websocket.encode("Playstate", data))
-	if ws_response then
-		return ws_response
-	end
-
-	local native_action_map: { [string]: playback_sessions.RemoteAction } = {
-		Pause = "pause",
-		Unpause = "unpause",
-		Stop = "stop",
-		NextTrack = "next_track",
-		PreviousTrack = "previous_track",
-		Seek = "seek",
-	}
-	local action = native_action_map[resolved_command]
-	if not action then
-		return api.response.empty(204)
-	end
-
-	local position_ms: number? = nil
-	if seek_ticks then
-		position_ms = math.floor(seek_ticks / 10000)
-	end
-	return dispatch_to_native(principal, session_id, action, position_ms, nil)
-end, { auth = "public", case_insensitive = true })
-api.post(P .. "/Sessions/{sessionId}/Command/{command}", function(ctx: ApiContext)
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-
-	local params = if ctx then ctx.params else nil
-	local session_id = if params then params.sessionId else nil
-	local command = if params then params.command else nil
-	if not session_id or not command then
-		return responses.bad_request("missing session id or command")
-	end
-
-	-- Route-param variant has no body, so Arguments is always empty here;
-	-- parameterised commands like SetVolume need POST /Sessions/{id}/Command.
-	local ws_response = dispatch_to_ws(
-		principal,
-		session_id,
-		websocket.encode("GeneralCommand", {
-			Name = command,
-			Arguments = {} :: JsonObject,
-			ControllingUserId = item_ids.encode(principal.user_id),
-		})
-	)
-	if ws_response then
-		return ws_response
-	end
-	return api.response.empty(204)
-end, { auth = "public", case_insensitive = true })
-api.post(P .. "/Sessions/{sessionId}/Command", function(ctx: ApiContext)
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-
-	local params = if ctx then ctx.params else nil
-	local session_id = if params then params.sessionId else nil
-	if not session_id then
-		return responses.bad_request("missing session id")
-	end
-
-	local request = if ctx then ctx.request else nil
-	local request_json = if request then request.json else nil
-	if type(request_json) ~= "table" then
-		return responses.bad_request("invalid command request body")
-	end
-	local body = request_json :: JsonObject
-
-	local command_name = body.Name
-	if type(command_name) ~= "string" then
-		return responses.bad_request("missing command Name")
-	end
-	local arguments: JsonObject = {}
-	local raw_arguments = body.Arguments
-	if type(raw_arguments) == "table" then
-		arguments = raw_arguments :: JsonObject
-	end
-
-	local ws_response = dispatch_to_ws(
-		principal,
-		session_id,
-		websocket.encode("GeneralCommand", {
-			Name = command_name,
-			Arguments = arguments,
-			ControllingUserId = item_ids.encode(principal.user_id),
-		})
-	)
-	if ws_response then
-		return ws_response
-	end
-
-	if command_name == "SetVolume" then
-		local volume = tonumber(arguments.Volume)
-		if volume then
-			return dispatch_to_native(principal, session_id, "set_volume", nil, volume / 100)
-		end
-	end
-	return api.response.empty(204)
-end, { auth = "public", case_insensitive = true })
-api.post(P .. "/Sessions/{sessionId}/Playing", function(ctx: ApiContext)
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-
-	local params = if ctx then ctx.params else nil
-	local session_id = if params then params.sessionId else nil
-	if not session_id then
-		return responses.bad_request("missing session id")
-	end
-
-	local request = if ctx then ctx.request else nil
-	local query = if request then request.query else nil
-	local request_json = if request then request.json else nil
-	local body: JsonObject = if type(request_json) == "table" then request_json :: JsonObject else {}
-
-	local play_command = requests.parse_query_string(query, { "playCommand", "PlayCommand" }, nil)
-		or (if type(body.PlayCommand) == "string" then body.PlayCommand :: string else "PlayNow")
-
-	local raw_item_ids: JsonValue = body.ItemIds
-	local requested_ids: { string } = {}
-	if type(raw_item_ids) == "table" then
-		for _, value: JsonValue in raw_item_ids :: { JsonValue } do
-			if type(value) == "string" then
-				table.insert(requested_ids, value)
-			end
-		end
-	else
-		local csv = requests.parse_query_string(query, { "itemIds", "ItemIds" }, nil)
-		if csv then
-			for _, part in string.split(csv, ",") do
-				local trimmed = requests.trim(part)
-				if trimmed then
-					table.insert(requested_ids, trimmed)
-				end
-			end
-		end
-	end
-	if #requested_ids == 0 then
-		return responses.bad_request("missing ItemIds")
-	end
-
-	local queue, queue_command = listing.remote_play_queue(requested_ids, play_command, principal.user_id)
-	local queue_json: { JsonValue } = {}
-	for _, id in queue do
-		table.insert(queue_json, id)
-	end
-	local data: JsonObject = {
-		PlayCommand = queue_command,
-		ItemIds = queue_json,
-	}
-	local start_ticks = requests.parse_query_int(query, { "startPositionTicks", "StartPositionTicks" }, nil, 0, nil)
-		or (if type(body.StartPositionTicks) == "number" then body.StartPositionTicks :: number else nil)
-	if start_ticks then
-		data.StartPositionTicks = start_ticks
-	end
-	local start_index = requests.parse_query_int(query, { "startIndex", "StartIndex" }, nil, 0, nil)
-		or (if type(body.StartIndex) == "number" then body.StartIndex :: number else nil)
-	if start_index then
-		data.StartIndex = start_index
-	end
-
-	local ws_response = dispatch_to_ws(principal, session_id, websocket.encode("Play", data))
-	if ws_response then
-		return ws_response
-	end
-	return responses.not_found("session not found")
-end, { auth = "public", case_insensitive = true })
+api.post(
+	P .. "/Sessions/{sessionId}/Playing/{command}",
+	remote_control.handle_playstate,
+	{ auth = "public", case_insensitive = true }
+)
+api.post(
+	P .. "/Sessions/{sessionId}/Command/{command}",
+	remote_control.handle_named_command,
+	{ auth = "public", case_insensitive = true }
+)
+api.post(
+	P .. "/Sessions/{sessionId}/Command",
+	remote_control.handle_general_command,
+	{ auth = "public", case_insensitive = true }
+)
+api.post(P .. "/Sessions/{sessionId}/Playing", remote_control.handle_play, { auth = "public", case_insensitive = true })
 api.post(P .. "/Sessions/Playing", function(ctx: ApiContext)
 	return session.handle_playback_report_route(ctx, "started")
 end, { auth = "public", case_insensitive = true })

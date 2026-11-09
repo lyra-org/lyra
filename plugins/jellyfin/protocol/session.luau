@@ -1177,6 +1177,17 @@ function module.build_session_id(principal: Principal, identity: ClientIdentity)
 	return crypt.hash("xxh3_128", material)
 end
 
+-- What upstream reports for a session that plays nothing.
+function module.idle_play_state(): JsonObject
+	return {
+		CanSeek = false,
+		IsPaused = false,
+		IsMuted = false,
+		RepeatMode = "RepeatNone",
+		PlaybackOrder = "Default",
+	}
+end
+
 function module.build_session_info(
 	session_id: string,
 	principal: Principal,
@@ -1201,6 +1212,7 @@ function module.build_session_info(
 		PlayableMediaTypes = {},
 		SupportedCommands = {},
 		AdditionalUsers = {},
+		PlayState = module.idle_play_state(),
 	}
 end
 

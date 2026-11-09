@@ -19,6 +19,11 @@ user = "listener"
 key = "speaker"
 user = "listener"
 client_name = "Kitchen Speaker"
+commands = ["pause", "play_tracks"]
+
+[[connections]]
+key = "knob"
+user = "listener"
 commands = ["pause"]
 
 [[connections]]
@@ -40,3 +45,10 @@ key = "song"
 title = "Song"
 release = "album"
 duration_ms = 200000
+
+[[playbacks]]
+key = "web"
+user = "listener"
+tracks = ["song"]
+state = "playing"
+client_name = "Web Player"

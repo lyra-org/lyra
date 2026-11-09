@@ -18,7 +18,8 @@ local function play(keys: { string }, command: string?): string
 	for _, key in keys do
 		table.insert(requested, if ids[key] then hex(key) else key)
 	end
-	local queue, sent = listing.remote_play_queue(requested, command or "PlayNow", fixture.users.owner)
+	local queue, sent =
+		listing.remote_play_queue(requested, command or "PlayNow", fixture.users.owner, fixture.users.owner)
 	local queued = {}
 	for _, id in queue do
 		table.insert(queued, names[id] or id)

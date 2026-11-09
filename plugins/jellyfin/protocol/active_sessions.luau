@@ -183,13 +183,14 @@ function module.admit(entry: SessionEntry)
 end
 
 local JELLYFIN_COMMAND_MAP: { [playback_sessions.RemoteAction]: string } = {
-	play = "Play",
-	pause = "Pause",
-	unpause = "Unpause",
-	stop = "Stop",
-	seek = "Seek",
-	next_track = "NextTrack",
-	previous_track = "PreviousTrack",
+	play = "PlayState",
+	play_tracks = "Play",
+	pause = "PlayState",
+	unpause = "PlayState",
+	stop = "PlayState",
+	seek = "PlayState",
+	next_track = "PlayState",
+	previous_track = "PlayState",
 	set_volume = "SetVolume",
 }
 
@@ -197,9 +198,11 @@ local PLAYABLE_MEDIA_TYPES: { JsonValue } = { "Audio" }
 
 local function to_jellyfin_supported_commands(commands: { playback_sessions.RemoteAction }): { string }
 	local result = {}
+	local seen: { [string]: boolean } = {}
 	for _, cmd in commands do
 		local mapped = JELLYFIN_COMMAND_MAP[cmd]
-		if mapped then
+		if mapped and not seen[mapped] then
+			seen[mapped] = true
 			table.insert(result, mapped)
 		end
 	end
@@ -248,7 +251,10 @@ local function set_now_playing(listing: Listing, dto: JsonObject, playing: Activ
 	dto.PlayState = {
 		PositionTicks = playing.effective_position_ms * 10000,
 		IsPaused = playing.state == "paused",
+		IsMuted = false,
 		CanSeek = true,
+		RepeatMode = "RepeatNone",
+		PlaybackOrder = "Default",
 	}
 end
 
@@ -269,14 +275,26 @@ local function set_activity(dto: JsonObject, activity_iso: string)
 	dto.LastPlaybackCheckIn = activity_iso
 end
 
--- A session for a connection of Lyra's own clients, which takes the commands it declares.
-local function connection_dto(conn: Connection): JsonObject
+-- A session for a connection of Lyra's own clients, which takes the commands it declares from its
+-- own user alone.
+local function connection_dto(conn: Connection, viewer: Principal): JsonObject
 	local supported_commands = to_jellyfin_supported_commands(conn.supported_commands)
+	-- A cast target must take Play, which a connection can only with `play_tracks`.
+	local takes_play = false
+	for _, command in conn.supported_commands do
+		takes_play = takes_play or command == "play_tracks"
+	end
 	local cmd_list: { JsonValue } = {}
 	for _, cmd in supported_commands do
 		table.insert(cmd_list, cmd)
 	end
-	return {
+	local controllable = takes_play and conn.user_id == viewer.user_id
+	local capabilities: JsonObject = {
+		SupportsMediaControl = takes_play,
+		SupportedCommands = cmd_list,
+		PlayableMediaTypes = PLAYABLE_MEDIA_TYPES,
+	}
+	local dto: JsonObject = {
 		Id = conn.id,
 		UserId = item_ids.encode(conn.user_id),
 		UserName = conn.username,
@@ -285,14 +303,16 @@ local function connection_dto(conn: Connection): JsonObject
 		Client = conn.client_name or "Lyra",
 		ServerId = SERVER_ID,
 		IsActive = true,
-		SupportsRemoteControl = #conn.supported_commands > 0,
+		SupportsRemoteControl = controllable,
+		SupportsMediaControl = controllable,
+		HasCustomDeviceName = false,
 		PlayableMediaTypes = PLAYABLE_MEDIA_TYPES,
-		Capabilities = {
-			SupportsMediaControl = #supported_commands > 0,
-			SupportedCommands = cmd_list,
-			PlayableMediaTypes = PLAYABLE_MEDIA_TYPES,
-		},
+		SupportedCommands = cmd_list,
+		Capabilities = capabilities,
+		PlayState = session.idle_play_state(),
 	}
+	set_activity(dto, session.iso_timestamp_ms(conn.connected_at_ms))
+	return dto
 end
 
 -- A session for a player that reports its playback without a socket, which takes no commands.
@@ -314,10 +334,13 @@ local function playback_dto(playing: ActivePlayback): JsonObject
 			Client = playing.client_name or "Lyra",
 			ServerId = SERVER_ID,
 			IsActive = true,
+			HasCustomDeviceName = false,
 			PlayableMediaTypes = PLAYABLE_MEDIA_TYPES,
+			SupportedCommands = {},
 		}
 	end
 	dto.SupportsRemoteControl = false
+	dto.SupportsMediaControl = false
 	set_activity(dto, session.iso_timestamp_ms(playing.updated_at_ms))
 	return dto
 end
@@ -395,10 +418,11 @@ local function list_sessions(principal: Principal, all_users: boolean, listing: 
 			continue
 		end
 		listed[device] = true
-		local dto = connection_dto(conn)
+		local dto = connection_dto(conn, principal)
 		local playing = latest(driven_by_connection[conn.id], paired_report(device))
 		if playing then
 			set_now_playing(listing, dto, playing)
+			set_activity(dto, session.iso_timestamp_ms(math.max(conn.connected_at_ms, playing.updated_at_ms)))
 		end
 		table.insert(result, dto)
 	end

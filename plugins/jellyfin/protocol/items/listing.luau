@@ -805,15 +805,15 @@ end
 
 -- The tracks upstream plays for an item one client asks another to play: a track itself, and the
 -- tracks under an album, artist, genre, playlist or library, each once, in SortName order. None
--- for an item the caller can't see.
-function module.playable_track_ids(item_id: string, user_id: string): { string }
+-- for an item the caller can't see, which the second result reports.
+function module.playable_track_ids(item_id: string, user_id: string): ({ string }, boolean)
 	local scope = lookups.scope(item_id)
 	local kind = if scope.id then lookups.visible_kind(scope.id, user_id) else nil
 	if kind == nil then
-		return {}
+		return {}, true
 	end
 	if kind == "Track" then
-		return { item_ids.encode(scope.id) :: string }
+		return { item_ids.encode(scope.id) :: string }, false
 	end
 
 	local options = options_module.for_user(options_module.parse(nil), user_id)
@@ -829,7 +829,7 @@ function module.playable_track_ids(item_id: string, user_id: string): { string }
 		built = query.tracks(options, scope)
 	end
 	if not built then
-		return {}
+		return {}, false
 	end
 
 	local result: { string } = {}
@@ -839,21 +839,73 @@ function module.playable_track_ids(item_id: string, user_id: string): { string }
 			table.insert(result, hex_id)
 		end
 	end
-	return result
+	return result, false
 end
 
--- What a remote play command plays, as upstream sends it on: each requested item's playable
--- tracks, or its instant mix for `PlayInstantMix`, in request order. An instant mix and a shuffle
--- play now, the shuffle in random order.
+-- Holds the place in a remote play's queue of an item the caller can't see, one track long.
+local HIDDEN_ITEM = ""
+
+-- Of the queue's tracks, by public id, those `user_id` can see. The queries that built it see what
+-- the dispatch principal does, which for an admin controlling another user's session is more.
+local function tracks_visible_to(queue: { string }, user_id: string): { [string]: boolean }
+	local track_ids: { string } = {}
+	for _, item_id in queue do
+		if item_id ~= HIDDEN_ITEM then
+			table.insert(track_ids, item_ids.decode(item_id) :: string)
+		end
+	end
+	return tracks.visible_to(user_id, track_ids)
+end
+
+-- The queue without the items that can't play, and where `start_index` lands in it: on the same
+-- track, or if that one went, the next one left, else the last one left before it. An index past
+-- the queue stays, for the delivery to refuse.
+local function playable_queue(
+	queue: { string },
+	visible: { [string]: boolean }?,
+	start_index: number?
+): ({ string }, number?)
+	local playable: { string } = {}
+	local selected: number? = nil
+	for position, item_id in queue do
+		if item_id ~= HIDDEN_ITEM and (visible == nil or visible[item_ids.decode(item_id) :: string]) then
+			table.insert(playable, item_id)
+			if start_index and selected == nil and position - 1 >= start_index then
+				selected = #playable - 1
+			end
+		end
+	end
+	if start_index == nil or start_index >= #queue then
+		return playable, start_index
+	end
+	if selected == nil and #playable > 0 then
+		selected = #playable - 1
+	end
+	return playable, selected
+end
+
+-- Past this many tracks a remote play expands no further items, so repeating a large one in a
+-- request can't multiply the work. The item that crosses it stays whole.
+local MAX_REMOTE_QUEUE_TRACKS = 10000
+
+-- What a remote play command from `controller_user_id` plays on a session of `user_id`, as upstream
+-- sends it on: each requested item's playable tracks, or its instant mix for `PlayInstantMix`, in
+-- request order, as far as that user can see them, and `start_index` moved to match. An instant mix
+-- and a shuffle play now, the shuffle in random order.
 function module.remote_play_queue(
 	requested_ids: { string },
 	play_command: string,
-	user_id: string
-): ({ string }, string)
+	user_id: string,
+	controller_user_id: string,
+	start_index: number?
+): ({ string }, string, number?)
 	local queue: { string } = {}
 	if play_command == "PlayInstantMix" then
 		local options = options_module.for_user(options_module.parse(nil), user_id)
 		for _, requested_id in requested_ids do
+			if #queue >= MAX_REMOTE_QUEUE_TRACKS then
+				break
+			end
 			local mix_items = instant_mix.list_instant_mix_audio(item_ids.decode(requested_id), options)
 			for _, item in mix_items do
 				if item.Id then
@@ -864,10 +916,19 @@ function module.remote_play_queue(
 		play_command = "PlayNow"
 	else
 		for _, requested_id in requested_ids do
-			local track_ids = module.playable_track_ids(requested_id, user_id)
+			if #queue >= MAX_REMOTE_QUEUE_TRACKS then
+				break
+			end
+			local track_ids, hidden = module.playable_track_ids(requested_id, user_id)
+			if hidden then
+				table.insert(queue, HIDDEN_ITEM)
+			end
 			table.move(track_ids, 1, #track_ids, #queue + 1, queue)
 		end
 	end
+
+	local visible = if user_id ~= controller_user_id then tracks_visible_to(queue, user_id) else nil
+	queue, start_index = playable_queue(queue, visible, start_index)
 
 	if play_command == "PlayShuffle" then
 		for index = #queue, 2, -1 do
@@ -876,7 +937,7 @@ function module.remote_play_queue(
 		end
 		play_command = "PlayNow"
 	end
-	return queue, play_command
+	return queue, play_command, start_index
 end
 
 local NAME_LOOKUP_LIMIT = 200
