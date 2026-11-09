@@ -557,6 +557,23 @@ impl CapabilityPolicy for ManifestCapabilityPolicy {
     }
 }
 
+/// Why a discovery left plugins out.
+#[derive(Debug)]
+pub struct PluginDiscoveryError {
+    /// The names of the plugin directories left out: one, or every member
+    /// of a dependency cycle.
+    pub directories: Vec<String>,
+    pub error: PluginLoadError,
+}
+
+impl fmt::Display for PluginDiscoveryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.error.fmt(f)
+    }
+}
+
+impl std::error::Error for PluginDiscoveryError {}
+
 #[derive(Debug)]
 pub enum PluginLoadError {
     ConfigNotFound(PathBuf),
@@ -881,7 +898,7 @@ impl PluginManager {
     pub fn discover_plugins(
         &mut self,
         host: &PluginHost,
-    ) -> Result<Vec<PluginLoadError>, std::io::Error> {
+    ) -> Result<Vec<PluginDiscoveryError>, std::io::Error> {
         let mut errors = Vec::new();
 
         if !self.plugins_dir.exists() {
@@ -898,14 +915,18 @@ impl PluginManager {
 
             // Dot-directories (VCS metadata, install staging) are not
             // plugin candidates.
-            if entry.file_name().to_string_lossy().starts_with('.') {
+            let directory = entry.file_name().to_string_lossy().into_owned();
+            if directory.starts_with('.') {
                 continue;
             }
 
             match self.load_plugin(&path, host) {
                 Ok(plugin) => {
                     if self.plugins.contains_key(&plugin.manifest.id) {
-                        errors.push(PluginLoadError::DuplicateId(plugin.manifest.id));
+                        errors.push(PluginDiscoveryError {
+                            directories: vec![directory],
+                            error: PluginLoadError::DuplicateId(plugin.manifest.id),
+                        });
                     } else {
                         tracing::info!(
                             "loaded plugin '{}' v{} from {}",
@@ -918,7 +939,10 @@ impl PluginManager {
                         self.plugins.insert(plugin.manifest.id.clone(), plugin);
                     }
                 }
-                Err(e) => errors.push(e),
+                Err(error) => errors.push(PluginDiscoveryError {
+                    directories: vec![directory],
+                    error,
+                }),
             }
         }
 
@@ -929,7 +953,7 @@ impl PluginManager {
 
     /// Validate cross-plugin invariants and prune offenders so the
     /// runtime never sees a half-resolved set.
-    fn resolve_dependencies(&mut self) -> Vec<PluginLoadError> {
+    fn resolve_dependencies(&mut self) -> Vec<PluginDiscoveryError> {
         let mut errors = Vec::new();
 
         // Cascading prunes: dropping A can unsatisfy B's dependency on A,
@@ -950,7 +974,10 @@ impl PluginManager {
             if !unmet.is_empty() {
                 for (id, error) in unmet {
                     self.remove_plugin(&id);
-                    errors.push(error);
+                    errors.push(PluginDiscoveryError {
+                        directories: vec![id],
+                        error,
+                    });
                 }
                 continue;
             }
@@ -962,8 +989,11 @@ impl PluginManager {
             for plugin_id in &cycle_members {
                 self.remove_plugin(plugin_id);
             }
-            errors.push(PluginLoadError::DependencyCycle {
-                plugins: cycle_members,
+            errors.push(PluginDiscoveryError {
+                directories: cycle_members.clone(),
+                error: PluginLoadError::DependencyCycle {
+                    plugins: cycle_members,
+                },
             });
         }
 
@@ -1916,6 +1946,7 @@ mod tests {
         Dependency,
         LoadedManifest,
         LoadedPlugin,
+        PluginDiscoveryError,
         PluginHost,
         PluginLoadError,
         PluginManager,
@@ -2227,7 +2258,8 @@ mod tests {
             loaded_plugin("b", "1.0.0", dependencies(&[("a", dependency("1"))])),
         ]);
         let errors = mgr.resolve_dependencies();
-        assert_eq!(errors.len(), 2);
+        let directories: Vec<_> = errors.iter().map(|error| &error.directories).collect();
+        assert_eq!(directories, [&["b"], &["c"]]);
         assert!(mgr.get_plugin("b").is_none());
         assert!(mgr.get_plugin("c").is_none());
     }
@@ -4044,7 +4076,7 @@ mod tests {
         let mut mgr = PluginManager::new(plugins_dir);
         let errors = mgr.discover_plugins(&reserving).unwrap();
         assert!(
-            matches!(errors.as_slice(), [PluginLoadError::InvalidPluginId { plugin_id, .. }] if plugin_id == "update"),
+            matches!(errors.as_slice(), [PluginDiscoveryError { directories, error: PluginLoadError::InvalidPluginId { plugin_id, .. } }] if plugin_id == "update" && directories == &["update"]),
             "{errors:?}"
         );
         assert_eq!(order(&mgr), vec!["demo"]);
@@ -4138,6 +4170,7 @@ mod tests {
             messages,
             vec!["plugin 'future' requires host ^0.1, but this is host 0.0.1"]
         );
+        assert_eq!(errors[0].directories, ["future"]);
         assert_eq!(order(&mgr), vec!["lib", "consumer"]);
 
         write("lib", "0.2.0", "");
@@ -4192,7 +4225,13 @@ mod tests {
         let mut mgr = PluginManager::new(plugins_dir.clone());
         let errors = mgr.discover_plugins(&host())?;
         assert!(
-            matches!(errors[..], [PluginLoadError::IncompatibleHost { .. }]),
+            matches!(
+                errors[..],
+                [PluginDiscoveryError {
+                    error: PluginLoadError::IncompatibleHost { .. },
+                    ..
+                }]
+            ),
             "{errors:?}"
         );
         let plugins: Vec<_> = mgr.list_plugins().cloned().collect();

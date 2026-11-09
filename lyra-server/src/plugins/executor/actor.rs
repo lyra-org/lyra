@@ -25,7 +25,7 @@ use anyhow::{
 use harmony_core::{
     ModuleSpec,
     plugin::{
-        PluginLoadError,
+        PluginDiscoveryError,
         PluginManifest,
     },
 };
@@ -223,7 +223,7 @@ impl PluginExecutorHandle {
         db: lyra_db::DbAsync,
         module_overrides: Vec<ModuleSpec>,
         settings: Option<crate::services::state::SettingsHandle>,
-    ) -> Result<(Self, Vec<PluginLoadError>)> {
+    ) -> Result<(Self, Vec<PluginDiscoveryError>)> {
         let plugins_dir = plugins_dir.into();
         Self::spawn(move || {
             let mut stores = super::stores::PluginModuleStores::with_db(db);
@@ -240,8 +240,8 @@ impl PluginExecutorHandle {
 
     /// Runs the executor `build` makes on its own thread.
     pub(crate) fn spawn(
-        build: impl FnOnce() -> Result<(PluginExecutor, Vec<PluginLoadError>)> + Send + 'static,
-    ) -> Result<(Self, Vec<PluginLoadError>)> {
+        build: impl FnOnce() -> Result<(PluginExecutor, Vec<PluginDiscoveryError>)> + Send + 'static,
+    ) -> Result<(Self, Vec<PluginDiscoveryError>)> {
         let (tx, rx) = plugin_executor_channel(EXECUTOR_QUEUE_CAPACITY);
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let (crashed, exit) = exit_channel();

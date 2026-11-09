@@ -18,7 +18,7 @@ use harmony_core::{
     SourceLoader,
     plugin::{
         LoadedPlugin,
-        PluginLoadError,
+        PluginDiscoveryError,
         PluginManager,
         PluginManifest,
         RuntimeBuilder,
@@ -71,7 +71,7 @@ impl PluginExecutor {
         auth_capabilities: crate::plugins::auth::AuthCapabilities,
         db: lyra_db::DbAsync,
         module_overrides: Vec<ModuleSpec>,
-    ) -> Result<(Self, Vec<PluginLoadError>)> {
+    ) -> Result<(Self, Vec<PluginDiscoveryError>)> {
         Self::discover_from_plugins_dir_with_stores(
             plugins_dir,
             server_info,
@@ -87,7 +87,7 @@ impl PluginExecutor {
         auth_capabilities: crate::plugins::auth::AuthCapabilities,
         stores: PluginModuleStores,
         module_overrides: Vec<ModuleSpec>,
-    ) -> Result<(Self, Vec<PluginLoadError>)> {
+    ) -> Result<(Self, Vec<PluginDiscoveryError>)> {
         let plugins_dir = plugins_dir.into();
         let mut plugin_manager = PluginManager::new(plugins_dir.clone());
         let errors = plugin_manager.discover_plugins(&crate::plugins::plugin_host())?;

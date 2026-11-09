@@ -10,7 +10,7 @@ use harmony_core::{
     UserDataBinding,
     luau::RequireRuntime,
     plugin::{
-        PluginLoadError,
+        PluginDiscoveryError,
         PluginManifest,
     },
 };
@@ -72,7 +72,7 @@ impl PluginExecutor {
     pub(crate) fn discover_from_plugins_dir(
         plugins_dir: impl Into<std::path::PathBuf>,
         server_info: crate::plugins::server::ServerInfo,
-    ) -> Result<(Self, Vec<PluginLoadError>)> {
+    ) -> Result<(Self, Vec<PluginDiscoveryError>)> {
         Self::discover_from_plugins_dir_with_stores(
             plugins_dir,
             server_info,
@@ -86,7 +86,7 @@ impl PluginExecutor {
         plugins_dir: impl Into<std::path::PathBuf>,
         server_info: crate::plugins::server::ServerInfo,
         db: lyra_db::DbAsync,
-    ) -> Result<(Self, Vec<PluginLoadError>)> {
+    ) -> Result<(Self, Vec<PluginDiscoveryError>)> {
         Self::discover_from_plugins_dir_with_db_and_modules(
             plugins_dir,
             server_info,
