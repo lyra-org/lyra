@@ -3,15 +3,18 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-//! What a request presents about its client: its bearer credential, its address, its origin, and
-//! the address it reached the server by.
+//! Reading what a request carries beyond its route: who it comes from and its body.
 
 mod address;
 mod base_url;
+mod body;
 pub(crate) mod origin;
 
 pub(crate) use address::client_address;
 pub(crate) use base_url::base_url;
+pub(crate) use body::UnreadBody;
+#[cfg(test)]
+pub(crate) use body::watched_body;
 
 use axum::http::{
     HeaderMap,

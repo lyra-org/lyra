@@ -120,7 +120,7 @@ async fn enforce(
     }
 }
 
-fn too_many_requests_response(retry_after: Duration) -> Response {
+pub(super) fn too_many_requests_response(retry_after: Duration) -> Response {
     let seconds = retry_after.as_secs().max(1).to_string();
     let mut response = (StatusCode::TOO_MANY_REQUESTS, "Error: too many requests").into_response();
     response.headers_mut().insert(

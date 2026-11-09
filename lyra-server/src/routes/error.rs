@@ -204,6 +204,12 @@ impl OperationOutput for AppError {
     }
 }
 
+impl From<axum::extract::rejection::BytesRejection> for AppError {
+    fn from(rejection: axum::extract::rejection::BytesRejection) -> Self {
+        Self::with_status(rejection.status(), rejection.body_text())
+    }
+}
+
 impl From<AuthError> for AppError {
     fn from(err: AuthError) -> Self {
         match err {

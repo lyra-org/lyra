@@ -167,7 +167,7 @@ fn me_openapi_routes() -> aide::axum::ApiRouter {
 }
 
 // Sharply below axum's 2MB default to bound CPU/RAM amplification on auth'd POSTs.
-const REQUEST_BODY_LIMIT_BYTES: usize = 256 * 1024;
+pub(super) const REQUEST_BODY_LIMIT_BYTES: usize = 256 * 1024;
 
 pub(crate) async fn serve_app(
     app: Router,

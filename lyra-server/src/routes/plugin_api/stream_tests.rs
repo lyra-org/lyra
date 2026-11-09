@@ -278,7 +278,10 @@ async fn a_route_handler_gets_the_callers_base_url() -> Result<()> {
             .context("/base-url is registered")?,
         kind: crate::plugins::api::RouteKind::Http,
     };
-    let app = axum::Router::new().route("/base-url", super::build_http_method_router(&route)?);
+    let app = axum::Router::new().route(
+        "/base-url",
+        super::build_http_method_router(&route, super::PublicBodyBudget::server())?,
+    );
 
     let proxy = std::net::SocketAddr::from(([127, 0, 0, 1], 4746));
     let stranger = std::net::SocketAddr::from(([203, 0, 113, 10], 4746));

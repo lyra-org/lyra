@@ -8,10 +8,7 @@ use aide::transform::TransformOperation;
 use axum::{
     Json,
     Router,
-    body::{
-        Body,
-        Bytes,
-    },
+    body::Body,
     extract::{
         DefaultBodyLimit,
         Path,
@@ -44,7 +41,10 @@ use agdb::{
 use crate::{
     routes::{
         AppError,
-        request::bearer_credential,
+        request::{
+            UnreadBody,
+            bearer_credential,
+        },
         responses::CoverResponse,
         serve::{
             file_response_with_cache_control,
@@ -526,10 +526,11 @@ async fn get_cover_candidates<K: CoverOwnerRoute>(
 async fn put_manual_cover<K: CoverOwnerRoute>(
     headers: HeaderMap,
     Path(id): Path<String>,
-    body: Bytes,
+    body: UnreadBody,
 ) -> Result<Json<CoverCandidatesResponse>, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
     require_image_content_type(&headers)?;
+    let body = body.read().await?;
     let found =
         selection::set_manual(&STATE.db.get(), &principal, K::KIND, &id, body.to_vec()).await?;
     Ok(Json(found.into()))
@@ -900,6 +901,31 @@ mod tests {
             response.status(),
             axum::http::StatusCode::UNSUPPORTED_MEDIA_TYPE
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn uploads_are_refused_before_their_body_is_read() -> anyhow::Result<()> {
+        use std::sync::atomic::Ordering;
+
+        use tower::ServiceExt;
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let id = release_id().await?;
+        let (body, read) = crate::routes::request::watched_body();
+        let request = axum::http::Request::builder()
+            .method(axum::http::Method::PUT)
+            .uri(format!("/{id}/covers/manual"))
+            .header(header::CONTENT_TYPE, "image/png")
+            .body(body)?;
+
+        let response = owner_cover_routes::<ReleaseCovers>()
+            .oneshot(request)
+            .await?;
+
+        assert_eq!(response.status(), axum::http::StatusCode::UNAUTHORIZED);
+        assert!(!read.load(Ordering::SeqCst), "the body stays unread");
         Ok(())
     }
 

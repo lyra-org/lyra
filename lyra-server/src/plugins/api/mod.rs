@@ -31,8 +31,8 @@ pub(crate) use self::route_key::{
     RouteKey,
     placeholder_offset,
 };
+pub(crate) use self::route_options::MAX_BODY_BYTES;
 use self::route_options::{
-    MAX_BODY_BYTES,
     RouteOptions,
     WebSocketRouteOptions,
 };
@@ -1195,7 +1195,7 @@ fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
                 described_field(
                     "max_body_bytes",
                     LuauType::optional(u64::luau_type()),
-                    "The largest request body the route accepts; a larger one is answered with 413 before the handler runs. Defaults to the server's limit of 256 KiB, and may be at most `MAX_BODY_BYTES`.",
+                    "The largest request body the route accepts; a larger one is answered with 413 before the handler runs. Defaults to the server's limit of 256 KiB, and may be at most `MAX_BODY_BYTES`. A route with `auth = \"required\"` answers an unauthenticated caller with 401 without reading the body. A public route that raises its limit above the default holds that many bytes of a fixed server-wide budget until it has been handled, and is answered with 429 while the budget is full or another such upload from the same client address is in progress.",
                 ),
             ],
         ),

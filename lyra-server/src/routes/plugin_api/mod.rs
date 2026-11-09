@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+mod body_budget;
 mod responses;
 #[cfg(test)]
 mod stream_tests;
@@ -21,6 +22,7 @@ use std::{
         Arc,
         LazyLock,
     },
+    time::Duration,
 };
 
 use anyhow::{
@@ -30,10 +32,7 @@ use anyhow::{
 };
 use axum::{
     Router,
-    body::{
-        Body,
-        Bytes,
-    },
+    body::Body,
     extract::{
         ConnectInfo,
         DefaultBodyLimit,
@@ -78,6 +77,7 @@ use tower::ServiceExt;
 use crate::services::plugin_scope::PluginId;
 use tower_http::services::ServeDir;
 
+use self::body_budget::PublicBodyBudget;
 use self::responses::{
     header_pairs,
     plugin_api_response_to_axum,
@@ -96,7 +96,9 @@ use crate::plugins::api::{
     initialize_registry,
     placeholder_offset,
 };
+use crate::routes::app::REQUEST_BODY_LIMIT_BYTES;
 use crate::routes::request::{
+    UnreadBody,
     base_url,
     bearer_credential,
 };
@@ -481,7 +483,7 @@ fn build_registered_router(
     for route in &routes {
         let path = route.key.path.clone();
         let method_router = match route.kind {
-            RouteKind::Http => build_http_method_router(route)?,
+            RouteKind::Http => build_http_method_router(route, PublicBodyBudget::server())?,
             RouteKind::WebSocket => build_websocket_method_router(route),
         };
         router = router.route(path.as_ref(), method_router);
@@ -512,7 +514,10 @@ fn describe_probe_conflict(
     anyhow::anyhow!("plugin '{plugin_id}' route '{path}': {err}")
 }
 
-fn build_http_method_router(route: &RegisteredRoute) -> Result<MethodRouter> {
+fn build_http_method_router(
+    route: &RegisteredRoute,
+    body_budget: PublicBodyBudget,
+) -> Result<MethodRouter> {
     let method_filter = method_filter_for(&route.key.method)?;
     let dispatch_route = route.clone();
     let router = on(
@@ -524,8 +529,9 @@ fn build_http_method_router(route: &RegisteredRoute) -> Result<MethodRouter> {
               params: Option<Path<HashMap<String, String>>>,
               client: Option<axum::Extension<crate::services::auth::caller::ClientAddress>>,
               peer: Option<axum::Extension<ConnectInfo<SocketAddr>>>,
-              body: Bytes| {
+              body: UnreadBody| {
             let route = dispatch_route.clone();
+            let body_budget = body_budget.clone();
             async move {
                 let query = collect_query_pairs(pairs);
                 let client = client
@@ -543,13 +549,14 @@ fn build_http_method_router(route: &RegisteredRoute) -> Result<MethodRouter> {
                     params,
                     client,
                     body,
+                    body_budget,
                 })
                 .await
             }
         },
     );
-    // The `Bytes` extractor answers a body past the innermost limit with 413, so this replaces
-    // the server's limit for this route alone.
+    // Reading the body answers one past the innermost limit with 413, so this replaces the
+    // server's limit for this route alone.
     Ok(match route.max_body_bytes {
         Some(limit) => router.layer(DefaultBodyLimit::max(limit)),
         None => router,
@@ -605,6 +612,9 @@ fn method_filter_for(method: &str) -> Result<MethodFilter> {
     Ok(filter)
 }
 
+/// How soon an upload refused for its share of the public body budget is worth retrying.
+const BODY_BUDGET_RETRY_AFTER: Duration = Duration::from_secs(5);
+
 struct RegisteredRouteRequest {
     route: RegisteredRoute,
     method: Method,
@@ -614,7 +624,8 @@ struct RegisteredRouteRequest {
     query: HashMap<String, Vec<String>>,
     params: Option<Path<HashMap<String, String>>>,
     client: crate::services::auth::caller::ClientAddress,
-    body: Bytes,
+    body: UnreadBody,
+    body_budget: PublicBodyBudget,
 }
 
 async fn dispatch_registered_route(request: RegisteredRouteRequest) -> Response {
@@ -628,6 +639,7 @@ async fn dispatch_registered_route(request: RegisteredRouteRequest) -> Response 
         params,
         client,
         body,
+        body_budget,
     } = request;
 
     let auth = match resolve_optional_auth(bearer_credential(&headers)).await {
@@ -646,6 +658,23 @@ async fn dispatch_registered_route(request: RegisteredRouteRequest) -> Response 
     if matches!(route.auth_mode, RouteAuthMode::Required) && auth.is_none() {
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
+
+    let raised_limit = route
+        .max_body_bytes
+        .filter(|limit| *limit > REQUEST_BODY_LIMIT_BYTES);
+    let _reservation = match (route.auth_mode, raised_limit) {
+        (RouteAuthMode::Public, Some(bytes)) => {
+            let Some(reservation) = body_budget.reserve(client, bytes) else {
+                return super::rate_limit::too_many_requests_response(BODY_BUDGET_RETRY_AFTER);
+            };
+            Some(reservation)
+        }
+        _ => None,
+    };
+    let body = match body.read().await {
+        Ok(body) => body,
+        Err(rejection) => return rejection.into_response(),
+    };
 
     let Some(runtime) = crate::plugins::STATE.runtime() else {
         return (
@@ -735,7 +764,7 @@ pub(crate) async fn call_route(route: &RegisteredRoute) -> StatusCode {
 
     let router = Router::new().route(
         route.key.path.as_ref(),
-        build_http_method_router(route).expect("route"),
+        build_http_method_router(route, PublicBodyBudget::server()).expect("route"),
     );
     router
         .oneshot(
@@ -1011,11 +1040,19 @@ mod tests {
         settle.await.unwrap();
     }
 
-    fn http_route(path: &str, max_body_bytes: Option<usize>) -> RegisteredRoute {
+    use std::sync::atomic::Ordering;
+
+    const RUNTIME_NOT_READY: &str = "plugin runtime is not ready";
+
+    fn http_route(
+        path: &str,
+        auth_mode: RouteAuthMode,
+        max_body_bytes: Option<usize>,
+    ) -> RegisteredRoute {
         RegisteredRoute {
             key: RouteKey::new("POST", path).unwrap(),
             plugin_id: crate::services::plugin_scope::PluginId::new("limits").unwrap(),
-            auth_mode: RouteAuthMode::Required,
+            auth_mode,
             case_insensitive: false,
             max_body_bytes,
             handler: crate::services::plugin_dispatch::PluginCallbackHandle {
@@ -1026,51 +1063,277 @@ mod tests {
         }
     }
 
+    fn routed(route: &RegisteredRoute, budget: &PublicBodyBudget) -> Router {
+        Router::new().route(
+            route.key.path.as_ref(),
+            build_http_method_router(route, budget.clone()).unwrap(),
+        )
+    }
+
+    async fn session_token() -> String {
+        let user = {
+            let mut db = crate::services::STATE.db.write().await;
+            lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("caller").unwrap())
+                .unwrap()
+        };
+        crate::services::testing::create_session(user, Default::default())
+            .await
+            .unwrap()
+            .token
+    }
+
+    fn post_from(address: &str, body: Body) -> Request {
+        let client = crate::services::auth::caller::ClientAddress::new(address.parse().unwrap());
+        Request::builder()
+            .method(Method::POST)
+            .uri("/upload")
+            .extension(client)
+            .body(body)
+            .unwrap()
+    }
+
+    fn pending_body() -> (Body, tokio::sync::oneshot::Sender<()>) {
+        let (finish_tx, finish_rx) = tokio::sync::oneshot::channel::<()>();
+        let body = Body::from_stream(futures::stream::once(async move {
+            finish_rx.await.ok();
+            Ok::<_, std::io::Error>(axum::body::Bytes::from_static(b"body"))
+        }));
+        (body, finish_tx)
+    }
+
+    async fn wait_for_available(budget: &PublicBodyBudget, bytes: usize) {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while budget.available() != bytes {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the first request reserves its limit");
+    }
+
+    fn assert_refused_as_busy(response: &Response) {
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(response.headers()["retry-after"], "5");
+    }
+
+    fn post_to(path: &str, token: Option<&str>, body: Body) -> Request {
+        let mut request = Request::builder().method(Method::POST).uri(path);
+        if let Some(token) = token {
+            request = request.header("authorization", format!("Bearer {token}"));
+        }
+        request.body(body).unwrap()
+    }
+
+    async fn status_and_text(response: Response) -> (StatusCode, String) {
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
     #[tokio::test]
     async fn a_route_body_limit_replaces_the_server_limit_for_that_route_alone() {
         let _guard = crate::services::testing::runtime_test_lock().await;
         crate::services::testing::init_default_test_state().unwrap();
+        let token = session_token().await;
         let server_limit = 1024;
+        let budget = PublicBodyBudget::server();
         let mut routes = Router::new();
         for route in [
-            http_route("/default", None),
-            http_route("/large", Some(4 * server_limit)),
-            http_route("/small", Some(16)),
+            http_route("/default", RouteAuthMode::Required, None),
+            http_route("/large", RouteAuthMode::Required, Some(4 * server_limit)),
+            http_route("/small", RouteAuthMode::Required, Some(16)),
         ] {
             routes = routes.route(
                 route.key.path.as_ref(),
-                build_http_method_router(&route).unwrap(),
+                build_http_method_router(&route, budget.clone()).unwrap(),
             );
         }
         let app = Router::new()
             .fallback_service(routes)
             .layer(DefaultBodyLimit::max(server_limit));
 
-        // A body the route accepts reaches the handler, which refuses the anonymous caller.
+        // A body the route accepts gets as far as the plugin runtime, which no test server has.
         for (path, size, status) in [
-            ("/default", server_limit, StatusCode::UNAUTHORIZED),
+            ("/default", server_limit, StatusCode::SERVICE_UNAVAILABLE),
             ("/default", server_limit + 1, StatusCode::PAYLOAD_TOO_LARGE),
-            ("/large", 4 * server_limit, StatusCode::UNAUTHORIZED),
+            ("/large", 4 * server_limit, StatusCode::SERVICE_UNAVAILABLE),
             (
                 "/large",
                 4 * server_limit + 1,
                 StatusCode::PAYLOAD_TOO_LARGE,
             ),
-            ("/small", 16, StatusCode::UNAUTHORIZED),
+            ("/small", 16, StatusCode::SERVICE_UNAVAILABLE),
             ("/small", 17, StatusCode::PAYLOAD_TOO_LARGE),
         ] {
             let response = app
                 .clone()
-                .oneshot(
-                    Request::builder()
-                        .method(Method::POST)
-                        .uri(path)
-                        .body(Body::from(vec![b'x'; size]))
-                        .unwrap(),
-                )
+                .oneshot(post_to(path, Some(&token), Body::from(vec![b'x'; size])))
                 .await
                 .unwrap();
             assert_eq!(response.status(), status, "{path} with {size} bytes");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_required_route_refuses_an_anonymous_caller_before_reading_the_body() {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state().unwrap();
+        let app = routed(
+            &http_route("/upload", RouteAuthMode::Required, None),
+            &PublicBodyBudget::for_tests(0),
+        );
+        let (body, read) = crate::routes::request::watched_body();
+
+        let response = app.oneshot(post_to("/upload", None, body)).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert!(!read.load(Ordering::SeqCst), "the body stays unread");
+    }
+
+    #[tokio::test]
+    async fn a_required_route_answers_without_waiting_for_the_body_over_a_socket() {
+        use tokio::io::AsyncWriteExt;
+
+        use crate::routes::listener::tests::{
+            connect,
+            limits,
+            read_until,
+            start,
+        };
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state().unwrap();
+        let app = routed(
+            &http_route("/upload", RouteAuthMode::Required, None),
+            &PublicBodyBudget::for_tests(0),
+        );
+        let server = start(app, limits()).await;
+
+        let mut stream = connect(server.addr).await;
+        stream
+            .write_all(b"POST /upload HTTP/1.1\r\nHost: lyra.test\r\nContent-Length: 4096\r\n\r\n")
+            .await
+            .unwrap();
+        let response = read_until(&mut stream, "\r\n\r\n").await;
+        assert!(response.starts_with("HTTP/1.1 401"), "{response}");
+
+        drop(stream);
+        server.stop().await;
+    }
+
+    #[tokio::test]
+    async fn an_address_holds_one_public_upload_at_a_time() {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state().unwrap();
+        let limit = 2 * REQUEST_BODY_LIMIT_BYTES;
+        let total = 4 * limit;
+        let budget = PublicBodyBudget::for_tests(total);
+        let app = routed(
+            &http_route("/upload", RouteAuthMode::Public, Some(limit)),
+            &budget,
+        );
+
+        let (body, finish) = pending_body();
+        let first = tokio::spawn(app.clone().oneshot(post_from("203.0.113.1", body)));
+        wait_for_available(&budget, total - limit).await;
+
+        let same_address = app
+            .clone()
+            .oneshot(post_from("203.0.113.1", Body::from("second")))
+            .await
+            .unwrap();
+        assert_refused_as_busy(&same_address);
+        assert_eq!(budget.available(), total - limit, "the budget had room");
+
+        let other_address = app
+            .clone()
+            .oneshot(post_from("203.0.113.2", Body::from("third")))
+            .await
+            .unwrap();
+        assert_eq!(
+            status_and_text(other_address).await,
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                RUNTIME_NOT_READY.to_string()
+            )
+        );
+
+        finish.send(()).unwrap();
+        first.await.unwrap().unwrap();
+        assert_eq!(budget.available(), total);
+
+        let again = app
+            .oneshot(post_from("203.0.113.1", Body::from("fourth")))
+            .await
+            .unwrap();
+        assert_eq!(
+            status_and_text(again).await,
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                RUNTIME_NOT_READY.to_string()
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn an_abandoned_upload_gives_back_its_reservation() {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state().unwrap();
+        let limit = 2 * REQUEST_BODY_LIMIT_BYTES;
+        let budget = PublicBodyBudget::for_tests(limit);
+        let app = routed(
+            &http_route("/upload", RouteAuthMode::Public, Some(limit)),
+            &budget,
+        );
+
+        let (body, _finish) = pending_body();
+        let upload = tokio::spawn(app.oneshot(post_from("203.0.113.1", body)));
+        wait_for_available(&budget, 0).await;
+
+        upload.abort();
+        let _ = upload.await;
+
+        assert_eq!(budget.available(), limit);
+    }
+
+    #[tokio::test]
+    async fn only_public_routes_raising_their_limit_draw_on_the_budget() {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state().unwrap();
+        let token = session_token().await;
+        let empty = PublicBodyBudget::for_tests(0);
+        let raised = Some(2 * REQUEST_BODY_LIMIT_BYTES);
+        for (route, token) in [
+            (http_route("/upload", RouteAuthMode::Public, None), None),
+            (
+                http_route(
+                    "/upload",
+                    RouteAuthMode::Public,
+                    Some(REQUEST_BODY_LIMIT_BYTES),
+                ),
+                None,
+            ),
+            (
+                http_route("/upload", RouteAuthMode::Required, raised),
+                Some(token.as_str()),
+            ),
+        ] {
+            let response = routed(&route, &empty)
+                .oneshot(post_to("/upload", token, Body::from("body")))
+                .await
+                .unwrap();
+            assert_eq!(
+                status_and_text(response).await,
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    RUNTIME_NOT_READY.to_string()
+                ),
+                "{:?} with limit {:?}",
+                route.auth_mode,
+                route.max_body_bytes,
+            );
         }
     }
 
