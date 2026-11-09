@@ -238,6 +238,9 @@ struct Track {
     /// Further libraries holding an entry of `file` of their own, as further sources of the track.
     #[serde(default)]
     also_in: Vec<String>,
+    /// The path on disk `also_in`'s entries record in place of `file`'s. Nothing reads the file
+    /// there.
+    also_at: Option<PathBuf>,
     /// Identifier values by scheme, stored as [`ID_PROVIDER`]'s, which declares each scheme.
     #[serde(default)]
     identifiers: BTreeMap<String, String>,
@@ -1051,6 +1054,11 @@ impl Fixture {
                 "fixture track {} is held elsewhere but has no file",
                 track.key
             );
+            anyhow::ensure!(
+                !track.also_in.is_empty() || track.also_at.is_none(),
+                "fixture track {} has an also_at but no also_in",
+                track.key
+            );
             if let Some(file) = &track.file {
                 let library_db_id = match self.release_library(track)? {
                     Some(library) => keys.library(library)?,
@@ -1078,7 +1086,12 @@ impl Fixture {
                             .to_string_lossy()
                             .into_owned(),
                         size: std::fs::metadata(&path)?.len(),
-                        full_path: path.clone(),
+                        full_path: track
+                            .also_at
+                            .as_ref()
+                            .filter(|_| index > 0)
+                            .unwrap_or(&path)
+                            .clone(),
                         kind: lyra_db::entries::EntryKind::File,
                         file_kind: Some("audio".into()),
                         hash: None,

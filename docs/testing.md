@@ -135,6 +135,7 @@ start_ms = 1000      # optional, with end_ms: the source's span of the file, as 
 folder = "Amy/Solo"  # optional; the directories holding the file's entry in the release's library
 missing = true       # optional; the file's entry is missing, as a sync that no longer found it leaves it
 also_in = ["other"]  # optional; further libraries holding an entry of the file, as further sources
+also_at = "/a/song.opus" # optional; the path on disk those entries record, in place of the file's
 identifiers = { "example:recording" = "r-1" } # optional values by scheme, under the `fixture` provider
 
 [[playlists]]

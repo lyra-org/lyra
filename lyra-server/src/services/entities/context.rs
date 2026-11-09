@@ -34,6 +34,7 @@ use super::{
     EntityProjectionInfo,
     projection::{
         DetectedEntityType,
+        HintScope,
         IdIncludes,
         PreFetchedIncludes,
         detect_entity_type,
@@ -352,7 +353,7 @@ pub(crate) fn build_release_context(
         entity_id,
         release,
         &[EntityInclude::Tracks, EntityInclude::Artists],
-        library_root.as_deref(),
+        HintScope::system(library_root.as_deref()),
         &PreFetchedIncludes::default(),
         &mut IdIncludes::new(schemes, &[]),
     )?;

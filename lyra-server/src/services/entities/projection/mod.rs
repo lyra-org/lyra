@@ -127,11 +127,29 @@ fn resolve_entity_id(db: &DbAny, query_id: QueryId) -> anyhow::Result<DbId> {
     }
 }
 
+/// Whose view of a release's files its lookup hints come from, and the library root the paths
+/// are read under.
+#[derive(Clone, Copy)]
+pub(super) struct HintScope<'a> {
+    viewer: &'a Viewer,
+    library_root: Option<&'a str>,
+}
+
+impl<'a> HintScope<'a> {
+    /// Hints read from all of a release's files, as provider lookups use them.
+    pub(super) fn system(library_root: Option<&'a str>) -> Self {
+        Self {
+            viewer: &Viewer::System,
+            library_root,
+        }
+    }
+}
+
 fn build_release_tracks(
     db: &DbAny,
     release_id: DbId,
     includes: &[EntityInclude],
-    library_root: Option<&str>,
+    scope: HintScope<'_>,
     prefetched: &PreFetchedIncludes,
     ids: &mut IdIncludes<'_>,
 ) -> anyhow::Result<(Vec<ReleaseProjectionTrack>, LookupHints)> {
@@ -154,10 +172,11 @@ fn build_release_tracks(
             let entries = lookup_or_fetch(prefetched.entries_by_track.as_ref(), track_id, || {
                 relations::track_entries(db, track_id)
             })?;
+            let entries = crate::services::entries::visible(db, scope.viewer, entries)?;
             (
                 included_external_id_rows(db, track_id, includes, prefetched)?,
                 artists_by_track.get(&track_id).cloned().unwrap_or_default(),
-                relations::lookup_hints_for_entries(&entries, library_root),
+                relations::lookup_hints_for_entries(&entries, scope.library_root),
             )
         } else {
             (Vec::new(), Vec::new(), LookupHints::default())
@@ -283,7 +302,7 @@ pub(super) fn project_release(
     release_id: DbId,
     release: Release,
     includes: &[EntityInclude],
-    library_root: Option<&str>,
+    scope: HintScope<'_>,
     prefetched: &PreFetchedIncludes,
     ids: &mut IdIncludes<'_>,
 ) -> anyhow::Result<ReleaseProjectionInfo> {
@@ -313,7 +332,7 @@ pub(super) fn project_release(
             }
             EntityInclude::Tracks => {
                 let (tracks, lookup_hints) =
-                    build_release_tracks(db, release_id, includes, library_root, prefetched, ids)?;
+                    build_release_tracks(db, release_id, includes, scope, prefetched, ids)?;
                 release_lookup_hints = lookup_hints;
                 projection.includes.tracks = Some(tracks);
             }
@@ -487,7 +506,7 @@ pub(crate) fn project_entity(
                 entity_id,
                 release,
                 includes,
-                library_root.as_deref(),
+                HintScope::system(library_root.as_deref()),
                 &no_prefetch,
                 ids,
             )?))
@@ -803,7 +822,10 @@ pub(crate) fn project_entities(
                     release_id,
                     release,
                     includes,
-                    library_root.as_deref(),
+                    HintScope {
+                        viewer,
+                        library_root: library_root.as_deref(),
+                    },
                     &prefetched,
                     ids,
                 )?));
@@ -980,6 +1002,61 @@ mod tests {
         assert_eq!(releases, ["Shown"]);
         assert_eq!(artists, ["Shown Artist"]);
         assert_eq!(credits, ["Shown Artist"]);
+        Ok(())
+    }
+
+    #[test]
+    fn release_hints_come_only_from_files_the_viewer_sees() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = lyra_db::users::create(&mut db, &test_user("listener")?)?;
+        let shown_library = insert_library(&mut db, "Shown", "/music/shown")?;
+        let hidden_library = insert_library(&mut db, "Hidden", "/music/hidden")?;
+        let release = insert_release(&mut db, "Shown")?;
+        let track = insert_track(&mut db, "Only Hidden Files")?;
+        connect(&mut db, shown_library, release)?;
+        connect(&mut db, release, track)?;
+        let file = insert_file_entry(
+            &mut db,
+            hidden_library,
+            "Private Artist - Private Album (2016)/song.flac",
+        )?;
+        connect(&mut db, track, file)?;
+
+        let shown_public_id = lyra_db::libraries::get_by_id(&db, shown_library)?
+            .unwrap()
+            .id;
+        let listener = Viewer::user(
+            &db,
+            Principal::for_user(&db, user_db_id, vec![], HashSet::from([shown_public_id])),
+        )?;
+        let hints = |viewer: &Viewer| -> anyhow::Result<(EntityLookupHints, EntityLookupHints)> {
+            let projected = project_entities(
+                &db,
+                viewer,
+                vec![QueryId::Id(release)],
+                &[EntityInclude::Tracks],
+                None,
+                &mut IdIncludes::new(&IdSchemes::default(), &[]),
+            )?;
+            let EntityProjectionInfo::Release(release) = &projected[0] else {
+                panic!("expected a release projection");
+            };
+            let tracks = release.includes.tracks.as_ref().expect("tracks included");
+            Ok((release.lookup_hints.clone(), tracks[0].lookup_hints.clone()))
+        };
+
+        let (of_release, of_track) = hints(&listener)?;
+        for hints in [of_release, of_track] {
+            assert_eq!(hints.artist_name, None);
+            assert_eq!(hints.release_title, None);
+            assert_eq!(hints.year, None);
+        }
+        let (of_release, of_track) = hints(&Viewer::System)?;
+        for hints in [of_release, of_track] {
+            assert_eq!(hints.artist_name.as_deref(), Some("Private Artist"));
+            assert_eq!(hints.release_title.as_deref(), Some("Private Album"));
+            assert_eq!(hints.year, Some(2016));
+        }
         Ok(())
     }
 

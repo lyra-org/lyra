@@ -223,6 +223,9 @@ pub(crate) fn visible(
     viewer: &Viewer,
     entries: Vec<Entry>,
 ) -> anyhow::Result<Vec<Entry>> {
+    if viewer.sees_everything() {
+        return Ok(entries);
+    }
     let ids = entries
         .iter()
         .filter_map(|entry| entry.db_id)

@@ -1,0 +1,27 @@
+run_as = "viewer"
+
+[[users]]
+key = "viewer"
+admin = true
+
+[[libraries]]
+key = "shown"
+name = "Shown"
+users = ["viewer"]
+
+[[libraries]]
+key = "hidden"
+name = "Hidden"
+
+[[releases]]
+key = "seen"
+title = "Seen"
+library = "shown"
+
+[[tracks]]
+key = "both"
+title = "Both"
+release = "seen"
+file = "song.opus"
+also_in = ["hidden"]
+also_at = "/a/Private Artist - Private Album (2016)/song.opus"
