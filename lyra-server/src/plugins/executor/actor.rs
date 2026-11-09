@@ -520,6 +520,30 @@ impl PluginDispatch for PluginExecutorHandle {
         self.tx
             .try_send(PluginExecutorCommand::ListenUpdate(payload))
     }
+
+    fn dispatch_favorite_update(
+        &self,
+        payload: crate::services::favorites::FavoriteUpdatePayload,
+    ) -> Result<()> {
+        self.tx
+            .try_send(PluginExecutorCommand::FavoriteUpdate(payload))
+    }
+
+    fn dispatch_rating_update(
+        &self,
+        payload: crate::services::ratings::RatingUpdatePayload,
+    ) -> Result<()> {
+        self.tx
+            .try_send(PluginExecutorCommand::RatingUpdate(payload))
+    }
+
+    fn dispatch_bookmark_update(
+        &self,
+        payload: crate::services::bookmarks::BookmarkUpdatePayload,
+    ) -> Result<()> {
+        self.tx
+            .try_send(PluginExecutorCommand::BookmarkUpdate(payload))
+    }
 }
 
 fn plugin_executor_channel(
@@ -682,6 +706,21 @@ fn handle_plugin_executor_command(
         PluginExecutorCommand::ListenUpdate(payload) => {
             if let Err(error) = runtime.dispatch_listen_update(payload) {
                 tracing::warn!(error = %error, "plugin listen on_update dispatch failed");
+            }
+        }
+        PluginExecutorCommand::FavoriteUpdate(payload) => {
+            if let Err(error) = runtime.dispatch_favorite_update(payload) {
+                tracing::warn!(error = %error, "plugin favorite on_update dispatch failed");
+            }
+        }
+        PluginExecutorCommand::RatingUpdate(payload) => {
+            if let Err(error) = runtime.dispatch_rating_update(payload) {
+                tracing::warn!(error = %error, "plugin rating on_update dispatch failed");
+            }
+        }
+        PluginExecutorCommand::BookmarkUpdate(payload) => {
+            if let Err(error) = runtime.dispatch_bookmark_update(payload) {
+                tracing::warn!(error = %error, "plugin bookmark on_update dispatch failed");
             }
         }
         PluginExecutorCommand::RunPluginSource { request, reply } => {

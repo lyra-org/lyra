@@ -301,6 +301,12 @@ scopes! {
             Effect::WritesPersonal(PersonalKind::Bookmarks, Users::Acting),
         ],
     },
+    BookmarksAll => {
+        id: "lyra.bookmarks.all",
+        within: Bookmarks,
+        functions: &["on_update"],
+        effects: &[Effect::ReadsPersonal(PersonalKind::Bookmarks, Users::All)],
+    },
     Chromaprint => {
         id: "lyra.chromaprint",
         module: chromaprint::ChromaprintModule::module_spec,
@@ -352,6 +358,12 @@ scopes! {
             Effect::ReadsPersonal(PersonalKind::Favorites, Users::Acting),
             Effect::WritesPersonal(PersonalKind::Favorites, Users::Acting),
         ],
+    },
+    FavoritesAll => {
+        id: "lyra.favorites.all",
+        within: Favorites,
+        functions: &["on_update"],
+        effects: &[Effect::ReadsPersonal(PersonalKind::Favorites, Users::All)],
     },
     Genres => {
         id: "lyra.genres",
@@ -487,6 +499,12 @@ scopes! {
             Effect::ReadsPersonal(PersonalKind::Ratings, Users::Acting),
             Effect::WritesPersonal(PersonalKind::Ratings, Users::Acting),
         ],
+    },
+    RatingsAll => {
+        id: "lyra.ratings.all",
+        within: Ratings,
+        functions: &["on_update"],
+        effects: &[Effect::ReadsPersonal(PersonalKind::Ratings, Users::All)],
     },
     Releases => {
         id: "lyra.releases",
@@ -1020,6 +1038,7 @@ mod tests {
                     "Changes the bookmarks of the users it acts for",
                 ],
             ),
+            ("lyra.bookmarks.all", &["Reads every user's bookmarks"]),
             (
                 "lyra.covers.manage",
                 &[
@@ -1034,6 +1053,7 @@ mod tests {
                     "Changes the favorites of the users it acts for",
                 ],
             ),
+            ("lyra.favorites.all", &["Reads every user's favorites"]),
             ("lyra.genres.manage", &["Changes the library's genres"]),
             (
                 "lyra.labels.manage",
@@ -1112,6 +1132,7 @@ mod tests {
                     "Changes the ratings of the users it acts for",
                 ],
             ),
+            ("lyra.ratings.all", &["Reads every user's ratings"]),
             (
                 "lyra.releases.manage",
                 &["Changes the library's track chains"],
@@ -1220,7 +1241,9 @@ mod tests {
         };
         assert!(load(r#"["lyra.listens","lyra.listens.all"]"#).is_ok());
         for (narrow, parent) in [
+            ("lyra.bookmarks.all", "lyra.bookmarks"),
             ("lyra.covers.manage", "lyra.covers"),
+            ("lyra.favorites.all", "lyra.favorites"),
             ("lyra.genres.manage", "lyra.genres"),
             ("lyra.labels.manage", "lyra.labels"),
             ("lyra.libraries.manage", "lyra.libraries"),
@@ -1228,6 +1251,7 @@ mod tests {
             ("lyra.lyrics.all", "lyra.lyrics"),
             ("lyra.metadata.refresh", "lyra.metadata"),
             ("lyra.playback_sessions.all", "lyra.playback_sessions"),
+            ("lyra.ratings.all", "lyra.ratings"),
             ("lyra.releases.manage", "lyra.releases"),
             ("lyra.tracks.all", "lyra.tracks"),
         ] {
@@ -1534,6 +1558,7 @@ mod tests {
                 "set(track_id, position_ms, options)",
                 "remove(track_id)",
                 "get(track_ids)",
+                "on_update(handler) [lyra.bookmarks.all]",
             ],
         ),
         ("lyra/chromaprint", &["compute(entry_id)"]),
@@ -1590,6 +1615,7 @@ mod tests {
                 "remove(target_id)",
                 "get(target_ids)",
                 "list_ids(entity)",
+                "on_update(handler) [lyra.favorites.all]",
             ],
         ),
         (
@@ -1754,6 +1780,7 @@ mod tests {
                 "remove(target_id)",
                 "get(target_ids)",
                 "average(target_ids)",
+                "on_update(handler) [lyra.ratings.all]",
             ],
         ),
         (

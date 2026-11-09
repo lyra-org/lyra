@@ -6,8 +6,6 @@
 use std::collections::HashMap;
 
 use harmony_luau as luau;
-#[cfg(feature = "docgen")]
-use harmony_luau::FunctionParameter;
 use harmony_luau::{
     DescribeInterface,
     FieldDescriptor,
@@ -79,8 +77,11 @@ use crate::{
     },
 };
 
-#[cfg(feature = "docgen")]
-struct PlaybackUpdateHandler;
+crate::plugins::update_callbacks::update_handler!(
+    PlaybackUpdateHandler,
+    "PlaybackUpdatePayload",
+    "Playback update callback."
+);
 
 #[derive(Clone, Debug, Deserialize)]
 struct PlaybackSessionReportRequest {
@@ -228,38 +229,6 @@ struct ConnectionInfo {
     playback: Option<PlaybackInfo>,
     remote_control_degraded: bool,
     connected_at_ms: u64,
-}
-
-#[cfg(feature = "docgen")]
-impl LuauTypeInfo for PlaybackUpdateHandler {
-    fn luau_type() -> LuauType {
-        LuauType::literal("PlaybackUpdateHandler")
-    }
-}
-
-#[cfg(feature = "docgen")]
-impl PlaybackUpdateHandler {
-    fn callback_type() -> LuauType {
-        LuauType::function(
-            vec![FunctionParameter {
-                name: Some("payload"),
-                ty: LuauType::literal("PlaybackUpdatePayload"),
-                variadic: false,
-            }],
-            vec![],
-        )
-    }
-}
-
-#[cfg(feature = "docgen")]
-impl DescribeTypeAlias for PlaybackUpdateHandler {
-    fn type_alias_descriptor() -> TypeAliasDescriptor {
-        TypeAliasDescriptor::new(
-            "PlaybackUpdateHandler",
-            Self::callback_type(),
-            Some("Playback update callback."),
-        )
-    }
 }
 
 pub(crate) struct PlaybackSessionsModule;

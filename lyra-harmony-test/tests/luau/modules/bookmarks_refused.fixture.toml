@@ -1,1 +1,1 @@
-without_scopes = ["lyra.bookmarks"]
+without_scopes = ["lyra.bookmarks", "lyra.bookmarks.all"]

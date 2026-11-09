@@ -16,7 +16,12 @@ use agdb::{
     DbId,
 };
 
-use crate::services::auth::Principal;
+use serde::Serialize;
+
+use crate::services::{
+    auth::Principal,
+    plugin_dispatch::send_update,
+};
 use lyra_db::{
     bookmarks::{
         Bookmark,
@@ -29,6 +34,54 @@ use lyra_db::{
 pub(crate) enum MutationOutcome {
     Applied,
     NotTargetable,
+}
+
+/// One change to a user's bookmarks, as plugins see it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct BookmarkUpdatePayload {
+    pub event: BookmarkEvent,
+    pub user_id: String,
+    pub track_id: String,
+    /// The position a `set` left.
+    pub position_ms: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum BookmarkEvent {
+    Set,
+    Removed,
+}
+
+fn update(
+    db: &impl lyra_db::DbAccess,
+    principal: &Principal,
+    track_db_id: DbId,
+    position_ms: Option<u64>,
+) -> anyhow::Result<Option<BookmarkUpdatePayload>> {
+    Ok(
+        lyra_db::lookup::find_id_by_db_id(db, track_db_id)?.map(|track_id| BookmarkUpdatePayload {
+            event: if position_ms.is_some() {
+                BookmarkEvent::Set
+            } else {
+                BookmarkEvent::Removed
+            },
+            user_id: principal.user_public_id.clone(),
+            track_id,
+            position_ms,
+        }),
+    )
+}
+
+/// Announces the change a committed write made, if it made one.
+fn announce<T>(written: (T, Option<BookmarkUpdatePayload>)) -> T {
+    let (outcome, update) = written;
+    if let Some(update) = update {
+        send_update("bookmark", |dispatch| {
+            dispatch.dispatch_bookmark_update(update)
+        });
+    }
+    outcome
 }
 
 /// The largest position every client reads exactly, as a double holds integers.
@@ -71,7 +124,7 @@ impl BookmarkInput {
 }
 
 /// Sets the caller's bookmark of a track it can see, clamping the position to the track's
-/// duration when that is known.
+/// duration when that is known, and announcing it to plugins.
 pub(crate) fn set_for_principal(
     db: &mut DbAny,
     principal: &Principal,
@@ -79,9 +132,9 @@ pub(crate) fn set_for_principal(
     input: &BookmarkInput,
 ) -> anyhow::Result<MutationOutcome> {
     let now_ms = now_ms()?;
-    db.transaction_mut(|t| -> anyhow::Result<MutationOutcome> {
+    db.transaction_mut(|t| -> anyhow::Result<_> {
         if !targetable_by_principal(t, principal, track_db_id)? {
-            return Ok(MutationOutcome::NotTargetable);
+            return Ok((MutationOutcome::NotTargetable, None));
         }
         let duration_ms =
             lyra_db::tracks::get_by_id(t, track_db_id)?.and_then(|track| track.duration_ms);
@@ -96,29 +149,37 @@ pub(crate) fn set_for_principal(
             input.comment.as_deref(),
             now_ms,
         )?;
-        Ok(MutationOutcome::Applied)
+        let update = update(t, principal, track_db_id, Some(position_ms))?;
+        Ok((MutationOutcome::Applied, update))
     })
+    .map(announce)
 }
 
 /// Clears the caller's bookmark even of a track it can no longer see, so stored state can be
 /// removed after access changes. A hidden track still answers `NotTargetable`, so removal does
-/// not reveal that it exists.
+/// not reveal that it exists. A bookmark that was cleared is announced to plugins.
 pub(crate) fn remove_for_principal(
     db: &mut DbAny,
     principal: &Principal,
     track_db_id: DbId,
 ) -> anyhow::Result<MutationOutcome> {
-    db.transaction_mut(|t| -> anyhow::Result<MutationOutcome> {
+    db.transaction_mut(|t| -> anyhow::Result<_> {
         if !is_track(t, track_db_id)? {
-            return Ok(MutationOutcome::NotTargetable);
+            return Ok((MutationOutcome::NotTargetable, None));
         }
-        lyra_db::bookmarks::remove(t, principal.require(t)?, track_db_id)?;
-        Ok(if targetable_by_principal(t, principal, track_db_id)? {
+        let update = if lyra_db::bookmarks::remove(t, principal.require(t)?, track_db_id)? {
+            update(t, principal, track_db_id, None)?
+        } else {
+            None
+        };
+        let outcome = if targetable_by_principal(t, principal, track_db_id)? {
             MutationOutcome::Applied
         } else {
             MutationOutcome::NotTargetable
-        })
+        };
+        Ok((outcome, update))
     })
+    .map(announce)
 }
 
 pub(crate) fn get_for_principal(
@@ -186,12 +247,12 @@ mod tests {
         test_db::{
             connect_artist,
             insert_library,
-            new_test_db,
         },
         users,
     };
 
     struct Setup {
+        _state: crate::services::testing::RuntimeTestGuard,
         db: DbAny,
         user: DbId,
         library: DbId,
@@ -199,12 +260,13 @@ mod tests {
     }
 
     fn setup(name: &str) -> anyhow::Result<Setup> {
-        let mut db = new_test_db()?;
+        let (mut db, _state) = crate::services::testing::publishing_test_db()?;
         let user = users::create(&mut db, &test_user("alice")?)?;
         let library = insert_library(&mut db, "Music", &format!("/tmp/lyra-bookmarks-{name}"))?;
         let library_id = lyra_db::lookup::find_id_by_db_id(&db, library)?.unwrap();
         let principal = Principal::for_user(&db, user, Vec::new(), HashSet::from([library_id]));
         Ok(Setup {
+            _state,
             db,
             user,
             library,
@@ -225,6 +287,43 @@ mod tests {
 
     fn input(position_ms: i64, comment: Option<&str>) -> BookmarkInput {
         BookmarkInput::new(position_ms, comment.map(str::to_string)).unwrap()
+    }
+
+    #[test]
+    fn every_change_to_a_bookmark_is_announced_once() -> anyhow::Result<()> {
+        let mut setup = setup("announced")?;
+        let dispatch = crate::services::testing::record_plugin_dispatch();
+        let track = track(&mut setup, Some(60_000))?;
+        let track_id = lyra_db::lookup::find_id_by_db_id(&setup.db, track)?.unwrap();
+        let hidden = insert_track(&mut setup.db, "Hidden")?;
+        let principal = setup.principal.clone();
+        let announced = || dispatch.bookmark_updates();
+
+        // Nothing changes: a track that can't be bookmarked, and no bookmark to clear.
+        set_for_principal(&mut setup.db, &principal, hidden, &input(1_000, None))?;
+        remove_for_principal(&mut setup.db, &principal, track)?;
+        assert_eq!(announced(), vec![]);
+
+        set_for_principal(&mut setup.db, &principal, track, &input(1_000, Some("a")))?;
+        set_for_principal(&mut setup.db, &principal, track, &input(90_000, None))?;
+        remove_for_principal(&mut setup.db, &principal, track)?;
+
+        let update = |event, position_ms| BookmarkUpdatePayload {
+            event,
+            user_id: principal.user_public_id.clone(),
+            track_id: track_id.clone(),
+            position_ms,
+        };
+        assert_eq!(
+            announced(),
+            vec![
+                update(BookmarkEvent::Set, Some(1_000)),
+                // Clamped to the track's duration, as stored.
+                update(BookmarkEvent::Set, Some(60_000)),
+                update(BookmarkEvent::Removed, None),
+            ]
+        );
+        Ok(())
     }
 
     #[test]
@@ -311,6 +410,7 @@ mod tests {
             user,
             library,
             principal,
+            ..
         } = &mut setup;
         let release = insert_release(db, "Release")?;
         let artist = insert_artist(db, "Artist")?;

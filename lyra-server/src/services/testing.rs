@@ -54,6 +54,7 @@ pub(crate) use self::test_state::{
     for_each_db_gap,
     init_default_test_state,
     init_library_test_state,
+    publishing_test_db,
     record_plugin_dispatch,
     run_with_recycle_at,
     user_principal,
@@ -143,6 +144,27 @@ impl PluginDispatch for IdleDispatch {
     fn dispatch_listen_update(
         &self,
         _payload: crate::services::listens::ListenUpdatePayload,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn dispatch_favorite_update(
+        &self,
+        _payload: crate::services::favorites::FavoriteUpdatePayload,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn dispatch_rating_update(
+        &self,
+        _payload: crate::services::ratings::RatingUpdatePayload,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn dispatch_bookmark_update(
+        &self,
+        _payload: crate::services::bookmarks::BookmarkUpdatePayload,
     ) -> anyhow::Result<()> {
         Ok(())
     }
@@ -371,15 +393,51 @@ mod test_state {
         initialize_state(None)
     }
 
-    /// A plugin runtime stand-in that keeps the listen updates services hand it.
+    /// A database for a synchronous test of a service whose writes publish updates to plugins,
+    /// with the default test state they publish through, held while the guard lives.
+    pub(crate) fn publishing_test_db() -> anyhow::Result<(agdb::DbAny, super::RuntimeTestGuard)> {
+        let guard = futures::executor::block_on(super::runtime_test_lock());
+        init_default_test_state()?;
+        Ok((lyra_db::test_db::new_test_db()?, guard))
+    }
+
+    /// A plugin runtime stand-in that keeps the updates services hand it.
     #[derive(Default)]
     pub(crate) struct RecordingDispatch {
         listen_updates: StdMutex<Vec<crate::services::listens::ListenUpdatePayload>>,
+        favorite_updates: StdMutex<Vec<crate::services::favorites::FavoriteUpdatePayload>>,
+        rating_updates: StdMutex<Vec<crate::services::ratings::RatingUpdatePayload>>,
+        bookmark_updates: StdMutex<Vec<crate::services::bookmarks::BookmarkUpdatePayload>>,
     }
 
     impl RecordingDispatch {
         pub(crate) fn listen_updates(&self) -> Vec<crate::services::listens::ListenUpdatePayload> {
             self.listen_updates
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
+        }
+
+        pub(crate) fn favorite_updates(
+            &self,
+        ) -> Vec<crate::services::favorites::FavoriteUpdatePayload> {
+            self.favorite_updates
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
+        }
+
+        pub(crate) fn rating_updates(&self) -> Vec<crate::services::ratings::RatingUpdatePayload> {
+            self.rating_updates
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
+        }
+
+        pub(crate) fn bookmark_updates(
+            &self,
+        ) -> Vec<crate::services::bookmarks::BookmarkUpdatePayload> {
+            self.bookmark_updates
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .clone()
@@ -429,6 +487,39 @@ mod test_state {
             payload: crate::services::listens::ListenUpdatePayload,
         ) -> anyhow::Result<()> {
             self.listen_updates
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(payload);
+            Ok(())
+        }
+
+        fn dispatch_favorite_update(
+            &self,
+            payload: crate::services::favorites::FavoriteUpdatePayload,
+        ) -> anyhow::Result<()> {
+            self.favorite_updates
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(payload);
+            Ok(())
+        }
+
+        fn dispatch_rating_update(
+            &self,
+            payload: crate::services::ratings::RatingUpdatePayload,
+        ) -> anyhow::Result<()> {
+            self.rating_updates
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(payload);
+            Ok(())
+        }
+
+        fn dispatch_bookmark_update(
+            &self,
+            payload: crate::services::bookmarks::BookmarkUpdatePayload,
+        ) -> anyhow::Result<()> {
+            self.bookmark_updates
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .push(payload);
@@ -803,6 +894,27 @@ mod fake_dispatch {
         }
 
         fn dispatch_listen_update(&self, _payload: ListenUpdatePayload) -> Result<()> {
+            Ok(())
+        }
+
+        fn dispatch_favorite_update(
+            &self,
+            _payload: crate::services::favorites::FavoriteUpdatePayload,
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        fn dispatch_rating_update(
+            &self,
+            _payload: crate::services::ratings::RatingUpdatePayload,
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        fn dispatch_bookmark_update(
+            &self,
+            _payload: crate::services::bookmarks::BookmarkUpdatePayload,
+        ) -> Result<()> {
             Ok(())
         }
     }

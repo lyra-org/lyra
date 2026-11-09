@@ -14,12 +14,61 @@ use agdb::{
     DbId,
 };
 
+use serde::Serialize;
+
 use crate::services::auth::{
     Principal,
     access,
 };
 use crate::services::catalog::Viewer;
+use crate::services::plugin_dispatch::send_update;
 use lyra_db::favorites::FavoriteKind;
+
+/// One change to a user's favorites, as plugins see it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct FavoriteUpdatePayload {
+    pub event: FavoriteEvent,
+    pub user_id: String,
+    pub target_id: String,
+    pub target_type: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FavoriteEvent {
+    Added,
+    Removed,
+}
+
+fn update(
+    db: &impl lyra_db::DbAccess,
+    event: FavoriteEvent,
+    principal: &Principal,
+    target_db_id: DbId,
+    kind: FavoriteKind,
+) -> anyhow::Result<Option<FavoriteUpdatePayload>> {
+    Ok(
+        lyra_db::lookup::find_id_by_db_id(db, target_db_id)?.map(|target_id| {
+            FavoriteUpdatePayload {
+                event,
+                user_id: principal.user_public_id.clone(),
+                target_id,
+                target_type: kind.as_str(),
+            }
+        }),
+    )
+}
+
+/// Announces the change a committed write made, if it made one.
+fn announce<T>(written: (T, Option<FavoriteUpdatePayload>)) -> T {
+    let (outcome, update) = written;
+    if let Some(update) = update {
+        send_update("favorite", |dispatch| {
+            dispatch.dispatch_favorite_update(update)
+        });
+    }
+    outcome
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MutationOutcome {
@@ -28,44 +77,51 @@ pub(crate) enum MutationOutcome {
     NotTargetable,
 }
 
-/// Add or refresh a favorite. Atomic over whitelist + visibility + write.
+/// Add or refresh a favorite, announcing either to plugins. Atomic over whitelist + visibility +
+/// write.
 pub(crate) fn add_for_principal(
     db: &mut DbAny,
     principal: &Principal,
     target_db_id: DbId,
 ) -> anyhow::Result<MutationOutcome> {
     let now_ms = now_ms()?;
-    db.transaction_mut(|t| -> anyhow::Result<MutationOutcome> {
+    db.transaction_mut(|t| -> anyhow::Result<_> {
         let user_db_id = principal.require(t)?;
         let Some(kind) = targetable_kind(t, principal, user_db_id, target_db_id)? else {
-            return Ok(MutationOutcome::NotTargetable);
+            return Ok((MutationOutcome::NotTargetable, None));
         };
         lyra_db::favorites::add(t, user_db_id, target_db_id, kind, now_ms)?;
-        Ok(MutationOutcome::Applied)
+        let update = update(t, FavoriteEvent::Added, principal, target_db_id, kind)?;
+        Ok((MutationOutcome::Applied, update))
     })
+    .map(announce)
 }
 
 /// Remove a favorite, even of a target the caller can no longer see, else a "ghost favorite"
 /// reappears if it becomes visible again. A hidden target still answers `NotTargetable`, so
-/// removal does not reveal that it exists.
+/// removal does not reveal that it exists. A favorite that was removed is announced to plugins.
 pub(crate) fn remove_for_principal(
     db: &mut DbAny,
     principal: &Principal,
     target_db_id: DbId,
 ) -> anyhow::Result<MutationOutcome> {
-    db.transaction_mut(|t| -> anyhow::Result<MutationOutcome> {
-        if lyra_db::favorites::target_kind(t, target_db_id)?.is_none() {
-            return Ok(MutationOutcome::NotTargetable);
-        }
+    db.transaction_mut(|t| -> anyhow::Result<_> {
+        let Some(kind) = lyra_db::favorites::target_kind(t, target_db_id)? else {
+            return Ok((MutationOutcome::NotTargetable, None));
+        };
         let user_db_id = principal.require(t)?;
-        lyra_db::favorites::remove(t, user_db_id, target_db_id)?;
-        Ok(
-            match targetable_kind(t, principal, user_db_id, target_db_id)? {
-                Some(_) => MutationOutcome::Applied,
-                None => MutationOutcome::NotTargetable,
-            },
-        )
+        let update = if lyra_db::favorites::remove(t, user_db_id, target_db_id)? {
+            update(t, FavoriteEvent::Removed, principal, target_db_id, kind)?
+        } else {
+            None
+        };
+        let outcome = match targetable_kind(t, principal, user_db_id, target_db_id)? {
+            Some(_) => MutationOutcome::Applied,
+            None => MutationOutcome::NotTargetable,
+        };
+        Ok((outcome, update))
     })
+    .map(announce)
 }
 
 pub(crate) fn has_for_principal(
@@ -207,10 +263,7 @@ mod tests {
         connect,
         test_user,
     };
-    use lyra_db::test_db::{
-        insert_library,
-        new_test_db,
-    };
+    use lyra_db::test_db::insert_library;
     use lyra_db::{
         Playlist,
         users,
@@ -286,8 +339,59 @@ mod tests {
     }
 
     #[test]
+    fn every_change_to_a_favorite_is_announced_once() -> anyhow::Result<()> {
+        let (mut db, _state) = crate::services::testing::publishing_test_db()?;
+        let dispatch = crate::services::testing::record_plugin_dispatch();
+        let user = create_user(&mut db, "alice")?;
+        let library = insert_library(&mut db, "Favorites", "/tmp/lyra-favorites-announced")?;
+        let library_id = lyra_db::lookup::find_id_by_db_id(&db, library)?.expect("library id");
+        let track_id = nanoid!();
+        let track = create_track(&mut db, &track_id)?;
+        connect(&mut db, library, track)?;
+        let hidden_id = nanoid!();
+        let hidden = create_track(&mut db, &hidden_id)?;
+        let principal = principal_for(&db, user, HashSet::from([library_id]));
+        let announced = || {
+            dispatch
+                .favorite_updates()
+                .into_iter()
+                .map(|update| {
+                    assert_eq!(update.user_id, principal.user_public_id);
+                    (update.event, update.target_id, update.target_type)
+                })
+                .collect::<Vec<_>>()
+        };
+
+        // Nothing changes: a target that can't be favorited, and no favorite to remove.
+        add_for_principal(&mut db, &principal, hidden)?;
+        remove_for_principal(&mut db, &principal, track)?;
+        assert_eq!(announced(), vec![]);
+
+        add_for_principal(&mut db, &principal, track)?;
+        add_for_principal(&mut db, &principal, track)?;
+        remove_for_principal(&mut db, &principal, track)?;
+        // A favorite of a track the user no longer sees is still removed, and announced.
+        lyra_db::favorites::add(&mut db, user, hidden, FavoriteKind::Track, 1)?;
+        assert_eq!(
+            remove_for_principal(&mut db, &principal, hidden)?,
+            MutationOutcome::NotTargetable
+        );
+
+        assert_eq!(
+            announced(),
+            vec![
+                (FavoriteEvent::Added, track_id.clone(), "track"),
+                (FavoriteEvent::Added, track_id.clone(), "track"),
+                (FavoriteEvent::Removed, track_id, "track"),
+                (FavoriteEvent::Removed, hidden_id, "track"),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn add_applies_for_whitelisted_track() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
+        let (mut db, _state) = crate::services::testing::publishing_test_db()?;
         let user = create_user(&mut db, "alice")?;
         let library_db_id = insert_library(&mut db, "Favorites", "/tmp/lyra-favorites-add")?;
         let library_public_id = lyra_db::lookup::find_id_by_db_id(&db, library_db_id)?
@@ -305,7 +409,7 @@ mod tests {
 
     #[test]
     fn missing_db_ids_are_not_targetable() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
+        let (mut db, _state) = crate::services::testing::publishing_test_db()?;
         let user = create_user(&mut db, "alice")?;
 
         let principal = principal_for(&db, user, HashSet::new());
@@ -326,7 +430,7 @@ mod tests {
 
     #[test]
     fn add_returns_not_targetable_for_non_whitelisted_kind() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
+        let (mut db, _state) = crate::services::testing::publishing_test_db()?;
         let user = create_user(&mut db, "alice")?;
         let other_node = db
             .exec_mut(
@@ -346,7 +450,7 @@ mod tests {
 
     #[test]
     fn add_rejects_whitelist_bypass_via_real_user() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
+        let (mut db, _state) = crate::services::testing::publishing_test_db()?;
         let caller = create_user(&mut db, "alice")?;
         let bob_db_id = create_user(&mut db, "bob")?;
 
@@ -363,7 +467,7 @@ mod tests {
 
     #[test]
     fn playlist_visibility_gate_blocks_non_owner_non_public() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
+        let (mut db, _state) = crate::services::testing::publishing_test_db()?;
         let owner = create_user(&mut db, "alice")?;
         let intruder = create_user(&mut db, "bob")?;
         let playlist = create_playlist(&mut db, owner, &nanoid!(), /* is_public= */ false)?;
@@ -386,7 +490,7 @@ mod tests {
 
     #[test]
     fn playlist_visibility_gate_allows_owner() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
+        let (mut db, _state) = crate::services::testing::publishing_test_db()?;
         let owner = create_user(&mut db, "alice")?;
         let playlist = create_playlist(&mut db, owner, &nanoid!(), false)?;
 
@@ -400,7 +504,7 @@ mod tests {
 
     #[test]
     fn playlist_visibility_gate_allows_public_non_owner() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
+        let (mut db, _state) = crate::services::testing::publishing_test_db()?;
         let owner = create_user(&mut db, "alice")?;
         let other = create_user(&mut db, "bob")?;
         let playlist = create_playlist(&mut db, owner, &nanoid!(), true)?;
@@ -414,7 +518,7 @@ mod tests {
     #[test]
     fn favorited_at_for_principal_returns_visible_favorites_and_caps_existing_ids()
     -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
+        let (mut db, _state) = crate::services::testing::publishing_test_db()?;
         let user = create_user(&mut db, "alice")?;
         let unsupported_user = create_user(&mut db, "unsupported")?;
         let visible_library = insert_library(&mut db, "Visible", "/tmp/lyra-favorites-check")?;
@@ -465,7 +569,7 @@ mod tests {
 
     #[test]
     fn favorited_at_seen_by_keeps_only_favorites_the_viewer_sees() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
+        let (mut db, _state) = crate::services::testing::publishing_test_db()?;
         let user = create_user(&mut db, "alice")?;
         let other = create_user(&mut db, "bob")?;
         let departed = create_user(&mut db, "carol")?;
@@ -520,7 +624,7 @@ mod tests {
 
     #[test]
     fn remove_clears_a_hidden_playlist_without_revealing_it() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
+        let (mut db, _state) = crate::services::testing::publishing_test_db()?;
         let owner = create_user(&mut db, "alice")?;
         let other = create_user(&mut db, "bob")?;
         let pub_id = nanoid!();
@@ -551,7 +655,7 @@ mod tests {
 
     #[test]
     fn remove_still_rejects_non_whitelisted_node() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
+        let (mut db, _state) = crate::services::testing::publishing_test_db()?;
         let caller = create_user(&mut db, "alice")?;
         let victim_db_id = create_user(&mut db, "victim")?;
 
@@ -568,7 +672,7 @@ mod tests {
 
     #[test]
     fn remove_idempotent_over_whitelisted_kind() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
+        let (mut db, _state) = crate::services::testing::publishing_test_db()?;
         let user = create_user(&mut db, "alice")?;
         let library_db_id = insert_library(&mut db, "Favorites", "/tmp/lyra-favorites-remove")?;
         let library_public_id = lyra_db::lookup::find_id_by_db_id(&db, library_db_id)?

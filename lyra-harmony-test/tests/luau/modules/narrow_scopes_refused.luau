@@ -1,4 +1,6 @@
+local bookmarks = require("@lyra/bookmarks")
 local covers = require("@lyra/covers")
+local favorites = require("@lyra/favorites")
 local genres = require("@lyra/genres")
 local labels = require("@lyra/labels")
 local libraries = require("@lyra/libraries")
@@ -6,11 +8,12 @@ local listens = require("@lyra/listens")
 local lyrics = require("@lyra/lyrics")
 local metadata = require("@lyra/metadata")
 local playback_sessions = require("@lyra/playback_sessions")
+local ratings = require("@lyra/ratings")
 local releases = require("@lyra/releases")
 
--- The test keeps `lyra.covers`, `lyra.genres`, `lyra.labels`, `lyra.libraries`, `lyra.listens`,
--- `lyra.lyrics`, `lyra.metadata`, `lyra.playback_sessions` and `lyra.releases`, but goes without the
--- narrow scopes within them.
+-- The test keeps `lyra.bookmarks`, `lyra.covers`, `lyra.favorites`, `lyra.genres`, `lyra.labels`,
+-- `lyra.libraries`, `lyra.listens`, `lyra.lyrics`, `lyra.metadata`, `lyra.playback_sessions`,
+-- `lyra.ratings` and `lyra.releases`, but goes without the narrow scopes within them.
 local function rejects(f: (...any) -> ...any, message: string, ...: any)
 	local ok, err = pcall(f, ...)
 	assert(not ok, `rejected: {message}`)
@@ -28,6 +31,9 @@ rejects(genres.add_parent, "genres.add_parent requires the lyra.genres.manage sc
 rejects(labels.resolve, "labels.resolve requires the lyra.labels.manage scope", { name = "Label" })
 rejects(releases.replace_chains, "releases.replace_chains requires the lyra.releases.manage scope", "id", {})
 rejects(listens.on_update, "listens.on_update requires the lyra.listens.all scope", function() end)
+rejects(favorites.on_update, "favorites.on_update requires the lyra.favorites.all scope", function() end)
+rejects(ratings.on_update, "ratings.on_update requires the lyra.ratings.all scope", function() end)
+rejects(bookmarks.on_update, "bookmarks.on_update requires the lyra.bookmarks.all scope", function() end)
 rejects(
 	playback_sessions.on_update,
 	"playback_sessions.on_update requires the lyra.playback_sessions.all scope",
@@ -55,6 +61,9 @@ assert(next(releases.get({ "missing" })) == nil)
 assert(next(releases.chains({ "missing" })) == nil)
 assert(lyrics.parse_lrc("[00:01.00]Hello").plain_text == "Hello")
 assert(next(listens.get({})) == nil)
+assert(next(favorites.get({})) == nil)
+assert(next(ratings.get({})) == nil)
+assert(next(bookmarks.get({})) == nil)
 assert(#playback_sessions.list_playbacks() == 0, "the caller's own playbacks need no narrow scope")
 rejects(
 	playback_sessions.report_session,

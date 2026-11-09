@@ -80,6 +80,26 @@ modules predate some of them.
   serves, documented as being for that alone, as `tracks.streamable` and `covers.artwork`
   are for public routes.
 
+## Change Events
+
+- A module announces changes to what it holds through `on_update(handler)`, as `listens`,
+  `favorites`, `ratings`, `bookmarks` and `playback_sessions` do. The handler takes one payload
+  with an `event` saying what happened, the `user_id` whose data changed, and the public ids
+  of what changed.
+- An update covers every user, so `on_update` needs the module's `.all` scope, and its ids may
+  name what the plugin's own callers cannot see.
+- A function's doc says which changes it announces. `favorites`, `ratings` and `bookmarks`
+  announce the changes made through their own mutations, by the REST API or any plugin, the
+  registering plugin included. They announce nothing when entities merge and the data moves to
+  the winner, or when a target or user is deleted and the data goes with it.
+- An update follows the commit that made the change, once. A refused call, or a removal of what
+  wasn't there, sends none; setting the same value again still sends one.
+- Delivery is best effort: updates are dropped while the plugin runtime is saturated or being
+  replaced, so a handler treats one as a hint to read again, not as a log.
+- A handler acts as the code that registered it did, which at a plugin's start is for no user. It
+  reads the changed user's data only through what acts for that user, such as a socket's own
+  thread.
+
 ## Plugin Data
 
 - A `@lyra/datastore` store belongs to the plugin whose code opens it. The host takes that plugin

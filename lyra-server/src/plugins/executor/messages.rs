@@ -134,6 +134,9 @@ pub(super) enum PluginExecutorCommand {
     },
     PlaybackUpdate(PlaybackUpdatePayload),
     ListenUpdate(crate::services::listens::ListenUpdatePayload),
+    FavoriteUpdate(crate::services::favorites::FavoriteUpdatePayload),
+    RatingUpdate(crate::services::ratings::RatingUpdatePayload),
+    BookmarkUpdate(crate::services::bookmarks::BookmarkUpdatePayload),
     RunPluginSource {
         request: PluginSourceRun,
         reply: tokio::sync::oneshot::Sender<Result<()>>,

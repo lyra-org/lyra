@@ -74,3 +74,37 @@ pub(crate) fn register<Payload: 'static>(
         Ok(())
     }))
 }
+
+/// Declares `$name` as the Luau type of an `on_update` handler taking a `$payload`.
+macro_rules! update_handler {
+    ($name:ident, $payload:literal, $description:literal) => {
+        #[cfg(feature = "docgen")]
+        struct $name;
+
+        #[cfg(feature = "docgen")]
+        impl harmony_luau::LuauTypeInfo for $name {
+            fn luau_type() -> harmony_luau::LuauType {
+                harmony_luau::LuauType::literal(stringify!($name))
+            }
+        }
+
+        #[cfg(feature = "docgen")]
+        impl harmony_luau::DescribeTypeAlias for $name {
+            fn type_alias_descriptor() -> harmony_luau::TypeAliasDescriptor {
+                harmony_luau::TypeAliasDescriptor::new(
+                    stringify!($name),
+                    harmony_luau::LuauType::function(
+                        vec![harmony_luau::FunctionParameter {
+                            name: Some("payload"),
+                            ty: harmony_luau::LuauType::literal($payload),
+                            variadic: false,
+                        }],
+                        vec![],
+                    ),
+                    Some($description),
+                )
+            }
+        }
+    };
+}
+pub(crate) use update_handler;

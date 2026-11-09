@@ -59,9 +59,10 @@ gates it, such as `lyra.metadata` for `@lyra/metadata`. A plugin naming a
 scope the server doesn't know fails to load. A few functions reach every
 user's data rather than that of the users the plugin acts for, and need a
 narrow scope on top of their module's: `lyra.listens.all` for
-`listens.on_update`, `lyra.playback_sessions.all` for
-`playback_sessions.on_update`, and `lyra.lyrics.all` for
-`lyrics.remove_all`. The catalog modules' scopes only read the library;
+`listens.on_update`, likewise `lyra.favorites.all`, `lyra.ratings.all` and
+`lyra.bookmarks.all` for those modules' `on_update`,
+`lyra.playback_sessions.all` for `playback_sessions.on_update`, and
+`lyra.lyrics.all` for `lyrics.remove_all`. The catalog modules' scopes only read the library;
 changing it needs the module's `.manage` scope, such as
 `lyra.genres.manage` for `genres.resolve` and `lyra.releases.manage` for
 `releases.replace_chains`. A privileged action has a narrow scope of its

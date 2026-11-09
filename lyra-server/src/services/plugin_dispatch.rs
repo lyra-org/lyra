@@ -23,6 +23,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::services::{
     STATE,
+    bookmarks::BookmarkUpdatePayload,
+    favorites::FavoriteUpdatePayload,
     listens::ListenUpdatePayload,
     mix::{
         MixRegistry,
@@ -31,6 +33,7 @@ use crate::services::{
     playback_sessions::PlaybackUpdatePayload,
     plugin_scope::RuntimeScope,
     providers::ProviderRegistry,
+    ratings::RatingUpdatePayload,
 };
 
 /// A handler a plugin registered, as services hold it: the runtime that
@@ -92,6 +95,34 @@ pub(crate) trait PluginDispatch: Send + Sync {
 
     /// Lossy like [`Self::dispatch_playback_update`].
     fn dispatch_listen_update(&self, payload: ListenUpdatePayload) -> Result<()>;
+
+    /// Lossy like [`Self::dispatch_playback_update`].
+    fn dispatch_favorite_update(&self, payload: FavoriteUpdatePayload) -> Result<()>;
+
+    /// Lossy like [`Self::dispatch_playback_update`].
+    fn dispatch_rating_update(&self, payload: RatingUpdatePayload) -> Result<()>;
+
+    /// Lossy like [`Self::dispatch_playback_update`].
+    fn dispatch_bookmark_update(&self, payload: BookmarkUpdatePayload) -> Result<()>;
+}
+
+/// Hands the published runtime an update of `kind` a service just committed, through `send`.
+/// Best effort: nothing is sent without a runtime, and one that is saturated or being replaced
+/// drops the update.
+pub(crate) fn send_update(
+    kind: &'static str,
+    send: impl FnOnce(&dyn PluginDispatch) -> Result<()>,
+) {
+    let Some(scope) = STATE.generation().latest() else {
+        return;
+    };
+    if let Err(error) = send(scope.dispatch().as_ref()) {
+        if DispatchNotStarted::caused(&error) {
+            tracing::debug!(kind, "dropped plugin on_update dispatch during a reload");
+        } else {
+            tracing::warn!(kind, error = %error, "failed to enqueue plugin on_update dispatch");
+        }
+    }
 }
 
 /// How long a call may wait for a transition covering its target.

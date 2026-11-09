@@ -1,1 +1,10 @@
-without_scopes = ["lyra.bookmarks", "lyra.favorites", "lyra.listens", "lyra.listens.all", "lyra.ratings"]
+without_scopes = [
+  "lyra.bookmarks",
+  "lyra.bookmarks.all",
+  "lyra.favorites",
+  "lyra.favorites.all",
+  "lyra.listens",
+  "lyra.listens.all",
+  "lyra.ratings",
+  "lyra.ratings.all",
+]

@@ -30,11 +30,71 @@ use crate::{
         bookmarks::{
             self as bookmark_service,
             BookmarkInput,
+            BookmarkUpdatePayload,
         },
     },
 };
 
 pub(crate) struct BookmarksModule;
+
+crate::plugins::update_callbacks::update_handler!(
+    BookmarkUpdateHandler,
+    "BookmarkUpdatePayload",
+    "Bookmark update callback."
+);
+
+/// [`BookmarkUpdatePayload`] as described to Luau.
+#[cfg(feature = "docgen")]
+struct LuauBookmarkUpdatePayload;
+
+#[cfg(feature = "docgen")]
+impl harmony_luau::DescribeInterface for LuauBookmarkUpdatePayload {
+    fn interface_descriptor() -> harmony_luau::InterfaceDescriptor {
+        use harmony_luau::{
+            FieldDescriptor,
+            LuauType,
+            LuauTypeInfo,
+        };
+
+        harmony_luau::InterfaceDescriptor {
+            name: "BookmarkUpdatePayload",
+            description: Some("One change to one user's bookmarks."),
+            fields: vec![
+                FieldDescriptor {
+                    name: "event",
+                    ty: LuauType::literal("\"set\" | \"removed\""),
+                    description: Some(
+                        "Whether the user set the track's bookmark, anew or again, or cleared it.",
+                    ),
+                },
+                FieldDescriptor {
+                    name: "user_id",
+                    ty: String::luau_type(),
+                    description: Some("The user's public id."),
+                },
+                FieldDescriptor {
+                    name: "track_id",
+                    ty: String::luau_type(),
+                    description: Some("The track's public id."),
+                },
+                FieldDescriptor {
+                    name: "position_ms",
+                    ty: Option::<u64>::luau_type(),
+                    description: Some("The position a `set` left. Absent for `removed`."),
+                },
+            ],
+        }
+    }
+}
+
+const _: fn(&BookmarkUpdatePayload) = |value| {
+    let BookmarkUpdatePayload {
+        event: _,
+        user_id: _,
+        track_id: _,
+        position_ms: _,
+    } = value;
+};
 
 crate::plugins::limits::module_limits!(&[crate::plugins::limits::Limit {
     name: "MAX_COMMENT_CHARS",
@@ -83,7 +143,7 @@ impl LuauTypeInfo for BookmarkRecord {
 
 #[harmony_macros::module(
     id = "lyra/bookmarks",
-    description = "The dispatch principal's saved positions in tracks.",
+    description = "The dispatch principal's saved positions in tracks, and every user's bookmarks as they change: `on_update` delivers all users' changes, not only the caller's, and needs the `lyra.bookmarks.all` scope too.",
     docs_feature = "docgen",
     extend = install_limits,
     describe = describe_limits
@@ -153,12 +213,31 @@ impl BookmarksModule {
             .collect::<luau::runtime::Result<Vec<_>>>()?;
         Ok(tracks.keyed(values))
     }
+
+    #[harmony(
+        description = "Registers a callback for every user's bookmark changes made through `set` and `remove`, by any plugin or the REST API. An update follows the commit, also when `set` leaves the same position; a refused call, or a `remove` of what had no bookmark, sends none. Bookmarks that move when tracks merge, or go when their track or user is deleted, send none. An update carries the position but not the comment. The track may be one the plugin's own callers cannot see. Delivery is best effort: updates are dropped while the plugin runtime is saturated. Needs the `lyra.bookmarks.all` scope too.",
+        args(handler: BookmarkUpdateHandler)
+    )]
+    fn on_update(
+        vm: &luau::Vm,
+        context: &luau::CallContext,
+        handler: luau::Function,
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
+        crate::plugins::update_callbacks::register::<BookmarkUpdatePayload>(
+            vm,
+            context,
+            handler,
+            "bookmarks.on_update",
+        )
+    }
 }
 
 #[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     use harmony_luau::{
+        DescribeInterface,
         DescribeModule,
+        DescribeTypeAlias,
         FieldDescriptor,
         InterfaceDescriptor,
     };
@@ -195,8 +274,12 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
     ));
     harmony_luau::render_definition_file_with_support(
         &BookmarksModule::module_descriptor(),
-        &[],
-        &[bookmark, set_options],
+        &[BookmarkUpdateHandler::type_alias_descriptor()],
+        &[
+            bookmark,
+            set_options,
+            LuauBookmarkUpdatePayload::interface_descriptor(),
+        ],
         &[],
     )
 }

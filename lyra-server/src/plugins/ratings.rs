@@ -24,15 +24,83 @@ use crate::{
     },
     services::{
         auth::Principal,
-        ratings as rating_service,
+        ratings::{
+            self as rating_service,
+            RatingUpdatePayload,
+        },
     },
 };
 
 pub(crate) struct RatingsModule;
 
+crate::plugins::update_callbacks::update_handler!(
+    RatingUpdateHandler,
+    "RatingUpdatePayload",
+    "Rating update callback."
+);
+
+/// [`RatingUpdatePayload`] as described to Luau.
+#[cfg(feature = "docgen")]
+struct LuauRatingUpdatePayload;
+
+#[cfg(feature = "docgen")]
+impl harmony_luau::DescribeInterface for LuauRatingUpdatePayload {
+    fn interface_descriptor() -> harmony_luau::InterfaceDescriptor {
+        use harmony_luau::{
+            FieldDescriptor,
+            LuauType,
+            LuauTypeInfo,
+        };
+
+        harmony_luau::InterfaceDescriptor {
+            name: "RatingUpdatePayload",
+            description: Some("One change to one user's ratings."),
+            fields: vec![
+                FieldDescriptor {
+                    name: "event",
+                    ty: LuauType::literal("\"set\" | \"removed\""),
+                    description: Some(
+                        "Whether the user rated the target, anew or again, or cleared its rating.",
+                    ),
+                },
+                FieldDescriptor {
+                    name: "user_id",
+                    ty: String::luau_type(),
+                    description: Some("The user's public id."),
+                },
+                FieldDescriptor {
+                    name: "target_id",
+                    ty: String::luau_type(),
+                    description: Some("The target's public id."),
+                },
+                FieldDescriptor {
+                    name: "target_type",
+                    ty: LuauType::literal("\"track\" | \"release\" | \"artist\""),
+                    description: Some("What the target is."),
+                },
+                FieldDescriptor {
+                    name: "rating",
+                    ty: Option::<u8>::luau_type(),
+                    description: Some("The rating a `set` left, 1-5. Absent for `removed`."),
+                },
+            ],
+        }
+    }
+}
+
+const _: fn(&RatingUpdatePayload) = |value| {
+    let RatingUpdatePayload {
+        event: _,
+        user_id: _,
+        target_id: _,
+        target_type: _,
+        rating: _,
+    } = value;
+};
+
 #[harmony_macros::module(
     id = "lyra/ratings",
-    description = "The dispatch principal's 1-5 ratings of tracks, releases and artists, and their averages across users.",
+    description = "The dispatch principal's 1-5 ratings of tracks, releases and artists, their averages across users, and every user's ratings as they change: `on_update` delivers all users' changes, not only the caller's, and needs the `lyra.ratings.all` scope too.",
     docs_feature = "docgen"
 )]
 impl RatingsModule {
@@ -112,16 +180,37 @@ impl RatingsModule {
         let averages = rating_service::averages_for_principal(&db, &principal, targets.db_ids())?;
         Ok(targets.keyed(averages))
     }
+
+    #[harmony(
+        description = "Registers a callback for every user's rating changes made through `set` and `remove`, by any plugin or the REST API. An update follows the commit, also when `set` leaves the same rating; a refused call, or a `remove` of what had no rating, sends none. Ratings that move when entities merge, or go when their target or user is deleted, send none. The target may be one the plugin's own callers cannot see. Delivery is best effort: updates are dropped while the plugin runtime is saturated. Needs the `lyra.ratings.all` scope too.",
+        args(handler: RatingUpdateHandler)
+    )]
+    fn on_update(
+        vm: &luau::Vm,
+        context: &luau::CallContext,
+        handler: luau::Function,
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
+        crate::plugins::update_callbacks::register::<RatingUpdatePayload>(
+            vm,
+            context,
+            handler,
+            "ratings.on_update",
+        )
+    }
 }
 
 #[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
-    use harmony_luau::DescribeModule;
+    use harmony_luau::{
+        DescribeInterface,
+        DescribeModule,
+        DescribeTypeAlias,
+    };
 
     harmony_luau::render_definition_file_with_support(
         &RatingsModule::module_descriptor(),
-        &[],
-        &[],
+        &[RatingUpdateHandler::type_alias_descriptor()],
+        &[LuauRatingUpdatePayload::interface_descriptor()],
         &[],
     )
 }

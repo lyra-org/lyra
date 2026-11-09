@@ -2445,6 +2445,12 @@ fn plugin_executor_stop_drops_the_plugins_callbacks() -> Result<()> {
             "lyra.playback_sessions.all",
             "lyra.listens",
             "lyra.listens.all",
+            "lyra.favorites",
+            "lyra.favorites.all",
+            "lyra.ratings",
+            "lyra.ratings.all",
+            "lyra.bookmarks",
+            "lyra.bookmarks.all",
         ],
         r#"
             local metadata = require("@lyra/metadata")
@@ -2463,6 +2469,9 @@ fn plugin_executor_stop_drops_the_plugins_callbacks() -> Result<()> {
             end)
             playbacks.on_update(function() end)
             listens.on_update(function() end)
+            require("@lyra/favorites").on_update(function() end)
+            require("@lyra/ratings").on_update(function() end)
+            require("@lyra/bookmarks").on_update(function() end)
         "#,
     )?;
     let (runtime, errors) = PluginExecutor::discover_from_plugins_dir_with_db(
@@ -2473,7 +2482,7 @@ fn plugin_executor_stop_drops_the_plugins_callbacks() -> Result<()> {
     assert!(errors.is_empty(), "{errors:?}");
     runtime.exec_plugin("demo")?;
     let data = runtime.vm.data();
-    let lens = || -> Result<[usize; 5]> {
+    let lens = || -> Result<[usize; 8]> {
         Ok([
             data.get::<crate::plugins::metadata::MetadataCallbackRegistry>()?
                 .len(),
@@ -2488,12 +2497,24 @@ fn plugin_executor_stop_drops_the_plugins_callbacks() -> Result<()> {
                 crate::services::listens::ListenUpdatePayload,
             >>()?
             .len(),
+            data.get::<crate::plugins::update_callbacks::UpdateCallbackStore<
+                crate::services::favorites::FavoriteUpdatePayload,
+            >>()?
+            .len(),
+            data.get::<crate::plugins::update_callbacks::UpdateCallbackStore<
+                crate::services::ratings::RatingUpdatePayload,
+            >>()?
+            .len(),
+            data.get::<crate::plugins::update_callbacks::UpdateCallbackStore<
+                crate::services::bookmarks::BookmarkUpdatePayload,
+            >>()?
+            .len(),
         ])
     };
-    assert_eq!(lens()?, [1, 1, 1, 1, 1]);
+    assert_eq!(lens()?, [1; 8]);
 
     runtime.stop_plugin("demo")?;
-    assert_eq!(lens()?, [0, 0, 0, 0, 0]);
+    assert_eq!(lens()?, [0; 8]);
     Ok(())
 }
 

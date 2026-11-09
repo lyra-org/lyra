@@ -16,14 +16,66 @@ use agdb::{
     DbId,
 };
 
+use serde::Serialize;
+
 use crate::services::{
     STATE,
     auth::Principal,
+    plugin_dispatch::send_update,
 };
 use lyra_db::{
     entities::MetadataEntityType,
     ratings::RatingValue,
 };
+
+/// One change to a user's ratings, as plugins see it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct RatingUpdatePayload {
+    pub event: RatingEvent,
+    pub user_id: String,
+    pub target_id: String,
+    pub target_type: &'static str,
+    /// The rating a `set` left.
+    pub rating: Option<u8>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RatingEvent {
+    Set,
+    Removed,
+}
+
+fn update(
+    db: &impl lyra_db::DbAccess,
+    principal: &Principal,
+    target_db_id: DbId,
+    kind: MetadataEntityType,
+    rating: Option<RatingValue>,
+) -> anyhow::Result<Option<RatingUpdatePayload>> {
+    Ok(
+        lyra_db::lookup::find_id_by_db_id(db, target_db_id)?.map(|target_id| RatingUpdatePayload {
+            event: if rating.is_some() {
+                RatingEvent::Set
+            } else {
+                RatingEvent::Removed
+            },
+            user_id: principal.user_public_id.clone(),
+            target_id,
+            target_type: kind.as_str(),
+            rating: rating.map(RatingValue::get),
+        }),
+    )
+}
+
+/// Announces the change a committed write made, if it made one.
+fn announce<T>(written: (T, Option<RatingUpdatePayload>)) -> T {
+    let (outcome, update) = written;
+    if let Some(update) = update {
+        send_update("rating", |dispatch| dispatch.dispatch_rating_update(update));
+    }
+    outcome
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MutationOutcome {
@@ -31,6 +83,7 @@ pub(crate) enum MutationOutcome {
     NotTargetable,
 }
 
+/// Sets the caller's rating of a target it can see, announcing it to plugins.
 pub(crate) fn set_for_principal(
     db: &mut DbAny,
     principal: &Principal,
@@ -38,34 +91,42 @@ pub(crate) fn set_for_principal(
     value: RatingValue,
 ) -> anyhow::Result<MutationOutcome> {
     let now_ms = now_ms()?;
-    db.transaction_mut(|t| -> anyhow::Result<MutationOutcome> {
-        if !targetable_by_principal(t, principal, target_db_id)? {
-            return Ok(MutationOutcome::NotTargetable);
-        }
+    db.transaction_mut(|t| -> anyhow::Result<_> {
+        let Some(kind) = targetable_kind(t, principal, target_db_id)? else {
+            return Ok((MutationOutcome::NotTargetable, None));
+        };
         lyra_db::ratings::upsert(t, principal.require(t)?, target_db_id, value, now_ms)?;
-        Ok(MutationOutcome::Applied)
+        let update = update(t, principal, target_db_id, kind, Some(value))?;
+        Ok((MutationOutcome::Applied, update))
     })
+    .map(announce)
 }
 
 /// Clears the caller's rating even of a target it can no longer see, so stored state can be
 /// removed after access changes. A hidden target still answers `NotTargetable`, so removal does
-/// not reveal that it exists.
+/// not reveal that it exists. A rating that was cleared is announced to plugins.
 pub(crate) fn remove_for_principal(
     db: &mut DbAny,
     principal: &Principal,
     target_db_id: DbId,
 ) -> anyhow::Result<MutationOutcome> {
-    db.transaction_mut(|t| -> anyhow::Result<MutationOutcome> {
-        if target_kind(t, target_db_id)?.is_none() {
-            return Ok(MutationOutcome::NotTargetable);
-        }
-        lyra_db::ratings::remove(t, principal.require(t)?, target_db_id)?;
-        Ok(if targetable_by_principal(t, principal, target_db_id)? {
+    db.transaction_mut(|t| -> anyhow::Result<_> {
+        let Some(kind) = target_kind(t, target_db_id)? else {
+            return Ok((MutationOutcome::NotTargetable, None));
+        };
+        let update = if lyra_db::ratings::remove(t, principal.require(t)?, target_db_id)? {
+            update(t, principal, target_db_id, kind, None)?
+        } else {
+            None
+        };
+        let outcome = if targetable_by_principal(t, principal, target_db_id)? {
             MutationOutcome::Applied
         } else {
             MutationOutcome::NotTargetable
-        })
+        };
+        Ok((outcome, update))
     })
+    .map(announce)
 }
 
 pub(crate) fn get_for_principal(
@@ -123,15 +184,27 @@ fn targetable_by_principal(
     principal: &Principal,
     target_db_id: DbId,
 ) -> anyhow::Result<bool> {
-    match target_kind(db, target_db_id)? {
-        None => Ok(false),
-        Some(MetadataEntityType::Artist) => {
-            crate::services::auth::access::artist_accessible(db, principal, target_db_id)
+    Ok(targetable_kind(db, principal, target_db_id)?.is_some())
+}
+
+/// What the target is, when the caller can rate it.
+fn targetable_kind(
+    db: &impl lyra_db::DbAccess,
+    principal: &Principal,
+    target_db_id: DbId,
+) -> anyhow::Result<Option<MetadataEntityType>> {
+    let Some(kind) = target_kind(db, target_db_id)? else {
+        return Ok(None);
+    };
+    let accessible = match kind {
+        MetadataEntityType::Artist => {
+            crate::services::auth::access::artist_accessible(db, principal, target_db_id)?
         }
-        Some(MetadataEntityType::Track | MetadataEntityType::Release) => {
-            crate::services::auth::access::entity_accessible(db, principal, target_db_id)
+        MetadataEntityType::Track | MetadataEntityType::Release => {
+            crate::services::auth::access::entity_accessible(db, principal, target_db_id)?
         }
-    }
+    };
+    Ok(accessible.then_some(kind))
 }
 
 /// Plugins pass raw ids, so an id naming no node is untargetable rather than an error.
@@ -165,7 +238,6 @@ mod tests {
         test_db::{
             connect_artist,
             insert_library,
-            new_test_db,
         },
         users,
     };
@@ -183,8 +255,49 @@ mod tests {
     }
 
     #[test]
+    fn every_change_to_a_rating_is_announced_once() -> anyhow::Result<()> {
+        let (mut db, _state) = crate::services::testing::publishing_test_db()?;
+        let dispatch = crate::services::testing::record_plugin_dispatch();
+        let user = users::create(&mut db, &test_user("alice")?)?;
+        let library = insert_library(&mut db, "Music", "/tmp/lyra-ratings-announced")?;
+        let library_id = lyra_db::lookup::find_id_by_db_id(&db, library)?.unwrap();
+        let release = insert_release(&mut db, "Release")?;
+        connect(&mut db, library, release)?;
+        let release_id = lyra_db::lookup::find_id_by_db_id(&db, release)?.unwrap();
+        let hidden = insert_track(&mut db, "Hidden")?;
+        let principal = principal(&db, user, HashSet::from([library_id]));
+        let announced = || dispatch.rating_updates();
+
+        // Nothing changes: a target that can't be rated, and no rating to clear.
+        set_for_principal(&mut db, &principal, hidden, RatingValue::new(3).unwrap())?;
+        remove_for_principal(&mut db, &principal, release)?;
+        assert_eq!(announced(), vec![]);
+
+        set_for_principal(&mut db, &principal, release, RatingValue::new(2).unwrap())?;
+        set_for_principal(&mut db, &principal, release, RatingValue::new(5).unwrap())?;
+        remove_for_principal(&mut db, &principal, release)?;
+
+        let update = |event, rating| RatingUpdatePayload {
+            event,
+            user_id: principal.user_public_id.clone(),
+            target_id: release_id.clone(),
+            target_type: "release",
+            rating,
+        };
+        assert_eq!(
+            announced(),
+            vec![
+                update(RatingEvent::Set, Some(2)),
+                update(RatingEvent::Set, Some(5)),
+                update(RatingEvent::Removed, None),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn set_get_update_and_remove_rating() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
+        let (mut db, _state) = crate::services::testing::publishing_test_db()?;
         let user = users::create(&mut db, &test_user("alice")?)?;
         let library = insert_library(&mut db, "Music", "/tmp/lyra-ratings-service")?;
         let library_public_id = lyra_db::lookup::find_id_by_db_id(&db, library)?.unwrap();
@@ -209,7 +322,7 @@ mod tests {
 
     #[test]
     fn values_for_principal_returns_visible_mixed_kind_ratings() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
+        let (mut db, _state) = crate::services::testing::publishing_test_db()?;
         let user = users::create(&mut db, &test_user("alice")?)?;
         let other_user = users::create(&mut db, &test_user("bob")?)?;
         let visible_library = insert_library(&mut db, "Visible", "/tmp/lyra-ratings-check")?;
@@ -266,7 +379,7 @@ mod tests {
         let _guard = crate::services::testing::runtime_test_lock().await;
         crate::services::testing::init_default_test_state()?;
 
-        let mut db = new_test_db()?;
+        let mut db = lyra_db::test_db::new_test_db()?;
         let user = users::create(&mut db, &test_user("alice")?)?;
         let other_user = users::create(&mut db, &test_user("bob")?)?;
         let outsider = users::create(&mut db, &test_user("carol")?)?;
@@ -301,7 +414,7 @@ mod tests {
 
     #[test]
     fn inaccessible_media_is_opaque_but_its_rating_is_still_cleared() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
+        let (mut db, _state) = crate::services::testing::publishing_test_db()?;
         let user = users::create(&mut db, &test_user("alice")?)?;
         let library = insert_library(&mut db, "Music", "/tmp/lyra-ratings-hidden")?;
         let library_public_id = lyra_db::lookup::find_id_by_db_id(&db, library)?.unwrap();
@@ -322,7 +435,7 @@ mod tests {
 
     #[test]
     fn rejects_non_media_targets() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
+        let (mut db, _state) = crate::services::testing::publishing_test_db()?;
         let user = users::create(&mut db, &test_user("alice")?)?;
         let other_user = users::create(&mut db, &test_user("bob")?)?;
         let principal = principal(&db, user, HashSet::new());

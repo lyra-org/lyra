@@ -8,16 +8,12 @@ use std::collections::HashMap;
 
 use harmony_luau as luau;
 #[cfg(feature = "docgen")]
+use harmony_luau::DescribeTypeAlias;
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     DescribeInterface,
     FieldDescriptor,
     InterfaceDescriptor,
-};
-#[cfg(feature = "docgen")]
-use harmony_luau::{
-    DescribeTypeAlias,
-    FunctionParameter,
-    TypeAliasDescriptor,
 };
 use harmony_luau::{
     LuauType,
@@ -48,33 +44,11 @@ use lyra_db::ResolveId;
 use serde::Deserialize;
 
 pub(crate) struct ListensModule;
-#[cfg(feature = "docgen")]
-struct ListenUpdateHandler;
-
-#[cfg(feature = "docgen")]
-impl LuauTypeInfo for ListenUpdateHandler {
-    fn luau_type() -> LuauType {
-        LuauType::literal("ListenUpdateHandler")
-    }
-}
-
-#[cfg(feature = "docgen")]
-impl DescribeTypeAlias for ListenUpdateHandler {
-    fn type_alias_descriptor() -> TypeAliasDescriptor {
-        TypeAliasDescriptor::new(
-            "ListenUpdateHandler",
-            LuauType::function(
-                vec![FunctionParameter {
-                    name: Some("payload"),
-                    ty: LuauType::literal("ListenUpdatePayload"),
-                    variadic: false,
-                }],
-                vec![],
-            ),
-            Some("Listen update callback."),
-        )
-    }
-}
+crate::plugins::update_callbacks::update_handler!(
+    ListenUpdateHandler,
+    "ListenUpdatePayload",
+    "Listen update callback."
+);
 
 #[derive(Deserialize)]
 struct SubmittedPlayRequest {

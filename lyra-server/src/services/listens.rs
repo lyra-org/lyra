@@ -27,7 +27,7 @@ use serde::{
     Serialize,
 };
 
-use super::plugin_dispatch::DispatchNotStarted;
+use super::plugin_dispatch::send_update;
 use super::{
     auth::Principal,
     catalog::{
@@ -232,21 +232,14 @@ pub(crate) fn dispatch_recorded(user_public_id: &str, listens: impl IntoIterator
     if listens.is_empty() {
         return;
     }
-    let Some(scope) = super::STATE.generation().latest() else {
-        return;
-    };
     let payload = ListenUpdatePayload {
         event: "recorded".to_string(),
         user_id: user_public_id.to_string(),
         listens,
     };
-    if let Err(error) = scope.dispatch().dispatch_listen_update(payload) {
-        if DispatchNotStarted::caused(&error) {
-            tracing::debug!("dropped plugin listen on_update dispatch during a reload");
-        } else {
-            tracing::warn!(error = %error, "failed to enqueue plugin listen on_update dispatch");
-        }
-    }
+    send_update("listen", |dispatch| {
+        dispatch.dispatch_listen_update(payload)
+    });
 }
 
 /// The most plays one submission may carry.

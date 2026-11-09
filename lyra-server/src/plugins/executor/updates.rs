@@ -20,8 +20,11 @@ use super::{
 use crate::{
     plugins::update_callbacks::UpdateCallbackStore,
     services::{
+        bookmarks::BookmarkUpdatePayload,
+        favorites::FavoriteUpdatePayload,
         listens::ListenUpdatePayload,
         playback_sessions::PlaybackUpdatePayload,
+        ratings::RatingUpdatePayload,
     },
 };
 
@@ -48,6 +51,42 @@ impl PluginExecutor {
                 plugin_id,
                 error = %error,
                 "listen on_update callback failed"
+            );
+        })
+    }
+
+    pub(crate) fn dispatch_favorite_update(&self, payload: FavoriteUpdatePayload) -> Result<()> {
+        self.run_update_callbacks::<FavoriteUpdatePayload>(&payload, |plugin_id, error| {
+            tracing::warn!(
+                user_id = %payload.user_id,
+                target_id = %payload.target_id,
+                plugin_id,
+                error = %error,
+                "favorite on_update callback failed"
+            );
+        })
+    }
+
+    pub(crate) fn dispatch_rating_update(&self, payload: RatingUpdatePayload) -> Result<()> {
+        self.run_update_callbacks::<RatingUpdatePayload>(&payload, |plugin_id, error| {
+            tracing::warn!(
+                user_id = %payload.user_id,
+                target_id = %payload.target_id,
+                plugin_id,
+                error = %error,
+                "rating on_update callback failed"
+            );
+        })
+    }
+
+    pub(crate) fn dispatch_bookmark_update(&self, payload: BookmarkUpdatePayload) -> Result<()> {
+        self.run_update_callbacks::<BookmarkUpdatePayload>(&payload, |plugin_id, error| {
+            tracing::warn!(
+                user_id = %payload.user_id,
+                track_id = %payload.track_id,
+                plugin_id,
+                error = %error,
+                "bookmark on_update callback failed"
             );
         })
     }

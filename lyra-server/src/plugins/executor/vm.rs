@@ -29,8 +29,11 @@ use harmony_luau as luau;
 use crate::{
     plugins::update_callbacks::UpdateCallbackStore,
     services::{
+        bookmarks::BookmarkUpdatePayload,
+        favorites::FavoriteUpdatePayload,
         listens::ListenUpdatePayload,
         playback_sessions::PlaybackUpdatePayload,
+        ratings::RatingUpdatePayload,
     },
 };
 
@@ -398,6 +401,12 @@ fn install_callback_stores(vm: &luau::Vm) -> Result<()> {
     vm.data()
         .insert(UpdateCallbackStore::<ListenUpdatePayload>::new(vm.id()))?;
     vm.data()
+        .insert(UpdateCallbackStore::<FavoriteUpdatePayload>::new(vm.id()))?;
+    vm.data()
+        .insert(UpdateCallbackStore::<RatingUpdatePayload>::new(vm.id()))?;
+    vm.data()
+        .insert(UpdateCallbackStore::<BookmarkUpdatePayload>::new(vm.id()))?;
+    vm.data()
         .insert(crate::plugins::api::ApiRouteStore::new(vm.id()))?;
     vm.data().insert(super::stream::StreamTasks::default())?;
     Ok(())
@@ -421,6 +430,21 @@ fn remove_plugin_callbacks(vm: &luau::Vm, plugin_id: &str) {
         vm,
         plugin_id,
         UpdateCallbackStore::<ListenUpdatePayload>::remove_plugin,
+    );
+    remove_from_store(
+        vm,
+        plugin_id,
+        UpdateCallbackStore::<FavoriteUpdatePayload>::remove_plugin,
+    );
+    remove_from_store(
+        vm,
+        plugin_id,
+        UpdateCallbackStore::<RatingUpdatePayload>::remove_plugin,
+    );
+    remove_from_store(
+        vm,
+        plugin_id,
+        UpdateCallbackStore::<BookmarkUpdatePayload>::remove_plugin,
     );
     remove_from_store(vm, plugin_id, ApiRouteStore::remove_plugin);
 }

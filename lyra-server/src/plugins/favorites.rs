@@ -20,13 +20,79 @@ use crate::{
     },
     services::{
         auth::Principal,
-        favorites as favorite_service,
+        favorites::{
+            self as favorite_service,
+            FavoriteUpdatePayload,
+        },
     },
 };
 
 pub(crate) struct FavoritesModule;
 
-#[harmony_macros::module(id = "lyra/favorites", docs_feature = "docgen")]
+crate::plugins::update_callbacks::update_handler!(
+    FavoriteUpdateHandler,
+    "FavoriteUpdatePayload",
+    "Favorite update callback."
+);
+
+/// [`FavoriteUpdatePayload`] as described to Luau.
+#[cfg(feature = "docgen")]
+struct LuauFavoriteUpdatePayload;
+
+#[cfg(feature = "docgen")]
+impl harmony_luau::DescribeInterface for LuauFavoriteUpdatePayload {
+    fn interface_descriptor() -> harmony_luau::InterfaceDescriptor {
+        use harmony_luau::{
+            FieldDescriptor,
+            LuauType,
+            LuauTypeInfo,
+        };
+
+        harmony_luau::InterfaceDescriptor {
+            name: "FavoriteUpdatePayload",
+            description: Some("One change to one user's favorites."),
+            fields: vec![
+                FieldDescriptor {
+                    name: "event",
+                    ty: LuauType::literal("\"added\" | \"removed\""),
+                    description: Some(
+                        "Whether the user favorited the target, anew or again, or unfavorited it.",
+                    ),
+                },
+                FieldDescriptor {
+                    name: "user_id",
+                    ty: String::luau_type(),
+                    description: Some("The user's public id."),
+                },
+                FieldDescriptor {
+                    name: "target_id",
+                    ty: String::luau_type(),
+                    description: Some("The target's public id."),
+                },
+                FieldDescriptor {
+                    name: "target_type",
+                    ty: LuauType::literal("\"track\" | \"release\" | \"artist\" | \"playlist\""),
+                    description: Some("What the target is."),
+                },
+            ],
+        }
+    }
+}
+
+const _: fn(&FavoriteUpdatePayload) = |value| {
+    let FavoriteUpdatePayload {
+        event: _,
+        user_id: _,
+        target_id: _,
+        target_type: _,
+    } = value;
+};
+
+#[harmony_macros::module(
+    id = "lyra/favorites",
+    description = "The dispatch principal's favorite tracks, releases, artists and playlists, and every user's favorites as they change: `on_update` delivers all users' changes, not only the caller's, and needs the `lyra.favorites.all` scope too.",
+    docs_feature = "docgen"
+)]
 impl FavoritesModule {
     async fn add(
         target_id: String,
@@ -100,16 +166,37 @@ impl FavoritesModule {
         }
         ids::public_id_list(&*db, &visible_ids)
     }
+
+    #[harmony(
+        description = "Registers a callback for every user's favorite changes made through `add` and `remove`, by any plugin or the REST API. An update follows the commit, also when `add` favorites a target again; a refused call, or a `remove` of what was no favorite, sends none. Favorites that move when entities merge, or go when their target or user is deleted, send none. The target may be one the plugin's own callers cannot see. Delivery is best effort: updates are dropped while the plugin runtime is saturated. Needs the `lyra.favorites.all` scope too.",
+        args(handler: FavoriteUpdateHandler)
+    )]
+    fn on_update(
+        vm: &luau::Vm,
+        context: &luau::CallContext,
+        handler: luau::Function,
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
+        crate::plugins::update_callbacks::register::<FavoriteUpdatePayload>(
+            vm,
+            context,
+            handler,
+            "favorites.on_update",
+        )
+    }
 }
 
 #[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
-    use harmony_luau::DescribeModule;
+    use harmony_luau::{
+        DescribeInterface,
+        DescribeModule,
+        DescribeTypeAlias,
+    };
 
     harmony_luau::render_definition_file_with_support(
         &FavoritesModule::module_descriptor(),
-        &[],
-        &[],
+        &[FavoriteUpdateHandler::type_alias_descriptor()],
+        &[LuauFavoriteUpdatePayload::interface_descriptor()],
         &[],
     )
 }

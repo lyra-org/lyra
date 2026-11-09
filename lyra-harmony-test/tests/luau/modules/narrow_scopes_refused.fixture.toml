@@ -1,5 +1,7 @@
 without_scopes = [
+  "lyra.bookmarks.all",
   "lyra.covers.manage",
+  "lyra.favorites.all",
   "lyra.genres.manage",
   "lyra.labels.manage",
   "lyra.libraries.manage",
@@ -7,5 +9,6 @@ without_scopes = [
   "lyra.lyrics.all",
   "lyra.metadata.refresh",
   "lyra.playback_sessions.all",
+  "lyra.ratings.all",
   "lyra.releases.manage",
 ]
