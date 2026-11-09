@@ -325,7 +325,10 @@ send every user's listening history off the server". A plugin's gain in a
 hold or preview gives its risk both before and after. A narrow scope lists
 the effects of its functions alone, so its module's scope doesn't carry
 them. Descriptions are for display; clients act on the kinds, data ids and
-levels. Filtering or
+levels. Where the plugin's author gave a scope a reason, that effect source
+carries it as `author_reason`, the author's own unverified text from the
+version the effect was worked out from. A preview omits it for a dependency
+whose installed and offered versions don't give the same reason. Filtering or
 sorting the catalog by a user's favorites, listens or ratings needs the
 scope that gates that data. A preview counts a dependency both as installed and
 as the repository offers it, since installing them together replaces the

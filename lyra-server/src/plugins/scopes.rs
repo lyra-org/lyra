@@ -646,6 +646,9 @@ impl RiskAssessment {
 pub(crate) struct EffectSource {
     pub(crate) plugin: String,
     pub(crate) scope: Scope,
+    /// What the plugin's author says the scope is for, from the version of
+    /// the plugin the effect was worked out from.
+    pub(crate) author_reason: Option<String>,
 }
 
 /// One thing a plugin can do, and the plugins and scopes that let it.
@@ -667,9 +670,11 @@ impl PluginEffect {
 }
 
 /// The effects of `scopes`, each scope id paired with the plugins that
-/// declare it, merged so each effect appears once.
+/// declare it, merged so each effect appears once. `author_reason` gives what
+/// a plugin's author says a scope, by id, is for.
 pub(crate) fn effects_of<'a>(
     scopes: impl IntoIterator<Item = (&'a str, &'a BTreeSet<String>)>,
+    author_reason: impl Fn(&str, &str) -> Option<String>,
 ) -> Vec<PluginEffect> {
     let mut merged: BTreeMap<Effect, BTreeSet<EffectSource>> = BTreeMap::new();
     for (id, via) in scopes {
@@ -683,6 +688,7 @@ pub(crate) fn effects_of<'a>(
                 .extend(via.iter().map(|plugin| EffectSource {
                     plugin: plugin.clone(),
                     scope,
+                    author_reason: author_reason(plugin, id),
                 }));
         }
     }
@@ -766,11 +772,13 @@ pub(crate) struct ScopeGain {
 /// What installing `candidate` among `plugins`, replacing the one with its
 /// id if any, lets each plugin newly reach, by [`scope_growth`]. `plugins`
 /// may already hold other updates; each plugin's previous risk is judged
-/// from the `installed` ones.
+/// from the `installed` ones. `scope_reason` gives what a plugin's author
+/// says a scope is for.
 pub(crate) fn scope_gains<P: ScopedPlugin>(
     installed: &[P],
     plugins: &[P],
     candidate: &P,
+    scope_reason: impl Fn(&P, &str) -> Option<String>,
 ) -> BTreeMap<String, ScopeGain> {
     let installed_as = |id: &str| installed.iter().find(|plugin| plugin.id() == id);
     let after = |id: &str| {
@@ -786,6 +794,7 @@ pub(crate) fn scope_gains<P: ScopedPlugin>(
                 .scopes
                 .iter()
                 .map(|(scope, via)| (scope.as_str(), via)),
+            |_, _| None,
         );
         RiskAssessment::of(effects.iter().map(|effect| &effect.effect))
     };
@@ -801,6 +810,7 @@ pub(crate) fn scope_gains<P: ScopedPlugin>(
                     .scopes
                     .iter()
                     .filter_map(|scope| Some((scope.as_str(), reach.scopes.get(scope)?))),
+                |plugin, scope| scope_reason(after(plugin)?, scope),
             );
             Some((
                 id,
@@ -855,11 +865,14 @@ mod tests {
     #[test]
     fn effects_merge_across_scopes_and_skip_utilities() {
         let (own, dependency) = (via(&["plugin"]), via(&["helper"]));
-        let effects = effects_of([
-            ("harmony.http", &own),
-            ("harmony.net", &dependency),
-            ("lyra.libraries", &own),
-        ]);
+        let effects = effects_of(
+            [
+                ("harmony.http", &own),
+                ("harmony.net", &dependency),
+                ("lyra.libraries", &own),
+            ],
+            |plugin, _| (plugin == "plugin").then(|| "Fetches things.".to_string()),
+        );
 
         assert_eq!(effects.len(), 2);
         assert_eq!(effects[0].effect, Effect::Egress);
@@ -869,10 +882,12 @@ mod tests {
                 EffectSource {
                     plugin: "helper".into(),
                     scope: Scope::HarmonyNet,
+                    author_reason: None,
                 },
                 EffectSource {
                     plugin: "plugin".into(),
                     scope: Scope::HarmonyHttp,
+                    author_reason: Some("Fetches things.".into()),
                 },
             ])
         );
@@ -1250,6 +1265,7 @@ mod tests {
             &installed,
             &installed,
             &Plugin::new(&["harmony.http", "lyra.listens", "lyra.listens.all"]),
+            |_, _| None,
         );
         let gain = &gains["demo"];
         assert_eq!(

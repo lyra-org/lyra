@@ -81,6 +81,8 @@ pub(crate) struct OfferedRelease {
     pub(crate) commit: String,
     /// The scopes the plugin declares at the release.
     pub(crate) scopes: Vec<String>,
+    /// What its author says some of them are for at the release, by scope.
+    pub(crate) scope_reasons: BTreeMap<String, String>,
     /// The plugins it depends on at the release.
     pub(crate) dependencies: BTreeMap<String, Dependency>,
 }
@@ -112,6 +114,7 @@ pub(super) fn listed_offer(plugin: &ListedPlugin) -> Offered {
             version: offer.manifest.version.clone(),
             commit: offer.commit.clone(),
             scopes: offer.manifest.scopes.clone(),
+            scope_reasons: offer.manifest.scope_reasons.clone(),
             dependencies: offer.manifest.dependencies.clone(),
         }),
         Err(error) => Err(match error.required_host() {
@@ -156,6 +159,12 @@ pub(super) fn stored_offer(entry: &repo_db::PluginRepositoryEntry) -> Offered {
         version: Version::parse(version).map_err(unreadable)?,
         commit: commit.clone(),
         scopes: entry.scopes.clone().unwrap_or_default(),
+        scope_reasons: entry
+            .scope_reasons
+            .iter()
+            .flatten()
+            .map(|reason| (reason.scope.clone(), reason.reason.clone()))
+            .collect(),
         dependencies,
     })
 }
@@ -177,6 +186,18 @@ pub(super) fn stored_dependencies(offered: &OfferedRelease) -> Vec<repo_db::Plug
             plugin_id: plugin_id.clone(),
             version: dependency.version.to_string(),
             optional: dependency.optional,
+        })
+        .collect()
+}
+
+/// The scope reasons a subscription stores for `offered`.
+pub(super) fn stored_scope_reasons(offered: &OfferedRelease) -> Vec<repo_db::PluginScopeReason> {
+    offered
+        .scope_reasons
+        .iter()
+        .map(|(scope, reason)| repo_db::PluginScopeReason {
+            scope: scope.clone(),
+            reason: reason.clone(),
         })
         .collect()
 }
@@ -266,6 +287,17 @@ pub(super) enum Reach<'a> {
     Release(&'a str, &'a OfferedRelease),
 }
 
+impl Reach<'_> {
+    /// What this version's author says `scope` is for.
+    pub(super) fn scope_reason(&self, scope: &str) -> Option<String> {
+        let reasons = match self {
+            Self::Installed(manifest) => &manifest.scope_reasons,
+            Self::Release(_, release) => &release.scope_reasons,
+        };
+        reasons.get(scope).cloned()
+    }
+}
+
 impl ScopedPlugin for Reach<'_> {
     fn id(&self) -> &str {
         match self {
@@ -301,6 +333,7 @@ fn scope_hold(
         installed,
         plugins,
         &Reach::Release(candidate.id, candidate.release),
+        Reach::scope_reason,
     );
     (!gains.is_empty()).then_some(Hold::AddsScopes { gains })
 }
@@ -565,9 +598,13 @@ fn offered_status(
 mod tests {
     use harmony_core::scopes::ScopeGrowth;
 
-    use super::*;
+    use super::{
+        super::plugin_access,
+        *,
+    };
     use crate::plugins::scopes::{
         Effect,
+        PluginEffect,
         Risk,
         RiskAssessment,
     };
@@ -598,7 +635,7 @@ mod tests {
             description: String::new(),
             entrypoint: None,
             scopes: Vec::new(),
-            scope_reasons: std::collections::BTreeMap::new(),
+            scope_reasons: BTreeMap::new(),
             dependencies: dependencies(requires),
         }
     }
@@ -608,6 +645,7 @@ mod tests {
             version: Version::parse(version).expect("version"),
             commit: "2".repeat(40),
             scopes: Vec::new(),
+            scope_reasons: BTreeMap::new(),
             dependencies: dependencies(requires),
         }
     }
@@ -991,6 +1029,284 @@ mod tests {
             (gains["a"].previous_risk, gains["a"].risk.risk),
             (Risk::Elevated, Risk::Elevated),
             "installed a already sends favorites off the server through d"
+        );
+    }
+
+    fn reasons(given: &[(&str, &str)]) -> BTreeMap<String, String> {
+        given
+            .iter()
+            .map(|(scope, reason)| (scope.to_string(), reason.to_string()))
+            .collect()
+    }
+
+    fn explained(
+        mut manifest: PluginManifest,
+        scopes: &[&str],
+        given: &[(&str, &str)],
+    ) -> PluginManifest {
+        manifest.scopes = scopes.iter().map(ToString::to_string).collect();
+        manifest.scope_reasons = reasons(given);
+        manifest
+    }
+
+    fn explained_release(
+        mut release: OfferedRelease,
+        scopes: &[&str],
+        given: &[(&str, &str)],
+    ) -> OfferedRelease {
+        release.scopes = scopes.iter().map(ToString::to_string).collect();
+        release.scope_reasons = reasons(given);
+        release
+    }
+
+    /// Each plugin and scope an effect comes through, with its reason.
+    fn sources(effects: &[PluginEffect]) -> BTreeSet<(String, &'static str, Option<String>)> {
+        effects
+            .iter()
+            .flat_map(|effect| &effect.via)
+            .map(|source| {
+                (
+                    source.plugin.clone(),
+                    source.scope.def().id,
+                    source.author_reason.clone(),
+                )
+            })
+            .collect()
+    }
+
+    fn source(
+        plugin: &str,
+        scope: &'static str,
+        reason: Option<&str>,
+    ) -> (String, &'static str, Option<String>) {
+        (plugin.to_string(), scope, reason.map(ToString::to_string))
+    }
+
+    fn gained_sources(
+        hold: Option<Hold>,
+        id: &str,
+    ) -> BTreeSet<(String, &'static str, Option<String>)> {
+        let Some(Hold::AddsScopes { gains }) = hold else {
+            panic!("expected a hold for added scopes");
+        };
+        sources(&gains[id].effects)
+    }
+
+    #[test]
+    fn holds_show_the_held_releases_reason_on_every_plugin_gaining_it() {
+        let installed = [
+            manifest("a", "1.0.0", &[]),
+            manifest("b", "1.0.0", &[("a", "^1")]),
+        ];
+        let a = explained_release(
+            release("1.1.0", &[]),
+            &["harmony.http"],
+            &[("harmony.http", "from the release")],
+        );
+
+        let mut held = holds(
+            &installed,
+            &[Candidate {
+                id: "a",
+                release: &a,
+                approved: false,
+            }],
+        );
+        let hold = held.remove("a");
+        let expected = BTreeSet::from([source("a", "harmony.http", Some("from the release"))]);
+        assert_eq!(gained_sources(hold.clone(), "a"), expected);
+        assert_eq!(gained_sources(hold, "b"), expected);
+    }
+
+    #[test]
+    fn holds_judged_against_another_update_use_its_text_and_held_plugins_their_installed_text() {
+        let installed = [
+            manifest("c", "1.0.0", &[]),
+            manifest("d", "1.0.0", &[]),
+            explained(
+                manifest("h", "1.0.0", &[]),
+                &["harmony.http"],
+                &[("harmony.http", "installed h")],
+            ),
+        ];
+        let c = release("1.1.0", &[("d", "^1")]);
+        let d = explained_release(
+            release("1.1.0", &[("h", "^1")]),
+            &["harmony.http"],
+            &[("harmony.http", "released d")],
+        );
+        let h = explained_release(
+            release("1.1.0", &[]),
+            &["harmony.http", "lyra.metadata"],
+            &[("harmony.http", "offered h")],
+        );
+
+        let mut held = holds(
+            &installed,
+            &[
+                Candidate {
+                    id: "c",
+                    release: &c,
+                    approved: false,
+                },
+                Candidate {
+                    id: "d",
+                    release: &d,
+                    approved: true,
+                },
+                Candidate {
+                    id: "h",
+                    release: &h,
+                    approved: false,
+                },
+            ],
+        );
+
+        assert!(matches!(held.get("h"), Some(Hold::AddsScopes { .. })));
+        assert_eq!(
+            gained_sources(held.remove("c"), "c"),
+            BTreeSet::from([
+                source("d", "harmony.http", Some("released d")),
+                source("h", "harmony.http", Some("installed h")),
+            ]),
+            "c reaches http through d's release, and through h as installed, since h is held"
+        );
+    }
+
+    #[test]
+    fn a_changed_reason_alone_creates_no_hold() {
+        let installed = [explained(
+            manifest("a", "1.0.0", &[]),
+            &["harmony.http"],
+            &[("harmony.http", "old text")],
+        )];
+        let changed = explained_release(
+            release("1.1.0", &[]),
+            &["harmony.http"],
+            &[("harmony.http", "new text")],
+        );
+        let removed = explained_release(release("1.1.0", &[]), &["harmony.http"], &[]);
+
+        assert!(held(&installed, &[("a", &changed)]).is_empty());
+        assert!(held(&installed, &[("a", &removed)]).is_empty());
+    }
+
+    /// The sources of `depender`'s preview, depending on `dep`, for the
+    /// `installed` and `offered` versions of `dep`.
+    fn previewed_dependency_sources(
+        installed: Option<PluginManifest>,
+        offered: Option<OfferedRelease>,
+    ) -> BTreeSet<(String, &'static str, Option<String>)> {
+        let depender = release("1.0.0", &[("dep", "^1")]);
+        let plugin = Reach::Release("depender", &depender);
+        let installed: Vec<_> = installed.iter().map(Reach::Installed).collect();
+        let offered: Vec<_> = offered
+            .iter()
+            .map(|release| Reach::Release("dep", release))
+            .collect();
+        sources(&plugin_access(&plugin, &installed, &offered).effects)
+    }
+
+    #[test]
+    fn previews_show_a_dependencys_reason_only_when_every_version_agrees() {
+        let http = ["harmony.http"];
+        let installed =
+            |given: &[(&str, &str)]| Some(explained(manifest("dep", "1.0.0", &[]), &http, given));
+        let offered =
+            |given: &[(&str, &str)]| Some(explained_release(release("1.1.0", &[]), &http, given));
+        let text = |reason: &'static str| [("harmony.http", reason)];
+        let shown = |reason: &str| BTreeSet::from([source("dep", "harmony.http", Some(reason))]);
+        let omitted = BTreeSet::from([source("dep", "harmony.http", None)]);
+
+        assert_eq!(
+            previewed_dependency_sources(installed(&text("kept")), None),
+            shown("kept"),
+            "only installed"
+        );
+        assert_eq!(
+            previewed_dependency_sources(None, offered(&text("kept"))),
+            shown("kept"),
+            "only offered"
+        );
+        assert_eq!(
+            previewed_dependency_sources(installed(&text("same")), offered(&text("same"))),
+            shown("same"),
+            "identical text"
+        );
+        assert_eq!(
+            previewed_dependency_sources(installed(&text("old")), offered(&text("new"))),
+            omitted,
+            "differing text"
+        );
+        assert_eq!(
+            previewed_dependency_sources(installed(&text("old")), offered(&[])),
+            omitted,
+            "text only on the installed one"
+        );
+        assert_eq!(
+            previewed_dependency_sources(installed(&[]), offered(&text("new"))),
+            omitted,
+            "text only on the offered one"
+        );
+        assert_eq!(
+            previewed_dependency_sources(installed(&text("old")), Some(release("1.1.0", &[])),),
+            omitted,
+            "the offered version does not declare the scope"
+        );
+    }
+
+    #[test]
+    fn previews_use_the_offered_text_of_the_plugin_itself() {
+        let installed = explained(
+            manifest("a", "1.0.0", &[]),
+            &["harmony.http"],
+            &[("harmony.http", "installed text")],
+        );
+        let offered = explained_release(
+            release("2.0.0", &[]),
+            &["harmony.http"],
+            &[("harmony.http", "offered text")],
+        );
+        let plugin = Reach::Release("a", &offered);
+        let installed = [Reach::Installed(&installed)];
+
+        let access = plugin_access(&plugin, &installed, &[plugin]);
+
+        assert_eq!(
+            sources(&access.effects),
+            BTreeSet::from([source("a", "harmony.http", Some("offered text"))])
+        );
+    }
+
+    #[test]
+    fn previews_show_what_they_widen_with_the_installed_manifests() {
+        let installed_c = explained(
+            manifest("c", "1.0.0", &[]),
+            &["harmony.http"],
+            &[("harmony.http", "installed c")],
+        );
+        let dependent = manifest("dependent", "1.0.0", &[("a", "^1")]);
+        let offered_c = explained_release(
+            release("1.1.0", &[]),
+            &["harmony.http"],
+            &[("harmony.http", "offered c")],
+        );
+        let a = explained_release(
+            release("2.0.0", &[("c", "^1")]),
+            &["lyra.metadata"],
+            &[("lyra.metadata", "offered a")],
+        );
+        let plugin = Reach::Release("a", &a);
+        let installed = [Reach::Installed(&installed_c), Reach::Installed(&dependent)];
+
+        let access = plugin_access(&plugin, &installed, &[Reach::Release("c", &offered_c)]);
+
+        assert_eq!(
+            sources(&access.widens["dependent"].effects),
+            BTreeSet::from([
+                source("a", "lyra.metadata", Some("offered a")),
+                source("c", "harmony.http", Some("installed c")),
+            ])
         );
     }
 }

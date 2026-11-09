@@ -583,6 +583,12 @@ struct EffectResponse {
 struct EffectSourceResponse {
     plugin: String,
     scope: &'static str,
+    /// Why the plugin says it needs the scope: its author's own unverified
+    /// plain text, not checked by the server and not translated. Never render
+    /// it as HTML. Omitted when there is none. A scope with several effects
+    /// repeats it under each, so clients may group by plugin and scope.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    author_reason: Option<String>,
 }
 
 /// `exposes` and `authority`: as the effects of those kinds.
@@ -686,6 +692,7 @@ impl From<PluginEffect> for EffectResponse {
                 .map(|source| EffectSourceResponse {
                     plugin: source.plugin,
                     scope: source.scope.def().id,
+                    author_reason: source.author_reason,
                 })
                 .collect(),
         }
@@ -2067,7 +2074,7 @@ mod tests {
             description: String::new(),
             entrypoint: None,
             scopes: Vec::new(),
-            scope_reasons: std::collections::BTreeMap::new(),
+            scope_reasons: BTreeMap::new(),
             dependencies: Default::default(),
         }
     }
@@ -2254,6 +2261,7 @@ mod tests {
                 version: None,
                 commit: None,
                 scopes: None,
+                scope_reasons: None,
                 dependencies: None,
                 position: None,
                 requires: None,
@@ -2333,6 +2341,15 @@ mod tests {
                 version: Some("2.0.0".into()),
                 commit: Some("b".repeat(40)),
                 scopes: Some(scopes.iter().map(ToString::to_string).collect()),
+                scope_reasons: Some(
+                    scopes
+                        .iter()
+                        .map(|scope| lyra_db::plugin_repositories::PluginScopeReason {
+                            scope: scope.to_string(),
+                            reason: "The author's reason.".into(),
+                        })
+                        .collect(),
+                ),
                 dependencies: None,
                 position: None,
                 requires: None,
@@ -2386,7 +2403,11 @@ mod tests {
                     "effects": [{
                         "kind": "writes_library",
                         "data": "metadata",
-                        "via": [{ "plugin": "scoped", "scope": "lyra.metadata" }],
+                        "via": [{
+                            "plugin": "scoped",
+                            "scope": "lyra.metadata",
+                            "author_reason": "The author's reason.",
+                        }],
                         "description": "Changes the library's metadata",
                     }],
                     "scopes": ["lyra.metadata"],
@@ -2395,6 +2416,35 @@ mod tests {
             })
         );
         assert_eq!(scoped["installed_automatically"], false);
+        Ok(())
+    }
+
+    #[test]
+    fn effect_sources_omit_an_author_reason_they_lack() -> anyhow::Result<()> {
+        use crate::plugins::scopes::{
+            Effect,
+            EffectSource,
+            PluginEffect,
+            Scope,
+        };
+
+        let source = |plugin: &str, author_reason: Option<&str>| EffectSource {
+            plugin: plugin.into(),
+            scope: Scope::HarmonyHttp,
+            author_reason: author_reason.map(Into::into),
+        };
+        let json = serde_json::to_value(EffectResponse::from(PluginEffect {
+            effect: Effect::Egress,
+            via: [source("a", Some("Fetches things.")), source("b", None)].into(),
+        }))?;
+
+        assert_eq!(
+            json["via"],
+            serde_json::json!([
+                { "plugin": "a", "scope": "harmony.http", "author_reason": "Fetches things." },
+                { "plugin": "b", "scope": "harmony.http" },
+            ])
+        );
         Ok(())
     }
 
@@ -2787,6 +2837,10 @@ mod tests {
                 description: Some("Does foo".into()),
                 commit: Some("b".repeat(40)),
                 scopes: Some(vec!["lyra.metadata".into()]),
+                scope_reasons: Some(vec![lyra_db::plugin_repositories::PluginScopeReason {
+                    scope: "lyra.metadata".into(),
+                    reason: "Adds details.".into(),
+                }]),
                 dependencies: None,
                 position: None,
                 requires: None,
@@ -2828,7 +2882,11 @@ mod tests {
             serde_json::json!({
                 "kind": "writes_library",
                 "data": "metadata",
-                "via": [{ "plugin": "foo", "scope": "lyra.metadata" }],
+                "via": [{
+                    "plugin": "foo",
+                    "scope": "lyra.metadata",
+                    "author_reason": "Adds details.",
+                }],
                 "description": "Changes the library's metadata",
             })
         );

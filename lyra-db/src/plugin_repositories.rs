@@ -64,6 +64,9 @@ pub struct PluginRepositoryEntry {
     pub error: Option<String>,
     /// The plugins the plugin depends on at that release.
     pub dependencies: Option<Vec<PluginDependency>>,
+    /// What the plugin's author says some of its scopes are for at that
+    /// release; unset on entries stored before reasons were.
+    pub scope_reasons: Option<Vec<PluginScopeReason>>,
     /// Where the listing placed the plugin, assigned on storing; unset on
     /// entries stored before positions were.
     pub position: Option<u64>,
@@ -77,6 +80,14 @@ pub struct PluginDependency {
     pub version: String,
     /// Whether the plugin loads without it.
     pub optional: bool,
+}
+
+/// Why a release's author says it needs a scope, as its `plugin.json` gives
+/// it.
+#[derive(DbTypeMarker, DbSerialize, DbValue, Clone, Debug, PartialEq, Eq)]
+pub struct PluginScopeReason {
+    pub scope: String,
+    pub reason: String,
 }
 
 const DEFAULT_SEEDED_KEY: &str = "default_repository_seeded";
@@ -472,6 +483,7 @@ mod tests {
             description: None,
             commit: None,
             scopes: None,
+            scope_reasons: None,
             dependencies: None,
             position: None,
             requires: None,
@@ -575,6 +587,49 @@ mod tests {
                 ..stored
             }
         );
+        Ok(())
+    }
+
+    #[test]
+    fn entries_stored_before_scope_reasons_read_as_having_none() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let stored = PluginRepositoryEntry {
+            scope_reasons: Some(vec![PluginScopeReason {
+                scope: "harmony.http".into(),
+                reason: "Fetches things.".into(),
+            }]),
+            ..entry("a", "t1")
+        };
+        let db_id = create(
+            &mut db,
+            &repository("https://github.com/lyra/plugins"),
+            std::slice::from_ref(&stored),
+        )?;
+        let [read] = &entries(&db, db_id)?[..] else {
+            panic!("expected one entry");
+        };
+        assert_eq!(read.scope_reasons, stored.scope_reasons);
+        let entry_id = read.db_id.expect("stored entry has an id");
+
+        db.exec_mut(
+            QueryBuilder::remove()
+                .values(["scope_reasons"])
+                .ids(entry_id)
+                .query(),
+        )?;
+        let keys = db.exec(QueryBuilder::select().keys().ids(entry_id).query())?;
+        assert!(
+            !keys.elements[0]
+                .values
+                .iter()
+                .any(|kv| kv.key == "scope_reasons".into()),
+            "the old shape has no such key"
+        );
+
+        let [read] = &entries(&db, db_id)?[..] else {
+            panic!("expected one entry");
+        };
+        assert_eq!(read.scope_reasons, None);
         Ok(())
     }
 

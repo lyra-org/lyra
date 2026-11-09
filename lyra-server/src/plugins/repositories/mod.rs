@@ -80,6 +80,7 @@ use status::{
     stored_dependencies,
     stored_error,
     stored_offer,
+    stored_scope_reasons,
 };
 pub(crate) use status::{
     Hold,
@@ -324,20 +325,35 @@ fn plugin_access(
     installed: &[Reach<'_>],
     offered: &[Reach<'_>],
 ) -> PluginAccess {
-    let effective = EffectiveScopes::of_any(plugin, |id| {
+    let versions = |id: &str| -> Vec<&Reach<'_>> {
         installed
             .iter()
             .chain(offered)
             .filter(|candidate| candidate.id() == id)
             .collect()
-    });
+    };
+    let effective = EffectiveScopes::of_any(plugin, versions);
     let effects = effects_of(
         effective
             .scopes
             .iter()
             .map(|(scope, via)| (scope.as_str(), via)),
+        |id, scope| {
+            if id == plugin.id() {
+                return plugin.scope_reason(scope);
+            }
+            // Either version of a dependency may be the one that runs, so
+            // only text they agree on describes it.
+            let mut reasons = versions(id)
+                .into_iter()
+                .map(|version| version.scope_reason(scope));
+            let reason = reasons.next()??;
+            reasons
+                .all(|other| other.as_ref() == Some(&reason))
+                .then_some(reason)
+        },
     );
-    let mut widens = scope_gains(installed, installed, plugin);
+    let mut widens = scope_gains(installed, installed, plugin, Reach::scope_reason);
     widens.remove(plugin.id());
     PluginAccess {
         risk: RiskAssessment::of(effects.iter().map(|effect| &effect.effect)),
@@ -476,6 +492,7 @@ fn listing_entries(listing: &RepositoryListing) -> Vec<repo_db::PluginRepository
                 description: manifest.map(|manifest| manifest.description.clone()),
                 commit: offered.as_ref().map(|offered| offered.commit.clone()),
                 dependencies: offered.as_ref().map(stored_dependencies),
+                scope_reasons: offered.as_ref().map(stored_scope_reasons),
                 scopes: offered.map(|offered| offered.scopes),
                 requires,
                 error: plugin.offer.as_ref().err().map(ToString::to_string),
@@ -997,6 +1014,7 @@ fn candidate_release(candidate: &PluginCandidate) -> OfferedRelease {
         version: manifest.version.clone(),
         commit: candidate.source.commit.clone(),
         scopes: manifest.scopes.clone(),
+        scope_reasons: manifest.scope_reasons.clone(),
         dependencies: manifest.dependencies.clone(),
     }
 }
@@ -2789,6 +2807,7 @@ mod tests {
                 version: Some(version.to_string()),
                 commit: Some("1".repeat(40)),
                 scopes: Some(Vec::new()),
+                scope_reasons: None,
                 dependencies: None,
                 position: None,
                 requires: None,
@@ -2945,6 +2964,130 @@ mod tests {
             BTreeSet::from(["harmony.http".to_string()])
         );
         assert!(access("same").effects.is_empty());
+        Ok(())
+    }
+
+    /// `changed` 2.0.0, explaining `harmony.http` with `reason`.
+    fn changed_explaining_http(reason: &str) -> anyhow::Result<String> {
+        let mut manifest: serde_json::Value = serde_json::from_str(&changed_at(HOST_REQUIREMENT))?;
+        manifest["scopes"] = serde_json::json!([{ "id": "harmony.http", "reason": reason }]);
+        Ok(manifest.to_string())
+    }
+
+    /// The reasons on the effects of `effects`, each with its plugin.
+    fn effect_reasons(
+        effects: &[crate::plugins::scopes::PluginEffect],
+    ) -> Vec<(String, Option<String>)> {
+        effects
+            .iter()
+            .flat_map(|effect| &effect.via)
+            .map(|source| (source.plugin.clone(), source.author_reason.clone()))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn live_and_stored_previews_carry_scope_reasons() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        let forge = catalog_forge(
+            HOST_REQUIREMENT,
+            HOST_REQUIREMENT,
+            changed_explaining_http("Fetches things.")?,
+        )
+        .await?;
+        let plugins_dir = tempfile::TempDir::new()?;
+        let listing = list(&forge.origin, None, &BuildInfo::default()).await?;
+        let expected = [("changed".to_string(), Some("Fetches things.".to_string()))];
+        let reasons = |plugins: &[PluginPreview]| {
+            let changed = plugins
+                .iter()
+                .find(|plugin| plugin.id == "changed")
+                .and_then(|plugin| plugin.access.as_ref())
+                .expect("previewed with access");
+            effect_reasons(&changed.effects)
+        };
+
+        assert_eq!(
+            reasons(&build_preview(&listing, plugins_dir.path()).plugins),
+            expected,
+            "live preview"
+        );
+
+        let repository_db_id = subscribe(&forge.origin, &[]).await?;
+        let stored = StoredListing::of(&listing);
+        let repository =
+            repo_db::get_by_id(&*STATE.db.read().await, "catalog")?.expect("just subscribed");
+        store_listed(&mut *STATE.db.write().await, repository, &stored)?;
+        let entries = repo_db::entries(&*STATE.db.read().await, repository_db_id)?;
+        assert_eq!(
+            reasons(&catalog_plugins(
+                &entries,
+                &forge.origin,
+                None,
+                plugins_dir.path(),
+                &[],
+            )),
+            expected,
+            "stored preview"
+        );
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn held_updates_show_the_reasons_of_the_release_they_would_install() -> anyhow::Result<()>
+    {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        lyra_db::server::ensure(&mut *STATE.db.write().await)?;
+        let forge = catalog_forge(
+            HOST_REQUIREMENT,
+            HOST_REQUIREMENT,
+            changed_explaining_http("Fetches things.")?,
+        )
+        .await?;
+        let plugins_dir = tempfile::TempDir::new()?;
+        install_records(plugins_dir.path(), &forge.origin, &[("changed", "1.0.0")])?;
+        subscribe(&forge.origin, &[]).await?;
+        let expected = vec![("changed".to_string(), Some("Fetches things.".to_string()))];
+        let held_reasons = |held: &HeldPlugin| {
+            let Hold::AddsScopes { gains } = &held.hold else {
+                panic!("held for its scopes: {held:?}");
+            };
+            effect_reasons(&gains["changed"].effects)
+        };
+
+        let report = update_plugins_in(plugins_dir.path(), UpdateSelection::All).await?;
+        let [held] = &report.held[..] else {
+            panic!("expected one held plugin: {report:?}");
+        };
+        assert_eq!(held_reasons(held), expected, "judged from the listing");
+
+        let client = http_client(&BuildInfo::default())?;
+        let listing = list(&forge.origin, None, &BuildInfo::default()).await?;
+        let resolved = resolve_listed(
+            &client,
+            listing,
+            Some(&["changed".to_string()]),
+            &crate::plugins::plugin_host(),
+            &UnpackBudget::new(),
+        )
+        .await
+        .map_err(map_resolve_error)?;
+        let [candidate] = &resolved.candidates[..] else {
+            panic!("expected one downloaded candidate");
+        };
+        let outcome = install_together(
+            vec![PendingInstall {
+                candidate,
+                approved: false,
+            }],
+            plugins_dir.path(),
+            InstalledBy::Request,
+        );
+        let [held] = &outcome.held[..] else {
+            panic!("expected the download to be held");
+        };
+        assert_eq!(held_reasons(held), expected, "judged after downloading");
         Ok(())
     }
 
@@ -3529,6 +3672,7 @@ mod tests {
                 version: Version::parse(version).unwrap(),
                 commit: "1".repeat(40),
                 scopes: Vec::new(),
+                scope_reasons: BTreeMap::new(),
                 dependencies: Default::default(),
             })
         };
@@ -3591,6 +3735,7 @@ mod tests {
             version: version.map(str::to_string),
             commit: version.map(|_| "1".repeat(40)),
             scopes: version.map(|_| Vec::new()),
+            scope_reasons: None,
             dependencies: None,
             position: None,
             requires: None,
@@ -3706,6 +3851,7 @@ mod tests {
             version: Some(version.to_string()),
             commit: Some("1".repeat(40)),
             scopes: Some(Vec::new()),
+            scope_reasons: None,
             dependencies: None,
             position: None,
             requires: None,
@@ -3938,6 +4084,7 @@ mod tests {
             version: Some("1.0.0".into()),
             commit: Some("1".repeat(40)),
             scopes: Some(Vec::new()),
+            scope_reasons: None,
             dependencies: None,
             position: None,
             requires: None,
@@ -4254,6 +4401,7 @@ mod tests {
                     scopes: None,
                     requires: None,
                     error: None,
+                    scope_reasons: None,
                     dependencies: None,
                     position: None,
                 }],
