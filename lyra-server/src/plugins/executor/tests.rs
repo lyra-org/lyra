@@ -22,6 +22,7 @@ fn default_server_info() -> crate::plugins::server::ServerInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
         commit_hash: "test".to_string(),
         port: 0,
+        tls: false,
         published_url: None,
         setup: crate::services::setup::Status {
             account_required: true,
@@ -1197,6 +1198,7 @@ fn plugin_executor_reads_server_info_from_vm_context() -> Result<()> {
             version: "9.8.7".to_string(),
             commit_hash: "abc123".to_string(),
             port: 3210,
+            tls: false,
             published_url: Some("https://lyra.example".to_string()),
             setup: crate::services::setup::Status {
                 account_required: false,

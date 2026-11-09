@@ -21,6 +21,7 @@ pub(crate) struct ServerInfo {
     pub(crate) version: String,
     pub(crate) commit_hash: String,
     pub(crate) port: u16,
+    pub(crate) tls: bool,
     pub(crate) published_url: Option<String>,
     pub(crate) setup: crate::services::setup::Status,
 }
@@ -59,6 +60,7 @@ pub(crate) async fn load_server_info() -> anyhow::Result<ServerInfo> {
         version: env!("CARGO_PKG_VERSION").to_string(),
         commit_hash: STATE.boot.get().build.commit_hash.clone(),
         port: STATE.boot.get().port,
+        tls: STATE.boot.get().tls.is_some(),
         published_url: config.published_url.clone(),
         setup,
     })
@@ -77,11 +79,12 @@ impl ServerInfoModuleStore {
     }
 }
 fn server_info_table(info: &ServerInfo) -> luau::OwnedTable {
-    let mut table = luau::OwnedTable::with_capacity(0, 6);
+    let mut table = luau::OwnedTable::with_capacity(0, 7);
     table.set_field("id", info.id.clone());
     table.set_field("version", info.version.clone());
     table.set_field("commit_hash", info.commit_hash.clone());
     table.set_field("port", i64::from(info.port));
+    table.set_field("tls", info.tls);
     table.set_field("published_url", info.published_url.clone());
     let mut setup = luau::OwnedTable::with_capacity(0, 2);
     setup.set_field("account_required", info.setup.account_required);
@@ -122,6 +125,13 @@ impl DescribeInterface for ServerInfo {
                 name: "port",
                 ty: u16::luau_type(),
                 description: None,
+            },
+            FieldDescriptor {
+                name: "tls",
+                ty: bool::luau_type(),
+                description: Some(
+                    "Whether the port serves HTTPS itself; a reverse proxy in front of the server doesn't count.",
+                ),
             },
             FieldDescriptor {
                 name: "published_url",

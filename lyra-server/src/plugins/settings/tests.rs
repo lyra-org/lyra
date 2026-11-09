@@ -26,6 +26,7 @@ fn server_info() -> crate::plugins::server::ServerInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
         commit_hash: "test".to_string(),
         port: 0,
+        tls: false,
         published_url: None,
         setup: crate::services::setup::Status {
             account_required: true,
