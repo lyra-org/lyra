@@ -69,6 +69,6 @@ assert(#playback_sessions.list_connections({ user_id = fixture.users.owner }) ==
 rejects(playback_sessions.send_command, "connection not found", { connection_id = "missing", action = "pause" })
 rejects(
 	playback_sessions.send_command,
-	"unknown variant `rewind`, expected one of `play`, `pause`",
+	"unknown variant `rewind`, expected one of `play`, `play_tracks`",
 	{ connection_id = speaker.id, action = "rewind" :: any }
 )

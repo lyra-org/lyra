@@ -12,6 +12,8 @@ pub(crate) const AUTH_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 pub(crate) const MAX_CONSECUTIVE_AUTH_ERRORS: u32 = 5;
 pub(crate) const MAX_MESSAGE_SIZE: usize = 64 * 1024;
 pub(crate) const MAX_CONNECTIONS_PER_USER: usize = 8;
+/// The most track ids one `play_tracks` command takes: the most a playback's queue holds.
+pub(crate) const MAX_PLAY_TRACK_IDS: usize = crate::services::playbacks::QUEUE_ITEM_HARD_CAP;
 /// Why the server closes a connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CloseReason {
@@ -45,6 +47,7 @@ impl CloseReason {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum RemoteAction {
     Play,
+    PlayTracks,
     Pause,
     Unpause,
     Stop,
@@ -59,6 +62,7 @@ impl RemoteAction {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Play => "play",
+            Self::PlayTracks => "play_tracks",
             Self::Pause => "pause",
             Self::Unpause => "unpause",
             Self::Stop => "stop",
@@ -69,4 +73,17 @@ impl RemoteAction {
             Self::HandoffQueue => "handoff_queue",
         }
     }
+}
+
+/// Where a `play_tracks` command puts its tracks in the target's queue.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PlayPlacement {
+    /// Replaces what the target plays.
+    Now,
+    /// After the track the target plays now.
+    Next,
+    /// At the end of the target's queue.
+    Last,
 }

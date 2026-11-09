@@ -33,6 +33,8 @@ use harmony_core::UserDataBinding;
 use crate::plugins::api::WebSocketSenderType;
 use crate::plugins::args;
 use crate::plugins::executor::ApiWebSocketSender;
+#[cfg(any(test, feature = "docgen"))]
+use crate::plugins::types::LuauPlayPlacement;
 #[cfg(feature = "docgen")]
 use crate::services::playback_sessions::{
     live_window_description,
@@ -61,7 +63,11 @@ use crate::{
         playback_sessions as playbacks,
         remote::{
             connections,
-            constants::RemoteAction,
+            constants::{
+                MAX_PLAY_TRACK_IDS,
+                PlayPlacement,
+                RemoteAction,
+            },
             control::{
                 self,
                 ControlError,
@@ -122,6 +128,12 @@ struct SendCommandRequest {
 #[serde(tag = "action", rename_all = "snake_case")]
 enum SendCommandAction {
     Play,
+    PlayTracks {
+        track_ids: Vec<String>,
+        placement: PlayPlacement,
+        start_index: Option<u64>,
+        start_position_ms: Option<u64>,
+    },
     Pause,
     Unpause,
     Stop,
@@ -143,6 +155,17 @@ impl From<SendCommandAction> for RemoteCommand {
     fn from(action: SendCommandAction) -> Self {
         match action {
             SendCommandAction::Play => Self::Play,
+            SendCommandAction::PlayTracks {
+                track_ids,
+                placement,
+                start_index,
+                start_position_ms,
+            } => Self::PlayTracks {
+                track_ids,
+                placement,
+                start_index,
+                start_position_ms,
+            },
             SendCommandAction::Pause => Self::Pause,
             SendCommandAction::Unpause => Self::Unpause,
             SendCommandAction::Stop => Self::Stop,
@@ -241,11 +264,18 @@ impl DescribeTypeAlias for PlaybackUpdateHandler {
 
 pub(crate) struct PlaybackSessionsModule;
 
-crate::plugins::limits::module_limits!(&[crate::plugins::limits::Limit {
-    name: "MAX_QUEUE_TRACK_IDS",
-    value: crate::services::playbacks::QUEUE_ITEM_HARD_CAP,
-    description: "The most track ids `save_queue` takes.",
-}]);
+crate::plugins::limits::module_limits!(&[
+    crate::plugins::limits::Limit {
+        name: "MAX_QUEUE_TRACK_IDS",
+        value: crate::services::playbacks::QUEUE_ITEM_HARD_CAP,
+        description: "The most track ids `save_queue` takes.",
+    },
+    crate::plugins::limits::Limit {
+        name: "MAX_PLAY_TRACK_IDS",
+        value: MAX_PLAY_TRACK_IDS,
+        description: "The most track ids a `play_tracks` command takes.",
+    },
+]);
 
 #[harmony_macros::module(
     id = "lyra/playback_sessions",
@@ -599,7 +629,7 @@ impl PlaybackSessionsModule {
     }
 
     #[harmony(
-        description = "Sends a remote control command to a connection, returning once it is queued for the target, or for `handoff_queue` once the target applied it. Raises a `not_found` error when the source or target connection or its user is missing; a `forbidden` error when the caller may not control the target; and a `conflict` error when the target did not declare the command. A request that doesn't match its `action`, and a `set_volume` level that isn't a number, raise an `invalid` error, sending nothing; a value with no JSON form, such as a function, raises an error with no kind.",
+        description = "Sends a remote control command to a connection, returning once it is queued for the target, or for `handoff_queue` once the target applied it. Raises a `not_found` error when the source or target connection or its user is missing, or a `play_tracks` track is missing or hidden from the target's user; a `forbidden` error when the caller may not control the target; and a `conflict` error when the target did not declare the command. A request that doesn't match its `action`, a `play_tracks` command with no track ids, past `MAX_PLAY_TRACK_IDS` of them, or whose `start_index` is outside them, and a `set_volume` level that isn't a number, raise an `invalid` error, sending nothing; a value with no JSON form, such as a function, raises an error with no kind.",
         args(request: SendCommandRequest)
     )]
     async fn send_command(
@@ -632,9 +662,12 @@ fn control_error(error: ControlError) -> luau::Error {
         ControlError::SourceNotFound
         | ControlError::TargetNotFound
         | ControlError::UserNotFound => kinded(ErrorKind::NotFound, error),
+        ControlError::TrackUnavailable => kinded(ErrorKind::NotFound, error),
         ControlError::NotAuthorized => kinded(ErrorKind::Forbidden, error),
         ControlError::Unsupported(_) => kinded(ErrorKind::Conflict, error),
-        ControlError::InvalidLevel => kinded(ErrorKind::Invalid, error),
+        ControlError::InvalidLevel | ControlError::InvalidPlayTracks(_) => {
+            kinded(ErrorKind::Invalid, error)
+        }
         error => crate::plugins::runtime_error(error),
     }
 }
@@ -714,11 +747,12 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
             LuauPlaybackEvent::type_alias_descriptor(),
             LuauPlaybackState::type_alias_descriptor(),
             LuauRemoteAction::type_alias_descriptor(),
+            LuauPlayPlacement::type_alias_descriptor(),
             TypeAliasDescriptor::new(
                 "SendCommandRequest",
                 send_command_request_type(),
                 Some(
-                    "A remote control command for the connection `connection_id`, as `list_connections` gives it, tagged by `action`. `set_volume`'s `level` is on a scale of 0 to 1, clamped to it. `handoff_queue` takes a durable playback id and its exact queue revision.",
+                    "A remote control command for the connection `connection_id`, as `list_connections` gives it, tagged by `action`. `play_tracks` takes public track ids in order and with repeats, at most `MAX_PLAY_TRACK_IDS`; `start_index` is the 0-based index in them to start from, by default the first, and `start_position_ms` where to start that track, by default its beginning. `set_volume`'s `level` is on a scale of 0 to 1, clamped to it. `handoff_queue` takes a durable playback id and its exact queue revision.",
                 ),
             ),
         ],
@@ -896,6 +930,15 @@ fn send_command_request_type() -> LuauType {
 
     LuauType::union(vec![
         command("play", vec![]),
+        command(
+            "play_tracks",
+            vec![
+                ("track_ids", Vec::<String>::luau_type()),
+                ("placement", LuauPlayPlacement::luau_type()),
+                ("start_index", Option::<u64>::luau_type()),
+                ("start_position_ms", Option::<u64>::luau_type()),
+            ],
+        ),
         command("pause", vec![]),
         command("unpause", vec![]),
         command("stop", vec![]),
@@ -1316,6 +1359,14 @@ mod tests {
             u64::luau_type()
         );
         assert_eq!(field_type("seek", "position_ms"), u64::luau_type());
+        assert_eq!(
+            field_type("play_tracks", "placement"),
+            LuauPlayPlacement::luau_type()
+        );
+        assert_eq!(
+            field_type("play_tracks", "start_index"),
+            Option::<u64>::luau_type()
+        );
         assert_eq!(command_type("pause").len(), 2);
     }
 
@@ -1324,8 +1375,10 @@ mod tests {
         match ty {
             LuauType::StringLiteral(value) => Some(serde_json::json!(value)),
             LuauType::Optional(_) => None,
+            LuauType::Array(_) => Some(serde_json::json!(["id"])),
             ty if *ty == String::luau_type() => Some(serde_json::json!("id")),
             ty if *ty == u64::luau_type() => Some(serde_json::json!(1)),
+            ty if *ty == LuauPlayPlacement::luau_type() => Some(serde_json::json!("now")),
             ty => panic!("no sample for {ty}"),
         }
     }
@@ -1365,12 +1418,12 @@ mod tests {
                 "missing field `position_ms`",
             ),
             (
-                serde_json::json!({ "connection_id": "c", "action": "handoff_queue", "playback_id": "p" }),
-                "missing field `queue_revision`",
+                serde_json::json!({ "connection_id": "c", "action": "play_tracks", "track_ids": [] }),
+                "missing field `placement`",
             ),
             (
                 serde_json::json!({ "connection_id": "c", "action": "rewind" }),
-                "unknown variant `rewind`, expected one of `play`, `pause`",
+                "unknown variant `rewind`, expected one of `play`, `play_tracks`",
             ),
             (
                 serde_json::json!({ "connection_id": "c" }),

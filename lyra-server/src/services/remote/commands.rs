@@ -65,6 +65,16 @@ async fn handle_command(cmd: ClientCommand, connection_id: ConnectionId) -> Resp
             return handle_declare_capabilities(id, commands, connection_id).await;
         }
         ClientCommand::Play(c) => (c.id, c.target, RemoteCommand::Play),
+        ClientCommand::PlayTracks(c) => (
+            c.id,
+            c.target,
+            RemoteCommand::PlayTracks {
+                track_ids: c.track_ids,
+                placement: c.placement,
+                start_index: c.start_index,
+                start_position_ms: c.start_position_ms,
+            },
+        ),
         ClientCommand::Pause(c) => (c.id, c.target, RemoteCommand::Pause),
         ClientCommand::Unpause(c) => (c.id, c.target, RemoteCommand::Unpause),
         ClientCommand::Stop(c) => (c.id, c.target, RemoteCommand::Stop),

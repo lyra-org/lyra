@@ -5,7 +5,10 @@
 
 use crate::services::playback_sessions::PlaybackUpdatePayload;
 use crate::services::remote::connections::Connection;
-use crate::services::remote::constants::RemoteAction;
+use crate::services::remote::constants::{
+    PlayPlacement,
+    RemoteAction,
+};
 #[cfg(feature = "docgen")]
 use asyncapi_rust::{
     AsyncApi,
@@ -32,6 +35,11 @@ pub(crate) enum ClientCommand {
     },
     #[cfg_attr(feature = "docgen", asyncapi(summary = "Start playback on target"))]
     Play(RemoteControlCommand),
+    #[cfg_attr(
+        feature = "docgen",
+        asyncapi(summary = "Ask target to play specific tracks")
+    )]
+    PlayTracks(PlayTracksCommand),
     #[cfg_attr(feature = "docgen", asyncapi(summary = "Pause playback on target"))]
     Pause(RemoteControlCommand),
     #[cfg_attr(feature = "docgen", asyncapi(summary = "Resume playback on target"))]
@@ -61,6 +69,21 @@ pub(crate) enum ClientCommand {
 pub(crate) struct RemoteControlCommand {
     pub(crate) id: String,
     pub(crate) target: String,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct PlayTracksCommand {
+    pub(crate) id: String,
+    pub(crate) target: String,
+    /// Public track ids, in order and with repeats, each visible to the target's user. Holds at
+    /// least one id.
+    pub(crate) track_ids: Vec<String>,
+    pub(crate) placement: PlayPlacement,
+    /// 0-based index in `track_ids` of the track to start from; the first one by default.
+    pub(crate) start_index: Option<u64>,
+    /// Where to start that track; its beginning by default.
+    pub(crate) start_position_ms: Option<u64>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -114,6 +137,19 @@ pub(crate) enum ForwardedCommand {
     Play {
         #[serde(skip_serializing_if = "Option::is_none")]
         from: Option<String>,
+    },
+    PlayTracks {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        from: Option<String>,
+        /// Public track ids, in order and with repeats.
+        track_ids: Vec<String>,
+        placement: PlayPlacement,
+        /// 0-based index in `track_ids` of the track to start from; the first one when absent.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        start_index: Option<u64>,
+        /// Where to start that track; its beginning when absent.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        start_position_ms: Option<u64>,
     },
     Pause {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -293,6 +329,40 @@ mod tests {
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["action"], "pause");
         assert!(json.get("from").is_none());
+    }
+
+    #[test]
+    fn play_tracks_carries_its_placement_and_omits_unset_fields() {
+        let ClientCommand::PlayTracks(command) = serde_json::from_str(
+            r#"{"action":"play_tracks","id":"abc","target":"2","track_ids":["t"],"placement":"next"}"#,
+        )
+        .unwrap() else {
+            panic!("expected a play_tracks command");
+        };
+        assert_eq!(command.placement, PlayPlacement::Next);
+        assert_eq!(
+            (command.start_index, command.start_position_ms),
+            (None, None)
+        );
+
+        let forwarded = OutgoingMessage::Command(ForwardedCommand::PlayTracks {
+            from: Some("source".to_string()),
+            track_ids: vec!["t".to_string()],
+            placement: PlayPlacement::Now,
+            start_index: None,
+            start_position_ms: Some(1000),
+        });
+        assert_eq!(
+            serde_json::to_value(&forwarded).unwrap(),
+            serde_json::json!({
+                "type": "command",
+                "action": "play_tracks",
+                "from": "source",
+                "track_ids": ["t"],
+                "placement": "now",
+                "start_position_ms": 1000,
+            })
+        );
     }
 
     #[test]

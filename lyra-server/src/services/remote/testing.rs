@@ -53,6 +53,26 @@ pub(crate) async fn user(name: &str) -> anyhow::Result<TestUser> {
     })
 }
 
+/// A user with no libraries, so it sees no track an admin's fixture inserted.
+pub(crate) async fn listener(name: &str) -> anyhow::Result<TestUser> {
+    let db_id = {
+        let mut db = STATE.db.write().await;
+        let user = lyra_db::fixtures::test_user(&format!("{name}-{}", nanoid::nanoid!()))?;
+        lyra_db::users::create(&mut db, &user)?
+    };
+    Ok(TestUser {
+        db_id,
+        principal: testing::user_principal(db_id).await?,
+    })
+}
+
+/// A track in no library, seen only by admins, and its public id.
+pub(crate) async fn track(title: &str) -> anyhow::Result<String> {
+    let mut db = STATE.db.write().await;
+    let track_db_id = lyra_db::fixtures::insert_track(&mut db, title)?;
+    Ok(lyra_db::lookup::find_id_by_db_id(&*db, track_db_id)?.expect("track has a public id"))
+}
+
 pub(crate) async fn connect(
     user: &TestUser,
     session_key: &str,

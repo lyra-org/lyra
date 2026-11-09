@@ -1,0 +1,51 @@
+run_as = "owner"
+
+[[users]]
+key = "owner"
+
+[[users]]
+key = "other"
+
+[[connections]]
+key = "speaker"
+user = "owner"
+commands = ["play_tracks"]
+
+[[connections]]
+key = "knob"
+user = "owner"
+commands = ["pause"]
+
+[[connections]]
+key = "elsewhere"
+user = "other"
+commands = ["play_tracks"]
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["owner"]
+
+[[libraries]]
+key = "vault"
+name = "Vault"
+
+[[releases]]
+key = "open"
+title = "Open"
+library = "music"
+
+[[releases]]
+key = "hidden"
+title = "Hidden"
+library = "vault"
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "open"
+
+[[tracks]]
+key = "secret"
+title = "Secret"
+release = "hidden"

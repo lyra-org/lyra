@@ -230,7 +230,14 @@ mirror_string_enum!(
     LuauRemoteAction for crate::services::remote::constants::RemoteAction,
     "RemoteAction",
     description = "A remote control command a connection can accept.",
-    [Play, Pause, Unpause, Stop, Seek, NextTrack, PreviousTrack, SetVolume, HandoffQueue]
+    [Play, PlayTracks, Pause, Unpause, Stop, Seek, NextTrack, PreviousTrack, SetVolume, HandoffQueue]
+);
+
+mirror_string_enum!(
+    LuauPlayPlacement for crate::services::remote::constants::PlayPlacement,
+    "PlayPlacement",
+    description = "Where a `play_tracks` command puts its tracks: `now` replaces what the target plays, `next` follows the track it plays now, `last` goes at the end of its queue.",
+    [Now, Next, Last]
 );
 
 mirror_string_enum!(
@@ -626,6 +633,10 @@ mod tests {
         assert_spelled_as_serialized::<
             LuauRemoteAction,
             crate::services::remote::constants::RemoteAction,
+        >();
+        assert_spelled_as_serialized::<
+            LuauPlayPlacement,
+            crate::services::remote::constants::PlayPlacement,
         >();
         assert_spelled_as_serialized::<LuauSyncRunKind, crate::services::libraries::SyncRunKind>();
         assert_spelled_as_serialized::<LuauSyncRunStatus, crate::services::libraries::SyncRunStatus>(
