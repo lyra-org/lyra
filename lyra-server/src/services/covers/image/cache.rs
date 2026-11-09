@@ -458,6 +458,10 @@ pub(super) mod testing {
     pub(in super::super) fn flights(cache: &TransformCache) -> usize {
         lock(&cache.flights).len()
     }
+
+    pub(in super::super) fn flight_holders(cache: &TransformCache) -> usize {
+        lock(&cache.flights).values().map(|turn| turn.holders).sum()
+    }
 }
 
 #[cfg(test)]

@@ -760,6 +760,16 @@ mod tests {
         assert_eq!(cached_bytes(again), std::fs::read(&stored).ok());
     }
 
+    async fn wait_for_flight_holders(cache: &TransformCache, count: usize) {
+        for _ in 0..500 {
+            if cache::testing::flight_holders(cache) == count {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(cache::testing::flight_holders(cache), count);
+    }
+
     #[tokio::test]
     async fn concurrent_misses_of_one_variant_transform_once() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -772,18 +782,19 @@ mod tests {
         let slots = Arc::new(Semaphore::new(1));
         let held = Arc::clone(&slots).acquire_owned().await.expect("slot");
 
-        let spawn = |wait: Duration| {
-            let (cache, slots, path) = (Arc::clone(&cache), Arc::clone(&slots), path.clone());
+        let spawn = |slots: &Arc<Semaphore>, wait: Duration| {
+            let (cache, slots, path) = (Arc::clone(&cache), Arc::clone(slots), path.clone());
             tokio::spawn(async move {
                 let options = options(None, Some(100), None);
                 render_cover_on(&cache, &slots, wait, &path, HASH, options).await
             })
         };
-        let first = spawn(Duration::from_secs(10));
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        // Waiting for a slot of its own, the second would be refused as busy.
-        let second = spawn(Duration::from_millis(10));
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        let first = spawn(&slots, Duration::from_secs(3600));
+        wait_for_flight_holders(&cache, 1).await;
+        // With no slot to take, the second is refused as busy unless it shares the first's
+        // transform.
+        let second = spawn(&Arc::new(Semaphore::new(0)), Duration::from_millis(10));
+        wait_for_flight_holders(&cache, 2).await;
         drop(held);
 
         for rendered in [first.await, second.await] {
