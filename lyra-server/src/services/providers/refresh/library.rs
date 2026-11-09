@@ -13,6 +13,7 @@ use std::{
 
 use agdb::DbId;
 
+use crate::services::plugin_dispatch::Published;
 use crate::services::{
     EntityType,
     STATE,
@@ -33,15 +34,18 @@ use crate::services::{
     },
     providers::{
         ProviderCallError,
+        ProviderRegistry,
         ProviderServiceError,
-        declared_artist_ids,
         id_schemes,
         library_refresh_locks,
         node_is_entity,
+        provider_registry,
     },
 };
+use tokio::sync::RwLock;
 
 use super::{
+    ReleaseDedupDeclarations,
     UnregisteredProviders,
     artist_covers::{
         ListedArtist,
@@ -137,7 +141,11 @@ impl ScanRefreshPlan {
     pub(crate) async fn current() -> Result<Self, ProviderServiceError> {
         let providers = read_active_providers().await?;
         Ok(Self {
-            provider_ids: refresh_providers_for(&providers, EntityType::Release).await,
+            provider_ids: refresh_providers_for(
+                &*provider_registry().read().await,
+                &providers,
+                EntityType::Release,
+            ),
             unregistered: UnregisteredProviders::default(),
         })
     }
@@ -286,7 +294,11 @@ async fn refresh_locked_library(
     };
 
     let providers = read_active_providers().await?.only(options.provider_id);
-    let refreshers = refresh_providers_for(&providers, EntityType::Release).await;
+    let refreshers = refresh_providers_for(
+        &*provider_registry().read().await,
+        &providers,
+        EntityType::Release,
+    );
     let schemes = id_schemes().await;
     let unregistered = UnregisteredProviders::default();
     let release_count = releases
@@ -394,7 +406,13 @@ async fn refresh_locked_library(
             continue;
         }
 
-        if deduplicate_after_providers(&HashSet::from([provider_id.clone()]), library_db_id).await {
+        if deduplicate_after_providers(
+            &provider_registry(),
+            &HashSet::from([provider_id.clone()]),
+            library_db_id,
+        )
+        .await
+        {
             // A context cached for a release this pass left alone may name what was merged away.
             dirty_releases.extend(
                 releases
@@ -471,13 +489,20 @@ async fn refresh_locked_library(
 /// anything. Returns whether anything may have been merged away, which a failure partway also
 /// leaves open.
 pub(crate) async fn deduplicate_after_providers(
+    registry: &RwLock<ProviderRegistry>,
     provider_ids: &HashSet<String>,
     library_db_id: DbId,
 ) -> bool {
     if provider_ids.is_empty() {
         return false;
     }
-    let declared_artist_ids = declared_artist_ids().await;
+    let (declared_artist_ids, declarations) = {
+        let registry = registry.read().await;
+        (
+            registry.declared_ids(EntityType::Artist),
+            ReleaseDedupDeclarations::of(&registry),
+        )
+    };
     let mut db_write = STATE.db.write().await;
     let artists_merged = match deduplicate_artists_by_external_id(
         &mut db_write,
@@ -494,7 +519,8 @@ pub(crate) async fn deduplicate_after_providers(
             true
         }
     };
-    deduplicate_release_scope_locked(&mut db_write, library_db_id, provider_ids) || artists_merged
+    deduplicate_release_scope_locked(&mut db_write, library_db_id, provider_ids, &declarations)
+        || artists_merged
 }
 
 /// One unit of work: asks a provider about a release, unless its sync filter turns the release
@@ -513,6 +539,7 @@ async fn refresh_release_with_provider(
         .start_work(SyncStageKey::ProviderRefresh, details.clone())
         .await;
     let should_run = match dispatch_sync_filter(
+        &Published,
         provider_id,
         EntityType::Release,
         apply_sync_filters,
@@ -547,7 +574,7 @@ async fn refresh_release_with_provider(
         return false;
     }
 
-    match dispatch_refresh(provider_id, EntityType::Release, context).await {
+    match dispatch_refresh(&Published, provider_id, EntityType::Release, context).await {
         Ok(()) => {
             progress
                 .complete_work(work_id, SyncStageKey::ProviderRefresh)

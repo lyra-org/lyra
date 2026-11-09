@@ -413,11 +413,11 @@ fn lyrics_callback(
             context,
         );
         lyrics_dispatcher::register_handler(
-            &scope.providers_for(&provider.plugin_id),
+            &mut *scope.providers_for(&provider.plugin_id).write_owned().await,
+            scope.services.published.clone(),
             &provider.provider_id,
             ProviderLyricsSpec::new(timeout, require, handler),
-        )
-        .await;
+        );
         Ok(())
     }))
 }

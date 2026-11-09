@@ -30,11 +30,13 @@ use crate::services::{
         SyncRunProgress,
         SyncStageKey,
     },
+    metadata::id_links::DeclaredIds,
     options::provider_options,
-    providers::provider_registry,
+    providers::ProviderRegistry,
 };
 
 use lyra_db::ProviderConfig;
+use tokio::sync::RwLock;
 
 mod artist_covers;
 mod dispatch;
@@ -130,11 +132,11 @@ async fn read_active_providers() -> anyhow::Result<ActiveProviders> {
 
 /// The providers with a refresh handler for `entity_type`, by id: a pass looks their handlers up
 /// at each call, so it follows them through a plugin reload.
-async fn refresh_providers_for(
-    providers: impl IntoIterator<Item = &ProviderConfig>,
+fn refresh_providers_for<'a>(
+    registry: &ProviderRegistry,
+    providers: impl IntoIterator<Item = &'a ProviderConfig>,
     entity_type: EntityType,
 ) -> Vec<String> {
-    let registry = provider_registry().read_owned().await;
     providers
         .into_iter()
         .filter(|provider| registry.has_refresh_callback(&provider.provider_id, entity_type))
@@ -143,11 +145,11 @@ async fn refresh_providers_for(
 }
 
 /// Each provider's options, checked for every provider before any of them runs.
-async fn passed_provider_options(
+fn passed_provider_options(
+    registry: &ProviderRegistry,
     provider_ids: &[String],
     passed_options: &HashMap<String, String>,
 ) -> Result<Vec<serde_json::Map<String, serde_json::Value>>, ProviderServiceError> {
-    let registry = provider_registry().read_owned().await;
     provider_ids
         .iter()
         .map(|provider_id| {
@@ -174,10 +176,31 @@ fn context_with_options(
     context
 }
 
-async fn deduplicate_release_scope(library_db_id: DbId, providers_called: &[String]) {
+/// What release deduplication reads of the providers' declarations, taken before the database
+/// write lock.
+struct ReleaseDedupDeclarations {
+    release_ids: DeclaredIds,
+    unique_track_id_pairs: HashSet<(String, String)>,
+}
+
+impl ReleaseDedupDeclarations {
+    fn of(registry: &ProviderRegistry) -> Self {
+        Self {
+            release_ids: registry.declared_ids(EntityType::Release),
+            unique_track_id_pairs: registry.unique_track_id_pairs(),
+        }
+    }
+}
+
+async fn deduplicate_release_scope(
+    registry: &RwLock<ProviderRegistry>,
+    library_db_id: DbId,
+    providers_called: &[String],
+) {
     let provider_scope: HashSet<String> = providers_called.iter().cloned().collect();
+    let declarations = ReleaseDedupDeclarations::of(&*registry.read().await);
     let mut db_write = STATE.db.write().await;
-    deduplicate_release_scope_locked(&mut db_write, library_db_id, &provider_scope);
+    deduplicate_release_scope_locked(&mut db_write, library_db_id, &provider_scope, &declarations);
 }
 
 /// Returns whether a release may have been merged away, which a failure partway also leaves open.
@@ -185,22 +208,16 @@ fn deduplicate_release_scope_locked(
     db_write: &mut DbAny,
     library_db_id: DbId,
     provider_scope: &HashSet<String>,
+    declarations: &ReleaseDedupDeclarations,
 ) -> bool {
-    let (declared_release_ids, unique_track_id_pairs) = {
-        let registry = futures::executor::block_on(provider_registry().read_owned());
-        (
-            registry.declared_ids(EntityType::Release),
-            registry.unique_track_id_pairs(),
-        )
-    };
-    if !declared_release_ids.has_unique() {
+    if !declarations.release_ids.has_unique() {
         return false;
     }
     match deduplicate_releases_by_external_id(
         db_write,
         library_db_id,
-        &declared_release_ids,
-        &unique_track_id_pairs,
+        &declarations.release_ids,
+        &declarations.unique_track_id_pairs,
         Some(provider_scope),
         &STATE.generation().merge_journal,
     ) {

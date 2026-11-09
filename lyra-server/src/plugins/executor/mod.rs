@@ -35,8 +35,8 @@ pub(crate) use self::messages::{
     WebSocketState,
 };
 pub(crate) use self::metadata::{
+    VmCalls,
     dispatch_id_links_in_vm,
-    dispatch_similar_releases_in_vm,
 };
 pub(crate) use self::stream::{
     ApiResponseStream,

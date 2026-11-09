@@ -199,6 +199,7 @@ pub(crate) use resolve::{
     is_cover_file,
 };
 pub(crate) use sync::{
+    ReleaseCoverSubject,
     artist_cover_wanted,
     discard_cover,
     discard_unreferenced_cover_files,

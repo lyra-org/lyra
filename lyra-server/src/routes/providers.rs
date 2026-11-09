@@ -631,6 +631,7 @@ async fn refresh_entity(
     let mut provider_options: HashMap<String, String> = query.extra;
     provider_options.retain(|key, _| !KNOWN_REFRESH_PARAMS.contains(&key.as_str()));
     let result = refresh_entity_service(
+        &crate::services::plugin_dispatch::Published,
         &principal,
         &entity_id,
         EntityRefreshOptions {

@@ -35,8 +35,10 @@ use crate::{
         selection,
         upload,
     },
-    services::plugin_dispatch::MetadataRefreshRequest,
-    services::plugin_scope::RuntimeScope,
+    services::plugin_dispatch::{
+        MetadataRefreshRequest,
+        RuntimeCalls,
+    },
     services::providers::{
         ExternalIdsByScheme,
         LyricsInFlight,
@@ -176,38 +178,29 @@ impl Drop for InFlightGuard {
     }
 }
 
-/// Spawns a startup rescan sharing the handler's cancel token.
-pub(crate) async fn register_handler(
-    registry: &tokio::sync::RwLock<crate::services::providers::ProviderRegistry>,
+/// Spawns a startup rescan sharing the handler's cancel token. It waits for `published`, its own
+/// scope going live: a rescan dispatches through the published scope, and the handler isn't there
+/// until then.
+pub(crate) fn register_handler(
+    registry: &mut crate::services::providers::ProviderRegistry,
+    published: CancellationToken,
     provider_id: &str,
     spec: ProviderLyricsSpec,
 ) {
-    let Some(cancel) = registry.write().await.set_lyrics_handler(provider_id, spec) else {
+    let Some(cancel) = registry.set_lyrics_handler(provider_id, spec) else {
         return;
     };
 
     tokio::spawn(async move {
-        // Dispatch resolves STATE.generation().plugin_dispatch at call time; plugin init can
-        // register handlers before the runtime is published.
-        if !wait_for_plugin_dispatch(&cancel).await {
-            return;
+        tokio::select! {
+            biased;
+            () = cancel.cancelled() => return,
+            () = published.cancelled() => {}
         }
         if let Err(err) = rescan(false, cancel).await {
             tracing::warn!(error = %err, "lyrics startup rescan failed");
         }
     });
-}
-
-async fn wait_for_plugin_dispatch(cancel: &CancellationToken) -> bool {
-    loop {
-        if crate::services::STATE.generation().latest().is_some() {
-            return true;
-        }
-        tokio::select! {
-            _ = cancel.cancelled() => return false,
-            _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {}
-        }
-    }
 }
 
 /// The providers a dispatch could not finish for its track.
@@ -320,12 +313,12 @@ async fn dispatch_one(
                 ProviderLookup::Answer(None)
             })
         },
-        |spec, scope| async move {
+        |spec, calls| async move {
             let answered = unless_cancelled(
                 &spec.cancel,
                 provider_id,
                 track_db_id,
-                call_lyrics_handler(&scope, &spec, context, track_db_id, track_public_id),
+                call_lyrics_handler(&calls, &spec, context, track_db_id, track_public_id),
             )
             .await
             .transpose()?
@@ -378,8 +371,8 @@ async fn unless_cancelled<T>(
     }
 }
 
-async fn call_lyrics_handler(
-    scope: &RuntimeScope,
+async fn call_lyrics_handler<C: RuntimeCalls>(
+    calls: &C,
     spec: &ProviderLyricsSpec,
     context: &LyricsTrackContext,
     track_db_id: DbId,
@@ -403,7 +396,7 @@ async fn call_lyrics_handler(
         context: track_context_to_json(context),
         deadline: std::time::Instant::now() + timeout,
     };
-    let result = tokio::time::timeout(timeout, scope.dispatch().dispatch_metadata_refresh(request))
+    let result = tokio::time::timeout(timeout, calls.metadata_refresh(request))
         .await
         .map_err(|_| {
             anyhow::anyhow!("lyrics handler timed out after {} ms", timeout.as_millis())

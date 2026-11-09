@@ -46,6 +46,7 @@ use crate::services::{
     STATE,
     covers::{
         AudioFolders,
+        ReleaseCoverSubject,
         configured_covers_root,
         record_local_release_cover,
         refresh_gone_covers_for_library,
@@ -79,6 +80,7 @@ use crate::services::{
         ScanRefreshPlan,
         deduplicate_after_providers,
         node_is_entity,
+        provider_registry,
         refresh_library_metadata_after_others,
         refresh_release_metadata_for_scan,
         sync_artist_covers,
@@ -540,7 +542,7 @@ pub(crate) async fn sync_library_pipeline(
                 &progress,
             )
             .await;
-            deduplicate_after_providers(&refreshed_by, library_db_id).await;
+            deduplicate_after_providers(&provider_registry(), &refreshed_by, library_db_id).await;
             follow_merged_releases(db, chunk).await?;
         }
         let mut first_on_release = HashSet::new();
@@ -1521,11 +1523,14 @@ async fn sync_provider_release_cover(
     };
 
     let synced = match sync_release_cover_for_tracks(
+        &crate::services::plugin_dispatch::Published,
         context.db,
         audio_folders,
-        &tracks,
-        &release,
-        &artists,
+        ReleaseCoverSubject {
+            release: &release,
+            tracks: &tracks,
+            artists: &artists,
+        },
         cover_paths,
         options,
     )
@@ -3490,11 +3495,14 @@ FILE "album.flac" WAVE
             )
         };
         let synced = sync_release_cover_for_tracks(
+            &crate::services::plugin_dispatch::Published,
             &STATE.db.get(),
             &folders,
-            &tracks,
-            &found,
-            &[],
+            ReleaseCoverSubject {
+                release: &found,
+                tracks: &tracks,
+                artists: &[],
+            },
             paths,
             CoverSyncOptions::default(),
         )

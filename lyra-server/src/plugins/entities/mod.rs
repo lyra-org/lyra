@@ -41,10 +41,7 @@ use crate::{
             id_link_targets,
             project_visible_entities,
         },
-        providers::{
-            provider_registry,
-            resolve_id_links,
-        },
+        providers::resolve_id_links,
     },
 };
 use agdb::QueryId;
@@ -116,15 +113,14 @@ impl<'vm> luau::FromLuau<'vm> for QueryManyRequest {
     }
 }
 
-/// The VM to run link generators on, when the `links` include is requested. Generators can't
+/// Whether the projection runs link generators: only for the `links` include. Generators can't
 /// request links themselves, even from tasks they spawn, since those inherit the caller context.
-fn link_generator_vm(
-    vm: &luau::Vm,
+fn runs_link_generators(
     context: &luau::CallContext,
     includes: &[EntityInclude],
-) -> luau::runtime::Result<Option<luau::Vm>> {
+) -> luau::runtime::Result<bool> {
     if !includes.contains(&EntityInclude::Links) {
-        return Ok(None);
+        return Ok(false);
     }
     if context
         .caller
@@ -135,7 +131,7 @@ fn link_generator_vm(
             "the links include cannot be requested from an id link generator",
         ));
     }
-    Ok(Some(vm.clone()))
+    Ok(true)
 }
 
 #[cfg(feature = "docgen")]
@@ -250,12 +246,13 @@ impl EntitiesModule {
             includes,
             library_id,
         } = request;
-        let link_vm = link_generator_vm(&vm, &context, &includes)?;
+        let run_generators = runs_link_generators(&context, &includes)?;
         let scoped = ViewerDb::from_call_frame(&vm, &context)?;
         let mut keys = Vec::new();
         let projections = project_with_links(
             scoped.handle(),
-            link_vm,
+            &vm,
+            run_generators,
             &includes,
             library_id,
             |db, library_id, id_includes| {
@@ -312,11 +309,12 @@ async fn query_entity(
         includes,
         library_id,
     } = request;
-    let link_vm = link_generator_vm(&vm, &context, &includes)?;
+    let run_generators = runs_link_generators(&context, &includes)?;
     let scoped = ViewerDb::from_call_frame(&vm, &context)?;
     let mut projections = project_with_links(
         scoped.handle(),
-        link_vm,
+        &vm,
+        run_generators,
         &includes,
         library_id,
         |db, library_id, id_includes| {
@@ -376,7 +374,8 @@ async fn query_entity(
 /// lock is released, since generator functions may use the database.
 async fn project_with_links(
     db: DbAsync,
-    link_vm: Option<luau::Vm>,
+    vm: &luau::Vm,
+    run_generators: bool,
     includes: &[EntityInclude],
     library_id: Option<String>,
     project: impl FnOnce(
@@ -385,12 +384,15 @@ async fn project_with_links(
         &mut IdIncludes<'_>,
     ) -> luau::runtime::Result<Vec<EntityProjectionInfo>>,
 ) -> luau::runtime::Result<Vec<EntityProjectionInfo>> {
+    // The calling VM's scope, not the published one: during a reload that's another VM's, and
+    // generators can only run on this one.
+    let vm_scope = crate::plugins::state::VmScope::of(vm)?;
     let (schemes, generators) = {
-        let registry = provider_registry();
+        let registry = vm_scope.services.providers.registry();
         let registry = registry.read().await;
         (
             registry.id_schemes(),
-            link_vm.is_some().then(|| registry.id_link_generators()),
+            run_generators.then(|| registry.id_link_generators()),
         )
     };
     let (mut projections, links) = {
@@ -401,17 +403,18 @@ async fn project_with_links(
         };
         let mut id_includes = IdIncludes::new(&schemes, includes);
         let projections = project(&db, library_id, &mut id_includes)?;
-        let links = match (link_vm, generators, id_includes.into_link_rows()) {
-            (Some(vm), Some(generators), Some(rows)) => {
+        let links = match (generators, id_includes.into_link_rows()) {
+            (Some(generators), Some(rows)) => {
                 let targets = id_link_targets(&db, rows, library_id, &generators)?;
-                Some((vm, generators, targets))
+                Some((generators, targets))
             }
             _ => None,
         };
         (projections, links)
     };
-    if let Some((vm, generators, targets)) = links {
-        let links = resolve_id_links(targets, &generators, |provider_id, calls| {
+    if let Some((generators, targets)) = links {
+        let cache = vm_scope.services.providers.id_link_cache();
+        let links = resolve_id_links(&cache, targets, &generators, |provider_id, calls| {
             crate::plugins::executor::dispatch_id_links_in_vm(vm.clone(), provider_id, calls)
         })
         .await;

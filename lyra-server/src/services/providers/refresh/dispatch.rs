@@ -8,16 +8,17 @@ use std::time::Duration;
 use crate::services::{
     EntityType,
     plugin_dispatch::{
+        CallSource,
         MetadataRefreshRequest,
         MetadataRefreshResult,
         PluginCallbackHandle,
+        RuntimeCalls,
     },
-    plugin_scope::RuntimeScope,
     providers::{
         ProviderCallError,
         ProviderCallStage,
         ProviderLookup,
-        with_provider_call,
+        with_provider_call_on,
     },
 };
 
@@ -29,21 +30,19 @@ const DEFAULT_METADATA_REFRESH_TIMEOUT: Duration = Duration::from_secs(60);
 /// provider's refreshes from overlapping, is released only after that.
 const METADATA_REFRESH_DEADLINE_GRACE: Duration = Duration::from_secs(5);
 
-async fn run_metadata_handler(
+async fn run_metadata_handler<C: RuntimeCalls>(
     role: &str,
-    scope: &RuntimeScope,
+    calls: &C,
     handler: PluginCallbackHandle,
     context: serde_json::Value,
 ) -> anyhow::Result<MetadataRefreshResult> {
     tokio::time::timeout(
         DEFAULT_METADATA_REFRESH_TIMEOUT + METADATA_REFRESH_DEADLINE_GRACE,
-        scope
-            .dispatch()
-            .dispatch_metadata_refresh(MetadataRefreshRequest {
-                handler,
-                context,
-                deadline: std::time::Instant::now() + DEFAULT_METADATA_REFRESH_TIMEOUT,
-            }),
+        calls.metadata_refresh(MetadataRefreshRequest {
+            handler,
+            context,
+            deadline: std::time::Instant::now() + DEFAULT_METADATA_REFRESH_TIMEOUT,
+        }),
     )
     .await
     .map_err(|_| {
@@ -54,12 +53,14 @@ async fn run_metadata_handler(
     })?
 }
 
-pub(super) async fn dispatch_refresh(
+pub(super) async fn dispatch_refresh<S: CallSource>(
+    source: &S,
     provider_id: &str,
     entity_type: EntityType,
     context: serde_json::Value,
 ) -> Result<(), ProviderCallError> {
-    with_provider_call(
+    with_provider_call_on(
+        source,
         provider_id,
         ProviderCallStage::MetadataRefresh,
         |registry| {
@@ -68,10 +69,13 @@ pub(super) async fn dispatch_refresh(
                 .copied()
                 .map(ProviderLookup::Call)
         },
-        |handler, scope| async move {
-            run_metadata_handler("metadata refresh", &scope, handler, context)
-                .await
-                .map(|_| ())
+        |handler, calls| {
+            let context = context.clone();
+            async move {
+                run_metadata_handler("metadata refresh", &calls, handler, context)
+                    .await
+                    .map(|_| ())
+            }
         },
     )
     .await
@@ -79,13 +83,15 @@ pub(super) async fn dispatch_refresh(
 
 /// Whether the provider's sync filter lets the item through. Without a filter, or when the pass
 /// applies none, a provider with a refresh handler runs unfiltered.
-pub(super) async fn dispatch_sync_filter(
+pub(super) async fn dispatch_sync_filter<S: CallSource>(
+    source: &S,
     provider_id: &str,
     entity_type: EntityType,
     apply_sync_filters: bool,
     context: &serde_json::Value,
 ) -> Result<bool, ProviderCallError> {
-    with_provider_call(
+    with_provider_call_on(
+        source,
         provider_id,
         ProviderCallStage::MetadataRefresh,
         |registry| {
@@ -98,9 +104,9 @@ pub(super) async fn dispatch_sync_filter(
                 .has_refresh_callback(provider_id, entity_type)
                 .then_some(ProviderLookup::Answer(true))
         },
-        |handler, scope| async move {
+        |handler, calls| async move {
             let result =
-                run_metadata_handler("sync filter", &scope, handler, context.clone()).await?;
+                run_metadata_handler("sync filter", &calls, handler, context.clone()).await?;
             Ok(result
                 .values
                 .first()

@@ -395,8 +395,9 @@ impl MixModule {
     async fn blend(
         request: JsonArg,
         #[context] principal: Principal,
+        #[context] vm: luau::Vm,
     ) -> luau::runtime::Result<luau::Value> {
-        consume(MixShape::Blend, request, principal).await
+        consume(&vm, MixShape::Blend, request, principal).await
     }
 
     #[harmony(
@@ -407,8 +408,9 @@ impl MixModule {
     async fn path(
         request: JsonArg,
         #[context] principal: Principal,
+        #[context] vm: luau::Vm,
     ) -> luau::runtime::Result<luau::Value> {
-        consume(MixShape::Path, request, principal).await
+        consume(&vm, MixShape::Path, request, principal).await
     }
 }
 
@@ -528,6 +530,7 @@ fn describe_key(key: &luau::Value) -> String {
 
 /// Mixes `request`, a REST body, in the shape the function called names.
 async fn consume(
+    vm: &luau::Vm,
     shape: MixShape,
     request: JsonArg,
     principal: Principal,
@@ -540,7 +543,9 @@ async fn consume(
     };
     // A larger limit is capped here; REST refuses it.
     request.limit = request.limit.map(|limit| limit.min(mix_service::MAX_LIMIT));
-    match mix_service::mix(&request, &plugin_viewer(&principal)).await {
+    let calls = crate::plugins::executor::VmCalls::of(vm)?;
+    let deadline = tokio::time::Instant::now() + MIX_DISPATCH_BUDGET;
+    match mix_service::mix_on(&calls, deadline, &request, &plugin_viewer(&principal)).await {
         Ok(tracks) => tracks_to_luau(Some(tracks)),
         Err(MixError::SeedNotFound(_)) => tracks_to_luau(None),
         Err(MixError::Internal(error)) => Err(error.into()),

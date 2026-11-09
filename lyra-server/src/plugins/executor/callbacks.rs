@@ -57,6 +57,15 @@ pub(super) enum CallbackReply {
     Source(tokio::sync::oneshot::Sender<Result<()>>),
 }
 
+/// A metadata refresh or sync filter's failure: `not_found` says the entity it was writing is gone.
+pub(super) fn refresh_failure(error: harmony_luau::RaisedError) -> anyhow::Error {
+    if error.kind == Some(crate::plugins::errors::ErrorKind::NotFound.as_str()) {
+        anyhow::Error::new(RefreshTargetGone(error.message))
+    } else {
+        anyhow::Error::msg(error.message)
+    }
+}
+
 impl CallbackReply {
     fn is_cancelled(&self) -> bool {
         match self {
@@ -72,15 +81,10 @@ impl CallbackReply {
         }
     }
 
-    /// A handler's failure as this reply's receiver reads it: to a metadata refresh or its sync
-    /// filter, `not_found` says the entity it was writing is gone.
+    /// A handler's failure as this reply's receiver reads it.
     fn failure(&self, error: harmony_luau::RaisedError) -> anyhow::Error {
         match self {
-            Self::Refresh(_)
-                if error.kind == Some(crate::plugins::errors::ErrorKind::NotFound.as_str()) =>
-            {
-                anyhow::Error::new(RefreshTargetGone(error.message))
-            }
+            Self::Refresh(_) => refresh_failure(error),
             _ => anyhow::Error::msg(error.message),
         }
     }

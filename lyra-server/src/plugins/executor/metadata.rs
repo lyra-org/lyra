@@ -7,6 +7,7 @@ use std::{
     collections::HashSet,
     future::poll_fn,
     rc::Rc,
+    sync::Arc,
     time::{
         Duration,
         Instant,
@@ -31,10 +32,15 @@ use super::{
         MetadataDispatchContext,
     },
 };
+use crate::plugins::state::VmScope;
 use crate::services::plugin_dispatch::{
+    CallSource,
     MetadataRefreshRequest,
     MetadataRefreshResult,
+    MixHandlerRequest,
+    MixHandlerResult,
     PluginCallbackHandle,
+    RuntimeCalls,
     SimilarReleaseCandidate,
     SimilarReleaseExternalRef,
     SimilarReleasesDispatchRequest,
@@ -152,10 +158,28 @@ fn schedule_handler<M: Send + Sync + 'static>(
     resume_budget: Duration,
     completion: Rc<LocalLuauTaskCompletion>,
 ) -> Result<(Rc<LocalScheduler>, harmony_luau::Thread)> {
-    let thread = vm.create_thread(&handler.function)?;
-    let scheduler = vm.data().get::<LocalScheduler>()?;
     let mut context = handler.context.clone();
     context.caller.insert(marker);
+    schedule_function(
+        vm,
+        &handler.function,
+        context,
+        args,
+        resume_budget,
+        completion,
+    )
+}
+
+fn schedule_function(
+    vm: &harmony_luau::Vm,
+    function: &harmony_luau::Function,
+    context: harmony_core::CallContext,
+    args: Vec<harmony_luau::Value>,
+    resume_budget: Duration,
+    completion: Rc<LocalLuauTaskCompletion>,
+) -> Result<(Rc<LocalScheduler>, harmony_luau::Thread)> {
+    let thread = vm.create_thread(function)?;
+    let scheduler = vm.data().get::<LocalScheduler>()?;
     scheduler.schedule_luau_thread_with_budget_and_completion(
         context,
         vm.clone(),
@@ -176,9 +200,51 @@ async fn run_handler<M: Send + Sync + 'static>(
     resume_budget: Duration,
     deadline: Instant,
 ) -> Result<Option<Vec<harmony_luau::Value>>> {
+    let mut context = handler.context.clone();
+    context.caller.insert(marker);
+    run_function(
+        vm,
+        &handler.function,
+        context,
+        args,
+        resume_budget,
+        deadline,
+    )
+    .await
+}
+
+/// A handler's raised error, whole, for a caller that reads its kind.
+#[derive(Debug, thiserror::Error)]
+#[error("{}", .0.message)]
+struct HandlerRaised(harmony_luau::RaisedError);
+
+/// [`super::callbacks::refresh_failure`] for a handler run on the calling VM.
+fn raised_refresh_failure(error: anyhow::Error) -> anyhow::Error {
+    match error.downcast::<HandlerRaised>() {
+        Ok(HandlerRaised(raised)) => super::callbacks::refresh_failure(raised),
+        Err(error) => error,
+    }
+}
+
+/// Runs `function` to completion, or cancels it at `deadline` and returns `None`. Dropping the
+/// future cancels it too.
+pub(super) async fn run_function(
+    vm: &harmony_luau::Vm,
+    function: &harmony_luau::Function,
+    context: harmony_core::CallContext,
+    args: Vec<harmony_luau::Value>,
+    resume_budget: Duration,
+    deadline: Instant,
+) -> Result<Option<Vec<harmony_luau::Value>>> {
     let completion = Rc::new(LocalLuauTaskCompletion::default());
-    let (scheduler, thread) =
-        schedule_handler(vm, handler, marker, args, resume_budget, completion.clone())?;
+    let (scheduler, thread) = schedule_function(
+        vm,
+        function,
+        context,
+        args,
+        resume_budget,
+        completion.clone(),
+    )?;
     let mut guard = ScheduledThreadGuard {
         scheduler,
         thread,
@@ -192,10 +258,88 @@ async fn run_handler<M: Send + Sync + 'static>(
     guard.armed = false;
     result
         .map(Some)
-        .map_err(|error| anyhow::Error::msg(error.message))
+        .map_err(|error| HandlerRaised(error).into())
 }
 
-pub(crate) async fn dispatch_similar_releases_in_vm(
+/// How a host function reaches plugin handlers: on the VM making the call, which the executor is
+/// already running, with no queue slot. Queueing to it could wait on the very thread doing the
+/// waiting, or be refused behind a drain.
+#[derive(Clone)]
+pub(crate) struct VmCalls {
+    vm: harmony_luau::Vm,
+    scope: Rc<VmScope>,
+}
+
+impl VmCalls {
+    pub(crate) fn of(vm: &harmony_luau::Vm) -> harmony_luau::runtime::Result<Self> {
+        Ok(Self {
+            vm: vm.clone(),
+            scope: VmScope::of(vm)?,
+        })
+    }
+}
+
+impl CallSource for VmCalls {
+    type Calls = Self;
+
+    fn current(&self) -> Option<Self> {
+        Some(self.clone())
+    }
+}
+
+impl RuntimeCalls for VmCalls {
+    async fn providers(
+        &self,
+    ) -> Arc<tokio::sync::RwLock<crate::services::providers::ProviderRegistry>> {
+        self.scope.services.providers.registry()
+    }
+
+    async fn mixers(&self) -> Arc<tokio::sync::RwLock<crate::services::mix::MixRegistry>> {
+        self.scope.services.mix.registry()
+    }
+
+    async fn metadata_refresh(
+        &self,
+        request: MetadataRefreshRequest,
+    ) -> Result<MetadataRefreshResult> {
+        let handler = self
+            .vm
+            .data()
+            .get::<crate::plugins::metadata::MetadataCallbackRegistry>()?
+            .get(request.handler)?;
+        let argument = harmony_serde::json_to_luau_owned(request.context, 0)?;
+        let budget = request.deadline.saturating_duration_since(Instant::now());
+        let values = run_handler(
+            &self.vm,
+            &handler,
+            MetadataDispatchContext,
+            vec![argument],
+            budget,
+            request.deadline,
+        )
+        .await
+        .map_err(raised_refresh_failure)?
+        .context("metadata handler did not complete within its timeout")?;
+        let values = values
+            .iter()
+            .map(|value| harmony_serde::luau_to_json(value).map_err(anyhow::Error::new))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(MetadataRefreshResult { values })
+    }
+
+    async fn mix_handler(&self, request: MixHandlerRequest) -> Result<MixHandlerResult> {
+        super::mix::dispatch_mix_in_vm(&self.vm, request).await
+    }
+
+    async fn similar_releases(
+        &self,
+        request: SimilarReleasesDispatchRequest,
+    ) -> Result<SimilarReleasesDispatchResult> {
+        dispatch_similar_releases_in_vm(self.vm.clone(), request).await
+    }
+}
+
+async fn dispatch_similar_releases_in_vm(
     vm: harmony_luau::Vm,
     request: SimilarReleasesDispatchRequest,
 ) -> Result<SimilarReleasesDispatchResult> {
@@ -458,6 +602,22 @@ fn bounded_luau_string(value: harmony_luau::Value, field: &str) -> Result<String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_not_found_from_a_refresh_on_the_calling_vm_says_its_target_is_gone() {
+        use crate::services::plugin_dispatch::RefreshTargetGone;
+
+        let raised = |kind| {
+            anyhow::Error::new(HandlerRaised(harmony_luau::RaisedError {
+                kind,
+                message: "gone".to_string(),
+            }))
+        };
+        assert!(raised_refresh_failure(raised(Some("not_found"))).is::<RefreshTargetGone>());
+        let failure = raised_refresh_failure(raised(None));
+        assert!(!failure.is::<RefreshTargetGone>());
+        assert_eq!(failure.to_string(), "gone");
+    }
 
     #[test]
     fn calls_start_only_with_enough_time_left_and_get_at_most_the_call_budget() {

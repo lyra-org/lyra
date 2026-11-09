@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use crate::services::plugin_dispatch::CallSource;
 use crate::services::{
     STATE,
     auth::{
@@ -176,7 +177,8 @@ pub(crate) async fn set_entity_locked(
 /// provider, once they have answered, for a principal holding `SyncMetadata`, as the database
 /// has it now. An entity that is missing, hidden from the principal, or of another type is not
 /// found.
-pub(crate) async fn refresh_entity(
+pub(crate) async fn refresh_entity<S: CallSource>(
+    source: &S,
     principal: &Principal,
     entity_id: &str,
     options: EntityRefreshOptions,
@@ -206,7 +208,7 @@ pub(crate) async fn refresh_entity(
         }
     };
 
-    refresh_entity_metadata(target, options)
+    refresh_entity_metadata(source, target, options)
         .await
         .map_err(|error| match error {
             ProviderServiceError::EntityNotFound(_) => not_found(),

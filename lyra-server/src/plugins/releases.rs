@@ -282,7 +282,7 @@ impl ReleasesModule {
         let request = parse_similar_options(opts.0)?;
         let principal = crate::plugins::auth::require_dispatch_principal(context)?;
         let db = crate::plugins::db::get(vm)?;
-        let provider_vm = vm.clone();
+        let calls = crate::plugins::executor::VmCalls::of(vm)?;
 
         Ok(luau::ScheduledFuture::new(async move {
             let Some(release_db_id) = ids::db_id(&*db.read().await, &release_id)? else {
@@ -290,7 +290,9 @@ impl ReleasesModule {
             };
             let options =
                 release_service::SimilarReleaseOptions::for_principal(&principal, request.limit);
-            let Some(releases) = similar_in_vm(release_db_id, &options, provider_vm).await? else {
+            let Some(releases) =
+                release_service::similar_on(&calls, release_db_id, &options).await?
+            else {
                 return Ok(luau::Value::Nil);
             };
             let availability = services::catalog::Availability::of(&*db.read().await)?;
@@ -308,22 +310,6 @@ impl ReleasesModule {
             harmony_luau::serializable_to_luau_owned(releases)
         }))
     }
-}
-
-/// Dispatches to the providers on the VM making the call, which the executor
-/// is already running; queueing to it would deadlock.
-async fn similar_in_vm(
-    seed_db_id: DbId,
-    options: &release_service::SimilarReleaseOptions,
-    provider_vm: luau::Vm,
-) -> anyhow::Result<Option<Vec<lyra_db::Release>>> {
-    release_service::similar_with_dispatch(seed_db_id, options, move |_runtime, request| {
-        let provider_vm = provider_vm.clone();
-        async move {
-            crate::plugins::executor::dispatch_similar_releases_in_vm(provider_vm, request).await
-        }
-    })
-    .await
 }
 
 struct SimilarReleaseRequest {

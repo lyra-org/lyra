@@ -13,6 +13,7 @@ use crate::services::{
     covers::{
         AudioFolders,
         CoverSyncOptions,
+        ReleaseCoverSubject,
         forget_gone_covers,
         record_local_release_cover,
         sync_artist_cover,
@@ -22,13 +23,14 @@ use crate::services::{
         EntityContextError,
         build_entity_provider_context,
     },
+    plugin_dispatch::CallSource,
     providers::{
         EntityRefreshOptions,
         EntityRefreshResult,
         ProviderCallError,
         ProviderServiceError,
         RefreshTarget,
-        id_schemes,
+        registry_for,
     },
 };
 
@@ -52,13 +54,14 @@ pub(in crate::services::providers) fn resolve_library_id_for_entity(
         .find_map(|library| library.db_id))
 }
 
-pub(crate) async fn refresh_entity_metadata(
+pub(crate) async fn refresh_entity_metadata<S: CallSource>(
+    source: &S,
     target: RefreshTarget,
     options: EntityRefreshOptions,
 ) -> Result<EntityRefreshResult, ProviderServiceError> {
     let node_id = target.db_id;
 
-    let schemes = id_schemes().await;
+    let schemes = registry_for(source).await.read().await.id_schemes();
     let (entity_type, context, library_db_id) = {
         let db = STATE.db.read().await;
         if !target.holds(&db)? {
@@ -78,12 +81,18 @@ pub(crate) async fn refresh_entity_metadata(
     };
 
     let providers = read_active_providers().await?;
-    let refreshers = refresh_providers_for(&providers, entity_type).await;
-    let provider_options = passed_provider_options(&refreshers, &options.provider_options).await?;
+    let (refreshers, provider_options) = {
+        let registry = registry_for(source).await;
+        let registry = registry.read().await;
+        let refreshers = refresh_providers_for(&registry, &providers, entity_type);
+        let provider_options =
+            passed_provider_options(&registry, &refreshers, &options.provider_options)?;
+        (refreshers, provider_options)
+    };
     let mut providers_called = Vec::new();
     for (provider_id, provider_options) in refreshers.into_iter().zip(provider_options) {
         let context = context_with_options(context.clone(), provider_options);
-        match dispatch_refresh(&provider_id, entity_type, context).await {
+        match dispatch_refresh(source, &provider_id, entity_type, context).await {
             Ok(()) => providers_called.push(provider_id),
             Err(ProviderCallError::NotRegistered) => tracing::warn!(
                 provider_id,
@@ -109,12 +118,23 @@ pub(crate) async fn refresh_entity_metadata(
         && let Some(library_db_id) = library_db_id
         && !providers_called.is_empty()
     {
-        deduplicate_release_scope(library_db_id, &providers_called).await;
+        deduplicate_release_scope(
+            &*registry_for(source).await,
+            library_db_id,
+            &providers_called,
+        )
+        .await;
     }
 
     if !providers_called.is_empty() && !options.covers.skips() {
-        sync_cover_for_refreshed_entity(&target, entity_type, library_db_id, options.covers)
-            .await?;
+        sync_cover_for_refreshed_entity(
+            source,
+            &target,
+            entity_type,
+            library_db_id,
+            options.covers,
+        )
+        .await?;
     }
 
     Ok(EntityRefreshResult {
@@ -125,7 +145,8 @@ pub(crate) async fn refresh_entity_metadata(
 
 /// Fetches the covers of a refreshed entity, unless its target no longer holds, which the read
 /// here checks under the guard it reads with.
-async fn sync_cover_for_refreshed_entity(
+async fn sync_cover_for_refreshed_entity<S: CallSource>(
+    source: &S,
     target: &RefreshTarget,
     entity_type: EntityType,
     library_db_id: Option<DbId>,
@@ -169,11 +190,14 @@ async fn sync_cover_for_refreshed_entity(
             };
 
             let synced = sync_release_cover_for_tracks(
+                source,
                 &STATE.db.get(),
                 &folders,
-                &tracks,
-                &release,
-                &artists,
+                ReleaseCoverSubject {
+                    release: &release,
+                    tracks: &tracks,
+                    artists: &artists,
+                },
                 paths,
                 options,
             )
@@ -200,7 +224,7 @@ async fn sync_cover_for_refreshed_entity(
                 return Ok(());
             };
 
-            let synced = sync_artist_cover(&STATE.db.get(), &artist, paths, options, None)
+            let synced = sync_artist_cover(source, &STATE.db.get(), &artist, paths, options, None)
                 .await
                 .map_err(ProviderServiceError::Internal)?;
             forget_gone_covers(&STATE.db.get(), node_id)

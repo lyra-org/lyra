@@ -6,13 +6,14 @@
 use std::collections::HashMap;
 
 use lyra_db::Track;
+use tokio::sync::RwLock;
 
 use super::{
     DEFAULT_LIMIT,
     MAX_LIMIT,
-    MIX_DISPATCH_BUDGET,
     MixError,
     MixHandlerSpec,
+    MixRegistry,
     MixRequest,
     MixRequirements,
     MixSeedType,
@@ -20,16 +21,17 @@ use super::{
     MixViewer,
     builtin,
     finalize_mixer_tracks,
-    mix_registry,
     request::ResolvedSeeds,
 };
 use crate::services::{
     STATE,
     options::typed_options,
     plugin_dispatch::{
+        CallSource,
         DispatchNotStarted,
         MixHandlerRequest,
         MixHandlerTrack,
+        RuntimeCalls,
     },
 };
 
@@ -50,6 +52,7 @@ pub(super) struct MixerChoice {
 /// The enabled mixers whose handler for the request's shape covers it, or only the pinned one.
 /// Fails for an option an enabled mixer declares with another type.
 pub(super) async fn choose_mixers(
+    mixers: &RwLock<MixRegistry>,
     request: &MixRequest,
     requirements: &MixRequirements,
 ) -> Result<MixerChoice, MixError> {
@@ -57,7 +60,7 @@ pub(super) async fn choose_mixers(
         let db = STATE.db.read().await;
         lyra_db::mixers::get(&db)?
     };
-    let registry = mix_registry().read_owned().await;
+    let registry = mixers.read().await;
     let pinned = request.mixer.as_deref();
     if let Some(pinned) = pinned {
         if !registry.is_registered(pinned) {
@@ -193,7 +196,9 @@ pub(super) struct Dispatched {
 /// timeout, cut to what remains of the request's budget, and the explicit seeds followed by as
 /// many history seeds as its spec takes. A candidate whose current handler no longer covers the
 /// request is passed over. `Ok(None)` when none produced tracks.
-pub(super) async fn dispatch(
+pub(super) async fn dispatch<S: CallSource>(
+    source: &S,
+    deadline: tokio::time::Instant,
     candidates: &[Candidate],
     request: &MixRequest,
     requirements: &MixRequirements,
@@ -203,11 +208,9 @@ pub(super) async fn dispatch(
     if candidates.is_empty() {
         return Ok(None);
     }
-    let deadline = tokio::time::Instant::now() + MIX_DISPATCH_BUDGET;
 
     for (index, candidate) in candidates.iter().enumerate() {
-        let now = tokio::time::Instant::now();
-        if now >= deadline {
+        if tokio::time::Instant::now() >= deadline {
             tracing::warn!(
                 remaining = candidates.len() - index,
                 "mix dispatch budget exhausted"
@@ -215,13 +218,12 @@ pub(super) async fn dispatch(
             break;
         }
         let mixer_id = &candidate.mixer_id;
-        let Some(scope) = STATE.generation().latest() else {
-            tracing::debug!(mixer = %mixer_id, "no plugin runtime to reach the mixer, trying next");
+        let Some(calls) = source.current() else {
+            tracing::debug!(mixer = %mixer_id, "the mixer can't be reached, trying next");
             continue;
         };
-        let registration = scope
-            .mix()
-            .registry()
+        let registry = calls.mixers().await;
+        let registration = registry
             .read()
             .await
             .handler(mixer_id, request.shape)
@@ -232,7 +234,12 @@ pub(super) async fn dispatch(
             tracing::debug!(mixer = %mixer_id, "mixer has no handler for this mix now, trying next");
             continue;
         };
-        let timeout = (deadline - now).min(registration.timeout);
+        // Read after the wait for any transition, which comes out of the same budget.
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            continue;
+        }
+        let timeout = remaining.min(registration.timeout);
         let handler_request = MixHandlerRequest {
             handler: registration.handler,
             seeds: seeds.for_handler(registration.spec.max_seeds),
@@ -240,11 +247,7 @@ pub(super) async fn dispatch(
             limit: request.limit,
             options: candidate.options.clone(),
         };
-        let entries = match tokio::time::timeout(
-            timeout,
-            scope.dispatch().dispatch_mix_handler(handler_request),
-        )
-        .await
+        let entries = match tokio::time::timeout(timeout, calls.mix_handler(handler_request)).await
         {
             Ok(Ok(result)) => result.tracks,
             Ok(Err(err)) if DispatchNotStarted::caused(&err) => {
@@ -340,6 +343,7 @@ async fn tracks_from_mixer_result(entries: Vec<MixHandlerTrack>) -> anyhow::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::mix::MIX_DISPATCH_BUDGET;
     use crate::services::mix::MixHandlerRegistration;
 
     fn spec(seed_types: &[MixSeedType], max_seeds: usize, query: bool) -> MixHandlerSpec {
@@ -370,7 +374,7 @@ mod tests {
         mixer_id: &str,
         handler: crate::services::plugin_dispatch::PluginCallbackHandle,
     ) -> anyhow::Result<()> {
-        let registry = mix_registry();
+        let registry = crate::services::mix::mix_registry();
         let mut registry = registry.write().await;
         registry.register(
             crate::services::plugin_scope::PluginId::new(format!("{mixer_id}_plugin").as_str())?,
@@ -437,6 +441,8 @@ mod tests {
 
         let running = tokio::spawn(async move {
             dispatch(
+                &crate::services::plugin_dispatch::Published,
+                tokio::time::Instant::now() + MIX_DISPATCH_BUDGET,
                 &[candidate("first"), candidate("second")],
                 &MixRequest::default(),
                 &requirements,

@@ -24,7 +24,12 @@ use serde_json::Value;
 use std::sync::LazyLock;
 
 use crate::{
-    services::plugin_dispatch::MetadataRefreshRequest,
+    services::plugin_dispatch::{
+        CallSource,
+        MetadataRefreshRequest,
+        Published,
+        RuntimeCalls,
+    },
     services::providers::{
         ExternalIdsByScheme,
         IdSchemes,
@@ -35,6 +40,7 @@ use crate::{
         id_schemes,
         requirements_match,
         with_provider_call,
+        with_provider_call_on,
     },
 };
 use lyra_db::{
@@ -305,23 +311,25 @@ pub(crate) async fn search_provider(
 
     let result = with_provider_call(
         provider,
-        ProviderCallStage::MetadataRefresh,
+        ProviderCallStage::Search,
         |registry| {
             registry
                 .get_search_callback(provider, entity_type)
                 .copied()
                 .map(ProviderLookup::Call)
         },
-        |handler, scope| async move {
-            scope
-                .dispatch()
-                .dispatch_metadata_refresh(MetadataRefreshRequest {
-                    handler,
-                    context: serde_json::Value::String(query),
-                    deadline: std::time::Instant::now() + Duration::from_secs(300),
-                })
-                .await
-                .with_context(|| format!("provider search handler failed for '{provider}'"))
+        |handler, calls| {
+            let query = query.clone();
+            async move {
+                calls
+                    .metadata_refresh(MetadataRefreshRequest {
+                        handler,
+                        context: serde_json::Value::String(query),
+                        deadline: std::time::Instant::now() + Duration::from_secs(300),
+                    })
+                    .await
+                    .with_context(|| format!("provider search handler failed for '{provider}'"))
+            }
         },
     )
     .await
@@ -349,6 +357,7 @@ pub(crate) async fn search_provider(
                 None
             } else {
                 match resolve_provider_cover_url(
+                    &Published,
                     &provider_id,
                     entity_type,
                     &serde_json::json!({ "external_ids": external_ids }),
@@ -666,14 +675,15 @@ pub(crate) fn artist_context_value(
     Ok(context)
 }
 
-async fn resolve_provider_cover_url(
+async fn resolve_provider_cover_url<S: CallSource>(
+    source: &S,
     provider_id: &str,
     entity_type: EntityType,
     context: &Value,
     bypass_cache: bool,
 ) -> Result<Option<String>> {
     Ok(
-        search_provider_cover(provider_id, entity_type, context, bypass_cache)
+        search_provider_cover(source, provider_id, entity_type, context, bypass_cache)
             .await?
             .and_then(|result| {
                 result
@@ -683,20 +693,36 @@ async fn resolve_provider_cover_url(
     )
 }
 
-pub(crate) async fn resolve_provider_release_cover_url(
+pub(crate) async fn resolve_provider_release_cover_url<S: CallSource>(
+    source: &S,
     provider_id: &str,
     context: &Value,
     bypass_cache: bool,
 ) -> Result<Option<String>> {
-    resolve_provider_cover_url(provider_id, EntityType::Release, context, bypass_cache).await
+    resolve_provider_cover_url(
+        source,
+        provider_id,
+        EntityType::Release,
+        context,
+        bypass_cache,
+    )
+    .await
 }
 
-pub(crate) async fn resolve_provider_artist_cover_url(
+pub(crate) async fn resolve_provider_artist_cover_url<S: CallSource>(
+    source: &S,
     provider_id: &str,
     context: &Value,
     bypass_cache: bool,
 ) -> Result<Option<String>> {
-    resolve_provider_cover_url(provider_id, EntityType::Artist, context, bypass_cache).await
+    resolve_provider_cover_url(
+        source,
+        provider_id,
+        EntityType::Artist,
+        context,
+        bypass_cache,
+    )
+    .await
 }
 
 async fn search_cover_candidates_for_contexts(
@@ -707,7 +733,15 @@ async fn search_cover_candidates_for_contexts(
 ) -> Result<Vec<super::ProviderCoverSearchResult>> {
     let mut results = Vec::new();
     for (provider_id, context) in provider_contexts {
-        match search_provider_cover(&provider_id, entity_type, &context, bypass_cache).await {
+        match search_provider_cover(
+            &Published,
+            &provider_id,
+            entity_type,
+            &context,
+            bypass_cache,
+        )
+        .await
+        {
             Ok(Some(result)) => results.push(result),
             Ok(None) => {}
             Err(err) => {
@@ -724,7 +758,8 @@ async fn search_cover_candidates_for_contexts(
     Ok(results)
 }
 
-async fn search_provider_cover(
+async fn search_provider_cover<S: CallSource>(
+    source: &S,
     provider_id: &str,
     entity_type: EntityType,
     context: &Value,
@@ -736,7 +771,8 @@ async fn search_provider_cover(
     }
 
     let handler_context = cover_handler_context(context, bypass_cache);
-    let dispatch = match with_provider_call(
+    let dispatch = match with_provider_call_on(
+        source,
         provider_id,
         ProviderCallStage::CoverSearch,
         |registry| {
@@ -747,26 +783,27 @@ async fn search_provider_cover(
                 ProviderLookup::Answer(None)
             })
         },
-        |spec, scope| async move {
-            let timeout = spec.timeout;
-            tokio::time::timeout(
-                timeout,
-                scope
-                    .dispatch()
-                    .dispatch_metadata_refresh(MetadataRefreshRequest {
+        |spec, calls| {
+            let handler_context = handler_context.clone();
+            async move {
+                let timeout = spec.timeout;
+                tokio::time::timeout(
+                    timeout,
+                    calls.metadata_refresh(MetadataRefreshRequest {
                         handler: spec.handler,
                         context: handler_context,
                         deadline: std::time::Instant::now() + timeout,
                     }),
-            )
-            .await
-            .with_context(|| {
-                format!(
-                    "provider cover handler for '{provider_id}' timed out after {}ms",
-                    timeout.as_millis()
                 )
-            })?
-            .map(Some)
+                .await
+                .with_context(|| {
+                    format!(
+                        "provider cover handler for '{provider_id}' timed out after {}ms",
+                        timeout.as_millis()
+                    )
+                })?
+                .map(Some)
+            }
         },
     )
     .await

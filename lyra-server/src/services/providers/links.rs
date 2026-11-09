@@ -312,6 +312,7 @@ enum LinkSlot {
 /// Resolves links for every target, calling `dispatch` at most once per
 /// provider. Generator failures only drop the affected links.
 pub(crate) async fn resolve_id_links<F, Fut>(
+    cache: &Mutex<IdLinkCache>,
     targets: Vec<IdLinkTarget>,
     generators: &IdLinkGenerators,
     dispatch: F,
@@ -320,11 +321,7 @@ where
     F: Fn(String, Vec<IdLinkCall>) -> Fut,
     Fut: Future<Output = anyhow::Result<Vec<IdLinkCallResult>>>,
 {
-    let cache = crate::services::STATE
-        .generation()
-        .latest()
-        .map_or_else(Default::default, |scope| scope.providers().id_link_cache());
-    resolve_with_cache(&cache, targets, generators, dispatch).await
+    resolve_with_cache(cache, targets, generators, dispatch).await
 }
 
 async fn resolve_with_cache<F, Fut>(

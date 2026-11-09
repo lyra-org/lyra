@@ -33,7 +33,7 @@ pub(crate) use similarity::{
     MAX_SIMILAR_RELEASE_LIMIT,
     SimilarReleaseOptions,
     similar,
-    similar_with_dispatch,
+    similar_on,
 };
 
 #[derive(Clone, Copy, Debug, Default)]

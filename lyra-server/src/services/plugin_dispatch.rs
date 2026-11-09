@@ -4,6 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 use std::{
+    future::Future,
     sync::{
         Arc,
         atomic::{
@@ -20,10 +21,18 @@ use anyhow::{
 };
 use futures::future::BoxFuture;
 
+use tokio::sync::RwLock;
+
 use crate::services::{
+    STATE,
     listens::ListenUpdatePayload,
-    mix::MixSeed,
+    mix::{
+        MixRegistry,
+        MixSeed,
+    },
     playback_sessions::PlaybackUpdatePayload,
+    plugin_scope::RuntimeScope,
+    providers::ProviderRegistry,
 };
 
 /// A handler a plugin registered, as services hold it: the runtime that
@@ -85,6 +94,89 @@ pub(crate) trait PluginDispatch: Send + Sync {
 
     /// Lossy like [`Self::dispatch_playback_update`].
     fn dispatch_listen_update(&self, payload: ListenUpdatePayload) -> Result<()>;
+}
+
+/// A handler call the runtime can run, with the registries its handlers are read from.
+pub(crate) trait RuntimeCalls {
+    fn providers(&self) -> impl Future<Output = Arc<RwLock<ProviderRegistry>>>;
+
+    fn mixers(&self) -> impl Future<Output = Arc<RwLock<MixRegistry>>>;
+
+    fn metadata_refresh(
+        &self,
+        request: MetadataRefreshRequest,
+    ) -> impl Future<Output = Result<MetadataRefreshResult>>;
+
+    fn mix_handler(
+        &self,
+        request: MixHandlerRequest,
+    ) -> impl Future<Output = Result<MixHandlerResult>>;
+
+    fn similar_releases(
+        &self,
+        request: SimilarReleasesDispatchRequest,
+    ) -> impl Future<Output = Result<SimilarReleasesDispatchResult>>;
+}
+
+/// Where a service gets its [`RuntimeCalls`]: the published runtime, queued, or the VM making the
+/// call, whose executor can't serve a queue while it is the one waiting.
+pub(crate) trait CallSource {
+    type Calls: RuntimeCalls;
+
+    /// The calls as they stand; `None` when no runtime can make them.
+    fn current(&self) -> Option<Self::Calls>;
+}
+
+/// The published runtime, as seen from outside any VM.
+#[derive(Clone)]
+pub(crate) struct Published;
+
+impl CallSource for Published {
+    type Calls = PublishedCalls;
+
+    fn current(&self) -> Option<PublishedCalls> {
+        let scope = STATE.generation().latest()?;
+        Some(PublishedCalls { scope })
+    }
+}
+
+/// One published scope's handlers and dispatcher, which always belong to each other.
+pub(crate) struct PublishedCalls {
+    scope: Arc<RuntimeScope>,
+}
+
+impl RuntimeCalls for PublishedCalls {
+    async fn providers(&self) -> Arc<RwLock<ProviderRegistry>> {
+        self.scope.providers().registry()
+    }
+
+    async fn mixers(&self) -> Arc<RwLock<MixRegistry>> {
+        self.scope.mix().registry()
+    }
+
+    async fn metadata_refresh(
+        &self,
+        request: MetadataRefreshRequest,
+    ) -> Result<MetadataRefreshResult> {
+        self.scope
+            .dispatch()
+            .dispatch_metadata_refresh(request)
+            .await
+    }
+
+    async fn mix_handler(&self, request: MixHandlerRequest) -> Result<MixHandlerResult> {
+        self.scope.dispatch().dispatch_mix_handler(request).await
+    }
+
+    async fn similar_releases(
+        &self,
+        request: SimilarReleasesDispatchRequest,
+    ) -> Result<SimilarReleasesDispatchResult> {
+        self.scope
+            .dispatch()
+            .dispatch_similar_releases(request)
+            .await
+    }
 }
 
 #[derive(Clone, Debug)]

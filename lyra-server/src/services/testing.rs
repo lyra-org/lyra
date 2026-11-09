@@ -159,6 +159,61 @@ pub(crate) fn publish_dispatch(dispatch: std::sync::Arc<dyn PluginDispatch>) {
         .replace(Some(std::sync::Arc::new(current.republished(dispatch))));
 }
 
+/// Answers similar-release calls with `dispatch`, reading handlers from the published scope.
+#[cfg(test)]
+#[derive(Clone)]
+pub(crate) struct ClosureCalls<F>(pub(crate) F);
+
+#[cfg(test)]
+impl<F, Fut> crate::services::plugin_dispatch::CallSource for ClosureCalls<F>
+where
+    F: Fn(SimilarReleasesDispatchRequest) -> Fut + Clone,
+    Fut: std::future::Future<Output = anyhow::Result<SimilarReleasesDispatchResult>>,
+{
+    type Calls = Self;
+
+    fn current(&self) -> Option<Self> {
+        Some(self.clone())
+    }
+}
+
+#[cfg(test)]
+impl<F, Fut> crate::services::plugin_dispatch::RuntimeCalls for ClosureCalls<F>
+where
+    F: Fn(SimilarReleasesDispatchRequest) -> Fut + Clone,
+    Fut: std::future::Future<Output = anyhow::Result<SimilarReleasesDispatchResult>>,
+{
+    async fn providers(
+        &self,
+    ) -> std::sync::Arc<tokio::sync::RwLock<crate::services::providers::ProviderRegistry>> {
+        crate::services::providers::provider_registry()
+    }
+
+    async fn mixers(
+        &self,
+    ) -> std::sync::Arc<tokio::sync::RwLock<crate::services::mix::MixRegistry>> {
+        crate::services::mix::mix_registry()
+    }
+
+    async fn metadata_refresh(
+        &self,
+        _request: MetadataRefreshRequest,
+    ) -> anyhow::Result<MetadataRefreshResult> {
+        anyhow::bail!("the closure calls only answer similar releases")
+    }
+
+    async fn mix_handler(&self, _request: MixHandlerRequest) -> anyhow::Result<MixHandlerResult> {
+        anyhow::bail!("the closure calls only answer similar releases")
+    }
+
+    async fn similar_releases(
+        &self,
+        request: SimilarReleasesDispatchRequest,
+    ) -> anyhow::Result<SimilarReleasesDispatchResult> {
+        (self.0)(request).await
+    }
+}
+
 static RUNTIME_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 /// Held for the whole test; removes the data directory of the state initialized under it before

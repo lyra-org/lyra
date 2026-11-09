@@ -157,8 +157,10 @@ pub(crate) use registry::{
     library_refresh_locks,
     lyrics_in_flight,
     provider_registry,
+    registry_for,
     sync_locks,
     with_provider_call,
+    with_provider_call_on,
 };
 pub(crate) use requirements::{
     requirements_match,

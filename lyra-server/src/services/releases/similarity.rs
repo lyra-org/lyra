@@ -8,7 +8,6 @@ use std::{
         HashMap,
         HashSet,
     },
-    future::Future,
     sync::Arc,
     time::{
         Duration,
@@ -20,23 +19,23 @@ use agdb::{
     DbAny,
     DbId,
 };
-use anyhow::{
-    Context,
-    Result,
-};
+use anyhow::Result;
 use serde_json::Value;
+
+use tokio::sync::RwLock;
 
 use crate::{
     services::STATE,
     services::auth::Principal,
     services::plugin_dispatch::{
+        CallSource,
         DispatchCancellation,
         DispatchNotStarted,
-        PluginDispatch,
+        Published,
+        RuntimeCalls,
         SimilarReleaseCandidate,
         SimilarReleaseExternalRef,
         SimilarReleasesDispatchRequest,
-        SimilarReleasesDispatchResult,
     },
     services::{
         EntityType,
@@ -46,7 +45,7 @@ use crate::{
             ProviderRegistry,
             ProviderSimilarReleasesSpec,
             active_providers,
-            provider_registry,
+            registry_for,
             requirements_match,
         },
     },
@@ -116,9 +115,9 @@ impl ReleaseIdRules {
 
 /// A provider's handler and runtime as one registry read found them, with the id rules of that
 /// read when they differ from the ones the request holds.
-struct ResolvedProvider {
+struct ResolvedProvider<C> {
     spec: ProviderSimilarReleasesSpec,
-    runtime: Option<Arc<dyn PluginDispatch>>,
+    calls: C,
     changed_id_rules: Option<ReleaseIdRules>,
 }
 
@@ -138,31 +137,21 @@ pub(crate) async fn similar(
     seed_db_id: DbId,
     options: &SimilarReleaseOptions,
 ) -> Result<Option<Vec<Release>>> {
-    similar_with_dispatch(seed_db_id, options, |runtime, request| async move {
-        runtime
-            .context("plugin runtime is not initialized")?
-            .dispatch_similar_releases(request)
-            .await
-    })
-    .await
+    similar_on(&Published, seed_db_id, options).await
 }
 
-pub(crate) async fn similar_with_dispatch<F, Fut>(
+pub(crate) async fn similar_on<S: CallSource>(
+    source: &S,
     seed_db_id: DbId,
     options: &SimilarReleaseOptions,
-    dispatch_provider: F,
-) -> Result<Option<Vec<Release>>>
-where
-    F: Fn(Option<Arc<dyn PluginDispatch>>, SimilarReleasesDispatchRequest) -> Fut + Clone,
-    Fut: Future<Output = Result<SimilarReleasesDispatchResult>>,
-{
+) -> Result<Option<Vec<Release>>> {
     let limit = options.limit.min(MAX_SIMILAR_RELEASE_LIMIT);
     if limit == 0 {
         return Ok(Some(Vec::new()));
     }
 
-    let provider_ids = similar_provider_ids().await?;
-    let mut id_rules = ReleaseIdRules::of(&*provider_registry().read().await);
+    let provider_ids = similar_provider_ids(&*registry_for(source).await).await?;
+    let mut id_rules = ReleaseIdRules::of(&*registry_for(source).await.read().await);
     let Some(mut seed) = read_seed(seed_db_id, limit, &id_rules.schemes, options).await? else {
         return Ok(None);
     };
@@ -179,7 +168,7 @@ where
         // Executor-dispatched handlers are already serialized by the executor, so this takes no
         // provider call lock; holding one while waiting for it inverts the lock order with in-VM
         // calls.
-        let Some(provider) = resolve_provider(&provider_id, &id_rules).await else {
+        let Some(provider) = resolve_provider(source, &provider_id, &id_rules).await else {
             tracing::debug!(provider_id, "similar releases provider is not registered");
             continue;
         };
@@ -208,9 +197,7 @@ where
         let context = context.clone();
         let cancellation = DispatchCancellation::default();
         let cancellation_for_call = cancellation.clone();
-        let runtime = provider.runtime.clone();
         let provider_id_for_call = provider_id.clone();
-        let dispatch_provider = dispatch_provider.clone();
         let request = SimilarReleasesDispatchRequest {
             provider_id: provider_id_for_call,
             handler: callback,
@@ -219,7 +206,8 @@ where
             cancellation: cancellation_for_call,
             max_candidates: MAX_PROVIDER_CANDIDATES,
         };
-        let dispatch = tokio::time::timeout(remaining, dispatch_provider(runtime, request)).await;
+        let dispatch =
+            tokio::time::timeout(remaining, provider.calls.similar_releases(request)).await;
 
         let dispatch = match dispatch {
             Ok(Ok(result)) => result,
@@ -303,12 +291,12 @@ where
     Ok(Some(releases))
 }
 
-async fn similar_provider_ids() -> Result<Vec<String>> {
+async fn similar_provider_ids(registry: &RwLock<ProviderRegistry>) -> Result<Vec<String>> {
     let configs = {
         let db = STATE.db.read().await;
         active_providers(&db)?
     };
-    let registry = provider_registry().read_owned().await;
+    let registry = registry.read().await;
     Ok(configs
         .iter()
         .filter(|config| registry.has_similar_releases_handler(&config.provider_id))
@@ -316,15 +304,21 @@ async fn similar_provider_ids() -> Result<Vec<String>> {
         .collect())
 }
 
-async fn resolve_provider(provider_id: &str, held: &ReleaseIdRules) -> Option<ResolvedProvider> {
-    let scope = STATE.generation().latest()?;
-    let registry = scope.providers().registry().read_owned().await;
+async fn resolve_provider<S: CallSource>(
+    source: &S,
+    provider_id: &str,
+    held: &ReleaseIdRules,
+) -> Option<ResolvedProvider<S::Calls>> {
+    let calls = source.current()?;
+    let registry = calls.providers().await.read_owned().await;
     let spec = registry.get_similar_releases_handler(provider_id)?.clone();
+    let changed_id_rules = (!Arc::ptr_eq(&registry.id_schemes(), &held.schemes))
+        .then(|| ReleaseIdRules::of(&registry));
+    drop(registry);
     Some(ResolvedProvider {
         spec,
-        runtime: Some(scope.dispatch().clone()),
-        changed_id_rules: (!Arc::ptr_eq(&registry.id_schemes(), &held.schemes))
-            .then(|| ReleaseIdRules::of(&registry)),
+        calls,
+        changed_id_rules,
     })
 }
 
@@ -588,6 +582,7 @@ fn local_release(db: &DbAny, release_id: &str) -> Result<Option<DbId>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::plugin_dispatch::SimilarReleasesDispatchResult;
     use anyhow::anyhow;
     use lyra_db::fixtures::{
         connect,
@@ -650,54 +645,58 @@ mod tests {
         }
 
         let contexts = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let releases = similar_with_dispatch(seed, &SimilarReleaseOptions::default(), {
-            let contexts = contexts.clone();
-            move |_runtime, request: SimilarReleasesDispatchRequest| {
+        let releases = similar_on(
+            &crate::services::testing::ClosureCalls({
                 let contexts = contexts.clone();
-                async move {
-                    if request.provider_id == "second" {
-                        contexts
-                            .lock()
-                            .expect("contexts")
-                            .push((request.handler.handler_id, request.context));
-                        return Ok(SimilarReleasesDispatchResult {
-                            candidates: vec![SimilarReleaseCandidate::External(
-                                SimilarReleaseExternalRef {
-                                    provider_id: "second".to_string(),
+                move |request: SimilarReleasesDispatchRequest| {
+                    let contexts = contexts.clone();
+                    async move {
+                        if request.provider_id == "second" {
+                            contexts
+                                .lock()
+                                .expect("contexts")
+                                .push((request.handler.handler_id, request.context));
+                            return Ok(SimilarReleasesDispatchResult {
+                                candidates: vec![SimilarReleaseCandidate::External(
+                                    SimilarReleaseExternalRef {
+                                        provider_id: "second".to_string(),
+                                        id_type: "new_id".to_string(),
+                                        id_value: "similar".to_string(),
+                                    },
+                                )],
+                            });
+                        }
+                        teardown_plugin_providers(&PluginId::new("second_plugin")?).await;
+                        let registry = provider_registry();
+                        let mut registry = registry.write().await;
+                        registry.register(
+                            PluginId::new("second_plugin")?,
+                            "second".to_string(),
+                            None,
+                        )?;
+                        registry.set_similar_releases_handler("second", spec(3));
+                        registry
+                            .set_id_registration(
+                                "second",
+                                ProviderIdSpec {
                                     id_type: "new_id".to_string(),
-                                    id_value: "similar".to_string(),
+                                    entity: EntityType::Release,
+                                    unique: false,
+                                    scheme: "second:new".to_string(),
+                                    label: None,
                                 },
-                            )],
-                        });
+                                || None,
+                            )
+                            .map_err(|err| anyhow!(err))?;
+                        Ok(SimilarReleasesDispatchResult {
+                            candidates: Vec::new(),
+                        })
                     }
-                    teardown_plugin_providers(&PluginId::new("second_plugin")?).await;
-                    let registry = provider_registry();
-                    let mut registry = registry.write().await;
-                    registry.register(
-                        PluginId::new("second_plugin")?,
-                        "second".to_string(),
-                        None,
-                    )?;
-                    registry.set_similar_releases_handler("second", spec(3));
-                    registry
-                        .set_id_registration(
-                            "second",
-                            ProviderIdSpec {
-                                id_type: "new_id".to_string(),
-                                entity: EntityType::Release,
-                                unique: false,
-                                scheme: "second:new".to_string(),
-                                label: None,
-                            },
-                            || None,
-                        )
-                        .map_err(|err| anyhow!(err))?;
-                    Ok(SimilarReleasesDispatchResult {
-                        candidates: Vec::new(),
-                    })
                 }
-            }
-        })
+            }),
+            seed,
+            &SimilarReleaseOptions::default(),
+        )
         .await?
         .ok_or_else(|| anyhow!("seed missing"))?;
 

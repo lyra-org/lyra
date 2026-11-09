@@ -30,6 +30,11 @@ mod dispatch;
 mod registry;
 mod request;
 
+use crate::services::plugin_dispatch::{
+    CallSource,
+    Published,
+    RuntimeCalls,
+};
 pub(crate) use admin::{
     MixerAdminError,
     MixerUpdate,
@@ -123,6 +128,17 @@ pub(crate) async fn mix(
     request: &MixRequest,
     viewer: &MixViewer,
 ) -> Result<Vec<MixedTrack>, MixError> {
+    let deadline = tokio::time::Instant::now() + MIX_DISPATCH_BUDGET;
+    mix_on(&Published, deadline, request, viewer).await
+}
+
+/// [`mix`], reaching mixers through `source`.
+pub(crate) async fn mix_on<S: CallSource>(
+    source: &S,
+    deadline: tokio::time::Instant,
+    request: &MixRequest,
+    viewer: &MixViewer,
+) -> Result<Vec<MixedTrack>, MixError> {
     request.validate()?;
     let resolved = {
         let db = STATE.db.read().await;
@@ -132,7 +148,11 @@ pub(crate) async fn mix(
     let builtin = (request.mixer.is_none() && request.shape == MixShape::Blend)
         .then(builtin::spec)
         .filter(|spec| spec.covers(&requirements));
-    let choice = dispatch::choose_mixers(request, &requirements).await?;
+    let mixers = match source.current() {
+        Some(calls) => calls.mixers().await,
+        None => Default::default(),
+    };
+    let choice = dispatch::choose_mixers(&mixers, request, &requirements).await?;
     if choice.candidates.is_empty() && builtin.is_none() {
         return Err(dispatch::unsupported(request, &requirements, &choice));
     }
@@ -141,6 +161,8 @@ pub(crate) async fn mix(
     }
 
     let dispatched = dispatch::dispatch(
+        source,
+        deadline,
         &choice.candidates,
         request,
         &requirements,

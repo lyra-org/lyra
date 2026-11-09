@@ -3,7 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use anyhow::Result;
+use anyhow::{
+    Context,
+    Result,
+};
 use harmony_core::{
     LocalScheduler,
     UserDataBinding,
@@ -16,6 +19,9 @@ use crate::services::plugin_dispatch::{
     MixHandlerResult,
     MixHandlerTrack,
 };
+
+/// How long a mixer handler may run. Requests cut it to their own budget.
+const MIX_HANDLER_BUDGET: std::time::Duration = std::time::Duration::from_secs(300);
 
 impl PluginExecutor {
     pub(super) fn start_mix_handler(
@@ -39,7 +45,7 @@ impl PluginExecutor {
             .map(|(handler, _, _)| handler.mixer_id.clone())
             .unwrap_or_default();
         self.start_callback(
-            std::time::Instant::now() + std::time::Duration::from_secs(300),
+            std::time::Instant::now() + MIX_HANDLER_BUDGET,
             super::callbacks::CallbackReply::Mix { reply, mixer_id },
             permit,
             |timeout, completion| {
@@ -65,6 +71,29 @@ impl PluginExecutor {
     ) -> Result<MixHandlerResult> {
         self.drive_callback(|reply, permit| self.start_mix_handler(request, reply, permit))
     }
+}
+
+/// Runs the mixer on `vm`, the VM making the call, as a queued dispatch would.
+pub(super) async fn dispatch_mix_in_vm(
+    vm: &luau::Vm,
+    request: MixHandlerRequest,
+) -> Result<MixHandlerResult> {
+    let handler = vm
+        .data()
+        .get::<crate::plugins::mix::MixCallbackRegistry>()?
+        .get(request.handler)?;
+    let argument = mix_context_value(vm, &handler, &request)?;
+    let values = super::metadata::run_function(
+        vm,
+        &handler.function,
+        handler.context.clone(),
+        vec![argument],
+        MIX_HANDLER_BUDGET,
+        std::time::Instant::now() + MIX_HANDLER_BUDGET,
+    )
+    .await?
+    .context("mixer handler did not complete within its budget")?;
+    parse_mix_result(&handler.mixer_id, values)
 }
 
 fn mix_context_value(

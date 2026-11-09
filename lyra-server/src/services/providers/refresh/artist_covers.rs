@@ -5,6 +5,7 @@
 
 use agdb::DbId;
 
+use crate::services::plugin_dispatch::Published;
 use crate::services::{
     EntityType,
     STATE,
@@ -80,7 +81,11 @@ async fn artist_refresher_ids(provider_filter: Option<&str>) -> Vec<String> {
             })
             .collect::<Vec<_>>()
     };
-    refresh_providers_for(&providers, EntityType::Artist).await
+    refresh_providers_for(
+        &*provider_registry().read().await,
+        &providers,
+        EntityType::Artist,
+    )
 }
 
 /// The listed artist as it is now, or none once it is gone or its id went to another node.
@@ -134,7 +139,9 @@ async fn refresh_and_sync_artist_cover(
         Ok(context) => {
             for provider_id in &refreshers.provider_ids {
                 progress.check_cancelled()?;
-                match dispatch_refresh(provider_id, EntityType::Artist, context.clone()).await {
+                match dispatch_refresh(&Published, provider_id, EntityType::Artist, context.clone())
+                    .await
+                {
                     Ok(()) => {}
                     Err(ProviderCallError::NotRegistered) => {
                         refreshers.unregistered.note(provider_id);
@@ -161,8 +168,15 @@ async fn refresh_and_sync_artist_cover(
     let Some(artist) = current_artist(listed).await? else {
         return Ok(ArtistCoverOutcome::Gone);
     };
-    let got_cover =
-        sync_artist_cover(&STATE.db.get(), &artist, paths, options, provider_filter).await?;
+    let got_cover = sync_artist_cover(
+        &Published,
+        &STATE.db.get(),
+        &artist,
+        paths,
+        options,
+        provider_filter,
+    )
+    .await?;
     if provider_missing && !got_cover {
         return Ok(ArtistCoverOutcome::ProviderNotRegistered);
     }

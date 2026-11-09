@@ -32,10 +32,15 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use crate::services::libraries::MediaRoots;
+use crate::services::plugin_dispatch::{
+    CallSource,
+    Published,
+};
 use crate::services::providers::{
     active_providers,
     id_schemes,
     provider_registry,
+    registry_for,
 };
 use lyra_db::{
     Artist,
@@ -448,20 +453,31 @@ async fn save_provider_cover(
     Ok(Some(PathBuf::from(cover.path)))
 }
 
-pub(crate) async fn sync_release_cover_for_tracks(
+/// The release a cover sync is for, with the tracks and artists it reads around it.
+pub(crate) struct ReleaseCoverSubject<'a> {
+    pub(crate) release: &'a Release,
+    pub(crate) tracks: &'a [Track],
+    pub(crate) artists: &'a [Artist],
+}
+
+pub(crate) async fn sync_release_cover_for_tracks<S: CallSource>(
+    source: &S,
     db: &lyra_db::DbAsync,
     folders: &Arc<AudioFolders>,
-    tracks: &[Track],
-    release: &Release,
-    artists: &[Artist],
+    subject: ReleaseCoverSubject<'_>,
     paths: CoverPaths<'_>,
     options: CoverSyncOptions,
 ) -> Result<bool> {
+    let ReleaseCoverSubject {
+        release,
+        tracks,
+        artists,
+    } = subject;
     let Some(release_id) = release.db_id.clone().map(Into::<DbId>::into) else {
         return Ok(false);
     };
 
-    let schemes = id_schemes().await;
+    let schemes = registry_for(source).await.read().await.id_schemes();
     let (dirs, files, rejected_local, roots) = {
         let db_read = db.read().await;
         let dirs =
@@ -509,6 +525,7 @@ pub(crate) async fn sync_release_cover_for_tracks(
 
     for (provider_id, release_context) in provider_contexts {
         let cover_url = match resolve_provider_release_cover_url(
+            source,
             &provider_id,
             &release_context,
             options.bypass_cache,
@@ -566,7 +583,8 @@ pub(crate) async fn sync_release_cover_for_tracks(
     Ok(false)
 }
 
-pub(crate) async fn sync_artist_cover(
+pub(crate) async fn sync_artist_cover<S: CallSource>(
+    source: &S,
     db: &lyra_db::DbAsync,
     artist: &Artist,
     paths: CoverPaths<'_>,
@@ -577,7 +595,7 @@ pub(crate) async fn sync_artist_cover(
         return Ok(false);
     };
 
-    let schemes = id_schemes().await;
+    let schemes = registry_for(source).await.read().await.id_schemes();
     let files = stored_cover_files(&*db.read().await, artist_id, None)?;
     let has_cover = search_cover_files(files).await?;
     let (basis, provider_contexts) = {
@@ -602,6 +620,7 @@ pub(crate) async fn sync_artist_cover(
 
     for (provider_id, artist_context) in provider_contexts {
         let cover_url = match resolve_provider_artist_cover_url(
+            source,
             &provider_id,
             &artist_context,
             options.bypass_cache,
@@ -1128,6 +1147,7 @@ pub(crate) async fn sync_release_covers_for_library(
         }
         for (provider_id, release_context) in &ctx.provider_contexts {
             let cover_url = match resolve_provider_release_cover_url(
+                &Published,
                 provider_id,
                 release_context,
                 options.bypass_cache,
@@ -1712,11 +1732,14 @@ mod tests {
         };
 
         let synced = sync_release_cover_for_tracks(
+            &crate::services::plugin_dispatch::Published,
             &db,
             &Arc::default(),
-            &[],
-            &release,
-            &[],
+            ReleaseCoverSubject {
+                release: &release,
+                tracks: &[],
+                artists: &[],
+            },
             CoverPaths {
                 library_root: None,
                 covers_root: Path::new("covers"),

@@ -495,6 +495,10 @@ fn plugin_ids(manifests: &[harmony_core::plugin::PluginManifest]) -> Vec<PluginI
 }
 
 #[cfg(test)]
+#[path = "lifecycle/reentry_tests.rs"]
+mod reentry_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::plugins::testing::published_runtime;

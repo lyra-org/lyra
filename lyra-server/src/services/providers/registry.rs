@@ -37,14 +37,17 @@ use crate::services::metadata::layers::{
     MANUAL_SOURCE_ID,
 };
 use crate::services::plugin_dispatch::{
+    CallSource,
     DispatchNotStarted,
     PluginCallbackHandle,
+    Published,
+    PublishedCalls,
     RefreshTargetGone,
+    RuntimeCalls,
 };
 use crate::services::plugin_scope::{
     PluginId,
     PluginScopedInner,
-    RuntimeScope,
     ScopedRegistry,
 };
 
@@ -155,6 +158,7 @@ pub(crate) enum ProviderCallStage {
     MetadataRefresh,
     CoverSearch,
     Lyrics,
+    Search,
 }
 
 impl ProviderCallStage {
@@ -163,6 +167,7 @@ impl ProviderCallStage {
             Self::MetadataRefresh => "metadata_refresh",
             Self::CoverSearch => "cover_search",
             Self::Lyrics => "lyrics",
+            Self::Search => "search",
         }
     }
 }
@@ -213,21 +218,35 @@ pub(crate) async fn with_provider_call<H, T, L, F, Fut>(
 ) -> Result<T, ProviderCallError>
 where
     L: Fn(&ProviderRegistry) -> Option<ProviderLookup<H, T>>,
-    F: FnOnce(H, Arc<RuntimeScope>) -> Fut,
+    F: FnOnce(H, PublishedCalls) -> Fut,
+    Fut: Future<Output = Result<T>>,
+{
+    with_provider_call_on(&Published, provider_id, stage, lookup, call).await
+}
+
+/// [`with_provider_call`] through `source`. The call lock is taken wherever the handler runs: it
+/// keeps one provider's calls from overlapping.
+pub(crate) async fn with_provider_call_on<S, H, T, L, F, Fut>(
+    source: &S,
+    provider_id: &str,
+    stage: ProviderCallStage,
+    lookup: L,
+    call: F,
+) -> Result<T, ProviderCallError>
+where
+    S: CallSource,
+    L: Fn(&ProviderRegistry) -> Option<ProviderLookup<H, T>>,
+    F: FnOnce(H, S::Calls) -> Fut,
     Fut: Future<Output = Result<T>>,
 {
     let generation = crate::services::STATE.generation();
-    let read_lookup = async || {
-        let scope = generation
-            .latest()
-            .ok_or(ProviderCallError::NotRegistered)?;
-        let found = {
-            let registry = scope.providers().registry.read().await;
-            lookup(&registry).ok_or(ProviderCallError::NotRegistered)?
-        };
-        Ok::<_, ProviderCallError>((found, scope))
+    let read_lookup = async |calls: &S::Calls| {
+        let registry = calls.providers().await;
+        lookup(&*registry.read().await).ok_or(ProviderCallError::NotRegistered)
     };
-    if let (ProviderLookup::Answer(answer), _) = read_lookup().await? {
+
+    let calls = source.current().ok_or(ProviderCallError::NotRegistered)?;
+    if let ProviderLookup::Answer(answer) = read_lookup(&calls).await? {
         return Ok(answer);
     }
 
@@ -250,16 +269,25 @@ where
         "provider call lock acquired"
     );
 
-    let (found, scope) = read_lookup().await?;
-    match found {
-        ProviderLookup::Call(handler) => call(handler, scope).await.map_err(|error| {
-            if DispatchNotStarted::caused(&error) {
-                ProviderCallError::NotRegistered
-            } else {
-                ProviderCallError::of_handler(error)
-            }
-        }),
-        ProviderLookup::Answer(answer) => Ok(answer),
+    let calls = source.current().ok_or(ProviderCallError::NotRegistered)?;
+    let handler = match read_lookup(&calls).await? {
+        ProviderLookup::Call(handler) => handler,
+        ProviderLookup::Answer(answer) => return Ok(answer),
+    };
+    call(handler, calls).await.map_err(|error| {
+        if DispatchNotStarted::caused(&error) {
+            ProviderCallError::NotRegistered
+        } else {
+            ProviderCallError::of_handler(error)
+        }
+    })
+}
+
+/// The registry `source` reads handlers from, empty before anything is published.
+pub(crate) async fn registry_for<S: CallSource>(source: &S) -> Arc<RwLock<ProviderRegistry>> {
+    match source.current() {
+        Some(calls) => calls.providers().await,
+        None => Arc::default(),
     }
 }
 

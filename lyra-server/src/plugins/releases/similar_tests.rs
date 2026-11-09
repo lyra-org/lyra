@@ -20,6 +20,7 @@ use anyhow::{
     anyhow,
 };
 
+use crate::services::plugin_dispatch::SimilarReleasesDispatchRequest;
 use crate::{
     plugins::executor::PluginExecutorHandle,
     services::{
@@ -31,7 +32,7 @@ use crate::{
         releases::{
             SimilarReleaseOptions,
             similar,
-            similar_with_dispatch,
+            similar_on,
         },
     },
 };
@@ -273,14 +274,8 @@ async fn dispatcher_queue_delay_does_not_consume_handler_timeout() -> Result<()>
     )?;
     publish_test_runtime(&plugin).await?;
 
-    let releases = similar_with_dispatch(
-        seed,
-        &SimilarReleaseOptions {
-            limit: 1,
-            accessible_library_ids: None,
-            viewer: None,
-        },
-        move |_runtime, request| {
+    let releases = similar_on(
+        &crate::services::testing::ClosureCalls(move |request: SimilarReleasesDispatchRequest| {
             let candidate_public_id = candidate_public_id.clone();
             async move {
                 assert_eq!(request.timeout, Duration::from_millis(25));
@@ -291,6 +286,12 @@ async fn dispatcher_queue_delay_does_not_consume_handler_timeout() -> Result<()>
                     }],
                 })
             }
+        }),
+        seed,
+        &SimilarReleaseOptions {
+            limit: 1,
+            accessible_library_ids: None,
+            viewer: None,
         },
     )
     .await?
@@ -327,14 +328,8 @@ async fn in_vm_dispatch_is_not_wrapped_in_provider_call_lock() -> Result<()> {
     )?;
     publish_test_runtime(&plugin).await?;
 
-    let releases = similar_with_dispatch(
-        seed,
-        &SimilarReleaseOptions {
-            limit: 1,
-            accessible_library_ids: None,
-            viewer: None,
-        },
-        move |_runtime, request| {
+    let releases = similar_on(
+        &crate::services::testing::ClosureCalls(move |request: SimilarReleasesDispatchRequest| {
             let candidate_public_id = candidate_public_id.clone();
             async move {
                 Ok(tokio::time::timeout(
@@ -343,18 +338,27 @@ async fn in_vm_dispatch_is_not_wrapped_in_provider_call_lock() -> Result<()> {
                         &request.provider_id,
                         crate::services::providers::ProviderCallStage::MetadataRefresh,
                         |_| Some(crate::services::providers::ProviderLookup::Call(())),
-                        |(), _| async move {
-                            Ok(SimilarReleasesDispatchResult {
-                                candidates: vec![SimilarReleaseCandidate::Local {
-                                    release_id: candidate_public_id,
-                                }],
-                            })
+                        |(), _| {
+                            let candidate_public_id = candidate_public_id.clone();
+                            async move {
+                                Ok(SimilarReleasesDispatchResult {
+                                    candidates: vec![SimilarReleaseCandidate::Local {
+                                        release_id: candidate_public_id,
+                                    }],
+                                })
+                            }
                         },
                     ),
                 )
                 .await
                 .context("in-VM dispatch waited on an outer provider call lock")??)
             }
+        }),
+        seed,
+        &SimilarReleaseOptions {
+            limit: 1,
+            accessible_library_ids: None,
+            viewer: None,
         },
     )
     .await?
