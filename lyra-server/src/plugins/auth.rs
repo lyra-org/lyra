@@ -130,6 +130,21 @@ impl OwnersQuery {
     }
 }
 
+/// The verified principal's database id, and the users `owners` covers whose data it may read.
+pub(crate) fn owned_users(
+    db: &agdb::DbAny,
+    principal: &ServicePrincipal,
+    owners: Owners<'_>,
+) -> luau::runtime::Result<(agdb::DbId, Vec<lyra_db::User>)> {
+    let viewer_db_id = require_user_db_id(principal, db)?;
+    let current = principal
+        .current(db)
+        .map_err(crate::plugins::errors::auth_error)?;
+    let users = crate::services::auth::owners::resolve(db, &current, viewer_db_id, owners)
+        .map_err(crate::plugins::errors::auth_error)?;
+    Ok((viewer_db_id, users))
+}
+
 impl<'vm> luau::FromLuau<'vm> for OwnersQuery {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let query: luau::Value = reader.read()?;

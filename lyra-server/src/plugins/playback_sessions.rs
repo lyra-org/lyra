@@ -412,7 +412,7 @@ impl PlaybackSessionsModule {
         let snapshots = registry::list_connections().await;
         let now_ms = playbacks::now_ms().map_err(crate::plugins::runtime_error)?;
         let db = db.read().await;
-        let (viewer_db_id, users) = owned_users(&db, &principal, owners)?;
+        let (viewer_db_id, users) = crate::plugins::auth::owned_users(&db, &principal, owners)?;
         let usernames = users
             .iter()
             .map(|user| (user.id.as_str(), user.username.as_str()))
@@ -649,7 +649,7 @@ async fn list_active_playbacks(
     let now_ms = playbacks::now_ms().map_err(crate::plugins::runtime_error)?;
     let db = db.read().await;
     let all_users = matches!(owners, owners::Owners::All);
-    let (viewer_db_id, users) = owned_users(&db, &principal, owners)?;
+    let (viewer_db_id, users) = crate::plugins::auth::owned_users(&db, &principal, owners)?;
     let connections =
         connections::join_owned(&db, viewer_db_id, &owner_ids(&users), snapshots, now_ms)
             .map_err(crate::plugins::runtime_error)?;
@@ -686,21 +686,6 @@ async fn list_active_playbacks(
         })
         .collect::<Vec<_>>();
     harmony_luau::serializable_to_luau_owned(&result)
-}
-
-/// The verified principal's database id, and the users `owners` covers whose playback it may read.
-fn owned_users(
-    db: &agdb::DbAny,
-    principal: &Principal,
-    owners: owners::Owners<'_>,
-) -> luau::runtime::Result<(agdb::DbId, Vec<lyra_db::User>)> {
-    let viewer_db_id = crate::plugins::auth::require_user_db_id(principal, db)?;
-    let current = principal
-        .current(db)
-        .map_err(crate::plugins::errors::auth_error)?;
-    let users = owners::resolve(db, &current, viewer_db_id, owners)
-        .map_err(crate::plugins::errors::auth_error)?;
-    Ok((viewer_db_id, users))
 }
 
 fn owner_ids(users: &[lyra_db::User]) -> Vec<(agdb::DbId, &str)> {

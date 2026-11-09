@@ -15,7 +15,6 @@ use harmony_luau::{
     TypeAliasDescriptor,
     render_definition_file_with_support,
 };
-#[cfg(feature = "docgen")]
 use std::collections::HashMap;
 
 use crate::plugins::args::UniqueIds;
@@ -114,6 +113,36 @@ impl LuauTypeInfo for TrackPage {
 
 #[harmony_macros::module(id = "lyra/tracks", docs_feature = "docgen")]
 impl TracksModule {
+    #[harmony(
+        description = "The tracks among `ids` that the user `user_id` can see, keyed by id, each `true`; missing and hidden tracks are absent. This tells the caller what libraries that user can reach, so it is for narrowing what a remote control command plays on another user's session to what that user can play. The caller's own ids need nothing more; another user's require the manage_users permission and every permission that user holds, and a user that doesn't exist sees nothing. Needs the `lyra.tracks.all` scope too.",
+        returns(HashMap<String, bool>)
+    )]
+    async fn visible_to(
+        user_id: String,
+        ids: UniqueIds,
+        #[context] db: crate::plugins::db::Db,
+        #[context] principal: crate::services::auth::Principal,
+    ) -> luau::runtime::Result<luau::Value> {
+        let db = db.read().await;
+        let (_, users) = crate::plugins::auth::owned_users(
+            &db,
+            &principal,
+            crate::services::auth::owners::Owners::User(&user_id),
+        )?;
+        let visible = match users.first().and_then(|user| user.db_id) {
+            Some(user_db_id) => services::playbacks::accessible_track_ids(&*db, user_db_id, &ids.0)
+                .map_err(crate::plugins::runtime_error)?,
+            None => Vec::new(),
+        };
+        drop(db);
+        harmony_luau::serializable_to_luau_owned(
+            visible
+                .into_iter()
+                .map(|id| (id, true))
+                .collect::<HashMap<_, _>>(),
+        )
+    }
+
     #[harmony(
         description = "The tracks with these ids that the caller can see, keyed by id.",
         returns(HashMap<String, Track>)

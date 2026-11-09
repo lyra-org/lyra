@@ -352,7 +352,8 @@ pub(crate) fn report_progress(
             });
         }
         let queue = queue_from_playback(&playback)?;
-        if require_full_queue_access && !queue_tracks_accessible_to_user(t, user_db_id, &queue)? {
+        if require_full_queue_access && !tracks_accessible_to_user(t, user_db_id, &queue.track_ids)?
+        {
             return Err(PlaybackError::NotFound);
         }
         if lyra_db::lookup::find_node_id_by_id(t, queue.current_track_id())?
@@ -910,25 +911,53 @@ pub(crate) fn validate_queue(
     })
 }
 
-pub(crate) fn queue_tracks_accessible_to_user(
+/// Whether every one of these tracks exists and is visible to the user.
+pub(crate) fn tracks_accessible_to_user(
     db: &impl lyra_db::DbAccess,
     user_db_id: DbId,
-    snapshot: &QueueSnapshot,
+    track_ids: &[String],
 ) -> Result<bool, PlaybackError> {
     let is_admin = lyra_db::roles::has_admin_role(db, user_db_id)?;
     let accessible_library_ids = lyra_db::libraries::accessible_library_ids(db, user_db_id)?;
-    for public_id in &snapshot.track_ids {
-        let Some(track_db_id) = lyra_db::lookup::find_node_id_by_id(db, public_id)? else {
-            return Ok(false);
-        };
-        if lyra_db::tracks::get_by_id(db, track_db_id)?.is_none() {
-            return Ok(false);
-        }
-        if !track_accessible_in_scope(db, track_db_id, is_admin, &accessible_library_ids)? {
+    for public_id in track_ids {
+        if !track_id_accessible(db, public_id, is_admin, &accessible_library_ids)? {
             return Ok(false);
         }
     }
     Ok(true)
+}
+
+/// The ids among `track_ids` of tracks that exist and are visible to the user, in order and with
+/// repeats.
+pub(crate) fn accessible_track_ids(
+    db: &impl lyra_db::DbAccess,
+    user_db_id: DbId,
+    track_ids: &[String],
+) -> Result<Vec<String>, PlaybackError> {
+    let is_admin = lyra_db::roles::has_admin_role(db, user_db_id)?;
+    let accessible_library_ids = lyra_db::libraries::accessible_library_ids(db, user_db_id)?;
+    let mut accessible = Vec::with_capacity(track_ids.len());
+    for public_id in track_ids {
+        if track_id_accessible(db, public_id, is_admin, &accessible_library_ids)? {
+            accessible.push(public_id.clone());
+        }
+    }
+    Ok(accessible)
+}
+
+fn track_id_accessible(
+    db: &impl lyra_db::DbAccess,
+    public_id: &str,
+    is_admin: bool,
+    accessible_library_ids: &HashSet<String>,
+) -> Result<bool, PlaybackError> {
+    let Some(track_db_id) = lyra_db::lookup::find_node_id_by_id(db, public_id)? else {
+        return Ok(false);
+    };
+    if lyra_db::tracks::get_by_id(db, track_db_id)?.is_none() {
+        return Ok(false);
+    }
+    track_accessible_in_scope(db, track_db_id, is_admin, accessible_library_ids)
 }
 
 fn track_accessible_in_scope(
@@ -1071,7 +1100,7 @@ pub(crate) fn validate_handoff_queue(
     }
     let queue = queue_from_playback(&playback)
         .map_err(|error| HandoffValidationError::Internal(anyhow::anyhow!(error.to_string())))?;
-    if !queue_tracks_accessible_to_user(db, user_db_id, &queue)
+    if !tracks_accessible_to_user(db, user_db_id, &queue.track_ids)
         .map_err(|error| HandoffValidationError::Internal(anyhow::anyhow!(error.to_string())))?
     {
         return Err(HandoffValidationError::Inaccessible);

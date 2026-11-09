@@ -171,6 +171,7 @@ data_kinds! {
         PlaybackActivity => ("playback_activity", "playback activity"),
         PlaybackSessions => ("playback_sessions", "playback sessions"),
         AccountDetails => ("account_details", "account details"),
+        LibraryAccess => ("library_access", "library access"),
     }
 }
 
@@ -520,6 +521,12 @@ scopes! {
         id: "lyra.tracks",
         module: tracks::TracksModule::module_spec,
         effects: &[],
+    },
+    TracksAll => {
+        id: "lyra.tracks.all",
+        within: Tracks,
+        functions: &["visible_to"],
+        effects: &[Effect::ReadsPersonal(PersonalKind::LibraryAccess, Users::All)],
     },
     Users => {
         id: "lyra.users",
@@ -1116,6 +1123,7 @@ mod tests {
                     "Changes the tags of the users it acts for",
                 ],
             ),
+            ("lyra.tracks.all", &["Reads every user's library access"]),
             ("lyra.users", &["Reads every user's account details"]),
         ];
         assert_eq!(
@@ -1148,6 +1156,7 @@ mod tests {
                 "playback_activity",
                 "playback_sessions",
                 "account_details",
+                "library_access",
                 "genres",
                 "record_labels",
                 "lyrics",
@@ -1220,6 +1229,7 @@ mod tests {
             ("lyra.metadata.refresh", "lyra.metadata"),
             ("lyra.playback_sessions.all", "lyra.playback_sessions"),
             ("lyra.releases.manage", "lyra.releases"),
+            ("lyra.tracks.all", "lyra.tracks"),
         ] {
             let error = load(&format!(r#"["{narrow}"]"#)).unwrap_err();
             assert!(
@@ -1776,6 +1786,7 @@ mod tests {
         (
             "lyra/tracks",
             &[
+                "visible_to(user_id, ids) [lyra.tracks.all]",
                 "get(ids)",
                 "streamable(ids)",
                 "query(query)",
