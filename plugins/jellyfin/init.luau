@@ -56,6 +56,7 @@ local listing_routes = require("@self/routes/listings")
 local playback = require("@self/protocol/items/playback")
 local playlist_access = require("@self/protocol/playlist_access")
 local preferences = require("@self/protocol/preferences")
+local quick_connect_routes = require("@self/routes/quick_connect")
 local remote_control = require("@self/routes/remote_control")
 local requests = require("@self/protocol/items/requests")
 local responses = require("@self/protocol/items/responses")
@@ -290,9 +291,7 @@ api.post(P .. "/Users/{userId}/Configuration", function(ctx: ApiContext): ApiRes
 	local params = if ctx then ctx.params else nil
 	return handle_user_configuration_post(ctx, if params then params.userId else nil)
 end, { auth = "public", case_insensitive = true })
-api.get(P .. "/QuickConnect/Enabled", function(): ApiResponse
-	return api.response.json(200, false)
-end, { auth = "public", case_insensitive = true })
+quick_connect_routes.register()
 api.post(P .. "/Users/ForgotPassword", function(): ApiResponse
 	return api.response.json(200, {
 		Action = "ContactAdmin",
