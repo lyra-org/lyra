@@ -56,7 +56,7 @@ function module.resolve_playback_source_for_track(track: { id: string }?, includ
 		return nil
 	end
 
-	local ok, source_items = pcall(playback_sources.get, track.id, include_entry == true)
+	local ok, source_items = pcall(playback_sources.get, track.id, { include_entry = include_entry == true })
 	if not ok or type(source_items) ~= "table" then
 		return nil
 	end
@@ -75,7 +75,7 @@ function module.resolve_public_playback_source(track: { id: string }?, include_e
 		return nil
 	end
 
-	local ok, source = pcall(playback_sources.streamable, track.id, include_entry == true)
+	local ok, source = pcall(playback_sources.streamable, track.id, { include_entry = include_entry == true })
 	if not ok or type(source) ~= "table" then
 		return nil
 	end

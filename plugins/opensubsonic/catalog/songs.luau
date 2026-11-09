@@ -112,7 +112,7 @@ function module.list(track_list: { Track }, saved_bookmarks: { [string]: bookmar
 	local release_projections = credits.projections(release_ids, { "credits" })
 	local genres_by_release = if #release_ids > 0 then genres.by_release(release_ids) else {}
 
-	local sources = playback_sources.get_many(ids, true)
+	local sources = playback_sources.get_many(ids, { include_entry = true })
 	local relative_files: { EntryInfo } = {}
 	for _, source in sources do
 		if source.entry and source.entry.full_path == nil then

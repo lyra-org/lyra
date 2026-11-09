@@ -18,7 +18,10 @@ use harmony_luau::{
     render_definition_file_with_support,
 };
 
-use crate::plugins::args::UniqueIds;
+use crate::plugins::args::{
+    self,
+    UniqueIds,
+};
 use crate::plugins::auth::ResponseCaller;
 use crate::plugins::{
     ids::{
@@ -61,6 +64,30 @@ struct DeliveryDescription;
 #[cfg(feature = "docgen")]
 struct SourceDescription;
 
+/// The `options` argument of the source reads.
+#[derive(Default)]
+struct SourceOptions {
+    include_entry: bool,
+}
+
+impl<'vm> luau::FromLuau<'vm> for SourceOptions {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let options: luau::Table = reader.read()?;
+        args::reject_unknown_fields(&options, "options", &["include_entry"])?;
+        Ok(Self {
+            include_entry: args::optional_bool(&options, "include_entry", "options")?
+                .unwrap_or(false),
+        })
+    }
+}
+
+#[cfg(feature = "docgen")]
+impl LuauTypeInfo for SourceOptions {
+    fn luau_type() -> LuauType {
+        LuauType::named("SourceOptions")
+    }
+}
+
 pub(crate) struct PlaybackSourcesModule;
 
 #[harmony_macros::module(id = "lyra/playback_sources", docs_feature = "docgen")]
@@ -71,11 +98,11 @@ impl PlaybackSourcesModule {
     )]
     async fn get(
         id: Option<String>,
-        include_entry: Option<bool>,
+        options: Option<SourceOptions>,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        let include_entry = include_entry.unwrap_or(false);
+        let include_entry = options.unwrap_or_default().include_entry;
         let db = db.read().await;
         let include_full_path = lyra_db::roles::has_permission(
             &principal.permissions,
@@ -123,10 +150,10 @@ impl PlaybackSourcesModule {
     )]
     async fn streamable(
         track_id: String,
-        include_entry: Option<bool>,
+        options: Option<SourceOptions>,
         #[context] db: Db,
     ) -> luau::runtime::Result<luau::Value> {
-        let include_entry = include_entry.unwrap_or(false);
+        let include_entry = options.unwrap_or_default().include_entry;
         let db = db.read().await;
         let Some(track_id) = ids::db_id_of(&db, &track_id, "Track")? else {
             return Ok(luau::Value::Nil);
@@ -189,11 +216,11 @@ impl PlaybackSourcesModule {
     )]
     async fn get_many(
         track_ids: UniqueIds,
-        include_entry: Option<bool>,
+        options: Option<SourceOptions>,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        let include_entry = include_entry.unwrap_or(false);
+        let include_entry = options.unwrap_or_default().include_entry;
         let db = db.read().await;
         let tracks = Resolved::of(&*db, track_ids.0)?;
         let include_full_path = lyra_db::roles::has_permission(
@@ -581,12 +608,19 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
             None,
         ),
     ]);
+    let mut source_options = InterfaceDescriptor::new("SourceOptions", None);
+    source_options.fields.push(field(
+        "include_entry",
+        LuauType::optional(bool::luau_type()),
+        Some("Include each source's `entry`. Default `false`."),
+    ));
     render_definition_file_with_support(
         &PlaybackSourcesModule::module_descriptor(),
         &aliases,
         &[
             EntryInfo::interface_descriptor(),
             PlaybackSourceInfo::interface_descriptor(),
+            source_options,
             crate::plugins::api::options::track_stream_options_interface(),
             DeliveryDescription::interface_descriptor(),
             SourceDescription::interface_descriptor(),

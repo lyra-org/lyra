@@ -93,66 +93,11 @@ impl TagsModule {
             .map_err(crate::plugins::runtime_error)
     }
 
-    #[harmony(description = "Returns whether a target has a tag.")]
-    async fn has(
-        target_id: String,
-        tag: String,
-        #[context] db: Db,
-        #[context] principal: Principal,
-    ) -> luau::runtime::Result<bool> {
-        let db = db.read().await;
-        let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let viewer = ids::viewer_of(&*db, &principal)?;
-        let Some(target) = ids::visible_db_id(&db, &viewer, &target_id)? else {
-            return Ok(false);
-        };
-        tag_service::has_target(&db, user_id, target, &tag).map_err(crate::plugins::runtime_error)
-    }
-
-    #[harmony(
-        description = "Whether each of the targets has the tag, keyed by id. Targets that are missing, hidden from the caller, or not taggable are absent.",
-        returns(HashMap<String, bool>)
-    )]
-    async fn has_many(
-        target_ids: UniqueIds,
-        tag: String,
-        #[context] db: Db,
-        #[context] principal: Principal,
-    ) -> luau::runtime::Result<luau::OwnedTable> {
-        let db = db.read().await;
-        let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let targets = Resolved::of(&*db, target_ids.0)?;
-        let result = tag_service::has_targets(&db, user_id, targets.db_ids(), &tag)
-            .map_err(crate::plugins::runtime_error)?;
-        let viewer = ids::viewer_of(&*db, &principal)?;
-        Ok(targets.keyed(ids::seen_by(&db, &viewer, result)?))
-    }
-
-    #[harmony(
-        description = "Returns tags for a target.",
-        returns(Vec<TagInfo>)
-    )]
-    async fn get_for_target(
-        target_id: String,
-        #[context] db: Db,
-        #[context] principal: Principal,
-    ) -> luau::runtime::Result<luau::OwnedTable> {
-        let db = db.read().await;
-        let user_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
-        let viewer = ids::viewer_of(&*db, &principal)?;
-        let Some(target) = ids::visible_db_id(&db, &viewer, &target_id)? else {
-            return Ok(luau::OwnedTable::new());
-        };
-        let tags = tag_service::get_for_target(&db, user_id, target)
-            .map_err(crate::plugins::runtime_error)?;
-        Ok(tag_info_array(tags.into_iter().map(tag_to_info).collect()))
-    }
-
     #[harmony(
         description = "The tags of each of the targets, keyed by id. Targets that are missing, hidden from the caller, or not taggable are absent.",
         returns(HashMap<String, Vec<TagInfo>>)
     )]
-    async fn get_for_targets_many(
+    async fn by_target(
         target_ids: UniqueIds,
         #[context] db: Db,
         #[context] principal: Principal,

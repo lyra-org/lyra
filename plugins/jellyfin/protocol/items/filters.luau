@@ -140,7 +140,7 @@ function module.collect(options: ItemsQueryOptions): FilterValues?
 	-- Upstream groups tags case-insensitively, names each group by its least spelling, and orders
 	-- them ordinally.
 	local tag_groups: { [string]: string } = {}
-	for _, infos in batched(tagged, tags.get_for_targets_many) do
+	for _, infos in batched(tagged, tags.by_target) do
 		for _, info in infos do
 			local name = requests.trim(info.tag)
 			if name then

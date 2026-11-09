@@ -771,8 +771,8 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
                 local playback_sources = require("@lyra/playback_sources")
                 local track_id = "{track_id}"
 
-                executor_playback_source_rows = playback_sources.get(track_id, true)
-                executor_playback_source_many = playback_sources.get_many({{ track_id, track_id, "missing" }}, true)
+                executor_playback_source_rows = playback_sources.get(track_id, {{ include_entry = true }})
+                executor_playback_source_many = playback_sources.get_many({{ track_id, track_id, "missing" }}, {{ include_entry = true }})
             "#,
         )
         .into_bytes(),
@@ -1320,13 +1320,10 @@ fn plugin_executor_exposes_db_backed_lyra_tags_module() -> Result<()> {
                 local track_id = "{track_id}"
 
                 executor_tag_name = tags.add(track_id, " Workout ", "#335577")
-                executor_has = tags.has(track_id, "Workout")
-                executor_has_many = tags.has_many({{ track_id, track_id, "missing" }}, "Workout")
-                executor_for_target = tags.get_for_target(track_id)
-                executor_for_targets = tags.get_for_targets_many({{ track_id, "missing" }})
+                executor_for_targets = tags.by_target({{ track_id, "missing" }})
                 executor_tagged = tags.get_tagged("Workout")
                 tags.remove(track_id, "Workout")
-                executor_has_after_remove = tags.has(track_id, "Workout")
+                executor_after_remove = tags.by_target({{ track_id }})
             "##,
         )
         .into_bytes(),
@@ -1341,15 +1338,11 @@ fn plugin_executor_exposes_db_backed_lyra_tags_module() -> Result<()> {
                 local track_id = "{track_id}"
 
                 return executor_tag_name,
-                    executor_has,
-                    executor_has_many[track_id],
-                    executor_has_many["missing"] == nil,
-                    executor_for_target[1].tag,
-                    executor_for_target[1].color,
                     executor_for_targets[track_id][1].tag,
+                    executor_for_targets[track_id][1].color,
                     executor_for_targets["missing"] == nil,
                     executor_tagged[1],
-                    executor_has_after_remove
+                    #executor_after_remove[track_id] == 0
             "#,
         )
         .into_bytes(),
@@ -1358,15 +1351,11 @@ fn plugin_executor_exposes_db_backed_lyra_tags_module() -> Result<()> {
         values,
         vec![
             luau::Value::String(b"Workout".to_vec()),
-            luau::Value::Boolean(true),
-            luau::Value::Boolean(true),
-            luau::Value::Boolean(true),
             luau::Value::String(b"Workout".to_vec()),
             luau::Value::String(b"#335577".to_vec()),
-            luau::Value::String(b"Workout".to_vec()),
             luau::Value::Boolean(true),
             luau::Value::String(track_id.into_bytes()),
-            luau::Value::Boolean(false),
+            luau::Value::Boolean(true),
         ]
     );
     Ok(())

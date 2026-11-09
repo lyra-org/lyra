@@ -2954,7 +2954,7 @@ fn streamable_bindings_serve_anonymous_public_routes() -> Result<()> {
             api.get("/stream/{track}/{release}", function(ctx)
                 local track = ctx.params.track
                 local release = ctx.params.release
-                local source = playback_sources.streamable(track, true)
+                local source = playback_sources.streamable(track, { include_entry = true })
                 return api.response.json(200, {
                     track = tracks.streamable({ track, release })[track] ~= nil,
                     release = tracks.streamable({ release })[release] ~= nil,
@@ -3025,8 +3025,9 @@ fn label_bindings_hide_inaccessible_releases() -> Result<()> {
                 local labels = require("@lyra/labels")
                 local releases = labels.get_releases("{label}")
                 local many = labels.get_releases_many({{ "{label}" }})["{label}"]
+                local by_release = labels.by_release({{ "{hidden}", "{shown}" }})
                 return #releases, releases[1], #many, many[1],
-                    #labels.get_for_release("{hidden}"), #labels.get_for_release("{shown}")
+                    by_release["{hidden}"] == nil, #by_release["{shown}"]
             "#,
         ),
     )?;
@@ -3038,7 +3039,7 @@ fn label_bindings_hide_inaccessible_releases() -> Result<()> {
             shown.clone(),
             luau::Value::Number(1.0),
             shown,
-            luau::Value::Number(0.0),
+            luau::Value::Boolean(true),
             luau::Value::Number(1.0),
         ]
     );

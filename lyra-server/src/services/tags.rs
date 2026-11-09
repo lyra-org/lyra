@@ -143,39 +143,6 @@ pub(crate) fn has_target(
         .map_err(TagServiceError::Internal)
 }
 
-/// Batch check, keyed by target. Non-whitelisted and non-visible targets are absent.
-pub(crate) fn has_targets(
-    db: &DbAny,
-    owner_db_id: DbId,
-    target_db_ids: &[DbId],
-    raw_tag_name: &str,
-) -> Result<HashMap<DbId, bool>, TagServiceError> {
-    let normalized =
-        lyra_db::tags::normalize_tag_name(raw_tag_name).map_err(TagServiceError::BadTagName)?;
-    let visibility =
-        TargetVisibility::for_user(db, owner_db_id).map_err(TagServiceError::Internal)?;
-    let visible = visible_targets(db, &visibility, target_db_ids)?;
-    let mut out: HashMap<DbId, bool> = visible.iter().map(|id| (*id, false)).collect();
-    out.extend(
-        lyra_db::tags::has_targets(db, owner_db_id, &visible, &normalized)
-            .map_err(TagServiceError::Internal)?,
-    );
-    Ok(out)
-}
-
-pub(crate) fn get_for_target(
-    db: &DbAny,
-    owner_db_id: DbId,
-    target_db_id: DbId,
-) -> Result<Vec<Tag>, TagServiceError> {
-    let visibility =
-        TargetVisibility::for_user(db, owner_db_id).map_err(TagServiceError::Internal)?;
-    if !targetable(db, &visibility, target_db_id).map_err(TagServiceError::Internal)? {
-        return Ok(Vec::new());
-    }
-    lyra_db::tags::get_for_target(db, owner_db_id, target_db_id).map_err(TagServiceError::Internal)
-}
-
 /// Each target's tags, keyed by target. Non-whitelisted and non-visible targets are absent.
 pub(crate) fn get_for_targets_many(
     db: &DbAny,
@@ -852,7 +819,7 @@ mod tests {
         lyra_db::libraries::revoke_access(&mut db, user, library_db_id)?;
 
         assert!(!has_target(&db, user, track_db_id, "Visible")?);
-        assert!(get_for_target(&db, user, track_db_id)?.is_empty());
+        assert!(get_for_targets_many(&db, user, &[track_db_id])?.is_empty());
         let (targets, _) = get_tagged(&db, user, "Visible")?;
         assert!(targets.is_empty());
         Ok(())
@@ -874,10 +841,8 @@ mod tests {
                 Err(TagServiceError::NotTargetable),
             ));
             assert!(!has_target(&db, user, target, "X")?);
-            assert!(get_for_target(&db, user, target)?.is_empty());
+            assert!(get_for_targets_many(&db, user, &[target])?.is_empty());
         }
-        let many = has_targets(&db, user, &[DbId(999_999_999), other_user], "X")?;
-        assert!(many.is_empty());
         Ok(())
     }
 

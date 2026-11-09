@@ -5,7 +5,7 @@ local tags = require("@lyra/tags")
 
 local ids = fixture.ids
 local missing = "missing-target"
-local tag_node = tags.get_for_target(ids.plain)[1].id
+local tag_node = tags.by_target({ ids.plain })[ids.plain][1].id
 
 assert(favorites.add(ids.song), "a visible track is favoritable")
 assert(favorites.add(ids.song), "adding again refreshes the favorite")

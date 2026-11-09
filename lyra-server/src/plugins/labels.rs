@@ -102,28 +102,11 @@ impl LabelsModule {
         Ok(label.map(label_info_table))
     }
 
-    #[harmony(returns(Vec<LabelForReleaseInfo>))]
-    async fn get_for_release(
-        release_id: String,
-        #[context] db: ViewerDb,
-    ) -> luau::runtime::Result<luau::OwnedTable> {
-        let labels = {
-            let (db, viewer) = db.read().await?;
-            match ids::db_id(&*db, &release_id)? {
-                Some(release_id) if viewer.sees_entity(&*db, release_id)? => {
-                    lyra_db::labels::get_for_release(&db, release_id)?
-                }
-                _ => Vec::new(),
-            }
-        };
-        Ok(label_release_array(labels))
-    }
-
     #[harmony(
         description = "The labels of each of these releases that the caller can see, keyed by release id.",
         returns(HashMap<String, Vec<LabelForReleaseInfo>>)
     )]
-    async fn get_for_releases_many(
+    async fn by_release(
         release_ids: UniqueIds,
         #[context] db: ViewerDb,
     ) -> luau::runtime::Result<luau::OwnedTable> {

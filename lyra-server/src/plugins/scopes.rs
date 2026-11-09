@@ -1608,8 +1608,7 @@ mod tests {
             &[
                 "resolve(request) [lyra.labels.manage]",
                 "get_by_id(label_id)",
-                "get_for_release(release_id)",
-                "get_for_releases_many(release_ids)",
+                "by_release(release_ids)",
                 "get_releases(label_id)",
                 "get_releases_many(label_ids)",
             ],
@@ -1710,10 +1709,10 @@ mod tests {
         (
             "lyra/playback_sources",
             &[
-                "get(id, include_entry)",
-                "streamable(track_id, include_entry)",
+                "get(id, options)",
+                "streamable(track_id, options)",
                 "decide(track_id, options)",
-                "get_many(track_ids, include_entry)",
+                "get_many(track_ids, options)",
             ],
         ),
         (
@@ -1775,10 +1774,7 @@ mod tests {
             &[
                 "add(target_id, tag, color)",
                 "remove(target_id, tag)",
-                "has(target_id, tag)",
-                "has_many(target_ids, tag)",
-                "get_for_target(target_id)",
-                "get_for_targets_many(target_ids)",
+                "by_target(target_ids)",
                 "get_tagged(tag)",
             ],
         ),

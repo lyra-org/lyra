@@ -529,31 +529,6 @@ pub fn has_target(
     has_target_edge(db, tag_id, target_db_id)
 }
 
-pub fn has_targets(
-    db: &impl DbAccess,
-    owner_db_id: DbId,
-    target_db_ids: &[DbId],
-    normalized_name: &str,
-) -> anyhow::Result<HashMap<DbId, bool>> {
-    let mut response: HashMap<DbId, bool> = target_db_ids
-        .iter()
-        .copied()
-        .map(|id| (id, false))
-        .collect();
-
-    let Some(tag_id) = find_tag_id_by_owner_and_name(db, owner_db_id, normalized_name)? else {
-        return Ok(response);
-    };
-
-    let attached: HashSet<DbId> = get_targets(db, tag_id)?.into_iter().collect();
-    for id in target_db_ids {
-        if attached.contains(id) {
-            response.insert(*id, true);
-        }
-    }
-    Ok(response)
-}
-
 /// Targets tagged `normalized_name` by `owner`. Errs above [`GET_TAGGED_CAP`].
 pub fn get_targets_by_tag(
     db: &impl DbAccess,

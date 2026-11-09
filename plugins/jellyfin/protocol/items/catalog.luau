@@ -575,7 +575,7 @@ function helpers.fetch_tag_info_map(user_id: string?, target_ids: { string }): T
 		return helpers.normalize_tag_info_map(target_ids, nil)
 	end
 
-	local ok, raw_tag_map = pcall(tags_module.get_for_targets_many, target_ids)
+	local ok, raw_tag_map = pcall(tags_module.by_target, target_ids)
 	if not ok or type(raw_tag_map) ~= "table" then
 		return helpers.normalize_tag_info_map(target_ids, nil)
 	end
@@ -588,12 +588,12 @@ function helpers.fetch_tag_infos(user_id: string?, target_id: string?): { TagInf
 		return nil
 	end
 
-	local ok, raw_tags = pcall(tags_module.get_for_target, target_id)
-	if not ok or type(raw_tags) ~= "table" then
+	local ok, raw_tag_map = pcall(tags_module.by_target, { target_id })
+	if not ok or type(raw_tag_map) ~= "table" then
 		return nil
 	end
 
-	return raw_tags :: { TagInfo }
+	return (raw_tag_map :: TagInfoMap)[target_id] or {}
 end
 
 function helpers.resolve_tag_infos(target_id: string?, context: ItemContext?): { TagInfo }?
@@ -1935,7 +1935,7 @@ function helpers.prefetch_track_stats_and_media(
 		context.position_lookup = positions
 	end
 
-	local sources = playback_sources.get_many(seed.track_ids, options.include_media_info == true)
+	local sources = playback_sources.get_many(seed.track_ids, { include_entry = options.include_media_info == true })
 	if type(sources) == "table" then
 		context.playback_source_by_track_id = sources
 		context.has_source_prefetch = true
