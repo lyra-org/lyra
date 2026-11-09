@@ -140,6 +140,9 @@ async fn refresh_and_sync_artist_cover(
     }
     let context = {
         let db = STATE.db.read().await;
+        if !crate::services::providers::node_is_entity(&db, listed.db_id, &listed.id)? {
+            return Ok(None);
+        }
         build_entity_provider_context(&db, listed.db_id, None, schemes).map(|(_, context)| context)
     };
     match context {

@@ -37,6 +37,7 @@ use crate::services::{
         declared_artist_ids,
         id_schemes,
         library_refresh_locks,
+        node_is_entity,
     },
 };
 
@@ -178,7 +179,11 @@ pub(crate) async fn refresh_release_metadata_for_scan(
         if dirty || context.is_none() {
             let rebuilt = {
                 let db = STATE.db.read().await;
-                if lyra_db::releases::get_by_id(&db, release_id)?.is_none() {
+                let replaced = match release_public_id.as_deref() {
+                    Some(id) => !node_is_entity(&db, release_id, id)?,
+                    None => false,
+                };
+                if replaced || lyra_db::releases::get_by_id(&db, release_id)?.is_none() {
                     None
                 } else {
                     match build_release_context(&db, release_id, Some(library_db_id), &schemes) {
@@ -309,10 +314,7 @@ async fn refresh_locked_library(
             if dirty_releases.remove(&node_id) {
                 let rebuilt = {
                     let db = STATE.db.read().await;
-                    // agdb reuses ids, so the node must still be this release.
-                    if lyra_db::lookup::find_id_by_db_id(&db, node_id)?.as_deref()
-                        != Some(release.id.as_str())
-                    {
+                    if !node_is_entity(&db, node_id, &release.id)? {
                         Err(None)
                     } else {
                         build_release_context(&db, node_id, Some(library_db_id), &schemes)

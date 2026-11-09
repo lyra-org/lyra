@@ -218,6 +218,40 @@ async fn a_release_merged_away_between_providers_is_passed_over() -> anyhow::Res
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_scan_refresh_of_a_release_whose_id_went_to_another_node_calls_no_provider()
+-> anyhow::Result<()> {
+    let _guard = runtime_test_lock().await;
+    init_default_test_state()?;
+    let dispatch = FakePluginDispatch::install();
+    let handler = dispatch.add(FakeResponse::Value(serde_json::Value::Null));
+    register_release_refresher("reused-id", handler).await?;
+    let (library, release) = {
+        let mut db = STATE.db.write().await;
+        let library = insert_library(&mut db, "Reused", "/reused-id")?;
+        let release = insert_release(&mut db, "Newcomer")?;
+        connect(&mut db, library, release)?;
+        (library, release)
+    };
+
+    let refreshed = super::library::refresh_release_metadata_for_scan(
+        library,
+        release,
+        SyncRunProgress::unreported_for_test(),
+        Some("the-merged-release".to_string()),
+        None,
+    )
+    .await
+    .map_err(|err| err.into_anyhow())?;
+
+    assert!(refreshed.is_empty());
+    assert!(
+        dispatch.calls(handler).is_empty(),
+        "the newcomer isn't refreshed under the merged release's name"
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_refresh_syncs_covers_even_when_no_provider_refreshed_a_release() -> anyhow::Result<()> {
     let _guard = runtime_test_lock().await;
     init_default_test_state()?;

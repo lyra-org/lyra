@@ -221,8 +221,18 @@ pub(crate) struct EntityRefreshResult {
     pub(crate) providers_called: Vec<String>,
 }
 
+/// Whether the node is still the entity `public_id` names. agdb reuses ids, so a node id held
+/// across an await can come to name another entity.
+pub(crate) fn node_is_entity(
+    db: &impl lyra_db::DbAccess,
+    db_id: agdb::DbId,
+    public_id: &str,
+) -> anyhow::Result<bool> {
+    Ok(lyra_db::lookup::find_id_by_db_id(db, db_id)?.as_deref() == Some(public_id))
+}
+
 /// The entity a refresh runs for: the node the caller named by `public_id` and `viewer` saw.
-/// agdb reuses ids, so the refresh checks it again under each guard it reads the entity with.
+/// The refresh checks it again under each guard it reads the entity with.
 pub(crate) struct RefreshTarget {
     pub(crate) db_id: agdb::DbId,
     pub(crate) public_id: String,
@@ -232,11 +242,7 @@ pub(crate) struct RefreshTarget {
 impl RefreshTarget {
     /// Whether the node is still the entity named and the viewer still sees it.
     pub(crate) fn holds(&self, db: &agdb::DbAny) -> anyhow::Result<bool> {
-        Ok(
-            lyra_db::lookup::find_id_by_db_id(db, self.db_id)?.as_deref()
-                == Some(self.public_id.as_str())
-                && self.viewer.sees(db, self.db_id)?,
-        )
+        Ok(node_is_entity(db, self.db_id, &self.public_id)? && self.viewer.sees(db, self.db_id)?)
     }
 }
 

@@ -43,6 +43,7 @@ pub(crate) use crate::services::system::library_sync_context as system_context;
 use crate::services::{
     CoverPaths,
     CoverSyncOptions,
+    STATE,
     covers::{
         configured_covers_root,
         record_local_release_cover,
@@ -74,6 +75,7 @@ use crate::services::{
         LibraryRefreshOptions,
         ListedArtist,
         deduplicate_after_providers,
+        node_is_entity,
         refresh_library_metadata_after_others,
         refresh_release_metadata_for_scan,
         release_refresh_provider_ids,
@@ -1102,26 +1104,24 @@ async fn release_artifact_plan(
     }))
 }
 
-/// The release the plan's tracks are on now: its own, unless a merge took it and agdb gave its id
-/// to another node, then the one the tracks moved to.
+/// The plan's release as it is now: its own, or the one merges left it in; `None` once it is gone.
 fn current_release(
     db: &impl lyra_db::DbAccess,
     plan: &ReleaseArtifactPlan,
 ) -> anyhow::Result<Option<lyra_db::Release>> {
-    if plan.release_public_id.is_some()
-        && lyra_db::lookup::find_id_by_db_id(db, plan.release_id)? == plan.release_public_id
-    {
+    let Some(public_id) = plan.release_public_id.as_deref() else {
+        return Ok(None);
+    };
+    if node_is_entity(db, plan.release_id, public_id)? {
         return lyra_db::releases::get_by_id(db, plan.release_id);
     }
-    for &track_id in &plan.track_ids {
-        if let Some(release) = lyra_db::releases::get_by_track(db, track_id)?
-            .into_iter()
-            .next()
-        {
-            return Ok(Some(release));
-        }
-    }
-    Ok(None)
+    let Some(winner) = STATE.generation().merge_journal.resolve(public_id) else {
+        return Ok(None);
+    };
+    let Some(release_id) = lyra_db::lookup::find_node_id_by_id(db, &winner)? else {
+        return Ok(None);
+    };
+    lyra_db::releases::get_by_id(db, release_id)
 }
 
 fn current_release_ids(
@@ -1137,7 +1137,7 @@ fn current_release_ids(
     Ok(release_ids.into_iter().collect())
 }
 
-/// Points the plans at the releases their tracks are on now.
+/// Points the plans at the releases merges left them in, marking those with none as gone.
 async fn follow_merged_releases(
     db: &DbAsync,
     plans: &mut [ReleaseArtifactPlan],
@@ -1540,7 +1540,6 @@ mod tests {
     };
 
     use super::*;
-    use crate::services::STATE;
 
     const CUE_SHEET: &str = r#"PERFORMER "Cue Artist"
 TITLE "Cue Album"
@@ -3956,9 +3955,10 @@ FILE "album.flac" WAVE
         assert_ne!(winner, loser, "the groups must make separate releases");
         {
             let mut db = STATE.db.write().await;
-            db.transaction_mut(|t| {
+            let merge = db.transaction_mut(|t| {
                 crate::services::providers::merge_release_into_inside_tx(t, winner, loser)
             })?;
+            STATE.generation().merge_journal.record(merge);
         }
         shift_mtime(&one, 5)?;
         shift_mtime(&two, 5)?;
@@ -4018,9 +4018,10 @@ FILE "album.flac" WAVE
         assert_ne!(winner, loser, "the groups must make separate releases");
         {
             let mut db = STATE.db.write().await;
-            db.transaction_mut(|t| {
+            let merge = db.transaction_mut(|t| {
                 crate::services::providers::merge_release_into_inside_tx(t, winner, loser)
             })?;
+            STATE.generation().merge_journal.record(merge);
         }
         shift_mtime(&good, 5)?;
         shift_mtime(&bad, 5)?;

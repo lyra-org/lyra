@@ -102,18 +102,7 @@ pub(crate) async fn refresh_entity_metadata(
     }
 
     if !providers_called.is_empty() && !options.covers.skips() {
-        // The providers may have merged the entity away, and its id gone to another node.
-        if !target.holds(&*STATE.db.read().await)? {
-            tracing::debug!(
-                entity_id = %target.public_id,
-                "entity gone after its refresh; skipping its cover sync"
-            );
-            return Ok(EntityRefreshResult {
-                entity_type,
-                providers_called,
-            });
-        }
-        sync_cover_for_refreshed_entity(node_id, entity_type, library_db_id, options.covers)
+        sync_cover_for_refreshed_entity(&target, entity_type, library_db_id, options.covers)
             .await?;
     }
 
@@ -123,12 +112,25 @@ pub(crate) async fn refresh_entity_metadata(
     })
 }
 
+/// Fetches the covers of a refreshed entity, unless its target no longer holds, which the read
+/// here checks under the guard it reads with.
 async fn sync_cover_for_refreshed_entity(
-    node_id: DbId,
+    target: &RefreshTarget,
     entity_type: EntityType,
     library_db_id: Option<DbId>,
     options: CoverSyncOptions,
 ) -> Result<(), ProviderServiceError> {
+    let node_id = target.db_id;
+    let holds = |db: &DbAny| -> anyhow::Result<bool> {
+        let holds = target.holds(db)?;
+        if !holds {
+            tracing::debug!(
+                entity_id = %target.public_id,
+                "entity gone after its refresh; skipping its cover sync"
+            );
+        }
+        Ok(holds)
+    };
     let (library_root, covers_root) = cover_path_buffers_for_library(library_db_id).await?;
     let paths = cover_paths(&library_root, &covers_root);
 
@@ -136,7 +138,12 @@ async fn sync_cover_for_refreshed_entity(
         EntityType::Release => {
             let Some((release, tracks, artists)) = ({
                 let db = STATE.db.read().await;
-                lyra_db::releases::get_by_id(&db, node_id)?.map(|release| {
+                let release = if holds(&db)? {
+                    lyra_db::releases::get_by_id(&db, node_id)?
+                } else {
+                    None
+                };
+                release.map(|release| {
                     let tracks = lyra_db::tracks::get_direct(&db, node_id).unwrap_or_default();
                     let artists = lyra_db::artists::get(&db, node_id).unwrap_or_default();
                     (release, tracks, artists)
@@ -167,7 +174,11 @@ async fn sync_cover_for_refreshed_entity(
         EntityType::Artist => {
             let Some(artist) = ({
                 let db = STATE.db.read().await;
-                lyra_db::artists::get_by_id(&db, node_id)?
+                if holds(&db)? {
+                    lyra_db::artists::get_by_id(&db, node_id)?
+                } else {
+                    None
+                }
             }) else {
                 return Ok(());
             };
