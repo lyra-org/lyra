@@ -18,9 +18,23 @@ type JsonObject = { [string]: JsonValue }
 
 local routes = {}
 
+-- A 403 response unless the caller may configure the plugin.
+local function require_manage_plugins(ctx: ApiContext): ApiResponse?
+	local permissions = if ctx.auth then ctx.auth.principal.permissions else {}
+	if table.find(permissions, "admin") or table.find(permissions, "manage_plugins") then
+		return nil
+	end
+	return api.response.json(403, { error = "requires the manage_plugins permission" })
+end
+
 -- Starts an analysis, forwarding the client's body so callers can scope it (e.g.
 -- num_recent_albums).
 function routes.analysis_start(ctx: ApiContext): ApiResponse
+	local denied = require_manage_plugins(ctx)
+	if denied then
+		return denied
+	end
+
 	local raw = ctx.request.body_raw
 	local given = type(raw) == "string" and string.match(raw, "%S") ~= nil
 	-- Objects and arrays both decode to tables; only an object may scope the analysis.
@@ -43,6 +57,11 @@ function routes.analysis_start(ctx: ApiContext): ApiResponse
 end
 
 function routes.status(ctx: ApiContext): ApiResponse
+	local denied = require_manage_plugins(ctx)
+	if denied then
+		return denied
+	end
+
 	local task_id = ctx.params.task_id
 	if not task_id or not string.match(task_id, "^[%w%-_]+$") then
 		return api.response.json(400, { error = "invalid task_id" })
@@ -55,7 +74,12 @@ end
 -- Whether AudioMuse answers an authenticated request for the configured server, with each
 -- model's analysis coverage. A failure answers 502 with AudioMuse's status and error, such as a
 -- rejected token or an unknown server.
-function routes.health(): ApiResponse
+function routes.health(ctx: ApiContext): ApiResponse
+	local denied = require_manage_plugins(ctx)
+	if denied then
+		return denied
+	end
+
 	local response = client.get("/api/models")
 	local body = client.decode(response.body)
 	if client.ok(response) and type(body) == "table" then
