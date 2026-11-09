@@ -98,6 +98,7 @@ use crate::plugins::api::{
 };
 use crate::routes::app::REQUEST_BODY_LIMIT_BYTES;
 use crate::routes::request::{
+    ConnectionScheme,
     UnreadBody,
     base_url,
     bearer_credential,
@@ -529,6 +530,7 @@ fn build_http_method_router(
               params: Option<Path<HashMap<String, String>>>,
               client: Option<axum::Extension<crate::services::auth::caller::ClientAddress>>,
               peer: Option<axum::Extension<ConnectInfo<SocketAddr>>>,
+              connection: Option<axum::Extension<ConnectionScheme>>,
               body: UnreadBody| {
             let route = dispatch_route.clone();
             let body_budget = body_budget.clone();
@@ -538,7 +540,10 @@ fn build_http_method_router(
                     .map(|axum::Extension(client)| client)
                     .unwrap_or_default();
                 let peer = peer.map(|axum::Extension(ConnectInfo(peer))| peer);
-                let base_url = base_url(peer, &headers, &uri);
+                let connection = connection
+                    .map(|axum::Extension(connection)| connection)
+                    .unwrap_or_default();
+                let base_url = base_url(peer, connection, &headers, &uri);
                 dispatch_registered_route(RegisteredRouteRequest {
                     route,
                     method,

@@ -13,6 +13,8 @@ use lyra_db::bootstrap::DbConfig;
 #[derive(Clone)]
 pub(crate) struct Boot {
     pub(crate) port: u16,
+    /// Set when the port serves HTTPS itself.
+    pub(crate) tls: Option<TlsFiles>,
     pub(crate) data_dir: PathBuf,
     pub(crate) db: DbConfig,
     /// Where plugins are installed and discovered.
@@ -27,6 +29,13 @@ pub(crate) struct Boot {
     /// nothing outside it.
     pub(crate) hls_dir: PathBuf,
     pub(crate) build: BuildInfo,
+}
+
+/// The PEM certificate chain and private key the server serves HTTPS with.
+#[derive(Clone, Debug)]
+pub(crate) struct TlsFiles {
+    pub(crate) cert: PathBuf,
+    pub(crate) key: PathBuf,
 }
 
 /// Identity of the build running the server, supplied by the binary so that

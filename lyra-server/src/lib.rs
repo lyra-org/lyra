@@ -49,6 +49,14 @@ pub async fn run_server(build: BuildInfo, capture: Option<CaptureArgs>) -> Resul
     // Validate the file before touching the port, directories, or database.
     let library = configured_library(&loaded.file)?;
     let file_settings = server_settings::normalize_file(&loaded.file.settings)?;
+    let tls_files = loaded.boot.tls.clone().map(|tls| services::boot::TlsFiles {
+        cert: tls.cert,
+        key: tls.key,
+    });
+    let tls = match &tls_files {
+        Some(files) => Some(routes::ServerTls::load(files.clone()).await?),
+        None => None,
+    };
     // Bind first: a port collision with a running server must fail fast
     // instead of blocking on that server's DB process lock.
     let listener = bind_configured_listener(loaded.boot.port).await?;
@@ -73,6 +81,7 @@ pub async fn run_server(build: BuildInfo, capture: Option<CaptureArgs>) -> Resul
     )?;
     let boot = services::boot::Boot {
         port: loaded.boot.port,
+        tls: tls_files,
         transcode_cache_dir: loaded.boot.transcode_cache_dir(),
         cover_cache_dir: loaded.boot.cover_cache_dir(),
         hls_dir: loaded.boot.hls_dir(),
@@ -82,7 +91,7 @@ pub async fn run_server(build: BuildInfo, capture: Option<CaptureArgs>) -> Resul
         build,
     };
     services::STATE.initialize(boot, created, resolved)?;
-    serve(capture, listener).await
+    serve(capture, listener, tls).await
 }
 
 /// The library `file` seeds, validated before anything is touched.
@@ -116,7 +125,11 @@ pub struct CaptureArgs {
     pub library_path: PathBuf,
 }
 
-async fn serve(capture: Option<CaptureArgs>, listener: TcpListener) -> Result<()> {
+async fn serve(
+    capture: Option<CaptureArgs>,
+    listener: TcpListener,
+    tls: Option<routes::ServerTls>,
+) -> Result<()> {
     let capture_mode = capture.is_some();
     let shutdown_token = services::shutdown::reset();
     let config = services::STATE.config();
@@ -189,7 +202,7 @@ async fn serve(capture: Option<CaptureArgs>, listener: TcpListener) -> Result<()
         log_task_failure("plugin update checks", update_checks.await);
     });
 
-    routes::serve_app(app, config.as_ref(), listener, shutdown_token).await?;
+    routes::serve_app(app, config.as_ref(), listener, tls, shutdown_token).await?;
 
     tracing::info!("server stopped, running shutdown cleanup");
     services::shutdown::cancel();

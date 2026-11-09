@@ -1,5 +1,9 @@
 {
   "port": 4746,
+  "tls": {
+    "cert": null,
+    "key": null
+  },
   "published_url": null,
   "cors": {
     "allowed_origins": []

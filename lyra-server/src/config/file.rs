@@ -32,6 +32,7 @@ const LYRA_CONFIG_PATH_ENV: &str = "LYRA_CONFIG_PATH";
 pub(crate) struct ConfigFile {
     pub(crate) port: Option<u16>,
     pub(crate) db: Option<DbFile>,
+    pub(crate) tls: Option<TlsFile>,
     /// Dev-only bootstrap that seeds one library at startup; libraries are
     /// otherwise managed through the API.
     pub(crate) library: Option<LibraryFile>,
@@ -57,6 +58,14 @@ pub(crate) struct DbFile {
     pub(crate) path: Option<PathBuf>,
 }
 
+/// The PEM files that switch the port to HTTPS. Setting one without the other fails startup.
+#[derive(Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct TlsFile {
+    pub(crate) cert: Option<PathBuf>,
+    pub(crate) key: Option<PathBuf>,
+}
+
 impl ConfigFile {
     pub(crate) fn parse(contents: &str) -> Result<Self> {
         let root: serde_json::Value = serde_json::from_str(contents)?;
@@ -66,6 +75,7 @@ impl ConfigFile {
 
         let port = take_typed(&mut root, "port")?;
         let db = take_typed(&mut root, "db")?;
+        let tls = take_typed(&mut root, "tls")?;
         let library = take_typed(&mut root, "library")?;
 
         let mut settings = BTreeMap::new();
@@ -76,6 +86,7 @@ impl ConfigFile {
         Ok(Self {
             port,
             db,
+            tls,
             library,
             settings,
         })
@@ -243,6 +254,7 @@ mod tests {
             r#"{
                 "port": 5000,
                 "db": {"kind": "memory"},
+                "tls": {"cert": "/tls/lyra.crt", "key": "/tls/lyra.key"},
                 "library": {"path": "/music"},
                 "published_url": "http://localhost",
                 "auth": {"enabled": false},
@@ -253,6 +265,15 @@ mod tests {
 
         assert_eq!(file.port, Some(5000));
         assert!(file.db.is_some());
+        let tls = file.tls.expect("tls is typed");
+        assert_eq!(
+            tls.cert.as_deref(),
+            Some(std::path::Path::new("/tls/lyra.crt"))
+        );
+        assert_eq!(
+            tls.key.as_deref(),
+            Some(std::path::Path::new("/tls/lyra.key"))
+        );
         assert_eq!(
             file.library.and_then(|library| library.path).as_deref(),
             Some(std::path::Path::new("/music"))
@@ -294,6 +315,7 @@ mod tests {
     #[test]
     fn unknown_typed_subkeys_are_rejected() {
         assert!(ConfigFile::parse(r#"{"db": {"kinds": "memory"}}"#).is_err());
+        assert!(ConfigFile::parse(r#"{"tls": {"certificate": "/tls/lyra.crt"}}"#).is_err());
         assert!(ConfigFile::parse(r#"{"library": {"paths": "/music"}}"#).is_err());
         assert!(ConfigFile::parse(r#"[]"#).is_err());
     }
@@ -304,6 +326,7 @@ mod tests {
 
         assert!(file.port.is_none());
         assert!(file.db.is_none());
+        assert!(file.tls.is_none());
         assert!(file.library.is_none());
         assert!(file.settings.is_empty());
         Ok(())

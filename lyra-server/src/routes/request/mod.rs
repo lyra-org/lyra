@@ -11,7 +11,10 @@ mod body;
 pub(crate) mod origin;
 
 pub(crate) use address::client_address;
-pub(crate) use base_url::base_url;
+pub(crate) use base_url::{
+    ConnectionScheme,
+    base_url,
+};
 pub(crate) use body::UnreadBody;
 #[cfg(test)]
 pub(crate) use body::watched_body;

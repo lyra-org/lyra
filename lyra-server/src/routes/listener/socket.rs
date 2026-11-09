@@ -22,6 +22,7 @@ use tokio::{
         AsyncWrite,
         ReadBuf,
     },
+    net::TcpStream,
     time::{
         Instant,
         Sleep,
@@ -78,6 +79,15 @@ impl<S> AdmittedSocket<S> {
             ))),
             Poll::Pending => Poll::Pending,
         }
+    }
+}
+
+impl AdmittedSocket<TcpStream> {
+    /// The first byte the peer sends, left unread, or `None` when it closes without one.
+    pub(super) async fn first_byte(&self) -> io::Result<Option<u8>> {
+        let mut first = [0];
+        let read = self.inner.peek(&mut first).await?;
+        Ok((read > 0).then_some(first[0]))
     }
 }
 

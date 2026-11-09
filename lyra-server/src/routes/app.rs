@@ -173,9 +173,17 @@ pub(crate) async fn serve_app(
     app: Router,
     config: &Config,
     listener: TcpListener,
+    tls: Option<super::listener::ServerTls>,
     shutdown_token: CancellationToken,
 ) -> Result<()> {
     tracing::info!("listening on {}", listener.local_addr()?);
+    if let Some(tls) = &tls {
+        tracing::info!(
+            cert = %tls.files().cert.display(),
+            key = %tls.files().key.display(),
+            "serving HTTPS only"
+        );
+    }
     tracing::info!(
         trusted_proxies = %config.rate_limit.trusted_proxies,
         client_ip_header = config.rate_limit.client_ip_header.name(),
@@ -196,6 +204,7 @@ pub(crate) async fn serve_app(
         app,
         super::listener::ConnectionLimits::for_process(),
         config.rate_limit.trusted_proxies.clone(),
+        tls,
         shutdown_token,
     )
     .await;

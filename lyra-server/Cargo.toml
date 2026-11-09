@@ -53,6 +53,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 schemars = { version = "1.2.1", features = ["derive"], optional = true }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal"] }
+tokio-rustls = { version = "0.26", default-features = false }
 tokio-stream = { version = "0.1", default-features = false }
 tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
 futures = { version = "0.3", default-features = false, features = ["std", "async-await", "executor"] }
@@ -88,5 +89,6 @@ rustix = { workspace = true }
 [dev-dependencies]
 flate2 = { workspace = true }
 lyra-db = { path = "../lyra-db", features = ["testing"] }
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
 tar = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }

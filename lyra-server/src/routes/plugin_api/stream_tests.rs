@@ -263,6 +263,8 @@ async fn a_route_handler_gets_the_callers_base_url() -> Result<()> {
     use axum::extract::ConnectInfo;
     use tower::ServiceExt;
 
+    use crate::routes::request::ConnectionScheme;
+
     let _guard = crate::services::testing::runtime_test_lock().await;
     let server = serve().await?;
     crate::plugins::STATE
@@ -285,10 +287,13 @@ async fn a_route_handler_gets_the_callers_base_url() -> Result<()> {
 
     let proxy = std::net::SocketAddr::from(([127, 0, 0, 1], 4746));
     let stranger = std::net::SocketAddr::from(([203, 0, 113, 10], 4746));
-    for (peer, expected) in [
-        (Some(proxy), serde_json::json!("https://lyra.example")),
-        (Some(stranger), serde_json::json!("http://lyra.local:4746")),
-        (None, serde_json::json!("http://lyra.local:4746")),
+    let (plain, tls) = (ConnectionScheme::Http, ConnectionScheme::Https);
+    for (peer, connection, expected) in [
+        (Some(proxy), Some(plain), "https://lyra.example"),
+        (Some(proxy), Some(tls), "https://lyra.example"),
+        (Some(stranger), Some(plain), "http://lyra.local:4746"),
+        (Some(stranger), Some(tls), "https://lyra.local:4746"),
+        (None, None, "http://lyra.local:4746"),
     ] {
         let mut request = axum::http::Request::builder()
             .uri("/base-url")
@@ -298,14 +303,18 @@ async fn a_route_handler_gets_the_callers_base_url() -> Result<()> {
         if let Some(peer) = peer {
             request = request.extension(ConnectInfo(peer));
         }
+        if let Some(connection) = connection {
+            request = request.extension(connection);
+        }
         let response = app
             .clone()
             .oneshot(request.body(axum::body::Body::empty())?)
             .await?;
-        assert_eq!(response.status(), axum::http::StatusCode::OK, "{peer:?}");
+        let case = format!("{peer:?} over {connection:?}");
+        assert_eq!(response.status(), axum::http::StatusCode::OK, "{case}");
         let body = axum::body::to_bytes(response.into_body(), 1024).await?;
         let json: serde_json::Value = serde_json::from_slice(&body)?;
-        assert_eq!(json["base_url"], expected, "{peer:?}");
+        assert_eq!(json["base_url"], expected, "{case}");
     }
     Ok(())
 }

@@ -40,7 +40,9 @@ use axum::{
 };
 use tokio::{
     io::{
+        AsyncRead,
         AsyncReadExt,
+        AsyncWrite,
         AsyncWriteExt,
     },
     net::{
@@ -59,12 +61,14 @@ use tokio_util::sync::CancellationToken;
 use super::*;
 
 /// How long anything a test waits for may take. Reached only when a test is failing.
-const BOUND: Duration = Duration::from_secs(10);
+pub(super) const BOUND: Duration = Duration::from_secs(10);
 
-const SHORT: Duration = Duration::from_millis(150);
+pub(super) const SHORT: Duration = Duration::from_millis(150);
 
 pub(in crate::routes) fn limits() -> ConnectionLimits {
     ConnectionLimits {
+        tls_handshake: BOUND * 6,
+        certificate_poll: BOUND * 6,
         header_read: BOUND * 6,
         body_stall: BOUND * 6,
         write_stall: BOUND * 6,
@@ -94,10 +98,19 @@ impl Server {
 }
 
 async fn start_trusting(app: Router, limits: ConnectionLimits, trusted: TrustedProxies) -> Server {
+    start_with(app, limits, trusted, None).await
+}
+
+pub(super) async fn start_with(
+    app: Router,
+    limits: ConnectionLimits,
+    trusted: TrustedProxies,
+    tls: Option<ServerTls>,
+) -> Server {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let addr = listener.local_addr().unwrap();
     let shutdown = CancellationToken::new();
-    let task = tokio::spawn(serve(listener, app, limits, trusted, shutdown.clone()));
+    let task = tokio::spawn(serve(listener, app, limits, trusted, tls, shutdown.clone()));
     Server {
         addr,
         shutdown,
@@ -121,7 +134,7 @@ async fn echo_socket(ws: WebSocketUpgrade) -> axum::response::Response {
     })
 }
 
-fn app() -> Router {
+pub(super) fn app() -> Router {
     Router::new()
         .route("/ok", get(|| async { "ok" }))
         .route("/ws", get(echo_socket))
@@ -136,7 +149,7 @@ pub(in crate::routes) async fn connect(addr: SocketAddr) -> TcpStream {
 }
 
 /// Everything the server still sends on `stream`, until it closes it.
-async fn read_until_closed(stream: &mut TcpStream) -> String {
+pub(super) async fn read_until_closed(stream: &mut (impl AsyncRead + Unpin)) -> String {
     let mut received = Vec::new();
     let mut chunk = [0; 4096];
     timeout(BOUND, async {
@@ -152,7 +165,10 @@ async fn read_until_closed(stream: &mut TcpStream) -> String {
     String::from_utf8_lossy(&received).into_owned()
 }
 
-pub(in crate::routes) async fn read_until(stream: &mut TcpStream, needle: &str) -> String {
+pub(in crate::routes) async fn read_until(
+    stream: &mut (impl AsyncRead + Unpin),
+    needle: &str,
+) -> String {
     let mut received = Vec::new();
     let mut chunk = [0; 4096];
     timeout(BOUND, async {
@@ -167,7 +183,7 @@ pub(in crate::routes) async fn read_until(stream: &mut TcpStream, needle: &str) 
     String::from_utf8_lossy(&received).into_owned()
 }
 
-fn get_request(path: &str) -> String {
+pub(super) fn get_request(path: &str) -> String {
     format!("GET {path} HTTP/1.1\r\nHost: lyra.test\r\n\r\n")
 }
 
@@ -207,7 +223,14 @@ async fn becomes_served(addr: SocketAddr) -> bool {
 
 /// A socket upgraded to a WebSocket, proven by a message echoed over it.
 async fn upgraded_socket(addr: SocketAddr) -> TcpStream {
-    let mut stream = connect(addr).await;
+    upgraded(connect(addr).await).await
+}
+
+/// `stream` upgraded to a WebSocket, proven by a message echoed over it.
+pub(super) async fn upgraded<S>(mut stream: S) -> S
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     let handshake = "GET /ws HTTP/1.1\r\nHost: lyra.test\r\nConnection: Upgrade\r\n\
                      Upgrade: websocket\r\nSec-WebSocket-Version: 13\r\n\
                      Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
@@ -218,7 +241,7 @@ async fn upgraded_socket(addr: SocketAddr) -> TcpStream {
     stream
 }
 
-async fn assert_echoes(stream: &mut TcpStream) {
+pub(super) async fn assert_echoes(stream: &mut (impl AsyncRead + AsyncWrite + Unpin)) {
     stream
         .write_all(&[0x81, 0x82, 0, 0, 0, 0, b'h', b'i'])
         .await
@@ -359,7 +382,7 @@ async fn time_before_the_body_is_read_is_not_charged_to_it() {
     assert!(response.starts_with("HTTP/1.1 200"), "{response}");
 }
 
-struct NotifyOnDrop(Option<oneshot::Sender<()>>);
+pub(super) struct NotifyOnDrop(Option<oneshot::Sender<()>>);
 
 impl Drop for NotifyOnDrop {
     fn drop(&mut self) {
@@ -369,8 +392,8 @@ impl Drop for NotifyOnDrop {
     }
 }
 
-#[tokio::test]
-async fn a_socket_that_stops_taking_writes_is_closed() {
+/// An app whose `/flood` never stops sending, and what resolves once that response is dropped.
+pub(super) fn flooding_app() -> (Router, oneshot::Receiver<()>) {
     let (dropped_tx, dropped_rx) = oneshot::channel();
     let guard = Arc::new(Mutex::new(Some(NotifyOnDrop(Some(dropped_tx)))));
     let flood = get(move || {
@@ -381,8 +404,14 @@ async fn a_socket_that_stops_taking_writes_is_closed() {
         });
         async move { Body::from_stream(chunks) }
     });
+    (Router::new().route("/flood", flood), dropped_rx)
+}
+
+#[tokio::test]
+async fn a_socket_that_stops_taking_writes_is_closed() {
+    let (app, dropped_rx) = flooding_app();
     let server = start(
-        Router::new().route("/flood", flood),
+        app,
         ConnectionLimits {
             write_stall: SHORT,
             ..limits()
@@ -438,7 +467,7 @@ async fn connections_over_the_global_cap_are_closed() {
 }
 
 /// Answers once the server has served a request on `stream`, proving it stayed open.
-async fn assert_still_served(stream: &mut TcpStream) {
+pub(super) async fn assert_still_served(stream: &mut (impl AsyncRead + AsyncWrite + Unpin)) {
     stream
         .write_all(get_request("/ok").as_bytes())
         .await

@@ -3,13 +3,15 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-//! Values needed before the database opens: the listening port, the data
-//! directory, and the database location. Resolved env > file > default.
+//! Values needed before the database opens: the listening port, its TLS
+//! files, the data directory, and the database location. Resolved env > file
+//! > default.
 
 use anyhow::{
     Context,
     Result,
     anyhow,
+    bail,
 };
 use std::{
     env,
@@ -33,6 +35,8 @@ pub(crate) const DEFAULT_PORT: u16 = 4746;
 const LYRA_DATA_DIR_ENV: &str = "LYRA_DATA_DIR";
 const LYRA_DB_DIR_ENV: &str = "LYRA_DB_DIR";
 const LYRA_PORT_ENV: &str = "LYRA_PORT";
+const LYRA_TLS_CERT_ENV: &str = "LYRA_TLS_CERT";
+const LYRA_TLS_KEY_ENV: &str = "LYRA_TLS_KEY";
 const DEFAULT_DATA_DIR: &str = "data";
 const TRANSCODE_CACHE_DIR_NAME: &str = "transcodes";
 const HLS_DIR_NAME: &str = "hls";
@@ -45,6 +49,8 @@ pub(crate) struct BootEnv {
     pub(crate) data_dir: Option<OsString>,
     pub(crate) db_dir: Option<OsString>,
     pub(crate) port: Option<OsString>,
+    pub(crate) tls_cert: Option<OsString>,
+    pub(crate) tls_key: Option<OsString>,
 }
 
 impl BootEnv {
@@ -53,6 +59,8 @@ impl BootEnv {
             data_dir: env::var_os(LYRA_DATA_DIR_ENV),
             db_dir: env::var_os(LYRA_DB_DIR_ENV),
             port: env::var_os(LYRA_PORT_ENV),
+            tls_cert: env::var_os(LYRA_TLS_CERT_ENV),
+            tls_key: env::var_os(LYRA_TLS_KEY_ENV),
         }
     }
 }
@@ -60,14 +68,24 @@ impl BootEnv {
 #[derive(Clone)]
 pub(crate) struct BootConfig {
     pub(crate) port: u16,
+    /// Set when the port serves HTTPS.
+    pub(crate) tls: Option<TlsPaths>,
     pub(crate) data_dir: PathBuf,
     pub(crate) db: DbConfig,
+}
+
+/// The PEM certificate chain and private key the port serves HTTPS with.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TlsPaths {
+    pub(crate) cert: PathBuf,
+    pub(crate) key: PathBuf,
 }
 
 impl Default for BootConfig {
     fn default() -> Self {
         Self {
             port: DEFAULT_PORT,
+            tls: None,
             data_dir: PathBuf::from(DEFAULT_DATA_DIR),
             db: DbConfig::default(),
         }
@@ -83,6 +101,7 @@ impl BootConfig {
             boot.port = port;
         }
         apply_port_override(&mut boot, env.port)?;
+        boot.tls = resolve_tls(file, env.tls_cert, env.tls_key)?;
         boot.data_dir = data_dir_path(env.data_dir)?;
         if let Some(db) = &file.db {
             if let Some(kind) = db.kind {
@@ -148,6 +167,28 @@ fn apply_port_override(boot: &mut BootConfig, raw: Option<OsString>) -> Result<(
     Ok(())
 }
 
+/// Each path resolves on its own, so the environment may replace one and leave the other to the
+/// file. Relative paths stay relative to the working directory.
+fn resolve_tls(
+    file: &ConfigFile,
+    cert: Option<OsString>,
+    key: Option<OsString>,
+) -> Result<Option<TlsPaths>> {
+    let file = file.tls.as_ref();
+    let cert = non_empty_path(cert).or_else(|| file.and_then(|tls| tls.cert.clone()));
+    let key = non_empty_path(key).or_else(|| file.and_then(|tls| tls.key.clone()));
+    match (cert, key) {
+        (Some(cert), Some(key)) => Ok(Some(TlsPaths { cert, key })),
+        (None, None) => Ok(None),
+        (Some(_), None) => {
+            bail!("tls.cert is set without tls.key ({LYRA_TLS_KEY_ENV}); TLS needs both")
+        }
+        (None, Some(_)) => {
+            bail!("tls.key is set without tls.cert ({LYRA_TLS_CERT_ENV}); TLS needs both")
+        }
+    }
+}
+
 fn data_dir_path(raw: Option<OsString>) -> Result<PathBuf> {
     let path = non_empty_path(raw).unwrap_or_else(|| PathBuf::from(DEFAULT_DATA_DIR));
     if path.is_absolute() {
@@ -177,6 +218,7 @@ mod tests {
         BootConfig,
         BootEnv,
         DEFAULT_PORT,
+        TlsPaths,
         apply_port_override,
         data_dir_path,
         resolve_db_path,
@@ -356,10 +398,81 @@ mod tests {
                 data_dir: Some(data_dir.path().as_os_str().to_owned()),
                 db_dir: Some(data_dir.path().join("db").into_os_string()),
                 port: Some(OsString::from("6000")),
+                ..BootEnv::default()
             },
         )?;
         assert_eq!(from_env.port, 6000);
         assert_eq!(from_env.db.path, data_dir.path().join("db").join("x.db"));
+        Ok(())
+    }
+
+    fn tls_paths(cert: &str, key: &str) -> Option<TlsPaths> {
+        Some(TlsPaths {
+            cert: PathBuf::from(cert),
+            key: PathBuf::from(key),
+        })
+    }
+
+    #[test]
+    fn tls_paths_resolve_env_over_file() -> anyhow::Result<()> {
+        let file = ConfigFile::parse(r#"{"tls": {"cert": "file.crt", "key": "file.key"}}"#)?;
+
+        assert!(
+            BootConfig::resolve(&ConfigFile::default(), BootEnv::default())?
+                .tls
+                .is_none()
+        );
+        assert_eq!(
+            BootConfig::resolve(&file, BootEnv::default())?.tls,
+            tls_paths("file.crt", "file.key")
+        );
+        assert_eq!(
+            BootConfig::resolve(
+                &file,
+                BootEnv {
+                    tls_cert: Some(OsString::from("env.crt")),
+                    tls_key: Some(OsString::new()),
+                    ..BootEnv::default()
+                },
+            )?
+            .tls,
+            tls_paths("env.crt", "file.key")
+        );
+        assert_eq!(
+            BootConfig::resolve(
+                &ConfigFile::default(),
+                BootEnv {
+                    tls_cert: Some(OsString::from("env.crt")),
+                    tls_key: Some(OsString::from("env.key")),
+                    ..BootEnv::default()
+                },
+            )?
+            .tls,
+            tls_paths("env.crt", "env.key")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn half_a_tls_pair_is_rejected() -> anyhow::Result<()> {
+        let error = BootConfig::resolve(
+            &ConfigFile::parse(r#"{"tls": {"cert": "file.crt"}}"#)?,
+            BootEnv::default(),
+        )
+        .err()
+        .expect("a certificate alone should be rejected");
+        assert!(error.to_string().contains("without tls.key"), "{error}");
+
+        let error = BootConfig::resolve(
+            &ConfigFile::default(),
+            BootEnv {
+                tls_key: Some(OsString::from("env.key")),
+                ..BootEnv::default()
+            },
+        )
+        .err()
+        .expect("a key alone should be rejected");
+        assert!(error.to_string().contains("without tls.cert"), "{error}");
         Ok(())
     }
 
@@ -374,7 +487,7 @@ mod tests {
             BootEnv {
                 data_dir: Some(data_dir.clone().into_os_string()),
                 db_dir: Some(db_dir.clone().into_os_string()),
-                port: None,
+                ..BootEnv::default()
             },
         )?;
 

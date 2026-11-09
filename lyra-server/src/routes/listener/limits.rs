@@ -11,6 +11,12 @@ use std::time::Duration;
 /// wait for its next one.
 const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// How long a TLS handshake may take, start to finish.
+const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How often the TLS certificate files are read for a replacement.
+const CERTIFICATE_POLL_INTERVAL: Duration = Duration::from_secs(30);
+
 /// How long a request body may go without a frame while the handler is reading it.
 const BODY_STALL_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -28,6 +34,8 @@ const MAX_CONNECTIONS: usize = 4096;
 /// The limits one server applies to its connections.
 #[derive(Clone, Copy, Debug)]
 pub(in crate::routes) struct ConnectionLimits {
+    pub(super) tls_handshake: Duration,
+    pub(super) certificate_poll: Duration,
     pub(super) header_read: Duration,
     pub(super) body_stall: Duration,
     pub(super) write_stall: Duration,
@@ -42,6 +50,8 @@ impl ConnectionLimits {
         let global = global_cap(soft_descriptor_limit());
         tracing::debug!(global, "connection limit");
         Self {
+            tls_handshake: TLS_HANDSHAKE_TIMEOUT,
+            certificate_poll: CERTIFICATE_POLL_INTERVAL,
             header_read: HEADER_READ_TIMEOUT,
             body_stall: BODY_STALL_TIMEOUT,
             write_stall: WRITE_STALL_TIMEOUT,

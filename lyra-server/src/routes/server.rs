@@ -172,8 +172,17 @@ struct BootDbResponse {
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
+struct BootTlsResponse {
+    cert: String,
+    key: String,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct BootResponse {
     port: u16,
+    /// The certificate and key files the port serves HTTPS with, or `null` when it serves HTTP.
+    tls: Option<BootTlsResponse>,
     data_dir: String,
     db: BootDbResponse,
 }
@@ -321,6 +330,10 @@ fn settings_response() -> Result<ServerSettingsResponse, AppError> {
         pending_restart,
         boot: BootResponse {
             port: boot.port,
+            tls: boot.tls.as_ref().map(|tls| BootTlsResponse {
+                cert: tls.cert.display().to_string(),
+                key: tls.key.display().to_string(),
+            }),
             data_dir: boot.data_dir.display().to_string(),
             db: BootDbResponse {
                 kind: boot.db.kind.as_str().to_string(),
@@ -799,6 +812,7 @@ mod tests {
 
         assert_eq!(body["pending_restart"], json!([]));
         assert_eq!(body["boot"]["port"], json!(0));
+        assert!(body["boot"]["tls"].is_null());
         assert_eq!(body["boot"]["db"]["kind"], json!("memory"));
         assert!(body["boot"]["data_dir"].is_string());
         Ok(())

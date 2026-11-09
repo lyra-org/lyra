@@ -18,16 +18,40 @@ use axum::http::{
 
 use crate::services::settings::server::normalize_origin;
 
-/// The `scheme://authority` a request from `peer` was addressed to. Forwarded headers count only
+/// What a connection to the server's own port speaks, set on each of its requests.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ConnectionScheme {
+    #[default]
+    Http,
+    /// The server terminated TLS itself.
+    Https,
+}
+
+impl ConnectionScheme {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Http => "http",
+            Self::Https => "https",
+        }
+    }
+}
+
+/// The `scheme://authority` a request from `peer` was addressed to, over a connection speaking
+/// `connection` unless a forwarded header names another scheme. Forwarded headers count only
 /// from a peer on a local network, a trust separate from the configured proxies that decide a
 /// client's address, since this value only ever describes the address back to its caller.
-pub(crate) fn base_url(peer: Option<SocketAddr>, headers: &HeaderMap, uri: &Uri) -> Option<String> {
+pub(crate) fn base_url(
+    peer: Option<SocketAddr>,
+    connection: ConnectionScheme,
+    headers: &HeaderMap,
+    uri: &Uri,
+) -> Option<String> {
     let forwarded = peer.is_some_and(|peer| is_local_network(peer.ip()));
     let scheme = forwarded
         .then(|| forwarded_value(headers, "x-forwarded-proto"))
         .flatten()
         .filter(|proto| matches!(*proto, "http" | "https"))
-        .unwrap_or("http");
+        .unwrap_or(connection.as_str());
     let forwarded_host = forwarded
         .then(|| forwarded_value(headers, "x-forwarded-host"))
         .flatten();
@@ -94,7 +118,20 @@ mod tests {
     }
 
     fn resolve(peer: Option<SocketAddr>, pairs: &[(&str, &[u8])]) -> Option<String> {
-        base_url(peer, &headers(pairs), &Uri::from_static("/jellyfin"))
+        resolve_over(ConnectionScheme::Http, peer, pairs)
+    }
+
+    fn resolve_over(
+        connection: ConnectionScheme,
+        peer: Option<SocketAddr>,
+        pairs: &[(&str, &[u8])],
+    ) -> Option<String> {
+        base_url(
+            peer,
+            connection,
+            &headers(pairs),
+            &Uri::from_static("/jellyfin"),
+        )
     }
 
     fn some(url: &str) -> Option<String> {
@@ -114,6 +151,7 @@ mod tests {
         assert_eq!(
             base_url(
                 peer(PUBLIC),
+                ConnectionScheme::Http,
                 &HeaderMap::new(),
                 &Uri::from_static("https://lyra.example:8443/jellyfin"),
             ),
@@ -127,6 +165,7 @@ mod tests {
         assert_eq!(
             base_url(
                 peer(PUBLIC),
+                ConnectionScheme::Http,
                 &headers(&[("host", b"lyra.home.local")]),
                 &Uri::from_static("http://other.example/jellyfin"),
             ),
@@ -154,6 +193,69 @@ mod tests {
                 ],
             ),
             some("https://lyra.example")
+        );
+    }
+
+    #[test]
+    fn a_connection_over_the_servers_own_tls_is_https() {
+        assert_eq!(
+            resolve_over(
+                ConnectionScheme::Https,
+                peer(PUBLIC),
+                &[("host", b"lyra.local:4746")]
+            ),
+            some("https://lyra.local:4746")
+        );
+        assert_eq!(
+            resolve_over(
+                ConnectionScheme::Https,
+                peer(PUBLIC),
+                &[("host", b"lyra.local:443")]
+            ),
+            some("https://lyra.local")
+        );
+        assert_eq!(
+            resolve_over(
+                ConnectionScheme::Https,
+                None,
+                &[("host", b"lyra.local"), ("x-forwarded-proto", b"http")]
+            ),
+            some("https://lyra.local")
+        );
+    }
+
+    #[test]
+    fn a_trusted_forwarded_scheme_wins_over_the_connections() {
+        assert_eq!(
+            resolve_over(
+                ConnectionScheme::Https,
+                peer(PROXY),
+                &[
+                    ("host", b"lyra:4746"),
+                    ("x-forwarded-proto", b"http"),
+                    ("x-forwarded-host", b"lyra.example"),
+                ],
+            ),
+            some("http://lyra.example")
+        );
+        assert_eq!(
+            resolve_over(
+                ConnectionScheme::Https,
+                peer(PROXY),
+                &[
+                    ("host", b"lyra:4746"),
+                    ("x-forwarded-host", b"lyra.example")
+                ],
+            ),
+            some("https://lyra.example")
+        );
+        assert_eq!(
+            resolve_over(
+                ConnectionScheme::Https,
+                peer(PUBLIC),
+                &[("host", b"lyra.local"), ("x-forwarded-proto", b"http")],
+            ),
+            some("https://lyra.local")
         );
     }
 
@@ -338,6 +440,7 @@ mod tests {
         assert_eq!(
             base_url(
                 peer(PUBLIC),
+                ConnectionScheme::Http,
                 &headers(&[("host", b"not a host")]),
                 &Uri::from_static("http://lyra.example/jellyfin"),
             ),

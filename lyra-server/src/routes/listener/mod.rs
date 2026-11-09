@@ -10,11 +10,16 @@ mod limits;
 mod socket;
 #[cfg(test)]
 pub(super) mod tests;
+mod tls;
+#[cfg(test)]
+mod tls_tests;
 
 use std::{
+    io,
     net::SocketAddr,
     pin::pin,
     sync::Arc,
+    time::Duration,
 };
 
 use axum::{
@@ -49,6 +54,11 @@ use hyper_util::{
     service::TowerToHyperService,
 };
 use tokio::{
+    io::{
+        AsyncRead,
+        AsyncWrite,
+        AsyncWriteExt,
+    },
     net::{
         TcpListener,
         TcpStream,
@@ -56,11 +66,16 @@ use tokio::{
     task::JoinSet,
     time::timeout,
 };
+use tokio_rustls::{
+    TlsAcceptor,
+    server::TlsStream,
+};
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use tower_http::timeout::RequestBodyTimeoutLayer;
 
 pub(super) use self::limits::ConnectionLimits;
+pub(crate) use self::tls::ServerTls;
 use self::{
     gate::{
         ConnectionGate,
@@ -68,18 +83,29 @@ use self::{
     },
     socket::AdmittedSocket,
 };
-use crate::services::settings::server::TrustedProxies;
+use crate::{
+    routes::request::ConnectionScheme,
+    services::settings::server::TrustedProxies,
+};
 
-/// Serves `app` on `listener` until `shutdown`, then waits for its connections up to the drain
-/// limit and aborts what remains. Sockets upgraded away from HTTP are no longer connections here:
-/// they outlive this, and keep their place against the connection caps until they close.
+/// Serves `app` on `listener` until `shutdown`, over TLS alone when `tls` is given, then waits for
+/// its connections up to the drain limit and aborts what remains. Sockets upgraded away from HTTP
+/// are no longer connections here: they outlive this, and keep their place against the connection
+/// caps until they close.
 pub(super) async fn serve(
     mut listener: TcpListener,
     app: Router,
     limits: ConnectionLimits,
     trusted_peers: TrustedProxies,
+    tls: Option<ServerTls>,
     shutdown: CancellationToken,
 ) {
+    let handshake = tls.as_ref().map(|tls| Handshake {
+        acceptor: tls.acceptor(),
+        deadline: limits.tls_handshake,
+    });
+    let certificate_reloads =
+        tls.map(|tls| tokio::spawn(tls.follow_files(limits.certificate_poll)));
     let app = app.layer(RequestBodyTimeoutLayer::new(limits.body_stall));
     let gate = ConnectionGate::new(limits.per_peer, limits.global, trusted_peers);
     let mut http = http1::Builder::new();
@@ -105,10 +131,14 @@ pub(super) async fn serve(
             standing,
             peer,
             app.clone(),
+            handshake.clone(),
             shutdown.clone(),
         ));
     }
     drop(listener);
+    if let Some(certificate_reloads) = certificate_reloads {
+        certificate_reloads.abort();
+    }
 
     let drained = timeout(limits.shutdown_drain, async {
         while connections.join_next().await.is_some() {}
@@ -147,46 +177,132 @@ where
     }
 }
 
+/// The TLS handshake a connection must finish before it is read as HTTP.
+#[derive(Clone)]
+struct Handshake {
+    acceptor: TlsAcceptor,
+    deadline: Duration,
+}
+
+impl Handshake {
+    /// The socket once the peer has finished the handshake, or `None` when it failed, outlasted
+    /// the deadline, spoke plain HTTP, or the server began shutting down first.
+    async fn accept(
+        &self,
+        socket: AdmittedSocket<TcpStream>,
+        peer: SocketAddr,
+        shutdown: &CancellationToken,
+    ) -> Option<TlsStream<AdmittedSocket<TcpStream>>> {
+        let accepting = async {
+            // A TLS record never opens with a letter, and every HTTP method does.
+            if socket
+                .first_byte()
+                .await?
+                .is_some_and(|first| first.is_ascii_uppercase())
+            {
+                return refuse_plain_http(socket).await.map(|()| None);
+            }
+            self.acceptor.accept(socket).await.map(Some)
+        };
+        tokio::select! {
+            biased;
+            () = shutdown.cancelled() => None,
+            accepted = timeout(self.deadline, accepting) => match accepted {
+                Ok(Ok(Some(stream))) => Some(stream),
+                Ok(Ok(None)) => {
+                    tracing::debug!(%peer, "refused a plain HTTP request to the HTTPS port");
+                    None
+                }
+                Ok(Err(err)) => {
+                    tracing::debug!(%peer, error = %err, "TLS handshake failed");
+                    None
+                }
+                Err(_) => {
+                    tracing::debug!(%peer, "TLS handshake outlasted its deadline");
+                    None
+                }
+            },
+        }
+    }
+}
+
+/// Tells a peer that spoke plain HTTP why it is being closed, then reads until it hangs up:
+/// closing over its unread request would reset the connection and could lose the answer.
+async fn refuse_plain_http(mut socket: AdmittedSocket<TcpStream>) -> io::Result<()> {
+    const ANSWER: &[u8] =
+        b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain; charset=utf-8\r\n\
+                            Content-Length: 49\r\nConnection: close\r\n\r\n\
+                            This port serves HTTPS, and was sent plain HTTP.\n";
+    socket.write_all(ANSWER).await?;
+    socket.shutdown().await?;
+    tokio::io::copy(&mut socket, &mut tokio::io::sink()).await?;
+    Ok(())
+}
+
+/// Serves one admitted connection to its end. A handshake is part of the connection: it holds the
+/// connection's place against the caps and is evicted like any connection with no request.
 async fn serve_connection(
     http: http1::Builder,
     socket: AdmittedSocket<TcpStream>,
     standing: Arc<ConnectionStanding>,
     peer: SocketAddr,
     app: Router,
+    handshake: Option<Handshake>,
     shutdown: CancellationToken,
 ) {
-    let service = app.map_request(move |request: Request<Incoming>| {
-        let mut request = request.map(Body::new);
-        request.extensions_mut().insert(ConnectInfo(peer));
-        request
-    });
-    let connection = http
-        .serve_connection(
-            TokioIo::new(socket),
-            ProtectingService {
-                standing: Arc::clone(&standing),
-                inner: TowerToHyperService::new(service),
-            },
-        )
-        .with_upgrades();
-    let served = async move {
-        let mut connection = pin!(connection);
-        tokio::select! {
-            result = connection.as_mut() => result,
-            () = shutdown.cancelled() => {
-                connection.as_mut().graceful_shutdown();
-                connection.await
-            }
+    let served = async {
+        let Some(handshake) = handshake else {
+            let scheme = ConnectionScheme::Http;
+            return serve_http(http, socket, scheme, &standing, peer, app, shutdown).await;
+        };
+        if let Some(stream) = handshake.accept(socket, peer, &shutdown).await {
+            let scheme = ConnectionScheme::Https;
+            serve_http(http, stream, scheme, &standing, peer, app, shutdown).await;
         }
     };
 
     tokio::select! {
         biased;
         () = standing.evicted() => tracing::trace!(%peer, "evicted a connection with no request"),
-        result = served => {
-            if let Err(err) = result {
-                tracing::trace!(%peer, error = %err, "connection ended with an error");
-            }
+        () = served => {}
+    }
+}
+
+async fn serve_http<S>(
+    http: http1::Builder,
+    socket: S,
+    scheme: ConnectionScheme,
+    standing: &Arc<ConnectionStanding>,
+    peer: SocketAddr,
+    app: Router,
+    shutdown: CancellationToken,
+) where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let service = app.map_request(move |request: Request<Incoming>| {
+        let mut request = request.map(Body::new);
+        request.extensions_mut().insert(ConnectInfo(peer));
+        request.extensions_mut().insert(scheme);
+        request
+    });
+    let connection = http
+        .serve_connection(
+            TokioIo::new(socket),
+            ProtectingService {
+                standing: Arc::clone(standing),
+                inner: TowerToHyperService::new(service),
+            },
+        )
+        .with_upgrades();
+    let mut connection = pin!(connection);
+    let result = tokio::select! {
+        result = connection.as_mut() => result,
+        () = shutdown.cancelled() => {
+            connection.as_mut().graceful_shutdown();
+            connection.await
         }
+    };
+    if let Err(err) = result {
+        tracing::trace!(%peer, error = %err, "connection ended with an error");
     }
 }

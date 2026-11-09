@@ -298,6 +298,7 @@ fn memory_boot() -> anyhow::Result<Boot> {
     let data_dir = replace_data_dir()?;
     Ok(Boot {
         port: 0,
+        tls: None,
         transcode_cache_dir: data_dir.join("transcodes"),
         cover_cache_dir: data_dir.join("cover-transforms"),
         hls_dir: data_dir.join("hls"),

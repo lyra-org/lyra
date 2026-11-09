@@ -83,6 +83,7 @@ pub(crate) use error::{
 pub use genres::genre_routes;
 pub use labels::label_routes;
 pub use libraries::library_routes;
+pub(crate) use listener::ServerTls;
 pub use listens::listen_routes;
 pub use metadata::metadata_routes;
 pub(crate) use metadata::reingest_request_gate;
