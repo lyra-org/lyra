@@ -45,6 +45,7 @@ use crate::services::{
     CoverSyncOptions,
     STATE,
     covers::{
+        AudioFolders,
         configured_covers_root,
         record_local_release_cover,
         refresh_gone_covers_for_library,
@@ -457,6 +458,19 @@ pub(crate) async fn sync_library_pipeline(
     mark_missing_entries_for_scan(db, library, &observation, progress.clone()).await?;
     progress.check_cancelled()?;
     let mut plans = process_pending_metadata(db, library, progress.clone()).await?;
+    // Every group is applied by now, so a release can't look alone in a folder because another
+    // album's files in it are still to come; those a failed group left stay unread.
+    let audio_folders = if plans.is_empty() {
+        AudioFolders::default()
+    } else {
+        AudioFolders::of_libraries(&*db.read().await, std::slice::from_ref(library))?
+    };
+    let artifact_scope = ArtifactScope {
+        db,
+        library_db_id,
+        library_path: &library.path,
+        audio_folders: &audio_folders,
+    };
     let stages = ReleaseArtifactStages::for_sync(options);
     let mut provider_count = 0;
     if stages.provider_refresh {
@@ -528,20 +542,11 @@ pub(crate) async fn sync_library_pipeline(
         futures::future::join_all(chunk.iter().map(|plan| {
             let covers = first_on_release.insert(plan.release_id);
             let progress = progress.clone();
+            let artifact_scope = &artifact_scope;
             async move {
                 #[cfg(test)]
                 tests::before_release_artifacts(plan).await;
-                if process_release_artifacts(
-                    db,
-                    library_db_id,
-                    &library.path,
-                    plan,
-                    stages,
-                    covers,
-                    progress,
-                )
-                .await
-                {
+                if process_release_artifacts(artifact_scope, plan, stages, covers, progress).await {
                     mark_entries_synced(db, library_db_id, &plan.entry_ids).await;
                 }
             }
@@ -1040,6 +1045,14 @@ struct ReleaseArtifactPlan {
     gone: bool,
 }
 
+/// What the artifact stages of a scan's releases share.
+struct ArtifactScope<'a> {
+    db: &'a DbAsync,
+    library_db_id: DbId,
+    library_path: &'a Path,
+    audio_folders: &'a AudioFolders,
+}
+
 struct ReleaseArtifactContext<'a> {
     db: &'a DbAsync,
     library_db_id: DbId,
@@ -1217,9 +1230,7 @@ async fn refresh_changed_releases(
 /// or the run was cancelled. Lyrics and provider cover failures are failed units that `/refresh`
 /// retries, as provider failures are.
 async fn process_release_artifacts(
-    db: &DbAsync,
-    library_db_id: DbId,
-    library_path: &Path,
+    scope: &ArtifactScope<'_>,
     plan: &ReleaseArtifactPlan,
     stages: ReleaseArtifactStages,
     covers: bool,
@@ -1241,16 +1252,21 @@ async fn process_release_artifacts(
         return true;
     }
     let run_id = progress.run_id().to_string();
-    let context =
-        ReleaseArtifactContext::new(db, library_db_id, library_path, plan, progress.clone());
+    let context = ReleaseArtifactContext::new(
+        scope.db,
+        scope.library_db_id,
+        scope.library_path,
+        plan,
+        progress.clone(),
+    );
 
     let local_cover = if covers {
-        sync_local_release_cover_metadata(&context).await
+        sync_local_release_cover_metadata(&context, scope.audio_folders).await
     } else {
         Ok(())
     };
     dispatch_release_lyrics(
-        library_db_id,
+        scope.library_db_id,
         plan.release_id,
         plan,
         run_id,
@@ -1260,7 +1276,7 @@ async fn process_release_artifacts(
     if !covers {
         skip_cover_units(&progress, stages, "release_merged").await;
     } else if !stages.covers.skips() {
-        sync_provider_release_cover(&context, stages.covers).await;
+        sync_provider_release_cover(&context, scope.audio_folders, stages.covers).await;
     }
     local_cover.is_ok() && !progress.is_cancelled()
 }
@@ -1315,6 +1331,7 @@ async fn refresh_changed_release(context: &ReleaseArtifactContext<'_>) -> Vec<St
 /// Records the release's local cover, failing when it can't be resolved or persisted.
 async fn sync_local_release_cover_metadata(
     context: &ReleaseArtifactContext<'_>,
+    audio_folders: &AudioFolders,
 ) -> anyhow::Result<()> {
     let started = Instant::now();
     let details = context.details("local_cover_metadata");
@@ -1322,9 +1339,13 @@ async fn sync_local_release_cover_metadata(
         .progress
         .start_work(SyncStageKey::LocalCoverMetadata, details.clone())
         .await;
-    let result =
-        record_local_release_cover(context.db, context.release_id, Some(context.library_path))
-            .await;
+    let result = record_local_release_cover(
+        context.db,
+        audio_folders,
+        context.release_id,
+        Some(context.library_path),
+    )
+    .await;
 
     match result {
         Ok(synced) => {
@@ -1418,6 +1439,7 @@ async fn dispatch_release_lyrics(
 
 async fn sync_provider_release_cover(
     context: &ReleaseArtifactContext<'_>,
+    audio_folders: &AudioFolders,
     options: CoverSyncOptions,
 ) {
     let started = Instant::now();
@@ -1475,6 +1497,7 @@ async fn sync_provider_release_cover(
 
     let synced = match sync_release_cover_for_tracks(
         context.db,
+        audio_folders,
         &tracks,
         &release,
         &artists,
@@ -2835,6 +2858,200 @@ FILE "album.flac" WAVE
         )
     }
 
+    fn cover_path(dir: &Path) -> String {
+        dir.join("cover.png").to_string_lossy().into_owned()
+    }
+
+    async fn sole_release_of(library: &Library, audio: &Path) -> anyhow::Result<DbId> {
+        release_of(entry_for(library, audio).await?.db_id.expect("entry db_id")).await
+    }
+
+    /// The library-wide release cover pass a refresh ends with.
+    async fn refresh_release_covers(library: &Library) -> anyhow::Result<usize> {
+        let covers_root = configured_covers_root();
+        crate::services::covers::sync_and_persist_release_covers_for_library(
+            &STATE.db.get(),
+            CoverPaths {
+                library_root: Some(&library.path),
+                covers_root: &covers_root,
+            },
+            library.db_id.expect("library db_id"),
+            CoverSyncOptions::default(),
+            None,
+            &tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_flat_folder_of_two_albums_gives_neither_its_cover() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cover-flat").await?;
+        let (one, two) = (root.join("Mix/one.flac"), root.join("Mix/two.flac"));
+        tagged_file(&one, &("One", 1, None, None))?;
+        tagged_file(&two, &("Two", 1, None, None))?;
+        std::fs::write(root.join("Mix/cover.png"), PNG_1X1)?;
+
+        sync(&library).await?;
+
+        assert_eq!(local_cover_of(&library, &one).await?, None);
+        assert_eq!(local_cover_of(&library, &two).await?, None);
+        refresh_release_covers(&library).await?;
+        assert_eq!(local_cover_of(&library, &one).await?, None);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_image_above_two_album_folders_is_neither_album_s() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cover-road-trip").await?;
+        let one = album_track(&root.join("Road Trip/One"), "One")?;
+        let two = album_track(&root.join("Road Trip/Two"), "Two")?;
+        std::fs::write(root.join("Road Trip/cover.png"), PNG_1X1)?;
+
+        sync(&library).await?;
+
+        assert_eq!(local_cover_of(&library, &one).await?, None);
+        assert_eq!(local_cover_of(&library, &two).await?, None);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn one_album_over_disc_folders_keeps_the_image_above_them() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cover-discs").await?;
+        let (one, two) = (
+            root.join("Album/CD1/01.flac"),
+            root.join("Album/CD2/01.flac"),
+        );
+        tagged_file(&one, &("Album", 1, Some(1), None))?;
+        tagged_file(&two, &("Album", 1, Some(2), None))?;
+        std::fs::write(root.join("Album/cover.png"), PNG_1X1)?;
+
+        sync(&library).await?;
+
+        assert_eq!(
+            sole_release_of(&library, &one).await?,
+            sole_release_of(&library, &two).await?,
+            "the discs make one release"
+        );
+        assert_eq!(
+            local_cover_of(&library, &one).await?,
+            Some(cover_path(&root.join("Album")))
+        );
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_album_keeps_the_art_in_its_own_folder_beside_other_albums() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cover-own-folder").await?;
+        let own = album_track(&root.join("Artist/Own"), "Own")?;
+        let other = album_track(&root.join("Artist/Other"), "Other")?;
+        std::fs::write(root.join("Artist/Own/cover.png"), PNG_1X1)?;
+
+        sync(&library).await?;
+
+        assert_eq!(
+            local_cover_of(&library, &own).await?,
+            Some(cover_path(&root.join("Artist/Own")))
+        );
+        assert_eq!(local_cover_of(&library, &other).await?, None);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    /// The accepted limit of judging by what the folder holds: one album's folder alone under
+    /// another looks just like an album's own disc folder.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_lone_album_under_a_playlist_folder_still_inherits_its_image() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cover-lone-album").await?;
+        let audio = album_track(&root.join("Playlist/Album"), "Album")?;
+        std::fs::write(root.join("Playlist/cover.png"), PNG_1X1)?;
+
+        sync(&library).await?;
+
+        assert_eq!(
+            local_cover_of(&library, &audio).await?,
+            Some(cover_path(&root.join("Playlist")))
+        );
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_file_marked_missing_still_counts_against_the_folder() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cover-missing-counts").await?;
+        let (one, two) = (root.join("Mix/one.flac"), root.join("Mix/two.flac"));
+        tagged_file(&one, &("One", 1, None, None))?;
+        tagged_file(&two, &("Two", 1, None, None))?;
+        std::fs::write(root.join("Mix/cover.png"), PNG_1X1)?;
+        sync(&library).await?;
+
+        std::fs::remove_file(&two)?;
+        sync(&library).await?;
+        assert!(entry_for(&library, &two).await?.is_missing());
+
+        refresh_release_covers(&library).await?;
+        assert_eq!(local_cover_of(&library, &one).await?, None);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_album_with_an_unread_file_neither_gains_nor_loses_its_cover() -> anyhow::Result<()>
+    {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cover-unread").await?;
+        let album = root.join("Album");
+        let audio = album_track(&album, "Album")?;
+        std::fs::write(album.join("cover.png"), PNG_1X1)?;
+        sync(&library).await?;
+        let recorded = local_cover_of(&library, &audio).await?;
+        assert!(recorded.is_some());
+
+        let unread = album.join("unread.flac");
+        tagged_file(&unread, &("Album", 2, None, None))?;
+        if !deny_reads(&unread)? {
+            allow_reads(&unread)?;
+            return Ok(());
+        }
+        std::fs::write(album.join("cover.jpg"), PNG_1X1)?;
+        shift_mtime(&album, 10)?;
+        sync(&library).await?;
+        refresh_release_covers(&library).await?;
+
+        assert!(!synced(&library, &unread).await?, "the file went unread");
+        assert_eq!(
+            local_cover_of(&library, &audio).await?,
+            recorded,
+            "unread audio could be anyone's, so nothing is recorded or dropped"
+        );
+
+        allow_reads(&unread)?;
+        shift_mtime(&album, 20)?;
+        sync(&library).await?;
+        assert_eq!(
+            local_cover_of(&library, &audio).await?,
+            Some(album.join("cover.jpg").to_string_lossy().into_owned()),
+            "once read, the album's own folder gives its cover again"
+        );
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn a_cover_link_to_something_else_is_not_registered() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
@@ -4144,6 +4361,49 @@ FILE "album.flac" WAVE
             run.progress.completed_units + run.progress.skipped_units,
             run.progress.total_units,
             "every counted unit must settle, and no unit may go uncounted"
+        );
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn audio_on_no_release_does_not_cost_a_folder_its_cover() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cover-no-release").await?;
+        let album = root.join("Album");
+        let kept = album_track(&album, "Album")?;
+        let stray = album.join("stray.flac");
+        std::fs::copy(&kept, &stray)?;
+        let art = album.join("cover.png");
+        std::fs::write(&art, PNG_1X1)?;
+        sync(&library).await?;
+        let art = art.to_string_lossy().into_owned();
+        assert_eq!(
+            local_cover_of(&library, &kept).await?.as_deref(),
+            Some(art.as_str())
+        );
+
+        let stray_entry = entry_for(&library, &stray).await?.db_id.expect("id");
+        {
+            let mut db = STATE.db.write().await;
+            let track = lyra_db::tracks::get_by_entry(&db, stray_entry)?
+                .into_iter()
+                .next()
+                .and_then(|track| track.db_id.map(DbId::from))
+                .expect("track");
+            for release in lyra_db::releases::get_by_track(&db, track)? {
+                let release = release.db_id.map(DbId::from).expect("release id");
+                lyra_db::releases::unlink_track(&mut db, release, track)?;
+            }
+            assert!(lyra_db::entries::release_ids(&*db, stray_entry)?.is_empty());
+        }
+        sync(&library).await?;
+
+        assert_eq!(
+            local_cover_of(&library, &kept).await?.as_deref(),
+            Some(art.as_str()),
+            "a file on no release says nothing about who owns the folder"
         );
         let _ = std::fs::remove_dir_all(root);
         Ok(())

@@ -11,6 +11,7 @@ use crate::services::{
     EntityType,
     STATE,
     covers::{
+        AudioFolders,
         CoverSyncOptions,
         forget_gone_covers,
         record_local_release_cover,
@@ -136,17 +137,22 @@ async fn sync_cover_for_refreshed_entity(
 
     match entity_type {
         EntityType::Release => {
-            let Some((release, tracks, artists)) = ({
+            let Some((release, tracks, artists, folders)) = ({
                 let db = STATE.db.read().await;
                 let release = if holds(&db)? {
                     lyra_db::releases::get_by_id(&db, node_id)?
                 } else {
                     None
                 };
-                release.map(|release| {
+                let folders = release
+                    .as_ref()
+                    .map(|_| AudioFolders::of_release(&*db, node_id))
+                    .transpose()
+                    .map_err(ProviderServiceError::Internal)?;
+                release.zip(folders).map(|(release, folders)| {
                     let tracks = lyra_db::tracks::get_direct(&db, node_id).unwrap_or_default();
                     let artists = lyra_db::artists::get(&db, node_id).unwrap_or_default();
-                    (release, tracks, artists)
+                    (release, tracks, artists, folders)
                 })
             }) else {
                 return Ok(());
@@ -154,6 +160,7 @@ async fn sync_cover_for_refreshed_entity(
 
             let synced = sync_release_cover_for_tracks(
                 &STATE.db.get(),
+                &folders,
                 &tracks,
                 &release,
                 &artists,
@@ -162,7 +169,7 @@ async fn sync_cover_for_refreshed_entity(
             )
             .await
             .map_err(ProviderServiceError::Internal)?;
-            record_local_release_cover(&STATE.db.get(), node_id, paths.library_root)
+            record_local_release_cover(&STATE.db.get(), &folders, node_id, paths.library_root)
                 .await
                 .map_err(ProviderServiceError::Internal)?;
             tracing::debug!(

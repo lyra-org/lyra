@@ -208,6 +208,17 @@ pub fn get_by_track(db: &DbAny, track_db_id: DbId) -> anyhow::Result<Vec<Entry>>
     Ok(entries)
 }
 
+/// The releases holding the tracks that play the audio file `entry_db_id`.
+pub fn release_ids(db: &impl super::DbAccess, entry_db_id: DbId) -> anyhow::Result<HashSet<DbId>> {
+    let mut releases = HashSet::new();
+    for source in super::graph::inbound_neighbor_ids(db, entry_db_id, "TrackSource")? {
+        for track in super::graph::inbound_neighbor_ids(db, source, "Track")? {
+            releases.extend(super::graph::inbound_neighbor_ids(db, track, "Release")?);
+        }
+    }
+    Ok(releases)
+}
+
 /// The library's own entries: the tree of directories and files under it. The walk goes through
 /// entries alone, as other edges lead to releases, whose tracks can play another library's files
 /// once a release is shared.

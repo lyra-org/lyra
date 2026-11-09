@@ -49,6 +49,7 @@ use super::{
     CoverPaths,
     CoverSyncOptions,
     CoverUpdate,
+    folders::AudioFolders,
     image::{
         MAX_COVER_BYTES,
         cover_blurhash,
@@ -394,6 +395,7 @@ async fn save_provider_cover(
 
 pub(crate) async fn sync_release_cover_for_tracks(
     db: &lyra_db::DbAsync,
+    folders: &AudioFolders,
     tracks: &[Track],
     release: &Release,
     artists: &[Artist],
@@ -408,7 +410,7 @@ pub(crate) async fn sync_release_cover_for_tracks(
     let (dirs, files, roots) = {
         let db_read = db.read().await;
         (
-            cover_dirs_for_release(&db_read, tracks, paths.library_root)?,
+            cover_dirs_for_release(&db_read, folders, release_id, tracks, paths.library_root)?,
             stored_cover_files(&*db_read, release_id)?,
             MediaRoots::for_principal(&*db_read, None)?.for_covers(),
         )
@@ -687,6 +689,7 @@ async fn resolve_local_covers_for_library(
     let (mut searches, mut failed) = (Vec::new(), Vec::new());
     let roots = {
         let db_read = db.read().await;
+        let folders = AudioFolders::of_library(&*db_read, library_id)?;
         for release in &lyra_db::releases::get(&db_read, library_id)? {
             let Some(release_id) = release.db_id.clone().map(Into::<DbId>::into) else {
                 continue;
@@ -695,7 +698,13 @@ async fn resolve_local_covers_for_library(
                 continue;
             }
             let tracks = lyra_db::tracks::get_direct(&db_read, release_id)?;
-            match cover_dirs_for_release(&db_read, &tracks, paths.library_root) {
+            match cover_dirs_for_release(
+                &db_read,
+                &folders,
+                release_id,
+                &tracks,
+                paths.library_root,
+            ) {
                 Ok(dirs) => searches.push(((release_id, release.id.clone()), dirs)),
                 Err(err) => failed.push(err),
             }
@@ -734,6 +743,7 @@ pub(crate) async fn sync_release_covers_for_library(
             return Ok(0);
         }
 
+        let folders = AudioFolders::of_library(&*db_read, library_id)?;
         let mut searches = Vec::new();
         for release in lyra_db::releases::get(&db_read, library_id)? {
             let Some(release_id) = release.db_id.map(Into::<DbId>::into) else {
@@ -742,7 +752,9 @@ pub(crate) async fn sync_release_covers_for_library(
 
             let tracks = lyra_db::tracks::get_direct(&db_read, release_id)?;
             // The metadata pass after this one reports a cover search that fails.
-            let Ok(dirs) = cover_dirs_for_release(&db_read, &tracks, paths.library_root) else {
+            let Ok(dirs) =
+                cover_dirs_for_release(&db_read, &folders, release_id, &tracks, paths.library_root)
+            else {
                 continue;
             };
             let files = stored_cover_files(&*db_read, release_id)?;
@@ -943,9 +955,11 @@ pub(super) async fn upsert_local_cover_metadata(
 
 /// Records the release's library cover as its local cover, leaving a locked release alone, then
 /// removes its covers from any source whose file is confirmed gone. Returns the cover found and
-/// whether its record changed.
+/// whether its record changed. Judging folders takes every album in them to have been applied, as
+/// a scan's have by its artifact stage.
 pub(crate) async fn record_local_release_cover(
     db: &lyra_db::DbAsync,
+    folders: &AudioFolders,
     release_id: DbId,
     library_root: Option<&Path>,
 ) -> Result<Option<(PathBuf, bool)>> {
@@ -958,7 +972,7 @@ pub(crate) async fn record_local_release_cover(
             return Ok(None);
         }
         let tracks = lyra_db::tracks::get_direct(&db_read, release_id)?;
-        let dirs = cover_dirs_for_release(&db_read, &tracks, library_root)?;
+        let dirs = cover_dirs_for_release(&db_read, folders, release_id, &tracks, library_root)?;
         let roots = MediaRoots::for_principal(&*db_read, None)?.for_covers();
         (release.id, dirs, roots)
     };
@@ -1052,12 +1066,18 @@ async fn find_gone_covers(
     let mut searches = Vec::new();
     let roots = {
         let db_read = db.read().await;
+        let folders = if local.is_empty() {
+            AudioFolders::default()
+        } else {
+            AudioFolders::of_library(&*db_read, library_id)?
+        };
         for stale in local {
             if stale.current(&*db_read)?.is_none() {
                 continue;
             }
-            let tracks = lyra_db::tracks::get_direct(&db_read, stale.owner_db_id())?;
-            match cover_dirs_for_release(&db_read, &tracks, library_root) {
+            let owner_id = stale.owner_db_id();
+            let tracks = lyra_db::tracks::get_direct(&db_read, owner_id)?;
+            match cover_dirs_for_release(&db_read, &folders, owner_id, &tracks, library_root) {
                 Ok(dirs) => searches.push((stale, dirs)),
                 Err(err) => gone.failed.push(err),
             }
@@ -1362,6 +1382,7 @@ mod tests {
 
         let synced = sync_release_cover_for_tracks(
             &db,
+            &AudioFolders::default(),
             &[],
             &release,
             &[],
@@ -1670,7 +1691,7 @@ mod tests {
         };
 
         assert!(
-            record_local_release_cover(&db, release_id, None)
+            record_local_release_cover(&db, &AudioFolders::default(), release_id, None)
                 .await?
                 .is_none()
         );
@@ -1795,9 +1816,14 @@ mod tests {
         std_fs::remove_dir_all(album.join("CD2"))?;
 
         assert!(
-            record_local_release_cover(&db, release_id, Some(root.path()))
-                .await?
-                .is_none()
+            record_local_release_cover(
+                &db,
+                &AudioFolders::default(),
+                release_id,
+                Some(root.path())
+            )
+            .await?
+            .is_none()
         );
         assert!(local_pin(&db, release_id).await?);
         Ok(())
@@ -1818,7 +1844,13 @@ mod tests {
             return Ok(());
         }
 
-        let result = record_local_release_cover(&db, release_id, Some(root.path())).await;
+        let result = record_local_release_cover(
+            &db,
+            &AudioFolders::default(),
+            release_id,
+            Some(root.path()),
+        )
+        .await;
         std_fs::set_permissions(&folder, std_fs::Permissions::from_mode(0o755))?;
         assert!(result?.is_none());
         assert!(local_pin(&db, release_id).await?);
@@ -1834,9 +1866,14 @@ mod tests {
         std_fs::remove_file(folder.join("cover.png"))?;
 
         assert!(
-            record_local_release_cover(&db, release_id, Some(root.path()))
-                .await?
-                .is_none()
+            record_local_release_cover(
+                &db,
+                &AudioFolders::default(),
+                release_id,
+                Some(root.path())
+            )
+            .await?
+            .is_none()
         );
         assert!(
             lyra_db::covers::sources(&*db.read().await, release_id)?.is_empty(),

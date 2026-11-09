@@ -30,7 +30,14 @@ use crate::services::{
 };
 use lyra_db::Track;
 
-use super::image::COVER_EXTENSIONS;
+use super::{
+    folders::{
+        AudioFolders,
+        FolderClaim,
+        FolderDepth,
+    },
+    image::COVER_EXTENSIONS,
+};
 
 pub(crate) fn configured_covers_root() -> PathBuf {
     STATE.config().covers_path.clone()
@@ -143,13 +150,20 @@ fn find_cover_in_directory(dir: &Path, roots: &MediaRoots) -> Result<Option<Path
     Ok(candidates.into_iter().next().map(|(_, path)| path))
 }
 
+/// The folders around the release's tracks, sorted out by who the audio in them belongs to:
+/// a track's own folder counts when all the audio directly in it is the release's, and the folder
+/// above when all the audio beneath it is, so a folder of several releases gives none of them
+/// its image.
 pub(crate) fn cover_dirs_for_release(
     db: &DbAny,
+    folders: &AudioFolders,
+    release_id: DbId,
     tracks: &[Track],
     library_root: Option<&Path>,
 ) -> Result<Vec<PathBuf>> {
     let mut seen_tracks = HashSet::new();
-    let mut seen_dirs = HashSet::new();
+    let mut judged = HashSet::new();
+    let mut owned = HashSet::new();
     let mut dirs = Vec::new();
 
     for track in tracks {
@@ -177,20 +191,22 @@ pub(crate) fn cover_dirs_for_release(
                 continue;
             }
 
-            let mut candidate_dirs = Vec::new();
-            candidate_dirs.push(track_dir.to_path_buf());
+            let mut candidate_dirs = vec![(track_dir, FolderDepth::Direct)];
 
             if let Some(parent_dir) = track_dir.parent() {
                 let parent_in_library =
                     library_root.is_none_or(|root| parent_dir.starts_with(root));
                 if parent_dir != track_dir && parent_in_library {
-                    candidate_dirs.push(parent_dir.to_path_buf());
+                    candidate_dirs.push((parent_dir, FolderDepth::Recursive));
                 }
             }
 
-            for dir in candidate_dirs {
-                if seen_dirs.insert(dir.clone()) {
-                    dirs.push(dir);
+            for (dir, depth) in candidate_dirs {
+                if judged.insert((dir.to_path_buf(), depth))
+                    && folders.claim(db, dir, release_id, depth)? == FolderClaim::Sole
+                    && owned.insert(dir.to_path_buf())
+                {
+                    dirs.push(dir.to_path_buf());
                 }
             }
         }
@@ -199,8 +215,8 @@ pub(crate) fn cover_dirs_for_release(
     Ok(dirs)
 }
 
-/// The release's cover in its library: a `cover.*` image in the first of `dirs` holding one, as
-/// [`cover_dirs_for_release`] lists the folders holding its tracks and the folders above.
+/// The release's cover in its library: a `cover.*` image in the first of `dirs` holding one, the
+/// folders [`cover_dirs_for_release`] found to be the release's.
 pub(crate) fn find_local_cover(dirs: &[PathBuf], roots: &MediaRoots) -> Result<Option<PathBuf>> {
     for dir in dirs {
         if let Some(cover) = find_cover_in_directory(dir, roots)? {
@@ -254,10 +270,6 @@ mod tests {
         test_db::TestDb,
     };
 
-    fn new_test_db() -> anyhow::Result<DbAny> {
-        Ok(TestDb::new()?.into_inner())
-    }
-
     #[test]
     fn a_cover_link_to_something_else_is_passed_over() -> anyhow::Result<()> {
         let (library, outside) = (tempfile::tempdir()?, tempfile::tempdir()?);
@@ -284,7 +296,10 @@ mod tests {
     #[test]
     fn cover_dirs_for_release_keeps_library_root_and_skips_parent_outside_root()
     -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
+        let mut db = TestDb::initialized()?.into_inner();
+        let library = lyra_db::test_db::insert_library(&mut db, "Library", "/music")?;
+        let release_id = lyra_db::fixtures::insert_release(&mut db, "Release")?;
+        lyra_db::fixtures::connect(&mut db, library, release_id)?;
 
         let track_node = Track {
             db_id: None,
@@ -367,6 +382,9 @@ mod tests {
                 .query(),
         )?;
 
+        lyra_db::fixtures::connect(&mut db, release_id, track_id)?;
+        lyra_db::fixtures::connect(&mut db, library, entry_id)?;
+
         let tracks = vec![Track {
             db_id: Some(NodeId::from(track_id)),
             id: nanoid!(),
@@ -385,7 +403,14 @@ mod tests {
             file_created_at_ms: None,
         }];
 
-        let dirs = cover_dirs_for_release(&db, &tracks, Some(Path::new("/music")))?;
+        let folders = AudioFolders::of_library(&db, library)?;
+        let dirs = cover_dirs_for_release(
+            &db,
+            &folders,
+            release_id,
+            &tracks,
+            Some(Path::new("/music")),
+        )?;
         assert_eq!(dirs, vec![PathBuf::from("/music")]);
 
         Ok(())

@@ -4,6 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 pub(crate) mod display;
+mod folders;
 mod image;
 pub(crate) mod lookup;
 pub(crate) mod providers;
@@ -178,6 +179,7 @@ impl ProviderCoverSearchResult {
 }
 
 // Re-exports for convenient access from the rest of the crate.
+pub(crate) use folders::AudioFolders;
 pub(crate) use image::{
     COVER_EXTENSIONS,
     MAX_COVER_BYTES,
