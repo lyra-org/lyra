@@ -1,0 +1,31 @@
+run_as = "listener"
+
+[[users]]
+key = "listener"
+
+[[users]]
+key = "other"
+
+[[api_keys]]
+key = "phone"
+user = "listener"
+
+[[api_keys]]
+key = "other_phone"
+user = "other"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener", "other"]
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+duration_ms = 200000

@@ -43,6 +43,10 @@ export type SessionEntry = {
 	last_playback_event_s: number?,
 	-- os.clock() of the socket's last KeepAlive.
 	last_keep_alive_s: number,
+	-- Rises with every socket; the lowest of a user's is their oldest.
+	connection_order: number,
+	-- Closed by the cap. Its sender reads as open until the host acts on the close.
+	evicted: boolean,
 }
 
 -- Per-listing state: the NowPlayingItem tables whose track names are filled in one batched lookup
@@ -56,6 +60,57 @@ local module = {}
 -- Live Jellyfin sockets keyed by session id.
 local entries: { [string]: SessionEntry } = {}
 module.entries = entries
+
+-- Goes beyond upstream: every plugin shares one Luau VM, so one account can't hold unlimited sockets.
+local MAX_SOCKETS_PER_USER = 32
+module.MAX_SOCKETS_PER_USER = MAX_SOCKETS_PER_USER
+
+local last_connection_order = 0
+
+function module.next_connection_order(): number
+	last_connection_order += 1
+	return last_connection_order
+end
+
+local function close_socket(entry: SessionEntry)
+	pcall(function()
+		entry.sender:close()
+	end)
+end
+
+-- Makes `entry` its session's socket, closing the one it replaces and, over the cap, the user's
+-- oldest. Evicted sockets end through their own handlers. Nothing here may yield: concurrent
+-- connects would each pass the count.
+function module.admit(entry: SessionEntry)
+	local replaced = entries[entry.session_id]
+	local live: { SessionEntry } = {}
+	for _, other in entries do
+		if
+			other ~= replaced
+			and other.user_id == entry.user_id
+			and not other.evicted
+			and not other.sender:is_closed()
+		then
+			table.insert(live, other)
+		end
+	end
+
+	local excess = #live + 1 - MAX_SOCKETS_PER_USER
+	if excess > 0 then
+		table.sort(live, function(left: SessionEntry, right: SessionEntry): boolean
+			return left.connection_order < right.connection_order
+		end)
+		for index = 1, excess do
+			live[index].evicted = true
+			close_socket(live[index])
+		end
+	end
+
+	if replaced then
+		close_socket(replaced)
+	end
+	entries[entry.session_id] = entry
+end
 
 local JELLYFIN_COMMAND_MAP: { [playback_sessions.RemoteAction]: string } = {
 	play = "Play",
