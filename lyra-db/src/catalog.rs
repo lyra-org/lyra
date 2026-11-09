@@ -61,6 +61,7 @@ pub struct CatalogArtist {
 pub struct CatalogGenre {
     pub id: DbId,
     pub name: String,
+    pub created: Option<u64>,
     pub aliases: Vec<String>,
 }
 
@@ -212,9 +213,11 @@ pub fn read(db: &(impl DbAccess + Sync)) -> anyhow::Result<Catalog> {
         let genres = genres
             .into_iter()
             .filter_map(|element| {
+                let values = Values(&element.values);
                 Some(CatalogGenre {
                     id: element.id,
-                    name: Values(&element.values).text("name")?,
+                    name: values.text("name")?,
+                    created: values.number("created_at_ms"),
                     aliases: aliases.remove(&element.id).unwrap_or_default(),
                 })
             })

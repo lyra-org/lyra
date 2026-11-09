@@ -489,6 +489,11 @@ pub(crate) struct ArtistFields {
     pub(crate) credited: Bits,
 }
 
+#[derive(Debug)]
+pub(crate) struct GenreFields {
+    pub(crate) created: Vec<u64>,
+}
+
 /// One credit on a release or track.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Credit {
@@ -711,6 +716,7 @@ pub(crate) struct Snapshot {
     pub(crate) track: TrackFields,
     pub(crate) release: ReleaseFields,
     pub(crate) artist: ArtistFields,
+    pub(crate) genre: GenreFields,
     libraries: HashMap<DbId, u32>,
     library_public_ids: HashMap<String, u32>,
     library_releases: Links,
@@ -784,6 +790,7 @@ impl Snapshot {
             release_dates,
             release_created,
             artist_created,
+            genre_created,
             artist_type,
             credited_flags,
         ) = {
@@ -834,6 +841,10 @@ impl Snapshot {
                             })
                             .collect(),
                     );
+                    let genre_created = genres
+                        .iter()
+                        .map(|genre| or_missing(genre.created))
+                        .collect::<Vec<_>>();
                     let genres = Table::new(
                         genres
                             .into_iter()
@@ -852,6 +863,7 @@ impl Snapshot {
                         release_dates,
                         release_created,
                         artist_created,
+                        genre_created,
                         artist_type,
                         credited_flags,
                     )
@@ -864,6 +876,7 @@ impl Snapshot {
                 release_dates,
                 release_created,
                 artist_created,
+                genre_created,
                 artist_type,
                 credited_flags,
             ) = rest;
@@ -875,6 +888,7 @@ impl Snapshot {
                 release_dates,
                 release_created,
                 artist_created,
+                genre_created,
                 artist_type,
                 credited_flags,
             )
@@ -985,6 +999,9 @@ impl Snapshot {
                     .map(|(slot, _)| slot as u32),
             ),
         };
+        let genre = GenreFields {
+            created: genre_created,
+        };
         let lead = |credits: &Credits, owners: usize| {
             (0..owners as u32)
                 .map(|owner| {
@@ -1025,6 +1042,7 @@ impl Snapshot {
             track,
             release,
             artist,
+            genre,
             libraries: library_slots,
             library_public_ids,
             library_releases,
@@ -1211,7 +1229,8 @@ impl Snapshot {
             + self.release.year.capacity()
             + self.release.track_count.capacity()
             + self.release.total_duration.capacity()
-            + self.artist.created.capacity())
+            + self.artist.created.capacity()
+            + self.genre.created.capacity())
             * 8;
         scopes
             + self.tracks.memory()

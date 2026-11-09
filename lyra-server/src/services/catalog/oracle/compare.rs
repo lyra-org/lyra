@@ -264,6 +264,14 @@ fn fixture(seed: u64) -> anyhow::Result<Fixture> {
         .iter()
         .filter_map(|name| lyra_db::genres::find_by_name(&db, name).transpose())
         .collect::<anyhow::Result<Vec<_>>>()?;
+    for genre in &genres {
+        db.exec_mut(
+            agdb::QueryBuilder::insert()
+                .values_uniform([("created_at_ms", rng.below(5) as u64).into()])
+                .ids(*genre)
+                .query(),
+        )?;
+    }
     Ok(Fixture {
         db,
         user,
@@ -793,6 +801,7 @@ fn genres_match_the_scanning_pipeline() -> anyhow::Result<()> {
             filters,
             &sorts(&[
                 Name,
+                DateCreated,
                 ReleaseCount,
                 TrackCount,
                 TotalDuration,

@@ -45,7 +45,7 @@ impl Old for Genres {
         ids: Vec<DbId>,
         keys: &[GenreKey],
     ) -> Result<Vec<Row>, CatalogError> {
-        let fields = lyra_db::graph::select_fields(db, &ids, &["name"])?;
+        let fields = lyra_db::graph::select_fields(db, &ids, &["name", "created_at_ms"])?;
         let needs = |wanted: &[GenreKey]| keys.iter().any(|key| wanted.contains(key));
         let mut release_counts = HashMap::new();
         let mut tracks_by_genre = HashMap::new();
@@ -79,12 +79,16 @@ impl Old for Genres {
         Ok(ids
             .into_iter()
             .filter_map(|id| {
-                let mut row = Row::new(id, fields.get(&id)?.text("name")?.to_string(), None);
+                let genre = fields.get(&id)?;
+                let mut row = Row::new(id, genre.text("name")?.to_string(), None);
                 let totals = totals.get(&id).copied().unwrap_or_default();
                 row.values = keys
                     .iter()
                     .map(|key| match key {
                         GenreKey::Name => Some(SortValue::Text(row.lower_name().to_string())),
+                        GenreKey::DateCreated => {
+                            genre.number("created_at_ms").map(SortValue::Number)
+                        }
                         GenreKey::ReleaseCount => Some(SortValue::Number(
                             release_counts.get(&id).copied().unwrap_or(0),
                         )),

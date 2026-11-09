@@ -33,6 +33,7 @@ use lyra_db::genres::Genre;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum GenreKey {
     Name,
+    DateCreated,
     /// The visible releases in the genre.
     ReleaseCount,
     /// The tracks on the visible releases in the genre.
@@ -48,6 +49,7 @@ pub(crate) enum GenreKey {
 impl SortKey for GenreKey {
     const KEYS: &'static [(&'static str, Self)] = &[
         ("name", Self::Name),
+        ("date_created", Self::DateCreated),
         ("release_count", Self::ReleaseCount),
         ("track_count", Self::TrackCount),
         ("total_duration", Self::TotalDuration),
@@ -159,6 +161,9 @@ impl Catalog for Genres {
                     .collect()
             }));
         }
+        if key == GenreKey::DateCreated {
+            return Ok(Column::Fields(&index.genre.created));
+        }
         let links = cx.links();
         let scoped = scoped_genre_releases(cx, filter);
         let releases_of = |genre: u32| {
@@ -185,7 +190,11 @@ impl Catalog for Genres {
             GenreKey::TotalDuration => totals(false, |totals| Some(totals.total_duration))?,
             GenreKey::ListenCount => totals(true, |totals| Some(totals.listen_count))?,
             GenreKey::LastPlayedAt => totals(true, |totals| totals.last_played_at)?,
-            GenreKey::Name | GenreKey::Relevance | GenreKey::Random | GenreKey::Id => {
+            GenreKey::Name
+            | GenreKey::DateCreated
+            | GenreKey::Relevance
+            | GenreKey::Random
+            | GenreKey::Id => {
                 unreachable!("{key:?} is not a computed field key")
             }
         })

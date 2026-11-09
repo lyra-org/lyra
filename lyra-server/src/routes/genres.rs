@@ -105,7 +105,7 @@ struct GenreListQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Comma-separated or repeated values: name, release_count, track_count, total_duration, listen_count, last_played_at, relevance (with query), random, id."
+            description = "Comma-separated or repeated values: name, date_created, release_count, track_count, total_duration, listen_count, last_played_at, relevance (with query), random, id."
         )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
@@ -353,7 +353,7 @@ async fn get_genre(
 #[cfg(feature = "docgen")]
 fn list_genres_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List genres").description(
-        "Returns genres as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `sort_by`, `sort_order`, `available`, `limit`, `cursor`. `available=true` keeps the genres whose `available` field is true, counting only their tracks that can play; `available=false` keeps the genres of a release holding a track that can't play, partly playable ones included, counting only such tracks. Results are limited to genres attached to releases visible to the authenticated user. `library_id` scopes results to releases belonging to that public library ID. `sort_by` supports `name`, `last_played_at`, `listen_count`, `release_count`, `track_count`, `total_duration`, and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` matches genre names and aliases; each of its words must start a word, ignoring case, accents, apostrophes and punctuation; no character is an operator, and a word in a script written without spaces, such as Japanese, matches anywhere in a word. Exact names rank first, then names starting with the query, then names holding every word, then names holding some, then matches only through related items. `inc=covers` includes personalized display cover metadata.",
+        "Returns genres as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `sort_by`, `sort_order`, `available`, `limit`, `cursor`. `available=true` keeps the genres whose `available` field is true, counting only their tracks that can play; `available=false` keeps the genres of a release holding a track that can't play, partly playable ones included, counting only such tracks. Results are limited to genres attached to releases visible to the authenticated user. `library_id` scopes results to releases belonging to that public library ID. `sort_by` supports `name`, `date_created`, `last_played_at`, `listen_count`, `release_count`, `track_count`, `total_duration`, and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` matches genre names and aliases; each of its words must start a word, ignoring case, accents, apostrophes and punctuation; no character is an operator, and a word in a script written without spaces, such as Japanese, matches anywhere in a word. Exact names rank first, then names starting with the query, then names holding every word, then names holding some, then matches only through related items. `inc=covers` includes personalized display cover metadata.",
     )
 }
 
@@ -651,6 +651,39 @@ mod tests {
         assert_eq!(
             list_genre_names(headers, None, Some("name"), Some("descending")).await?,
             vec!["Techno", "Jazz", "Ambient"]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_genres_sorts_by_creation_time() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        {
+            let mut db = STATE.db.write().await;
+            let library = insert_library(&mut db, "Dated Genres", "/tmp/lyra-dated-genres")?;
+            for (name, created_at_ms) in [("Ambient", 30_u64), ("Jazz", 10), ("Techno", 20)] {
+                insert_genre_release(&mut db, library, name)?;
+                let genre = lyra_db::genres::find_by_name(&*db, name)?
+                    .ok_or_else(|| anyhow::anyhow!("genre missing"))?;
+                db.exec_mut(
+                    agdb::QueryBuilder::insert()
+                        .values_uniform([("created_at_ms", created_at_ms).into()])
+                        .ids(genre)
+                        .query(),
+                )?;
+            }
+        }
+        let headers = create_admin_headers("genre-created-admin").await?;
+
+        assert_eq!(
+            list_genre_names(headers.clone(), None, Some("date_created"), None).await?,
+            vec!["Jazz", "Techno", "Ambient"]
+        );
+        assert_eq!(
+            list_genre_names(headers, None, Some("date_created"), Some("descending")).await?,
+            vec!["Ambient", "Techno", "Jazz"]
         );
         Ok(())
     }
