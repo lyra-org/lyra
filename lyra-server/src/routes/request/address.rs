@@ -7,7 +7,6 @@
 //! forwarded client headers.
 
 use std::{
-    collections::HashSet,
     net::{
         IpAddr,
         SocketAddr,
@@ -20,7 +19,10 @@ use std::{
 
 use axum::http::HeaderMap;
 
-use crate::services::auth::caller::ClientAddress;
+use crate::services::{
+    auth::caller::ClientAddress,
+    settings::server::TrustedProxies,
+};
 
 static MISSING_PEER_WARNED: AtomicBool = AtomicBool::new(false);
 static UNTRUSTED_FORWARD_HEADERS_WARNED: AtomicBool = AtomicBool::new(false);
@@ -30,7 +32,7 @@ static UNTRUSTED_FORWARD_HEADERS_WARNED: AtomicBool = AtomicBool::new(false);
 pub(crate) fn client_address(
     peer: Option<SocketAddr>,
     headers: &HeaderMap,
-    trusted_proxies: &HashSet<IpAddr>,
+    trusted_proxies: &TrustedProxies,
 ) -> ClientAddress {
     let Some(peer) = peer else {
         if !MISSING_PEER_WARNED.swap(true, Ordering::Relaxed) {
@@ -40,7 +42,7 @@ pub(crate) fn client_address(
     };
 
     let peer_ip = peer.ip();
-    if trusted_proxies.contains(&peer_ip) {
+    if trusted_proxies.contains(peer_ip) {
         return ClientAddress::new(
             forwarded_client_ip(headers, trusted_proxies).unwrap_or(peer_ip),
         );
@@ -57,7 +59,7 @@ pub(crate) fn client_address(
     ClientAddress::new(peer_ip)
 }
 
-fn forwarded_client_ip(headers: &HeaderMap, trusted_proxies: &HashSet<IpAddr>) -> Option<IpAddr> {
+fn forwarded_client_ip(headers: &HeaderMap, trusted_proxies: &TrustedProxies) -> Option<IpAddr> {
     x_forwarded_for_client_ip(headers, trusted_proxies)
         .or_else(|| forwarded_header_client_ip(headers, trusted_proxies))
         .or_else(|| x_real_ip(headers))
@@ -65,7 +67,7 @@ fn forwarded_client_ip(headers: &HeaderMap, trusted_proxies: &HashSet<IpAddr>) -
 
 fn x_forwarded_for_client_ip(
     headers: &HeaderMap,
-    trusted_proxies: &HashSet<IpAddr>,
+    trusted_proxies: &TrustedProxies,
 ) -> Option<IpAddr> {
     let raw = headers.get("x-forwarded-for")?.to_str().ok()?;
     let ips = raw
@@ -77,7 +79,7 @@ fn x_forwarded_for_client_ip(
 
 fn forwarded_header_client_ip(
     headers: &HeaderMap,
-    trusted_proxies: &HashSet<IpAddr>,
+    trusted_proxies: &TrustedProxies,
 ) -> Option<IpAddr> {
     let raw = headers.get("forwarded")?.to_str().ok()?;
     let ips = raw
@@ -102,11 +104,11 @@ fn x_real_ip(headers: &HeaderMap) -> Option<IpAddr> {
         .and_then(parse_forwarded_ip)
 }
 
-fn select_forwarded_client_ip(ips: &[IpAddr], trusted_proxies: &HashSet<IpAddr>) -> Option<IpAddr> {
+fn select_forwarded_client_ip(ips: &[IpAddr], trusted_proxies: &TrustedProxies) -> Option<IpAddr> {
     ips.iter()
         .rev()
         .copied()
-        .find(|ip| !trusted_proxies.contains(ip))
+        .find(|ip| !trusted_proxies.contains(*ip))
         .or_else(|| ips.first().copied())
 }
 
@@ -148,6 +150,10 @@ mod tests {
 
     use super::*;
 
+    fn loopback() -> TrustedProxies {
+        TrustedProxies::parse(["127.0.0.1"]).expect("valid entries")
+    }
+
     fn address(raw: &str) -> ClientAddress {
         ClientAddress::new(raw.parse().expect("valid ip"))
     }
@@ -156,7 +162,7 @@ mod tests {
     fn forwarded_headers_count_only_from_trusted_proxies() {
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", HeaderValue::from_static("203.0.113.10"));
-        let trusted = HashSet::from([IpAddr::V4(Ipv4Addr::LOCALHOST)]);
+        let trusted = loopback();
         let proxy = Some(SocketAddr::from(([127, 0, 0, 1], 4746)));
         let stranger = Some(SocketAddr::from(([198, 51, 100, 1], 4746)));
 
@@ -175,8 +181,29 @@ mod tests {
     }
 
     #[test]
+    fn a_range_of_proxies_is_trusted() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("203.0.113.10, 172.30.5.9"),
+        );
+        let trusted = TrustedProxies::parse(["172.30.5.0/24"]).expect("valid entries");
+        let inside = Some(SocketAddr::from(([172, 30, 5, 2], 4746)));
+        let outside = Some(SocketAddr::from(([172, 30, 6, 2], 4746)));
+
+        assert_eq!(
+            client_address(inside, &headers, &trusted),
+            address("203.0.113.10")
+        );
+        assert_eq!(
+            client_address(outside, &headers, &trusted),
+            address("172.30.6.2")
+        );
+    }
+
+    #[test]
     fn forwarded_ipv6_clients_are_grouped_by_their_64() {
-        let trusted = HashSet::from([IpAddr::V4(Ipv4Addr::LOCALHOST)]);
+        let trusted = loopback();
         let proxy = Some(SocketAddr::from(([127, 0, 0, 1], 4746)));
         let forwarded = |raw: &'static str| {
             let mut headers = HeaderMap::new();
@@ -196,7 +223,7 @@ mod tests {
         );
 
         assert_eq!(
-            forwarded_header_client_ip(&headers, &HashSet::new()),
+            forwarded_header_client_ip(&headers, &TrustedProxies::none()),
             Some(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10)))
         );
     }
@@ -208,7 +235,7 @@ mod tests {
             "x-forwarded-for",
             HeaderValue::from_static("198.51.100.99, 203.0.113.10, 127.0.0.1"),
         );
-        let trusted = HashSet::from([IpAddr::V4(Ipv4Addr::LOCALHOST)]);
+        let trusted = loopback();
 
         assert_eq!(
             x_forwarded_for_client_ip(&headers, &trusted),

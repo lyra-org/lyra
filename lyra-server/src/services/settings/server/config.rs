@@ -3,18 +3,16 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::{
-    net::IpAddr,
-    path::{
-        Path,
-        PathBuf,
-    },
+use std::path::{
+    Path,
+    PathBuf,
 };
 
 #[cfg(test)]
 use super::FileSettings;
 use super::{
     Lookup,
+    TrustedProxies,
     resolve_path,
 };
 use crate::services::libraries::LibraryConfig;
@@ -116,7 +114,7 @@ pub(crate) struct CorsConfig {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct RateLimitConfig {
     pub(crate) enabled: bool,
-    pub(crate) trusted_proxies: Vec<IpAddr>,
+    pub(crate) trusted_proxies: TrustedProxies,
     /// Per credential, or per client address for anonymous requests.
     pub(crate) global_per_minute: u32,
     pub(crate) global_burst: u32,

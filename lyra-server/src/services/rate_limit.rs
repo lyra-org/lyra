@@ -177,7 +177,8 @@ mod tests {
         startup.rate_limit.enabled = true;
         startup.rate_limit.login_per_minute = 1;
         startup.rate_limit.login_burst = 1;
-        startup.rate_limit.trusted_proxies.clear();
+        startup.rate_limit.trusted_proxies =
+            crate::services::settings::server::TrustedProxies::none();
         crate::services::STATE
             .startup_config
             .replace(Arc::new(startup.clone()));

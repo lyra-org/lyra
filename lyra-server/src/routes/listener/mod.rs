@@ -12,10 +12,7 @@ mod socket;
 pub(super) mod tests;
 
 use std::{
-    net::{
-        IpAddr,
-        SocketAddr,
-    },
+    net::SocketAddr,
     pin::pin,
     sync::Arc,
 };
@@ -71,6 +68,7 @@ use self::{
     },
     socket::AdmittedSocket,
 };
+use crate::services::settings::server::TrustedProxies;
 
 /// Serves `app` on `listener` until `shutdown`, then waits for its connections up to the drain
 /// limit and aborts what remains. Sockets upgraded away from HTTP are no longer connections here:
@@ -79,7 +77,7 @@ pub(super) async fn serve(
     mut listener: TcpListener,
     app: Router,
     limits: ConnectionLimits,
-    trusted_peers: impl IntoIterator<Item = IpAddr>,
+    trusted_peers: TrustedProxies,
     shutdown: CancellationToken,
 ) {
     let app = app.layer(RequestBodyTimeoutLayer::new(limits.body_stall));

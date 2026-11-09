@@ -9,7 +9,6 @@ use std::{
     collections::{
         BTreeMap,
         HashMap,
-        HashSet,
     },
     net::IpAddr,
     sync::{
@@ -30,7 +29,10 @@ use std::{
 
 use tokio_util::sync::CancellationToken;
 
-use crate::services::auth::caller::ClientAddress;
+use crate::services::{
+    auth::caller::ClientAddress,
+    settings::server::TrustedProxies,
+};
 
 const WARNING_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -42,7 +44,7 @@ const WARNING_INTERVAL: Duration = Duration::from_secs(60);
 pub(super) struct ConnectionGate {
     per_peer: usize,
     global: usize,
-    trusted_peers: HashSet<IpAddr>,
+    trusted_peers: TrustedProxies,
     held: Mutex<Held>,
 }
 
@@ -82,18 +84,11 @@ pub(super) struct ConnectionStanding {
 }
 
 impl ConnectionGate {
-    pub(super) fn new(
-        per_peer: usize,
-        global: usize,
-        trusted_peers: impl IntoIterator<Item = IpAddr>,
-    ) -> Arc<Self> {
+    pub(super) fn new(per_peer: usize, global: usize, trusted_peers: TrustedProxies) -> Arc<Self> {
         Arc::new(Self {
             per_peer,
             global,
-            trusted_peers: trusted_peers
-                .into_iter()
-                .map(|peer| peer.to_canonical())
-                .collect(),
+            trusted_peers,
             held: Mutex::default(),
         })
     }
@@ -101,8 +96,7 @@ impl ConnectionGate {
     /// A permit for a connection from `peer`, or `None` when it is over a cap and no connection
     /// can make way for it.
     pub(super) fn admit(self: &Arc<Self>, peer: IpAddr) -> Option<ConnectionPermit> {
-        let client =
-            (!self.trusted_peers.contains(&peer.to_canonical())).then(|| ClientAddress::new(peer));
+        let client = (!self.trusted_peers.contains(peer)).then(|| ClientAddress::new(peer));
         let mut held = self.held();
         if let Some(client) = client
             && held.by_peer.get(&client).copied().unwrap_or_default() >= self.per_peer
@@ -257,6 +251,10 @@ mod tests {
         raw.parse().expect("valid ip")
     }
 
+    fn trusting(entries: &[&str]) -> TrustedProxies {
+        TrustedProxies::parse(entries.iter().copied()).expect("valid entries")
+    }
+
     fn admitted(gate: &Arc<ConnectionGate>, peer: &str) -> ConnectionPermit {
         gate.admit(ip(peer)).expect("admitted")
     }
@@ -280,7 +278,7 @@ mod tests {
 
     #[test]
     fn a_peer_gets_its_place_back_when_a_permit_drops() {
-        let gate = ConnectionGate::new(2, 8, []);
+        let gate = ConnectionGate::new(2, 8, TrustedProxies::none());
         let first = admitted(&gate, "203.0.113.1");
         let _second = admitted(&gate, "203.0.113.1");
         assert!(gate.admit(ip("203.0.113.1")).is_none());
@@ -292,7 +290,7 @@ mod tests {
 
     #[test]
     fn counted_peers_leave_nothing_behind() {
-        let gate = ConnectionGate::new(2, 8, []);
+        let gate = ConnectionGate::new(2, 8, TrustedProxies::none());
         drop(gate.admit(ip("203.0.113.1")));
         drop(proven(&gate, "203.0.113.1"));
         assert_empty(&gate);
@@ -300,7 +298,7 @@ mod tests {
 
     #[test]
     fn peers_are_grouped_as_the_limiters_count_them() {
-        let gate = ConnectionGate::new(1, 8, []);
+        let gate = ConnectionGate::new(1, 8, TrustedProxies::none());
         let _v6 = admitted(&gate, "2001:db8:1:2::1");
         assert!(gate.admit(ip("2001:db8:1:2:ffff::2")).is_none());
         assert!(gate.admit(ip("2001:db8:1:3::1")).is_some());
@@ -311,7 +309,7 @@ mod tests {
 
     #[test]
     fn trusted_peers_skip_the_per_peer_cap_but_not_the_global_one() {
-        let gate = ConnectionGate::new(1, 3, [ip("127.0.0.1")]);
+        let gate = ConnectionGate::new(1, 3, trusting(&["127.0.0.1"]));
         let _permits = [
             proven(&gate, "127.0.0.1"),
             proven(&gate, "::ffff:127.0.0.1"),
@@ -322,14 +320,66 @@ mod tests {
 
     #[test]
     fn a_trusted_peer_may_be_configured_in_its_mapped_form() {
-        let gate = ConnectionGate::new(1, 8, [ip("::ffff:127.0.0.1")]);
+        let gate = ConnectionGate::new(1, 8, trusting(&["::ffff:127.0.0.1"]));
         let _first = admitted(&gate, "127.0.0.1");
         assert!(gate.admit(ip("127.0.0.1")).is_some());
     }
 
     #[test]
+    fn a_range_of_trusted_peers_skips_the_per_peer_cap() {
+        let gate = ConnectionGate::new(1, 8, trusting(&["172.30.5.0/24"]));
+        let _first = admitted(&gate, "172.30.5.2");
+        assert!(gate.admit(ip("172.30.5.2")).is_some());
+        assert!(gate.admit(ip("::ffff:172.30.5.2")).is_some());
+
+        let _outside = admitted(&gate, "172.30.6.2");
+        assert!(gate.admit(ip("172.30.6.2")).is_none());
+    }
+
+    #[test]
+    fn the_gate_and_client_address_agree_on_mapped_peers() {
+        use std::net::SocketAddr;
+
+        use axum::http::{
+            HeaderMap,
+            HeaderValue,
+        };
+
+        use crate::routes::request::client_address;
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", HeaderValue::from_static("203.0.113.10"));
+        let check = |configured: &str, peer: &str, trusted: bool| {
+            let proxies = trusting(&[configured]);
+            let gate = ConnectionGate::new(1, 8, proxies.clone());
+            let _first = admitted(&gate, peer);
+            assert_eq!(
+                gate.admit(ip(peer)).is_some(),
+                trusted,
+                "{configured} {peer}"
+            );
+            let expected = if trusted {
+                ip("203.0.113.10")
+            } else {
+                ip(peer)
+            };
+            assert_eq!(
+                client_address(Some(SocketAddr::new(ip(peer), 4746)), &headers, &proxies,),
+                ClientAddress::new(expected),
+                "{configured} {peer}"
+            );
+        };
+
+        check("127.0.0.1", "127.0.0.1", true);
+        check("127.0.0.1", "::ffff:127.0.0.1", true);
+        check("::ffff:127.0.0.1", "127.0.0.1", true);
+        check("::ffff:127.0.0.0/104", "::ffff:127.0.0.1", true);
+        check("127.0.0.1", "::ffff:127.0.0.2", false);
+    }
+
+    #[test]
     fn a_full_cap_evicts_the_oldest_unproven_connection() {
-        let gate = ConnectionGate::new(8, 3, []);
+        let gate = ConnectionGate::new(8, 3, TrustedProxies::none());
         let oldest = admitted(&gate, "203.0.113.1");
         let protected = proven(&gate, "203.0.113.2");
         let next = admitted(&gate, "203.0.113.3");
@@ -355,7 +405,7 @@ mod tests {
 
     #[test]
     fn protected_connections_are_never_evicted() {
-        let gate = ConnectionGate::new(8, 2, []);
+        let gate = ConnectionGate::new(8, 2, TrustedProxies::none());
         let first = proven(&gate, "203.0.113.1");
         let second = proven(&gate, "203.0.113.2");
 
@@ -368,7 +418,7 @@ mod tests {
 
     #[test]
     fn a_peer_at_its_cap_evicts_nothing() {
-        let gate = ConnectionGate::new(1, 2, []);
+        let gate = ConnectionGate::new(1, 2, TrustedProxies::none());
         let same = admitted(&gate, "203.0.113.1");
         let other = admitted(&gate, "203.0.113.2");
 
@@ -381,7 +431,7 @@ mod tests {
 
     #[test]
     fn a_request_arriving_after_eviction_changes_nothing() {
-        let gate = ConnectionGate::new(8, 1, []);
+        let gate = ConnectionGate::new(8, 1, TrustedProxies::none());
         let evicted = admitted(&gate, "203.0.113.1");
         let newcomer = admitted(&gate, "203.0.113.2");
 
@@ -401,7 +451,7 @@ mod tests {
 
     #[test]
     fn protection_stays_settled_for_later_requests() {
-        let gate = ConnectionGate::new(8, 1, []);
+        let gate = ConnectionGate::new(8, 1, TrustedProxies::none());
         let permit = admitted(&gate, "203.0.113.1");
         assert!(permit.standing().protect());
         assert!(permit.standing().protect());
@@ -411,7 +461,7 @@ mod tests {
     #[test]
     fn the_total_never_exceeds_the_cap_under_contention() {
         const CAP: usize = 4;
-        let gate = ConnectionGate::new(16, CAP, []);
+        let gate = ConnectionGate::new(16, CAP, TrustedProxies::none());
         std::thread::scope(|scope| {
             for thread in 0..8 {
                 let gate = &gate;

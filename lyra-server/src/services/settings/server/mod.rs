@@ -24,11 +24,13 @@ use anyhow::{
 
 use crate::services::libraries::LibraryConfig;
 
+mod client_ip;
 mod config;
 mod definitions;
 mod kind;
 mod update;
 
+pub(crate) use client_ip::TrustedProxies;
 pub(crate) use config::{
     AuthConfig,
     Config,
@@ -299,14 +301,7 @@ pub(crate) fn resolve(
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        net::{
-            IpAddr,
-            Ipv4Addr,
-            Ipv6Addr,
-        },
-        path::PathBuf,
-    };
+    use std::path::PathBuf;
 
     use agdb::DbId;
     use serde_json::json;
@@ -363,10 +358,7 @@ mod tests {
             },
             rate_limit: RateLimitConfig {
                 enabled: true,
-                trusted_proxies: vec![
-                    IpAddr::V4(Ipv4Addr::LOCALHOST),
-                    IpAddr::V6(Ipv6Addr::LOCALHOST),
-                ],
+                trusted_proxies: TrustedProxies::parse(["127.0.0.1", "::1"])?,
                 global_per_minute: 1_200,
                 global_burst: 300,
                 authenticated_per_minute: 600,
@@ -536,6 +528,22 @@ mod tests {
 
         let message = error.to_string();
         assert!(message.contains("'rate_limit.login_burst'"));
+    }
+
+    #[test]
+    fn trusted_proxies_written_as_bare_addresses_still_resolve() -> anyhow::Result<()> {
+        let stored = stored(&[(
+            "rate_limit.trusted_proxies",
+            json!(["192.0.2.1", "::ffff:192.0.2.2", "::1"]),
+        )]);
+
+        let resolved = resolve(&data_dir(), None, FileSettings::default(), &stored)?;
+
+        assert_eq!(
+            resolved.config.rate_limit.trusted_proxies.entries(),
+            ["192.0.2.1", "192.0.2.2", "::1"]
+        );
+        Ok(())
     }
 
     #[test]

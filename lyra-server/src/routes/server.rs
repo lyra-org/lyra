@@ -255,7 +255,7 @@ fn field_response(setting: &EffectiveSetting, data_dir: &Path) -> SettingFieldRe
             value: string_of(value),
             default: string_of(&default),
         },
-        Kind::OriginList { .. } | Kind::IpList { .. } => SettingFieldResponse::StringList {
+        Kind::OriginList { .. } | Kind::IpRangeList { .. } => SettingFieldResponse::StringList {
             key,
             props: props(true),
             value: string_list_of(value),
@@ -763,6 +763,11 @@ mod tests {
         let origins = field(&body, "cors.allowed_origins");
         assert_eq!(origins["type"], json!("string_list"));
         assert_eq!(origins["value"], json!([]));
+
+        let proxies = field(&body, "rate_limit.trusted_proxies");
+        assert_eq!(proxies["type"], json!("string_list"));
+        assert_eq!(proxies["value"], json!(["127.0.0.1", "::1"]));
+        assert_eq!(proxies["default"], json!(["127.0.0.1", "::1"]));
 
         assert_eq!(body["pending_restart"], json!([]));
         assert_eq!(body["boot"]["port"], json!(0));

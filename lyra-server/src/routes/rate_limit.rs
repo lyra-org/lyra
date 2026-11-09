@@ -6,11 +6,7 @@
 //! The HTTP request rate limiter.
 
 use std::{
-    collections::HashSet,
-    net::{
-        IpAddr,
-        SocketAddr,
-    },
+    net::SocketAddr,
     sync::{
         Arc,
         Mutex,
@@ -71,6 +67,7 @@ use crate::services::{
     settings::server::{
         Config,
         RateLimitConfig,
+        TrustedProxies,
     },
 };
 
@@ -133,7 +130,7 @@ pub(super) fn too_many_requests_response(retry_after: Duration) -> Response {
 #[derive(Clone)]
 struct RuntimeConfig {
     enabled: bool,
-    trusted_proxies: HashSet<IpAddr>,
+    trusted_proxies: TrustedProxies,
     global: Option<Policy>,
     user: Option<Policy>,
     authenticated: Option<Policy>,
@@ -143,7 +140,7 @@ impl RuntimeConfig {
     fn from_config(config: &RateLimitConfig) -> Self {
         Self {
             enabled: config.enabled,
-            trusted_proxies: config.trusted_proxies.iter().copied().collect(),
+            trusted_proxies: config.trusted_proxies.clone(),
             global: Policy::new(config.global_per_minute, config.global_burst),
             user: Policy::new(
                 config.global_per_minute.saturating_mul(USER_CREDENTIALS),
@@ -354,7 +351,6 @@ fn download_token_identity(uri: &Uri) -> Option<Identity> {
 mod tests {
     use std::net::{
         IpAddr,
-        Ipv4Addr,
         SocketAddr,
     };
 
@@ -381,7 +377,7 @@ mod tests {
     fn disabled_rate_limit_config() -> RateLimitConfig {
         RateLimitConfig {
             enabled: true,
-            trusted_proxies: Vec::new(),
+            trusted_proxies: TrustedProxies::none(),
             global_per_minute: 0,
             global_burst: 0,
             authenticated_per_minute: 0,
@@ -588,7 +584,7 @@ mod tests {
         let _guard = crate::services::testing::runtime_test_lock().await;
         crate::plugins::testing::init_default_test_state()?;
         let mut rate_limit = disabled_rate_limit_config();
-        rate_limit.trusted_proxies = vec![IpAddr::V4(Ipv4Addr::LOCALHOST)];
+        rate_limit.trusted_proxies = TrustedProxies::parse(["127.0.0.1"])?;
         rate_limit.global_per_minute = 60;
         rate_limit.global_burst = 1;
         let app = apply(
@@ -634,7 +630,7 @@ mod tests {
         let _guard = crate::services::testing::runtime_test_lock().await;
         crate::plugins::testing::init_default_test_state()?;
         let mut rate_limit = disabled_rate_limit_config();
-        rate_limit.trusted_proxies = vec![IpAddr::V4(Ipv4Addr::LOCALHOST)];
+        rate_limit.trusted_proxies = TrustedProxies::parse(["127.0.0.1"])?;
         rate_limit.global_per_minute = 60;
         rate_limit.global_burst = 1;
         let app = apply(

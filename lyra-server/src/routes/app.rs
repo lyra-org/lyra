@@ -190,7 +190,7 @@ pub(crate) async fn serve_app(
         listener,
         app,
         super::listener::ConnectionLimits::for_process(),
-        config.rate_limit.trusted_proxies.iter().copied(),
+        config.rate_limit.trusted_proxies.clone(),
         shutdown_token,
     )
     .await;

@@ -140,11 +140,12 @@ mod tests {
 
     use super::super::gate::ConnectionGate;
     use super::*;
+    use crate::services::settings::server::TrustedProxies;
 
     const STALL: Duration = Duration::from_secs(60);
 
     fn admitted<S>(inner: S) -> AdmittedSocket<S> {
-        let permit = ConnectionGate::new(1, 1, [])
+        let permit = ConnectionGate::new(1, 1, TrustedProxies::none())
             .admit("203.0.113.1".parse().expect("valid ip"))
             .expect("an empty gate admits");
         AdmittedSocket::new(inner, STALL, permit)

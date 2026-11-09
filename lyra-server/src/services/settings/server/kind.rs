@@ -3,13 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::{
-    net::IpAddr,
-    path::{
-        Component,
-        Path,
-        PathBuf,
-    },
+use std::path::{
+    Component,
+    Path,
+    PathBuf,
 };
 
 use anyhow::{
@@ -21,6 +18,8 @@ use serde_json::{
     Value,
     json,
 };
+
+use super::TrustedProxies;
 
 /// Value type of a server setting. Each kind owns its default and its
 /// normalization, so a setting is declared as data.
@@ -45,7 +44,8 @@ pub(crate) enum Kind {
     OriginList {
         default: &'static [&'static str],
     },
-    IpList {
+    /// IP addresses and CIDR ranges, canonicalized by [`TrustedProxies`].
+    IpRangeList {
         default: &'static [&'static str],
     },
 }
@@ -58,7 +58,7 @@ impl Kind {
             Self::U64 { default } => json!(default),
             Self::NullableU64 | Self::NullableOrigin => Value::Null,
             Self::Path { default } => json!(default),
-            Self::OriginList { default } | Self::IpList { default } => json!(default),
+            Self::OriginList { default } | Self::IpRangeList { default } => json!(default),
         }
     }
 
@@ -101,17 +101,8 @@ impl Kind {
                     .collect::<Result<Vec<_>>>()?;
                 Ok(json!(origins))
             }
-            Self::IpList { .. } => {
-                let addresses = strings_of(value)?
-                    .into_iter()
-                    .map(|raw| {
-                        raw.trim()
-                            .parse::<IpAddr>()
-                            .map(|address| address.to_string())
-                            .map_err(|err| anyhow!("entry '{}': {err}", raw.trim()))
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                Ok(json!(addresses))
+            Self::IpRangeList { .. } => {
+                Ok(json!(TrustedProxies::parse(strings_of(value)?)?.entries()))
             }
         }
     }
@@ -314,8 +305,8 @@ mod tests {
     }
 
     #[test]
-    fn ip_list_parses_and_canonicalizes_addresses() {
-        let kind = Kind::IpList { default: &[] };
+    fn ip_range_list_parses_and_canonicalizes_entries() {
+        let kind = Kind::IpRangeList { default: &[] };
         assert_eq!(
             normalize(
                 kind,
@@ -324,9 +315,13 @@ mod tests {
             .unwrap(),
             json!(["127.0.0.1", "::1"])
         );
+        assert_eq!(
+            normalize(kind, json!(["10.0.0.0/8", "::ffff:192.0.2.1", "::/0"])).unwrap(),
+            json!(["10.0.0.0/8", "192.0.2.1", "::/0"])
+        );
         assert_eq!(normalize(kind, json!([])).unwrap(), json!([]));
-        let error = normalize(kind, json!(["10.0.0.0/8"])).expect_err("cidr is not an address");
-        assert!(error.to_string().contains("entry '10.0.0.0/8'"));
+        let error = normalize(kind, json!(["10.0.0.0/33"])).expect_err("prefix out of range");
+        assert!(error.to_string().contains("entry '10.0.0.0/33'"));
         assert!(normalize(kind, json!(["localhost"])).is_err());
         assert!(normalize(kind, json!([1])).is_err());
     }

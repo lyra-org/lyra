@@ -7,6 +7,7 @@
 
 use std::{
     net::{
+        IpAddr,
         Ipv4Addr,
         SocketAddr,
     },
@@ -92,7 +93,7 @@ impl Server {
     }
 }
 
-async fn start_trusting(app: Router, limits: ConnectionLimits, trusted: Vec<IpAddr>) -> Server {
+async fn start_trusting(app: Router, limits: ConnectionLimits, trusted: TrustedProxies) -> Server {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let addr = listener.local_addr().unwrap();
     let shutdown = CancellationToken::new();
@@ -105,7 +106,7 @@ async fn start_trusting(app: Router, limits: ConnectionLimits, trusted: Vec<IpAd
 }
 
 pub(in crate::routes) async fn start(app: Router, limits: ConnectionLimits) -> Server {
-    start_trusting(app, limits, Vec::new()).await
+    start_trusting(app, limits, TrustedProxies::none()).await
 }
 
 async fn echo_socket(ws: WebSocketUpgrade) -> axum::response::Response {
@@ -464,7 +465,7 @@ fn loopback() -> IpAddr {
 
 #[tokio::test]
 async fn a_request_on_an_evicted_connection_is_not_dispatched() {
-    let gate = ConnectionGate::new(8, 1, []);
+    let gate = ConnectionGate::new(8, 1, TrustedProxies::none());
     let evicted = gate.admit(loopback()).unwrap();
     let _newcomer = gate.admit(loopback()).unwrap();
     let (inner, calls) = counting_service();
@@ -484,7 +485,7 @@ async fn a_request_on_an_evicted_connection_is_not_dispatched() {
 
 #[tokio::test]
 async fn a_connection_is_protected_when_hyper_dispatches_not_when_polled() {
-    let gate = ConnectionGate::new(8, 1, []);
+    let gate = ConnectionGate::new(8, 1, TrustedProxies::none());
     let permit = gate.admit(loopback()).unwrap();
     let (inner, calls) = counting_service();
     let service = ProtectingService {
@@ -576,7 +577,7 @@ async fn trusted_peers_are_held_only_to_the_global_cap() {
             global: 2,
             ..limits()
         },
-        vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        TrustedProxies::parse(["127.0.0.1"]).unwrap(),
     )
     .await;
     let _first = held_connection(server.addr).await;

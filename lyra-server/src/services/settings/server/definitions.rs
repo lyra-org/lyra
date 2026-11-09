@@ -125,9 +125,9 @@ pub(super) static ALL: &[SettingDefinition] = &[
         "rate_limit.trusted_proxies",
         RATE_LIMIT,
         "Trusted proxies",
-        "IP addresses whose forwarded client address is trusted for rate limiting. They are also exempt from the per-address connection cap, so a reverse proxy must be listed here.",
+        "IP addresses or CIDR ranges of the reverse proxies allowed to report a client's address. They are also exempt from the per-address connection cap, so a reverse proxy must be listed here.",
         RestartRequired,
-        Kind::IpList {
+        Kind::IpRangeList {
             default: &["127.0.0.1", "::1"],
         },
     ),
