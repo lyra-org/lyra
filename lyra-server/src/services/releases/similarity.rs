@@ -36,6 +36,7 @@ use crate::{
         SimilarReleaseCandidate,
         SimilarReleaseExternalRef,
         SimilarReleasesDispatchRequest,
+        TransitionWait,
     },
     services::{
         EntityType,
@@ -137,7 +138,14 @@ pub(crate) async fn similar(
     seed_db_id: DbId,
     options: &SimilarReleaseOptions,
 ) -> Result<Option<Vec<Release>>> {
-    similar_on(&Published, seed_db_id, options).await
+    similar_on(
+        &Published::new(TransitionWait::Until(
+            tokio::time::Instant::now() + DISPATCH_BUDGET,
+        )),
+        seed_db_id,
+        options,
+    )
+    .await
 }
 
 pub(crate) async fn similar_on<S: CallSource>(
@@ -309,7 +317,7 @@ async fn resolve_provider<S: CallSource>(
     provider_id: &str,
     held: &ReleaseIdRules,
 ) -> Option<ResolvedProvider<S::Calls>> {
-    let calls = source.current()?;
+    let calls = source.reach(provider_id).await?;
     let registry = calls.providers().await.read_owned().await;
     let spec = registry.get_similar_releases_handler(provider_id)?.clone();
     let changed_id_rules = (!Arc::ptr_eq(&registry.id_schemes(), &held.schemes))

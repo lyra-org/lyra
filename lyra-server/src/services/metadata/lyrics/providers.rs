@@ -38,6 +38,7 @@ use crate::{
     services::plugin_dispatch::{
         MetadataRefreshRequest,
         RuntimeCalls,
+        TransitionWait,
     },
     services::providers::{
         ExternalIdsByScheme,
@@ -226,8 +227,12 @@ impl LyricsDispatchOutcome {
 }
 
 /// [`dispatch_for_track_identity`], failing when any provider failed.
-pub(crate) async fn dispatch_for_track(track_db_id: DbId, force_refresh: bool) -> Result<()> {
-    dispatch_for_track_identity(track_db_id, None, force_refresh)
+pub(crate) async fn dispatch_for_track(
+    track_db_id: DbId,
+    force_refresh: bool,
+    wait: TransitionWait,
+) -> Result<()> {
+    dispatch_for_track_identity(track_db_id, None, force_refresh, wait)
         .await?
         .into_result()
 }
@@ -239,6 +244,7 @@ pub(crate) async fn dispatch_for_track_identity(
     track_db_id: DbId,
     expected_public_id: Option<&str>,
     force_refresh: bool,
+    wait: TransitionWait,
 ) -> Result<LyricsDispatchOutcome> {
     let now = upload::now_ms().map_err(|err| anyhow::anyhow!("now_ms() failed: {err}"))?;
     let (mut context, preferred_languages, local, track_public_id) =
@@ -274,6 +280,7 @@ pub(crate) async fn dispatch_for_track_identity(
         };
 
         if let Err(err) = dispatch_one(
+            wait.clone(),
             &provider_id,
             &context,
             &preferred_languages,
@@ -295,6 +302,7 @@ pub(crate) async fn dispatch_for_track_identity(
 /// spec's cancel token ends the call, and the recording after it, when the spec is replaced or
 /// torn down.
 async fn dispatch_one(
+    wait: TransitionWait,
     provider_id: &str,
     context: &LyricsTrackContext,
     preferred_languages: &[String],
@@ -305,6 +313,7 @@ async fn dispatch_one(
     let call = with_provider_call(
         provider_id,
         ProviderCallStage::Lyrics,
+        wait,
         |registry| {
             let spec = registry.get_lyrics_handler(provider_id)?;
             Some(if require_matches(context, &spec.require) {
@@ -646,7 +655,7 @@ pub(crate) async fn rescan(force_refresh: bool, cancel: CancellationToken) -> Re
                 }
                 tokio::select! {
                     _ = cancel.cancelled() => {}
-                    res = dispatch_for_track_identity(track_db_id, Some(&track_public_id), force_refresh) => {
+                    res = dispatch_for_track_identity(track_db_id, Some(&track_public_id), force_refresh, TransitionWait::background(cancel.clone())) => {
                         if let Err(err) = res.and_then(LyricsDispatchOutcome::into_result) {
                             tracing::warn!(
                                 track_db_id = track_db_id.0,
@@ -800,7 +809,7 @@ mod tests {
         install_handler_for_test("disabled", handler(callback)).await;
         lyra_db::providers::set_enabled(&mut *STATE.db.write().await, "disabled", false)?;
 
-        dispatch_for_track(track_id, true).await?;
+        dispatch_for_track(track_id, true, TransitionWait::interactive()).await?;
         assert!(dispatch.calls(callback).is_empty());
         Ok(())
     }
@@ -825,7 +834,9 @@ mod tests {
 
         let success_id = success_id.expect("success handler");
 
-        let outcome = dispatch_for_track_identity(track_id, None, false).await?;
+        let outcome =
+            dispatch_for_track_identity(track_id, None, false, TransitionWait::interactive())
+                .await?;
         let failed: Vec<(&str, String)> = outcome
             .failed
             .iter()
@@ -842,7 +853,7 @@ mod tests {
         assert!(outcome.in_progress.is_empty());
         assert_eq!(dispatch.calls(success_id).len(), 1);
 
-        let error = dispatch_for_track(track_id, false)
+        let error = dispatch_for_track(track_id, false, TransitionWait::interactive())
             .await
             .unwrap_err()
             .to_string();
@@ -873,7 +884,13 @@ mod tests {
             track
         };
 
-        dispatch_for_track_identity(track_id, Some(&original.id), false).await?;
+        dispatch_for_track_identity(
+            track_id,
+            Some(&original.id),
+            false,
+            TransitionWait::interactive(),
+        )
+        .await?;
         let original_public_id = original.id.clone();
         original.db_id = None;
         original.id = "replacement-public-id".into();
@@ -884,11 +901,16 @@ mod tests {
                 .ids()[0];
             assert_eq!(replacement_id, track_id);
         }
-        let outcome =
-            dispatch_for_track_identity(track_id, Some(&original_public_id), false).await?;
+        let outcome = dispatch_for_track_identity(
+            track_id,
+            Some(&original_public_id),
+            false,
+            TransitionWait::interactive(),
+        )
+        .await?;
         assert!(outcome.failed.is_empty() && outcome.in_progress.is_empty());
         assert!(dispatch.calls(callback).is_empty());
-        dispatch_for_track(track_id, false).await?;
+        dispatch_for_track(track_id, false, TransitionWait::interactive()).await?;
         assert_eq!(dispatch.calls(callback).len(), 1);
         Ok(())
     }
@@ -904,7 +926,9 @@ mod tests {
         let callback = dispatch.add(FakeResponse::Held(release.clone(), Box::new(match_hit())));
         install_handler_for_test("test_hit", handler(callback)).await;
 
-        let running = tokio::spawn(async move { dispatch_for_track(track_id, false).await });
+        let running = tokio::spawn(async move {
+            dispatch_for_track(track_id, false, TransitionWait::interactive()).await
+        });
         dispatch.wait_for_calls(callback, 1).await;
         assert!(
             STATE.db.get().try_write().is_ok(),
@@ -935,7 +959,9 @@ mod tests {
         let callback = dispatch.add(FakeResponse::Held(release.clone(), Box::new(match_hit())));
         install_handler_for_test("test_recycled_track", handler(callback)).await;
 
-        let running = tokio::spawn(async move { dispatch_for_track(track_id, false).await });
+        let running = tokio::spawn(async move {
+            dispatch_for_track(track_id, false, TransitionWait::interactive()).await
+        });
         dispatch.wait_for_calls(callback, 1).await;
         let replacement_public_id = {
             let mut db = STATE.db.write().await;
@@ -977,7 +1003,7 @@ mod tests {
         let callback = dispatch.add(miss());
         install_handler_for_test("test_force", handler(callback)).await;
 
-        dispatch_for_track(track_id, true).await?;
+        dispatch_for_track(track_id, true, TransitionWait::interactive()).await?;
         let calls = dispatch.calls(callback);
         assert_eq!(calls.len(), 1);
         assert_eq!(
@@ -998,10 +1024,14 @@ mod tests {
         let callback = dispatch.add(FakeResponse::Held(release.clone(), Box::new(miss())));
         install_handler_for_test("test_dedupe", handler(callback)).await;
 
-        let first = tokio::spawn(async move { dispatch_for_track(track_id, false).await });
+        let first = tokio::spawn(async move {
+            dispatch_for_track(track_id, false, TransitionWait::interactive()).await
+        });
         dispatch.wait_for_calls(callback, 1).await;
-        dispatch_for_track(track_id, false).await?;
-        let outcome = dispatch_for_track_identity(track_id, None, false).await?;
+        dispatch_for_track(track_id, false, TransitionWait::interactive()).await?;
+        let outcome =
+            dispatch_for_track_identity(track_id, None, false, TransitionWait::interactive())
+                .await?;
         assert_eq!(
             dispatch.calls(callback).len(),
             1,
@@ -1027,8 +1057,9 @@ mod tests {
         install_handler_for_test("a_held", handler(held)).await;
         install_handler_for_test("b_vanishing", handler(vanishing)).await;
 
-        let run =
-            tokio::spawn(async move { dispatch_for_track_identity(track_id, None, false).await });
+        let run = tokio::spawn(async move {
+            dispatch_for_track_identity(track_id, None, false, TransitionWait::interactive()).await
+        });
         dispatch.wait_for_calls(held, 1).await;
         teardown_plugin_providers(&test_plugin_id()).await;
         release.add_permits(1);
@@ -1118,6 +1149,7 @@ mod tests {
                 with_provider_call(
                     "test_waiting",
                     ProviderCallStage::Lyrics,
+                    TransitionWait::interactive(),
                     |_| Some(ProviderLookup::Call(())),
                     |(), _| async {
                         entered.notify_one();
@@ -1129,7 +1161,9 @@ mod tests {
             }
         });
         entered.notified().await;
-        let waiting = tokio::spawn(async move { dispatch_for_track(track_id, false).await });
+        let waiting = tokio::spawn(async move {
+            dispatch_for_track(track_id, false, TransitionWait::interactive()).await
+        });
         tokio::task::yield_now().await;
 
         let new = dispatch.add(miss());

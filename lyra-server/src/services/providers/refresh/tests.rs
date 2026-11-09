@@ -51,7 +51,7 @@ async fn a_late_handler_ends_with_the_runtimes_answer() {
         .expect("register");
 
     let error = super::dispatch::dispatch_refresh(
-        &crate::services::plugin_dispatch::Published,
+        &crate::services::plugin_dispatch::Published::interactive(),
         "late-provider",
         EntityType::Release,
         serde_json::json!({}),
@@ -71,7 +71,7 @@ async fn a_refresh_without_a_handler_is_not_registered() {
     init_default_test_state().expect("test state");
 
     let result = super::dispatch::dispatch_refresh(
-        &crate::services::plugin_dispatch::Published,
+        &crate::services::plugin_dispatch::Published::interactive(),
         "nobody",
         EntityType::Release,
         serde_json::json!({}),
@@ -929,7 +929,9 @@ async fn an_entity_refresh_passes_over_a_provider_stopped_by_a_gone_target() -> 
 
     let refresh = tokio::spawn(async move {
         crate::services::providers::refresh_entity(
-            &crate::services::plugin_dispatch::Published,
+            &crate::services::plugin_dispatch::Published::new(
+                crate::services::plugin_dispatch::TransitionWait::interactive(),
+            ),
             &admin,
             &release_id,
             Default::default(),

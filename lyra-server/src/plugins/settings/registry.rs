@@ -178,6 +178,7 @@ pub(crate) async fn initialize_registry() {
     settings_registry().write_owned().await.clear();
 }
 
+#[cfg(test)]
 pub(crate) async fn freeze_registry() {
     settings_registry().write_owned().await.freeze();
 }

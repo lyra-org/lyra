@@ -14,15 +14,43 @@ use tokio::sync::{
     mpsc as async_mpsc,
 };
 
-struct PendingCall(async_mpsc::UnboundedSender<()>);
+/// Held across a handler's wait; its drop is the handler's cancellation. While `gate` is closed
+/// that cancellation can't finish, keeping the executor thread in it.
+struct PendingCall(async_mpsc::UnboundedSender<()>, Arc<CancelGate>);
 
 impl Drop for PendingCall {
     fn drop(&mut self) {
         let _ = self.0.send(());
+        self.1.pass();
+    }
+}
+
+#[derive(Default)]
+struct CancelGate {
+    closed: std::sync::Mutex<bool>,
+    opened: std::sync::Condvar,
+}
+
+impl CancelGate {
+    fn close(&self) {
+        *self.closed.lock().expect("gate poisoned") = true;
+    }
+
+    fn open(&self) {
+        *self.closed.lock().expect("gate poisoned") = false;
+        self.opened.notify_all();
+    }
+
+    fn pass(&self) {
+        let mut closed = self.closed.lock().expect("gate poisoned");
+        while *closed {
+            closed = self.opened.wait(closed).expect("gate poisoned");
+        }
     }
 }
 
 struct TestExecutor {
+    cancel_gate: Arc<CancelGate>,
     handle: PluginExecutorHandle,
     slow: PluginCallbackHandle,
     fast: PluginCallbackHandle,
@@ -44,6 +72,8 @@ fn test_executor() -> Result<TestExecutor> {
     let (dropped_tx, dropped) = async_mpsc::unbounded_channel();
     let release = Arc::new(Notify::new());
     let release_for_thread = release.clone();
+    let cancel_gate = Arc::new(CancelGate::default());
+    let cancel_gate_for_thread = cancel_gate.clone();
     thread::spawn(move || {
         let setup = (|| -> Result<_> {
             let runtime = PluginExecutor::with_manifests(Arc::from(vec![PluginManifest {
@@ -70,7 +100,8 @@ fn test_executor() -> Result<TestExecutor> {
                     ModuleSpec::new("test/gate")
                         .function(FunctionSpec::new("wait").call_async(Arc::new(move |_| {
                             let _ = started_tx.send(());
-                            let guard = PendingCall(dropped_tx.clone());
+                            let guard =
+                                PendingCall(dropped_tx.clone(), cancel_gate_for_thread.clone());
                             let release = release_for_thread.clone();
                             Ok(harmony_luau::ScheduledFuture::new(async move {
                                 let _guard = guard;
@@ -139,6 +170,7 @@ fn test_executor() -> Result<TestExecutor> {
         api,
         started,
         dropped,
+        cancel_gate,
         release,
     })
 }
@@ -411,8 +443,12 @@ async fn a_drain_waits_for_the_running_call_and_fails_the_one_behind_it() -> Res
             with_provider_call(
                 "dispatch-fast",
                 ProviderCallStage::MetadataRefresh,
+                crate::services::plugin_dispatch::TransitionWait::interactive(),
                 |_| Some(ProviderLookup::Call(())),
-                |(), _| async move { handle.dispatch_metadata_refresh(request).await },
+                |(), _| {
+                    let (handle, request) = (handle.clone(), request.clone());
+                    async move { handle.dispatch_metadata_refresh(request).await }
+                },
             )
             .await
         }
@@ -440,6 +476,34 @@ async fn a_drain_waits_for_the_running_call_and_fails_the_one_behind_it() -> Res
     ));
     let error = direct_call.await?.expect_err("the call never started");
     assert!(DispatchNotStarted::caused(&error), "{error:#}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_dropped_caller_does_not_let_a_drain_finish_while_its_handler_runs() -> Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
+    let mut executor = test_executor()?;
+    let running = hold_slot(&mut executor).await?;
+    let drain = start_drain(&executor.handle, LONG_LIMIT).await?;
+
+    executor.cancel_gate.close();
+    running.abort();
+    assert!(running.await.unwrap_err().is_cancelled());
+    signal(&mut executor.dropped).await?;
+
+    // The handler's cancellation has begun and can't finish, so its slot is still held.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        !drain.is_finished(),
+        "a drain must wait for the cancelled handler"
+    );
+
+    executor.cancel_gate.open();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), drain).await??,
+        DrainOutcome::Drained
+    );
     Ok(())
 }
 

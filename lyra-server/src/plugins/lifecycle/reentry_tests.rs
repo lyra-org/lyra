@@ -37,7 +37,7 @@ use crate::{
 };
 
 /// State whose reloads discover `plugin` in `plugins_dir`, with its runtime started.
-async fn start_plugin(
+pub(super) async fn start_plugin(
     plugins_dir: &tempfile::TempDir,
     id: &str,
     scopes: &[&str],
@@ -56,7 +56,7 @@ async fn start_plugin(
     Ok(runtime)
 }
 
-async fn admin_principal() -> anyhow::Result<Principal> {
+pub(super) async fn admin_principal() -> anyhow::Result<Principal> {
     let user_db_id = {
         let mut db = STATE.db.write().await;
         let user_db_id = lyra_db::test_db::insert_user(&mut db, "reentry-admin")?;
@@ -72,7 +72,7 @@ async fn admin_principal() -> anyhow::Result<Principal> {
 
 /// Runs `source` as `plugin_id` on `runtime` with `arg` as its `...`, holding a slot like any
 /// dispatch.
-fn run_chunk(
+pub(super) fn run_chunk(
     runtime: &PluginRuntime,
     plugin_id: &str,
     source: &'static str,
@@ -94,7 +94,7 @@ fn run_chunk(
     })
 }
 
-async fn wait_for_slot(runtime: &PluginRuntime) -> anyhow::Result<()> {
+pub(super) async fn wait_for_slot(runtime: &PluginRuntime) -> anyhow::Result<()> {
     let deadline = Instant::now() + Duration::from_secs(5);
     while runtime.slots_in_use() == 0 {
         anyhow::ensure!(Instant::now() < deadline, "the chunk never took its slot");
@@ -245,6 +245,7 @@ async fn a_nested_refresh_waits_for_the_providers_running_call() -> anyhow::Resu
             with_provider_call(
                 "locked",
                 ProviderCallStage::MetadataRefresh,
+                crate::services::plugin_dispatch::TransitionWait::interactive(),
                 |_| Some(ProviderLookup::Call(())),
                 |(), _| async {
                     entered.notify_one();

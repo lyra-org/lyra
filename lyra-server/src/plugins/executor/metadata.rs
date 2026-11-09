@@ -282,8 +282,16 @@ impl VmCalls {
 impl CallSource for VmCalls {
     type Calls = Self;
 
+    async fn reach(&self, _target: &str) -> Option<Self> {
+        Some(self.clone())
+    }
+
     fn current(&self) -> Option<Self> {
         Some(self.clone())
+    }
+
+    fn in_transition(&self, _target: &str) -> bool {
+        false
     }
 }
 

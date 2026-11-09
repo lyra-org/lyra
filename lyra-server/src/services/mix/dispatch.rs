@@ -218,7 +218,7 @@ pub(super) async fn dispatch<S: CallSource>(
             break;
         }
         let mixer_id = &candidate.mixer_id;
-        let Some(calls) = source.current() else {
+        let Some(calls) = source.reach(mixer_id).await else {
             tracing::debug!(mixer = %mixer_id, "the mixer can't be reached, trying next");
             continue;
         };
@@ -441,7 +441,7 @@ mod tests {
 
         let running = tokio::spawn(async move {
             dispatch(
-                &crate::services::plugin_dispatch::Published,
+                &crate::services::plugin_dispatch::Published::interactive(),
                 tokio::time::Instant::now() + MIX_DISPATCH_BUDGET,
                 &[candidate("first"), candidate("second")],
                 &MixRequest::default(),
@@ -465,6 +465,66 @@ mod tests {
         assert_eq!(running.await??, Some(1));
         assert!(old.calls(old_second).is_empty());
         assert_eq!(new.calls(new_second).len(), 1);
+        Ok(())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_transition_wait_comes_out_of_the_mix_budget() -> anyhow::Result<()> {
+        use crate::services::testing::{
+            FakePluginDispatch,
+            FakeResponse,
+            init_default_test_state,
+            runtime_test_lock,
+        };
+
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let fake = FakePluginDispatch::install();
+        let handler = fake.add(FakeResponse::Stall);
+        lyra_db::mixers::register(&mut *STATE.db.write().await, "slow", None)?;
+        {
+            let registry = crate::services::mix::mix_registry();
+            let mut registry = registry.write().await;
+            registry.register(
+                crate::services::plugin_scope::PluginId::new("slow_plugin")?,
+                "slow".to_string(),
+            )?;
+            registry.set_handler(
+                "slow",
+                MixShape::Blend,
+                MixHandlerRegistration {
+                    spec: spec(&[], 5, true),
+                    timeout: std::time::Duration::from_secs(14),
+                    handler,
+                },
+            )?;
+        }
+        let generation = STATE.generation();
+        let transition = generation.begin_transition(crate::services::state::Transition::Runtime);
+        let viewer = MixViewer {
+            principal: None,
+            accessible_library_ids: None,
+            playlists: Default::default(),
+        };
+        let fields: crate::services::mix::MixRequestFields =
+            serde_json::from_value(serde_json::json!({ "q": "anything", "mixer": "slow" }))?;
+        let request = fields.into_request();
+
+        let started = tokio::time::Instant::now();
+        let running = tokio::spawn(async move {
+            crate::services::mix::mix(&request, &viewer)
+                .await
+                .map(|tracks| tracks.len())
+        });
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        drop(transition);
+
+        assert_eq!(running.await?.map_err(|err| anyhow::anyhow!("{err:?}"))?, 0);
+        assert_eq!(
+            started.elapsed().as_secs(),
+            MIX_DISPATCH_BUDGET.as_secs(),
+            "the handler got only what the wait left of the budget"
+        );
         Ok(())
     }
 

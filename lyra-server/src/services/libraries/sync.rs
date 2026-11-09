@@ -1440,7 +1440,15 @@ async fn dispatch_release_lyrics(
                 let work_id = progress
                     .start_work(SyncStageKey::Lyrics, details.clone())
                     .await;
-                match dispatch_lyrics_for_track(track_db_id, false).await {
+                match dispatch_lyrics_for_track(
+                    track_db_id,
+                    false,
+                    crate::services::plugin_dispatch::TransitionWait::background(
+                        progress.cancellation().clone(),
+                    ),
+                )
+                .await
+                {
                     Ok(()) => {
                         progress.complete_work(work_id, SyncStageKey::Lyrics).await;
                     }
@@ -1523,7 +1531,9 @@ async fn sync_provider_release_cover(
     };
 
     let synced = match sync_release_cover_for_tracks(
-        &crate::services::plugin_dispatch::Published,
+        &crate::services::plugin_dispatch::Published::background(
+            context.progress.cancellation().clone(),
+        ),
         context.db,
         audio_folders,
         ReleaseCoverSubject {
@@ -2197,14 +2207,21 @@ FILE "album.flac" WAVE
 
         let (held, is_held) = tokio::sync::oneshot::channel();
         let (release, released) = tokio::sync::oneshot::channel::<()>();
+        let hold = std::sync::Mutex::new(Some((held, released)));
         let holder = tokio::spawn(crate::services::providers::with_provider_call(
             "queued",
             crate::services::providers::ProviderCallStage::MetadataRefresh,
+            crate::services::plugin_dispatch::TransitionWait::interactive(),
             |_| Some(crate::services::providers::ProviderLookup::Call(())),
-            |(), _scope| async move {
-                let _ = held.send(());
-                let _ = released.await;
-                Ok(())
+            move |(), _calls| {
+                let hold = hold.lock().expect("hold").take();
+                async move {
+                    if let Some((held, released)) = hold {
+                        let _ = held.send(());
+                        let _ = released.await;
+                    }
+                    Ok(())
+                }
             },
         ));
         is_held.await?;
@@ -3495,7 +3512,7 @@ FILE "album.flac" WAVE
             )
         };
         let synced = sync_release_cover_for_tracks(
-            &crate::services::plugin_dispatch::Published,
+            &crate::services::plugin_dispatch::Published::interactive(),
             &STATE.db.get(),
             &folders,
             ReleaseCoverSubject {

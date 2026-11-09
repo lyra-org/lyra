@@ -74,6 +74,8 @@ use axum::{
 };
 use futures::future::BoxFuture;
 use tower::ServiceExt;
+
+use crate::services::plugin_scope::PluginId;
 use tower_http::services::ServeDir;
 
 use self::responses::{
@@ -93,7 +95,6 @@ use crate::plugins::api::{
     RouteKind,
     initialize_registry,
     placeholder_offset,
-    registered_routes,
 };
 use crate::routes::request::{
     base_url,
@@ -137,11 +138,17 @@ pub(crate) async fn install(app: Router, reservations: HashSet<RouteKey>) -> Res
 struct InstalledRoutes;
 
 impl RouteHost for InstalledRoutes {
-    fn rebuild(&self) -> BoxFuture<'_, Result<()>> {
-        Box::pin(async {
-            let built = build_router(installed_static_dir().await).await?;
-            install_router(built).await;
-            Ok(())
+    fn build(
+        &self,
+        routes: Vec<RegisteredRoute>,
+        case_insensitive: CaseInsensitiveRouter,
+    ) -> BoxFuture<'_, Result<crate::plugins::api::InstallRoutes>> {
+        Box::pin(async move {
+            let built =
+                build_router(routes, case_insensitive, installed_static_dir().await).await?;
+            let install: crate::plugins::api::InstallRoutes =
+                Box::new(move || Box::pin(install_router(built)));
+            Ok(install)
         })
     }
 }
@@ -150,19 +157,36 @@ pub(super) struct BuiltRouters {
     main: Router,
     ci: CaseInsensitiveRouter,
     limiter_matcher: matchit::Router<()>,
+    owners: matchit::Router<RouteOwners>,
 }
+
+/// Each method a path serves and the plugin serving it.
+type RouteOwners = HashMap<String, Vec<PluginId>>;
 
 #[derive(Clone)]
 pub(super) struct InstalledRouters {
     main: Router,
     ci: Arc<CaseInsensitiveRouter>,
+    /// The plugins serving each route, so a request can wait out a transition of theirs.
+    owners: Arc<matchit::Router<RouteOwners>>,
 }
 
 impl InstalledRouters {
+    /// The plugins serving `method` at `path`; `HEAD` is served by a `GET` route.
+    fn owners_of(&self, method: &Method, path: &str) -> Option<&Vec<PluginId>> {
+        let methods = self.owners.at(path).ok()?.value;
+        methods.get(method.as_str()).or_else(|| {
+            (method == Method::HEAD)
+                .then(|| methods.get(Method::GET.as_str()))
+                .flatten()
+        })
+    }
+
     fn empty() -> Self {
         Self {
             main: Router::new(),
             ci: Arc::new(CaseInsensitiveRouter::new()),
+            owners: Arc::new(matchit::Router::new()),
         }
     }
 }
@@ -226,6 +250,7 @@ pub(super) async fn initialize_router(static_dir: Option<PathBuf>) {
     *INSTALLED_ROUTERS.write().await = InstalledRouters {
         main,
         ci: Arc::new(CaseInsensitiveRouter::new()),
+        owners: Arc::new(matchit::Router::new()),
     };
     *LIMITER_ROUTE_MATCHER
         .write()
@@ -284,41 +309,85 @@ pub(super) async fn install_router(built: BuiltRouters) {
     *INSTALLED_ROUTERS.write().await = InstalledRouters {
         main: built.main,
         ci: Arc::new(built.ci),
+        owners: Arc::new(built.owners),
     };
     *LIMITER_ROUTE_MATCHER
         .write()
         .expect("limiter route matcher poisoned") = Arc::new(built.limiter_matcher);
 }
 
-pub(super) async fn build_router(static_dir: Option<PathBuf>) -> Result<BuiltRouters> {
-    let mut built = build_registered_router().await?;
+pub(super) async fn build_router(
+    routes: Vec<RegisteredRoute>,
+    case_insensitive: CaseInsensitiveRouter,
+    static_dir: Option<PathBuf>,
+) -> Result<BuiltRouters> {
+    let mut built = build_registered_router(routes, case_insensitive)?;
     built.main = apply_catchall_and_static(built.main, static_dir);
     Ok(built)
 }
 
+/// How long a request waits for a transition covering its route's plugin.
+const ROUTE_TRANSITION_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
 pub(super) async fn fallback(mut request: Request) -> Response {
-    let routers = { INSTALLED_ROUTERS.read().await.clone() };
-
-    let original_path = request.uri().path();
-    if has_ascii_upper(original_path) {
-        let lowered = original_path.to_ascii_lowercase();
-        if let Some(pattern) = routers.ci.find_pattern(&lowered) {
-            let new_path = rewrite_path_for_ci(&pattern, original_path);
-            match rebuild_uri_with_path(request.uri(), &new_path) {
-                Some(new_uri) => *request.uri_mut() = new_uri,
-                None => tracing::warn!(
-                    pattern = %pattern,
-                    incoming = %original_path,
-                    "failed to rebuild URI for case-insensitive rewrite; dispatching original"
-                ),
-            }
-        }
+    // Waited out before routing, so the request reaches the routes installed with whatever
+    // replaced the plugin. The routers it picks from may differ from these, so the URI stays as
+    // sent until the final routers rewrite it.
+    if !wait_for_route_owners(request.method().clone(), request.uri().clone()).await {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "plugin runtime is not ready",
+        )
+            .into_response();
     }
-
+    let routers = { INSTALLED_ROUTERS.read().await.clone() };
+    if let Some(new_uri) = case_insensitive_uri(&routers, request.uri()) {
+        *request.uri_mut() = new_uri;
+    }
     match routers.main.oneshot(request).await {
         Ok(response) => response,
         Err(err) => match err {},
     }
+}
+
+/// Waits for any transition covering the plugins serving `method` at `uri`. False when one
+/// outlasted the wait. A path no plugin serves yet deliberately doesn't wait: during a reload it
+/// answers 404, even when the next run is about to add a route for it.
+async fn wait_for_route_owners(method: Method, uri: Uri) -> bool {
+    let routers = { INSTALLED_ROUTERS.read().await.clone() };
+    let lookup_uri = case_insensitive_uri(&routers, &uri);
+    let path = lookup_uri.as_ref().unwrap_or(&uri).path();
+    let Some(owners) = routers.owners_of(&method, path) else {
+        return true;
+    };
+    let wait = crate::services::plugin_dispatch::TransitionWait::Until(
+        tokio::time::Instant::now() + ROUTE_TRANSITION_WAIT,
+    );
+    crate::services::STATE
+        .generation()
+        .plugins_settled(owners, &wait)
+        .await
+        .is_ok()
+}
+
+/// `uri` as a case-insensitive route of `routers` matches it, when one does and it differs.
+fn case_insensitive_uri(routers: &InstalledRouters, uri: &Uri) -> Option<Uri> {
+    let original_path = uri.path();
+    if !has_ascii_upper(original_path) {
+        return None;
+    }
+    let lowered = original_path.to_ascii_lowercase();
+    let pattern = routers.ci.find_pattern(&lowered)?;
+    let new_path = rewrite_path_for_ci(&pattern, original_path);
+    let rebuilt = rebuild_uri_with_path(uri, &new_path);
+    if rebuilt.is_none() {
+        tracing::warn!(
+            pattern = %pattern,
+            incoming = %original_path,
+            "failed to rebuild URI for case-insensitive rewrite; dispatching original"
+        );
+    }
+    rebuilt
 }
 
 fn has_ascii_upper(path: &str) -> bool {
@@ -356,11 +425,24 @@ fn rebuild_uri_with_path(uri: &Uri, new_path: &str) -> Option<Uri> {
     Uri::from_parts(parts).ok()
 }
 
-async fn build_registered_router() -> Result<BuiltRouters> {
-    let (routes, ci_router) = registered_routes().await;
-
+fn build_registered_router(
+    routes: Vec<RegisteredRoute>,
+    ci_router: CaseInsensitiveRouter,
+) -> Result<BuiltRouters> {
     let mut probe: matchit::Router<String> = matchit::Router::new();
     let mut limiter_matcher: matchit::Router<()> = matchit::Router::new();
+    let mut owners: matchit::Router<RouteOwners> = matchit::Router::new();
+    let mut owners_by_path: HashMap<&str, RouteOwners> = HashMap::new();
+    for route in &routes {
+        let plugins = owners_by_path
+            .entry(route.key.path.as_ref())
+            .or_default()
+            .entry(route.key.method.to_string())
+            .or_default();
+        if !plugins.contains(&route.plugin_id) {
+            plugins.push(route.plugin_id.clone());
+        }
+    }
     let mut plugin_by_path: HashMap<String, String> = HashMap::new();
     for (reserved, owner) in [("/api", "core"), ("/api/{*path}", "core")] {
         probe
@@ -386,6 +468,12 @@ async fn build_registered_router() -> Result<BuiltRouters> {
         limiter_matcher
             .insert(path.to_string(), ())
             .with_context(|| format!("seeding limiter matcher for '{path}'"))?;
+        owners
+            .insert(
+                path.to_string(),
+                owners_by_path.get(path).cloned().unwrap_or_default(),
+            )
+            .with_context(|| format!("seeding route owners for '{path}'"))?;
         plugin_by_path.insert(path.to_string(), owner);
     }
 
@@ -402,6 +490,7 @@ async fn build_registered_router() -> Result<BuiltRouters> {
         main: router,
         ci: ci_router,
         limiter_matcher,
+        owners,
     })
 }
 
@@ -599,6 +688,12 @@ async fn dispatch_registered_route(request: RegisteredRouteRequest) -> Response 
                 }
             }
         }
+        // The route belongs to a replaced runtime, or a plugin being restarted: nothing ran.
+        Err(err) if crate::services::plugin_dispatch::DispatchNotStarted::caused(&err) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "plugin runtime is not ready",
+        )
+            .into_response(),
         Err(err) => {
             tracing::error!(
                 plugin_id = %route.plugin_id,
@@ -610,6 +705,49 @@ async fn dispatch_registered_route(request: RegisteredRouteRequest) -> Response 
             (StatusCode::INTERNAL_SERVER_ERROR, "internal server error").into_response()
         }
     }
+}
+
+/// Installs routes the way the server does, and serves them through what fronts them.
+#[cfg(test)]
+pub(crate) async fn use_installed_routes() {
+    initialize_registry(HashSet::new(), Some(Arc::new(InstalledRoutes))).await;
+    initialize_router(None).await;
+}
+
+/// The response to one anonymous `GET` of `path`, through the installed routes.
+#[cfg(test)]
+pub(crate) async fn get_installed(path: &str) -> StatusCode {
+    fallback(
+        Request::builder()
+            .method("GET")
+            .uri(path)
+            .body(axum::body::Body::empty())
+            .expect("request"),
+    )
+    .await
+    .status()
+}
+
+/// Sends one anonymous request through `route`'s handler, as an installed route would.
+#[cfg(test)]
+pub(crate) async fn call_route(route: &RegisteredRoute) -> StatusCode {
+    use tower::ServiceExt;
+
+    let router = Router::new().route(
+        route.key.path.as_ref(),
+        build_http_method_router(route).expect("route"),
+    );
+    router
+        .oneshot(
+            Request::builder()
+                .method(route.key.method.as_ref())
+                .uri(route.key.path.as_ref())
+                .body(axum::body::Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("infallible")
+        .status()
 }
 
 #[cfg(test)]
@@ -726,6 +864,122 @@ mod tests {
                 .unwrap();
             assert_eq!(actual.as_ref(), body.as_bytes(), "{path}");
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_request_gets_503_when_the_transition_outlasts_its_wait() {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state().unwrap();
+        use_installed_routes().await;
+        let route = RegisteredRoute {
+            key: RouteKey::new("GET", "/held").unwrap(),
+            plugin_id: PluginId::new("held").unwrap(),
+            // Past the wait this route answers 401 for an anonymous caller, unlike the wait's 503.
+            auth_mode: RouteAuthMode::Required,
+            case_insensitive: false,
+            max_body_bytes: None,
+            handler: crate::services::plugin_dispatch::PluginCallbackHandle {
+                vm_id: 0,
+                handler_id: 0,
+            },
+            kind: RouteKind::Http,
+        };
+        install_router(
+            build_router(vec![route], CaseInsensitiveRouter::new(), None)
+                .await
+                .unwrap(),
+        )
+        .await;
+        let generation = crate::services::STATE.generation();
+        let _transition = generation.begin_transition(crate::services::state::Transition::Runtime);
+
+        let started = tokio::time::Instant::now();
+        let status = get_installed("/held").await;
+
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(started.elapsed(), ROUTE_TRANSITION_WAIT);
+    }
+
+    fn route_on(owner: &str, method: &str, path: &str, case_insensitive: bool) -> RegisteredRoute {
+        RegisteredRoute {
+            key: if case_insensitive {
+                RouteKey::new_case_insensitive(method, path).unwrap()
+            } else {
+                RouteKey::new(method, path).unwrap()
+            },
+            plugin_id: PluginId::new(owner).unwrap(),
+            auth_mode: RouteAuthMode::Public,
+            case_insensitive,
+            max_body_bytes: None,
+            handler: crate::services::plugin_dispatch::PluginCallbackHandle {
+                vm_id: 0,
+                handler_id: 0,
+            },
+            kind: RouteKind::Http,
+        }
+    }
+
+    async fn install_routes(routes: Vec<RegisteredRoute>, ci_paths: &[&str]) {
+        let mut ci = CaseInsensitiveRouter::new();
+        for path in ci_paths {
+            ci.insert(path).unwrap();
+        }
+        install_router(build_router(routes, ci, None).await.unwrap()).await;
+    }
+
+    async fn request(method: &str, path: &str) -> StatusCode {
+        fallback(
+            Request::builder()
+                .method(method)
+                .uri(path)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .status()
+    }
+
+    async fn route_test_state() -> crate::services::testing::RuntimeTestGuard {
+        let guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state().unwrap();
+        use_installed_routes().await;
+        guard
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_path_nobody_serves_is_not_held_by_a_reload() {
+        let _guard = route_test_state().await;
+        let generation = crate::services::STATE.generation();
+        let _transition = generation.begin_transition(crate::services::state::Transition::Runtime);
+
+        let started = tokio::time::Instant::now();
+        let status = request("GET", "/nothing").await;
+
+        assert_eq!(started.elapsed(), std::time::Duration::ZERO);
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_final_router_routes_the_uri_as_sent() {
+        let _guard = route_test_state().await;
+        install_routes(vec![route_on("plugin", "GET", "/items", true)], &["/items"]).await;
+        let generation = crate::services::STATE.generation();
+        let transition = generation.begin_transition(crate::services::state::Transition::Runtime);
+        let settle = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            // No longer case-insensitive: only the casing as sent reaches it.
+            install_routes(vec![route_on("plugin", "GET", "/ITEMS", false)], &[]).await;
+            drop(transition);
+        });
+
+        let status = request("GET", "/ITEMS").await;
+
+        assert_ne!(
+            status,
+            StatusCode::NOT_FOUND,
+            "the new route matched as sent"
+        );
+        settle.await.unwrap();
     }
 
     fn http_route(path: &str, max_body_bytes: Option<usize>) -> RegisteredRoute {

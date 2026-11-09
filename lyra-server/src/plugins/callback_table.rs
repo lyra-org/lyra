@@ -14,7 +14,10 @@ use std::{
 use anyhow::Result;
 use harmony_core::CallContext;
 
-use crate::services::plugin_dispatch::PluginCallbackHandle;
+use crate::services::plugin_dispatch::{
+    DispatchNotStarted,
+    PluginCallbackHandle,
+};
 
 /// A callback that runs in the call context of the plugin that registered it.
 pub(crate) trait PluginCallback: Clone {
@@ -54,7 +57,10 @@ impl<T: PluginCallback> CallbackTable<T> {
             .borrow()
             .get(&handler_id)
             .cloned()
-            .ok_or_else(|| anyhow::anyhow!("handler {handler_id} not found"))
+            .ok_or_else(|| {
+                anyhow::Error::new(DispatchNotStarted)
+                    .context(format!("handler {handler_id} not found"))
+            })
     }
 
     /// Ignores a handle another runtime issued.

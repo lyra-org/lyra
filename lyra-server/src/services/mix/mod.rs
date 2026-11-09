@@ -34,6 +34,7 @@ use crate::services::plugin_dispatch::{
     CallSource,
     Published,
     RuntimeCalls,
+    TransitionWait,
 };
 pub(crate) use admin::{
     MixerAdminError,
@@ -129,7 +130,13 @@ pub(crate) async fn mix(
     viewer: &MixViewer,
 ) -> Result<Vec<MixedTrack>, MixError> {
     let deadline = tokio::time::Instant::now() + MIX_DISPATCH_BUDGET;
-    mix_on(&Published, deadline, request, viewer).await
+    mix_on(
+        &Published::new(TransitionWait::Until(deadline)),
+        deadline,
+        request,
+        viewer,
+    )
+    .await
 }
 
 /// [`mix`], reaching mixers through `source`.

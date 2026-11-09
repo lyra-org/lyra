@@ -16,14 +16,16 @@ pub(crate) use self::luau::{
     declare_settings,
     declare_user_settings,
 };
-#[cfg(test)]
-pub(crate) use self::registry::initialize_registry;
 pub(crate) use self::registry::{
     Registry,
     SettingsRegistries,
     SettingsScope,
-    freeze_registry,
     settings_registry,
+};
+#[cfg(test)]
+pub(crate) use self::registry::{
+    freeze_registry,
+    initialize_registry,
 };
 pub(crate) use crate::services::settings::{
     ChoiceOption,

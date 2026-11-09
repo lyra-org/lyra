@@ -40,7 +40,11 @@ use crate::services::{
         bindings::ConnectionBindings,
         socket_claims::SocketClaims,
     },
-    plugin_scope::RuntimeScope,
+    plugin_dispatch::TransitionWait,
+    plugin_scope::{
+        PluginId,
+        RuntimeScope,
+    },
     providers::ProviderLocks,
     settings::server::{
         self as server_settings,
@@ -147,6 +151,7 @@ pub(crate) struct AuthCaches {
 pub(crate) struct GenerationState {
     /// The published plugin runtime, with everything derived from it.
     pub(crate) runtime: RuntimeScopeHandle,
+    transition: tokio::sync::watch::Sender<Transition>,
     /// Generation state of the layers above services, swapped with this one.
     pub(crate) layers: LayerStates,
     pub(crate) auth_caches: AuthCaches,
@@ -167,6 +172,104 @@ impl GenerationState {
     /// The published runtime scope, without waiting for anything.
     pub(crate) fn latest(&self) -> Option<Arc<RuntimeScope>> {
         self.runtime.get()
+    }
+
+    /// The published scope once no transition covers `target`. An `Err` means the wait ended
+    /// first; the scope published then may be the one being replaced, so it isn't returned.
+    pub(crate) async fn live(
+        &self,
+        target: &str,
+        wait: &TransitionWait,
+    ) -> Result<Option<Arc<RuntimeScope>>, TransitionNotSettled> {
+        self.settled(wait, |transition| transition.covers(target))
+            .await?;
+        Ok(self.latest())
+    }
+
+    pub(crate) fn in_transition(&self, target: &str) -> bool {
+        self.transition.borrow().covers(target)
+    }
+
+    /// Waits until no transition covers any of `plugins`.
+    pub(crate) async fn plugins_settled(
+        &self,
+        plugins: &[PluginId],
+        wait: &TransitionWait,
+    ) -> Result<(), TransitionNotSettled> {
+        self.settled(wait, |transition| {
+            plugins
+                .iter()
+                .any(|plugin| transition.covers_plugin(plugin))
+        })
+        .await
+    }
+
+    #[cfg(test)]
+    pub(crate) fn route_is_held(&self, plugin: &PluginId) -> bool {
+        self.transition.borrow().covers_plugin(plugin)
+    }
+
+    async fn settled(
+        &self,
+        wait: &TransitionWait,
+        mut holds_up: impl FnMut(&Transition) -> bool,
+    ) -> Result<(), TransitionNotSettled> {
+        let mut transition = self.transition.subscribe();
+        let settled = transition.wait_for(|transition| !holds_up(transition));
+        match wait {
+            TransitionWait::Until(deadline) => tokio::time::timeout_at(*deadline, settled)
+                .await
+                .map(|_| ())
+                .map_err(|_| TransitionNotSettled),
+            TransitionWait::Settled { cancel } => tokio::select! {
+                biased;
+                _ = settled => Ok(()),
+                () = cancel.cancelled() => Err(TransitionNotSettled),
+            },
+        }
+    }
+
+    /// New calls covered by `transition` wait in [`Self::live`] until the returned guard drops.
+    #[must_use]
+    pub(crate) fn begin_transition(self: &Arc<Self>, transition: Transition) -> TransitionGuard {
+        self.transition.send_replace(transition);
+        TransitionGuard {
+            generation: self.clone(),
+        }
+    }
+}
+
+/// What is being replaced, and so which new calls wait.
+#[derive(Clone, Default)]
+pub(crate) enum Transition {
+    #[default]
+    Idle,
+    /// Every plugin.
+    Runtime,
+}
+
+/// A wait for a transition ended before the transition did.
+#[derive(Debug)]
+pub(crate) struct TransitionNotSettled;
+
+impl Transition {
+    fn covers(&self, _target: &str) -> bool {
+        matches!(self, Self::Runtime)
+    }
+
+    fn covers_plugin(&self, _plugin_id: &PluginId) -> bool {
+        matches!(self, Self::Runtime)
+    }
+}
+
+/// Settles the transition however its owner ends.
+pub(crate) struct TransitionGuard {
+    generation: Arc<GenerationState>,
+}
+
+impl Drop for TransitionGuard {
+    fn drop(&mut self) {
+        self.generation.transition.send_replace(Transition::Idle);
     }
 }
 

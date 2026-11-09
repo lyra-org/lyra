@@ -17,7 +17,10 @@ use crate::{
         },
         state::VmScope,
     },
-    services::plugin_scope::PluginId,
+    services::{
+        plugin_scope::PluginId,
+        state::Transition,
+    },
 };
 use anyhow::{
     Context,
@@ -141,11 +144,9 @@ impl PluginRegistries {
         self.teardown_in_progress.write().await.remove(plugin_id);
     }
 
-    /// Publishes the startup runtime, runs its entrypoints and finalizes
-    /// startup, all under the lock reloads take, so neither a reload nor the
-    /// restart of a crashed runtime overlaps them. A reload that got the lock
-    /// first already published a fresher runtime, so the startup one is shut
-    /// down unused.
+    /// Starts the startup runtime through the path a reload takes, under the lock reloads take. A
+    /// reload that got the lock first already published a fresher runtime, so the startup one is
+    /// shut down unused.
     pub(crate) async fn start_plugins(
         &self,
         runtime: crate::plugins::bootstrap::PluginRuntime,
@@ -159,23 +160,23 @@ impl PluginRegistries {
             runtime.shutdown().await?;
             PublishOutcome::Replaced
         } else {
-            match publish_and_run(&runtime, &shutdown).await {
-                None => return Ok(PublishOutcome::ShuttingDown),
-                // Its thread died; the crash is reported as for any published runtime.
-                Some(Err(error)) => tracing::error!(
-                    error = %format!("{error:#}"),
-                    "plugin runtime stopped while running startup entrypoints"
-                ),
-                Some(Ok(failed)) => self.teardown_failed_plugins(runtime.scope(), &failed).await,
+            match self.replace_runtime(&runtime, &shutdown).await {
+                Ok(PublishOutcome::ShuttingDown) => return Ok(PublishOutcome::ShuttingDown),
+                Ok(outcome) => outcome,
+                // The scope is published; the supervisor or the next reload takes it from here.
+                Err(error) => {
+                    tracing::error!(
+                        error = %format!("{error:#}"),
+                        "plugin runtime did not start cleanly"
+                    );
+                    PublishOutcome::Published
+                }
             }
-            PublishOutcome::Published
         };
         if shutdown.is_cancelled() {
             return Ok(PublishOutcome::ShuttingDown);
         }
-        crate::plugins::bootstrap::finalize_startup()
-            .await
-            .context("finalize plugin startup")?;
+        crate::plugins::bootstrap::finalize_startup().await;
         Ok(outcome)
     }
 
@@ -247,8 +248,6 @@ impl PluginRegistries {
         })
     }
 
-    /// Once `shutdown` is cancelled it publishes no runtime, and cuts short the
-    /// entrypoints of one it has published.
     async fn reload_detached(
         self,
         expected: Option<ExecutorId>,
@@ -267,17 +266,31 @@ impl PluginRegistries {
             return Ok(PublishOutcome::Replaced);
         }
 
-        let old_ids = plugin_ids(&crate::plugins::STATE.manifests());
-        let old_scope = crate::plugins::STATE.vm_scope();
-
-        // Fresh discovery from disk, built aside from what is live.
+        // Fresh discovery from disk, built aside from what is live. A failure here leaves the old
+        // scope serving.
         let runtime = crate::plugins::bootstrap::initialize_harmony().await?;
+        self.replace_runtime(&runtime, &shutdown).await
+    }
+
+    /// Replaces the published runtime with `runtime`: stops the old one, runs the entrypoints
+    /// into the new scope with new calls waiting, and publishes it whole. Once shutdown is
+    /// cancelled it publishes nothing and clears the pointer.
+    async fn replace_runtime(
+        &self,
+        runtime: &crate::plugins::bootstrap::PluginRuntime,
+        shutdown: &CancellationToken,
+    ) -> Result<PublishOutcome> {
+        let generation = crate::services::STATE.generation();
+        let transition = generation.begin_transition(Transition::Runtime);
+
+        let old_ids = plugin_ids(&crate::plugins::STATE.manifests());
         let new_ids = plugin_ids(&runtime.scope().plugin.manifests.get());
+        let old_scope = crate::plugins::STATE.vm_scope();
 
         // The replaced runtime must run no more Lua. A failed shutdown means its thread had
         // already exited, which leaves it just as stopped.
         if let Some(old_runtime) = crate::plugins::STATE.runtime() {
-            if old_runtime.drain(RELOAD_DRAIN_LIMIT, &shutdown).await == DrainOutcome::TimedOut {
+            if old_runtime.drain(RELOAD_DRAIN_LIMIT, shutdown).await == DrainOutcome::TimedOut {
                 tracing::warn!(
                     limit_ms = RELOAD_DRAIN_LIMIT.as_millis() as u64,
                     "replaced plugin runtime still had calls running; cancelling them"
@@ -290,6 +303,7 @@ impl PluginRegistries {
                 );
             }
         }
+        // Dropping the old registry would do this, but calls still hold the scope.
         if let Some(old_scope) = &old_scope {
             old_scope.services.providers.cancel_lyrics_handlers().await;
         }
@@ -303,24 +317,55 @@ impl PluginRegistries {
             }
         }
 
-        let Some(exec_result) = publish_and_run(&runtime, &shutdown).await else {
-            return Ok(PublishOutcome::ShuttingDown);
+        let exec = if shutdown.is_cancelled() {
+            None
+        } else {
+            Some(run_entrypoints(runtime, shutdown).await)
+        };
+        let Some(exec) = exec.filter(|_| !shutdown.is_cancelled()) else {
+            return Ok(self.abandon_runtime(runtime).await);
         };
 
-        if let Ok(failed) = &exec_result {
+        if let Ok(failed) = &exec {
             self.teardown_failed_plugins(runtime.scope(), failed).await;
         }
         runtime.scope().plugin.freeze().await;
+        let routes = crate::plugins::api::build_routes(&runtime.scope().plugin.api).await;
+
+        let published = crate::services::shutdown::unless_cancelled(shutdown, || {
+            crate::plugins::STATE.publish_runtime(&generation, runtime.clone());
+        });
+        if published.is_none() {
+            return Ok(self.abandon_runtime(runtime).await);
+        }
+        // Requests waiting on the transition pick their route from the new routers.
+        let routes = routes.context("failed to build plugin routes");
+        let routes = match (&exec, routes) {
+            (Ok(_), Ok(Some(install))) => {
+                install().await;
+                Ok(())
+            }
+            (_, Err(error)) if exec.is_ok() => Err(error),
+            _ => Ok(()),
+        };
+        drop(transition);
+
         for plugin_id in &old_ids {
             sweep_stale_http_limits(plugin_id).await;
         }
 
-        exec_result?;
-        if shutdown.is_cancelled() {
-            return Ok(PublishOutcome::ShuttingDown);
-        }
-        crate::plugins::api::rebuild_registered_routes().await?;
+        exec?;
+        routes?;
         Ok(PublishOutcome::Published)
+    }
+
+    async fn abandon_runtime(
+        &self,
+        runtime: &crate::plugins::bootstrap::PluginRuntime,
+    ) -> PublishOutcome {
+        crate::services::STATE.generation().runtime.replace(None);
+        stop_unpublished(runtime).await;
+        PublishOutcome::ShuttingDown
     }
 
     /// Tears the plugin down and re-runs its entrypoint from the files
@@ -440,33 +485,21 @@ impl PluginRegistries {
     }
 }
 
-/// Publishes `runtime` and runs its entrypoints, returning the plugins whose
-/// entrypoint failed. Plugin entrypoints dispatch handlers that resolve the
-/// published runtime at call time, so it is published first. Once shutdown
-/// has started the runtime is shut down unpublished instead; a shutdown that
-/// starts later sees it published, and cuts its entrypoints short.
-async fn publish_and_run(
+/// The plugins whose entrypoint failed. Shutdown cuts the entrypoints short.
+async fn run_entrypoints(
     runtime: &crate::plugins::bootstrap::PluginRuntime,
     shutdown: &CancellationToken,
-) -> Option<Result<Vec<String>>> {
-    let published = crate::services::shutdown::unless_cancelled(shutdown, || {
-        crate::plugins::STATE
-            .publish_runtime(&crate::services::STATE.generation(), runtime.clone());
-    });
-    if published.is_none() {
-        stop_unpublished(runtime).await;
-        return None;
-    }
+) -> Result<Vec<String>> {
     let exec = runtime.exec_all();
     futures::pin_mut!(exec);
-    Some(tokio::select! {
+    tokio::select! {
         biased;
         () = shutdown.cancelled() => {
             runtime.cancel_entrypoints();
             exec.await
         }
         result = &mut exec => result,
-    })
+    }
 }
 
 async fn stop_unpublished(runtime: &crate::plugins::bootstrap::PluginRuntime) {
@@ -497,6 +530,10 @@ fn plugin_ids(manifests: &[harmony_core::plugin::PluginManifest]) -> Vec<PluginI
 #[cfg(test)]
 #[path = "lifecycle/reentry_tests.rs"]
 mod reentry_tests;
+
+#[cfg(test)]
+#[path = "lifecycle/transition_tests.rs"]
+mod transition_tests;
 
 #[cfg(test)]
 mod tests {
@@ -634,11 +671,16 @@ mod tests {
     struct FailingRouteHost(std::sync::atomic::AtomicUsize);
 
     impl crate::plugins::api::RouteHost for FailingRouteHost {
-        fn rebuild(&self) -> futures::future::BoxFuture<'_, Result<()>> {
+        fn build(
+            &self,
+            _routes: Vec<crate::plugins::api::RegisteredRoute>,
+            _case_insensitive: crate::plugins::api::CaseInsensitiveRouter,
+        ) -> futures::future::BoxFuture<'_, Result<crate::plugins::api::InstallRoutes>> {
             let call = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Box::pin(async move {
                 anyhow::ensure!(call != 1, "route rebuild failed");
-                Ok(())
+                let install: crate::plugins::api::InstallRoutes = Box::new(|| Box::pin(async {}));
+                Ok(install)
             })
         }
     }
@@ -944,21 +986,16 @@ mod tests {
                     .await
             }
         });
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while published_runtime().is_err() {
-            anyhow::ensure!(
-                std::time::Instant::now() < deadline,
-                "startup never published its runtime"
-            );
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
+        // Long enough for the entrypoint to be running.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         shutdown.cancel();
 
         let outcome = tokio::time::timeout(std::time::Duration::from_secs(10), start)
             .await
             .context("shutdown never ended the slow startup entrypoint")???;
         assert_eq!(outcome, PublishOutcome::ShuttingDown);
-        assert_eq!(published_runtime()?.id(), startup.id());
+        assert!(published_runtime().is_err());
+        assert!(is_stopped(&startup).await);
         Ok(())
     }
 

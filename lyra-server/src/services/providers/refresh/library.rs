@@ -539,7 +539,7 @@ async fn refresh_release_with_provider(
         .start_work(SyncStageKey::ProviderRefresh, details.clone())
         .await;
     let should_run = match dispatch_sync_filter(
-        &Published,
+        &Published::background(progress.cancellation().clone()),
         provider_id,
         EntityType::Release,
         apply_sync_filters,
@@ -574,7 +574,14 @@ async fn refresh_release_with_provider(
         return false;
     }
 
-    match dispatch_refresh(&Published, provider_id, EntityType::Release, context).await {
+    match dispatch_refresh(
+        &Published::background(progress.cancellation().clone()),
+        provider_id,
+        EntityType::Release,
+        context,
+    )
+    .await
+    {
         Ok(()) => {
             progress
                 .complete_work(work_id, SyncStageKey::ProviderRefresh)

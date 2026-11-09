@@ -15,10 +15,17 @@ use crate::{
     services::plugin_dispatch::PluginCallbackHandle,
 };
 
-/// Serves the registered plugin routes over HTTP. Rebuilt whenever the
-/// registered set changes, so a failed rebuild surfaces to whoever changed it.
+/// Installs routes a [`RouteHost`] built.
+pub(crate) type InstallRoutes = Box<dyn FnOnce() -> BoxFuture<'static, ()> + Send>;
+
+/// Serves the registered plugin routes over HTTP. Routes are built apart from installing them, so
+/// a change of the registered set can fail before anything it replaces is touched.
 pub(crate) trait RouteHost: Send + Sync {
-    fn rebuild(&self) -> BoxFuture<'_, Result<()>>;
+    fn build(
+        &self,
+        routes: Vec<RegisteredRoute>,
+        case_insensitive: CaseInsensitiveRouter,
+    ) -> BoxFuture<'_, Result<InstallRoutes>>;
 }
 
 pub(crate) struct ApiRouteStore {
@@ -244,7 +251,7 @@ impl CaseInsensitiveRouter {
         Self::default()
     }
 
-    fn insert(&mut self, path: &str) -> Result<()> {
+    pub(crate) fn insert(&mut self, path: &str) -> Result<()> {
         if !self.paths.insert(path.to_string()) {
             return Ok(());
         }
@@ -441,9 +448,10 @@ pub(crate) async fn initialize_registry(
     api_route_registry().write_owned().await.reset();
 }
 
-/// The registered routes ordered by path then method, with their
-/// case-insensitive lookup.
-pub(crate) async fn registered_routes() -> (Vec<RegisteredRoute>, CaseInsensitiveRouter) {
-    let registry = api_route_registry().read_owned().await;
+/// `registries`' routes ordered by path then method, with their case-insensitive lookup.
+pub(crate) async fn registered_routes(
+    registries: &ApiRouteRegistries,
+) -> (Vec<RegisteredRoute>, CaseInsensitiveRouter) {
+    let registry = registries.registry.read().await;
     (registry.snapshot(), registry.ci_router_snapshot())
 }

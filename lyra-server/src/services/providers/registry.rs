@@ -44,6 +44,7 @@ use crate::services::plugin_dispatch::{
     PublishedCalls,
     RefreshTargetGone,
     RuntimeCalls,
+    TransitionWait,
 };
 use crate::services::plugin_scope::{
     PluginId,
@@ -213,19 +214,23 @@ pub(crate) enum ProviderLookup<H, T> {
 pub(crate) async fn with_provider_call<H, T, L, F, Fut>(
     provider_id: &str,
     stage: ProviderCallStage,
+    wait: TransitionWait,
     lookup: L,
     call: F,
 ) -> Result<T, ProviderCallError>
 where
     L: Fn(&ProviderRegistry) -> Option<ProviderLookup<H, T>>,
-    F: FnOnce(H, PublishedCalls) -> Fut,
+    F: Fn(H, PublishedCalls) -> Fut,
     Fut: Future<Output = Result<T>>,
 {
-    with_provider_call_on(&Published, provider_id, stage, lookup, call).await
+    with_provider_call_on(&Published::new(wait), provider_id, stage, lookup, call).await
 }
 
 /// [`with_provider_call`] through `source`. The call lock is taken wherever the handler runs: it
-/// keeps one provider's calls from overlapping.
+/// keeps one provider's calls from overlapping. A wait never holds it.
+///
+/// A handler that never started is retried once from a fresh read, since no Luau ran. One that
+/// started is not.
 pub(crate) async fn with_provider_call_on<S, H, T, L, F, Fut>(
     source: &S,
     provider_id: &str,
@@ -236,7 +241,7 @@ pub(crate) async fn with_provider_call_on<S, H, T, L, F, Fut>(
 where
     S: CallSource,
     L: Fn(&ProviderRegistry) -> Option<ProviderLookup<H, T>>,
-    F: FnOnce(H, S::Calls) -> Fut,
+    F: Fn(H, S::Calls) -> Fut,
     Fut: Future<Output = Result<T>>,
 {
     let generation = crate::services::STATE.generation();
@@ -245,42 +250,55 @@ where
         lookup(&*registry.read().await).ok_or(ProviderCallError::NotRegistered)
     };
 
-    let calls = source.current().ok_or(ProviderCallError::NotRegistered)?;
-    if let ProviderLookup::Answer(answer) = read_lookup(&calls).await? {
-        return Ok(answer);
-    }
-
-    let lock = {
-        let mut locks = generation.providers.call_locks.clone().lock_owned().await;
-        locks
-            .entry(provider_id.to_string())
-            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-            .clone()
-    };
-
-    let wait_started = Instant::now();
-    let _guard = lock.lock().await;
-    let waited = wait_started.elapsed();
-    tracing::debug!(
-        provider_id,
-        stage = stage.as_str(),
-        waited_ms = waited.as_millis() as u64,
-        waited = waited > Duration::ZERO,
-        "provider call lock acquired"
-    );
-
-    let calls = source.current().ok_or(ProviderCallError::NotRegistered)?;
-    let handler = match read_lookup(&calls).await? {
-        ProviderLookup::Call(handler) => handler,
-        ProviderLookup::Answer(answer) => return Ok(answer),
-    };
-    call(handler, calls).await.map_err(|error| {
-        if DispatchNotStarted::caused(&error) {
-            ProviderCallError::NotRegistered
-        } else {
-            ProviderCallError::of_handler(error)
+    let mut may_retry = true;
+    loop {
+        let calls = source
+            .reach(provider_id)
+            .await
+            .ok_or(ProviderCallError::NotRegistered)?;
+        if let ProviderLookup::Answer(answer) = read_lookup(&calls).await? {
+            return Ok(answer);
         }
-    })
+
+        let lock = {
+            let mut locks = generation.providers.call_locks.clone().lock_owned().await;
+            locks
+                .entry(provider_id.to_string())
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+                .clone()
+        };
+
+        let wait_started = Instant::now();
+        let _guard = lock.lock().await;
+        let waited = wait_started.elapsed();
+        tracing::debug!(
+            provider_id,
+            stage = stage.as_str(),
+            waited_ms = waited.as_millis() as u64,
+            waited = waited > Duration::ZERO,
+            "provider call lock acquired"
+        );
+
+        // Waiting for the lock may have outlasted the scope read above; the next loop waits for
+        // the transition without holding the lock.
+        if source.in_transition(provider_id) {
+            continue;
+        }
+
+        let calls = source.current().ok_or(ProviderCallError::NotRegistered)?;
+        let handler = match read_lookup(&calls).await? {
+            ProviderLookup::Call(handler) => handler,
+            ProviderLookup::Answer(answer) => return Ok(answer),
+        };
+        match call(handler, calls).await {
+            Ok(answer) => return Ok(answer),
+            Err(error) if !DispatchNotStarted::caused(&error) => {
+                return Err(ProviderCallError::of_handler(error));
+            }
+            Err(_) if may_retry => may_retry = false,
+            Err(_) => return Err(ProviderCallError::NotRegistered),
+        }
+    }
 }
 
 /// The registry `source` reads handlers from, empty before anything is published.
@@ -1102,6 +1120,7 @@ pub(crate) mod tests {
                 with_provider_call(
                     &provider_id,
                     ProviderCallStage::MetadataRefresh,
+                    TransitionWait::interactive(),
                     |_| Some(ProviderLookup::Call(())),
                     |(), _| async {
                         let current = active.fetch_add(1, Ordering::SeqCst) + 1;
@@ -1139,6 +1158,7 @@ pub(crate) mod tests {
                 with_provider_call(
                     &provider_id,
                     ProviderCallStage::MetadataRefresh,
+                    TransitionWait::interactive(),
                     |_| Some(ProviderLookup::Call(())),
                     |(), _| async {
                         barrier.wait().await;
@@ -1180,6 +1200,7 @@ pub(crate) mod tests {
                 with_provider_call(
                     "demo",
                     ProviderCallStage::MetadataRefresh,
+                    TransitionWait::interactive(),
                     |_| Some(ProviderLookup::Call(())),
                     |(), _| async {
                         entered.notify_one();
@@ -1198,6 +1219,7 @@ pub(crate) mod tests {
             with_provider_call(
                 "demo",
                 ProviderCallStage::MetadataRefresh,
+                TransitionWait::interactive(),
                 |_| Some(ProviderLookup::Call(())),
                 |(), _| async { Ok(()) },
             )
@@ -1219,6 +1241,7 @@ pub(crate) mod tests {
         let result = with_provider_call(
             "unregistered",
             ProviderCallStage::MetadataRefresh,
+            TransitionWait::interactive(),
             |_| None::<ProviderLookup<(), ()>>,
             |(), _| async { Ok(()) },
         )
@@ -1235,6 +1258,7 @@ pub(crate) mod tests {
         let missing = with_provider_call(
             "unregistered",
             ProviderCallStage::MetadataRefresh,
+            TransitionWait::interactive(),
             |_| None::<ProviderLookup<(), ()>>,
             |(), _| async { Ok(()) },
         )
@@ -1242,6 +1266,7 @@ pub(crate) mod tests {
         let answered = with_provider_call(
             "answered",
             ProviderCallStage::MetadataRefresh,
+            TransitionWait::interactive(),
             |_| Some(ProviderLookup::<(), _>::Answer(7)),
             |(), _| async { Ok(0) },
         )
@@ -1251,6 +1276,129 @@ pub(crate) mod tests {
         assert!(matches!(missing, Err(ProviderCallError::NotRegistered)));
         assert_eq!(answered, 7);
         assert_eq!(call_lock_count().await, 0);
+    }
+
+    async fn call_through_transition(
+        wait: TransitionWait,
+    ) -> (
+        Arc<AtomicUsize>,
+        tokio::task::JoinHandle<Result<(), ProviderCallError>>,
+    ) {
+        let dispatched = Arc::new(AtomicUsize::new(0));
+        let running = tokio::spawn({
+            let dispatched = dispatched.clone();
+            async move {
+                with_provider_call(
+                    "waiting",
+                    ProviderCallStage::MetadataRefresh,
+                    wait,
+                    |_| Some(ProviderLookup::Call(())),
+                    |(), _| {
+                        dispatched.fetch_add(1, Ordering::SeqCst);
+                        async { Ok(()) }
+                    },
+                )
+                .await
+            }
+        });
+        (dispatched, running)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_pass_outlasts_any_transition_and_then_runs() {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state().expect("test state");
+        let generation = crate::services::STATE.generation();
+        let transition = generation.begin_transition(crate::services::state::Transition::Runtime);
+        let (dispatched, running) =
+            call_through_transition(TransitionWait::background(CancellationToken::new())).await;
+
+        sleep(Duration::from_secs(4000)).await;
+        assert_eq!(dispatched.load(Ordering::SeqCst), 0);
+        assert!(!running.is_finished());
+
+        drop(transition);
+        running.await.expect("join").expect("the pass goes on");
+        assert_eq!(dispatched.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_passed_deadline_reports_not_registered_without_dispatching() {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state().expect("test state");
+        let generation = crate::services::STATE.generation();
+        let _transition = generation.begin_transition(crate::services::state::Transition::Runtime);
+        let (dispatched, running) = call_through_transition(TransitionWait::Until(
+            tokio::time::Instant::now() + Duration::from_secs(1),
+        ))
+        .await;
+
+        let result = running.await.expect("join");
+
+        assert!(matches!(result, Err(ProviderCallError::NotRegistered)));
+        assert_eq!(dispatched.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_cancelled_pass_stops_waiting_without_dispatching() {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state().expect("test state");
+        let generation = crate::services::STATE.generation();
+        let _transition = generation.begin_transition(crate::services::state::Transition::Runtime);
+        let cancel = CancellationToken::new();
+        let (dispatched, running) =
+            call_through_transition(TransitionWait::background(cancel.clone())).await;
+        sleep(Duration::from_secs(1)).await;
+
+        cancel.cancel();
+
+        let result = running.await.expect("join");
+        assert!(matches!(result, Err(ProviderCallError::NotRegistered)));
+        assert_eq!(dispatched.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_handler_that_never_started_is_retried_once() {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state().expect("test state");
+        let calls = AtomicUsize::new(0);
+
+        let result = with_provider_call(
+            "not-started",
+            ProviderCallStage::Lyrics,
+            TransitionWait::interactive(),
+            |_| Some(ProviderLookup::Call(())),
+            |(), _| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                async { Err::<(), _>(anyhow::Error::new(DispatchNotStarted)) }
+            },
+        )
+        .await;
+
+        assert!(matches!(result, Err(ProviderCallError::NotRegistered)));
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn a_handler_that_started_is_not_retried() {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state().expect("test state");
+        let calls = AtomicUsize::new(0);
+
+        let result = with_provider_call(
+            "started",
+            ProviderCallStage::Lyrics,
+            TransitionWait::interactive(),
+            |_| Some(ProviderLookup::Call(())),
+            |(), _| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                async { Err::<(), _>(anyhow::anyhow!("the handler raised")) }
+            },
+        )
+        .await;
+
+        assert!(matches!(result, Err(ProviderCallError::Failed(_))));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
@@ -1265,6 +1413,7 @@ pub(crate) mod tests {
                 with_provider_call(
                     "demo",
                     ProviderCallStage::MetadataRefresh,
+                    TransitionWait::interactive(),
                     |_| Some(ProviderLookup::Call(())),
                     |(), _| async {
                         entered.notify_one();
@@ -1281,6 +1430,7 @@ pub(crate) mod tests {
         let waiting = with_provider_call(
             "demo",
             ProviderCallStage::MetadataRefresh,
+            TransitionWait::interactive(),
             {
                 let looked_up = looked_up.clone();
                 move |_: &ProviderRegistry| {

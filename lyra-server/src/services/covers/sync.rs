@@ -1147,7 +1147,7 @@ pub(crate) async fn sync_release_covers_for_library(
         }
         for (provider_id, release_context) in &ctx.provider_contexts {
             let cover_url = match resolve_provider_release_cover_url(
-                &Published,
+                &Published::background(cancel.clone()),
                 provider_id,
                 release_context,
                 options.bypass_cache,
@@ -1732,7 +1732,7 @@ mod tests {
         };
 
         let synced = sync_release_cover_for_tracks(
-            &crate::services::plugin_dispatch::Published,
+            &crate::services::plugin_dispatch::Published::interactive(),
             &db,
             &Arc::default(),
             ReleaseCoverSubject {

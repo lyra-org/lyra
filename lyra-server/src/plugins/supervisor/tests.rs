@@ -305,20 +305,15 @@ async fn shutdown_cuts_short_the_entrypoints_of_a_restart() -> anyhow::Result<()
     let mut supervisor = supervisor(&shutdown);
     let id = crashed.id();
     let restart = tokio::spawn(async move { supervisor.handle_crash(id, Instant::now()).await });
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while published_runtime()?.id() == crashed.id() {
-        anyhow::ensure!(
-            Instant::now() < deadline,
-            "the restart never published a runtime"
-        );
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    // Long enough for the new entrypoint to be running; its scope publishes after it ends.
+    tokio::time::sleep(Duration::from_millis(300)).await;
     shutdown.cancel();
 
     let outcome = tokio::time::timeout(Duration::from_secs(10), restart)
         .await
         .context("shutdown never ended the slow entrypoint")??;
     assert_eq!(outcome, CrashOutcome::ShuttingDown);
+    assert!(published_runtime().is_err(), "shutdown clears the pointer");
     Ok(())
 }
 

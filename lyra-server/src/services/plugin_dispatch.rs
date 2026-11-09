@@ -15,13 +15,11 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{
-    Result,
-    ensure,
-};
+use anyhow::Result;
 use futures::future::BoxFuture;
 
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 
 use crate::services::{
     STATE,
@@ -48,12 +46,12 @@ impl PluginCallbackHandle {
     /// The handler's id in the runtime `vm_id`; fails for a handle another
     /// runtime issued.
     pub(crate) fn handler_id_in(self, vm_id: u64) -> Result<u64> {
-        ensure!(
-            self.vm_id == vm_id,
-            "plugin handler {} belongs to plugin runtime {}, not to runtime {vm_id}",
-            self.handler_id,
-            self.vm_id
-        );
+        if self.vm_id != vm_id {
+            return Err(anyhow::Error::new(DispatchNotStarted).context(format!(
+                "plugin handler {} belongs to plugin runtime {}, not to runtime {vm_id}",
+                self.handler_id, self.vm_id
+            )));
+        }
         Ok(self.handler_id)
     }
 }
@@ -96,6 +94,31 @@ pub(crate) trait PluginDispatch: Send + Sync {
     fn dispatch_listen_update(&self, payload: ListenUpdatePayload) -> Result<()>;
 }
 
+/// How long a call may wait for a transition covering its target.
+#[derive(Clone)]
+pub(crate) enum TransitionWait {
+    /// Until the transition settles, which its guard guarantees, or `cancel` fires.
+    Settled {
+        cancel: CancellationToken,
+    },
+    Until(tokio::time::Instant),
+}
+
+impl TransitionWait {
+    /// What someone is waiting on gets this long.
+    pub(crate) fn interactive() -> Self {
+        Self::Until(tokio::time::Instant::now() + INTERACTIVE_TRANSITION_WAIT)
+    }
+
+    /// A background pass waits as long as the transition takes, or until it is cancelled.
+    pub(crate) fn background(cancel: CancellationToken) -> Self {
+        Self::Settled { cancel }
+    }
+}
+
+/// The transition budget of a call someone is waiting on.
+pub(crate) const INTERACTIVE_TRANSITION_WAIT: Duration = Duration::from_secs(15);
+
 /// A handler call the runtime can run, with the registries its handlers are read from.
 pub(crate) trait RuntimeCalls {
     fn providers(&self) -> impl Future<Output = Arc<RwLock<ProviderRegistry>>>;
@@ -123,20 +146,51 @@ pub(crate) trait RuntimeCalls {
 pub(crate) trait CallSource {
     type Calls: RuntimeCalls;
 
-    /// The calls as they stand; `None` when no runtime can make them.
+    /// The calls to reach `target`, once no transition holds it up; `None` when nothing can reach
+    /// it: no runtime, or the caller's wait ended first. Nothing was dispatched then.
+    fn reach(&self, target: &str) -> impl Future<Output = Option<Self::Calls>>;
+
+    /// The calls as they stand, without waiting for anything.
     fn current(&self) -> Option<Self::Calls>;
+
+    fn in_transition(&self, target: &str) -> bool;
 }
 
 /// The published runtime, as seen from outside any VM.
 #[derive(Clone)]
-pub(crate) struct Published;
+pub(crate) struct Published {
+    wait: TransitionWait,
+}
+
+impl Published {
+    pub(crate) fn new(wait: TransitionWait) -> Self {
+        Self { wait }
+    }
+
+    pub(crate) fn interactive() -> Self {
+        Self::new(TransitionWait::interactive())
+    }
+
+    pub(crate) fn background(cancel: CancellationToken) -> Self {
+        Self::new(TransitionWait::background(cancel))
+    }
+}
 
 impl CallSource for Published {
     type Calls = PublishedCalls;
 
+    async fn reach(&self, target: &str) -> Option<PublishedCalls> {
+        let scope = STATE.generation().live(target, &self.wait).await.ok()??;
+        Some(PublishedCalls { scope })
+    }
+
     fn current(&self) -> Option<PublishedCalls> {
         let scope = STATE.generation().latest()?;
         Some(PublishedCalls { scope })
+    }
+
+    fn in_transition(&self, target: &str) -> bool {
+        STATE.generation().in_transition(target)
     }
 }
 

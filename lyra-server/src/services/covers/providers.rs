@@ -29,6 +29,7 @@ use crate::{
         MetadataRefreshRequest,
         Published,
         RuntimeCalls,
+        TransitionWait,
     },
     services::providers::{
         ExternalIdsByScheme,
@@ -312,6 +313,7 @@ pub(crate) async fn search_provider(
     let result = with_provider_call(
         provider,
         ProviderCallStage::Search,
+        TransitionWait::interactive(),
         |registry| {
             registry
                 .get_search_callback(provider, entity_type)
@@ -357,7 +359,7 @@ pub(crate) async fn search_provider(
                 None
             } else {
                 match resolve_provider_cover_url(
-                    &Published,
+                    &Published::interactive(),
                     &provider_id,
                     entity_type,
                     &serde_json::json!({ "external_ids": external_ids }),
@@ -734,7 +736,7 @@ async fn search_cover_candidates_for_contexts(
     let mut results = Vec::new();
     for (provider_id, context) in provider_contexts {
         match search_provider_cover(
-            &Published,
+            &Published::interactive(),
             &provider_id,
             entity_type,
             &context,

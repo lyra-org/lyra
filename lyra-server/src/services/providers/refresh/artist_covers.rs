@@ -139,8 +139,13 @@ async fn refresh_and_sync_artist_cover(
         Ok(context) => {
             for provider_id in &refreshers.provider_ids {
                 progress.check_cancelled()?;
-                match dispatch_refresh(&Published, provider_id, EntityType::Artist, context.clone())
-                    .await
+                match dispatch_refresh(
+                    &Published::background(progress.cancellation().clone()),
+                    provider_id,
+                    EntityType::Artist,
+                    context.clone(),
+                )
+                .await
                 {
                     Ok(()) => {}
                     Err(ProviderCallError::NotRegistered) => {
@@ -169,7 +174,7 @@ async fn refresh_and_sync_artist_cover(
         return Ok(ArtistCoverOutcome::Gone);
     };
     let got_cover = sync_artist_cover(
-        &Published,
+        &Published::background(progress.cancellation().clone()),
         &STATE.db.get(),
         &artist,
         paths,

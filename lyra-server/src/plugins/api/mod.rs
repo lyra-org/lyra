@@ -9,22 +9,22 @@ mod route_key;
 mod route_options;
 mod types;
 
+use self::registry::ApiRouteRegistration;
+#[cfg(test)]
+use self::registry::api_route_registry;
 pub(crate) use self::registry::{
     ApiRouteHost,
     ApiRouteRegistries,
     ApiRouteRegistry,
     ApiRouteStore,
     CaseInsensitiveRouter,
+    InstallRoutes,
     RegisteredRoute,
     RouteAuthMode,
     RouteHost,
     RouteKind,
     initialize_registry,
     registered_routes,
-};
-use self::registry::{
-    ApiRouteRegistration,
-    api_route_registry,
 };
 use self::route_key::lowercase_literal_segments;
 pub(crate) use self::route_key::{
@@ -99,19 +99,27 @@ use crate::plugins::auth::{
     AuthCredential,
     Principal as AuthPrincipal,
 };
-pub(crate) async fn finalize() -> anyhow::Result<()> {
-    api_route_registry().write_owned().await.freeze();
-    rebuild_registered_routes().await
+/// Builds the HTTP routes of `registries` without installing them; `None` until a host installs
+/// routes at all.
+pub(crate) async fn build_routes(
+    registries: &ApiRouteRegistries,
+) -> anyhow::Result<Option<InstallRoutes>> {
+    let Some(host) = crate::plugins::STATE.generation().api.host() else {
+        return Ok(None);
+    };
+    let (routes, case_insensitive) = registered_routes(registries).await;
+    host.build(routes, case_insensitive).await.map(Some)
 }
 
-/// Rebuilds the installed HTTP routes from the registry; a no-op until a
-/// host installs them.
+/// Rebuilds the installed HTTP routes from the published scope's.
 pub(crate) async fn rebuild_registered_routes() -> anyhow::Result<()> {
-    let host = crate::plugins::STATE.generation().api.host();
-    match host {
-        Some(host) => host.rebuild().await,
-        None => Ok(()),
+    let Some(scope) = crate::plugins::STATE.scope() else {
+        return Ok(());
+    };
+    if let Some(install) = build_routes(&scope.vm_scope.plugin.api).await? {
+        install().await;
     }
+    Ok(())
 }
 
 /// An HTTP status code argument.

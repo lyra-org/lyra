@@ -5,11 +5,9 @@
 
 use std::sync::Arc;
 
-use crate::plugins::api as plugin_api;
 use crate::{
     services,
     services::STATE,
-    services::plugin_scope::PluginId,
 };
 use anyhow::{
     Context,
@@ -34,7 +32,7 @@ pub(crate) async fn initialize_harmony() -> Result<PluginRuntime> {
                 server_info,
                 auth_capabilities,
                 STATE.db.get(),
-                Vec::new(),
+                module_overrides(),
                 Some(STATE.settings.clone()),
             )
         })?;
@@ -48,6 +46,26 @@ pub(crate) async fn initialize_harmony() -> Result<PluginRuntime> {
             .replace(Arc::from(runtime.plugin_manifests().await?));
         Ok(runtime)
     }
+}
+
+#[cfg(not(test))]
+fn module_overrides() -> Vec<harmony_core::ModuleSpec> {
+    Vec::new()
+}
+
+/// A test's stand-ins for modules the reload path builds its runtimes with.
+#[cfg(test)]
+pub(crate) static TEST_MODULES: std::sync::Mutex<Option<TestModules>> = std::sync::Mutex::new(None);
+
+#[cfg(test)]
+pub(crate) type TestModules = fn() -> Vec<harmony_core::ModuleSpec>;
+
+#[cfg(test)]
+fn module_overrides() -> Vec<harmony_core::ModuleSpec> {
+    TEST_MODULES
+        .lock()
+        .expect("test modules poisoned")
+        .map_or_else(Vec::new, |modules| modules())
 }
 
 /// Warns of each plugin an interrupted install left only as its previous
@@ -69,39 +87,22 @@ pub(crate) async fn exec_for_capture(runtime: PluginRuntime) -> Result<()> {
     Ok(())
 }
 
-pub(crate) async fn finalize_startup() -> Result<()> {
+pub(crate) async fn finalize_startup() {
     deduplicate_artists_after_plugin_init().await;
-    crate::plugins::settings::freeze_registry().await;
     services::clear_cover_search_cache().await;
-
-    plugin_api::finalize().await?;
     tracing::info!("plugin routes are now active");
-    Ok(())
 }
 
+/// Ends the live scope at shutdown: nothing reads it again.
 pub(crate) async fn teardown_loaded_plugins() {
-    let Some(scope) = crate::plugins::STATE.vm_scope() else {
-        return;
-    };
-    for manifest in crate::plugins::STATE.manifests().iter() {
-        match PluginId::new(manifest.id.clone()) {
-            Ok(plugin_id) => {
-                tracing::debug!(plugin_id = %plugin_id, "tearing down plugin registries");
-                crate::plugins::STATE
-                    .generation()
-                    .registries
-                    .teardown_plugin(&scope, &plugin_id, false)
-                    .await;
-            }
-            Err(err) => {
-                tracing::warn!(
-                    plugin_id = %manifest.id,
-                    error = %err,
-                    "skipping plugin teardown for invalid manifest id"
-                );
-            }
-        }
+    if let Some(scope) = crate::plugins::STATE.scope() {
+        let crate::plugins::state::RuntimeScopeState {
+            runtime: _,
+            vm_scope,
+        } = &*scope;
+        vm_scope.services.providers.cancel_lyrics_handlers().await;
     }
+    STATE.generation().runtime.replace(None);
 }
 
 async fn deduplicate_artists_after_plugin_init() {

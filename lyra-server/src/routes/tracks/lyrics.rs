@@ -330,9 +330,13 @@ async fn refresh_track_lyrics(
         track_db_id
     };
 
-    let outcome =
-        lyrics_service::providers::dispatch_for_track_identity(track_db_id, Some(&id), true)
-            .await?;
+    let outcome = lyrics_service::providers::dispatch_for_track_identity(
+        track_db_id,
+        Some(&id),
+        true,
+        crate::services::plugin_dispatch::TransitionWait::interactive(),
+    )
+    .await?;
     for (provider_id, error) in &outcome.failed {
         tracing::warn!(
             provider = provider_id.as_ref(),

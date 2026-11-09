@@ -337,6 +337,7 @@ async fn in_vm_dispatch_is_not_wrapped_in_provider_call_lock() -> Result<()> {
                     crate::services::providers::with_provider_call(
                         &request.provider_id,
                         crate::services::providers::ProviderCallStage::MetadataRefresh,
+                        crate::services::plugin_dispatch::TransitionWait::interactive(),
                         |_| Some(crate::services::providers::ProviderLookup::Call(())),
                         |(), _| {
                             let candidate_public_id = candidate_public_id.clone();
