@@ -276,7 +276,7 @@ pub(crate) fn by_parent(
     Ok(children)
 }
 
-/// The visible entries holding each visible track's audio.
+/// The visible entries holding each visible track's audio, by name.
 pub(crate) fn by_track(
     db: &DbAny,
     viewer: &Viewer,
@@ -297,6 +297,12 @@ pub(crate) fn by_track(
                 placed.push(PlacedEntry::locate(db, entry)?);
             }
         }
+        placed.sort_by(|a, b| {
+            a.entry
+                .name
+                .cmp(&b.entry.name)
+                .then_with(|| a.entry.id.cmp(&b.entry.id))
+        });
         entries.insert(track, placed);
     }
     Ok(entries)

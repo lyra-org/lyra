@@ -259,6 +259,7 @@ mod tests {
     use lyra_db::fixtures::{
         connect,
         insert_artist,
+        insert_file_entry,
         insert_release,
         insert_track,
     };
@@ -545,6 +546,39 @@ mod tests {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("expected release artists"))?;
         assert_eq!(artists[0].name, "Artist");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn searched_tracks_carry_visible_entries_when_asked() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup().await?;
+        let shown_public_id = {
+            let mut db = STATE.db.write().await;
+            let shown = insert_library(&mut db, "Shown", "/music/shown")?;
+            let hidden = insert_library(&mut db, "Hidden", "/music/hidden")?;
+            let release = insert_release(&mut db, "Blue Release")?;
+            let track = insert_track(&mut db, "Blue Track")?;
+            connect(&mut db, shown, release)?;
+            connect(&mut db, release, track)?;
+            for (library, name) in [(shown, "shown.flac"), (hidden, "hidden.flac")] {
+                let entry = insert_file_entry(&mut db, library, name)?;
+                connect(&mut db, track, entry)?;
+            }
+            lyra_db::libraries::get_by_id(&*db, shown)?
+                .ok_or_else(|| anyhow::anyhow!("library missing"))?
+                .id
+        };
+        let principal = principal(false, HashSet::from([shown_public_id])).await;
+
+        let found = search(&principal, "query=blue&track_inc=entries").await?;
+        let entries = found.tracks.items[0]
+            .entries
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("expected track entries"))?;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "shown.flac");
+        assert!(entries[0].full_path.is_none());
         Ok(())
     }
 

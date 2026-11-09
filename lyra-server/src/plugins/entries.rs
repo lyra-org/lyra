@@ -68,7 +68,7 @@ impl EntriesModule {
     }
 
     #[harmony(
-        description = "The entries holding the audio of each of these tracks that the caller can see, keyed by track id.",
+        description = "The entries holding the audio of each of these tracks that the caller can see, by name, keyed by track id.",
         returns(HashMap<String, Vec<EntryInfo>>)
     )]
     async fn by_track(

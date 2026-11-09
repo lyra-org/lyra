@@ -357,6 +357,14 @@ pub struct TrackResponse {
     pub releases: Option<Vec<ReleaseResponse>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artists: Option<Vec<ArtistResponse>>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "The files holding the track's audio that the caller can see, by name; `[]` when it can see none."
+        )
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entries: Option<Vec<EntryResponse>>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -447,6 +455,7 @@ impl TrackChains {
             duration_ms: track.duration_ms,
             releases: None,
             artists: None,
+            entries: None,
         }
     }
 }
@@ -467,6 +476,7 @@ impl TrackResponse {
             chain: None,
             releases: None,
             artists: None,
+            entries: None,
         }
     }
 }

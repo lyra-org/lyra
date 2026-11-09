@@ -53,7 +53,7 @@ pub(crate) struct MixQueryParams {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Comma-separated or repeated values: releases, artists, release_covers, artist_covers."
+            description = "Comma-separated or repeated values: releases, artists, entries, release_covers, artist_covers."
         )
     )]
     #[serde(default, deserialize_with = "routes::deserialize_inc")]
@@ -136,7 +136,7 @@ fn filter_accessible_tracks(
 #[cfg(feature = "docgen")]
 fn post_mix_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Generate mix").description(
-        "Returns tracks mixed from `seeds`, the caller's recent listens (`from_history`), or a free-text `q`. Seeds are public IDs of tracks, releases, artists, genres or playlists; `{ \"id\": ..., \"exclude\": true }` excludes a seed, mixing away from it, and a request needs at least one seed that isn't excluded, `from_history` or `q`. Every seed, excluded or not, must exist and be visible to the caller, or the request fails with 404.\n\nThe `blend` shape (default) returns tracks like the seeds. Tracks of one chain stay together and in chain order, and `pin_seed` leads with a single track seed. The `path` shape takes exactly two seeds, neither excluded, and returns the tracks leading from the first to the second in the mixer's order, up to 2000 tracks; tracks the caller can't see are left out, chains are not regrouped, and `limit` is only a step hint.\n\nEnabled mixers are tried in priority order, and only those whose declared handler takes the request's shape, seed types, explicit seed count, excluded seeds and query; the first non-empty result wins. `from_history` asks for track seeds, and the caller's recent listens fill each mixer's seeds beyond the explicit ones, most recent first. `GET /api/mixers` lists what each mixer and the built-in mixer take. Mixer `options` are keyed `<mixer_id>.<name>` and must have the option's declared type. `mixer` pins one mixer with no fallback. A request no mixer can serve fails with 400 naming what is unsupported.\n\nEach track carries the serving mixer's `score` when it gave one: its relevance to the request from 0 to 1, comparable only within one response.\n\nUse `inc` to hydrate nested data: `releases`, `artists`, `release_covers` (covers require `releases`), and `artist_covers` (covers require `artists`).",
+        "Returns tracks mixed from `seeds`, the caller's recent listens (`from_history`), or a free-text `q`. Seeds are public IDs of tracks, releases, artists, genres or playlists; `{ \"id\": ..., \"exclude\": true }` excludes a seed, mixing away from it, and a request needs at least one seed that isn't excluded, `from_history` or `q`. Every seed, excluded or not, must exist and be visible to the caller, or the request fails with 404.\n\nThe `blend` shape (default) returns tracks like the seeds. Tracks of one chain stay together and in chain order, and `pin_seed` leads with a single track seed. The `path` shape takes exactly two seeds, neither excluded, and returns the tracks leading from the first to the second in the mixer's order, up to 2000 tracks; tracks the caller can't see are left out, chains are not regrouped, and `limit` is only a step hint.\n\nEnabled mixers are tried in priority order, and only those whose declared handler takes the request's shape, seed types, explicit seed count, excluded seeds and query; the first non-empty result wins. `from_history` asks for track seeds, and the caller's recent listens fill each mixer's seeds beyond the explicit ones, most recent first. `GET /api/mixers` lists what each mixer and the built-in mixer take. Mixer `options` are keyed `<mixer_id>.<name>` and must have the option's declared type. `mixer` pins one mixer with no fallback. A request no mixer can serve fails with 400 naming what is unsupported.\n\nEach track carries the serving mixer's `score` when it gave one: its relevance to the request from 0 to 1, comparable only within one response.\n\nUse `inc` to hydrate nested data: `releases`, `artists`, `entries`, `release_covers` (covers require `releases`), and `artist_covers` (covers require `artists`). When `inc=entries`, each track carries the files holding its audio that the caller can see, by name, `[]` when it can see none, and `full_path` is included only for authenticated users with ManageLibraries permission.",
     )
 }
 
@@ -195,11 +195,19 @@ mod tests {
         authorization: &str,
         body: impl Into<Body>,
     ) -> anyhow::Result<(StatusCode, String)> {
+        post_to("/", authorization, body).await
+    }
+
+    async fn post_to(
+        uri: &str,
+        authorization: &str,
+        body: impl Into<Body>,
+    ) -> anyhow::Result<(StatusCode, String)> {
         let response = mix_routes()
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/")
+                    .uri(uri)
                     .header(AUTHORIZATION, authorization)
                     .header(CONTENT_TYPE, "application/json")
                     .body(body.into())?,
@@ -314,6 +322,30 @@ mod tests {
             assert_eq!(tracks.len(), 50);
             assert_eq!(ids.len(), 50);
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn mixed_tracks_carry_entries_when_asked() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = tempfile::tempdir()?;
+        let catalog = catalog(&test_dir).await?;
+
+        let (status, tracks) = post_to(
+            "/?inc=entries",
+            &catalog.authorization,
+            serde_json::json!({ "seeds": [catalog.artist], "limit": 5 }).to_string(),
+        )
+        .await?;
+        assert_eq!(status, StatusCode::OK, "{tracks}");
+        let tracks: serde_json::Value = serde_json::from_str(&tracks)?;
+        let tracks = tracks.as_array().expect("mix response is an array");
+        assert!(!tracks.is_empty());
+        assert!(
+            tracks
+                .iter()
+                .all(|track| track["entries"] == serde_json::json!([]))
+        );
         Ok(())
     }
 

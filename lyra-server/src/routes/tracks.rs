@@ -45,6 +45,7 @@ use crate::{
         covers as route_covers,
         deserialize_inc,
         responses::{
+            EntryResponse,
             PageResponse,
             ReleaseResponse,
             TrackChains,
@@ -77,6 +78,10 @@ use crate::{
             ResolvedCover,
             shown::CoverTarget,
         },
+        entries::{
+            self as entry_service,
+            PlacedEntry,
+        },
         pagination::SnapshotKey,
         tracks as track_service,
     },
@@ -89,7 +94,7 @@ struct TrackQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Comma-separated or repeated values: releases, artists, release_covers, artist_covers."
+            description = "Comma-separated or repeated values: releases, artists, entries, release_covers, artist_covers."
         )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
@@ -102,7 +107,7 @@ struct TrackListQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Comma-separated or repeated values: releases, artists, release_covers, artist_covers."
+            description = "Comma-separated or repeated values: releases, artists, entries, release_covers, artist_covers."
         )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
@@ -194,6 +199,7 @@ impl TrackListOptions {
 #[derive(Clone, Copy)]
 pub(crate) struct TrackRouteIncludes {
     pub(crate) service: track_service::TrackIncludes,
+    pub(crate) entries: bool,
     pub(crate) release_covers: bool,
     pub(crate) artist_covers: bool,
 }
@@ -201,13 +207,20 @@ pub(crate) struct TrackRouteIncludes {
 pub(crate) fn parse_inc(inc: Option<Vec<String>>) -> Result<TrackRouteIncludes, AppError> {
     let values = super::parse_inc_values(
         inc,
-        &["releases", "artists", "release_covers", "artist_covers"],
+        &[
+            "releases",
+            "artists",
+            "entries",
+            "release_covers",
+            "artist_covers",
+        ],
     )?;
     let mut result = TrackRouteIncludes {
         service: track_service::TrackIncludes {
             releases: false,
             artists: false,
         },
+        entries: false,
         release_covers: false,
         artist_covers: false,
     };
@@ -215,6 +228,7 @@ pub(crate) fn parse_inc(inc: Option<Vec<String>>) -> Result<TrackRouteIncludes, 
         match value.as_str() {
             "releases" => result.service.releases = true,
             "artists" => result.service.artists = true,
+            "entries" => result.entries = true,
             "release_covers" => result.release_covers = true,
             "artist_covers" => result.artist_covers = true,
             _ => {}
@@ -290,14 +304,50 @@ pub(crate) fn track_responses(
         }
     }
     let covers = route_covers::resolve_principal_covers(db, principal, &targets)?;
+    let track_entries = if includes.entries {
+        let viewer = catalog::Viewer::user(db, principal.clone())?;
+        let track_db_ids = details
+            .iter()
+            .filter_map(|detail| detail.track.db_id.clone().map(DbId::from))
+            .collect::<Vec<_>>();
+        entry_service::by_track(db, &viewer, &track_db_ids)?
+    } else {
+        HashMap::new()
+    };
+    let include_entry_paths = lyra_db::roles::has_permission(
+        &principal.permissions,
+        lyra_db::Permission::ManageLibraries,
+    );
     Ok(details
         .into_iter()
-        .map(|detail| track_detail_to_response(detail, &covers, includes, chains))
+        .map(|detail| {
+            let entries = includes
+                .entries
+                .then(|| entry_responses(&detail.track, &track_entries, include_entry_paths));
+            track_detail_to_response(detail, entries, &covers, includes, chains)
+        })
         .collect())
+}
+
+fn entry_responses(
+    track: &lyra_db::Track,
+    track_entries: &HashMap<DbId, Vec<PlacedEntry>>,
+    include_full_path: bool,
+) -> Vec<EntryResponse> {
+    track
+        .db_id
+        .clone()
+        .map(DbId::from)
+        .and_then(|track_db_id| track_entries.get(&track_db_id))
+        .into_iter()
+        .flatten()
+        .map(|placed| EntryResponse::from_entry(placed.entry.clone(), include_full_path))
+        .collect()
 }
 
 fn track_detail_to_response(
     detail: track_service::TrackDetails,
+    entries: Option<Vec<EntryResponse>>,
     covers: &HashMap<DbId, ResolvedCover>,
     includes: TrackRouteIncludes,
     chains: &TrackChains,
@@ -336,6 +386,7 @@ fn track_detail_to_response(
                 includes.artist_covers,
             )
         }),
+        entries,
     }
 }
 
@@ -702,14 +753,14 @@ async fn get_track(
 #[cfg(feature = "docgen")]
 fn list_tracks_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List tracks").description(
-        "Returns tracks as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `release_id`, `sort_by`, `sort_order`, `rated`, `min_rating`, `max_rating`, `favorite`, `listened`, `bookmarked`, `available`, `limit`, `cursor`. `available=true` keeps only tracks that can play and `available=false` only those whose files are all missing; tracks report it as `available`. `min_rating` and `max_rating` filter tracks by the authenticated user's inclusive personal rating range; either bound excludes unrated tracks. `rated=true` keeps only tracks the user has rated and `rated=false` only those they have not; `rated=false` cannot be combined with a rating bound. `favorite=true` keeps only tracks the user has favorited and `favorite=false` the rest. `listened=true` keeps only tracks the user has listened to at least once and `listened=false` the rest. `bookmarked=true` keeps only tracks the user has bookmarked and `bookmarked=false` the rest. `library_id` scopes results to tracks belonging to that public library ID. `release_id` scopes results to one public release ID and defaults ordering to album order: disc, track, sort name, id. `sort_by` supports `name`, `sort_name`, `date_created`, `year`, `duration`, `disc`, `track`, `release_title` (the title of the track's release), `artist_name` (the first credited artist), `release_artist_name` (the first artist credited on the track's release), `listen_count`, `last_played_at`, `rating` (the authenticated user's personal rating), `rated_at` (when the authenticated user last set their rating), `favorited_at` (when they first favorited the track), `bookmarked_at` (when they last set their bookmark of the track), `relevance` (with `query`), `random`, and `id`. `random` moves the tracks of a chain as one, keeping them together and in chain order in either direction. `sort_order` supports `ascending` and `descending` and applies to every key. Tracks without a value for a key sort last in both directions, except missing disc and track numbers, which sort first. Ties fall back to sort name, name, then id. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` matches track titles and sort titles, the tracks' artists, and the titles and artists of the releases holding them that the caller can see; each of its words must start a word, ignoring case, accents, apostrophes and punctuation; no character is an operator, and a word in a script written without spaces, such as Japanese, matches anywhere in a word. It defaults ordering to relevance: exact names rank first, then names starting with the query, then names holding every word, then names holding some, then matches only through related items. A track in a chain carries `chain` with the chain's `id` and the track's 0-based `position` in it. Use `inc` to include releases and/or artists. When `inc=releases,release_covers`, nested release metadata includes a public cover image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
+        "Returns tracks as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `release_id`, `sort_by`, `sort_order`, `rated`, `min_rating`, `max_rating`, `favorite`, `listened`, `bookmarked`, `available`, `limit`, `cursor`. `available=true` keeps only tracks that can play and `available=false` only those whose files are all missing; tracks report it as `available`. `min_rating` and `max_rating` filter tracks by the authenticated user's inclusive personal rating range; either bound excludes unrated tracks. `rated=true` keeps only tracks the user has rated and `rated=false` only those they have not; `rated=false` cannot be combined with a rating bound. `favorite=true` keeps only tracks the user has favorited and `favorite=false` the rest. `listened=true` keeps only tracks the user has listened to at least once and `listened=false` the rest. `bookmarked=true` keeps only tracks the user has bookmarked and `bookmarked=false` the rest. `library_id` scopes results to tracks belonging to that public library ID. `release_id` scopes results to one public release ID and defaults ordering to album order: disc, track, sort name, id. `sort_by` supports `name`, `sort_name`, `date_created`, `year`, `duration`, `disc`, `track`, `release_title` (the title of the track's release), `artist_name` (the first credited artist), `release_artist_name` (the first artist credited on the track's release), `listen_count`, `last_played_at`, `rating` (the authenticated user's personal rating), `rated_at` (when the authenticated user last set their rating), `favorited_at` (when they first favorited the track), `bookmarked_at` (when they last set their bookmark of the track), `relevance` (with `query`), `random`, and `id`. `random` moves the tracks of a chain as one, keeping them together and in chain order in either direction. `sort_order` supports `ascending` and `descending` and applies to every key. Tracks without a value for a key sort last in both directions, except missing disc and track numbers, which sort first. Ties fall back to sort name, name, then id. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` matches track titles and sort titles, the tracks' artists, and the titles and artists of the releases holding them that the caller can see; each of its words must start a word, ignoring case, accents, apostrophes and punctuation; no character is an operator, and a word in a script written without spaces, such as Japanese, matches anywhere in a word. It defaults ordering to relevance: exact names rank first, then names starting with the query, then names holding every word, then names holding some, then matches only through related items. A track in a chain carries `chain` with the chain's `id` and the track's 0-based `position` in it. Use `inc` to include releases, artists, and/or entries. When `inc=entries`, each track carries the files holding its audio that the caller can see, by name, `[]` when it can see none, and `full_path` is included only for authenticated users with ManageLibraries permission. When `inc=releases,release_covers`, nested release metadata includes a public cover image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
     )
 }
 
 #[cfg(feature = "docgen")]
 fn get_track_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get track by ID").description(
-        "Returns a single track. 404 if not found. A track in a chain carries `chain` with the chain's `id` and the track's 0-based `position` in it. Use `inc` to include releases and/or artists. When `inc=releases,release_covers`, nested release metadata includes a public cover image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
+        "Returns a single track. 404 if not found. A track in a chain carries `chain` with the chain's `id` and the track's 0-based `position` in it. Use `inc` to include releases, artists, and/or entries. When `inc=entries`, each track carries the files holding its audio that the caller can see, by name, `[]` when it can see none, and `full_path` is included only for authenticated users with ManageLibraries permission. When `inc=releases,release_covers`, nested release metadata includes a public cover image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
     )
 }
 
@@ -955,6 +1006,7 @@ mod tests {
     use lyra_db::fixtures::{
         connect,
         insert_artist,
+        insert_file_entry,
         insert_release,
         insert_track,
     };
@@ -1019,6 +1071,146 @@ mod tests {
         assert!(includes.service.releases);
         assert!(includes.release_covers);
         assert!(includes.artist_covers);
+        Ok(())
+    }
+
+    /// A track whose files sit in a shown and a hidden library, one whose only file is hidden,
+    /// and principals limited to the shown library.
+    struct EntryFixture {
+        shared: String,
+        hidden_only: String,
+        manager: Principal,
+        listener: Principal,
+    }
+
+    async fn entry_fixture() -> anyhow::Result<EntryFixture> {
+        setup_route_test().await?;
+        let mut db = STATE.db.write().await;
+        let user_db_id = lyra_db::test_db::insert_user(&mut db, "entry-viewer")?;
+        let shown = insert_library(&mut db, "Shown", "/music/shown")?;
+        let hidden = insert_library(&mut db, "Hidden", "/music/hidden")?;
+        let shown_public_id = lyra_db::libraries::get_by_id(&*db, shown)?
+            .ok_or_else(|| anyhow::anyhow!("library missing"))?
+            .id;
+
+        let shared = insert_track(&mut db, "Shared")?;
+        let hidden_only = insert_track(&mut db, "Hidden Only")?;
+        let release = insert_release(&mut db, "Entry Release")?;
+        connect(&mut db, shown, release)?;
+        connect(&mut db, release, shared)?;
+        connect(&mut db, release, hidden_only)?;
+        for (track, library, name) in [
+            (shared, shown, "z.flac"),
+            (shared, shown, "a.flac"),
+            (shared, hidden, "hidden.flac"),
+            (hidden_only, hidden, "other.flac"),
+        ] {
+            let entry = insert_file_entry(&mut db, library, name)?;
+            connect(&mut db, track, entry)?;
+        }
+
+        let principal = |permissions| {
+            Principal::for_user(
+                &*db,
+                user_db_id,
+                permissions,
+                HashSet::from([shown_public_id.clone()]),
+            )
+        };
+        let manager = principal(vec![lyra_db::Permission::ManageLibraries]);
+        let listener = principal(Vec::new());
+        Ok(EntryFixture {
+            shared: lyra_db::tracks::get_by_id(&*db, shared)?
+                .ok_or_else(|| anyhow::anyhow!("track missing"))?
+                .id,
+            hidden_only: lyra_db::tracks::get_by_id(&*db, hidden_only)?
+                .ok_or_else(|| anyhow::anyhow!("track missing"))?
+                .id,
+            manager,
+            listener,
+        })
+    }
+
+    async fn get_track_json(
+        principal: &Principal,
+        id: &str,
+        inc: Option<&str>,
+    ) -> anyhow::Result<serde_json::Value> {
+        let response = get_track_response(
+            principal,
+            id.to_string(),
+            inc.map(|inc| vec![inc.to_string()]),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        Ok(serde_json::to_value(response)?)
+    }
+
+    #[tokio::test]
+    async fn track_entries_show_paths_only_to_library_managers() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let fixture = entry_fixture().await?;
+
+        let managed = get_track_json(&fixture.manager, &fixture.shared, Some("entries")).await?;
+        let entries = managed["entries"].as_array().expect("entries are an array");
+        let names = entries
+            .iter()
+            .map(|entry| entry["name"].as_str().expect("entry has a name"))
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["a.flac", "z.flac"]);
+        assert_eq!(entries[0]["full_path"], "/music/a.flac");
+
+        let listened = get_track_json(&fixture.listener, &fixture.shared, Some("entries")).await?;
+        let entries = listened["entries"]
+            .as_array()
+            .expect("entries are an array");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0]["name"], "a.flac");
+        assert!(entries[0].get("full_path").is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn track_entries_are_empty_when_every_file_is_hidden_and_omitted_unasked()
+    -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let fixture = entry_fixture().await?;
+
+        let requested =
+            get_track_json(&fixture.listener, &fixture.hidden_only, Some("entries")).await?;
+        assert_eq!(requested["entries"], serde_json::json!([]));
+        let unasked = get_track_json(&fixture.listener, &fixture.hidden_only, None).await?;
+        assert!(unasked.get("entries").is_none());
+
+        let page = list_track_responses(
+            &fixture.manager,
+            TrackListOptions {
+                inc: Some(vec!["entries".to_string()]),
+                query: None,
+                library_id: None,
+                release_id: None,
+                sort_by: None,
+                sort_order: None,
+                personal: catalog::PersonalFilter::default(),
+                bookmarked: None,
+                page_request: super::super::SnapshotPageRequest::first_page(100),
+                available: None,
+            },
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        let counts = page
+            .items
+            .iter()
+            .map(|track| {
+                (
+                    track.title.as_str(),
+                    track.entries.as_ref().map(std::vec::Vec::len),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        assert_eq!(counts["Shared"], Some(2));
+        assert_eq!(counts["Hidden Only"], Some(0));
         Ok(())
     }
 
