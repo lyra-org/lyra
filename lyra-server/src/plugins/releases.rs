@@ -282,7 +282,7 @@ impl ReleasesModule {
         let request = parse_similar_options(opts.0)?;
         let principal = crate::plugins::auth::require_dispatch_principal(context)?;
         let db = crate::plugins::db::get(vm)?;
-        let calls = crate::plugins::executor::VmCalls::of(vm)?;
+        let calls = crate::plugins::executor::VmCalls::of(vm, context)?;
 
         Ok(luau::ScheduledFuture::new(async move {
             let Some(release_db_id) = ids::db_id(&*db.read().await, &release_id)? else {

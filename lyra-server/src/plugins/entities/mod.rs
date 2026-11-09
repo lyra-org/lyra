@@ -113,6 +113,18 @@ impl<'vm> luau::FromLuau<'vm> for QueryManyRequest {
     }
 }
 
+/// The plugin whose VM is projecting: what it sees of the providers, and whose calls it makes.
+fn link_caller(
+    context: &luau::CallContext,
+) -> luau::runtime::Result<Option<crate::services::plugin_scope::PluginId>> {
+    Ok(context
+        .origin
+        .plugin
+        .clone()
+        .map(crate::services::plugin_scope::PluginId::new)
+        .transpose()?)
+}
+
 /// Whether the projection runs link generators: only for the `links` include. Generators can't
 /// request links themselves, even from tasks they spawn, since those inherit the caller context.
 fn runs_link_generators(
@@ -252,6 +264,7 @@ impl EntitiesModule {
         let projections = project_with_links(
             scoped.handle(),
             &vm,
+            &context,
             run_generators,
             &includes,
             library_id,
@@ -314,6 +327,7 @@ async fn query_entity(
     let mut projections = project_with_links(
         scoped.handle(),
         &vm,
+        &context,
         run_generators,
         &includes,
         library_id,
@@ -375,6 +389,7 @@ async fn query_entity(
 async fn project_with_links(
     db: DbAsync,
     vm: &luau::Vm,
+    context: &luau::CallContext,
     run_generators: bool,
     includes: &[EntityInclude],
     library_id: Option<String>,
@@ -387,8 +402,10 @@ async fn project_with_links(
     // The calling VM's scope, not the published one: during a reload that's another VM's, and
     // generators can only run on this one.
     let vm_scope = crate::plugins::state::VmScope::of(vm)?;
+    let caller = link_caller(context)?;
+    let chain = crate::plugins::executor::CallChain::of(context);
     let (schemes, generators) = {
-        let registry = vm_scope.services.providers.registry();
+        let registry = vm_scope.provider_view(caller.as_ref()).await;
         let registry = registry.read().await;
         (
             registry.id_schemes(),
@@ -415,7 +432,12 @@ async fn project_with_links(
     if let Some((generators, targets)) = links {
         let cache = vm_scope.services.providers.id_link_cache();
         let links = resolve_id_links(&cache, targets, &generators, |provider_id, calls| {
-            crate::plugins::executor::dispatch_id_links_in_vm(vm.clone(), provider_id, calls)
+            crate::plugins::executor::dispatch_id_links_in_vm(
+                vm.clone(),
+                chain.clone(),
+                provider_id,
+                calls,
+            )
         })
         .await;
         apply_id_links(&mut projections, &links);

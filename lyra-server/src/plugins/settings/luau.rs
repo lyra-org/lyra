@@ -237,11 +237,6 @@ pub(crate) async fn declare_settings(
     context: luau::CallContext,
 ) -> luau::runtime::Result<luau::OwnedTable> {
     let (plugin_id, db) = declaring_plugin(&vm, &context)?;
-    let generation = crate::plugins::STATE.generation();
-    let _registration = generation
-        .registries
-        .ensure_registrations_open(&plugin_id)
-        .await?;
     let stored_values = load_stored_values(db.as_ref(), &plugin_id).await?;
     let builder = settings_builder(stored_values);
     let builder_value =
@@ -259,8 +254,7 @@ pub(crate) async fn declare_settings(
     let config = build_config_table(&schema.groups, &builder)?;
 
     crate::plugins::state::VmScope::of(&vm)?
-        .settings_for(&plugin_id)
-        .write_owned()
+        .write_settings(&plugin_id)
         .await
         .register_schema(plugin_id, SettingsScope::Global, schema)?;
 
@@ -273,11 +267,6 @@ pub(crate) async fn declare_user_settings(
     context: luau::CallContext,
 ) -> luau::runtime::Result<luau::UserData> {
     let (plugin_id, db) = declaring_plugin(&vm, &context)?;
-    let generation = crate::plugins::STATE.generation();
-    let _registration = generation
-        .registries
-        .ensure_registrations_open(&plugin_id)
-        .await?;
     let builder = settings_builder(HashMap::new());
     let builder_value =
         SettingsBuilder::class().create_value(&vm, &context.origin, builder.clone())?;
@@ -288,8 +277,7 @@ pub(crate) async fn declare_user_settings(
     let schema = Schema { groups };
 
     crate::plugins::state::VmScope::of(&vm)?
-        .settings_for(&plugin_id)
-        .write_owned()
+        .write_settings(&plugin_id)
         .await
         .register_schema(plugin_id.clone(), SettingsScope::User, schema.clone())?;
 

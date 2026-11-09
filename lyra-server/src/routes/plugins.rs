@@ -1172,10 +1172,9 @@ async fn load_registered_schema(plugin_id: &str, scope: SettingsScope) -> Result
     let registry = plugin_settings_registry::settings_registry()
         .read_owned()
         .await;
-    let typed_id = crate::services::plugin_scope::PluginId::new(plugin_id.to_string())
+    crate::services::plugin_scope::PluginId::new(plugin_id.to_string())
         .map_err(|_| AppError::not_found(format!("plugin not found: {plugin_id}")))?;
-    if !registry.is_frozen_for_plugin(&typed_id) && registry.get_schema(plugin_id, scope).is_none()
-    {
+    if !registry.is_frozen() && registry.get_schema(plugin_id, scope).is_none() {
         return Err(AppError::service_unavailable(
             "plugin settings are still initializing",
         ));
@@ -1228,14 +1227,13 @@ fn build_status(
     target: SettingsTarget,
 ) -> PluginSettingsStatus {
     let scope = target.scope();
-    let typed = match PluginId::new(plugin_id.to_string()) {
-        Ok(id) => id,
-        Err(_) => return PluginSettingsStatus::NotDeclared,
-    };
+    if PluginId::new(plugin_id.to_string()).is_err() {
+        return PluginSettingsStatus::NotDeclared;
+    }
 
     let schema = match registry.get_schema(plugin_id, scope) {
         Some(schema) => schema,
-        None if !registry.is_frozen_for_plugin(&typed) => {
+        None if !registry.is_frozen() => {
             return PluginSettingsStatus::Initializing;
         }
         None => return PluginSettingsStatus::NotDeclared,

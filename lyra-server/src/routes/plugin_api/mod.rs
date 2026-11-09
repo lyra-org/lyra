@@ -891,7 +891,10 @@ mod tests {
         )
         .await;
         let generation = crate::services::STATE.generation();
-        let _transition = generation.begin_transition(crate::services::state::Transition::Runtime);
+        let _transition = generation.begin_transition(crate::services::state::Transition::Plugin {
+            plugin: PluginId::new("held").unwrap(),
+            targets: Default::default(),
+        });
 
         let started = tokio::time::Instant::now();
         let status = get_installed("/held").await;
@@ -944,6 +947,32 @@ mod tests {
         crate::plugins::testing::init_default_test_state().unwrap();
         use_installed_routes().await;
         guard
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_request_waits_only_on_the_plugin_serving_its_method() {
+        let _guard = route_test_state().await;
+        install_routes(
+            vec![
+                route_on("restarting", "GET", "/shared", false),
+                route_on("other", "POST", "/shared", false),
+            ],
+            &[],
+        )
+        .await;
+        let generation = crate::services::STATE.generation();
+        let _transition = generation.begin_transition(crate::services::state::Transition::Plugin {
+            plugin: PluginId::new("restarting").unwrap(),
+            targets: Default::default(),
+        });
+
+        let started = tokio::time::Instant::now();
+        request("POST", "/shared").await;
+        assert_eq!(started.elapsed(), std::time::Duration::ZERO);
+
+        let status = request("GET", "/shared").await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(started.elapsed(), ROUTE_TRANSITION_WAIT);
     }
 
     #[tokio::test(start_paused = true)]

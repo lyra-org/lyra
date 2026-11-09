@@ -146,6 +146,8 @@ impl PluginExecutor {
         L: SourceLoader + 'static,
     {
         let scope = stores.scope();
+        let running = super::callbacks::RunningHandlers::default();
+        let running_for_vm = running.clone();
         let runtime = RuntimeBuilder::new(loader, manifests.clone())
             .plugins(plugins)
             .modules(generic_modules(module_overrides)?)
@@ -166,6 +168,7 @@ impl PluginExecutor {
                         stores.server_settings.clone(),
                     ))?;
                 stores.install_into(vm)?;
+                vm.data().insert(running_for_vm)?;
                 install_callback_stores(vm)
             })
             .on_run_end(remove_plugin_callbacks)
@@ -174,8 +177,10 @@ impl PluginExecutor {
         Ok(Self {
             runtime,
             scope,
+            running,
             websocket_tasks: RefCell::new(HashMap::<TaskIdKey, Arc<WebSocketState>>::new()),
             callback_tasks: RefCell::new(Vec::new()),
+            pending_restart: RefCell::new(None),
         })
     }
 
@@ -201,13 +206,67 @@ impl PluginExecutor {
         self.runtime.stop_plugin(plugin_id)
     }
 
-    pub(crate) fn restart_plugin(&self, plugin_id: &str) -> Result<()> {
-        let restarted = self.runtime.restart_plugin(plugin_id);
+    /// Refuses new dispatches into the plugin, until [`Self::reopen_plugin`]. The handlers already
+    /// running keep its callbacks, so their own nested calls still resolve, until the run stops.
+    pub(crate) fn quiesce_plugin(&self, plugin_id: &str) {
+        self.running.quiesce(plugin_id);
+    }
+
+    /// Admits dispatches again, once what replaced the plugin is live.
+    pub(crate) fn reopen_plugin(&self, plugin_id: &str) {
+        self.running.reopen(plugin_id);
+    }
+
+    pub(super) fn is_quiesced(&self, plugin: Option<&str>) -> bool {
+        self.running.is_quiesced(plugin)
+    }
+
+    /// Replies once the plugin's new entrypoint has run; the executor serves other commands
+    /// meanwhile.
+    pub(super) fn start_plugin_restart(
+        &self,
+        plugin_id: String,
+        reply: tokio::sync::oneshot::Sender<Result<()>>,
+    ) {
+        if self.pending_restart.borrow().is_some() {
+            let _ = reply.send(Err(anyhow::anyhow!("a plugin restart is already running")));
+            return;
+        }
+        let started = self.runtime.start_plugin_restart(&plugin_id);
         // The ended run's streams were stopped as it was asked to end; the new run's are not.
         if let Ok(stops) = super::stream::stream_stops(&self.vm) {
-            stops.run_started(plugin_id);
+            stops.run_started(&plugin_id);
         }
-        restarted
+        match started {
+            Ok(Some(entrypoint)) => {
+                *self.pending_restart.borrow_mut() =
+                    Some(super::PendingRestart { entrypoint, reply });
+            }
+            Ok(None) => {
+                let _ = reply.send(Ok(()));
+            }
+            Err(error) => {
+                let _ = reply.send(Err(error));
+            }
+        }
+    }
+
+    pub(super) fn poll_pending_restart(&self) {
+        let outcome = {
+            let pending = self.pending_restart.borrow();
+            let Some(pending) = pending.as_ref() else {
+                return;
+            };
+            self.runtime.poll_entrypoint(&pending.entrypoint)
+        };
+        let Some(outcome) = outcome else {
+            return;
+        };
+        let Some(pending) = self.pending_restart.borrow_mut().take() else {
+            return;
+        };
+        let super::PendingRestart { entrypoint, reply } = pending;
+        let _ = reply.send(self.runtime.finish_entrypoint(entrypoint, outcome));
     }
 
     /// The ids of the plugins whose entrypoint failed.
@@ -270,6 +329,7 @@ impl PluginExecutor {
             std::time::Instant::now() + PLUGIN_SOURCE_RUN_BUDGET,
             super::callbacks::CallbackReply::Source(reply),
             permit,
+            Some(Arc::from(run.plugin_id.as_str())),
             |timeout, completion| {
                 let dispatch_auth = crate::plugins::auth::DispatchAuth::default();
                 dispatch_auth.record(run.principal);
@@ -278,6 +338,10 @@ impl PluginExecutor {
                     ..CallContext::default()
                 };
                 context.caller.insert(dispatch_auth);
+                context.caller.insert(super::CallChain::root(
+                    std::time::Instant::now() + timeout,
+                    context.origin.plugin.clone(),
+                ));
                 let args = (run.args)(&self.vm, &context.origin)?;
                 let thread = self.runtime.load_source_thread(run.source, &mut context)?;
                 let scheduler = self.vm.data().get::<harmony_core::LocalScheduler>()?;

@@ -137,6 +137,7 @@ impl MetadataModule {
         options: Option<RefreshOptions>,
         #[context] principal: crate::services::auth::Principal,
         #[context] vm: luau::Vm,
+        #[context] context: luau::CallContext,
     ) -> luau::runtime::Result<luau::Value> {
         use crate::services::providers::{
             ProviderAdminError,
@@ -144,7 +145,7 @@ impl MetadataModule {
         };
 
         let options = options.map(|options| options.0).unwrap_or_default();
-        let calls = crate::plugins::executor::VmCalls::of(&vm)?;
+        let calls = crate::plugins::executor::VmCalls::of(&vm, &context)?;
         match refresh_entity(&calls, &principal, &entity_id, options).await {
             Ok(result) => {
                 let mut refreshed = luau::OwnedTable::with_capacity(0, 2);

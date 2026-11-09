@@ -4,7 +4,6 @@
 // www.meshiplaw.com/lyra.
 
 use std::{
-    collections::HashSet,
     sync::Arc,
     time::Duration,
 };
@@ -27,19 +26,11 @@ use anyhow::{
     Result,
     bail,
 };
-use tokio::sync::{
-    Mutex,
-    RwLock,
-    RwLockReadGuard,
-};
+use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 /// How long a reload lets the calls running on the replaced runtime finish.
 const RELOAD_DRAIN_LIMIT: Duration = Duration::from_secs(10);
-
-pub(crate) struct PluginRegistrationGuard<'a> {
-    _guard: RwLockReadGuard<'a, HashSet<PluginId>>,
-}
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum PluginRestartError {
@@ -69,8 +60,6 @@ pub(crate) enum PublishOutcome {
 #[derive(Clone)]
 pub(crate) struct PluginRegistries {
     restart_lock: Arc<Mutex<()>>,
-    teardown_lock: Arc<Mutex<()>>,
-    teardown_in_progress: Arc<RwLock<HashSet<PluginId>>>,
 }
 
 impl Default for PluginRegistries {
@@ -83,8 +72,6 @@ impl PluginRegistries {
     pub(crate) fn new() -> Self {
         Self {
             restart_lock: Arc::new(Mutex::new(())),
-            teardown_lock: Arc::new(Mutex::new(())),
-            teardown_in_progress: Arc::new(RwLock::new(HashSet::new())),
         }
     }
 
@@ -93,55 +80,13 @@ impl PluginRegistries {
         self.restart_lock.clone().lock_owned().await
     }
 
-    pub(crate) async fn ensure_registrations_open(
-        &self,
-        plugin_id: &PluginId,
-    ) -> Result<PluginRegistrationGuard<'_>> {
-        let guard = self.teardown_in_progress.read().await;
-        if guard.contains(plugin_id) {
-            bail!("plugin '{plugin_id}' is tearing down; new registrations rejected");
-        }
-        Ok(PluginRegistrationGuard { _guard: guard })
-    }
-
-    pub(crate) async fn teardown_plugin(
-        &self,
-        scope: &VmScope,
-        plugin_id: &PluginId,
-        reopen_registrations: bool,
-    ) {
-        let _teardown = self.teardown_lock.lock().await;
-
-        {
-            let mut teardown_in_progress = self.teardown_in_progress.write().await;
-            teardown_in_progress.insert(plugin_id.clone());
-        }
-
-        scope.plugin.api.refreeze_plugin(plugin_id).await;
-        scope.plugin.settings.refreeze_plugin(plugin_id).await;
-
+    /// Replaces the plugin's buckets with empty ones and sweeps its HTTP limits. Routes are the
+    /// caller's to rebuild, as an unpublished scope has none installed.
+    async fn clear_plugin(&self, scope: &VmScope, plugin_id: &PluginId) {
         scope.teardown_plugin(plugin_id).await;
-        crate::plugins::api::rebuild_registered_routes()
-            .await
-            .unwrap_or_else(|err| panic!("router rebuild must not fail post-teardown: {err}"));
-        // A plugin about to run again keeps its HTTP limits in force until
-        // that run has set its own; `sweep_stale_http_limits` drops the rest.
         harmony_http::mark_plugin_limits_stale(plugin_id.as_str()).await;
         harmony_http::clear_plugin_cache(plugin_id.as_str());
-        if !reopen_registrations {
-            sweep_stale_http_limits(plugin_id).await;
-        }
-
-        if reopen_registrations {
-            scope.plugin.api.unfreeze_plugin(plugin_id.clone()).await;
-            scope
-                .plugin
-                .settings
-                .unfreeze_plugin(plugin_id.clone())
-                .await;
-        }
-
-        self.teardown_in_progress.write().await.remove(plugin_id);
+        sweep_stale_http_limits(plugin_id).await;
     }
 
     /// Starts the startup runtime through the path a reload takes, under the lock reloads take. A
@@ -197,12 +142,11 @@ impl PluginRegistries {
             .iter()
             .filter_map(|id| PluginId::new(id.clone()).ok())
         {
-            self.teardown_plugin(scope, &plugin_id, false).await;
+            self.clear_plugin(scope, &plugin_id).await;
         }
     }
 
-    /// Tears down every loaded plugin, rediscovers `plugins_dir`, and
-    /// executes the freshly discovered set. This is how installs, updates,
+    /// Rediscovers `plugins_dir` and replaces the runtime with the freshly discovered set. This is how installs, updates,
     /// and uninstalls go live without a server restart.
     ///
     /// Runs as its own task: a caller dropped between stopping the old
@@ -368,14 +312,14 @@ impl PluginRegistries {
         PublishOutcome::ShuttingDown
     }
 
-    /// Tears the plugin down and re-runs its entrypoint from the files
-    /// currently on disk. The manifest stays as loaded: a changed
+    /// Re-runs the plugin's entrypoint from the files currently on disk, its new registrations
+    /// replacing its old ones whole once the run succeeds. The manifest stays as loaded: a changed
     /// `plugin.json` is rejected before teardown and needs `reload_all_plugins`.
     /// Other plugins that already required this plugin's modules keep the
     /// old exports until they restart themselves.
     ///
     /// Runs as its own task, so a dropped caller can't leave the plugin
-    /// stopped and torn down without its new run.
+    /// stopped without its new run.
     pub(crate) async fn restart_plugin(
         &self,
         plugin_id: &PluginId,
@@ -383,7 +327,9 @@ impl PluginRegistries {
         let registries = self.clone();
         let id = plugin_id.clone();
         tokio::spawn(async move {
-            let result = registries.restart_detached(id).await;
+            let result = registries
+                .restart_detached(id, crate::services::shutdown::token())
+                .await;
             if let Err(error) = &result {
                 tracing::error!(error = %error, "plugin restart failed");
             }
@@ -401,9 +347,16 @@ impl PluginRegistries {
     async fn restart_detached(
         self,
         plugin_id: PluginId,
+        shutdown: CancellationToken,
     ) -> std::result::Result<(), PluginRestartError> {
         let plugin_id = &plugin_id;
-        let _restart = self.restart_lock.lock().await;
+        let shutting_down = || PluginRestartError::Failed {
+            plugin_id: plugin_id.clone(),
+            source: anyhow::anyhow!("plugins are not restarted during shutdown"),
+        };
+        let Some(_restart) = self.lock_unless_cancelled(&shutdown).await else {
+            return Err(shutting_down());
+        };
         // Read under the lock: a reload ahead of this restart replaces it.
         let runtime = crate::plugins::STATE
             .runtime()
@@ -438,50 +391,116 @@ impl PluginRegistries {
                     source: err.context("failed to read plugin manifests"),
                 })?;
         scope.plugin.manifests.replace(Arc::from(manifests));
+        let failed = |source: anyhow::Error| PluginRestartError::Failed {
+            plugin_id: plugin_id.clone(),
+            source,
+        };
 
-        // Stop the old run before teardown reopens registrations, so none of
-        // its tasks can register into the restarted plugin.
+        // New calls to this plugin wait from here until its new bucket is live; everything else
+        // carries on, and enumerations keep seeing the old bucket.
+        let generation = crate::services::STATE.generation();
+        let targets = scope.services.plugin_targets(plugin_id).await;
+        let _transition = generation.begin_transition(Transition::Plugin {
+            plugin: plugin_id.clone(),
+            targets: Arc::new(targets),
+        });
+
+        let restarted = self
+            .run_restart(&runtime, plugin_id, &shutdown, &failed, &shutting_down)
+            .await;
+        if let Err(error) = runtime.reopen_plugin(plugin_id.as_str()).await {
+            tracing::warn!(
+                plugin_id = %plugin_id,
+                error = %format!("{error:#}"),
+                "plugin runtime stopped before its restarted plugin was reopened"
+            );
+        }
+        restarted
+    }
+
+    /// Drains the plugin, re-runs it and publishes what it registered, with its dispatches gated
+    /// from the drain until the caller reopens it.
+    async fn run_restart(
+        &self,
+        runtime: &crate::plugins::bootstrap::PluginRuntime,
+        plugin_id: &PluginId,
+        shutdown: &CancellationToken,
+        failed: &impl Fn(anyhow::Error) -> PluginRestartError,
+        shutting_down: &impl Fn() -> PluginRestartError,
+    ) -> std::result::Result<(), PluginRestartError> {
+        let scope = runtime.scope();
+        let outcome = runtime
+            .drain_plugin(plugin_id.as_str(), RELOAD_DRAIN_LIMIT, shutdown)
+            .await
+            .map_err(|err| failed(err.context("failed to drain plugin")))?;
+        if outcome == DrainOutcome::Cancelled {
+            return Err(shutting_down());
+        }
+        if outcome == DrainOutcome::TimedOut {
+            tracing::warn!(
+                plugin_id = %plugin_id,
+                limit_ms = RELOAD_DRAIN_LIMIT.as_millis() as u64,
+                "restarted plugin still had calls running; cancelling them"
+            );
+        }
         runtime
             .stop_plugin(plugin_id.as_str())
             .await
-            .map_err(|err| PluginRestartError::Failed {
-                plugin_id: plugin_id.clone(),
-                source: err.context("failed to stop plugin"),
-            })?;
-        self.teardown_plugin(scope, plugin_id, true).await;
+            .map_err(|err| failed(err.context("failed to stop plugin")))?;
+        // A plugin about to run again keeps its HTTP limits in force until that run has set its
+        // own; the sweep drops the rest.
+        harmony_http::mark_plugin_limits_stale(plugin_id.as_str()).await;
+        harmony_http::clear_plugin_cache(plugin_id.as_str());
 
-        // Caches are dropped on the VM thread right before the entrypoint
-        // re-runs, after teardown, so no old-plugin work can repopulate them.
-        match runtime.restart_plugin(plugin_id.as_str()).await {
-            Ok(()) => {
-                refreeze_plugin_registration_exemptions(scope, plugin_id).await;
-                sweep_stale_http_limits(plugin_id).await;
-                if let Err(err) = crate::plugins::api::rebuild_registered_routes().await {
-                    if let Err(error) = runtime.stop_plugin(plugin_id.as_str()).await {
-                        tracing::warn!(
-                            plugin_id = %plugin_id,
-                            error = %format!("{error:#}"),
-                            "failed to stop plugin after its routes failed to rebuild"
-                        );
-                    }
-                    self.teardown_plugin(scope, plugin_id, false).await;
-                    return Err(PluginRestartError::Failed {
-                        plugin_id: plugin_id.clone(),
-                        source: err.context("failed to rebuild plugin API routes"),
-                    });
+        scope.begin_staging(plugin_id.clone());
+        let restarted = {
+            let restart = runtime.restart_plugin(plugin_id.as_str());
+            futures::pin_mut!(restart);
+            tokio::select! {
+                biased;
+                () = shutdown.cancelled() => {
+                    runtime.cancel_entrypoints();
+                    restart.await
                 }
-                Ok(())
+                result = &mut restart => result,
             }
-            // The failed entrypoint already ended its run.
-            Err(err) => {
-                refreeze_plugin_registration_exemptions(scope, plugin_id).await;
-                self.teardown_plugin(scope, plugin_id, false).await;
-                Err(PluginRestartError::Failed {
-                    plugin_id: plugin_id.clone(),
-                    source: err.context("plugin execution failed"),
-                })
-            }
+        };
+        let replaced = match restarted {
+            Ok(()) => scope.commit_staging().await,
+            Err(err) => Err(err.context("plugin execution failed")),
+        };
+        if let Err(err) = replaced {
+            scope.discard_staging();
+            self.remove_failed_run(runtime, scope, plugin_id).await;
+            return Err(failed(err));
         }
+        sweep_stale_http_limits(plugin_id).await;
+
+        if let Err(err) = crate::plugins::api::rebuild_registered_routes().await {
+            self.remove_failed_run(runtime, scope, plugin_id).await;
+            return Err(failed(err.context("failed to rebuild plugin API routes")));
+        }
+        Ok(())
+    }
+
+    /// Ends the plugin's run, leaves it absent and installs the routes without it.
+    async fn remove_failed_run(
+        &self,
+        runtime: &crate::plugins::bootstrap::PluginRuntime,
+        scope: &VmScope,
+        plugin_id: &PluginId,
+    ) {
+        if let Err(error) = runtime.stop_plugin(plugin_id.as_str()).await {
+            tracing::warn!(
+                plugin_id = %plugin_id,
+                error = %format!("{error:#}"),
+                "failed to stop a plugin whose restart failed"
+            );
+        }
+        self.clear_plugin(scope, plugin_id).await;
+        crate::plugins::api::rebuild_registered_routes()
+            .await
+            .unwrap_or_else(|err| panic!("router rebuild must not fail post-teardown: {err}"));
     }
 }
 
@@ -515,11 +534,6 @@ async fn sweep_stale_http_limits(plugin_id: &PluginId) {
     harmony_http::remove_stale_plugin_limits(plugin_id.as_str()).await;
 }
 
-async fn refreeze_plugin_registration_exemptions(scope: &VmScope, plugin_id: &PluginId) {
-    scope.plugin.api.refreeze_plugin(plugin_id).await;
-    scope.plugin.settings.refreeze_plugin(plugin_id).await;
-}
-
 fn plugin_ids(manifests: &[harmony_core::plugin::PluginManifest]) -> Vec<PluginId> {
     manifests
         .iter()
@@ -539,31 +553,6 @@ mod transition_tests;
 mod tests {
     use super::*;
     use crate::plugins::testing::published_runtime;
-
-    #[tokio::test]
-    async fn ensure_registrations_open_rejects_during_teardown() {
-        let registries = PluginRegistries::new();
-        let plugin_id = PluginId::new("demo").unwrap();
-
-        assert!(
-            registries
-                .ensure_registrations_open(&plugin_id)
-                .await
-                .is_ok()
-        );
-
-        registries
-            .teardown_in_progress
-            .write()
-            .await
-            .insert(plugin_id.clone());
-
-        let error = match registries.ensure_registrations_open(&plugin_id).await {
-            Ok(_) => panic!("teardown should reject new registrations"),
-            Err(error) => error,
-        };
-        assert!(error.to_string().contains("tearing down"));
-    }
 
     async fn is_stopped(runtime: &crate::plugins::bootstrap::PluginRuntime) -> bool {
         runtime
@@ -665,8 +654,7 @@ mod tests {
         Ok(())
     }
 
-    /// Fails only the rebuild after the new run; the teardowns around it
-    /// rebuild too, and must succeed.
+    /// Fails only the rebuild after the new run; the one after its teardown must succeed.
     #[derive(Default)]
     struct FailingRouteHost(std::sync::atomic::AtomicUsize);
 
@@ -678,7 +666,7 @@ mod tests {
         ) -> futures::future::BoxFuture<'_, Result<crate::plugins::api::InstallRoutes>> {
             let call = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Box::pin(async move {
-                anyhow::ensure!(call != 1, "route rebuild failed");
+                anyhow::ensure!(call != 0, "route rebuild failed");
                 let install: crate::plugins::api::InstallRoutes = Box::new(|| Box::pin(async {}));
                 Ok(install)
             })
@@ -690,7 +678,7 @@ mod tests {
         let (_guard, source, _sources) =
             exec_test_plugin("failed-rebuild", TASK_AND_METADATA, "").await?;
         crate::plugins::api::initialize_registry(
-            HashSet::new(),
+            Default::default(),
             Some(Arc::new(FailingRouteHost::default())),
         )
         .await;

@@ -20,12 +20,114 @@ use harmony_core::{
 };
 use harmony_luau::StringEnum;
 use std::{
+    collections::{
+        HashMap,
+        HashSet,
+    },
     rc::Rc,
+    sync::{
+        Arc,
+        Mutex,
+        PoisonError,
+    },
     time::{
         Duration,
         Instant,
     },
 };
+
+/// How many handlers each plugin has running on the executor thread, so a restart can wait for
+/// one plugin's without waiting on the others'.
+#[derive(Clone, Default)]
+pub(crate) struct RunningHandlers {
+    inner: Arc<RunningHandlersInner>,
+}
+
+#[derive(Default)]
+struct RunningHandlersInner {
+    counts: Mutex<HashMap<Arc<str>, usize>>,
+    changed: tokio::sync::Notify,
+    /// Plugins whose new dispatches are refused while they are replaced.
+    quiesced: Mutex<HashSet<Arc<str>>>,
+}
+
+impl RunningHandlers {
+    pub(super) fn quiesce(&self, plugin: &str) {
+        self.quiesced().insert(Arc::from(plugin));
+    }
+
+    pub(super) fn reopen(&self, plugin: &str) {
+        self.quiesced().remove(plugin);
+    }
+
+    pub(super) fn is_quiesced(&self, plugin: Option<&str>) -> bool {
+        plugin.is_some_and(|plugin| self.quiesced().contains(plugin))
+    }
+
+    fn quiesced(&self) -> std::sync::MutexGuard<'_, HashSet<Arc<str>>> {
+        self.inner
+            .quiesced
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub(super) fn enter(&self, plugin: Option<Arc<str>>) -> Option<RunningHandler> {
+        let plugin = plugin?;
+        *self
+            .inner
+            .counts
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(plugin.clone())
+            .or_default() += 1;
+        Some(RunningHandler {
+            inner: self.inner.clone(),
+            plugin,
+        })
+    }
+
+    pub(super) async fn wait_idle(&self, plugin: &str) {
+        loop {
+            let changed = self.inner.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if !self
+                .inner
+                .counts
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .contains_key(plugin)
+            {
+                return;
+            }
+            changed.await;
+        }
+    }
+}
+
+/// One running handler, counted until dropped.
+pub(super) struct RunningHandler {
+    inner: Arc<RunningHandlersInner>,
+    plugin: Arc<str>,
+}
+
+impl Drop for RunningHandler {
+    fn drop(&mut self) {
+        let mut counts = self
+            .inner
+            .counts
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(count) = counts.get_mut(&self.plugin) {
+            *count -= 1;
+            if *count == 0 {
+                counts.remove(&self.plugin);
+            }
+        }
+        drop(counts);
+        self.inner.changed.notify_waiters();
+    }
+}
 
 pub(super) struct PendingCallbackTask {
     completion: Rc<LocalLuauTaskCompletion>,
@@ -34,6 +136,7 @@ pub(super) struct PendingCallbackTask {
     deadline: Instant,
     reply: CallbackReply,
     _permit: tokio::sync::OwnedSemaphorePermit,
+    _running: Option<RunningHandler>,
 }
 
 pub(super) enum CallbackReply {
@@ -195,6 +298,7 @@ impl PluginExecutor {
         deadline: Instant,
         reply: CallbackReply,
         permit: tokio::sync::OwnedSemaphorePermit,
+        plugin: Option<Arc<str>>,
         prepare: impl FnOnce(
             Duration,
             Rc<LocalLuauTaskCompletion>,
@@ -202,6 +306,11 @@ impl PluginExecutor {
     ) {
         let completion = Rc::new(LocalLuauTaskCompletion::default());
         let scheduled = (|| {
+            if self.is_quiesced(plugin.as_deref()) {
+                return Err(anyhow::Error::new(
+                    crate::services::plugin_dispatch::DispatchNotStarted,
+                ));
+            }
             if reply.is_cancelled() {
                 bail!("plugin handler dispatch was cancelled");
             }
@@ -219,6 +328,7 @@ impl PluginExecutor {
                 deadline,
                 reply,
                 _permit: permit,
+                _running: self.running.enter(plugin),
             }),
             Err(error) => reply.send(self, deadline, Err(error)),
         }

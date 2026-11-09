@@ -5,6 +5,7 @@
 
 mod actor;
 mod api;
+mod call_chain;
 mod callbacks;
 mod messages;
 mod metadata;
@@ -21,6 +22,7 @@ pub(crate) use self::actor::{
     ExecutorId,
     PluginExecutorHandle,
 };
+pub(crate) use self::call_chain::CallChain;
 use self::messages::TaskIdKey;
 pub(crate) use self::messages::{
     ApiFallbackResponse,
@@ -77,8 +79,16 @@ use harmony_core::{
 pub(crate) struct PluginExecutor {
     runtime: Runtime,
     scope: crate::plugins::state::VmScope,
+    running: callbacks::RunningHandlers,
     websocket_tasks: RefCell<HashMap<TaskIdKey, Arc<WebSocketState>>>,
     callback_tasks: RefCell<Vec<callbacks::PendingCallbackTask>>,
+    pending_restart: RefCell<Option<PendingRestart>>,
+}
+
+/// A restarted plugin's entrypoint, polled between commands so the other plugins keep running.
+struct PendingRestart {
+    entrypoint: harmony_core::plugin::RunningEntrypoint,
+    reply: tokio::sync::oneshot::Sender<anyhow::Result<()>>,
 }
 
 impl std::ops::Deref for PluginExecutor {
@@ -91,6 +101,7 @@ impl std::ops::Deref for PluginExecutor {
 
 impl PluginExecutor {
     fn poll_background_tasks(&self) {
+        self.poll_pending_restart();
         self.poll_callback_tasks();
         stream::poll_streams(&self.vm);
         let Ok(scheduler) = self.vm.data().get::<LocalScheduler>() else {

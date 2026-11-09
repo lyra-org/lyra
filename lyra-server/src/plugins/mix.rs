@@ -202,14 +202,8 @@ impl Mixer {
         let mixer = self.clone();
         let scope = crate::plugins::state::VmScope::of(vm)?;
         Ok(luau::ScheduledFuture::new(async move {
-            let generation = crate::plugins::STATE.generation();
-            let _registration = generation
-                .registries
-                .ensure_registrations_open(&mixer.plugin_id)
-                .await?;
             scope
-                .mix_for(&mixer.plugin_id)
-                .write_owned()
+                .write_mix(&mixer.plugin_id)
                 .await
                 .declare_option(&mixer.id, option)
                 .map_err(crate::plugins::runtime_error)
@@ -231,13 +225,8 @@ impl Mixer {
         let context = context.clone();
         let vm = vm.clone();
         Ok(luau::ScheduledFuture::new(async move {
-            let generation = crate::plugins::STATE.generation();
-            let _registration = generation
-                .registries
-                .ensure_registrations_open(&mixer.plugin_id)
-                .await?;
             let scope = crate::plugins::state::VmScope::of(&vm)?;
-            let mut registry = scope.mix_for(&mixer.plugin_id).write_owned().await;
+            let mut registry = scope.write_mix(&mixer.plugin_id).await;
             let handlers = vm.data().get::<MixCallbackRegistry>()?;
             let handler = handlers.register(mixer.id.clone(), function, context);
             let registration = MixHandlerRegistration {
@@ -355,14 +344,8 @@ impl MixModule {
             Some(options) => optional_display_name(options)?,
             None => None,
         };
-        let generation = crate::plugins::STATE.generation();
-        let _registration = generation
-            .registries
-            .ensure_registrations_open(&plugin_id)
-            .await?;
         crate::plugins::state::VmScope::of(&vm)?
-            .mix_for(&plugin_id)
-            .write_owned()
+            .write_mix(&plugin_id)
             .await
             .register(plugin_id.clone(), id.clone())?;
 
@@ -396,8 +379,9 @@ impl MixModule {
         request: JsonArg,
         #[context] principal: Principal,
         #[context] vm: luau::Vm,
+        #[context] context: luau::CallContext,
     ) -> luau::runtime::Result<luau::Value> {
-        consume(&vm, MixShape::Blend, request, principal).await
+        consume(&vm, &context, MixShape::Blend, request, principal).await
     }
 
     #[harmony(
@@ -409,8 +393,9 @@ impl MixModule {
         request: JsonArg,
         #[context] principal: Principal,
         #[context] vm: luau::Vm,
+        #[context] context: luau::CallContext,
     ) -> luau::runtime::Result<luau::Value> {
-        consume(&vm, MixShape::Path, request, principal).await
+        consume(&vm, &context, MixShape::Path, request, principal).await
     }
 }
 
@@ -531,6 +516,7 @@ fn describe_key(key: &luau::Value) -> String {
 /// Mixes `request`, a REST body, in the shape the function called names.
 async fn consume(
     vm: &luau::Vm,
+    context: &luau::CallContext,
     shape: MixShape,
     request: JsonArg,
     principal: Principal,
@@ -543,7 +529,7 @@ async fn consume(
     };
     // A larger limit is capped here; REST refuses it.
     request.limit = request.limit.map(|limit| limit.min(mix_service::MAX_LIMIT));
-    let calls = crate::plugins::executor::VmCalls::of(vm)?;
+    let calls = crate::plugins::executor::VmCalls::of(vm, context)?;
     let deadline = tokio::time::Instant::now() + MIX_DISPATCH_BUDGET;
     match mix_service::mix_on(&calls, deadline, &request, &plugin_viewer(&principal)).await {
         Ok(tracks) => tracks_to_luau(Some(tracks)),

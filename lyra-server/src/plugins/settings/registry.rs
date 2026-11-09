@@ -4,10 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 use std::{
-    collections::{
-        HashMap,
-        HashSet,
-    },
+    collections::HashMap,
     sync::Arc,
 };
 
@@ -43,14 +40,6 @@ impl SettingsRegistries {
     pub(crate) async fn freeze(&self) {
         self.registry.write().await.freeze();
     }
-
-    pub(crate) async fn unfreeze_plugin(&self, plugin_id: PluginId) {
-        self.registry.write().await.unfreeze_plugin(plugin_id);
-    }
-
-    pub(crate) async fn refreeze_plugin(&self, plugin_id: &PluginId) {
-        self.registry.write().await.refreeze_plugin(plugin_id);
-    }
 }
 
 /// The published scope's settings; empty before any scope is published.
@@ -68,65 +57,26 @@ pub(crate) enum SettingsScope {
     User,
 }
 
-/// Exemptions is the per-plugin escape hatch a restart flow uses to re-run
-/// a single plugin's `declare_settings` without letting the rest of the
-/// process sneak past the freeze.
-#[derive(Default)]
-enum FreezeState {
-    #[default]
-    Open,
-    Frozen {
-        exemptions: HashSet<PluginId>,
-    },
-}
-
 /// Plugin settings schemas, bucketed by owning plugin.
 #[derive(Default)]
 pub(crate) struct Registry {
     schemas: HashMap<PluginId, HashMap<SettingsScope, Schema>>,
-    state: FreezeState,
+    frozen: bool,
 }
 
 impl Registry {
     #[cfg(test)]
     pub(crate) fn clear(&mut self) {
         self.schemas.clear();
-        self.state = FreezeState::Open;
+        self.frozen = false;
     }
 
     pub(crate) fn freeze(&mut self) {
-        self.state = FreezeState::Frozen {
-            exemptions: HashSet::new(),
-        };
+        self.frozen = true;
     }
 
-    /// True iff writes for the given plugin would be rejected.
-    pub(crate) fn is_frozen_for_plugin(&self, plugin_id: &PluginId) -> bool {
-        match &self.state {
-            FreezeState::Open => false,
-            FreezeState::Frozen { exemptions } => !exemptions.contains(plugin_id),
-        }
-    }
-
-    /// Add a plugin to the freeze exemptions. No-op when `Open`.
-    pub(crate) fn unfreeze_plugin(&mut self, plugin_id: PluginId) {
-        if let FreezeState::Frozen { exemptions } = &mut self.state {
-            exemptions.insert(plugin_id);
-        }
-    }
-
-    /// Remove a plugin from the freeze exemptions. No-op when `Open`.
-    pub(crate) fn refreeze_plugin(&mut self, plugin_id: &PluginId) {
-        if let FreezeState::Frozen { exemptions } = &mut self.state {
-            exemptions.remove(plugin_id);
-        }
-    }
-
-    fn writes_allowed(&self, plugin_id: &PluginId) -> bool {
-        match &self.state {
-            FreezeState::Open => true,
-            FreezeState::Frozen { exemptions } => exemptions.contains(plugin_id),
-        }
+    pub(crate) fn is_frozen(&self) -> bool {
+        self.frozen
     }
 
     pub(crate) fn register_schema(
@@ -135,7 +85,7 @@ impl Registry {
         scope: SettingsScope,
         schema: Schema,
     ) -> anyhow::Result<()> {
-        if !self.writes_allowed(&plugin_id) {
+        if self.frozen {
             bail!("lyra/plugins settings registry is frozen for plugin '{plugin_id}'");
         }
         let scope_label = match scope {
@@ -158,13 +108,21 @@ impl Registry {
 }
 
 impl PluginScopedInner for Registry {
-    fn clear_bucket(&mut self, plugin_id: &PluginId) {
-        self.schemas.remove(plugin_id);
-        // Exemption lifetime is tied to bucket presence; if the caller
-        // forgets `refreeze_plugin` on an error path, teardown is what
-        // prevents a permanent writable window.
-        if let FreezeState::Frozen { exemptions } = &mut self.state {
-            exemptions.remove(plugin_id);
+    type Bucket = HashMap<SettingsScope, Schema>;
+
+    fn take_bucket(&mut self, plugin_id: &PluginId) -> Self::Bucket {
+        self.schemas.remove(plugin_id).unwrap_or_default()
+    }
+
+    fn check_bucket(&self, _plugin_id: &PluginId, _new: &Self::Bucket) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn replace_bucket(&mut self, plugin_id: &PluginId, new: Self::Bucket) {
+        if new.is_empty() {
+            self.schemas.remove(plugin_id);
+        } else {
+            self.schemas.insert(plugin_id.clone(), new);
         }
     }
 
@@ -244,44 +202,6 @@ mod tests {
                 Schema { groups: Vec::new() },
             )
             .expect_err("frozen registry should reject new schemas");
-        assert!(error.to_string().contains("frozen"));
-    }
-
-    #[test]
-    fn unfreeze_plugin_permits_writes_for_that_plugin_only() {
-        let mut registry = Registry::default();
-        registry.freeze();
-        registry.unfreeze_plugin(demo_id());
-
-        registry
-            .register_schema(
-                demo_id(),
-                SettingsScope::Global,
-                Schema { groups: Vec::new() },
-            )
-            .expect("exempt plugin should be able to register while globally frozen");
-
-        let other = PluginId::new("other").unwrap();
-        let error = registry
-            .register_schema(other, SettingsScope::Global, Schema { groups: Vec::new() })
-            .expect_err("non-exempt plugin must still be rejected");
-        assert!(error.to_string().contains("frozen"));
-    }
-
-    #[test]
-    fn refreeze_plugin_restores_rejection() {
-        let mut registry = Registry::default();
-        registry.freeze();
-        registry.unfreeze_plugin(demo_id());
-        registry.refreeze_plugin(&demo_id());
-
-        let error = registry
-            .register_schema(
-                demo_id(),
-                SettingsScope::Global,
-                Schema { groups: Vec::new() },
-            )
-            .expect_err("re-frozen plugin should be rejected again");
         assert!(error.to_string().contains("frozen"));
     }
 }

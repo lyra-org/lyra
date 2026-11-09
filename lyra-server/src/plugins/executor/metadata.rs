@@ -25,6 +25,7 @@ use harmony_core::{
     UserDataBinding,
 };
 
+use super::CallChain;
 use super::{
     PluginExecutor,
     messages::{
@@ -35,6 +36,7 @@ use super::{
 use crate::plugins::state::VmScope;
 use crate::services::plugin_dispatch::{
     CallSource,
+    DispatchNotStarted,
     MetadataRefreshRequest,
     MetadataRefreshResult,
     MixHandlerRequest,
@@ -45,7 +47,9 @@ use crate::services::plugin_dispatch::{
     SimilarReleaseExternalRef,
     SimilarReleasesDispatchRequest,
     SimilarReleasesDispatchResult,
+    TransitionWait,
 };
+use crate::services::plugin_scope::PluginId;
 
 use crate::services::providers::{
     ID_LINK_BATCH_TIMEOUT,
@@ -109,7 +113,11 @@ impl PluginExecutor {
         reply: super::callbacks::CallbackReply,
         permit: tokio::sync::OwnedSemaphorePermit,
     ) {
-        self.start_callback(deadline, reply, permit, |timeout, completion| {
+        let plugin = handler
+            .as_ref()
+            .ok()
+            .and_then(|handler| handler.context.origin.plugin.clone());
+        self.start_callback(deadline, reply, permit, plugin, |timeout, completion| {
             schedule_metadata_handler(&self.vm, handler?, context, timeout, completion)
         });
     }
@@ -160,6 +168,10 @@ fn schedule_handler<M: Send + Sync + 'static>(
 ) -> Result<(Rc<LocalScheduler>, harmony_luau::Thread)> {
     let mut context = handler.context.clone();
     context.caller.insert(marker);
+    context.caller.insert(CallChain::root(
+        Instant::now() + resume_budget,
+        context.origin.plugin.clone(),
+    ));
     schedule_function(
         vm,
         &handler.function,
@@ -194,6 +206,7 @@ fn schedule_function(
 /// Runs `handler` to completion, or cancels it at `deadline` and returns `None`.
 async fn run_handler<M: Send + Sync + 'static>(
     vm: &harmony_luau::Vm,
+    chain: &CallChain,
     handler: &crate::plugins::metadata::MetadataCallback,
     marker: M,
     args: Vec<harmony_luau::Value>,
@@ -204,6 +217,7 @@ async fn run_handler<M: Send + Sync + 'static>(
     context.caller.insert(marker);
     run_function(
         vm,
+        chain,
         &handler.function,
         context,
         args,
@@ -230,12 +244,24 @@ fn raised_refresh_failure(error: anyhow::Error) -> anyhow::Error {
 /// future cancels it too.
 pub(super) async fn run_function(
     vm: &harmony_luau::Vm,
+    chain: &CallChain,
     function: &harmony_luau::Function,
     context: harmony_core::CallContext,
     args: Vec<harmony_luau::Value>,
     resume_budget: Duration,
     deadline: Instant,
 ) -> Result<Option<Vec<harmony_luau::Value>>> {
+    let running = vm.data().get::<super::callbacks::RunningHandlers>()?;
+    let plugin = context.origin.plugin.clone();
+    // A plugin being replaced takes no new calls, except from a chain it is already running in.
+    if running.is_quiesced(plugin.as_deref())
+        && !plugin.as_deref().is_some_and(|plugin| chain.admits(plugin))
+    {
+        return Err(DispatchNotStarted.into());
+    }
+    let mut context = context;
+    context.caller.insert(chain.admitting(plugin.as_ref()));
+    let _running = running.enter(plugin);
     let completion = Rc::new(LocalLuauTaskCompletion::default());
     let (scheduler, thread) = schedule_function(
         vm,
@@ -268,13 +294,29 @@ pub(super) async fn run_function(
 pub(crate) struct VmCalls {
     vm: harmony_luau::Vm,
     scope: Rc<VmScope>,
+    caller: Option<PluginId>,
+    chain: CallChain,
+    wait: TransitionWait,
 }
 
 impl VmCalls {
-    pub(crate) fn of(vm: &harmony_luau::Vm) -> harmony_luau::runtime::Result<Self> {
+    pub(crate) fn of(
+        vm: &harmony_luau::Vm,
+        context: &harmony_luau::CallContext,
+    ) -> harmony_luau::runtime::Result<Self> {
+        let chain = CallChain::of(context);
+        let wait = TransitionWait::Until(tokio::time::Instant::from_std(chain.wait_deadline()));
         Ok(Self {
             vm: vm.clone(),
             scope: VmScope::of(vm)?,
+            caller: context
+                .origin
+                .plugin
+                .clone()
+                .map(PluginId::new)
+                .transpose()?,
+            chain,
+            wait,
         })
     }
 }
@@ -282,7 +324,12 @@ impl VmCalls {
 impl CallSource for VmCalls {
     type Calls = Self;
 
-    async fn reach(&self, _target: &str) -> Option<Self> {
+    async fn reach(&self, target: &str) -> Option<Self> {
+        crate::services::STATE
+            .generation()
+            .settled_for_nested(self.chain.admitted(), target, &self.wait)
+            .await
+            .ok()?;
         Some(self.clone())
     }
 
@@ -290,8 +337,10 @@ impl CallSource for VmCalls {
         Some(self.clone())
     }
 
-    fn in_transition(&self, _target: &str) -> bool {
-        false
+    fn in_transition(&self, target: &str) -> bool {
+        crate::services::STATE
+            .generation()
+            .nested_in_transition(self.chain.admitted(), target)
     }
 }
 
@@ -299,11 +348,11 @@ impl RuntimeCalls for VmCalls {
     async fn providers(
         &self,
     ) -> Arc<tokio::sync::RwLock<crate::services::providers::ProviderRegistry>> {
-        self.scope.services.providers.registry()
+        self.scope.provider_view(self.caller.as_ref()).await
     }
 
     async fn mixers(&self) -> Arc<tokio::sync::RwLock<crate::services::mix::MixRegistry>> {
-        self.scope.services.mix.registry()
+        self.scope.mix_view(self.caller.as_ref()).await
     }
 
     async fn metadata_refresh(
@@ -319,6 +368,7 @@ impl RuntimeCalls for VmCalls {
         let budget = request.deadline.saturating_duration_since(Instant::now());
         let values = run_handler(
             &self.vm,
+            &self.chain,
             &handler,
             MetadataDispatchContext,
             vec![argument],
@@ -336,19 +386,20 @@ impl RuntimeCalls for VmCalls {
     }
 
     async fn mix_handler(&self, request: MixHandlerRequest) -> Result<MixHandlerResult> {
-        super::mix::dispatch_mix_in_vm(&self.vm, request).await
+        super::mix::dispatch_mix_in_vm(&self.vm, &self.chain, request).await
     }
 
     async fn similar_releases(
         &self,
         request: SimilarReleasesDispatchRequest,
     ) -> Result<SimilarReleasesDispatchResult> {
-        dispatch_similar_releases_in_vm(self.vm.clone(), request).await
+        dispatch_similar_releases_in_vm(self.vm.clone(), &self.chain, request).await
     }
 }
 
 async fn dispatch_similar_releases_in_vm(
     vm: harmony_luau::Vm,
+    chain: &CallChain,
     request: SimilarReleasesDispatchRequest,
 ) -> Result<SimilarReleasesDispatchResult> {
     if request.cancellation.is_cancelled() {
@@ -358,6 +409,7 @@ async fn dispatch_similar_releases_in_vm(
     let argument = harmony_serde::json_to_luau_owned(request.context, 0)?;
     let values = run_handler(
         &vm,
+        chain,
         &handler,
         MetadataDispatchContext,
         vec![argument],
@@ -378,9 +430,18 @@ async fn dispatch_similar_releases_in_vm(
 /// Once a generator times out, its remaining calls are skipped.
 pub(crate) async fn dispatch_id_links_in_vm(
     vm: harmony_luau::Vm,
+    chain: CallChain,
     provider_id: String,
     calls: Vec<IdLinkCall>,
 ) -> Result<Vec<IdLinkCallResult>> {
+    // A listing doesn't wait on a plugin being replaced: its links are left out of this one, and
+    // not remembered.
+    if crate::services::STATE
+        .generation()
+        .nested_in_transition(chain.admitted(), &provider_id)
+    {
+        return Ok(vec![Err(IdLinkCallError::NotRun); calls.len()]);
+    }
     let handlers = vm
         .data()
         .get::<crate::plugins::metadata::MetadataCallbackRegistry>()?;
@@ -391,7 +452,7 @@ pub(crate) async fn dispatch_id_links_in_vm(
         let budget = id_link_call_budget(deadline.saturating_duration_since(Instant::now()));
         let result = match budget {
             Some(budget) if !timed_out.contains(&call.handler) => {
-                run_id_link(&vm, &handlers, &provider_id, call, budget, deadline).await
+                run_id_link(&vm, &chain, &handlers, &provider_id, call, budget, deadline).await
             }
             _ => Err(IdLinkCallError::NotRun),
         };
@@ -411,6 +472,7 @@ fn id_link_call_budget(remaining: Duration) -> Option<Duration> {
 
 async fn run_id_link(
     vm: &harmony_luau::Vm,
+    chain: &CallChain,
     handlers: &crate::plugins::metadata::MetadataCallbackRegistry,
     provider_id: &str,
     call: &IdLinkCall,
@@ -420,11 +482,18 @@ async fn run_id_link(
     let failed = |error: String| IdLinkCallError::Failed(error);
     let handler = handlers
         .get_for_provider(call.handler, provider_id, call.entity)
-        .map_err(|error| failed(format!("{error:#}")))?;
+        .map_err(|error| {
+            if DispatchNotStarted::caused(&error) {
+                IdLinkCallError::NotRun
+            } else {
+                failed(format!("{error:#}"))
+            }
+        })?;
     let ctx = id_link_context(vm, &handler, call).map_err(|error| failed(format!("{error:#}")))?;
     let id = harmony_luau::Value::String(call.id.clone().into_bytes());
     let outcome = run_handler(
         vm,
+        chain,
         &handler,
         IdLinkDispatchContext,
         vec![id, ctx],
@@ -447,6 +516,7 @@ fn id_link_outcome(
         Ok(None) => Err(IdLinkCallError::NotRun),
         // Task failures reach us as text; the busy-generator executor test
         // fails if the interrupt message stops coming through.
+        Err(error) if DispatchNotStarted::caused(&error) => Err(IdLinkCallError::NotRun),
         Err(error) if error.to_string().contains(harmony_luau::INTERRUPTED_ERROR) => {
             if budget == ID_LINK_CALL_BUDGET {
                 Err(IdLinkCallError::TimedOut)

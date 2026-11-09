@@ -365,10 +365,9 @@ impl ApiModule {
         })?;
         harmony_core::ensure_current_plugin_run(vm, context)?;
         let routes = vm.data().get::<ApiRouteStore>()?;
-        let plugin = crate::plugins::current_plugin(vm, context, "api.websocket")?;
-        let registry = crate::plugins::state::VmScope::of(vm)?.routes_for(&plugin);
+        let scope = crate::plugins::state::VmScope::of(vm)?;
         routes.register_websocket(
-            registry,
+            &scope,
             plugin_id,
             path,
             handler,
@@ -712,10 +711,9 @@ fn register_route(
     })?;
     harmony_core::ensure_current_plugin_run(vm, context)?;
     let routes = vm.data().get::<ApiRouteStore>()?;
-    let plugin = crate::plugins::current_plugin(vm, context, "api.route")?;
-    let registry = crate::plugins::state::VmScope::of(vm)?.routes_for(&plugin);
+    let scope = crate::plugins::state::VmScope::of(vm)?;
     routes.register(
-        registry,
+        &scope,
         ApiRouteRegistration {
             plugin_id,
             method,

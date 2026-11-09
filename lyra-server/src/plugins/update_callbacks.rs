@@ -63,15 +63,10 @@ pub(crate) fn register<Payload: 'static>(
     function: luau::Function,
     function_name: &str,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let validated_plugin_id = crate::plugins::current_plugin(vm, context, function_name)?;
+    crate::plugins::current_plugin(vm, context, function_name)?;
     let vm = vm.clone();
     let context = context.clone();
     Ok(luau::ScheduledFuture::new(async move {
-        let generation = crate::plugins::STATE.generation();
-        let _registration = generation
-            .registries
-            .ensure_registrations_open(&validated_plugin_id)
-            .await?;
         let callbacks = vm.data().get::<UpdateCallbackStore<Payload>>()?;
         callbacks
             .handlers

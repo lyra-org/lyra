@@ -13,7 +13,10 @@ use harmony_core::{
 };
 use serde::Serialize;
 
-use super::PluginExecutor;
+use super::{
+    CallChain,
+    PluginExecutor,
+};
 use crate::{
     plugins::update_callbacks::UpdateCallbackStore,
     services::{
@@ -68,19 +71,24 @@ impl PluginExecutor {
         let payload_value = harmony_luau::serializable_to_luau_owned(payload)?;
         let scheduler = self.vm.data().get::<LocalScheduler>()?;
         for handler in handlers {
+            if self.is_quiesced(handler.context.origin.plugin.as_deref()) {
+                continue;
+            }
             let thread = self.vm.create_thread(&handler.function)?;
+            // Run to completion on the executor, so what they call can never wait on it.
+            let options = ThreadDriveOptions::default();
+            let mut context = handler.context.clone();
+            context.caller.insert(CallChain::synchronous(
+                &options,
+                context.origin.plugin.clone(),
+            ));
             scheduler.spawn_luau_thread(
-                handler.context.clone(),
+                context,
                 self.vm.clone(),
                 thread.clone(),
                 vec![payload_value.clone()],
             );
-            if let Err(error) = drive_thread(
-                &self.tokio_runtime,
-                &scheduler,
-                &thread,
-                ThreadDriveOptions::default(),
-            ) {
+            if let Err(error) = drive_thread(&self.tokio_runtime, &scheduler, &thread, options) {
                 on_error(
                     handler.context.origin.plugin.as_deref().unwrap_or_default(),
                     &error,

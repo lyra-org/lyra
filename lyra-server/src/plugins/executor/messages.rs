@@ -92,6 +92,16 @@ pub(super) enum PluginExecutorCommand {
         plugin_id: String,
         reply: tokio::sync::oneshot::Sender<Result<()>>,
     },
+    /// Refuses the plugin's new handler dispatches; those already running go on.
+    QuiescePlugin {
+        plugin_id: String,
+        reply: tokio::sync::oneshot::Sender<Result<()>>,
+    },
+    /// Admits the plugin's dispatches again.
+    ReopenPlugin {
+        plugin_id: String,
+        reply: tokio::sync::oneshot::Sender<Result<()>>,
+    },
     StopPlugin {
         plugin_id: String,
         reply: tokio::sync::oneshot::Sender<Result<()>>,

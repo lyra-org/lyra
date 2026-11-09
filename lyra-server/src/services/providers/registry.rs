@@ -360,7 +360,7 @@ pub(crate) struct ProviderSimilarReleasesSpec {
 }
 
 /// `cancel` is cancelled once the handler leaves the registry: replaced,
-/// torn down with its plugin, or dropped with its generation.
+/// torn down with its plugin, or with its runtime scope replaced.
 #[derive(Clone)]
 pub(crate) struct ProviderLyricsSpec {
     pub(crate) timeout: Duration,
@@ -496,6 +496,38 @@ impl ProviderRegistry {
     ) -> Option<&PluginCallbackHandle> {
         self.state(provider_id)
             .and_then(|provider| provider.refresh_callbacks.get(&entity_type))
+    }
+
+    /// A read-only view of this registry with `plugin_id`'s bucket replaced by `staged`'s. It
+    /// leaves the lyrics handlers out: those are cancelled when a registry holding them drops,
+    /// and nothing reads them through a view.
+    pub(crate) fn overlaid(&self, plugin_id: &PluginId, staged: &Self) -> Self {
+        let copy_bucket = |bucket: &HashMap<String, ProviderState>| {
+            bucket
+                .iter()
+                .map(|(id, state)| (id.clone(), state.without_lyrics()))
+                .collect::<HashMap<_, _>>()
+        };
+        let mut providers = self
+            .providers
+            .iter()
+            .filter(|(owner, _)| *owner != plugin_id)
+            .map(|(owner, bucket)| (owner.clone(), copy_bucket(bucket)))
+            .collect::<HashMap<_, _>>();
+        if let Some(bucket) = staged.providers.get(plugin_id) {
+            providers.insert(plugin_id.clone(), copy_bucket(bucket));
+        }
+        let mut view = Self::default();
+        view.providers.extend(providers);
+        view.rebuild_derived();
+        view
+    }
+
+    pub(crate) fn provider_ids(&self, plugin_id: &PluginId) -> HashSet<String> {
+        self.providers
+            .get(plugin_id)
+            .map(|bucket| bucket.keys().cloned().collect())
+            .unwrap_or_default()
     }
 
     pub(crate) fn has_refresh_callback(&self, provider_id: &str, entity_type: EntityType) -> bool {
@@ -1019,7 +1051,7 @@ pub(crate) mod tests {
                 .contains_key("example:item")
         );
 
-        registry.clear_bucket(&plugin_id);
+        registry.replace_bucket(&plugin_id, Default::default());
         registry.rebuild_derived();
 
         assert!(registry.id_schemes().resolve(&rows).is_empty());
@@ -1456,8 +1488,43 @@ pub(crate) mod tests {
 }
 
 impl PluginScopedInner for ProviderRegistry {
-    fn clear_bucket(&mut self, plugin_id: &PluginId) {
-        if let Some(bucket) = self.providers.remove(plugin_id) {
+    type Bucket = HashMap<String, ProviderState>;
+
+    fn take_bucket(&mut self, plugin_id: &PluginId) -> Self::Bucket {
+        self.providers.remove(plugin_id).unwrap_or_default()
+    }
+
+    fn check_bucket(&self, plugin_id: &PluginId, new: &Self::Bucket) -> Result<()> {
+        for (provider_id, state) in new {
+            if let Some(existing) = self
+                .plugin_by_provider
+                .get(provider_id)
+                .filter(|existing| *existing != plugin_id)
+            {
+                bail!("provider '{provider_id}' already registered by plugin '{existing}'");
+            }
+            for scheme in state.id_specs.values().map(|spec| &spec.scheme) {
+                if let Some((owner, _)) = self
+                    .providers
+                    .iter()
+                    .filter(|(other, _)| *other != plugin_id)
+                    .flat_map(|(_, bucket)| bucket.iter())
+                    .find(|(_, state)| state.id_specs.values().any(|spec| spec.scheme == *scheme))
+                {
+                    bail!("scheme '{scheme}' is registered by provider '{owner}'");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn replace_bucket(&mut self, plugin_id: &PluginId, new: Self::Bucket) {
+        let replaced = if new.is_empty() {
+            self.providers.remove(plugin_id)
+        } else {
+            self.providers.insert(plugin_id.clone(), new)
+        };
+        if let Some(bucket) = replaced {
             bucket
                 .values()
                 .for_each(ProviderState::cancel_lyrics_handler);
@@ -1477,7 +1544,7 @@ impl PluginScopedInner for ProviderRegistry {
 }
 
 #[derive(Default)]
-struct ProviderState {
+pub(crate) struct ProviderState {
     display_name: Option<String>,
     id_generators: HashMap<(EntityType, String), ProviderIdUrlGenerator>,
     id_specs: HashMap<(EntityType, String), ProviderIdSpec>,
@@ -1491,6 +1558,33 @@ struct ProviderState {
 }
 
 impl ProviderState {
+    fn without_lyrics(&self) -> Self {
+        let Self {
+            display_name,
+            id_generators,
+            id_specs,
+            search_callbacks,
+            refresh_callbacks,
+            sync_filter_callbacks,
+            cover_handlers,
+            similar_releases_handler,
+            lyrics_handler: _,
+            options,
+        } = self;
+        Self {
+            display_name: display_name.clone(),
+            id_generators: id_generators.clone(),
+            id_specs: id_specs.clone(),
+            search_callbacks: search_callbacks.clone(),
+            refresh_callbacks: refresh_callbacks.clone(),
+            sync_filter_callbacks: sync_filter_callbacks.clone(),
+            cover_handlers: cover_handlers.clone(),
+            similar_releases_handler: similar_releases_handler.clone(),
+            lyrics_handler: None,
+            options: options.clone(),
+        }
+    }
+
     fn cancel_lyrics_handler(&self) {
         if let Some(spec) = &self.lyrics_handler {
             spec.cancel.cancel();

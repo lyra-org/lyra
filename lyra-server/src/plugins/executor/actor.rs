@@ -212,6 +212,7 @@ pub(crate) struct PluginExecutorHandle {
     entrypoints: Arc<std::sync::atomic::AtomicBool>,
     exit: ExecutorExit,
     scope: crate::plugins::state::VmScope,
+    running: super::callbacks::RunningHandlers,
 }
 
 impl PluginExecutorHandle {
@@ -252,11 +253,12 @@ impl PluginExecutorHandle {
                     let streams = super::stream::stream_stops(&runtime.vm)?;
                     let entrypoints = runtime.entrypoint_cancellation();
                     let scope = runtime.scope.clone();
-                    Ok((runtime, errors, streams, entrypoints, scope))
+                    let running = runtime.running.clone();
+                    Ok((runtime, errors, streams, entrypoints, scope, running))
                 }) {
-                    Ok((runtime, errors, streams, entrypoints, scope)) => {
+                    Ok((runtime, errors, streams, entrypoints, scope, running)) => {
                         if ready_tx
-                            .send(Ok((errors, streams, entrypoints, scope)))
+                            .send(Ok((errors, streams, entrypoints, scope, running)))
                             .is_err()
                         {
                             return;
@@ -270,7 +272,7 @@ impl PluginExecutorHandle {
             })
             .context("spawn plugin executor thread")?;
 
-        let (errors, streams, entrypoints, scope) = ready_rx
+        let (errors, streams, entrypoints, scope, running) = ready_rx
             .recv()
             .context("plugin executor thread exited during startup")??;
         Ok((
@@ -280,6 +282,7 @@ impl PluginExecutorHandle {
                 entrypoints,
                 exit,
                 scope,
+                running,
             },
             errors,
         ))
@@ -328,6 +331,38 @@ impl PluginExecutorHandle {
 
     pub(crate) async fn verify_plugin_manifest(&self, plugin_id: &str) -> Result<()> {
         self.request_control(|reply| PluginExecutorCommand::VerifyPluginManifest {
+            plugin_id: plugin_id.to_string(),
+            reply,
+        })
+        .await
+    }
+
+    /// Starts no more of the plugin's handlers, and lets the ones running finish, up to `limit`.
+    /// Commands queued ahead of this one have started by then; a later dispatch is refused and
+    /// never starts.
+    pub(crate) async fn drain_plugin(
+        &self,
+        plugin_id: &str,
+        limit: Duration,
+        cancelled: &CancellationToken,
+    ) -> Result<DrainOutcome> {
+        self.request_control(|reply| PluginExecutorCommand::QuiescePlugin {
+            plugin_id: plugin_id.to_string(),
+            reply,
+        })
+        .await?;
+        Ok(tokio::select! {
+            biased;
+            () = cancelled.cancelled() => DrainOutcome::Cancelled,
+            _ = self.exit().wait() => DrainOutcome::Exited,
+            () = self.running.wait_idle(plugin_id) => DrainOutcome::Drained,
+            () = tokio::time::sleep(limit) => DrainOutcome::TimedOut,
+        })
+    }
+
+    /// Admits the plugin's dispatches again, once what replaced it is live.
+    pub(crate) async fn reopen_plugin(&self, plugin_id: &str) -> Result<()> {
+        self.request_control(|reply| PluginExecutorCommand::ReopenPlugin {
             plugin_id: plugin_id.to_string(),
             reply,
         })
@@ -596,11 +631,23 @@ fn handle_plugin_executor_command(
         PluginExecutorCommand::VerifyPluginManifest { plugin_id, reply } => {
             reply_if_open(reply, || runtime.verify_plugin_manifest(&plugin_id));
         }
+        PluginExecutorCommand::QuiescePlugin { plugin_id, reply } => {
+            reply_if_open(reply, || {
+                runtime.quiesce_plugin(&plugin_id);
+                Ok(())
+            });
+        }
+        PluginExecutorCommand::ReopenPlugin { plugin_id, reply } => {
+            reply_if_open(reply, || {
+                runtime.reopen_plugin(&plugin_id);
+                Ok(())
+            });
+        }
         PluginExecutorCommand::StopPlugin { plugin_id, reply } => {
             reply_if_open(reply, || runtime.stop_plugin(&plugin_id));
         }
         PluginExecutorCommand::RestartPlugin { plugin_id, reply } => {
-            reply_if_open(reply, || runtime.restart_plugin(&plugin_id));
+            runtime.start_plugin_restart(plugin_id, reply);
         }
         PluginExecutorCommand::ExecAll(reply) => {
             reply_if_open(reply, || Ok(runtime.exec_all()));
@@ -678,6 +725,7 @@ mod tests {
                 entrypoints: Default::default(),
                 exit: exit_channel().1,
                 scope: Default::default(),
+                running: Default::default(),
             },
             rx,
         )

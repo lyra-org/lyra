@@ -52,7 +52,7 @@ impl ApiRouteStore {
 
     pub(super) fn register(
         &self,
-        registry: Arc<tokio::sync::RwLock<ApiRouteRegistry>>,
+        scope: &crate::plugins::state::VmScope,
         registration: ApiRouteRegistration,
     ) -> luau::runtime::Result<()> {
         let ApiRouteRegistration {
@@ -77,12 +77,12 @@ impl ApiRouteStore {
             .handlers
             .insert(ApiHandlerRegistration { handler, context });
         futures::executor::block_on(async {
-            registry
-                .write_owned()
+            scope
+                .write_routes(&plugin)
                 .await
                 .register(RegisteredRoute {
                     key,
-                    plugin_id: plugin,
+                    plugin_id: plugin.clone(),
                     auth_mode,
                     case_insensitive,
                     max_body_bytes,
@@ -96,7 +96,7 @@ impl ApiRouteStore {
 
     pub(super) fn register_websocket(
         &self,
-        registry: Arc<tokio::sync::RwLock<ApiRouteRegistry>>,
+        scope: &crate::plugins::state::VmScope,
         plugin_id: Arc<str>,
         path: String,
         handler: luau::Function,
@@ -111,12 +111,12 @@ impl ApiRouteStore {
             .handlers
             .insert(ApiHandlerRegistration { handler, context });
         futures::executor::block_on(async {
-            registry
-                .write_owned()
+            scope
+                .write_routes(&plugin)
                 .await
                 .register(RegisteredRoute {
                     key,
-                    plugin_id: plugin,
+                    plugin_id: plugin.clone(),
                     auth_mode,
                     case_insensitive: false,
                     max_body_bytes: None,
@@ -170,22 +170,13 @@ impl ApiRouteRegistries {
         plugin_id: &crate::services::plugin_scope::PluginId,
     ) {
         let Self { registry } = self;
-        registry.write().await.clear_bucket(plugin_id);
+        crate::services::plugin_scope::ScopedRegistry::from_shared(registry.clone())
+            .teardown(plugin_id)
+            .await;
     }
 
     pub(crate) async fn freeze(&self) {
         self.registry.write().await.freeze();
-    }
-
-    pub(crate) async fn unfreeze_plugin(&self, plugin_id: crate::services::plugin_scope::PluginId) {
-        self.registry.write().await.unfreeze_plugin(plugin_id);
-    }
-
-    pub(crate) async fn refreeze_plugin(
-        &self,
-        plugin_id: &crate::services::plugin_scope::PluginId,
-    ) {
-        self.registry.write().await.refreeze_plugin(plugin_id);
     }
 }
 
@@ -271,69 +262,35 @@ impl CaseInsensitiveRouter {
 }
 
 #[derive(Default)]
-pub(super) enum FreezeState {
-    #[default]
-    Open,
-    Frozen {
-        exemptions: HashSet<crate::services::plugin_scope::PluginId>,
-    },
-}
-
-#[derive(Default)]
 pub(crate) struct ApiRouteRegistry {
     routes: HashMap<crate::services::plugin_scope::PluginId, HashMap<RouteKey, RegisteredRoute>>,
     ci_router: CaseInsensitiveRouter,
-    state: FreezeState,
+    frozen: bool,
 }
 
 impl ApiRouteRegistry {
     fn reset(&mut self) {
         self.routes.clear();
         self.ci_router = CaseInsensitiveRouter::new();
-        self.state = FreezeState::Open;
+        self.frozen = false;
     }
 
     pub(super) fn freeze(&mut self) {
-        self.state = FreezeState::Frozen {
-            exemptions: HashSet::new(),
-        };
-    }
-
-    pub(super) fn unfreeze_plugin(&mut self, plugin_id: crate::services::plugin_scope::PluginId) {
-        if let FreezeState::Frozen { exemptions } = &mut self.state {
-            exemptions.insert(plugin_id);
-        }
-    }
-
-    pub(super) fn refreeze_plugin(&mut self, plugin_id: &crate::services::plugin_scope::PluginId) {
-        if let FreezeState::Frozen { exemptions } = &mut self.state {
-            exemptions.remove(plugin_id);
-        }
-    }
-
-    fn writes_allowed(&self, plugin_id: &crate::services::plugin_scope::PluginId) -> bool {
-        match &self.state {
-            FreezeState::Open => true,
-            FreezeState::Frozen { exemptions } => exemptions.contains(plugin_id),
-        }
+        self.frozen = true;
     }
 
     fn iter_all(&self) -> impl Iterator<Item = &RegisteredRoute> {
         self.routes.values().flat_map(|bucket| bucket.values())
     }
 
-    fn find(&self, key: &RouteKey) -> Option<&RegisteredRoute> {
-        self.iter_all().find(|route| &route.key == key)
-    }
-
-    pub(super) fn register(&mut self, route: RegisteredRoute) -> Result<()> {
-        let core_routes = crate::plugins::STATE.generation().api.core_routes.get();
-        if !self.writes_allowed(&route.plugin_id) {
+    pub(crate) fn register(&mut self, route: RegisteredRoute) -> Result<()> {
+        if self.frozen {
             bail!(
                 "lyra/api route registry is frozen for plugin '{}'",
                 route.plugin_id
             );
         }
+        let core_routes = crate::plugins::STATE.generation().api.core_routes.get();
         if core_routes.contains(&route.key) {
             bail!(
                 "plugin route conflicts with core route: {} {}",
@@ -341,41 +298,7 @@ impl ApiRouteRegistry {
                 route.key.path
             );
         }
-        if let Some(existing) = self.find(&route.key) {
-            bail!(
-                "plugin route conflict: {} {} already registered by plugin '{}'",
-                route.key.method,
-                route.key.path,
-                existing.plugin_id
-            );
-        }
-
-        let new_lowered = if route.case_insensitive {
-            route.key.path.to_string()
-        } else {
-            lowercase_literal_segments(route.key.path.as_ref())
-        };
-        for existing in self.iter_all() {
-            if existing.key.path == route.key.path {
-                continue;
-            }
-            let existing_lowered = if existing.case_insensitive {
-                existing.key.path.to_string()
-            } else {
-                lowercase_literal_segments(existing.key.path.as_ref())
-            };
-            if existing_lowered == new_lowered
-                && (route.case_insensitive || existing.case_insensitive)
-            {
-                bail!(
-                    "plugin '{}' route '{}' shadows '{}' registered by plugin '{}' via case-insensitive lowering",
-                    route.plugin_id,
-                    route.key.path,
-                    existing.key.path,
-                    existing.plugin_id,
-                );
-            }
-        }
+        self.check_route(&route, None)?;
 
         if route.case_insensitive {
             self.ci_router
@@ -396,6 +319,54 @@ impl ApiRouteRegistry {
         Ok(())
     }
 
+    /// Fails if `route` conflicts with a registered route, leaving out `ignored`'s.
+    fn check_route(
+        &self,
+        route: &RegisteredRoute,
+        ignored: Option<&crate::services::plugin_scope::PluginId>,
+    ) -> Result<()> {
+        let others = || {
+            self.iter_all()
+                .filter(|existing| Some(&existing.plugin_id) != ignored)
+        };
+        if let Some(existing) = others().find(|existing| existing.key == route.key) {
+            bail!(
+                "plugin route conflict: {} {} already registered by plugin '{}'",
+                route.key.method,
+                route.key.path,
+                existing.plugin_id
+            );
+        }
+
+        let new_lowered = if route.case_insensitive {
+            route.key.path.to_string()
+        } else {
+            lowercase_literal_segments(route.key.path.as_ref())
+        };
+        for existing in others() {
+            if existing.key.path == route.key.path {
+                continue;
+            }
+            let existing_lowered = if existing.case_insensitive {
+                existing.key.path.to_string()
+            } else {
+                lowercase_literal_segments(existing.key.path.as_ref())
+            };
+            if existing_lowered == new_lowered
+                && (route.case_insensitive || existing.case_insensitive)
+            {
+                bail!(
+                    "plugin '{}' route '{}' shadows '{}' registered by plugin '{}' via case-insensitive lowering",
+                    route.plugin_id,
+                    route.key.path,
+                    existing.key.path,
+                    existing.plugin_id,
+                );
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn snapshot(&self) -> Vec<RegisteredRoute> {
         let mut routes: Vec<RegisteredRoute> = self.iter_all().cloned().collect();
         routes.sort_by(|left, right| {
@@ -410,13 +381,51 @@ impl ApiRouteRegistry {
     fn ci_router_snapshot(&self) -> CaseInsensitiveRouter {
         self.ci_router.clone()
     }
+}
 
-    pub(super) fn clear_bucket(&mut self, plugin_id: &crate::services::plugin_scope::PluginId) {
-        self.routes.remove(plugin_id);
-        if let FreezeState::Frozen { exemptions } = &mut self.state {
-            exemptions.remove(plugin_id);
+impl crate::services::plugin_scope::PluginScopedInner for ApiRouteRegistry {
+    type Bucket = HashMap<RouteKey, RegisteredRoute>;
+
+    fn take_bucket(&mut self, plugin_id: &crate::services::plugin_scope::PluginId) -> Self::Bucket {
+        self.routes.remove(plugin_id).unwrap_or_default()
+    }
+
+    fn check_bucket(
+        &self,
+        plugin_id: &crate::services::plugin_scope::PluginId,
+        new: &Self::Bucket,
+    ) -> Result<()> {
+        new.values()
+            .try_for_each(|route| self.check_route(route, Some(plugin_id)))?;
+        // The combined case-insensitive lookup, so `rebuild_derived` has nothing left to refuse.
+        let mut combined = CaseInsensitiveRouter::new();
+        for route in self
+            .iter_all()
+            .filter(|route| route.plugin_id != *plugin_id)
+            .chain(new.values())
+            .filter(|route| route.case_insensitive)
+        {
+            combined.insert(route.key.path.as_ref()).map_err(|err| {
+                anyhow::anyhow!(
+                    "plugin '{}' route '{}': {err}",
+                    route.plugin_id,
+                    route.key.path
+                )
+            })?;
         }
-        self.rebuild_derived();
+        Ok(())
+    }
+
+    fn replace_bucket(
+        &mut self,
+        plugin_id: &crate::services::plugin_scope::PluginId,
+        new: Self::Bucket,
+    ) {
+        if new.is_empty() {
+            self.routes.remove(plugin_id);
+        } else {
+            self.routes.insert(plugin_id.clone(), new);
+        }
     }
 
     fn rebuild_derived(&mut self) {

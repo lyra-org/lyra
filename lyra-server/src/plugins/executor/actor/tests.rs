@@ -164,6 +164,7 @@ fn test_executor() -> Result<TestExecutor> {
             entrypoints: Default::default(),
             exit,
             scope: Default::default(),
+            running: Default::default(),
         },
         slow,
         fast,

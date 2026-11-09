@@ -8,7 +8,10 @@ use std::{
         Any,
         TypeId,
     },
-    collections::HashMap,
+    collections::{
+        HashMap,
+        HashSet,
+    },
     path::Path,
     sync::{
         Arc,
@@ -190,6 +193,31 @@ impl GenerationState {
         self.transition.borrow().covers(target)
     }
 
+    /// Waits until no transition covers a nested call to `target` from a chain with `admitted`
+    /// running. It waits only on the restart of a plugin not in the chain: a reload is waiting
+    /// for the very handler making this call, and so is the drain of a plugin the chain runs in.
+    pub(crate) async fn settled_for_nested(
+        &self,
+        admitted: &[PluginId],
+        target: &str,
+        wait: &TransitionWait,
+    ) -> Result<(), TransitionNotSettled> {
+        self.settled(wait, |transition| {
+            transition.holds_up_nested(admitted, target)
+        })
+        .await
+    }
+
+    /// Holds up `targets` as well, for a plugin's transition that found them only once its new
+    /// run registered them.
+    pub(crate) fn extend_transition(&self, more: HashSet<String>) {
+        self.transition.send_modify(|transition| {
+            if let Transition::Plugin { targets, .. } = transition {
+                Arc::make_mut(targets).extend(more);
+            }
+        });
+    }
+
     /// Waits until no transition covers any of `plugins`.
     pub(crate) async fn plugins_settled(
         &self,
@@ -207,6 +235,10 @@ impl GenerationState {
     #[cfg(test)]
     pub(crate) fn route_is_held(&self, plugin: &PluginId) -> bool {
         self.transition.borrow().covers_plugin(plugin)
+    }
+
+    pub(crate) fn nested_in_transition(&self, admitted: &[PluginId], target: &str) -> bool {
+        self.transition.borrow().holds_up_nested(admitted, target)
     }
 
     async fn settled(
@@ -246,6 +278,11 @@ pub(crate) enum Transition {
     Idle,
     /// Every plugin.
     Runtime,
+    /// One plugin; `targets` are its providers and mixers.
+    Plugin {
+        plugin: PluginId,
+        targets: Arc<HashSet<String>>,
+    },
 }
 
 /// A wait for a transition ended before the transition did.
@@ -253,12 +290,29 @@ pub(crate) enum Transition {
 pub(crate) struct TransitionNotSettled;
 
 impl Transition {
-    fn covers(&self, _target: &str) -> bool {
-        matches!(self, Self::Runtime)
+    fn covers(&self, target: &str) -> bool {
+        match self {
+            Self::Idle => false,
+            Self::Runtime => true,
+            Self::Plugin { targets, .. } => targets.contains(target),
+        }
     }
 
-    fn covers_plugin(&self, _plugin_id: &PluginId) -> bool {
-        matches!(self, Self::Runtime)
+    fn covers_plugin(&self, plugin_id: &PluginId) -> bool {
+        match self {
+            Self::Idle => false,
+            Self::Runtime => true,
+            Self::Plugin { plugin, .. } => plugin == plugin_id,
+        }
+    }
+
+    fn holds_up_nested(&self, admitted: &[PluginId], target: &str) -> bool {
+        match self {
+            Self::Plugin { plugin, targets } => {
+                !admitted.contains(plugin) && targets.contains(target)
+            }
+            Self::Idle | Self::Runtime => false,
+        }
     }
 }
 

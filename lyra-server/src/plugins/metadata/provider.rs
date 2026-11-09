@@ -71,13 +71,8 @@ pub(super) async fn provider_new(
         Some(options) => optional_table_string(options, "display_name", "metadata.Provider.new")?,
         None => None,
     };
-    let generation = crate::plugins::STATE.generation();
-    let _registration = generation
-        .registries
-        .ensure_registrations_open(&plugin_id)
-        .await?;
     let scope = crate::plugins::state::VmScope::of(&vm)?;
-    let mut registry = scope.providers_for(&plugin_id).write_owned().await;
+    let mut registry = scope.write_providers(&plugin_id).await;
     registry.register(plugin_id.clone(), provider_id.clone(), display_name)?;
     drop(registry);
 
@@ -237,12 +232,7 @@ fn provider_id_callback(
     let provider = provider.clone();
     let scope = crate::plugins::state::VmScope::of(vm)?;
     Ok(luau::ScheduledFuture::new(async move {
-        let generation = crate::plugins::STATE.generation();
-        let _registration = generation
-            .registries
-            .ensure_registrations_open(&provider.plugin_id)
-            .await?;
-        let mut registry = scope.providers_for(&provider.plugin_id).write_owned().await;
+        let mut registry = scope.write_providers(&provider.plugin_id).await;
         let entity = id_spec.entity;
         let replaced = registry
             .set_id_registration(&provider.provider_id, id_spec, || {
@@ -278,12 +268,7 @@ fn declare_option_callback(
     let provider = provider.clone();
     let scope = crate::plugins::state::VmScope::of(vm)?;
     Ok(luau::ScheduledFuture::new(async move {
-        let generation = crate::plugins::STATE.generation();
-        let _registration = generation
-            .registries
-            .ensure_registrations_open(&provider.plugin_id)
-            .await?;
-        let mut registry = scope.providers_for(&provider.plugin_id).write_owned().await;
+        let mut registry = scope.write_providers(&provider.plugin_id).await;
         registry
             .declare_option(&provider.provider_id, option)
             .map_err(crate::plugins::runtime_error)?;
@@ -304,12 +289,7 @@ fn search_callback(
     let provider = provider.clone();
     let scope = crate::plugins::state::VmScope::of(vm)?;
     Ok(luau::ScheduledFuture::new(async move {
-        let generation = crate::plugins::STATE.generation();
-        let _registration = generation
-            .registries
-            .ensure_registrations_open(&provider.plugin_id)
-            .await?;
-        let mut registry = scope.providers_for(&provider.plugin_id).write_owned().await;
+        let mut registry = scope.write_providers(&provider.plugin_id).await;
         let handler =
             handlers.register(provider.provider_id.clone(), entity_type, handler, context);
 
@@ -352,18 +332,13 @@ fn cover_callback(
     let provider = provider.clone();
     let scope = crate::plugins::state::VmScope::of(vm)?;
     Ok(luau::ScheduledFuture::new(async move {
-        let generation = crate::plugins::STATE.generation();
-        let _registration = generation
-            .registries
-            .ensure_registrations_open(&provider.plugin_id)
-            .await?;
         if !harmony_http::has_rate_limit_for_plugin(provider.plugin_id.as_ref()).await {
             return Err(crate::plugins::runtime_error(format!(
                 "provider:cover requires http.set_rate_limit to be configured for at least one domain before registration; call set_rate_limit in plugin init for plugin '{}'",
                 provider.plugin_id
             )));
         }
-        let mut registry = scope.providers_for(&provider.plugin_id).write_owned().await;
+        let mut registry = scope.write_providers(&provider.plugin_id).await;
         let handler =
             handlers.register(provider.provider_id.clone(), entity_type, handler, context);
 
@@ -395,11 +370,6 @@ fn lyrics_callback(
     let provider = provider.clone();
     let scope = crate::plugins::state::VmScope::of(vm)?;
     Ok(luau::ScheduledFuture::new(async move {
-        let generation = crate::plugins::STATE.generation();
-        let _registration = generation
-            .registries
-            .ensure_registrations_open(&provider.plugin_id)
-            .await?;
         if !harmony_http::has_rate_limit_for_plugin(provider.plugin_id.as_ref()).await {
             return Err(crate::plugins::runtime_error(format!(
                 "provider:lyrics requires http.set_rate_limit to be configured for at least one domain before registration; call set_rate_limit in plugin init for plugin '{}'",
@@ -413,8 +383,8 @@ fn lyrics_callback(
             context,
         );
         lyrics_dispatcher::register_handler(
-            &mut *scope.providers_for(&provider.plugin_id).write_owned().await,
-            scope.services.published.clone(),
+            &mut *scope.write_providers(&provider.plugin_id).await,
+            scope.published_for(&provider.plugin_id),
             &provider.provider_id,
             ProviderLyricsSpec::new(timeout, require, handler),
         );
@@ -436,12 +406,7 @@ fn similar_releases_callback(
     let provider = provider.clone();
     let scope = crate::plugins::state::VmScope::of(vm)?;
     Ok(luau::ScheduledFuture::new(async move {
-        let generation = crate::plugins::STATE.generation();
-        let _registration = generation
-            .registries
-            .ensure_registrations_open(&provider.plugin_id)
-            .await?;
-        let mut registry = scope.providers_for(&provider.plugin_id).write_owned().await;
+        let mut registry = scope.write_providers(&provider.plugin_id).await;
         let handler = handlers.register(
             provider.provider_id.clone(),
             EntityType::Release,
@@ -475,12 +440,7 @@ fn refresh_callback(
     let provider = provider.clone();
     let scope = crate::plugins::state::VmScope::of(vm)?;
     Ok(luau::ScheduledFuture::new(async move {
-        let generation = crate::plugins::STATE.generation();
-        let _registration = generation
-            .registries
-            .ensure_registrations_open(&provider.plugin_id)
-            .await?;
-        let mut registry = scope.providers_for(&provider.plugin_id).write_owned().await;
+        let mut registry = scope.write_providers(&provider.plugin_id).await;
         let handler = handlers.register(
             provider.provider_id.clone(),
             entity_type,

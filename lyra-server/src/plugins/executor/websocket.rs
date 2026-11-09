@@ -27,6 +27,9 @@ impl PluginExecutor {
     pub(crate) fn start_websocket(&self, request: WebSocketStartRequest) -> Result<()> {
         let routes = self.vm.data().get::<crate::plugins::api::ApiRouteStore>()?;
         let handler = routes.get(request.handler)?;
+        if self.is_quiesced(handler.context.origin.plugin.as_deref()) {
+            return Err(crate::services::plugin_dispatch::DispatchNotStarted.into());
+        }
         let origin = handler.context.origin.clone();
         let reader = ApiWebSocketReader::class().create_value(
             &self.vm,

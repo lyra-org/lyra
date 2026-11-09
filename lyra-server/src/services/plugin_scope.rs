@@ -6,6 +6,7 @@
 use std::{
     any::Any,
     borrow::Borrow,
+    collections::HashSet,
     fmt,
     sync::Arc,
 };
@@ -14,13 +15,22 @@ use anyhow::{
     Result,
     bail,
 };
-use tokio::sync::RwLock;
+use tokio::sync::{
+    OwnedRwLockWriteGuard,
+    RwLock,
+};
 use tokio_util::sync::CancellationToken;
 
 use crate::services::{
-    mix::MixRegistries,
+    mix::{
+        MixRegistries,
+        MixRegistry,
+    },
     plugin_dispatch::PluginDispatch,
-    providers::ProviderRuntimeState,
+    providers::{
+        ProviderRegistry,
+        ProviderRuntimeState,
+    },
 };
 
 /// The registries a plugin runtime's plugins register into. They are built before the runtime's
@@ -44,6 +54,66 @@ impl ScopeRegistries {
         } = self;
         providers.teardown_plugin(plugin_id).await;
         mix.teardown_plugin(plugin_id).await;
+    }
+
+    /// Locks every registry for moving `staged`'s buckets of the plugin here, failing on a
+    /// conflict with another plugin.
+    pub(crate) async fn prepare_commit(
+        &self,
+        staged: &Self,
+        plugin_id: &PluginId,
+    ) -> Result<ScopeCommit> {
+        let Self {
+            providers,
+            mix,
+            published: _,
+        } = self;
+        Ok(ScopeCommit {
+            providers: BucketCommit::prepare(
+                &providers.registry(),
+                &staged.providers.registry(),
+                plugin_id,
+            )
+            .await?,
+            mix: BucketCommit::prepare(&mix.registry(), &staged.mix.registry(), plugin_id).await?,
+        })
+    }
+
+    /// The provider and mixer ids the plugin registered here.
+    pub(crate) async fn plugin_targets(&self, plugin_id: &PluginId) -> HashSet<String> {
+        let mut targets = self
+            .providers
+            .registry()
+            .read()
+            .await
+            .provider_ids(plugin_id);
+        targets.extend(self.mix.registry().read().await.mixer_ids(plugin_id));
+        targets
+    }
+}
+
+/// The services half of moving a restarted plugin's buckets into the live scope.
+pub(crate) struct ScopeCommit {
+    providers: BucketCommit<ProviderRegistry>,
+    mix: BucketCommit<MixRegistry>,
+}
+
+impl ScopeCommit {
+    /// The provider and mixer ids being published.
+    pub(crate) fn targets(&self) -> HashSet<String> {
+        let Self { providers, mix } = self;
+        let providers = providers
+            .bucket()
+            .into_iter()
+            .flat_map(|bucket| bucket.keys());
+        let mixers = mix.bucket().into_iter().flat_map(|bucket| bucket.keys());
+        providers.chain(mixers).cloned().collect()
+    }
+
+    pub(crate) fn apply(&mut self) {
+        let Self { providers, mix } = self;
+        providers.apply();
+        mix.apply();
     }
 }
 
@@ -127,6 +197,11 @@ impl PluginId {
         Ok(Self(value))
     }
 
+    /// An id the plugin runtime checked when it loaded the plugin, as a chunk's origin holds.
+    pub(crate) fn validated(value: Arc<str>) -> Self {
+        Self(value)
+    }
+
     pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
@@ -156,17 +231,24 @@ impl AsRef<str> for PluginId {
     }
 }
 
-/// Infallible: all validation must happen at register time so teardown
-/// cannot leave a half-live plugin.
+/// A registry of per-plugin buckets, whose buckets are replaced whole: a restart moves a staged
+/// bucket in, and teardown replaces a plugin's with an empty one.
 pub(crate) trait PluginScopedInner: Send + Sync + 'static {
-    /// Missing ids are a no-op.
-    fn clear_bucket(&mut self, plugin_id: &PluginId);
+    type Bucket: Default + Send + Sync;
+
+    fn take_bucket(&mut self, plugin_id: &PluginId) -> Self::Bucket;
+
+    /// What only the live registry can tell: whether `new` conflicts with another plugin's bucket.
+    fn check_bucket(&self, plugin_id: &PluginId, new: &Self::Bucket) -> Result<()>;
+
+    /// Infallible, so a plugin can't be left half replaced.
+    fn replace_bucket(&mut self, plugin_id: &PluginId, new: Self::Bucket);
 
     /// Rebuild derived side-car state from the surviving buckets.
     fn rebuild_derived(&mut self);
 }
 
-/// Pairs `clear_bucket` with `rebuild_derived` so impls cannot skip the rebuild.
+/// Pairs `replace_bucket` with `rebuild_derived` so impls cannot skip the rebuild.
 pub(crate) struct ScopedRegistry<T: PluginScopedInner> {
     inner: Arc<RwLock<T>>,
 }
@@ -178,7 +260,7 @@ impl<T: PluginScopedInner> ScopedRegistry<T> {
 
     pub(crate) async fn teardown(&self, plugin_id: &PluginId) {
         let mut guard = self.inner.write().await;
-        guard.clear_bucket(plugin_id);
+        guard.replace_bucket(plugin_id, T::Bucket::default());
         guard.rebuild_derived();
     }
 }
@@ -187,6 +269,59 @@ impl<T: PluginScopedInner> Clone for ScopedRegistry<T> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
+        }
+    }
+}
+
+/// One registry's half of moving a staged bucket into the live registry. Holds both write locks
+/// from the check through the replacement. A commit abandoned before `apply` puts its bucket back,
+/// so the staged registry ends what the bucket started when it is dropped.
+pub(crate) struct BucketCommit<T: PluginScopedInner> {
+    live: OwnedRwLockWriteGuard<T>,
+    staged: OwnedRwLockWriteGuard<T>,
+    plugin_id: PluginId,
+    bucket: Option<T::Bucket>,
+}
+
+impl<T: PluginScopedInner> BucketCommit<T> {
+    pub(crate) async fn prepare(
+        live: &Arc<RwLock<T>>,
+        staged: &Arc<RwLock<T>>,
+        plugin_id: &PluginId,
+    ) -> Result<Self> {
+        let mut staged = staged.clone().write_owned().await;
+        let live = live.clone().write_owned().await;
+        let bucket = staged.take_bucket(plugin_id);
+        let commit = Self {
+            live,
+            staged,
+            plugin_id: plugin_id.clone(),
+            bucket: Some(bucket),
+        };
+        if let Some(bucket) = &commit.bucket {
+            commit.live.check_bucket(plugin_id, bucket)?;
+        }
+        Ok(commit)
+    }
+
+    /// What is about to replace the plugin's bucket.
+    fn bucket(&self) -> Option<&T::Bucket> {
+        self.bucket.as_ref()
+    }
+
+    /// Keeps both locks: they are released when every registry of the commit has been applied.
+    pub(crate) fn apply(&mut self) {
+        if let Some(bucket) = self.bucket.take() {
+            self.live.replace_bucket(&self.plugin_id, bucket);
+            self.live.rebuild_derived();
+        }
+    }
+}
+
+impl<T: PluginScopedInner> Drop for BucketCommit<T> {
+    fn drop(&mut self) {
+        if let Some(bucket) = self.bucket.take() {
+            self.staged.replace_bucket(&self.plugin_id, bucket);
         }
     }
 }
@@ -220,13 +355,21 @@ mod tests {
     }
 
     struct TestInner {
-        cleared: Vec<String>,
+        replaced: Vec<String>,
         rebuilt: usize,
     }
 
     impl PluginScopedInner for TestInner {
-        fn clear_bucket(&mut self, plugin_id: &PluginId) {
-            self.cleared.push(plugin_id.to_string());
+        type Bucket = ();
+
+        fn take_bucket(&mut self, _plugin_id: &PluginId) {}
+
+        fn check_bucket(&self, _plugin_id: &PluginId, _new: &()) -> Result<()> {
+            Ok(())
+        }
+
+        fn replace_bucket(&mut self, plugin_id: &PluginId, _new: ()) {
+            self.replaced.push(plugin_id.to_string());
         }
 
         fn rebuild_derived(&mut self) {
@@ -235,9 +378,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scoped_registry_always_rebuilds_after_clear() {
+    async fn a_commit_holds_its_locks_past_apply() {
+        let plugin_id = PluginId::new("demo").unwrap();
+        let live = Arc::new(RwLock::new(TestInner {
+            replaced: Vec::new(),
+            rebuilt: 0,
+        }));
+        let staged = Arc::new(RwLock::new(TestInner {
+            replaced: Vec::new(),
+            rebuilt: 0,
+        }));
+
+        let mut commit = BucketCommit::prepare(&live, &staged, &plugin_id)
+            .await
+            .unwrap();
+        commit.apply();
+
+        assert!(live.try_read().is_err(), "applied, but not released");
+        drop(commit);
+        assert_eq!(live.read().await.replaced, vec!["demo".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn scoped_registry_always_rebuilds_after_replacing() {
         let registry = ScopedRegistry::new(TestInner {
-            cleared: Vec::new(),
+            replaced: Vec::new(),
             rebuilt: 0,
         });
         let id = PluginId::new("demo").unwrap();
@@ -246,7 +411,7 @@ mod tests {
 
         let guard = registry.shared();
         let inner = guard.read().await;
-        assert_eq!(inner.cleared, vec!["demo".to_string()]);
+        assert_eq!(inner.replaced, vec!["demo".to_string()]);
         assert_eq!(inner.rebuilt, 1);
     }
 }

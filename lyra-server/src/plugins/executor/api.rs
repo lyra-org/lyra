@@ -20,6 +20,9 @@ use super::{
     },
 };
 
+/// How long an API handler may run.
+const API_HANDLER_BUDGET: std::time::Duration = std::time::Duration::from_secs(300);
+
 impl PluginExecutor {
     pub(super) fn start_api_handler(
         &self,
@@ -41,6 +44,10 @@ impl PluginExecutor {
             context
                 .caller
                 .insert(crate::plugins::auth::DispatchClient(request.client));
+            context.caller.insert(super::CallChain::root(
+                std::time::Instant::now() + API_HANDLER_BUDGET,
+                context.origin.plugin.clone(),
+            ));
             Ok::<_, anyhow::Error>((thread, context, ctx))
         };
         let (thread, context, argument) = match prepare() {
@@ -51,7 +58,7 @@ impl PluginExecutor {
             }
         };
         self.start_callback(
-            std::time::Instant::now() + std::time::Duration::from_secs(300),
+            std::time::Instant::now() + API_HANDLER_BUDGET,
             super::callbacks::CallbackReply::Api {
                 reply,
                 request: Box::new(request),
@@ -59,6 +66,7 @@ impl PluginExecutor {
                 context: context.clone(),
             },
             permit,
+            context.origin.plugin.clone(),
             |timeout, completion| {
                 let scheduler = self.vm.data().get::<LocalScheduler>()?;
                 scheduler.schedule_luau_thread_with_budget_and_completion(

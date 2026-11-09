@@ -44,15 +44,25 @@ impl PluginExecutor {
             .as_ref()
             .map(|(handler, _, _)| handler.mixer_id.clone())
             .unwrap_or_default();
+        let plugin = prepared
+            .as_ref()
+            .ok()
+            .and_then(|(handler, _, _)| handler.context.origin.plugin.clone());
         self.start_callback(
             std::time::Instant::now() + MIX_HANDLER_BUDGET,
             super::callbacks::CallbackReply::Mix { reply, mixer_id },
             permit,
+            plugin,
             |timeout, completion| {
                 let (handler, thread, argument) = prepared?;
                 let scheduler = self.vm.data().get::<LocalScheduler>()?;
+                let mut context = handler.context.clone();
+                context.caller.insert(super::CallChain::root(
+                    std::time::Instant::now() + timeout,
+                    context.origin.plugin.clone(),
+                ));
                 scheduler.schedule_luau_thread_with_budget_and_completion(
-                    handler.context.clone(),
+                    context,
                     self.vm.clone(),
                     thread.clone(),
                     vec![argument],
@@ -76,6 +86,7 @@ impl PluginExecutor {
 /// Runs the mixer on `vm`, the VM making the call, as a queued dispatch would.
 pub(super) async fn dispatch_mix_in_vm(
     vm: &luau::Vm,
+    chain: &super::CallChain,
     request: MixHandlerRequest,
 ) -> Result<MixHandlerResult> {
     let handler = vm
@@ -85,6 +96,7 @@ pub(super) async fn dispatch_mix_in_vm(
     let argument = mix_context_value(vm, &handler, &request)?;
     let values = super::metadata::run_function(
         vm,
+        chain,
         &handler.function,
         handler.context.clone(),
         vec![argument],

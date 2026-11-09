@@ -1488,15 +1488,15 @@ fn plugin_executor_rejects_handles_from_another_runtime() -> Result<()> {
         .build()?;
     let results = tokio_runtime.block_on(super::dispatch_id_links_in_vm(
         runtime.vm.clone(),
+        super::CallChain::root(std::time::Instant::now() + Duration::from_secs(5), None),
         "stale-b".to_string(),
         vec![id_link_call(stale.id_link)],
     ))?;
-    match &results[0] {
-        Err(crate::services::providers::IdLinkCallError::Failed(error)) => {
-            assert!(error.contains("belongs to plugin runtime"), "{error}");
-        }
-        other => panic!("a stale id link handle must fail, got {other:?}"),
-    }
+    assert_eq!(
+        results[0],
+        Err(crate::services::providers::IdLinkCallError::NotRun),
+        "a stale id link handle runs nothing, and nothing is remembered for it"
+    );
     Ok(())
 }
 
@@ -3204,5 +3204,79 @@ async fn a_crash_closes_the_websockets_of_its_runtime() -> Result<()> {
     tokio::time::timeout(Duration::from_secs(5), state.closed())
         .await
         .context("the crashed runtime's websocket was never closed")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn nested_calls_wait_by_their_chains_deadline() -> Result<()> {
+    use crate::services::plugin_dispatch::CallSource;
+    use crate::services::state::Transition;
+
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
+    let runtime = PluginExecutor::with_manifests(Arc::from(Vec::new()))?;
+    let generation = crate::services::STATE.generation();
+    let _transition = generation.begin_transition(Transition::Plugin {
+        plugin: crate::services::plugin_scope::PluginId::new("target")?,
+        targets: Arc::new(std::collections::HashSet::from(["provider".to_string()])),
+    });
+
+    let mut context = CallContext::default();
+    context.caller.insert(super::CallChain::root(
+        std::time::Instant::now() + Duration::from_millis(60),
+        None,
+    ));
+    let chained = super::VmCalls::of(&runtime.vm, &context)?;
+    let started = std::time::Instant::now();
+    assert!(chained.reach("provider").await.is_none());
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "the chain's deadline bounds the wait"
+    );
+
+    let unchained = super::VmCalls::of(&runtime.vm, &CallContext::default())?;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), unchained.reach("provider"))
+            .await
+            .is_err(),
+        "a task with no handler in its chain has the interactive budget"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_chain_past_its_deadline_holds_no_exemptions() -> Result<()> {
+    use crate::services::plugin_dispatch::CallSource;
+    use crate::services::state::Transition;
+
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
+    let runtime = PluginExecutor::with_manifests(Arc::from(Vec::new()))?;
+    let generation = crate::services::STATE.generation();
+    let _transition = generation.begin_transition(Transition::Plugin {
+        plugin: crate::services::plugin_scope::PluginId::new("target")?,
+        targets: Arc::new(std::collections::HashSet::from(["provider".to_string()])),
+    });
+    let chained = |deadline: std::time::Instant| -> Result<super::VmCalls> {
+        let mut context = CallContext::default();
+        context
+            .caller
+            .insert(super::CallChain::root(deadline, Some(Arc::from("target"))));
+        Ok(super::VmCalls::of(&runtime.vm, &context)?)
+    };
+
+    let live = chained(std::time::Instant::now() + Duration::from_secs(30))?;
+    assert!(
+        live.reach("provider").await.is_some(),
+        "a chain inside its deadline is exempt from its own plugin's transition"
+    );
+
+    let expired = chained(std::time::Instant::now() - Duration::from_millis(1))?;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), expired.reach("provider"))
+            .await
+            .is_err(),
+        "past its deadline the task waits like one with no chain"
+    );
     Ok(())
 }

@@ -4,7 +4,10 @@
 // www.meshiplaw.com/lyra.
 
 use std::{
-    collections::HashMap,
+    collections::{
+        HashMap,
+        HashSet,
+    },
     sync::Arc,
     time::Duration,
 };
@@ -142,8 +145,8 @@ pub(crate) struct MixRegistry {
     plugin_by_mixer: HashMap<String, PluginId>,
 }
 
-#[derive(Default)]
-struct MixerState {
+#[derive(Clone, Default)]
+pub(crate) struct MixerState {
     handlers: HashMap<MixShape, MixHandlerRegistration>,
     options: Vec<OptionDeclaration>,
 }
@@ -174,6 +177,32 @@ impl MixRegistry {
     fn state_mut(&mut self, mixer_id: &str) -> Option<&mut MixerState> {
         let plugin_id = self.plugin_by_mixer.get(mixer_id)?.clone();
         self.mixers.get_mut(&plugin_id)?.get_mut(mixer_id)
+    }
+
+    /// A read-only view of this registry with `plugin_id`'s bucket replaced by `staged`'s.
+    pub(crate) fn overlaid(&self, plugin_id: &PluginId, staged: &Self) -> Self {
+        let mut mixers = self
+            .mixers
+            .iter()
+            .filter(|(owner, _)| *owner != plugin_id)
+            .map(|(owner, bucket)| (owner.clone(), bucket.clone()))
+            .collect::<HashMap<_, _>>();
+        if let Some(bucket) = staged.mixers.get(plugin_id) {
+            mixers.insert(plugin_id.clone(), bucket.clone());
+        }
+        let mut view = Self {
+            mixers,
+            ..Self::default()
+        };
+        view.rebuild_derived();
+        view
+    }
+
+    pub(crate) fn mixer_ids(&self, plugin_id: &PluginId) -> HashSet<String> {
+        self.mixers
+            .get(plugin_id)
+            .map(|bucket| bucket.keys().cloned().collect())
+            .unwrap_or_default()
     }
 
     pub(crate) fn is_registered(&self, mixer_id: &str) -> bool {
@@ -241,8 +270,31 @@ impl MixRegistry {
 }
 
 impl PluginScopedInner for MixRegistry {
-    fn clear_bucket(&mut self, plugin_id: &PluginId) {
-        self.mixers.remove(plugin_id);
+    type Bucket = HashMap<String, MixerState>;
+
+    fn take_bucket(&mut self, plugin_id: &PluginId) -> Self::Bucket {
+        self.mixers.remove(plugin_id).unwrap_or_default()
+    }
+
+    fn check_bucket(&self, plugin_id: &PluginId, new: &Self::Bucket) -> Result<()> {
+        for mixer_id in new.keys() {
+            if let Some(existing) = self
+                .plugin_by_mixer
+                .get(mixer_id)
+                .filter(|existing| *existing != plugin_id)
+            {
+                bail!("mixer '{mixer_id}' already registered by plugin '{existing}'");
+            }
+        }
+        Ok(())
+    }
+
+    fn replace_bucket(&mut self, plugin_id: &PluginId, new: Self::Bucket) {
+        if new.is_empty() {
+            self.mixers.remove(plugin_id);
+        } else {
+            self.mixers.insert(plugin_id.clone(), new);
+        }
     }
 
     fn rebuild_derived(&mut self) {
