@@ -235,6 +235,9 @@ struct Track {
     /// Whether `file`'s entry is missing, as a sync that no longer found it leaves it.
     #[serde(default)]
     missing: bool,
+    /// Further libraries holding an entry of `file` of their own, as further sources of the track.
+    #[serde(default)]
+    also_in: Vec<String>,
     /// Identifier values by scheme, stored as [`ID_PROVIDER`]'s, which declares each scheme.
     #[serde(default)]
     identifiers: BTreeMap<String, String>,
@@ -845,7 +848,8 @@ impl Fixture {
             // its root under a key of its own.
             let holds_files = self.tracks.iter().try_fold(false, |found, track| {
                 let held = track.file.is_some()
-                    && self.release_library(track)? == Some(library.key.as_str());
+                    && (self.release_library(track)? == Some(library.key.as_str())
+                        || track.also_in.contains(&library.key));
                 anyhow::Ok(found || held)
             })?;
             let created = lyra_db::libraries::create_system(
@@ -1042,12 +1046,16 @@ impl Fixture {
                 "fixture track {} is missing but has no file",
                 track.key
             );
+            anyhow::ensure!(
+                track.file.is_some() || track.also_in.is_empty(),
+                "fixture track {} is held elsewhere but has no file",
+                track.key
+            );
             if let Some(file) = &track.file {
                 let library_db_id = match self.release_library(track)? {
                     Some(library) => keys.library(library)?,
                     None => folders.loose_library(db, &self.directory)?,
                 };
-                let parent = folders.place(db, library_db_id, track.folder.as_deref())?;
                 let path = self.directory.join(file);
                 anyhow::ensure!(
                     path.is_file(),
@@ -1055,47 +1063,54 @@ impl Fixture {
                     path.display()
                 );
                 let format = services::metadata::read_source_format(&path)?;
-                let entry = lyra_db::Entry {
-                    db_id: None,
-                    id: nanoid::nanoid!(),
-                    name: path
-                        .file_name()
-                        .context("fixture track file has a name")?
-                        .to_string_lossy()
-                        .into_owned(),
-                    size: std::fs::metadata(&path)?.len(),
-                    full_path: path,
-                    kind: lyra_db::entries::EntryKind::File,
-                    file_kind: Some("audio".into()),
-                    hash: None,
-                    file_modified_at_ms: 0,
-                    file_created_at_ms: 0,
-                    synced_at_ms: None,
-                    missing_at_ms: None,
-                };
-                let entry_db_id = db
-                    .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
-                    .ids()[0];
-                lyra_db::graph::ensure_owned_edge(db, parent, entry_db_id)?;
-                if track.missing {
-                    lyra_db::entries::set_missing(db, &[entry_db_id], 1)?;
+                let mut holders = vec![library_db_id];
+                for library in &track.also_in {
+                    holders.push(keys.library(library)?);
                 }
-                db.transaction_mut(|t| {
-                    lyra_db::track_sources::upsert(
-                        t,
-                        track_db_id,
-                        entry_db_id,
-                        lyra_db::track_sources::TrackSourceUpsert {
-                            source_kind: "embedded_tags".into(),
-                            source_key: track.key.clone(),
-                            is_primary: true,
-                            start_ms: track.start_ms,
-                            end_ms: track.end_ms,
-                            format,
-                        },
-                        None,
-                    )
-                })?;
+                for (index, library_db_id) in holders.into_iter().enumerate() {
+                    let parent = folders.place(db, library_db_id, track.folder.as_deref())?;
+                    let entry = lyra_db::Entry {
+                        db_id: None,
+                        id: nanoid::nanoid!(),
+                        name: path
+                            .file_name()
+                            .context("fixture track file has a name")?
+                            .to_string_lossy()
+                            .into_owned(),
+                        size: std::fs::metadata(&path)?.len(),
+                        full_path: path.clone(),
+                        kind: lyra_db::entries::EntryKind::File,
+                        file_kind: Some("audio".into()),
+                        hash: None,
+                        file_modified_at_ms: 0,
+                        file_created_at_ms: 0,
+                        synced_at_ms: None,
+                        missing_at_ms: None,
+                    };
+                    let entry_db_id = db
+                        .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
+                        .ids()[0];
+                    lyra_db::graph::ensure_owned_edge(db, parent, entry_db_id)?;
+                    if track.missing {
+                        lyra_db::entries::set_missing(db, &[entry_db_id], 1)?;
+                    }
+                    db.transaction_mut(|t| {
+                        lyra_db::track_sources::upsert(
+                            t,
+                            track_db_id,
+                            entry_db_id,
+                            lyra_db::track_sources::TrackSourceUpsert {
+                                source_kind: "embedded_tags".into(),
+                                source_key: format!("{}:{index}", track.key),
+                                is_primary: index == 0,
+                                start_ms: track.start_ms,
+                                end_ms: track.end_ms,
+                                format,
+                            },
+                            None,
+                        )
+                    })?;
+                }
             }
             keys.entities.insert(
                 track.key.clone(),

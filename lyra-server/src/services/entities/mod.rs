@@ -143,7 +143,7 @@ pub(crate) struct ProjectionEntryInfo {
     #[serde(skip_serializing)]
     pub(crate) db_id: Option<NodeId>,
     pub(crate) id: String,
-    pub(crate) full_path: String,
+    pub(crate) full_path: Option<String>,
     pub(crate) kind: String,
     pub(crate) name: String,
     pub(crate) hash: Option<String>,
@@ -151,12 +151,12 @@ pub(crate) struct ProjectionEntryInfo {
     pub(crate) file_modified_at_ms: u64,
 }
 
-impl From<lyra_db::Entry> for ProjectionEntryInfo {
-    fn from(value: lyra_db::Entry) -> Self {
+impl ProjectionEntryInfo {
+    pub(crate) fn new(value: lyra_db::Entry, include_full_path: bool) -> Self {
         Self {
             db_id: value.db_id.map(NodeId::from),
             id: value.id,
-            full_path: value.full_path.to_string_lossy().to_string(),
+            full_path: include_full_path.then(|| value.full_path.to_string_lossy().into_owned()),
             kind: value.kind.to_string(),
             name: value.name,
             hash: value.hash,

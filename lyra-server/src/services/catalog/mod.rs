@@ -224,6 +224,17 @@ impl Viewer {
         self.restricted().is_none()
     }
 
+    /// Whether the viewer reads entries with their `full_path`: only a user who manages libraries.
+    pub(crate) fn sees_entry_paths(&self) -> bool {
+        match self {
+            Self::User { principal, .. } => lyra_db::roles::has_permission(
+                &principal.permissions,
+                lyra_db::Permission::ManageLibraries,
+            ),
+            Self::System => false,
+        }
+    }
+
     /// The viewer's libraries, or `None` when the viewer sees every library.
     pub(crate) fn visible_libraries(
         &self,

@@ -102,7 +102,7 @@ async fn keyed<T>(
         .map(|(id, value)| (id, entries_of(value)))
         .collect::<Vec<_>>();
     let parents = EntryInfo::parents(&*db, found.iter().flat_map(|(_, entries)| entries))?;
-    let full_path = EntryInfo::shows_full_path(&viewer);
+    let full_path = viewer.sees_entry_paths();
     let mut values = Vec::with_capacity(found.len());
     for (id, entries) in found {
         let infos = entries

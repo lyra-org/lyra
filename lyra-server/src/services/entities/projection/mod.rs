@@ -337,6 +337,7 @@ pub(super) fn project_release(
 
 fn project_track(
     db: &DbAny,
+    viewer: &Viewer,
     track_id: DbId,
     track: Track,
     includes: &[EntityInclude],
@@ -380,8 +381,13 @@ fn project_track(
                     lookup_or_fetch(prefetched.entries_by_track.as_ref(), track_id, || {
                         relations::track_entries(db, track_id)
                     })?;
-                projection.includes.entries =
-                    Some(entries.into_iter().map(ProjectionEntryInfo::from).collect());
+                let include_full_path = viewer.sees_entry_paths();
+                projection.includes.entries = Some(
+                    crate::services::entries::visible(db, viewer, entries)?
+                        .into_iter()
+                        .map(|entry| ProjectionEntryInfo::new(entry, include_full_path))
+                        .collect(),
+                );
             }
             EntityInclude::Credits => {
                 projection.includes.credits = Some(lookup_or_fetch(
@@ -452,6 +458,7 @@ fn project_artist(
 
 /// Projects one entity; the `links` include only records ID rows in
 /// `ids`, for `apply_id_links` to fill once resolved.
+/// Projects an entity as the system reads it.
 pub(crate) fn project_entity(
     db: &DbAny,
     query_id: QueryId,
@@ -489,6 +496,7 @@ pub(crate) fn project_entity(
             let track = Track::from_db_element(&element)?;
             Ok(EntityProjectionInfo::Track(project_track(
                 db,
+                &Viewer::System,
                 entity_id,
                 track,
                 includes,
@@ -550,9 +558,10 @@ pub(crate) fn project_visible_entities(
     Ok(scoped)
 }
 
-/// Drops included tracks and entries that `viewer` can't see; a track's releases are scoped
-/// before projection, since its artists and credits fall back to theirs. A visible release's own
-/// tracks and artists share its libraries, so only the lists that can cross libraries are checked.
+/// Drops an artist's included releases and tracks that `viewer` can't see; a track's releases are
+/// scoped before projection, since its artists and credits fall back to theirs, and its entries as
+/// they are projected. A visible release's own tracks and artists share its libraries, so only the
+/// lists that can cross libraries are checked.
 fn retain_visible_includes(
     db: &DbAny,
     viewer: &Viewer,
@@ -561,26 +570,16 @@ fn retain_visible_includes(
     if viewer.sees_everything() {
         return Ok(());
     }
-    match projection {
-        EntityProjectionInfo::Release(_) => {}
-        EntityProjectionInfo::Track(track) => {
-            if let Some(entries) = &mut track.includes.entries {
-                retain_visible(db, viewer, entries, |entry| {
-                    entry.db_id.clone().map(DbId::from)
-                })?;
-            }
+    if let EntityProjectionInfo::Artist(artist) = projection {
+        if let Some(releases) = &mut artist.includes.releases {
+            retain_visible(db, viewer, releases, |release| {
+                release.db_id.clone().map(DbId::from)
+            })?;
         }
-        EntityProjectionInfo::Artist(artist) => {
-            if let Some(releases) = &mut artist.includes.releases {
-                retain_visible(db, viewer, releases, |release| {
-                    release.db_id.clone().map(DbId::from)
-                })?;
-            }
-            if let Some(tracks) = &mut artist.includes.tracks {
-                retain_visible(db, viewer, tracks, |track| {
-                    track.db_id.clone().map(DbId::from)
-                })?;
-            }
+        if let Some(tracks) = &mut artist.includes.tracks {
+            retain_visible(db, viewer, tracks, |track| {
+                track.db_id.clone().map(DbId::from)
+            })?;
         }
     }
     Ok(())
@@ -812,6 +811,7 @@ pub(crate) fn project_entities(
             ResolvedEntity::Track(track_id, track) => {
                 projections.push(EntityProjectionInfo::Track(project_track(
                     db,
+                    viewer,
                     track_id,
                     track,
                     includes,
@@ -843,6 +843,7 @@ mod tests {
     use lyra_db::fixtures::{
         connect,
         insert_artist,
+        insert_file_entry,
         insert_release,
         insert_track,
         test_user,
@@ -979,6 +980,32 @@ mod tests {
         assert_eq!(releases, ["Shown"]);
         assert_eq!(artists, ["Shown Artist"]);
         assert_eq!(credits, ["Shown Artist"]);
+        Ok(())
+    }
+
+    #[test]
+    fn the_system_reads_every_entry_of_a_track_without_its_path() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let library = insert_library(&mut db, "Library", "/music/library")?;
+        let track = insert_track(&mut db, "Track")?;
+        let file = insert_file_entry(&mut db, library, "track.flac")?;
+        connect(&mut db, track, file)?;
+
+        let projected = project_entities(
+            &db,
+            &Viewer::System,
+            vec![QueryId::Id(track)],
+            &[EntityInclude::Entries],
+            None,
+            &mut IdIncludes::new(&IdSchemes::default(), &[]),
+        )?;
+        let EntityProjectionInfo::Track(track) = &projected[0] else {
+            panic!("expected a track projection");
+        };
+        let entries = track.includes.entries.as_ref().expect("entries included");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "track.flac");
+        assert!(entries[0].full_path.is_none());
         Ok(())
     }
 

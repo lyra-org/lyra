@@ -1,0 +1,25 @@
+run_as = "viewer"
+
+[[users]]
+key = "viewer"
+
+[[libraries]]
+key = "shown"
+name = "Shown"
+users = ["viewer"]
+
+[[libraries]]
+key = "hidden"
+name = "Hidden"
+
+[[releases]]
+key = "seen"
+title = "Seen"
+library = "shown"
+
+[[tracks]]
+key = "both"
+title = "Both"
+release = "seen"
+file = "song.opus"
+also_in = ["hidden"]

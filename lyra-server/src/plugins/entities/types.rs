@@ -50,7 +50,9 @@ use crate::services::{
 /// Describes `$source` to Luau as the interface `$name`. The field list is
 /// checked against `$source`, so a renamed or removed field fails to build.
 macro_rules! describe_interface {
-    ($marker:ident for $source:ty, $name:literal, {$($field:tt : $field_ty:ty as $key:literal),* $(,)?}) => {
+    (@description) => { None };
+    (@description $description:literal) => { Some($description) };
+    ($marker:ident for $source:ty, $name:literal, {$($field:tt : $field_ty:ty as $key:literal $(= $description:literal)?),* $(,)?}) => {
                 pub(crate) struct $marker;
 
                 impl LuauTypeInfo for $marker {
@@ -68,7 +70,7 @@ macro_rules! describe_interface {
                         $(FieldDescriptor {
                             name: $key,
                             ty: <$field_ty as LuauTypeInfo>::luau_type(),
-                            description: None,
+                            description: describe_interface!(@description $($description)?),
                         }),*
                     ],
                 }
@@ -129,7 +131,7 @@ describe_interface!(LuauEntityLookupHints for EntityLookupHints, "EntityLookupHi
 
 describe_interface!(LuauProjectionEntryInfo for ProjectionEntryInfo, "ProjectionEntryInfo", {
     id: String as "id",
-    full_path: String as "full_path",
+    full_path: Option<String> as "full_path" = "The path on disk, for callers who manage libraries.",
     kind: String as "kind",
     name: String as "name",
     hash: Option<String> as "hash",

@@ -26,7 +26,6 @@ use harmony_luau::{
 };
 
 use crate::services::{
-    catalog::Viewer,
     covers::ResolvedCover,
     entries::PlacedEntry,
 };
@@ -408,17 +407,6 @@ impl EntryInfo {
         parent_ids.sort_unstable_by_key(|id| id.0);
         parent_ids.dedup();
         crate::plugins::ids::public_ids(db, &parent_ids)
-    }
-
-    /// Whether `viewer` reads entries with their `full_path`.
-    pub(crate) fn shows_full_path(viewer: &Viewer) -> bool {
-        match viewer {
-            Viewer::User { principal, .. } => lyra_db::roles::has_permission(
-                &principal.permissions,
-                lyra_db::Permission::ManageLibraries,
-            ),
-            Viewer::System => false,
-        }
     }
 }
 

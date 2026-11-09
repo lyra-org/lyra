@@ -134,6 +134,7 @@ file = "song.opus"   # an audio file, relative to the fixture, as the primary so
 start_ms = 1000      # optional, with end_ms: the source's span of the file, as a cue sheet's
 folder = "Amy/Solo"  # optional; the directories holding the file's entry in the release's library
 missing = true       # optional; the file's entry is missing, as a sync that no longer found it leaves it
+also_in = ["other"]  # optional; further libraries holding an entry of the file, as further sources
 identifiers = { "example:recording" = "r-1" } # optional values by scheme, under the `fixture` provider
 
 [[playlists]]
