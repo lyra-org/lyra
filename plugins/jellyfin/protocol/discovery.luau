@@ -13,6 +13,7 @@ local constants = require("../constants")
 
 type ServerInfo = {
 	port: number,
+	tls: boolean,
 }
 
 local module = {}
@@ -108,7 +109,8 @@ function module.start(server_info: ServerInfo)
 				continue
 			end
 
-			local address = `http://{local_ip}:{server_info.port}{constants.ROUTE_PREFIX}`
+			local scheme = if server_info.tls then "https" else "http"
+			local address = `{scheme}://{local_ip}:{server_info.port}{constants.ROUTE_PREFIX}`
 			local response = json.encode({
 				Address = address,
 				Id = constants.SERVER_ID,

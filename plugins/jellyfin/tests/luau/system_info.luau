@@ -9,6 +9,7 @@ local function info(published_url: string?, base_url: string?)
 		version = "1.0.0",
 		commit_hash = "abc",
 		port = 4746,
+		tls = false,
 		published_url = published_url,
 		setup = { account_required = false, plugin_selection_required = false },
 	}
