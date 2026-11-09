@@ -304,7 +304,7 @@ pub(crate) fn require_permission(
     Ok(())
 }
 
-pub(crate) fn require_grantable_permissions(
+pub(crate) fn require_held_permissions(
     principal: &Principal,
     permissions: &[Permission],
 ) -> Result<(), AuthError> {
@@ -315,7 +315,7 @@ pub(crate) fn require_grantable_permissions(
         .collect();
     if !missing.is_empty() {
         return Err(AuthError::Forbidden(format!(
-            "cannot grant permissions you do not hold: {}",
+            "requires permissions you do not hold: {}",
             missing.join(", ")
         )));
     }

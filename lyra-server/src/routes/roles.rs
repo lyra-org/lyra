@@ -35,8 +35,9 @@ use crate::{
     services::STATE,
     services::auth::{
         Principal,
-        require_grantable_permissions,
+        require_held_permissions,
         require_manage_roles,
+        require_permission,
     },
 };
 use lyra_db::{
@@ -174,12 +175,6 @@ fn ensure_admin_permission_removal_allowed(
         return Ok(());
     }
 
-    if !principal_has_admin(principal) {
-        return Err(AppError::forbidden(
-            "Admin permission required to remove admin permission from a role",
-        ));
-    }
-
     let assigned_users = lyra_db::roles::get_users_with_role(db, role_db_id)?;
     if assigned_users
         .iter()
@@ -224,7 +219,7 @@ async fn create_role(
     let principal = require_manage_roles(bearer_credential(&headers)).await?;
     let name = validate_role_name(&body.name)?;
     let permissions = normalize_permissions(body.permissions);
-    require_grantable_permissions(&principal, &permissions)?;
+    require_held_permissions(&principal, &permissions)?;
 
     let mut db = STATE.db.write().await;
     if lyra_db::roles::get_by_name(&db, &name)?.is_some() {
@@ -258,6 +253,8 @@ async fn update_role_definition(
     }
 
     let mut db = STATE.db.write().await;
+    let principal = principal.current(db.deref())?;
+    require_permission(&principal, Permission::ManageRoles)?;
     let (role_db_id, current_role) = resolve_role_by_public_id(db.deref(), &role_id)?;
     forbid_builtin_role_mutation(&current_role, "updated")?;
 
@@ -270,7 +267,8 @@ async fn update_role_definition(
         .map(normalize_permissions)
         .unwrap_or_else(|| current_role.permissions.clone());
 
-    require_grantable_permissions(&principal, &next_permissions)?;
+    require_held_permissions(&principal, &current_role.permissions)?;
+    require_held_permissions(&principal, &next_permissions)?;
     ensure_admin_permission_removal_allowed(
         db.deref(),
         &principal,
@@ -339,7 +337,7 @@ fn create_role_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn update_role_definition_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Update role").description(
-        "Updates a custom role's name and/or permissions. Built-in roles are immutable. Editing admin-capable roles requires Admin permission.",
+        "Updates a custom role's name and/or permissions. Built-in roles are immutable. Requires every permission the role grants, before and after the update.",
     )
 }
 
@@ -582,6 +580,50 @@ mod tests {
         .into_response()
         .status();
         assert_eq!(update_status, StatusCode::FORBIDDEN);
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn manage_roles_cannot_remove_a_permission_it_does_not_hold() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let headers = create_headers_with_role(
+            "role-manager",
+            "role-manager",
+            vec![Permission::ManageRoles],
+        )
+        .await?;
+        let role_id = {
+            let mut db = STATE.db.write().await;
+            let role = Role {
+                db_id: None,
+                id: nanoid!(),
+                name: "plugin_admin".to_string(),
+                permissions: vec![Permission::ManagePlugins],
+            };
+            lyra_db::roles::create(&mut db, &role)?;
+            role.id
+        };
+
+        let status = update_role_definition(
+            headers,
+            Path(role_id),
+            Json(UpdateRoleDefinitionRequest {
+                name: None,
+                permissions: Some(vec![]),
+            }),
+        )
+        .await
+        .expect_err("role manager should not strip a permission it does not hold")
+        .into_response()
+        .status();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        let db = STATE.db.read().await;
+        let role = lyra_db::roles::get_by_name(&db, "plugin_admin")?.expect("role exists");
+        assert_eq!(role.permissions, vec![Permission::ManagePlugins]);
 
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())

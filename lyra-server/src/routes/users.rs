@@ -50,7 +50,7 @@ use crate::{
             login_with_password,
             logout_with_token,
             owners,
-            require_grantable_permissions,
+            require_held_permissions,
             require_manage_roles,
             require_manage_users,
             require_permission,
@@ -366,7 +366,7 @@ async fn update_role(
         .db_id
         .ok_or_else(|| AppError::not_found("role has no db_id"))?;
 
-    require_grantable_permissions(&caller, &target_role.permissions)?;
+    require_held_permissions(&caller, &target_role.permissions)?;
 
     if !owners::holds_permissions_of(&*db, &caller, user_db_id)? {
         return Err(AppError::forbidden(
