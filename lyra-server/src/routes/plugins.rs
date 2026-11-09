@@ -114,14 +114,35 @@ fn map_plugin_restart_error(error: PluginRestartError) -> AppError {
     }
 }
 
+/// A plugin in the plugins directory. `name`, `version` and `description`
+/// are its manifest's: the one it loaded with, or the one on disk when it
+/// did not load. When that manifest cannot be read, `name` is the `id`,
+/// `description` is empty, and `version` is the installed release of a
+/// repository plugin and absent otherwise.
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
-struct PluginManifestResponse {
+struct PluginResponse {
+    /// The name of the plugin's directory, which a loaded plugin's manifest
+    /// id matches.
     id: String,
     name: String,
-    version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<String>,
     description: String,
+    load: LoadStateResponse,
     source: PluginSourceResponse,
+}
+
+/// Whether the plugin runtime runs the plugin. `not_loaded` plugins were
+/// left out when the plugins were last loaded, for the `reason`: a manifest
+/// that cannot be read or that requires another server version, a
+/// dependency that is missing or did not load, or an install since then.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+enum LoadStateResponse {
+    Loaded,
+    NotLoaded { reason: String },
 }
 
 /// Where an installed plugin came from. `local` plugins were placed in the
@@ -1024,45 +1045,28 @@ fn source_response(
     }))
 }
 
-fn manifest_responses(
-    manifests: &[harmony_core::plugin::PluginManifest],
-    plugins_dir: &std::path::Path,
-    subscriptions: &[repositories_service::Subscription],
-) -> Vec<PluginManifestResponse> {
-    let installed = repositories_service::installed_manifests(plugins_dir);
-    let records: Vec<_> = manifests
-        .iter()
-        .map(|manifest| SourceRecord::load(&plugins_dir.join(&manifest.id)))
-        .collect();
-    let managed: Vec<(String, SourceRecord)> = manifests
-        .iter()
-        .zip(&records)
-        .filter_map(|(manifest, record)| {
-            Some((manifest.id.clone(), record.as_ref().ok()?.clone()?))
-        })
-        .collect();
-    let mut statuses =
-        repositories_service::installed_statuses(&managed, subscriptions, &installed);
-    manifests
-        .iter()
-        .zip(records)
-        .map(|(manifest, record)| PluginManifestResponse {
-            id: manifest.id.clone(),
-            name: manifest.name.clone(),
-            version: manifest.version.to_string(),
-            description: manifest.description.clone(),
-            source: match record {
-                Ok(None) => PluginSourceResponse::Local,
-                Ok(Some(record)) => match statuses.remove(&manifest.id) {
-                    Some(status) => source_response(record, status),
-                    None => PluginSourceResponse::Local,
-                },
-                Err(error) => PluginSourceResponse::Invalid {
-                    error: error.to_string(),
-                },
+fn plugin_response(installation: repositories_service::Installation) -> PluginResponse {
+    use repositories_service::{
+        InstallSource,
+        LoadState,
+    };
+    PluginResponse {
+        id: installation.id,
+        name: installation.name,
+        version: installation.version,
+        description: installation.description,
+        load: match installation.load {
+            LoadState::Loaded => LoadStateResponse::Loaded,
+            LoadState::NotLoaded { reason } => LoadStateResponse::NotLoaded { reason },
+        },
+        source: match installation.source {
+            InstallSource::Local => PluginSourceResponse::Local,
+            InstallSource::Invalid(error) => PluginSourceResponse::Invalid {
+                error: error.to_string(),
             },
-        })
-        .collect()
+            InstallSource::Repository(install) => source_response(install.record, install.status),
+        },
+    }
 }
 
 fn props_to_response(props: &FieldProps) -> FieldPropsResponse {
@@ -1276,16 +1280,22 @@ fn build_status(
     }
 }
 
-async fn list_plugins(headers: HeaderMap) -> Result<Json<Vec<PluginManifestResponse>>, AppError> {
+async fn list_plugins(headers: HeaderMap) -> Result<Json<Vec<PluginResponse>>, AppError> {
     let _principal = require_manage_plugins(bearer_credential(&headers)).await?;
-    let manifests = crate::plugins::STATE.manifests();
+    // One scope for both, so a reload between the reads cannot pair one runtime's plugins with
+    // another's errors.
+    let (manifests, errors) = crate::plugins::STATE.discovered();
     let plugins_dir = STATE.boot.get().plugins_dir.clone();
     let subscriptions = repositories_service::list_subscriptions()
         .await
         .map_err(map_repository_error)?;
-    Ok(Json(tokio::task::block_in_place(|| {
-        manifest_responses(manifests.as_ref(), &plugins_dir, &subscriptions)
-    })))
+    let installations = tokio::task::block_in_place(|| {
+        repositories_service::installations(&manifests, &errors, &plugins_dir, &subscriptions)
+    })
+    .map_err(map_repository_error)?;
+    Ok(Json(
+        installations.into_iter().map(plugin_response).collect(),
+    ))
 }
 
 /// Whose settings a listing reports, resolved under the guard that reads them.
@@ -1695,7 +1705,7 @@ fn get_settings_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn list_plugins_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List plugins").description(
-        "Returns the loaded plugin manifests along with where each plugin was installed from: a `source` of kind `repository` (origin, ref, version, commit, pinned, official, status, offered, hold, installed_at, installed_automatically), `local`, or `invalid` (error) when the source record could not be read and the plugin should be uninstalled or reinstalled. `pinned` is true for tag and commit installs, which updates never move. `status` compares the installed version with the release that the subscribed repository of the same origin and ref last offered this server (`up_to_date`, `update_available`, `incompatible` with the `requires` that excludes this server, or `unknown` with the `reason` when it offered nothing for another reason, such as a missing `versions.json`, or no such subscription lists the plugin), without contacting the forge; refreshing the repository or updating plugins stores the offered releases. `offered` is the release on offer (version, commit, scopes) and `hold` why an available update to it waits for an admin: `adds_scopes` with the `gains` of each plugin it would let reach new scopes, through its own or its dependencies', with what they let it do and its risk before and after, `breaks_dependents` with each dependent's id and requirement, `unmet_dependencies` with each dependency the release requires that would be missing or at another version, or `dependency_cycle` with the `plugins` it would leave depending on each other in a cycle. Dependencies are judged as if every available update were installed together. `installed_automatically` is true when the daily update check, not a request, installed the release at `installed_at`.",
+        "Returns every installed plugin, sorted by id: the plugins the runtime loaded, the plugin directories it left out when it last loaded them, and plugins added since. `load` tells them apart: a `state` of `loaded`, or `not_loaded` with the `reason`, such as a manifest that requires another server version. A plugin that did not load is described by its manifest on disk when that can be read, and by its id and installed release otherwise, and can still be updated or uninstalled. Each plugin carries where it was installed from: a `source` of kind `repository` (origin, ref, version, commit, pinned, official, status, offered, hold, installed_at, installed_automatically), `local`, or `invalid` (error) when the source record could not be read and the plugin should be uninstalled or reinstalled. `pinned` is true for tag and commit installs, which updates never move. `status` compares the installed version with the release that the subscribed repository of the same origin and ref last offered this server (`up_to_date`, `update_available`, `incompatible` with the `requires` that excludes this server, or `unknown` with the `reason` when it offered nothing for another reason, such as a missing `versions.json`, or no such subscription lists the plugin), without contacting the forge; refreshing the repository or updating plugins stores the offered releases. `offered` is the release on offer (version, commit, scopes) and `hold` why an available update to it waits for an admin: `adds_scopes` with the `gains` of each plugin it would let reach new scopes, through its own or its dependencies', with what they let it do and its risk before and after, `breaks_dependents` with each dependent's id and requirement, `unmet_dependencies` with each dependency the release requires that would be missing or at another version, or `dependency_cycle` with the `plugins` it would leave depending on each other in a cycle. Dependencies are judged as if every available update were installed together. `installed_automatically` is true when the daily update check, not a request, installed the release at `installed_at`.",
     )
 }
 
@@ -2079,8 +2089,28 @@ mod tests {
         }
     }
 
+    /// The responses for the loaded `manifests`, in their order.
+    fn plugin_responses(
+        manifests: &[harmony_core::plugin::PluginManifest],
+        plugins_dir: &std::path::Path,
+        subscriptions: &[repositories_service::Subscription],
+    ) -> Vec<PluginResponse> {
+        let mut responses: Vec<_> =
+            repositories_service::installations(manifests, &[], plugins_dir, subscriptions)
+                .expect("installations")
+                .into_iter()
+                .map(plugin_response)
+                .collect();
+        responses.sort_by_key(|response| {
+            manifests
+                .iter()
+                .position(|manifest| manifest.id == response.id)
+        });
+        responses
+    }
+
     #[test]
-    fn manifest_responses_report_plugin_sources() -> anyhow::Result<()> {
+    fn plugin_responses_report_plugin_sources() -> anyhow::Result<()> {
         let plugins_dir = tempfile::TempDir::new()?;
         std::fs::create_dir(plugins_dir.path().join("local"))?;
         std::fs::create_dir(plugins_dir.path().join("managed"))?;
@@ -2107,7 +2137,7 @@ mod tests {
         }
         .store(&plugins_dir.path().join("managed"))?;
 
-        let responses = manifest_responses(
+        let responses = plugin_responses(
             &[manifest("local"), manifest("managed"), manifest("broken")],
             plugins_dir.path(),
             &[],
@@ -2132,7 +2162,82 @@ mod tests {
     }
 
     #[test]
-    fn manifest_responses_mark_official_installs_from_their_records_alone() -> anyhow::Result<()> {
+    fn plugins_that_did_not_load_are_listed_with_the_reason_and_their_update() -> anyhow::Result<()>
+    {
+        use repositories_service::installed_tests::{
+            ORIGIN,
+            discover,
+            offering,
+            write_manifest,
+        };
+        let plugins_dir = tempfile::TempDir::new()?;
+        for id in ["loaded", "refused", "unreadable"] {
+            let dir = plugins_dir.path().join(id);
+            crate::plugins::testing::write_plugin(&dir, id, &[], "")?;
+            SourceRecord {
+                schema_version: harmony_repository::manifest::SOURCE_RECORD_SCHEMA_VERSION,
+                origin: ORIGIN.into(),
+                forge: harmony_repository::Forge::GitHub,
+                git_ref: None,
+                version: semver::Version::new(1, 0, 0),
+                commit: "a".repeat(40),
+                pinned: false,
+                subpath: Some(format!("plugins/{id}")),
+                via_repository: None,
+                installed_at: None,
+                installed_automatically: false,
+            }
+            .store(&dir)?;
+        }
+        let refused = std::fs::read_to_string(plugins_dir.path().join("refused/plugin.json"))?
+            .replace(crate::plugins::testing::HOST_REQUIREMENT, "=0.0.0");
+        write_manifest(plugins_dir.path(), "refused", &refused);
+        write_manifest(plugins_dir.path(), "unreadable", "{");
+        std::fs::create_dir(plugins_dir.path().join("handmade"))?;
+        let (manifests, errors) = discover(plugins_dir.path())?;
+
+        let responses: Vec<_> = repositories_service::installations(
+            &manifests,
+            &errors,
+            plugins_dir.path(),
+            &[offering(&["loaded", "refused", "unreadable"])],
+        )?
+        .into_iter()
+        .map(plugin_response)
+        .collect();
+        let json = serde_json::to_value(&responses)?;
+
+        let [handmade, loaded, refused, unreadable] = &json.as_array().expect("an array")[..]
+        else {
+            panic!("{json}");
+        };
+        assert_eq!(loaded["load"], serde_json::json!({ "state": "loaded" }));
+        assert_eq!(
+            refused["load"],
+            serde_json::json!({
+                "state": "not_loaded",
+                "reason": format!(
+                    "plugin 'refused' requires lyra =0.0.0, but this is lyra {}",
+                    env!("CARGO_PKG_VERSION")
+                ),
+            })
+        );
+        for plugin in [loaded, refused, unreadable] {
+            assert_eq!(plugin["version"], "1.0.0", "{plugin}");
+            assert_eq!(plugin["source"]["status"], "update_available", "{plugin}");
+            assert_eq!(plugin["source"]["offered"]["version"], "2.0.0", "{plugin}");
+        }
+        assert_eq!(unreadable["name"], "unreadable");
+        assert_eq!(unreadable["load"]["state"], "not_loaded");
+        assert_eq!(handmade["id"], "handmade");
+        assert_eq!(handmade["load"]["state"], "not_loaded");
+        assert_eq!(handmade["source"], serde_json::json!({ "kind": "local" }));
+        assert!(handmade.get("version").is_none(), "{handmade}");
+        Ok(())
+    }
+
+    #[test]
+    fn plugin_responses_mark_official_installs_from_their_records_alone() -> anyhow::Result<()> {
         const OFFICIAL: &str = "https://git.lyra.pub/lyra/lyra?forge=gitlab";
         const INDEX: &str = "https://github.com/o/index";
         let plugins_dir = tempfile::TempDir::new()?;
@@ -2190,7 +2295,7 @@ mod tests {
         }];
 
         for subscriptions in [&subscribed[..], &[]] {
-            let json = serde_json::to_value(manifest_responses(
+            let json = serde_json::to_value(plugin_responses(
                 &manifests,
                 plugins_dir.path(),
                 subscriptions,
@@ -2218,7 +2323,7 @@ mod tests {
     }
 
     #[test]
-    fn manifest_responses_give_the_reason_a_status_is_unknown() -> anyhow::Result<()> {
+    fn plugin_responses_give_the_reason_a_status_is_unknown() -> anyhow::Result<()> {
         let plugins_dir = tempfile::TempDir::new()?;
         let origin = "https://github.com/o/r";
         for id in ["unsubscribed", "unreleased"] {
@@ -2269,7 +2374,7 @@ mod tests {
             }],
         }];
 
-        let responses = manifest_responses(
+        let responses = plugin_responses(
             &[manifest("unsubscribed"), manifest("unreleased")],
             plugins_dir.path(),
             &subscriptions,
@@ -2290,7 +2395,7 @@ mod tests {
     }
 
     #[test]
-    fn manifest_responses_report_offered_releases_and_holds() -> anyhow::Result<()> {
+    fn plugin_responses_report_offered_releases_and_holds() -> anyhow::Result<()> {
         let plugins_dir = tempfile::TempDir::new()?;
         let write_manifest = |id: &str, dependencies: serde_json::Value| {
             let dir = plugins_dir.path().join(id);
@@ -2370,14 +2475,14 @@ mod tests {
             entries: vec![entry("held", &[]), entry("scoped", &["lyra.metadata"])],
         }];
 
-        let responses = manifest_responses(
-            &[manifest("held"), manifest("scoped")],
+        let responses = plugin_responses(
+            &[manifest("dependent"), manifest("held"), manifest("scoped")],
             plugins_dir.path(),
             &subscriptions,
         );
         let json = serde_json::to_value(&responses)?;
 
-        let held = &json[0]["source"];
+        let held = &json[1]["source"];
         assert_eq!(held["status"], "update_available");
         assert_eq!(
             held["offered"],
@@ -2391,7 +2496,7 @@ mod tests {
             })
         );
         assert_eq!(held["installed_automatically"], true);
-        let scoped = &json[1]["source"];
+        let scoped = &json[2]["source"];
         assert_eq!(
             scoped["hold"],
             serde_json::json!({

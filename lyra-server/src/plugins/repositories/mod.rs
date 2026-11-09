@@ -66,9 +66,18 @@ use crate::services::STATE;
 use crate::services::boot::BuildInfo;
 
 mod auto_update;
+mod installed;
 mod status;
 
 pub(crate) use auto_update::run_update_checks;
+#[cfg(test)]
+pub(crate) use installed::tests as installed_tests;
+pub(crate) use installed::{
+    InstallSource,
+    Installation,
+    LoadState,
+    installations,
+};
 use lyra_db::plugin_repositories as repo_db;
 use status::{
     Candidate,

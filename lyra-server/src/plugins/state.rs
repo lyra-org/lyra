@@ -12,7 +12,10 @@ use std::{
     },
 };
 
-use harmony_core::plugin::PluginManifest;
+use harmony_core::plugin::{
+    PluginDiscoveryError,
+    PluginManifest,
+};
 use harmony_luau as luau;
 use tokio::sync::{
     OwnedRwLockWriteGuard,
@@ -50,6 +53,7 @@ use crate::{
 };
 
 pub(crate) type ManifestHandle = SwapHandle<Arc<[PluginManifest]>>;
+pub(crate) type DiscoveryErrorHandle = SwapHandle<Arc<[PluginDiscoveryError]>>;
 
 /// What the plugin layer keeps per database/config generation, across runtimes. It lives in
 /// [`services::state::GenerationState::layers`], so the services reset swaps it wholesale with the
@@ -66,6 +70,8 @@ pub(crate) struct GenerationState {
 #[derive(Clone, Default)]
 pub(crate) struct PluginScopeRegistries {
     pub(crate) manifests: ManifestHandle,
+    /// Why the runtime's discovery left plugins out.
+    pub(crate) discovery_errors: DiscoveryErrorHandle,
     pub(crate) settings: SettingsRegistries,
     pub(crate) api: ApiRouteRegistries,
 }
@@ -92,6 +98,7 @@ impl PluginScopeRegistries {
     ) -> anyhow::Result<PluginScopeCommit> {
         let Self {
             manifests: _,
+            discovery_errors: _,
             settings,
             api,
         } = self;
@@ -110,6 +117,7 @@ impl PluginScopeRegistries {
     pub(crate) async fn teardown_plugin(&self, plugin_id: &PluginId) {
         let Self {
             manifests: _,
+            discovery_errors: _,
             settings,
             api,
         } = self;
@@ -396,6 +404,17 @@ impl PluginState {
         self.scope().map_or_else(
             || Arc::from([]),
             |scope| scope.vm_scope.plugin.manifests.get(),
+        )
+    }
+
+    /// What the published runtime's discovery loaded and what it left out.
+    pub(crate) fn discovered(&self) -> (Arc<[PluginManifest]>, Arc<[PluginDiscoveryError]>) {
+        self.scope().map_or_else(
+            || (Arc::from([]), Arc::from([])),
+            |scope| {
+                let plugin = &scope.vm_scope.plugin;
+                (plugin.manifests.get(), plugin.discovery_errors.get())
+            },
         )
     }
 

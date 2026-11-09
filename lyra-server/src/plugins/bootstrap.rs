@@ -36,12 +36,12 @@ pub(crate) async fn initialize_harmony() -> Result<PluginRuntime> {
                 Some(STATE.settings.clone()),
             )
         })?;
-        for error in errors {
+        for error in &errors {
             tracing::warn!(error = %error, "plugin discovery error");
         }
-        runtime
-            .scope()
-            .plugin
+        let scope = &runtime.scope().plugin;
+        scope.discovery_errors.replace(Arc::from(errors));
+        scope
             .manifests
             .replace(Arc::from(runtime.plugin_manifests().await?));
         Ok(runtime)
