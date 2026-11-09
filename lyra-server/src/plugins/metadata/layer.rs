@@ -24,12 +24,17 @@ use crate::plugins::types::{
 use serde_json::Value as JsonValue;
 
 use super::parsing::parse_custom_field_version;
+use crate::plugins::errors::{
+    ErrorKind,
+    kinded,
+};
 use crate::plugins::ids;
 use crate::services::metadata::layers::json::input_from_json;
 use crate::services::metadata::layers::{
     CustomFieldChanges,
     ProviderValues,
 };
+use crate::services::metadata::merge_journal::MergeJournal;
 use lyra_db::ArtistRelationType;
 use lyra_db::CreditType;
 use lyra_db::DbAsync;
@@ -204,23 +209,37 @@ impl MetadataLayer {
             .clone();
         Ok(luau::ScheduledFuture::new(async move {
             let mut db = db.write().await;
-            let node_id = layer.target(&db)?;
+            let generation = crate::services::STATE.generation();
+            let journal = &generation.merge_journal;
+            let target = layer.target(&db, journal)?;
+            let node_id = target.db_id;
             let artist_id = |id: &str| {
-                ids::db_id_of(&db, id, "Artist")?.ok_or_else(|| {
-                    crate::plugins::runtime_error(format!("artist_id {id} is not an artist"))
-                })
+                let not_an_artist =
+                    || crate::plugins::runtime_error(format!("artist_id {id} is not an artist"));
+                let artist = write_target(&db, journal, id)?.ok_or_else(not_an_artist)?;
+                if ids::kind(&db, artist.db_id)?.as_deref() != Some("Artist") {
+                    return Err(not_an_artist());
+                }
+                Ok(artist)
             };
             let mut relations = LayerRelations::new();
             for (relation_type, entries) in layer.relations {
-                let inputs = entries
-                    .into_iter()
-                    .map(|(id, attributes)| {
-                        Ok(LayerRelationInput {
-                            artist_id: artist_id(&id)?,
-                            attributes,
-                        })
-                    })
-                    .collect::<luau::runtime::Result<Vec<_>>>()?;
+                let mut inputs = Vec::with_capacity(entries.len());
+                for (id, attributes) in entries {
+                    let artist = artist_id(&id)?;
+                    // A merge can make a stale relation point at its own owner, which a
+                    // provider did not ask for; naming the owner itself is still refused.
+                    if artist.db_id == node_id
+                        && (artist.merged || target.merged)
+                        && id != layer.node_id
+                    {
+                        continue;
+                    }
+                    inputs.push(LayerRelationInput {
+                        artist_id: artist.db_id,
+                        attributes,
+                    });
+                }
                 relations.insert(relation_type, inputs);
             }
             let mut credits = LayerCredits::new();
@@ -229,7 +248,7 @@ impl MetadataLayer {
                     .into_iter()
                     .map(|(id, detail)| {
                         Ok(LayerCreditInput {
-                            artist_id: artist_id(&id)?,
+                            artist_id: artist_id(&id)?.db_id,
                             detail,
                         })
                     })
@@ -309,19 +328,48 @@ impl MetadataLayer {
     }
 }
 
+/// A node a provider write names: the one its id names, or, for an id a merge took, the winner.
+pub(super) struct WriteTarget {
+    pub(super) db_id: agdb::DbId,
+    pub(super) merged: bool,
+}
+
+/// The node a provider write lands on; `None` when `id` names nothing, or a merge took it and the
+/// winner is gone too.
+pub(super) fn write_target(
+    db: &agdb::DbAny,
+    journal: &MergeJournal,
+    id: &str,
+) -> luau::runtime::Result<Option<WriteTarget>> {
+    if let Some(db_id) = ids::db_id(db, id)? {
+        return Ok(Some(WriteTarget {
+            db_id,
+            merged: false,
+        }));
+    }
+    let Some(winner) = journal.resolve(id) else {
+        return Ok(None);
+    };
+    Ok(ids::db_id(db, &winner)?.map(|db_id| WriteTarget {
+        db_id,
+        merged: true,
+    }))
+}
+
 impl LayerBuilderState {
     /// The release, track or artist the layer describes, checked against what the layer sets.
-    fn target(&self, db: &agdb::DbAny) -> luau::runtime::Result<agdb::DbId> {
-        let not_an_entity = || {
-            crate::plugins::runtime_error(format!(
-                "node_id {} is not a release, track or artist",
-                self.node_id
-            ))
-        };
-        let node_id = ids::db_id(db, &self.node_id)?.ok_or_else(not_an_entity)?;
-        let kind = lyra_db::entities::metadata_entity_type(db, node_id)
+    fn target(
+        &self,
+        db: &agdb::DbAny,
+        journal: &MergeJournal,
+    ) -> luau::runtime::Result<WriteTarget> {
+        let not_an_entity =
+            || format!("node_id {} is not a release, track or artist", self.node_id);
+        let target = write_target(db, journal, &self.node_id)?
+            .ok_or_else(|| kinded(ErrorKind::NotFound, not_an_entity()))?;
+        let kind = lyra_db::entities::metadata_entity_type(db, target.db_id)
             .map_err(crate::plugins::runtime_error)?
-            .ok_or_else(not_an_entity)?;
+            .ok_or_else(|| crate::plugins::runtime_error(not_an_entity()))?;
         let is_artist = kind == MetadataEntityType::Artist;
         if is_artist && !self.credits.is_empty() {
             return Err(crate::plugins::runtime_error(format!(
@@ -335,7 +383,7 @@ impl LayerBuilderState {
                 self.node_id
             )));
         }
-        Ok(node_id)
+        Ok(target)
     }
 }
 

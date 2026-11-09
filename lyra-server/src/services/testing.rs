@@ -71,6 +71,27 @@ pub(crate) fn publish_config(config: server_settings::Config) {
     }));
 }
 
+/// Merges `loser_id` into `winner_id` without a request's checks, recording it as a request
+/// would, for tests of what runs beside a merge.
+pub(crate) async fn merge_entities(winner_id: &str, loser_id: &str) -> anyhow::Result<()> {
+    use crate::services::metadata::changes::{
+        merge_into,
+        model::MergeKind,
+    };
+
+    let mut db = STATE.db.write().await;
+    let id_of = |db: &agdb::DbAny, id: &str| {
+        lyra_db::lookup::find_node_id_by_id(db, id)?
+            .ok_or_else(|| anyhow::anyhow!("{id} is missing"))
+    };
+    let (winner, loser) = (id_of(&db, winner_id)?, id_of(&db, loser_id)?);
+    let kind = MergeKind::of(&*db, winner)?
+        .ok_or_else(|| anyhow::anyhow!("{winner_id} can't be merged into"))?;
+    let merge = db.transaction_mut(|t| merge_into(t, kind, winner, loser))?;
+    STATE.generation().merge_journal.record(merge);
+    Ok(())
+}
+
 static RUNTIME_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 /// Held for the whole test; removes the data directory of the state initialized under it before

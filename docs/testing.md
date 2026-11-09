@@ -234,6 +234,13 @@ Its `task` waits whatever scopes the plugin declares, as a test polling for a ru
 harness.task:wait(0.05) -- yields the test for at least this many seconds
 ```
 
+Its `catalog` changes the catalog as other work would while a provider's handler runs:
+
+```luau
+harness.catalog:merge(winner_id, loser_id) -- merges as a request or a deduplication does
+harness.catalog:remove(id)                 -- deletes the entity, with nothing surviving it
+```
+
 Its `sockets` opens and closes plugin websockets in place of a client:
 
 ```luau

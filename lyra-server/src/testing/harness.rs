@@ -26,7 +26,7 @@ use crate::plugins::executor::{
 /// How long a [`TestPlugin::call`] may run, as long as an API handler may.
 const CALL_BUDGET: std::time::Duration = std::time::Duration::from_secs(300);
 
-/// `{ sockets = TestSockets, plugin = TestPlugin, task = TestTask }`.
+/// `{ sockets = TestSockets, plugin = TestPlugin, task = TestTask, catalog = TestCatalog }`.
 pub(super) fn value(vm: &luau::Vm, origin: &luau::ChunkOrigin) -> anyhow::Result<luau::Value> {
     let harness = vm.create_table()?;
     harness.set(
@@ -41,7 +41,47 @@ pub(super) fn value(vm: &luau::Vm, origin: &luau::ChunkOrigin) -> anyhow::Result
         "task",
         TestTask::class().create_value(vm, origin, TestTask)?,
     )?;
+    harness.set(
+        "catalog",
+        TestCatalog::class().create_value(vm, origin, TestCatalog)?,
+    )?;
     Ok(luau::Value::Table(harness))
+}
+
+#[harmony_macros::userdata(
+    name = "TestCatalog",
+    description = "Changes the catalog as work beside the plugin does."
+)]
+#[derive(Clone)]
+struct TestCatalog;
+
+#[harmony_macros::userdata_methods]
+impl TestCatalog {
+    /// Merges the entity `loser_id` into `winner_id` of its kind.
+    fn merge(
+        &self,
+        winner_id: String,
+        loser_id: String,
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
+        Ok(luau::ScheduledFuture::new(async move {
+            crate::services::testing::merge_entities(&winner_id, &loser_id)
+                .await
+                .map_err(crate::plugins::runtime_error)
+        }))
+    }
+
+    /// Deletes the entity `id` with nothing surviving it.
+    fn remove(&self, id: String) -> luau::runtime::Result<luau::ScheduledFuture> {
+        Ok(luau::ScheduledFuture::new(async move {
+            let mut db = crate::services::STATE.db.write().await;
+            let node = lyra_db::lookup::find_node_id_by_id(&*db, &id)
+                .map_err(crate::plugins::runtime_error)?
+                .ok_or_else(|| crate::plugins::runtime_error(format!("{id} is missing")))?;
+            lyra_db::metadata::cascade_remove_entities(&mut db, &[node])
+                .map_err(crate::plugins::runtime_error)?;
+            Ok(())
+        }))
+    }
 }
 
 #[harmony_macros::userdata(

@@ -1,0 +1,115 @@
+run_as = "owner"
+
+[[users]]
+key = "owner"
+admin = true
+
+[[artists]]
+key = "target_winner"
+name = "Target Winner"
+
+[[artists]]
+key = "target_loser"
+name = "Target Loser"
+
+[[artists]]
+key = "chain_first"
+name = "Chain First"
+
+[[artists]]
+key = "chain_second"
+name = "Chain Second"
+
+[[artists]]
+key = "chain_last"
+name = "Chain Last"
+
+[[artists]]
+key = "gone_winner"
+name = "Gone Winner"
+
+[[artists]]
+key = "gone_loser"
+name = "Gone Loser"
+
+[[artists]]
+key = "credit_winner"
+name = "Credit Winner"
+
+[[artists]]
+key = "credit_loser"
+name = "Credit Loser"
+
+[[artists]]
+key = "related"
+name = "Related"
+
+[[artists]]
+key = "related_loser"
+name = "Related Loser"
+
+[[artists]]
+key = "related_winner"
+name = "Related Winner"
+
+[[artists]]
+key = "self_winner"
+name = "Self Winner"
+
+[[artists]]
+key = "self_loser"
+name = "Self Loser"
+
+[[artists]]
+key = "named_self_winner"
+name = "Named Self Winner"
+
+[[artists]]
+key = "named_self_loser"
+name = "Named Self Loser"
+
+[[artists]]
+key = "unmatched_winner"
+name = "Unmatched Winner"
+
+[[artists]]
+key = "unmatched_loser"
+name = "Unmatched Loser"
+
+[[artists]]
+key = "unmatched_gone"
+name = "Unmatched Gone"
+
+[[releases]]
+key = "release_winner"
+title = "Release Winner"
+
+[[releases]]
+key = "release_loser"
+title = "Release Loser"
+
+[[releases]]
+key = "unmatched_release_winner"
+title = "Unmatched Release Winner"
+
+[[releases]]
+key = "unmatched_release_loser"
+title = "Unmatched Release Loser"
+
+[[releases]]
+key = "album"
+title = "Album"
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+disc = 1
+track = 1
+
+[[tracks]]
+key = "doomed_track"
+title = "Doomed Track"
+release = "album"
+disc = 1
+track = 2

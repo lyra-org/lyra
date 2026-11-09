@@ -63,7 +63,7 @@ use crate::services::{
 };
 
 impl MergeKind {
-    fn of(db: &impl DbAccess, entity: DbId) -> anyhow::Result<Option<Self>> {
+    pub(crate) fn of(db: &impl DbAccess, entity: DbId) -> anyhow::Result<Option<Self>> {
         Ok(match lyra_db::graph::element_kind(db, entity)?.as_deref() {
             Some("Artist") => Some(Self::Artist),
             Some("Release") => Some(Self::Release),
@@ -371,7 +371,7 @@ fn manual_fills(db: &impl DbAccess, targets: &Targets) -> anyhow::Result<Vec<Man
         .collect())
 }
 
-fn merge_into(
+pub(crate) fn merge_into(
     t: &mut DbAnyTransactionMut<'_>,
     kind: MergeKind,
     winner: DbId,

@@ -12,6 +12,7 @@
 
 mod external_ids;
 mod merge;
+pub(crate) use merge::merge_into;
 pub(crate) mod model;
 mod rename_genre;
 

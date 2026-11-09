@@ -33,6 +33,7 @@ use super::MetadataCallbackRegistry;
 use super::layer::{
     LayerOptions,
     MetadataLayer,
+    write_target,
 };
 use super::parsing::{
     ensure_provider_owner,
@@ -583,13 +584,25 @@ fn mark_unmatched_callback(
         };
         let mut db_write = db.write().await;
         let not_an_entity = || {
-            crate::plugins::runtime_error(format!(
+            format!(
                 "provider:mark_unmatched: node_id {node_id} does not reference a release, artist, or track"
-            ))
+            )
         };
-        let node_id =
-            crate::plugins::ids::db_id(&*db_write, &node_id)?.ok_or_else(not_an_entity)?;
-        let entity_type = entity_type_for_node(&db_write, node_id)?.ok_or_else(not_an_entity)?;
+        let generation = crate::services::STATE.generation();
+        let target =
+            write_target(&db_write, &generation.merge_journal, &node_id)?.ok_or_else(|| {
+                crate::plugins::errors::kinded(
+                    crate::plugins::errors::ErrorKind::NotFound,
+                    not_an_entity(),
+                )
+            })?;
+        // A failed lookup of the loser says nothing about the winner.
+        if target.merged {
+            return Ok(());
+        }
+        let node_id = target.db_id;
+        let entity_type = entity_type_for_node(&db_write, node_id)?
+            .ok_or_else(|| crate::plugins::runtime_error(not_an_entity()))?;
 
         {
             for (id_type, entities) in normalized_id_types.iter().zip(registered_entities) {

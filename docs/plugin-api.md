@@ -22,6 +22,15 @@ modules predate some of them.
 - A `require` path names an id as `external_ids.<scheme>`, such as
   `external_ids.musicbrainz:release`.
 
+## Writes Racing a Merge
+
+- `Layer:save` follows an artist or release id a merge took to the winner, for its target and for
+  the artists it credits or relates. A relation the merge left pointing at its own owner is dropped.
+  A credited or related artist that is really gone still raises, so the save fails.
+- `provider:mark_unmatched` on an id a merge took does nothing and succeeds: no match for the loser
+  says nothing about the winner.
+- Reads are exact: a merged id is missing everywhere else.
+
 ## Reading Many Items
 
 - A read takes a list of ids and returns a map keyed by id, as `tracks.get`,
