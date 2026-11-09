@@ -3,6 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use std::collections::HashSet;
+
 use agdb::{
     DbAny,
     DbAnyTransactionMut,
@@ -203,6 +205,29 @@ pub(crate) fn failure_ids(db: &impl super::DbAccess, run_db_id: DbId) -> anyhow:
         .ids())
 }
 
+/// Removes the library's runs past its newest `keep`, except the latest finished run of each
+/// kind, along with their failures.
+pub fn prune_for_library(db: &mut DbAny, library_id: &str, keep: usize) -> anyhow::Result<()> {
+    db.transaction_mut(|t| {
+        let mut finished_kinds = HashSet::new();
+        let mut removed = Vec::new();
+        for (index, run) in list_for_library(t, library_id)?.iter().enumerate() {
+            let latest_finished = !is_active(run) && finished_kinds.insert(run.kind.clone());
+            if index < keep || latest_finished {
+                continue;
+            }
+            if let Some(run_db_id) = run.db_id {
+                removed.extend(failure_ids(t, run_db_id)?);
+                removed.push(run_db_id);
+            }
+        }
+        if !removed.is_empty() {
+            t.exec_mut(QueryBuilder::remove().ids(removed).query())?;
+        }
+        Ok(())
+    })
+}
+
 pub fn list(db: &impl super::DbAccess) -> anyhow::Result<Vec<SyncRunRecord>> {
     let runs: Vec<SyncRunRecord> = db
         .exec(
@@ -279,12 +304,16 @@ pub fn active_for_library(
     db: &impl super::DbAccess,
     library_id: &str,
 ) -> anyhow::Result<Option<SyncRunRecord>> {
-    Ok(list_for_library(db, library_id)?.into_iter().find(|run| {
-        matches!(
-            run.status.as_str(),
-            "queued" | "planning" | "running" | "cancelling"
-        )
-    }))
+    Ok(list_for_library(db, library_id)?
+        .into_iter()
+        .find(is_active))
+}
+
+fn is_active(run: &SyncRunRecord) -> bool {
+    matches!(
+        run.status.as_str(),
+        "queued" | "planning" | "running" | "cancelling"
+    )
 }
 
 #[cfg(test)]
@@ -504,6 +533,65 @@ mod tests {
             2,
             "the failures are one hop past the members"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn pruning_keeps_the_newest_and_each_kinds_latest_finished_run() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let shown = insert_library(&mut db, "Music", "/runs")?;
+        let shown_id = library_public_id(&db, shown)?;
+        let other = insert_library(&mut db, "Other", "/other")?;
+        let other_id = library_public_id(&db, other)?;
+
+        for sequence in 1..=2 {
+            let kind = if sequence == 1 {
+                "library_purge"
+            } else {
+                "library_refresh"
+            };
+            persist(
+                &mut db,
+                &finished_run(&shown_id, &format!("old-{kind}"), kind, sequence),
+                Some(&failure(sequence)),
+            )?;
+        }
+        for sequence in 3..=8 {
+            let id = format!("run-{sequence}");
+            persist(
+                &mut db,
+                &finished_run(&shown_id, &id, "library_sync", sequence),
+                Some(&failure(1)),
+            )?;
+        }
+        persist(
+            &mut db,
+            &finished_run(&other_id, "untouched", "library_sync", 1),
+            Some(&failure(1)),
+        )?;
+
+        prune_for_library(&mut db, &shown_id, 3)?;
+
+        let kept: Vec<String> = list_for_library(&db, &shown_id)?
+            .into_iter()
+            .map(|run| run.id)
+            .collect();
+        assert_eq!(
+            kept,
+            [
+                "run-8",
+                "run-7",
+                "run-6",
+                "old-library_refresh",
+                "old-library_purge"
+            ]
+        );
+        assert!(failures_for_run(&db, "run-3")?.is_empty());
+        assert_eq!(ordinals(&db, "old-library_purge")?, [1]);
+        assert_eq!(ordinals(&db, "run-8")?, [1]);
+        assert_eq!(list_for_library(&db, &other_id)?.len(), 1);
+        assert_eq!(ordinals(&db, "untouched")?, [1]);
+        assert_eq!(failure_node_count(&db)?, 6, "pruned runs took theirs along");
         Ok(())
     }
 

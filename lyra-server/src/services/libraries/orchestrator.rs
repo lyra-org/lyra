@@ -971,6 +971,9 @@ fn failure_record(
 
 const SYNC_EVENT_BROADCAST_CAPACITY: usize = 512;
 
+/// The newest runs of a library kept when another starts, on top of each kind's latest finished
+/// run.
+const RUNS_KEPT_AT_START: usize = 49;
 /// The most failures stored per run; the run's count keeps going past it.
 const MAX_STORED_FAILURES: u64 = 200;
 const MAX_FAILURE_MESSAGE_BYTES: usize = 2_000;
@@ -1160,6 +1163,7 @@ pub(crate) async fn start_resolved_run<E: From<anyhow::Error>>(
     Ok(start_locked(db, library, run).await?)
 }
 
+/// Needs [`SYNC_START_LOCK`]: what it checks and removes holds only while starts are serialized.
 async fn start_locked(
     db: DbAsync,
     library: Library,
@@ -1174,6 +1178,9 @@ async fn start_locked(
             started: false,
             run: existing,
         });
+    }
+    if let Err(err) = prune_runs(&db, &library_id).await {
+        tracing::warn!(library_public_id = %library_id, error = %err, "failed to prune sync runs");
     }
 
     let (kind, label) = match run {
@@ -1679,6 +1686,12 @@ async fn reconcile_interrupted_runs(db: &DbAsync) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn prune_runs(db: &DbAsync, library_id: &str) -> anyhow::Result<()> {
+    // Removes sync run records only.
+    let mut db_write = db.write_outside_catalog().await;
+    lyra_db::sync_runs::prune_for_library(&mut db_write, library_id, RUNS_KEPT_AT_START)
+}
+
 async fn persist_record(
     db: &DbAsync,
     record: lyra_db::sync_runs::SyncRunRecord,
@@ -2058,6 +2071,15 @@ mod tests {
         state.record(None)
     }
 
+    async fn run_ids(library_id: &str) -> anyhow::Result<Vec<String>> {
+        Ok(
+            lyra_db::sync_runs::list_for_library(&*STATE.db.read().await, library_id)?
+                .into_iter()
+                .map(|run| run.id)
+                .collect(),
+        )
+    }
+
     async fn fail_units(progress: &SyncRunProgress, count: usize, message: &str) {
         for _ in 0..count {
             let details = SyncWorkDetails::new("metadata_parse_group");
@@ -2068,6 +2090,61 @@ mod tests {
                 .fail_work(work, SyncStageKey::MetadataParse, details, message)
                 .await;
         }
+    }
+
+    #[tokio::test]
+    async fn starting_a_run_prunes_all_but_the_newest_and_each_kinds_latest() -> anyhow::Result<()>
+    {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let library = test_library().await?;
+        let other = test_library().await?;
+        let db = STATE.db.get();
+        let mut old_runs = vec![
+            stored_run(&library.id, "old-purge", SyncRunKind::Purge, 1)?,
+            stored_run(&library.id, "old-refresh", SyncRunKind::Refresh, 2)?,
+        ];
+        for sequence in 3..=60 {
+            old_runs.push(stored_run(
+                &library.id,
+                &format!("sync-{sequence}"),
+                SyncRunKind::Sync,
+                sequence,
+            )?);
+        }
+        for record in &old_runs {
+            persist_record(
+                &db,
+                record.clone(),
+                Some(failure_record(
+                    1,
+                    SyncStageKey::Purge,
+                    SyncWorkDetails::new("purge_track"),
+                    "failed",
+                )),
+            )
+            .await;
+        }
+        let other_run = stored_run(&other.id, "other", SyncRunKind::Sync, 1)?;
+        persist_record(&db, other_run, None).await;
+
+        start_library_run(db.clone(), LibraryRun::Purge(PurgeScope::All), |db| {
+            still_exists(db, library.clone())
+        })
+        .await?;
+        tokio::time::timeout(Duration::from_secs(5), wait_for_running_library_syncs()).await?;
+
+        let kept = run_ids(&library.id).await?;
+        assert_eq!(kept.len(), 49 + 2 + 1, "{kept:?}");
+        assert!(kept.iter().any(|id| id == "old-purge"));
+        assert!(kept.iter().any(|id| id == "old-refresh"));
+        assert!(kept.iter().any(|id| id == "sync-60"));
+        assert!(kept.iter().any(|id| id == "sync-12"));
+        assert!(!kept.iter().any(|id| id == "sync-11"));
+        assert!(lyra_db::sync_runs::failures_for_run(&*db.read().await, "sync-11")?.is_empty());
+        assert_eq!(sync_run_failures("sync-12").await?.len(), 1);
+        assert_eq!(run_ids(&other.id).await?, ["other"]);
+        Ok(())
     }
 
     #[tokio::test]
