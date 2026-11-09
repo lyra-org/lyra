@@ -67,6 +67,8 @@ modules predate some of them.
 - The kinds are `not_found`, `forbidden` (the caller may not do it), `unauthenticated` (the
   credential the call acts for no longer verifies) and `conflict` (the target's state refuses the
   change).
+- A provider refresh handler ending with `not_found`, which a write to an entity that no longer
+  exists raises, counts as skipped rather than failed; what it saved first stays.
 - A kind joins the list only when it means the same for any module, with nothing specific to one
   function, and only once a plugin branches on it.
 

@@ -446,6 +446,7 @@ mod fake_dispatch {
             MixHandlerResult,
             PluginCallbackHandle,
             PluginDispatch,
+            RefreshTargetGone,
             SimilarReleasesDispatchRequest,
             SimilarReleasesDispatchResult,
         },
@@ -455,6 +456,8 @@ mod fake_dispatch {
     pub(crate) enum FakeResponse {
         Value(serde_json::Value),
         Error(String),
+        /// Fails as a handler does when something it was writing is gone.
+        TargetGone(String),
         /// Answers with the inner response once the semaphore grants a permit.
         Held(Arc<Semaphore>, Box<FakeResponse>),
         /// Never answers, so the call ends only when its dispatch is dropped.
@@ -563,6 +566,9 @@ mod fake_dispatch {
             match response {
                 FakeResponse::Value(value) => return Ok(value),
                 FakeResponse::Error(message) => bail!(message),
+                FakeResponse::TargetGone(message) => {
+                    return Err(RefreshTargetGone(message).into());
+                }
                 FakeResponse::Held(release, then) => {
                     release.acquire().await?.forget();
                     response = *then;

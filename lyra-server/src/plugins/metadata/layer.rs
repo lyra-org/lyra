@@ -214,6 +214,8 @@ impl MetadataLayer {
             let target = layer.target(&db, journal)?;
             let node_id = target.db_id;
             let artist_id = |id: &str| {
+                // Not kinded, unlike a missing target: the release is live and partly written, so
+                // its refresh is reported as failed rather than skipped.
                 let not_an_artist =
                     || crate::plugins::runtime_error(format!("artist_id {id} is not an artist"));
                 let artist = write_target(&db, journal, id)?.ok_or_else(not_an_artist)?;
@@ -365,6 +367,7 @@ impl LayerBuilderState {
     ) -> luau::runtime::Result<WriteTarget> {
         let not_an_entity =
             || format!("node_id {} is not a release, track or artist", self.node_id);
+        // The kind is what makes a refresh count as skipped rather than failed.
         let target = write_target(db, journal, &self.node_id)?
             .ok_or_else(|| kinded(ErrorKind::NotFound, not_an_entity()))?;
         let kind = lyra_db::entities::metadata_entity_type(db, target.db_id)

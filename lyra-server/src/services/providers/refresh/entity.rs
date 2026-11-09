@@ -81,7 +81,16 @@ pub(crate) async fn refresh_entity_metadata(
     let mut providers_called = Vec::new();
     for (callback, provider_options) in callbacks.into_iter().zip(provider_options) {
         let context = context_with_options(context.clone(), provider_options);
-        dispatch_refresh_callback(&callback.provider_id, callback.handler, context).await?;
+        match dispatch_refresh_callback(&callback.provider_id, callback.handler, context).await {
+            // What it saved first stays, so what follows the providers still runs for it.
+            Err(err) if err.is_target_gone() => tracing::debug!(
+                provider_id = %callback.provider_id,
+                entity_id = %target.public_id,
+                error = %err,
+                "a refresh's target went away during its handler"
+            ),
+            result => result?,
+        }
         providers_called.push(callback.provider_id);
     }
 

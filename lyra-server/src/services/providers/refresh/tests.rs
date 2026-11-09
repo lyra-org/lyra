@@ -23,7 +23,11 @@ use super::{
     provider_registry,
 };
 use crate::services::covers::CoverSyncOptions;
-use crate::services::libraries::SyncRunProgress;
+use crate::services::libraries::{
+    SyncRunProgress,
+    SyncStageKey,
+    SyncTotalState,
+};
 use crate::services::testing::{
     FakePluginDispatch,
     FakeResponse,
@@ -82,6 +86,75 @@ async fn wait_for_calls(dispatch: &FakePluginDispatch, handler: PluginCallbackHa
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     panic!("handler was not called {n} times");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_release_gone_between_providers_settles_the_scans_remaining_units() -> anyhow::Result<()>
+{
+    let _guard = runtime_test_lock().await;
+    init_default_test_state()?;
+    let dispatch = FakePluginDispatch::install();
+    let gate = Arc::new(Semaphore::new(0));
+    let first = dispatch.add(FakeResponse::Held(
+        gate.clone(),
+        Box::new(FakeResponse::Value(serde_json::Value::Null)),
+    ));
+    let second = dispatch.add(FakeResponse::Value(serde_json::Value::Null));
+    let third = dispatch.add(FakeResponse::Value(serde_json::Value::Null));
+    register_release_refresher("first", first).await?;
+    register_release_refresher("second", second).await?;
+    register_release_refresher("third", third).await?;
+    let (library, release, public_id) = {
+        let mut db = STATE.db.write().await;
+        let library = insert_library(&mut db, "Vanishing", "/vanishing")?;
+        let release = insert_release(&mut db, "Vanishing")?;
+        connect(&mut db, library, release)?;
+        (
+            lyra_db::libraries::get_by_id(&db, library)?.expect("library"),
+            release,
+            lyra_db::lookup::find_id_by_db_id(&*db, release)?,
+        )
+    };
+    let progress = crate::services::libraries::begin_test_run(&library).await;
+    progress
+        .add_stage_total(SyncStageKey::ProviderRefresh, 3, SyncTotalState::Final)
+        .await;
+
+    let scan = {
+        let library = library.db_id.expect("db id");
+        let progress = progress.clone();
+        tokio::spawn(async move {
+            super::library::refresh_release_metadata_for_scan(
+                library, release, progress, public_id, None,
+            )
+            .await
+        })
+    };
+    wait_for_calls(&dispatch, first, 1).await;
+    STATE
+        .db
+        .write()
+        .await
+        .exec_mut(agdb::QueryBuilder::remove().ids(release).query())?;
+    gate.add_permits(1);
+
+    scan.await?.map_err(|err| err.into_anyhow())?;
+    let run = crate::services::libraries::get_sync_run(progress.run_id())
+        .await?
+        .expect("run");
+    crate::services::libraries::end_test_run(&progress).await;
+
+    assert!(dispatch.calls(second).is_empty() && dispatch.calls(third).is_empty());
+    assert_eq!(
+        (
+            run.progress.completed_units,
+            run.progress.skipped_units,
+            run.progress.total_units
+        ),
+        (1, 2, 3),
+        "the units of the providers that never ran are skipped"
+    );
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -674,5 +747,101 @@ async fn a_run_cancelled_during_its_release_covers_leaves_the_cover_unit_unsettl
 
     assert!(error.is_cancellation());
     assert_eq!(run.progress.completed_units, 0);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sync_filter_stopped_by_a_gone_target_is_skipped_and_counts_as_touched()
+-> anyhow::Result<()> {
+    let _guard = runtime_test_lock().await;
+    init_default_test_state()?;
+    let dispatch = FakePluginDispatch::install();
+    let handler = dispatch.add(FakeResponse::Value(serde_json::Value::Null));
+    let filter = dispatch.add(FakeResponse::TargetGone("gone".to_string()));
+    register_release_refresher("filtered", handler).await?;
+    provider_registry().write().await.set_sync_filter_callback(
+        "filtered",
+        EntityType::Release,
+        filter,
+    );
+    let library = {
+        let mut db = STATE.db.write().await;
+        let library = insert_library(&mut db, "Filtered", "/filtered-gone")?;
+        let release = insert_release(&mut db, "Release")?;
+        connect(&mut db, library, release)?;
+        lyra_db::libraries::get_by_id(&db, library)?.expect("library")
+    };
+    let progress = crate::services::libraries::begin_test_run(&library).await;
+    let options = LibraryRefreshOptions {
+        covers: CoverSyncOptions::SKIP,
+        apply_sync_filters: true,
+        provider_id: None,
+    };
+
+    let refreshed = super::library::refresh_library_metadata(
+        library.db_id.expect("db id"),
+        &options,
+        progress.clone(),
+    )
+    .await
+    .map_err(|err| err.into_anyhow())?;
+    let run = crate::services::libraries::get_sync_run(progress.run_id())
+        .await?
+        .expect("run");
+    crate::services::libraries::end_test_run(&progress).await;
+
+    assert_eq!(
+        refreshed, 1,
+        "what the filter saved first still gets merged"
+    );
+    assert_eq!(run.progress.skipped_units, 1);
+    assert!(dispatch.calls(handler).is_empty());
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_entity_refresh_passes_over_a_provider_stopped_by_a_gone_target() -> anyhow::Result<()> {
+    let _guard = runtime_test_lock().await;
+    init_default_test_state()?;
+    let dispatch = FakePluginDispatch::install();
+    let gate = Arc::new(Semaphore::new(0));
+    let first = dispatch.add(FakeResponse::Held(
+        gate.clone(),
+        Box::new(FakeResponse::TargetGone("gone".to_string())),
+    ));
+    let second = dispatch.add(FakeResponse::Value(serde_json::Value::Null));
+    register_release_refresher("first", first).await?;
+    register_release_refresher("second", second).await?;
+    let (admin, release, release_id) = {
+        let mut db = STATE.db.write().await;
+        lyra_db::roles::ensure_builtin_roles(&mut db)?;
+        let user = lyra_db::test_db::insert_user(&mut db, "entity-refresh-admin")?;
+        lyra_db::roles::ensure_user_has_role(&mut db, user, lyra_db::roles::BUILTIN_ADMIN_ROLE)?;
+        let library = insert_library(&mut db, "Entity", "/entity-gone")?;
+        let release = insert_release(&mut db, "Release")?;
+        connect(&mut db, library, release)?;
+        let id = lyra_db::lookup::find_id_by_db_id(&*db, release)?.expect("public id");
+        drop(db);
+        (
+            crate::services::testing::user_principal(user).await?,
+            release,
+            id,
+        )
+    };
+
+    let refresh = tokio::spawn(async move {
+        crate::services::providers::refresh_entity(&admin, &release_id, Default::default()).await
+    });
+    wait_for_calls(&dispatch, first, 1).await;
+    STATE
+        .db
+        .write()
+        .await
+        .exec_mut(agdb::QueryBuilder::remove().ids(release).query())?;
+    gate.add_permits(1);
+
+    let result = refresh.await?.expect("the refresh ends without an error");
+    assert_eq!(result.providers_called, ["first", "second"]);
+    assert_eq!(dispatch.calls(second).len(), 1);
     Ok(())
 }

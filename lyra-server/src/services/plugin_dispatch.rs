@@ -124,6 +124,12 @@ pub(crate) struct MetadataRefreshResult {
     pub(crate) values: Vec<serde_json::Value>,
 }
 
+/// A refresh handler ended because the entity it was writing is gone, which
+/// [`PluginDispatch::dispatch_metadata_refresh`] fails with.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub(crate) struct RefreshTargetGone(pub(crate) String);
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct SimilarReleaseExternalRef {
     pub(crate) provider_id: String,

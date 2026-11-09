@@ -589,6 +589,7 @@ fn mark_unmatched_callback(
             )
         };
         let generation = crate::services::STATE.generation();
+        // The kind is what makes a refresh count as skipped rather than failed.
         let target =
             write_target(&db_write, &generation.merge_journal, &node_id)?.ok_or_else(|| {
                 crate::plugins::errors::kinded(
@@ -667,30 +668,35 @@ mod tests {
     }
 
     impl TempSearchPluginDir {
-        fn new() -> anyhow::Result<Self> {
+        fn with_plugin(id: &str, source: &str) -> anyhow::Result<Self> {
             let root = std::env::temp_dir().join(format!(
                 "lyra-search-plugin-test-{}-{}",
                 std::process::id(),
                 SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
             ));
-            let plugin_dir = root.join("searchtest");
+            let plugin_dir = root.join(id);
             std::fs::create_dir_all(&plugin_dir)?;
             std::fs::write(
                 plugin_dir.join("plugin.json"),
                 serde_json::json!({
                     "schema_version": 1,
-                    "id": "searchtest",
-                    "name": "Search Test",
+                    "id": id,
+                    "name": "Test Plugin",
                     "version": "1.0.0",
                     "lyra": crate::plugins::testing::HOST_REQUIREMENT,
-                    "description": "Search callback contract test",
+                    "description": "Provider contract test",
                     "entrypoint": "init.luau",
                     "scopes": ["lyra.metadata"]
                 })
                 .to_string(),
             )?;
-            std::fs::write(
-                plugin_dir.join("init.luau"),
+            std::fs::write(plugin_dir.join("init.luau"), source)?;
+            Ok(Self { plugins_dir: root })
+        }
+
+        fn new() -> anyhow::Result<Self> {
+            Self::with_plugin(
+                "searchtest",
                 r#"
                     local metadata = require("@lyra/metadata")
                     local provider = metadata.Provider.new("searchtest")
@@ -710,8 +716,7 @@ mod tests {
                         }
                     end)
                 "#,
-            )?;
-            Ok(Self { plugins_dir: root })
+            )
         }
     }
 
@@ -719,6 +724,103 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.plugins_dir);
         }
+    }
+
+    /// Writes a release's title and then, by its title, raises through a write to something gone.
+    const GONE_WRITES: &str = r#"
+        local metadata = require("@lyra/metadata")
+        local provider = metadata.Provider.new("gonetest")
+
+        provider:refresh(metadata.EntityType.Release, function(context)
+            local layer = provider:layer(context.id)
+            layer:set_field("release_title", "Written first")
+            layer:save()
+            if context.release_title == "Target Gone" then
+                local gone = provider:layer("no-such-node")
+                gone:set_field("track_title", "Nowhere")
+                gone:save()
+            elseif context.release_title == "Artist Gone" then
+                local credited = provider:layer(context.id)
+                credited:set_credits(metadata.CreditType.Artist, { { artist_id = "no-such-artist" } })
+                credited:save()
+            end
+            return nil
+        end)
+    "#;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_gone_target_is_skipped_and_a_gone_credited_artist_fails() -> anyhow::Result<()> {
+        use crate::services::covers::CoverSyncOptions;
+        use crate::services::providers::{
+            LibraryRefreshOptions,
+            refresh_library_metadata,
+        };
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_library_test_state(std::env::temp_dir()).await?;
+        let plugins = TempSearchPluginDir::with_plugin("gonetest", GONE_WRITES)?;
+        let server_info = crate::plugins::server::load_server_info().await?;
+        let auth_capabilities =
+            crate::plugins::auth::AuthCapabilities::from_config(&STATE.config().auth);
+        let (runtime, errors) =
+            crate::plugins::executor::PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
+                plugins.plugins_dir.clone(),
+                server_info,
+                auth_capabilities,
+                STATE.db.get(),
+                Vec::new(),
+                Some(STATE.settings.clone()),
+            )?;
+        assert!(errors.is_empty(), "{errors:?}");
+        runtime.exec_plugin("gonetest").await?;
+        crate::plugins::STATE.publish_runtime(runtime.clone());
+
+        let (library, target_gone, artist_gone) = {
+            let mut db = STATE.db.write().await;
+            let library = lyra_db::test_db::insert_library(&mut db, "Gone", "/gone-writes")?;
+            let target_gone = lyra_db::fixtures::insert_release(&mut db, "Target Gone")?;
+            let artist_gone = lyra_db::fixtures::insert_release(&mut db, "Artist Gone")?;
+            for release in [target_gone, artist_gone] {
+                lyra_db::fixtures::connect(&mut db, library, release)?;
+            }
+            (
+                lyra_db::libraries::get_by_id(&db, library)?.expect("library"),
+                target_gone,
+                artist_gone,
+            )
+        };
+        let progress = crate::services::libraries::begin_test_run(&library).await;
+        let options = LibraryRefreshOptions {
+            covers: CoverSyncOptions::SKIP,
+            apply_sync_filters: false,
+            provider_id: None,
+        };
+
+        refresh_library_metadata(library.db_id.expect("db id"), &options, progress.clone())
+            .await
+            .map_err(|err| err.into_anyhow())?;
+        let run = crate::services::libraries::get_sync_run(progress.run_id())
+            .await?
+            .expect("run");
+        crate::services::libraries::end_test_run(&progress).await;
+
+        assert_eq!(
+            (
+                run.progress.skipped_units,
+                run.progress.failed_units,
+                run.progress.completed_units
+            ),
+            (1, 1, 0),
+            "the gone target is skipped, the gone credited artist fails"
+        );
+        let db = STATE.db.read().await;
+        for release in [target_gone, artist_gone] {
+            let saved = lyra_db::releases::get_by_id(&db, release)?.expect("release");
+            assert_eq!(saved.release_title, "Written first", "the first save stays");
+        }
+        drop(db);
+        crate::plugins::STATE.clear_runtime();
+        Ok(())
     }
 
     #[tokio::test]

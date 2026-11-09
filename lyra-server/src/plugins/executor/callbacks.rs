@@ -8,6 +8,7 @@ use super::{
     PluginExecutor,
     SimilarReleasesDispatchResult,
 };
+use crate::services::plugin_dispatch::RefreshTargetGone;
 use anyhow::{
     Context,
     Result,
@@ -17,6 +18,7 @@ use harmony_core::{
     LocalLuauTaskCompletion,
     LocalScheduler,
 };
+use harmony_luau::StringEnum;
 use std::{
     rc::Rc,
     time::{
@@ -67,6 +69,19 @@ impl CallbackReply {
                 cancellation,
                 ..
             } => reply.is_closed() || cancellation.is_cancelled(),
+        }
+    }
+
+    /// A handler's failure as this reply's receiver reads it: to a metadata refresh or its sync
+    /// filter, `not_found` says the entity it was writing is gone.
+    fn failure(&self, error: harmony_luau::RaisedError) -> anyhow::Error {
+        match self {
+            Self::Refresh(_)
+                if error.kind == Some(crate::plugins::errors::ErrorKind::NotFound.as_str()) =>
+            {
+                anyhow::Error::new(RefreshTargetGone(error.message))
+            }
+            _ => anyhow::Error::msg(error.message),
         }
     }
 
@@ -220,7 +235,7 @@ impl PluginExecutor {
                 let mut context = std::task::Context::from_waker(std::task::Waker::noop());
                 match task.completion.poll(&mut context) {
                     std::task::Poll::Ready(result) => {
-                        Some(result.map_err(|error| anyhow::Error::msg(error.message)))
+                        Some(result.map_err(|error| task.reply.failure(error)))
                     }
                     std::task::Poll::Pending => None,
                 }
@@ -232,6 +247,44 @@ impl PluginExecutor {
             } else {
                 index += 1;
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::oneshot;
+
+    use super::*;
+
+    fn not_found() -> harmony_luau::RaisedError {
+        harmony_luau::RaisedError {
+            kind: Some("not_found"),
+            message: "gone".to_string(),
+        }
+    }
+
+    #[test]
+    fn only_a_metadata_refresh_reads_not_found_as_its_target_gone() {
+        let (refresh, _refresh_answer) = oneshot::channel();
+        assert!(
+            CallbackReply::Refresh(refresh)
+                .failure(not_found())
+                .is::<RefreshTargetGone>()
+        );
+
+        let (source, _source_answer) = oneshot::channel();
+        let (mix, _mix_answer) = oneshot::channel();
+        for reply in [
+            CallbackReply::Source(source),
+            CallbackReply::Mix {
+                reply: mix,
+                mixer_id: "mixer".to_string(),
+            },
+        ] {
+            let failure = reply.failure(not_found());
+            assert!(!failure.is::<RefreshTargetGone>());
+            assert_eq!(failure.to_string(), "gone");
         }
     }
 }

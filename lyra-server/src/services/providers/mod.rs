@@ -198,6 +198,14 @@ impl ProviderServiceError {
         )
     }
 
+    /// Whether a handler stopped because something it was writing is gone.
+    pub(crate) fn is_target_gone(&self) -> bool {
+        matches!(
+            self,
+            Self::Internal(err) if err.is::<crate::services::plugin_dispatch::RefreshTargetGone>()
+        )
+    }
+
     /// The error as an [`anyhow::Error`], an internal one unwrapped so what it holds, such as a
     /// run's cancellation, can still be downcast to.
     pub(crate) fn into_anyhow(self) -> anyhow::Error {
