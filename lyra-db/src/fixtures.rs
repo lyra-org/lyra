@@ -122,6 +122,29 @@ pub fn connect(db: &mut DbAny, from: DbId, to: DbId) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// An audio file entry named `name`, held by `parent`, a library or directory entry.
+pub fn insert_file_entry(db: &mut DbAny, parent: DbId, name: &str) -> anyhow::Result<DbId> {
+    let entry = super::entries::Entry {
+        db_id: None,
+        id: nanoid!(),
+        full_path: format!("/music/{name}").into(),
+        kind: super::entries::EntryKind::File,
+        file_kind: Some("audio".to_string()),
+        name: name.to_string(),
+        hash: None,
+        size: 1,
+        file_modified_at_ms: 1,
+        file_created_at_ms: 1,
+        synced_at_ms: None,
+        missing_at_ms: None,
+    };
+    let entry_db_id = db
+        .exec_mut(QueryBuilder::insert().element(&entry).query())?
+        .ids()[0];
+    connect(db, parent, entry_db_id)?;
+    Ok(entry_db_id)
+}
+
 #[cfg(any(test, feature = "testing"))]
 pub fn connect_credit(
     db: &mut DbAny,

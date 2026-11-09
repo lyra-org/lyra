@@ -450,6 +450,7 @@ pub(crate) fn release_page(
         library_id.as_deref(),
     )?;
 
+    let viewer = catalog::Viewer::user(db, principal.clone())?;
     let (release_items, next_cursor) = if let Some(page) = page_request.resume(&snapshot_key)? {
         let release_items = super::load_snapshot_items(
             db,
@@ -462,7 +463,6 @@ pub(crate) fn release_page(
         (release_items, page.next_cursor)
     } else {
         let genres = resolve_genre_id_filter(db, principal, &parse_genre_id_filter(genre_id))?;
-        let viewer = catalog::Viewer::user(db, principal.clone())?;
         let mut query = catalog::Query::<Releases>::new(ReleaseFilter {
             library,
             genres,
@@ -484,7 +484,7 @@ pub(crate) fn release_page(
             page.next_cursor,
         )
     };
-    let details = releases::list_details_for_releases(db, includes, release_items)?;
+    let details = releases::list_details_for_releases(db, &viewer, includes, release_items)?;
     let items = release_responses(
         db,
         principal,
@@ -557,7 +557,8 @@ async fn get_release(
         release_db_id,
         || AppError::not_found(format!("Release not found: {id}")),
     )?;
-    let detail = releases::get_details(db, release_db_id, includes)?
+    let viewer = catalog::Viewer::user(db, principal.clone())?;
+    let detail = releases::get_details(db, &viewer, release_db_id, includes)?
         .ok_or_else(|| AppError::not_found(format!("Release not found: {}", id)))?;
 
     let mut responses = release_responses(
@@ -700,6 +701,7 @@ mod tests {
     use lyra_db::fixtures::insert_release as insert_test_release;
     use lyra_db::fixtures::{
         connect,
+        insert_file_entry,
         insert_track,
     };
     use lyra_db::test_db::{
@@ -958,6 +960,67 @@ mod tests {
             .map_err(|err| anyhow::anyhow!("{err:?}"))?;
         assert!(second.items.is_empty());
         assert!(second.next_cursor.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn release_list_entries_leave_out_libraries_the_caller_cannot_see() -> anyhow::Result<()>
+    {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let principal = {
+            let mut db = STATE.db.write().await;
+            let user_db_id = lyra_db::test_db::insert_user(&mut db, "release-entry-manager")?;
+            let shown = insert_library(&mut db, "Shown", "/music/shown")?;
+            let hidden = insert_library(&mut db, "Hidden", "/music/hidden")?;
+            let shown_public_id = lyra_db::libraries::get_by_id(&*db, shown)?
+                .ok_or_else(|| anyhow::anyhow!("library missing"))?
+                .id;
+            let release = insert_test_release(&mut db, "Spanning")?;
+            let track = insert_track(&mut db, "Shared")?;
+            connect(&mut db, release, track)?;
+            for library in [shown, hidden] {
+                connect(&mut db, library, release)?;
+                connect(&mut db, library, track)?;
+            }
+            let shown_file = insert_file_entry(&mut db, shown, "shown.flac")?;
+            let hidden_file = insert_file_entry(&mut db, hidden, "hidden.flac")?;
+            connect(&mut db, track, shown_file)?;
+            connect(&mut db, track, hidden_file)?;
+            Principal::for_user(
+                &*db,
+                user_db_id,
+                vec![Permission::ManageLibraries],
+                std::collections::HashSet::from([shown_public_id]),
+            )
+        };
+
+        let page = list_release_responses(
+            &principal,
+            ReleaseListOptions {
+                inc: Some(vec!["entries".to_string()]),
+                query: None,
+                year: None,
+                library_id: None,
+                genre_id: None,
+                sort_by: None,
+                sort_order: None,
+                personal: catalog::PersonalFilter::default(),
+                available: None,
+                page_request: crate::routes::SnapshotPageRequest::first_page(100),
+            },
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+
+        let items = serde_json::to_value(page.items)?;
+        let entries = items[0]["entries"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("expected entries"))?;
+        assert_eq!(entries.len(), 1, "{entries:?}");
+        assert_eq!(entries[0]["name"], "shown.flac");
+        assert_eq!(entries[0]["full_path"], "/music/shown.flac");
         Ok(())
     }
 

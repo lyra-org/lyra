@@ -16,9 +16,13 @@ use lyra_db::{
     Track,
 };
 
-use super::entities::{
-    ResolvedCreditedArtist,
-    relations,
+use super::{
+    catalog::Viewer,
+    entities::{
+        ResolvedCreditedArtist,
+        relations,
+    },
+    entries as entry_service,
 };
 
 pub(crate) mod chains;
@@ -51,6 +55,7 @@ pub(crate) struct ReleaseDetails {
 
 pub(crate) fn list_details_for_releases(
     db: &DbAny,
+    viewer: &Viewer,
     includes: ReleaseIncludes,
     releases: Vec<Release>,
 ) -> anyhow::Result<Vec<ReleaseDetails>> {
@@ -101,7 +106,11 @@ pub(crate) fn list_details_for_releases(
             None
         };
         let entries = if includes.entries {
-            Some(relations::unique_entries_for_tracks(db, &release_tracks)?)
+            Some(entry_service::visible(
+                db,
+                viewer,
+                relations::unique_entries_for_tracks(db, &release_tracks)?,
+            )?)
         } else {
             None
         };
@@ -126,6 +135,7 @@ pub(crate) fn list_details_for_releases(
 
 pub(crate) fn get_details(
     db: &DbAny,
+    viewer: &Viewer,
     release_db_id: DbId,
     includes: ReleaseIncludes,
 ) -> anyhow::Result<Option<ReleaseDetails>> {
@@ -133,9 +143,11 @@ pub(crate) fn get_details(
         return Ok(None);
     };
 
-    Ok(list_details_for_releases(db, includes, vec![release])?
-        .into_iter()
-        .next())
+    Ok(
+        list_details_for_releases(db, viewer, includes, vec![release])?
+            .into_iter()
+            .next(),
+    )
 }
 
 #[cfg(test)]
@@ -151,6 +163,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::services::auth::Principal;
     use crate::services::catalog::{
         self,
         pipeline::Catalog,
@@ -163,11 +176,19 @@ mod tests {
     use crate::services::entities::ArtistCreditSource;
     use anyhow::Context;
     use lyra_db::Artist;
+    use lyra_db::fixtures::{
+        connect,
+        insert_file_entry,
+        insert_track,
+        test_user,
+    };
     use lyra_db::test_db::{
         connect_artist,
+        insert_library,
         new_test_db,
     };
     use nanoid::nanoid;
+    use std::collections::HashSet;
 
     fn list_details_with_query(
         db: &DbAny,
@@ -178,6 +199,7 @@ mod tests {
         let releases = Releases::hydrate(db, &ids)?;
         list_details_for_releases(
             db,
+            &catalog::Viewer::System,
             includes,
             releases.into_iter().map(|release| release.item).collect(),
         )
@@ -264,7 +286,12 @@ mod tests {
     #[test]
     fn get_details_returns_none_for_missing_release() -> anyhow::Result<()> {
         let db = new_test_db()?;
-        let result = get_details(&db, DbId(999_999), ReleaseIncludes::default())?;
+        let result = get_details(
+            &db,
+            &catalog::Viewer::System,
+            DbId(999_999),
+            ReleaseIncludes::default(),
+        )?;
         assert!(result.is_none());
         Ok(())
     }
@@ -326,7 +353,8 @@ mod tests {
             track_artists: false,
             entries: false,
         };
-        let details = get_details(&db, release_id, includes)?.expect("release should exist");
+        let details = get_details(&db, &catalog::Viewer::System, release_id, includes)?
+            .expect("release should exist");
 
         assert_eq!(details.release.release_title, "Kind of Blue");
         assert_eq!(details.release_db_id, release_id);
@@ -356,10 +384,83 @@ mod tests {
             track_artists: false,
             entries: false,
         };
-        let details = get_details(&db, release_id, includes)?.expect("release should exist");
+        let details = get_details(&db, &catalog::Viewer::System, release_id, includes)?
+            .expect("release should exist");
         assert!(details.artists.is_none());
         assert!(details.tracks.is_none());
         assert!(details.entries.is_none());
+        Ok(())
+    }
+
+    fn entry_names(details: ReleaseDetails) -> Vec<String> {
+        let mut names = details
+            .entries
+            .expect("entries should be included")
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect::<Vec<_>>();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn release_entries_stop_at_the_libraries_the_viewer_sees() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = lyra_db::users::create(&mut db, &test_user("listener")?)?;
+        let shown = insert_library(&mut db, "Shown", "/music/shown")?;
+        let hidden = insert_library(&mut db, "Hidden", "/music/hidden")?;
+        let shown_public_id = lyra_db::libraries::get_by_id(&db, shown)?.unwrap().id;
+        let release_id = insert_release(&mut db, "Spanning", None, None, None)?;
+        connect(&mut db, shown, release_id)?;
+        connect(&mut db, hidden, release_id)?;
+
+        let shown_file = insert_file_entry(&mut db, shown, "shown.flac")?;
+        let hidden_file = insert_file_entry(&mut db, hidden, "hidden.flac")?;
+        let shared = insert_track(&mut db, "Shared")?;
+        let second = insert_track(&mut db, "Second")?;
+        for track in [shared, second] {
+            connect(&mut db, release_id, track)?;
+            connect(&mut db, shown, track)?;
+            connect(&mut db, track, shown_file)?;
+        }
+        connect(&mut db, hidden, shared)?;
+        connect(&mut db, shared, hidden_file)?;
+
+        let includes = ReleaseIncludes {
+            entries: true,
+            ..ReleaseIncludes::default()
+        };
+        // Managing libraries doesn't lift library restriction; only Admin does.
+        let manager = catalog::Viewer::user(
+            &db,
+            Principal::for_user(
+                &db,
+                user_db_id,
+                vec![lyra_db::Permission::ManageLibraries],
+                HashSet::from([shown_public_id]),
+            ),
+        )?;
+        let admin = catalog::Viewer::user(
+            &db,
+            Principal::for_user(
+                &db,
+                user_db_id,
+                vec![lyra_db::Permission::Admin],
+                HashSet::new(),
+            ),
+        )?;
+
+        assert_eq!(
+            entry_names(get_details(&db, &manager, release_id, includes)?.unwrap()),
+            ["shown.flac"],
+            "the shown file appears once, and the hidden library's not at all"
+        );
+        for viewer in [&admin, &catalog::Viewer::System] {
+            assert_eq!(
+                entry_names(get_details(&db, viewer, release_id, includes)?.unwrap()),
+                ["hidden.flac", "shown.flac"]
+            );
+        }
         Ok(())
     }
 

@@ -217,6 +217,25 @@ pub(crate) fn visible_ids(db: &DbAny, viewer: &Viewer, ids: &[DbId]) -> anyhow::
     Ok(visible)
 }
 
+/// `entries` without those the viewer can't see, in order.
+pub(crate) fn visible(
+    db: &DbAny,
+    viewer: &Viewer,
+    entries: Vec<Entry>,
+) -> anyhow::Result<Vec<Entry>> {
+    let ids = entries
+        .iter()
+        .filter_map(|entry| entry.db_id)
+        .collect::<Vec<_>>();
+    let seen = visible_ids(db, viewer, &ids)?
+        .into_iter()
+        .collect::<HashSet<_>>();
+    Ok(entries
+        .into_iter()
+        .filter(|entry| entry.db_id.is_some_and(|id| seen.contains(&id)))
+        .collect())
+}
+
 /// The entries with these ids that the viewer can see, keyed by id.
 pub(crate) fn get(
     db: &DbAny,

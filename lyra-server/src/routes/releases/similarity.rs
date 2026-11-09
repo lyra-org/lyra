@@ -25,6 +25,7 @@ use crate::{
     services::STATE,
     services::{
         auth::require_authenticated,
+        catalog,
         releases,
     },
 };
@@ -97,7 +98,7 @@ pub(super) async fn get_similar_releases(
         .ok_or_else(|| AppError::not_found(format!("Release not found: {id}")))?;
 
     let db = STATE.db.read().await;
-    principal.require(&*db)?;
+    let viewer = catalog::Viewer::user(&*db, principal.clone())?;
     if lyra_db::lookup::find_node_id_by_id(&*db, &id)? != Some(seed_db_id)
         || lyra_db::releases::get_by_id(&*db, seed_db_id)?.is_none()
         || !crate::services::auth::access::entity_accessible(&*db, &principal, seed_db_id)?
@@ -116,7 +117,7 @@ pub(super) async fn get_similar_releases(
             accessible.push(current);
         }
     }
-    let details = releases::list_details_for_releases(&db, includes, accessible)?;
+    let details = releases::list_details_for_releases(&db, &viewer, includes, accessible)?;
     let responses = super::release_responses(
         &db,
         &principal,

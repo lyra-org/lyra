@@ -286,6 +286,7 @@ struct ArtistParts {
 fn prepare_artist(
     db: &DbAny,
     principal: &Principal,
+    viewer: &catalog::Viewer,
     mut detail: artist_service::ArtistDetails,
     includes: ArtistRouteIncludes,
 ) -> anyhow::Result<ArtistParts> {
@@ -302,6 +303,7 @@ fn prepare_artist(
         Some(releases) if includes.release_artists || includes.release_covers => {
             Some(release_service::list_details_for_releases(
                 db,
+                viewer,
                 release_service::ReleaseIncludes {
                     artists: includes.release_artists,
                     tracks: false,
@@ -329,9 +331,10 @@ fn artist_responses(
     details: Vec<artist_service::ArtistDetails>,
     includes: ArtistRouteIncludes,
 ) -> Result<Vec<ArtistResponse>, AppError> {
+    let viewer = catalog::Viewer::user(db, principal.clone())?;
     let parts = details
         .into_iter()
-        .map(|detail| prepare_artist(db, principal, detail, includes))
+        .map(|detail| prepare_artist(db, principal, &viewer, detail, includes))
         .collect::<anyhow::Result<Vec<_>>>()?;
     let mut targets = Vec::new();
     for part in &parts {
