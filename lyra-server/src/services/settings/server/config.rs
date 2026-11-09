@@ -11,6 +11,7 @@ use std::path::{
 #[cfg(test)]
 use super::FileSettings;
 use super::{
+    ClientIpHeader,
     Lookup,
     TrustedProxies,
     resolve_path,
@@ -53,6 +54,7 @@ impl Config {
             rate_limit: RateLimitConfig {
                 enabled: settings.value("rate_limit.enabled"),
                 trusted_proxies: settings.value("rate_limit.trusted_proxies"),
+                client_ip_header: settings.value("rate_limit.client_ip_header"),
                 global_per_minute: settings.value("rate_limit.global_per_minute"),
                 global_burst: settings.value("rate_limit.global_burst"),
                 authenticated_per_minute: settings.value("rate_limit.authenticated_per_minute"),
@@ -115,6 +117,7 @@ pub(crate) struct CorsConfig {
 pub(crate) struct RateLimitConfig {
     pub(crate) enabled: bool,
     pub(crate) trusted_proxies: TrustedProxies,
+    pub(crate) client_ip_header: ClientIpHeader,
     /// Per credential, or per client address for anonymous requests.
     pub(crate) global_per_minute: u32,
     pub(crate) global_burst: u32,

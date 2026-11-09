@@ -21,20 +21,16 @@ use std::{
             Ordering,
         },
     },
-    time::{
-        Duration,
-        Instant,
-    },
+    time::Instant,
 };
 
 use tokio_util::sync::CancellationToken;
 
+use crate::routes::warning_throttle::WarningThrottle;
 use crate::services::{
     auth::caller::ClientAddress,
     settings::server::TrustedProxies,
 };
-
-const WARNING_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Counts connections against a cap per peer and a cap on them all. Trusted peers, whose
 /// connections carry many clients, count only toward the latter.
@@ -62,11 +58,6 @@ struct Held {
 struct Unproven {
     peer: Option<ClientAddress>,
     evicted: CancellationToken,
-}
-
-#[derive(Default)]
-struct WarningThrottle {
-    last: Option<Instant>,
 }
 
 /// A connection's place against the caps, given back when the connection's socket closes.
@@ -188,19 +179,6 @@ impl Held {
                 self.by_peer.remove(&peer);
             }
         }
-    }
-}
-
-impl WarningThrottle {
-    fn allows(&mut self, now: Instant) -> bool {
-        if self
-            .last
-            .is_some_and(|last| now.duration_since(last) < WARNING_INTERVAL)
-        {
-            return false;
-        }
-        self.last = Some(now);
-        true
     }
 }
 
@@ -345,7 +323,10 @@ mod tests {
             HeaderValue,
         };
 
-        use crate::routes::request::client_address;
+        use crate::{
+            routes::request::client_address,
+            services::settings::server::ClientIpHeader,
+        };
 
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", HeaderValue::from_static("203.0.113.10"));
@@ -364,7 +345,12 @@ mod tests {
                 ip(peer)
             };
             assert_eq!(
-                client_address(Some(SocketAddr::new(ip(peer), 4746)), &headers, &proxies,),
+                client_address(
+                    Some(SocketAddr::new(ip(peer), 4746)),
+                    &headers,
+                    &proxies,
+                    ClientIpHeader::XForwardedFor,
+                ),
                 ClientAddress::new(expected),
                 "{configured} {peer}"
             );
@@ -484,15 +470,5 @@ mod tests {
             }
         });
         assert_empty(&gate);
-    }
-
-    #[test]
-    fn warnings_are_held_to_one_per_interval() {
-        let mut throttle = WarningThrottle::default();
-        let start = Instant::now();
-        assert!(throttle.allows(start));
-        assert!(!throttle.allows(start + WARNING_INTERVAL - Duration::from_secs(1)));
-        assert!(throttle.allows(start + WARNING_INTERVAL));
-        assert!(!throttle.allows(start + WARNING_INTERVAL));
     }
 }

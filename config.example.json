@@ -10,6 +10,7 @@
       "127.0.0.1",
       "::1"
     ],
+    "client_ip_header": "x-forwarded-for",
     "global_per_minute": 1200,
     "global_burst": 300,
     "authenticated_per_minute": 600,

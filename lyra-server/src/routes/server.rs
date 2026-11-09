@@ -141,6 +141,16 @@ enum SettingFieldResponse {
         value: Option<Vec<String>>,
         default: Option<Vec<String>>,
     },
+    /// `value` is always one of `options`.
+    #[serde(rename = "choice")]
+    Choice {
+        key: String,
+        #[serde(flatten)]
+        props: SettingPropsResponse,
+        options: Vec<String>,
+        value: Option<String>,
+        default: Option<String>,
+    },
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -260,6 +270,13 @@ fn field_response(setting: &EffectiveSetting, data_dir: &Path) -> SettingFieldRe
             props: props(true),
             value: string_list_of(value),
             default: string_list_of(&default),
+        },
+        Kind::Choice { options, .. } => SettingFieldResponse::Choice {
+            key,
+            props: props(true),
+            options: options.iter().map(ToString::to_string).collect(),
+            value: string_of(value),
+            default: string_of(&default),
         },
     }
 }
@@ -769,6 +786,17 @@ mod tests {
         assert_eq!(proxies["value"], json!(["127.0.0.1", "::1"]));
         assert_eq!(proxies["default"], json!(["127.0.0.1", "::1"]));
 
+        let client_ip_header = field(&body, "rate_limit.client_ip_header");
+        assert_eq!(client_ip_header["type"], json!("choice"));
+        assert_eq!(
+            client_ip_header["options"],
+            json!(["x-forwarded-for", "x-real-ip", "forwarded"])
+        );
+        assert_eq!(client_ip_header["value"], json!("x-forwarded-for"));
+        assert_eq!(client_ip_header["default"], json!("x-forwarded-for"));
+        assert_eq!(client_ip_header["required"], json!(true));
+        assert_eq!(client_ip_header["restart_required"], json!(true));
+
         assert_eq!(body["pending_restart"], json!([]));
         assert_eq!(body["boot"]["port"], json!(0));
         assert_eq!(body["boot"]["db"]["kind"], json!("memory"));
@@ -814,6 +842,18 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(message.contains("nope.key"), "{message}");
+
+        let (status, message) = error(
+            update_server_settings(
+                headers.clone(),
+                request(&[("rate_limit.client_ip_header", json!("cf-connecting-ip"))]),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(message.contains("rate_limit.client_ip_header"), "{message}");
+        assert!(message.contains("x-forwarded-for"), "{message}");
 
         let (status, message) = error(
             update_server_settings(headers, request(&[("auth.enabled", json!("yes"))])).await,

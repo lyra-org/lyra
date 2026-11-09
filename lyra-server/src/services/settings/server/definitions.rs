@@ -11,6 +11,7 @@ use super::{
         Live,
         RestartRequired,
     },
+    ClientIpHeader,
     Kind,
     SettingDefinition,
     SettingGroup,
@@ -129,6 +130,17 @@ pub(super) static ALL: &[SettingDefinition] = &[
         RestartRequired,
         Kind::IpRangeList {
             default: &["127.0.0.1", "::1"],
+        },
+    ),
+    setting(
+        "rate_limit.client_ip_header",
+        RATE_LIMIT,
+        "Client IP header",
+        "The header a trusted proxy reports a client's address in. No other header is read, and without a usable value the client is taken to be the proxy. Per-address limits and everything else that identifies a client by address use the result.",
+        RestartRequired,
+        Kind::Choice {
+            default: ClientIpHeader::XForwardedFor.name(),
+            options: ClientIpHeader::OPTIONS,
         },
     ),
     setting(

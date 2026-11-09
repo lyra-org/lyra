@@ -65,6 +65,7 @@ use crate::services::{
         Policy,
     },
     settings::server::{
+        ClientIpHeader,
         Config,
         RateLimitConfig,
         TrustedProxies,
@@ -91,6 +92,7 @@ async fn enforce(
         peer_addr(&request),
         request.headers(),
         &limiter.config.trusted_proxies,
+        limiter.config.client_ip_header,
     );
     request.extensions_mut().insert(client);
     let Some(route) = limiter.route(&request) else {
@@ -131,6 +133,7 @@ pub(super) fn too_many_requests_response(retry_after: Duration) -> Response {
 struct RuntimeConfig {
     enabled: bool,
     trusted_proxies: TrustedProxies,
+    client_ip_header: ClientIpHeader,
     global: Option<Policy>,
     user: Option<Policy>,
     authenticated: Option<Policy>,
@@ -141,6 +144,7 @@ impl RuntimeConfig {
         Self {
             enabled: config.enabled,
             trusted_proxies: config.trusted_proxies.clone(),
+            client_ip_header: config.client_ip_header,
             global: Policy::new(config.global_per_minute, config.global_burst),
             user: Policy::new(
                 config.global_per_minute.saturating_mul(USER_CREDENTIALS),
@@ -378,6 +382,7 @@ mod tests {
         RateLimitConfig {
             enabled: true,
             trusted_proxies: TrustedProxies::none(),
+            client_ip_header: ClientIpHeader::XForwardedFor,
             global_per_minute: 0,
             global_burst: 0,
             authenticated_per_minute: 0,

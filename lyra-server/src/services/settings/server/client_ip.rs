@@ -3,7 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-//! Which peers may report a client's address from behind a reverse proxy.
+//! How a client is identified behind a reverse proxy: which peers may report its address, and the
+//! header they report it in.
 
 use std::{
     fmt,
@@ -104,6 +105,31 @@ fn entry(range: &IpNet) -> String {
         range.addr().to_string()
     } else {
         range.to_string()
+    }
+}
+
+/// The header a trusted proxy reports a client's address in.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum ClientIpHeader {
+    XForwardedFor,
+    XRealIp,
+    Forwarded,
+}
+
+impl ClientIpHeader {
+    pub(crate) const OPTIONS: &'static [&'static str] = &[
+        Self::XForwardedFor.name(),
+        Self::XRealIp.name(),
+        Self::Forwarded.name(),
+    ];
+
+    pub(crate) const fn name(self) -> &'static str {
+        match self {
+            Self::XForwardedFor => "x-forwarded-for",
+            Self::XRealIp => "x-real-ip",
+            Self::Forwarded => "forwarded",
+        }
     }
 }
 
@@ -239,6 +265,18 @@ mod tests {
         assert_eq!(
             proxies(&["127.0.0.1/32", "10.0.0.0/8"]).to_string(),
             "127.0.0.1, 10.0.0.0/8"
+        );
+    }
+
+    #[test]
+    fn every_header_option_names_its_variant() {
+        for option in ClientIpHeader::OPTIONS {
+            let header: ClientIpHeader = serde_json::from_value(serde_json::json!(option)).unwrap();
+            assert_eq!(header.name(), *option);
+        }
+        assert!(
+            serde_json::from_value::<ClientIpHeader>(serde_json::json!("cf-connecting-ip"))
+                .is_err()
         );
     }
 }

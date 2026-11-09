@@ -30,7 +30,10 @@ mod definitions;
 mod kind;
 mod update;
 
-pub(crate) use client_ip::TrustedProxies;
+pub(crate) use client_ip::{
+    ClientIpHeader,
+    TrustedProxies,
+};
 pub(crate) use config::{
     AuthConfig,
     Config,
@@ -359,6 +362,7 @@ mod tests {
             rate_limit: RateLimitConfig {
                 enabled: true,
                 trusted_proxies: TrustedProxies::parse(["127.0.0.1", "::1"])?,
+                client_ip_header: ClientIpHeader::XForwardedFor,
                 global_per_minute: 1_200,
                 global_burst: 300,
                 authenticated_per_minute: 600,
@@ -544,6 +548,37 @@ mod tests {
             ["192.0.2.1", "192.0.2.2", "::1"]
         );
         Ok(())
+    }
+
+    #[test]
+    fn client_ip_header_resolves_from_the_file() -> anyhow::Result<()> {
+        let file = normalize_file(&file(&[(
+            "rate_limit.client_ip_header",
+            json!("X-Real-IP"),
+        )]))?;
+
+        let resolved = resolve(&data_dir(), None, file, &[])?;
+
+        assert_eq!(
+            resolved.config.rate_limit.client_ip_header,
+            ClientIpHeader::XRealIp
+        );
+        let error = normalize_file(&self::file(&[(
+            "rate_limit.client_ip_header",
+            json!("cf-connecting-ip"),
+        )]))
+        .expect_err("a choice outside the options should fail");
+        assert!(format!("{error:#}").contains("must be one of"));
+        Ok(())
+    }
+
+    #[test]
+    fn every_choice_default_is_one_of_its_options() {
+        for definition in registry().definitions() {
+            if let Kind::Choice { default, options } = definition.kind {
+                assert!(options.contains(&default), "{}", definition.key);
+            }
+        }
     }
 
     #[test]

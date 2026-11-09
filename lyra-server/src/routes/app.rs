@@ -176,6 +176,11 @@ pub(crate) async fn serve_app(
     shutdown_token: CancellationToken,
 ) -> Result<()> {
     tracing::info!("listening on {}", listener.local_addr()?);
+    tracing::info!(
+        trusted_proxies = %config.rate_limit.trusted_proxies,
+        client_ip_header = config.rate_limit.client_ip_header.name(),
+        "reading client addresses from trusted proxies"
+    );
     let app = super::rate_limit::apply(app, config);
     let app = app.layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT_BYTES));
     let app = super::cors::apply(app);

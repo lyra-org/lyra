@@ -45,6 +45,7 @@ mod targets;
 pub(crate) mod trace;
 mod tracks;
 mod users;
+mod warning_throttle;
 mod websocket;
 
 use serde::{

@@ -48,6 +48,11 @@ pub(crate) enum Kind {
     IpRangeList {
         default: &'static [&'static str],
     },
+    /// One of a closed set of strings, matched without regard to ASCII case.
+    Choice {
+        default: &'static str,
+        options: &'static [&'static str],
+    },
 }
 
 impl Kind {
@@ -57,7 +62,7 @@ impl Kind {
             Self::U32 { default } => json!(default),
             Self::U64 { default } => json!(default),
             Self::NullableU64 | Self::NullableOrigin => Value::Null,
-            Self::Path { default } => json!(default),
+            Self::Path { default } | Self::Choice { default, .. } => json!(default),
             Self::OriginList { default } | Self::IpRangeList { default } => json!(default),
         }
     }
@@ -104,6 +109,15 @@ impl Kind {
             Self::IpRangeList { .. } => {
                 Ok(json!(TrustedProxies::parse(strings_of(value)?)?.entries()))
             }
+            Self::Choice { options, .. } => value
+                .as_str()
+                .and_then(|choice| {
+                    options
+                        .iter()
+                        .find(|option| option.eq_ignore_ascii_case(choice.trim()))
+                })
+                .map(|option| json!(option))
+                .ok_or_else(|| anyhow!("must be one of: {}", options.join(", "))),
         }
     }
 }
@@ -324,6 +338,21 @@ mod tests {
         assert!(error.to_string().contains("entry '10.0.0.0/33'"));
         assert!(normalize(kind, json!(["localhost"])).is_err());
         assert!(normalize(kind, json!([1])).is_err());
+    }
+
+    #[test]
+    fn choice_accepts_only_its_options() {
+        let kind = Kind::Choice {
+            default: "one",
+            options: &["one", "two"],
+        };
+        assert_eq!(kind.default(), json!("one"));
+        assert_eq!(normalize(kind, json!("two")).unwrap(), json!("two"));
+        let error = normalize(kind, json!("three")).expect_err("not an option");
+        assert_eq!(error.to_string(), "must be one of: one, two");
+        assert_eq!(normalize(kind, json!(" TWO ")).unwrap(), json!("two"));
+        assert!(normalize(kind, json!(null)).is_err());
+        assert!(normalize(kind, json!(1)).is_err());
     }
 
     #[test]
