@@ -38,6 +38,23 @@ pub struct SyncRunRecord {
     pub failure_count: u64,
 }
 
+/// One failed unit of a run's work, an outgoing neighbor of the run's node.
+#[derive(DbElement, Clone, Debug)]
+pub struct SyncRunFailureRecord {
+    pub db_id: Option<DbId>,
+    /// The run's failure count when this failure happened.
+    pub ordinal: u64,
+    pub stage: String,
+    pub work_type: String,
+    pub entity_type: Option<String>,
+    pub entity_id: Option<String>,
+    pub entity_title: Option<String>,
+    pub provider_id: Option<String>,
+    pub source_dir: Option<String>,
+    pub message: String,
+    pub failed_at_ms: u64,
+}
+
 pub fn create(db: &mut DbAny, record: &SyncRunRecord) -> anyhow::Result<DbId> {
     db.transaction_mut(|t| create_in_transaction(t, record))
 }
@@ -87,34 +104,103 @@ pub(crate) fn update_in_transaction(
     )
 }
 
-/// Stores `record` unless a newer one of its run is, in one transaction. Writes nothing once the
-/// run's library is gone.
-pub fn persist(db: &mut DbAny, record: &SyncRunRecord) -> anyhow::Result<()> {
-    db.transaction_mut(|t| persist_in_transaction(t, record))
+/// Stores `record` unless a newer one of its run is, and `failure` under the run either way, in
+/// one transaction. Writes nothing once the run's library is gone.
+pub fn persist(
+    db: &mut DbAny,
+    record: &SyncRunRecord,
+    failure: Option<&SyncRunFailureRecord>,
+) -> anyhow::Result<()> {
+    db.transaction_mut(|t| persist_in_transaction(t, record, failure))
 }
 
 fn persist_in_transaction(
     db: &mut DbAnyTransactionMut<'_>,
     record: &SyncRunRecord,
+    failure: Option<&SyncRunFailureRecord>,
 ) -> anyhow::Result<()> {
     if super::lookup::find_node_id_by_id(db, &record.library_id)?.is_none() {
         return Ok(());
     }
-    match get_by_id(db, &record.id)? {
-        // A write that lost the race to the lock leaves the newer record in place.
-        Some(stored) if stored.sequence >= record.sequence => {}
-        Some(stored) => update_in_transaction(
-            db,
-            &SyncRunRecord {
-                db_id: stored.db_id,
-                ..record.clone()
-            },
-        )?,
-        None => {
-            create_in_transaction(db, record)?;
+    let run_db_id = match get_by_id(db, &record.id)? {
+        Some(stored) => {
+            let run_db_id = stored
+                .db_id
+                .ok_or_else(|| anyhow::anyhow!("stored sync run has no db_id"))?;
+            // A write that lost the race to the lock leaves the newer record in place.
+            if stored.sequence < record.sequence {
+                update_in_transaction(
+                    db,
+                    &SyncRunRecord {
+                        db_id: Some(run_db_id),
+                        ..record.clone()
+                    },
+                )?;
+            }
+            run_db_id
         }
+        None => create_in_transaction(db, record)?,
+    };
+    if let Some(failure) = failure {
+        insert_failure_in_transaction(db, run_db_id, failure)?;
     }
     Ok(())
+}
+
+fn insert_failure_in_transaction(
+    db: &mut DbAnyTransactionMut<'_>,
+    run_db_id: DbId,
+    failure: &SyncRunFailureRecord,
+) -> anyhow::Result<()> {
+    let result = db.exec_mut(QueryBuilder::insert().element(failure).query())?;
+    let failure_db_id = result
+        .ids()
+        .first()
+        .copied()
+        .ok_or_else(|| anyhow::anyhow!("sync run failure insert returned no id"))?;
+    db.exec_mut(
+        QueryBuilder::insert()
+            .edges()
+            .from(run_db_id)
+            .to(failure_db_id)
+            .query(),
+    )?;
+    Ok(())
+}
+
+/// The stored failures of the run `run_id` names, oldest first.
+pub fn failures_for_run(
+    db: &impl super::DbAccess,
+    run_id: &str,
+) -> anyhow::Result<Vec<SyncRunFailureRecord>> {
+    let Some(run_db_id) = get_by_id(db, run_id)?.and_then(|run| run.db_id) else {
+        return Ok(Vec::new());
+    };
+    let mut failures: Vec<SyncRunFailureRecord> = db
+        .exec(
+            QueryBuilder::select()
+                .elements::<SyncRunFailureRecord>()
+                .search()
+                .from(run_db_id)
+                .where_()
+                .neighbor()
+                .query(),
+        )?
+        .try_into()?;
+    failures.sort_by_key(|failure| failure.ordinal);
+    Ok(failures)
+}
+
+pub(crate) fn failure_ids(db: &impl super::DbAccess, run_db_id: DbId) -> anyhow::Result<Vec<DbId>> {
+    Ok(db
+        .exec(
+            QueryBuilder::search()
+                .from(run_db_id)
+                .where_()
+                .neighbor()
+                .query(),
+        )?
+        .ids())
 }
 
 pub fn list(db: &impl super::DbAccess) -> anyhow::Result<Vec<SyncRunRecord>> {
@@ -236,14 +322,85 @@ mod tests {
         }
     }
 
+    fn failure(ordinal: u64) -> SyncRunFailureRecord {
+        SyncRunFailureRecord {
+            db_id: None,
+            ordinal,
+            stage: "metadata_parse".to_string(),
+            work_type: "metadata_parse_group".to_string(),
+            entity_type: None,
+            entity_id: None,
+            entity_title: None,
+            provider_id: None,
+            source_dir: Some(format!("/music/{ordinal}")),
+            message: format!("failure {ordinal}"),
+            failed_at_ms: ordinal,
+        }
+    }
+
     fn library_public_id(db: &DbAny, library: DbId) -> anyhow::Result<String> {
         Ok(crate::libraries::get_by_id(db, library)?
             .expect("library exists")
             .id)
     }
 
+    fn ordinals(db: &DbAny, run_id: &str) -> anyhow::Result<Vec<u64>> {
+        Ok(failures_for_run(db, run_id)?
+            .into_iter()
+            .map(|failure| failure.ordinal)
+            .collect())
+    }
+
+    /// Every failure node in the database, reachable from a run or not.
+    fn failure_node_count(db: &DbAny) -> anyhow::Result<usize> {
+        Ok(db
+            .exec(
+                QueryBuilder::search()
+                    .elements()
+                    .where_()
+                    .key("db_element_id")
+                    .value("SyncRunFailureRecord")
+                    .query(),
+            )?
+            .elements
+            .len())
+    }
+
     #[test]
-    fn an_out_of_date_write_keeps_the_newer_record() -> anyhow::Result<()> {
+    fn failures_read_back_in_ordinal_order_whatever_order_they_arrived() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let library = insert_library(&mut db, "Music", "/runs")?;
+        let library_id = library_public_id(&db, library)?;
+        let run = finished_run(&library_id, "run", "library_sync", 1);
+
+        for (sequence, ordinal) in [(2, 3), (3, 1), (4, 2)] {
+            persist(
+                &mut db,
+                &SyncRunRecord {
+                    sequence,
+                    ..run.clone()
+                },
+                Some(&failure(ordinal)),
+            )?;
+        }
+
+        let stored = failures_for_run(&db, "run")?;
+        assert_eq!(
+            stored
+                .iter()
+                .map(|failure| failure.ordinal)
+                .collect::<Vec<_>>(),
+            [1, 2, 3]
+        );
+        assert_eq!(stored[0].source_dir.as_deref(), Some("/music/1"));
+        assert_eq!(stored[0].message, "failure 1");
+        assert_eq!(get_by_id(&db, "run")?.expect("run").sequence, 4);
+        assert!(failures_for_run(&db, "missing")?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn an_out_of_date_write_keeps_the_record_and_stores_the_failure() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let library = insert_library(&mut db, "Music", "/runs")?;
         let library_id = library_public_id(&db, library)?;
@@ -251,17 +408,18 @@ mod tests {
             status: "running".to_string(),
             ..finished_run(&library_id, "run", "library_sync", 9)
         };
-        persist(&mut db, &newest)?;
+        persist(&mut db, &newest, None)?;
 
         let late = SyncRunRecord {
             status: "planning".to_string(),
             sequence: 5,
             ..newest.clone()
         };
-        persist(&mut db, &late)?;
+        persist(&mut db, &late, Some(&failure(1)))?;
 
         let stored = get_by_id(&db, "run")?.expect("run");
         assert_eq!((stored.status.as_str(), stored.sequence), ("running", 9));
+        assert_eq!(ordinals(&db, "run")?, [1]);
         Ok(())
     }
 
@@ -270,9 +428,101 @@ mod tests {
         let mut db = new_test_db()?;
         let run = finished_run("gone", "run", "library_sync", 1);
 
-        persist(&mut db, &run)?;
+        persist(&mut db, &run, Some(&failure(1)))?;
 
         assert!(get_by_id(&db, "run")?.is_none());
+        assert_eq!(failure_node_count(&db)?, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn a_failed_persist_leaves_neither_the_run_write_nor_its_failure() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let library = insert_library(&mut db, "Music", "/runs")?;
+        let library_id = library_public_id(&db, library)?;
+        let run = finished_run(&library_id, "run", "library_sync", 1);
+        persist(&mut db, &run, None)?;
+
+        let result = db.transaction_mut(|t| -> anyhow::Result<()> {
+            let newer = SyncRunRecord {
+                status: "failed".to_string(),
+                sequence: 2,
+                ..run.clone()
+            };
+            persist_in_transaction(t, &newer, Some(&failure(1)))?;
+            anyhow::bail!("the transaction fails after both writes")
+        });
+
+        assert!(result.is_err());
+        let stored = get_by_id(&db, "run")?.expect("run");
+        assert_eq!((stored.status.as_str(), stored.sequence), ("succeeded", 1));
+        assert_eq!(failure_node_count(&db)?, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn root_searches_stop_at_the_run_nodes() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let library = insert_library(&mut db, "Music", "/runs")?;
+        let library_id = library_public_id(&db, library)?;
+        let run = finished_run(&library_id, "run", "library_sync", 1);
+        persist(&mut db, &run, Some(&failure(1)))?;
+        persist(&mut db, &run, Some(&failure(2)))?;
+
+        let at_members = |db: &DbAny, key: &str| -> anyhow::Result<usize> {
+            Ok(db
+                .exec(
+                    QueryBuilder::search()
+                        .from("sync_runs")
+                        .where_()
+                        .distance(MEMBERS)
+                        .and()
+                        .keys(key)
+                        .query(),
+                )?
+                .elements
+                .len())
+        };
+        assert_eq!(at_members(&db, "library_id")?, 1);
+        assert_eq!(
+            at_members(&db, "ordinal")?,
+            0,
+            "a search at the root's members never reaches a failure"
+        );
+        assert_eq!(list(&db)?.len(), 1);
+        assert_eq!(list_for_library(&db, &library_id)?.len(), 1);
+        assert_eq!(
+            db.exec(
+                QueryBuilder::search()
+                    .from("sync_runs")
+                    .where_()
+                    .distance(agdb::CountComparison::Equal(4))
+                    .query(),
+            )?
+            .elements
+            .len(),
+            2,
+            "the failures are one hop past the members"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn deleting_a_library_removes_its_runs_and_failures() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let library = insert_library(&mut db, "Music", "/runs")?;
+        let library_id = library_public_id(&db, library)?;
+        persist(
+            &mut db,
+            &finished_run(&library_id, "run", "library_sync", 1),
+            Some(&failure(1)),
+        )?;
+
+        let library = crate::libraries::get_by_id(&db, library)?.expect("library exists");
+        db.transaction_mut(|t| crate::libraries::delete(t, &library))?;
+
+        assert!(list(&db)?.is_empty());
+        assert_eq!(failure_node_count(&db)?, 0);
         Ok(())
     }
 

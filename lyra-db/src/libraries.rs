@@ -625,6 +625,7 @@ pub fn delete(
     children.push(library_id);
     for run in super::sync_runs::list_for_library(db, &library.id)? {
         if let Some(id) = run.db_id {
+            children.extend(super::sync_runs::failure_ids(db, id)?);
             children.push(id);
         }
     }

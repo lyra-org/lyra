@@ -462,6 +462,7 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("GET", "/api/sync/events"),
     ("GET", "/api/sync/runs/{run_id}"),
     ("POST", "/api/sync/runs/{run_id}/cancel"),
+    ("GET", "/api/sync/runs/{run_id}/failures"),
     ("GET", "/api/search/"),
 ];
 

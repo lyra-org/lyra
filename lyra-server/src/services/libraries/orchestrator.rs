@@ -50,6 +50,7 @@ use crate::{
 use lyra_db::{
     DbAsync,
     Library,
+    sync_runs::SyncRunFailureRecord,
 };
 
 use super::sync::{
@@ -308,6 +309,17 @@ pub(crate) struct SyncRunProgressSummary {
 pub(crate) struct SyncRunCurrent {
     pub(crate) stage: SyncStageKey,
     pub(crate) subject: Option<String>,
+}
+
+/// One failed unit of a run's work.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct SyncRunFailure {
+    pub(crate) stage: SyncStageKey,
+    #[serde(flatten)]
+    pub(crate) details: SyncWorkDetails,
+    pub(crate) message: String,
+    pub(crate) failed_at: String,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -783,7 +795,7 @@ impl SyncRunProgress {
             }
             return;
         }
-        self.mutate(|state| {
+        self.mutate_recording(|state| {
             let removed = state
                 .active
                 .iter()
@@ -794,6 +806,7 @@ impl SyncRunProgress {
                 .entry(stage)
                 .or_insert_with(|| SyncStageState::new(state.total_state));
             stage_state.active_units = stage_state.active_units.saturating_sub(1);
+            let mut failure = None;
             match outcome {
                 WorkOutcome::Complete => {
                     stage_state.completed_units = stage_state.completed_units.saturating_add(1);
@@ -811,6 +824,14 @@ impl SyncRunProgress {
                         .as_ref()
                         .map(|item| now_unix_ms().saturating_sub(item.started_at_ms));
                     log_work_failure(&state.run_id, stage, &details, &message, elapsed_ms);
+                    if state.failure_count <= MAX_STORED_FAILURES {
+                        failure = Some(failure_record(
+                            state.failure_count,
+                            stage,
+                            details,
+                            &message,
+                        ));
+                    }
                 }
             }
             if stage_state.total_units > 0
@@ -823,6 +844,7 @@ impl SyncRunProgress {
                     SyncStageStatus::Failed
                 };
             }
+            failure
         })
         .await;
     }
@@ -853,10 +875,22 @@ impl SyncRunProgress {
     where
         F: FnOnce(&mut SyncRunState),
     {
+        self.mutate_recording(|state| {
+            update(state);
+            None
+        })
+        .await;
+    }
+
+    /// Applies `update`, then stores the run with the failure it hands out in one write.
+    async fn mutate_recording<F>(&self, update: F)
+    where
+        F: FnOnce(&mut SyncRunState) -> Option<SyncRunFailureRecord>,
+    {
         let Some(run) = &self.run else {
             return;
         };
-        let Some((summary, record)) = ({
+        let Some((summary, record, failure)) = ({
             let mut states = sync_run_states().write_owned().await;
             let Some(state) = states.get_mut(&run.run_id) else {
                 return;
@@ -864,11 +898,11 @@ impl SyncRunProgress {
             if !state.status.is_active() {
                 return;
             }
-            update(state);
+            let failure = update(state);
             state.updated_at_ms = now_unix_ms();
             state.sequence = state.sequence.saturating_add(1);
             match state.record(None) {
-                Ok(record) => Some((state.summary(), record)),
+                Ok(record) => Some((state.summary(), record, failure)),
                 Err(err) => {
                     tracing::warn!(
                         run_id = %run.run_id,
@@ -881,7 +915,7 @@ impl SyncRunProgress {
         }) else {
             return;
         };
-        persist_record(&run.db, record).await;
+        persist_record(&run.db, record, failure).await;
         publish_event(summary);
     }
 }
@@ -914,7 +948,32 @@ enum WorkOutcome {
     Fail(SyncWorkDetails, String),
 }
 
+fn failure_record(
+    ordinal: u64,
+    stage: SyncStageKey,
+    details: SyncWorkDetails,
+    message: &str,
+) -> SyncRunFailureRecord {
+    SyncRunFailureRecord {
+        db_id: None,
+        ordinal,
+        stage: stage.as_str().to_string(),
+        work_type: details.work_type,
+        entity_type: details.entity_type,
+        entity_id: details.entity_id,
+        entity_title: details.entity_title,
+        provider_id: details.provider_id,
+        source_dir: details.source_dir,
+        message: message[..message.floor_char_boundary(MAX_FAILURE_MESSAGE_BYTES)].to_string(),
+        failed_at_ms: now_unix_ms(),
+    }
+}
+
 const SYNC_EVENT_BROADCAST_CAPACITY: usize = 512;
+
+/// The most failures stored per run; the run's count keeps going past it.
+const MAX_STORED_FAILURES: u64 = 200;
+const MAX_FAILURE_MESSAGE_BYTES: usize = 2_000;
 
 // Pure serialization lock with no DB-derived data; intentionally
 // process-wide rather than generation-owned.
@@ -1030,7 +1089,7 @@ pub(crate) async fn cancel_sync_run(run_id: &str) -> anyhow::Result<Option<SyncR
         }
         (state.summary(), state.record(None)?)
     };
-    persist_record(&STATE.db.get(), record).await;
+    persist_record(&STATE.db.get(), record, None).await;
     publish_event(summary.clone());
     Ok(Some(summary))
 }
@@ -1133,7 +1192,7 @@ async fn start_locked(
     let supervisor = {
         let summary = summary.clone();
         async move {
-            persist_record(&db, record).await;
+            persist_record(&db, record, None).await;
             publish_event(summary);
             let _ = registered_tx.send(());
             let work_progress = progress.clone();
@@ -1371,7 +1430,7 @@ async fn mark_terminal(
         };
         (state.summary(), record)
     };
-    persist_record(db, record).await;
+    persist_record(db, record, None).await;
     publish_event(summary.clone());
     sync_run_states().write_owned().await.remove(run_id);
     Some(summary)
@@ -1436,6 +1495,15 @@ async fn filtered_run_for_library(
         return record_to_summary(record).map(Some);
     }
     Ok(None)
+}
+
+/// The stored failures of the run `run_id` names, oldest first.
+pub(crate) async fn sync_run_failures(run_id: &str) -> anyhow::Result<Vec<SyncRunFailure>> {
+    let db = STATE.db.read().await;
+    lyra_db::sync_runs::failures_for_run(&db, run_id)?
+        .into_iter()
+        .map(record_to_failure)
+        .collect()
 }
 
 /// Cancels the library's active run and returns its summary. Without an active run, returns the
@@ -1611,15 +1679,35 @@ async fn reconcile_interrupted_runs(db: &DbAsync) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn persist_record(db: &DbAsync, record: lyra_db::sync_runs::SyncRunRecord) {
+async fn persist_record(
+    db: &DbAsync,
+    record: lyra_db::sync_runs::SyncRunRecord,
+    failure: Option<SyncRunFailureRecord>,
+) {
     let result = {
         // Writes sync run records only.
         let mut db_write = db.write_outside_catalog().await;
-        lyra_db::sync_runs::persist(&mut db_write, &record)
+        lyra_db::sync_runs::persist(&mut db_write, &record, failure.as_ref())
     };
     if let Err(err) = result {
         tracing::warn!(run_id = %record.id, error = %err, "failed to persist sync run summary");
     }
+}
+
+fn record_to_failure(record: SyncRunFailureRecord) -> anyhow::Result<SyncRunFailure> {
+    Ok(SyncRunFailure {
+        stage: SyncStageKey::from_str(&record.stage)?,
+        details: SyncWorkDetails {
+            work_type: record.work_type,
+            entity_type: record.entity_type,
+            entity_id: record.entity_id,
+            entity_title: record.entity_title,
+            provider_id: record.provider_id,
+            source_dir: record.source_dir,
+        },
+        message: record.message,
+        failed_at: unix_ms_to_rfc3339_u64(record.failed_at_ms),
+    })
 }
 
 fn record_to_summary(record: lyra_db::sync_runs::SyncRunRecord) -> anyhow::Result<SyncRunSummary> {
@@ -1714,10 +1802,10 @@ mod tests {
 
         let db = STATE.db.get();
         let mut state = SyncRunState::new(SyncRunKind::Sync, library_id, 10_000, 0);
-        persist_record(&db, state.record(None)?).await;
+        persist_record(&db, state.record(None)?, None).await;
         state.status = SyncRunStatus::Running;
         state.sequence += 1;
-        persist_record(&db, state.record(None)?).await;
+        persist_record(&db, state.record(None)?, None).await;
         reconcile_interrupted_runs(&db).await?;
         assert_eq!(lyra_db::sync_runs::list(&*db.read().await)?.len(), 1);
         assert!(std::sync::Arc::ptr_eq(
@@ -1776,9 +1864,9 @@ mod tests {
         let late = state.record(None)?;
         state.status = SyncRunStatus::Succeeded;
         state.sequence = 2;
-        persist_record(&db, state.record(None)?).await;
+        persist_record(&db, state.record(None)?, None).await;
 
-        persist_record(&db, late).await;
+        persist_record(&db, late, None).await;
 
         let stored =
             lyra_db::sync_runs::get_by_id(&*db.read().await, &state.run_id)?.expect("run stored");
@@ -1954,6 +2042,136 @@ mod tests {
                 .get(&run_id)
                 .is_some_and(|state| state.status.is_active())
         );
+        Ok(())
+    }
+
+    fn stored_run(
+        library_id: &str,
+        id: &str,
+        kind: SyncRunKind,
+        sequence: u64,
+    ) -> anyhow::Result<lyra_db::sync_runs::SyncRunRecord> {
+        let mut state = SyncRunState::new(kind, library_id.to_string(), sequence, sequence);
+        state.run_id = id.to_string();
+        state.status = SyncRunStatus::Succeeded;
+        state.finished_at_ms = Some(sequence);
+        state.record(None)
+    }
+
+    async fn fail_units(progress: &SyncRunProgress, count: usize, message: &str) {
+        for _ in 0..count {
+            let details = SyncWorkDetails::new("metadata_parse_group");
+            let work = progress
+                .start_work(SyncStageKey::MetadataParse, details.clone())
+                .await;
+            progress
+                .fail_work(work, SyncStageKey::MetadataParse, details, message)
+                .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn the_stored_failures_are_capped_while_the_count_goes_on() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let library = test_library().await?;
+        let progress = begin_test_run(&library).await;
+
+        fail_units(&progress, 205, "unreadable").await;
+
+        let summary = get_sync_run(progress.run_id()).await?.expect("run");
+        assert_eq!(summary.failure_count, 205);
+        assert_eq!(summary.progress.failed_units, 205);
+        let failures = sync_run_failures(progress.run_id()).await?;
+        assert_eq!(failures.len(), 200);
+        assert_eq!(failures[0].stage, SyncStageKey::MetadataParse);
+        assert_eq!(failures[0].details.work_type, "metadata_parse_group");
+        end_test_run(&progress).await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn failures_survive_an_interrupted_run() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let library = test_library().await?;
+        let progress = begin_test_run(&library).await;
+        fail_units(&progress, 2, "unreadable").await;
+        let run_id = progress.run_id().to_string();
+
+        end_test_run(&progress).await;
+        let summary = get_sync_run(&run_id).await?.expect("run stored");
+
+        assert_eq!(summary.run.status, SyncRunStatus::Failed);
+        assert_eq!(
+            summary.run.error.as_deref(),
+            Some("server stopped before run completed")
+        );
+        assert_eq!(sync_run_failures(&run_id).await?.len(), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_long_message_is_cut_on_a_character_boundary() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let library = test_library().await?;
+        let progress = begin_test_run(&library).await;
+        let message = format!("x{}", "é".repeat(1_500));
+
+        fail_units(&progress, 1, &message).await;
+
+        let failures = sync_run_failures(progress.run_id()).await?;
+        assert_eq!(failures[0].message.len(), 1_999);
+        assert!(failures[0].message.ends_with('é'));
+        end_test_run(&progress).await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_failed_run_write_stores_no_failure() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let library = test_library().await?;
+        let db = STATE.db.get();
+        let record = stored_run(&library.id, "run", SyncRunKind::Sync, 1)?;
+        persist_record(&db, record.clone(), None).await;
+        let run_db_id = lyra_db::sync_runs::get_by_id(&*db.read().await, "run")?
+            .and_then(|run| run.db_id)
+            .expect("run stored");
+        // A stored run that no longer reads fails the write at its existence check.
+        db.write().await.exec_mut(
+            agdb::QueryBuilder::remove()
+                .values(vec![agdb::DbValue::from("status")])
+                .ids(run_db_id)
+                .query(),
+        )?;
+
+        let newer = lyra_db::sync_runs::SyncRunRecord {
+            sequence: 2,
+            ..record
+        };
+        let failure = failure_record(
+            1,
+            SyncStageKey::Purge,
+            SyncWorkDetails::new("purge_track"),
+            "failed",
+        );
+        persist_record(&db, newer, Some(failure)).await;
+
+        let neighbors = db
+            .read()
+            .await
+            .exec(
+                agdb::QueryBuilder::search()
+                    .from(run_db_id)
+                    .where_()
+                    .neighbor()
+                    .query(),
+            )?
+            .elements
+            .len();
+        assert_eq!(neighbors, 0, "the failure did not outlive its failed write");
         Ok(())
     }
 

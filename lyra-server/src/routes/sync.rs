@@ -68,12 +68,14 @@ use crate::{
         cancel_sync_run,
         libraries::{
             RunFilter,
+            SyncRunFailure,
             control::{
                 self,
                 LibraryControlError,
                 SyncReader,
                 require_manage_libraries_on,
             },
+            sync_run_failures,
         },
         remote::constants::{
             AUTH_CHECK_INTERVAL,
@@ -125,6 +127,14 @@ async fn cancel_run(
         .await?
         .ok_or_else(|| run_not_found(&run_id))?;
     Ok(Json(summary))
+}
+
+async fn get_run_failures(
+    headers: HeaderMap,
+    Path(run_id): Path<String>,
+) -> Result<Json<Vec<SyncRunFailure>>, AppError> {
+    let _summary = load_authorized_run(&headers, &run_id).await?;
+    Ok(Json(sync_run_failures(&run_id).await?))
 }
 
 async fn build_events_sse(
@@ -375,6 +385,26 @@ fn get_run_docs(op: TransformOperation) -> TransformOperation {
 }
 
 #[cfg(feature = "docgen")]
+fn get_run_failures_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("List sync run failures").description(
+        "Returns the stored failures of a run's units of work, oldest first, as a bare array. It \
+         can be read during a run and grows as the run proceeds. Each item carries the unit's \
+         `stage` and `type`, when known its `entity_type`, `entity_id`, `entity_title`, \
+         `provider_id` and `source_dir`, a `message` of at most 2,000 bytes, and `failed_at`. An \
+         item is one unit of work, not always one file: a metadata group with several unreadable \
+         files is one item whose message names the count and the first file. A failure of the \
+         run as a whole is `run.error` on the run, and purge runs have no per-unit failures.\n\
+         At most 200 items are stored. The array may hold fewer than the run's `failure_count`: \
+         the list is capped, runs from before failures were stored have none, a write can fail, \
+         and an active run's newest failure may still be waiting to be written. Do not infer \
+         truncation from the difference.\n\
+         Requires ManageLibraries on the run's library: paths and error text are what other \
+         viewers of the run don't see. A missing or hidden run is 404, and a caller who can see \
+         the run but can't manage its library is 403.",
+    )
+}
+
+#[cfg(feature = "docgen")]
 fn get_events_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Stream library sync statuses")
         .description(
@@ -439,6 +469,7 @@ pub fn sync_routes() -> Router {
         .route("/events", get(get_events))
         .route("/runs/{run_id}", get(get_run))
         .route("/runs/{run_id}/cancel", post(cancel_run))
+        .route("/runs/{run_id}/failures", get(get_run_failures))
 }
 
 #[cfg(feature = "docgen")]
@@ -454,6 +485,10 @@ pub(crate) fn sync_openapi_routes() -> aide::axum::ApiRouter {
         .api_route(
             "/runs/{run_id}/cancel",
             post_with(cancel_run, cancel_run_docs),
+        )
+        .api_route(
+            "/runs/{run_id}/failures",
+            get_with(get_run_failures, get_run_failures_docs),
         )
 }
 
@@ -641,6 +676,56 @@ mod tests {
             status_of(cancel_run(manager.clone(), Path(shown.run_id().to_string())).await),
             StatusCode::OK
         );
+        end_test_run(&shown).await;
+        end_test_run(&hidden).await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn only_a_manager_of_the_runs_library_reads_its_failures() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let fixture = setup().await?;
+        let shown = run_on(fixture.shown).await?;
+        let hidden = run_on(fixture.hidden).await?;
+        let details = SyncWorkDetails::new("entry_group_sync").source_dir(Some(SECRET.to_string()));
+        let work = shown
+            .start_work(SyncStageKey::EntrySync, details.clone())
+            .await;
+        shown
+            .fail_work(work, SyncStageKey::EntrySync, details, "cannot read")
+            .await;
+        let manager = headers(&token(fixture.manager).await?)?;
+        let listener = headers(&token(fixture.listener).await?)?;
+        let read = |headers: &HeaderMap, run_id: &str| {
+            get_run_failures(headers.clone(), Path(run_id.to_string()))
+        };
+
+        let Json(failures) = read(&manager, shown.run_id())
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        assert_eq!(failures.len(), 1);
+        let value = serde_json::to_value(&failures[0])?;
+        assert_eq!(value["stage"], "entry_sync");
+        assert_eq!(value["type"], "entry_group_sync");
+        assert_eq!(value["source_dir"], SECRET);
+        assert_eq!(value["message"], "cannot read");
+        assert!(value["failed_at"].is_string());
+        assert!(value.get("entity_id").is_none());
+        assert!(value.get("details").is_none());
+
+        assert_eq!(
+            status_of(read(&listener, shown.run_id()).await),
+            StatusCode::FORBIDDEN
+        );
+        for caller in [&manager, &listener] {
+            for run_id in [hidden.run_id(), "missing"] {
+                assert_eq!(
+                    status_of(read(caller, run_id).await),
+                    StatusCode::NOT_FOUND,
+                    "a run the caller cannot read is not found"
+                );
+            }
+        }
         end_test_run(&shown).await;
         end_test_run(&hidden).await;
         Ok(())
