@@ -93,6 +93,25 @@ pub(crate) use status::{
 
 const DEFAULT_ORIGIN: &str = "https://git.lyra.pub/lyra/lyra?forge=gitlab";
 
+/// Whether `origin` at `git_ref` is the official repository's default
+/// branch. An explicit ref, even the default branch's name, is not: nothing
+/// stores that name. An origin that doesn't parse is not either.
+fn is_official_origin(origin: &str, git_ref: Option<&str>) -> bool {
+    let (Ok(spec), Ok(official)) = (
+        RepoSpec::parse(origin, git_ref),
+        RepoSpec::parse(DEFAULT_ORIGIN, None),
+    ) else {
+        return false;
+    };
+    spec.explicit_ref.is_none() && spec.is_same_source(&official)
+}
+
+/// Whether an installed plugin's own code came from the official
+/// repository's default branch and is held in that repository.
+pub(crate) fn is_official_install(record: &SourceRecord) -> bool {
+    record.via_repository.is_none() && is_official_origin(&record.origin, record.git_ref.as_deref())
+}
+
 /// The client for one repository operation, identified as `build`.
 fn http_client(build: &BuildInfo) -> Result<reqwest::Client, PluginRepoError> {
     let _ = rustls::crypto::ring::default_provider().install_default();
@@ -272,6 +291,9 @@ pub(crate) struct PluginPreview {
     /// Origin of the plugin when a multi-plugin index points at another
     /// repository; `None` when it lives in the resolved repository itself.
     pub(crate) source_origin: Option<String>,
+    /// Whether its own code comes from the official repository's default
+    /// branch and is held in that repository.
+    pub(crate) official: bool,
     /// Why the plugin has no installable release, such as all of them
     /// requiring another server version. The other fields are then empty.
     pub(crate) error: Option<String>,
@@ -464,8 +486,8 @@ fn listing_entries(listing: &RepositoryListing) -> Vec<repo_db::PluginRepository
 }
 
 /// The subscription plugins installed from `origin` at `git_ref` belong
-/// to: the same repository as [`RepoSpec::is_same_repo`] sees it, so
-/// owner and name compare case-insensitively, and the same ref.
+/// to: the same source as [`RepoSpec::is_same_source`] sees it, so owner
+/// and name compare case-insensitively, and the same ref.
 fn find_subscription<'a>(
     subscriptions: &'a [Subscription],
     origin: &str,
@@ -476,7 +498,7 @@ fn find_subscription<'a>(
         let repository = &subscription.repository;
         repository.git_ref.as_deref() == git_ref
             && match (&spec, RepoSpec::parse(&repository.origin, None)) {
-                (Some(spec), Ok(subscribed)) => spec.is_same_repo(&subscribed),
+                (Some(spec), Ok(subscribed)) => spec.is_same_source(&subscribed),
                 _ => repository.origin == origin,
             }
     })
@@ -538,8 +560,11 @@ fn ensure_not_subscribed(
 
 /// The plugins `entries` describe, each with where it stands against
 /// `plugins_dir`, whose plugins are `installed`, in the order of `entries`.
+/// The entries are what the repository at `origin` and `git_ref` offers.
 fn catalog_plugins(
     entries: &[repo_db::PluginRepositoryEntry],
+    origin: &str,
+    git_ref: Option<&str>,
     plugins_dir: &Path,
     installed: &[PluginManifest],
 ) -> Vec<PluginPreview> {
@@ -552,6 +577,7 @@ fn catalog_plugins(
         .filter_map(|(entry, offer)| Some(Reach::Release(&entry.plugin_id, offer.as_ref().ok()?)))
         .collect();
     let installed: Vec<Reach<'_>> = installed.iter().map(Reach::Installed).collect();
+    let official_repository = is_official_origin(origin, git_ref);
     offers
         .iter()
         .map(|(entry, offer)| {
@@ -565,6 +591,7 @@ fn catalog_plugins(
                 commit: None,
                 status: catalog_status(&plugins_dir.join(&entry.plugin_id), offer),
                 source_origin: entry.source_origin.clone(),
+                official: official_repository && entry.source_origin.is_none(),
                 error: None,
             };
             match offer {
@@ -590,14 +617,18 @@ fn catalog_plugins(
 
 fn build_preview(listing: &RepositoryListing, plugins_dir: &Path) -> RepositoryPreview {
     let listed = StoredListing::of(listing);
+    let origin = listing.spec.canonical_url();
+    let git_ref = listing.spec.explicit_ref.clone();
     RepositoryPreview {
-        origin: listing.spec.canonical_url(),
-        git_ref: listing.spec.explicit_ref.clone(),
         plugins: catalog_plugins(
             &listed.entries,
+            &origin,
+            git_ref.as_deref(),
             plugins_dir,
             &installed_manifests(plugins_dir),
         ),
+        origin,
+        git_ref,
         resolved_ref: listed.resolved_ref,
         commit: listed.commit,
         name: listed.name,
@@ -1636,6 +1667,8 @@ fn repository_view(subscription: Subscription, installed: &[PluginManifest]) -> 
     RepositoryView {
         plugins: Some(catalog_plugins(
             &subscription.entries,
+            &subscription.repository.origin,
+            subscription.repository.git_ref.as_deref(),
             &STATE.boot.get().plugins_dir,
             installed,
         )),
@@ -1950,6 +1983,82 @@ mod tests {
         assert_eq!(record.commit, None);
         assert_eq!(record.refreshed_at_ms, None);
         Ok(())
+    }
+
+    #[test]
+    fn official_origin_is_the_default_repository_on_its_default_branch() {
+        for origin in [
+            DEFAULT_ORIGIN,
+            "https://git.lyra.pub/lyra/lyra.git?forge=gitlab",
+            "https://GIT.lyra.pub/LYRA/Lyra?forge=gitlab",
+            "https://git.lyra.pub/lyra/LYRA.git?forge=GitLab",
+        ] {
+            assert!(is_official_origin(origin, None), "{origin}");
+        }
+        for (origin, git_ref) in [
+            ("http://git.lyra.pub/lyra/lyra?forge=gitlab", None),
+            ("https://git.lyra.pub/lyra/lyra?forge=gitea", None),
+            ("https://git.lyra.pub/lyra/lyra?forge=github", None),
+            ("https://git.lyra.pub/lyra/lyra", None),
+            (DEFAULT_ORIGIN, Some("main")),
+            (DEFAULT_ORIGIN, Some("refs/heads/main")),
+            (DEFAULT_ORIGIN, Some("v1")),
+            (DEFAULT_ORIGIN, Some("")),
+            ("https://git.lyra.pub/lyra/lyra?forge=gitlab&ref=main", None),
+            (
+                "https://git.lyra.pub/lyra/lyra/-/tree/main?forge=gitlab",
+                None,
+            ),
+            ("not a url", None),
+            ("", None),
+            ("ssh://git@git.lyra.pub/lyra/lyra?forge=gitlab", None),
+            ("https://git.lyra.pub/lyra?forge=gitlab", None),
+            ("https://git.lyra.pub:8443/lyra/lyra?forge=gitlab", None),
+            (
+                "https://git.lyra.pub.example.org/lyra/lyra?forge=gitlab",
+                None,
+            ),
+            ("https://example.org/lyra/lyra?forge=gitlab", None),
+            ("https://git.lyra.pub/lyra/other?forge=gitlab", None),
+            ("https://git.lyra.pub/fork/lyra?forge=gitlab", None),
+            ("https://git.lyra.pub/group/lyra/lyra?forge=gitlab", None),
+        ] {
+            assert!(!is_official_origin(origin, git_ref), "{origin} {git_ref:?}");
+        }
+    }
+
+    #[test]
+    fn official_installs_are_held_in_the_official_repository_on_its_default_branch() {
+        let official = || SourceRecord {
+            origin: DEFAULT_ORIGIN.into(),
+            forge: Forge::GitLab,
+            subpath: Some("plugins/musicbrainz".into()),
+            ..record("1.0.0")
+        };
+        assert!(is_official_install(&official()));
+        assert!(!is_official_install(&SourceRecord {
+            via_repository: Some("https://github.com/o/index".into()),
+            ..official()
+        }));
+        assert!(!is_official_install(&SourceRecord {
+            git_ref: Some("v1".into()),
+            pinned: true,
+            ..official()
+        }));
+        assert!(!is_official_install(&SourceRecord {
+            git_ref: Some("main".into()),
+            ..official()
+        }));
+        assert!(!is_official_install(&SourceRecord {
+            origin: "https://github.com/o/r".into(),
+            forge: Forge::GitHub,
+            via_repository: Some(DEFAULT_ORIGIN.into()),
+            ..official()
+        }));
+        assert!(!is_official_install(&SourceRecord {
+            origin: "not a url".into(),
+            ..official()
+        }));
     }
 
     #[test]
@@ -3625,10 +3734,20 @@ mod tests {
             entries: vec![at("moved", "1.1.0")],
         };
 
-        record_listed(&mut db, "https://github.com/o/r", Some("v2"), &listed)?;
-        let subscription = repo_db::get_by_id(&db, "main")?.expect("subscription exists");
-        assert_eq!(subscription.commit.as_deref(), Some(&*"a".repeat(40)));
-        assert_eq!(subscription.refreshed_at_ms, None);
+        for (origin, git_ref) in [
+            ("https://github.com/o/r", Some("v2")),
+            ("http://github.com/o/r", None),
+            ("https://github.com/o/r?forge=gitea", None),
+        ] {
+            record_listed(&mut db, origin, git_ref, &listed)?;
+            let subscription = repo_db::get_by_id(&db, "main")?.expect("subscription exists");
+            assert_eq!(
+                subscription.commit.as_deref(),
+                Some(&*"a".repeat(40)),
+                "{origin} {git_ref:?}"
+            );
+            assert_eq!(subscription.refreshed_at_ms, None);
+        }
 
         record_listed(&mut db, "https://github.com/o/r", None, &listed)?;
         let subscription = repo_db::get_by_id(&db, "main")?.expect("subscription exists");
@@ -3716,6 +3835,158 @@ mod tests {
         assert_eq!(
             shown(&refreshed.plugins.expect("refreshing shows them")),
             shown(&plugins)
+        );
+        Ok(())
+    }
+
+    /// The official flag of each of `plugins`, by id.
+    fn official_flags(plugins: &[PluginPreview]) -> Vec<(&str, bool)> {
+        plugins
+            .iter()
+            .map(|plugin| (&*plugin.id, plugin.official))
+            .collect()
+    }
+
+    /// The listing of an index holding `here` and referencing `elsewhere`
+    /// in another repository.
+    async fn mixed_index_listing() -> anyhow::Result<RepositoryListing> {
+        let release = "1".repeat(40);
+        let versions = versions_json(&[(&release, HOST_REQUIREMENT)]);
+        let elsewhere = manifest_json("elsewhere", "1.0.0", HOST_REQUIREMENT);
+        let remote = TestForge::start(
+            vec![
+                ("plugin.json".into(), elsewhere.clone()),
+                ("versions.json".into(), versions.clone()),
+            ],
+            vec![(
+                release.clone(),
+                vec![
+                    ("plugin.json".into(), elsewhere),
+                    ("init.luau".into(), "return {}".into()),
+                ],
+            )],
+        )
+        .await?;
+        let index = serde_json::json!({
+            "schema_version": 1,
+            "name": "Index",
+            "plugins": [{ "path": "plugins/here" }, { "url": remote.origin }],
+        })
+        .to_string();
+        let here = manifest_json("here", "1.0.0", HOST_REQUIREMENT);
+        let tree = vec![
+            ("repository.json".to_string(), index),
+            ("plugins/here/plugin.json".to_string(), here),
+            (
+                "plugins/here/init.luau".to_string(),
+                "return {}".to_string(),
+            ),
+        ];
+        let mut tip = tree.clone();
+        tip.push(("versions.json".into(), versions));
+        let catalog = TestForge::start(tip, vec![(release, tree)]).await?;
+        Ok(list(&catalog.origin, None, &BuildInfo::default()).await?)
+    }
+
+    #[tokio::test]
+    async fn previews_mark_plugins_held_in_the_official_repository_on_its_default_branch()
+    -> anyhow::Result<()> {
+        let plugins_dir = tempfile::TempDir::new()?;
+        let mut listing = mixed_index_listing().await?;
+
+        let preview = build_preview(&listing, plugins_dir.path());
+        assert_eq!(
+            official_flags(&preview.plugins),
+            [("here", false), ("elsewhere", false)],
+            "another repository's index is not official"
+        );
+
+        listing.spec = RepoSpec::parse(DEFAULT_ORIGIN, None)?;
+        let preview = build_preview(&listing, plugins_dir.path());
+        assert_eq!(
+            official_flags(&preview.plugins),
+            [("here", true), ("elsewhere", false)],
+            "only what the official repository holds itself is official"
+        );
+
+        listing.spec = RepoSpec::parse(DEFAULT_ORIGIN, Some("main"))?;
+        let preview = build_preview(&listing, plugins_dir.path());
+        assert_eq!(
+            official_flags(&preview.plugins),
+            [("here", false), ("elsewhere", false)],
+            "an explicit ref is not official"
+        );
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn stored_listings_mark_plugins_held_in_the_official_repository_on_its_default_branch()
+    -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        let official = repo_db::list(&*STATE.db.read().await)?
+            .into_iter()
+            .find(|repository| repository.origin == DEFAULT_ORIGIN)
+            .expect("the default subscription is seeded");
+        let entry = |id: &str, source_origin: Option<&str>| repo_db::PluginRepositoryEntry {
+            db_id: None,
+            plugin_id: id.into(),
+            subpath: source_origin.is_none().then(|| format!("plugins/{id}")),
+            source_origin: source_origin.map(Into::into),
+            name: None,
+            description: None,
+            version: Some("1.0.0".into()),
+            commit: Some("1".repeat(40)),
+            scopes: Some(Vec::new()),
+            dependencies: None,
+            position: None,
+            requires: None,
+            error: None,
+        };
+        let entries = [
+            entry("here", None),
+            entry("elsewhere", Some("https://github.com/o/r")),
+        ];
+        assert!(repo_db::update(
+            &mut *STATE.db.write().await,
+            &official,
+            &entries
+        )?);
+
+        let view = get_repository(&official.id, true).await?;
+        assert_eq!(
+            official_flags(&view.plugins.expect("requested")),
+            [("here", true), ("elsewhere", false)]
+        );
+
+        let pinned = repository_view(
+            Subscription {
+                repository: repo_db::PluginRepository {
+                    git_ref: Some("main".into()),
+                    ..official.clone()
+                },
+                entries: entries.to_vec(),
+            },
+            &[],
+        );
+        assert_eq!(
+            official_flags(&pinned.plugins.expect("viewed with plugins")),
+            [("here", false), ("elsewhere", false)]
+        );
+
+        let third_party = repository_view(
+            Subscription {
+                repository: repo_db::PluginRepository {
+                    origin: "https://github.com/o/index".into(),
+                    ..official.clone()
+                },
+                entries: entries.to_vec(),
+            },
+            &[],
+        );
+        assert_eq!(
+            official_flags(&third_party.plugins.expect("viewed with plugins")),
+            [("here", false), ("elsewhere", false)]
         );
         Ok(())
     }

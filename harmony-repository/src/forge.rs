@@ -230,6 +230,12 @@ impl RepoSpec {
             && self.repo_name.eq_ignore_ascii_case(&other.repo_name)
     }
 
+    /// Whether both specs fetch the same repository the same way, ignoring
+    /// refs: a listing from one can stand for the other.
+    pub fn is_same_source(&self, other: &RepoSpec) -> bool {
+        self.is_same_repo(other) && self.scheme == other.scheme && self.forge == other.forge
+    }
+
     /// The whole repository as a tarball at `git_ref`, which may be a branch,
     /// tag or commit.
     pub fn archive_url(&self, git_ref: &str) -> String {
@@ -717,6 +723,22 @@ mod tests {
 
         let c = RepoSpec::parse("https://github.com/owner/other", None).unwrap();
         assert!(!a.is_same_repo(&c));
+    }
+
+    #[test]
+    fn same_source_also_needs_the_scheme_and_forge() {
+        let a = RepoSpec::parse("https://github.com/Owner/Repo", None).unwrap();
+        let b = RepoSpec::parse("https://github.com/owner/repo/tree/dev", None).unwrap();
+        assert!(a.is_same_source(&b));
+
+        for other in [
+            "http://github.com/owner/repo",
+            "https://github.com/owner/repo?forge=gitea",
+        ] {
+            let other = RepoSpec::parse(other, None).unwrap();
+            assert!(a.is_same_repo(&other));
+            assert!(!a.is_same_source(&other));
+        }
     }
 
     #[test]

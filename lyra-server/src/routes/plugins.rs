@@ -163,6 +163,11 @@ struct RepositorySourceResponse {
     /// True when `ref` is a tag or commit, so updates never move the
     /// plugin. Branch installs track new releases.
     pinned: bool,
+    /// True when the plugin's own code comes from the official Lyra
+    /// repository's default branch and is held in that repository itself.
+    /// It does not cover the plugin's dependencies, and is never derived
+    /// from `repository.json`, `plugin.json`, a plugin id or a name.
+    official: bool,
     #[serde(flatten)]
     status: UpdateStatusResponse,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -462,6 +467,11 @@ struct PluginPreviewResponse {
     status: CatalogStatusResponse,
     #[serde(skip_serializing_if = "Option::is_none")]
     source: Option<PluginPreviewSourceResponse>,
+    /// True when the plugin's own code comes from the official Lyra
+    /// repository's default branch and is held in that repository itself.
+    /// It does not cover the plugin's dependencies, and is never derived
+    /// from `repository.json`, `plugin.json`, a plugin id or a name.
+    official: bool,
     /// Why the plugin has no installable release, such as all of them
     /// requiring another Lyra version; `name`, `version`, `description` and
     /// `scopes` are then empty. Installing the plugin fails, but not the
@@ -916,6 +926,7 @@ fn plugin_preview_responses(
             source: plugin
                 .source_origin
                 .map(|origin| PluginPreviewSourceResponse { origin }),
+            official: plugin.official,
             error: plugin.error,
         })
         .collect()
@@ -992,6 +1003,7 @@ fn source_response(
     status: repositories_service::InstalledStatus,
 ) -> PluginSourceResponse {
     PluginSourceResponse::Repository(Box::new(RepositorySourceResponse {
+        official: repositories_service::is_official_install(&record),
         status: update_status_response(status.status),
         offered: status.offered.map(offered_release_response),
         hold: status.hold.map(hold_response),
@@ -1678,7 +1690,7 @@ fn get_settings_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn list_plugins_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List plugins").description(
-        "Returns the loaded plugin manifests along with where each plugin was installed from: a `source` of kind `repository` (origin, ref, version, commit, pinned, status, offered, hold, installed_at, installed_automatically), `local`, or `invalid` (error) when the source record could not be read and the plugin should be uninstalled or reinstalled. `pinned` is true for tag and commit installs, which updates never move. `status` compares the installed version with the release that the subscribed repository of the same origin and ref last offered this server (`up_to_date`, `update_available`, `incompatible` with the `requires` that excludes this server, or `unknown` with the `reason` when it offered nothing for another reason, such as a missing `versions.json`, or no such subscription lists the plugin), without contacting the forge; refreshing the repository or updating plugins stores the offered releases. `offered` is the release on offer (version, commit, scopes) and `hold` why an available update to it waits for an admin: `adds_scopes` with the `gains` of each plugin it would let reach new scopes, through its own or its dependencies', with what they let it do and its risk before and after, `breaks_dependents` with each dependent's id and requirement, `unmet_dependencies` with each dependency the release requires that would be missing or at another version, or `dependency_cycle` with the `plugins` it would leave depending on each other in a cycle. Dependencies are judged as if every available update were installed together. `installed_automatically` is true when the daily update check, not a request, installed the release at `installed_at`.",
+        "Returns the loaded plugin manifests along with where each plugin was installed from: a `source` of kind `repository` (origin, ref, version, commit, pinned, official, status, offered, hold, installed_at, installed_automatically), `local`, or `invalid` (error) when the source record could not be read and the plugin should be uninstalled or reinstalled. `pinned` is true for tag and commit installs, which updates never move. `status` compares the installed version with the release that the subscribed repository of the same origin and ref last offered this server (`up_to_date`, `update_available`, `incompatible` with the `requires` that excludes this server, or `unknown` with the `reason` when it offered nothing for another reason, such as a missing `versions.json`, or no such subscription lists the plugin), without contacting the forge; refreshing the repository or updating plugins stores the offered releases. `offered` is the release on offer (version, commit, scopes) and `hold` why an available update to it waits for an admin: `adds_scopes` with the `gains` of each plugin it would let reach new scopes, through its own or its dependencies', with what they let it do and its risk before and after, `breaks_dependents` with each dependent's id and requirement, `unmet_dependencies` with each dependency the release requires that would be missing or at another version, or `dependency_cycle` with the `plugins` it would leave depending on each other in a cycle. Dependencies are judged as if every available update were installed together. `installed_automatically` is true when the daily update check, not a request, installed the release at `installed_at`.",
     )
 }
 
@@ -2114,6 +2126,92 @@ mod tests {
     }
 
     #[test]
+    fn manifest_responses_mark_official_installs_from_their_records_alone() -> anyhow::Result<()> {
+        const OFFICIAL: &str = "https://git.lyra.pub/lyra/lyra?forge=gitlab";
+        const INDEX: &str = "https://github.com/o/index";
+        let plugins_dir = tempfile::TempDir::new()?;
+        let installs = [
+            ("official", OFFICIAL, None, false, None),
+            ("branch", OFFICIAL, Some("main"), false, None),
+            ("pinned", OFFICIAL, Some("v1"), true, None),
+            ("via", OFFICIAL, None, false, Some(INDEX)),
+            (
+                "remote",
+                "https://github.com/o/r",
+                None,
+                false,
+                Some(OFFICIAL),
+            ),
+            ("third_party", "https://github.com/o/r", None, false, None),
+        ];
+        for (id, origin, git_ref, pinned, via_repository) in installs {
+            let dir = plugins_dir.path().join(id);
+            std::fs::create_dir(&dir)?;
+            SourceRecord {
+                schema_version: harmony_repository::manifest::SOURCE_RECORD_SCHEMA_VERSION,
+                origin: origin.into(),
+                forge: harmony_repository::Forge::GitLab,
+                git_ref: git_ref.map(Into::into),
+                version: semver::Version::new(1, 0, 0),
+                commit: "a".repeat(40),
+                pinned,
+                subpath: Some(format!("plugins/{id}")),
+                via_repository: via_repository.map(Into::into),
+                installed_at: None,
+                installed_automatically: false,
+            }
+            .store(&dir)?;
+        }
+        std::fs::create_dir(plugins_dir.path().join("local"))?;
+        let manifests: Vec<_> = installs
+            .iter()
+            .map(|(id, ..)| manifest(id))
+            .chain([manifest("local")])
+            .collect();
+        let subscribed = [repositories_service::Subscription {
+            repository: lyra_db::plugin_repositories::PluginRepository {
+                db_id: None,
+                id: "default".into(),
+                origin: OFFICIAL.into(),
+                name: "Official".into(),
+                description: String::new(),
+                git_ref: None,
+                resolved_ref: None,
+                commit: None,
+                refreshed_at_ms: None,
+            },
+            entries: Vec::new(),
+        }];
+
+        for subscriptions in [&subscribed[..], &[]] {
+            let json = serde_json::to_value(manifest_responses(
+                &manifests,
+                plugins_dir.path(),
+                subscriptions,
+            ))?;
+            let official: Vec<_> = json
+                .as_array()
+                .expect("an array of manifests")
+                .iter()
+                .map(|plugin| plugin["source"]["official"].clone())
+                .collect();
+            assert_eq!(
+                official,
+                [
+                    serde_json::json!(true),
+                    serde_json::json!(false),
+                    serde_json::json!(false),
+                    serde_json::json!(false),
+                    serde_json::json!(false),
+                    serde_json::json!(false),
+                    serde_json::Value::Null,
+                ]
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn manifest_responses_give_the_reason_a_status_is_unknown() -> anyhow::Result<()> {
         let plugins_dir = tempfile::TempDir::new()?;
         let origin = "https://github.com/o/r";
@@ -2328,6 +2426,7 @@ mod tests {
                     commit: Some("a".repeat(40)),
                     status: CatalogStatus::Installed(UpdateStatus::UpdateAvailable),
                     source_origin: None,
+                    official: true,
                     error: None,
                 },
                 PluginPreview {
@@ -2340,6 +2439,7 @@ mod tests {
                     commit: None,
                     status: CatalogStatus::Available,
                     source_origin: Some("https://github.com/o/other".into()),
+                    official: false,
                     error: Some("requires another lyra".into()),
                 },
                 PluginPreview {
@@ -2354,6 +2454,7 @@ mod tests {
                         requires: "^0.0.7".into(),
                     }),
                     source_origin: None,
+                    official: false,
                     error: Some("requires lyra ^0.0.7".into()),
                 },
                 PluginPreview {
@@ -2368,6 +2469,7 @@ mod tests {
                         reason: "no releases".into(),
                     }),
                     source_origin: None,
+                    official: false,
                     error: Some("no releases".into()),
                 },
             ],
@@ -2396,6 +2498,9 @@ mod tests {
         assert_eq!(json["plugins"][2]["requires"], "^0.0.7");
         assert!(json["plugins"][0].get("source").is_none());
         assert!(json["plugins"][0].get("error").is_none());
+        assert_eq!(json["plugins"][0]["official"], true);
+        assert_eq!(json["plugins"][1]["official"], false);
+        assert!(json.get("official").is_none());
         assert_eq!(json["plugins"][1]["error"], "requires another lyra");
         assert_eq!(json["plugins"][1]["status"], "available");
         assert_eq!(
@@ -2415,6 +2520,8 @@ mod tests {
         assert_eq!(json["name"], "Stale");
         assert_eq!(json["resolved_ref"], "main");
         assert_eq!(json["plugins"][2]["requires"], "^0.0.7");
+        assert_eq!(json["plugins"][0]["official"], true);
+        assert!(json.get("official").is_none());
         let json = serde_json::to_value(repository_response(view(None)))?;
         assert!(json.get("plugins").is_none());
         Ok(())

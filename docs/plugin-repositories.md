@@ -284,6 +284,17 @@ install names each plugin with the release commit its preview showed, so
 the scopes approved are the scopes granted: a plugin whose offered release
 has changed since fails to install.
 
+Offered plugins, in previews and subscription listings, and installed
+plugins with a repository source carry `official`: true when the plugin's
+own code comes from the [official catalog](https://git.lyra.pub/lyra/lyra?forge=gitlab)'s
+default branch and is held in that repository itself. Any explicit ref, even
+the default branch's name, makes it false, as does an index entry pointing
+at another repository, and it does not cover the plugin's dependencies. The
+server computes it on read from the plugin's source, never from
+`repository.json`, `plugin.json`, a plugin id or a name. For an installed
+plugin it depends only on the source record, so removing or re-adding the
+subscription doesn't change it.
+
 Previews, and updates held for the scopes they reach, describe what the
 scopes reached let a plugin do, and which scopes, declared by the plugin
 or its dependencies, each effect comes through: send data off the server, add endpoints or listen on the
