@@ -86,14 +86,19 @@ RUN for dir in harmony-core harmony-crypt harmony-globals harmony-http harmony-s
       mkdir -p "$dir/src" && echo '' > "$dir/src/lib.rs"; \
     done && \
     mkdir -p lyra-docs/src && echo 'fn main() {}' > lyra-docs/src/main.rs && \
-    mkdir -p lyra-server/src && echo 'fn main() {}' > lyra-server/src/main.rs && echo '' > lyra-server/src/lib.rs
+    mkdir -p lyra-server/src && echo 'fn main() {}' > lyra-server/src/main.rs && echo '' > lyra-server/src/lib.rs && \
+    echo 'fn main() {}' > lyra-harmony-test/src/main.rs
 
 # Fetch all dependencies (fails fast on resolution/network errors).
 RUN cargo fetch --locked
 
 FROM build-env AS clippy
 
+# Pre-check dependencies. Stubs may fail; that's expected.
+RUN cargo clippy --locked --workspace --all-targets || true
+
 COPY . .
+RUN find harmony-* lyra-* -name '*.rs' -exec touch {} +
 RUN cargo clippy --locked --workspace --all-targets -- -D warnings
 
 FROM build-env AS deps
@@ -101,8 +106,6 @@ FROM build-env AS deps
 # Pre-compile dependencies. Stubs cause final link to fail — that's expected.
 RUN cargo build --release -p lyra-server || true
 
-# Kaniko carries declared ARGs into later stages' cache keys, so stages
-# declaring per-build ARGs come after the dependency layers.
 FROM node:24-bookworm-slim AS web
 
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \

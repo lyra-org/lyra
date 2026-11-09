@@ -34,22 +34,27 @@ web-revision:
     - if: $CI_COMMIT_TAG =~ /^v/
     - if: $CI_PIPELINE_SOURCE == "web"
 
-.kaniko:
+.buildkit:
   image:
-    name: gcr.io/kaniko-project/executor:debug
+    name: moby/buildkit:v0.34.2-rootless
     entrypoint: [""]
   variables:
     BUILDCACHE: gitlab:5380/$CI_PROJECT_PATH/cache
+    BUILDKITD_FLAGS: --oci-worker-no-process-sandbox --config=/tmp/buildkitd.toml
   before_script:
-    - mkdir -p /kaniko/.docker
+    - mkdir -p "$HOME/.docker"
     - |
       AUTH=$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')
-      cat > /kaniko/.docker/config.json <<EOF
+      cat > "$HOME/.docker/config.json" <<EOF
       {
         "auths": {
           "$INTERNAL_REGISTRY": { "auth": "$AUTH" }
         }
       }
+      EOF
+      cat > /tmp/buildkitd.toml <<EOF
+      [registry."$INTERNAL_REGISTRY"]
+        http = true
       EOF
 
 release-checks:
@@ -68,19 +73,17 @@ release-checks:
     - if: $CI_PIPELINE_SOURCE == "web"
 
 clippy:
-  extends: .kaniko
+  extends: .buildkit
   stage: check
   script:
     - |
-      /kaniko/executor \
-        --context "$CI_PROJECT_DIR" \
-        --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
-        --target=clippy \
-        --skip-unused-stages=true \
-        --no-push \
-        --cache=true \
-        --cache-repo=$BUILDCACHE \
-        --insecure-registry=$INTERNAL_REGISTRY
+      buildctl-daemonless.sh build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=. \
+        --opt target=clippy \
+        --import-cache "type=registry,ref=$BUILDCACHE:clippy" \
+        --export-cache "type=registry,ref=$BUILDCACHE:clippy,mode=max"
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
@@ -88,27 +91,27 @@ clippy:
     - if: $CI_PIPELINE_SOURCE == "web"
 
 docker:
-  extends: .kaniko
+  extends: .buildkit
   stage: build
   dependencies:
     - web-revision
   script:
     - |
       TAGS=$(sh ci/image-tags.sh)
-      DESTS=""
+      NAMES=""
       for TAG in $TAGS; do
-        DESTS="$DESTS --destination=$IMAGE:$TAG"
+        NAMES="$NAMES,$IMAGE:$TAG"
       done
-      /kaniko/executor \
-        --context "$CI_PROJECT_DIR" \
-        --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
-        $DESTS \
-        --skip-unused-stages=true \
-        --build-arg LYRA_GIT_HASH=$CI_COMMIT_SHA \
-        --build-arg "LYRA_WEB_GIT_HASH=$LYRA_WEB_GIT_HASH" \
-        --cache=true \
-        --cache-repo=$BUILDCACHE \
-        --insecure-registry=$INTERNAL_REGISTRY
+      buildctl-daemonless.sh build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=. \
+        --opt "build-arg:LYRA_GIT_HASH=$CI_COMMIT_SHA" \
+        --opt "build-arg:LYRA_WEB_GIT_HASH=$LYRA_WEB_GIT_HASH" \
+        --output "type=image,\"name=${NAMES#,}\",push=true" \
+        --import-cache "type=registry,ref=$BUILDCACHE:clippy" \
+        --import-cache "type=registry,ref=$BUILDCACHE:docker" \
+        --export-cache "type=registry,ref=$BUILDCACHE:docker,mode=max"
   rules: *docker_rules
 
 image-channels:
