@@ -395,6 +395,7 @@ async fn update_role(
 }
 
 async fn update_me(
+    Extension(client): Extension<ClientAddress>,
     headers: HeaderMap,
     Json(body): Json<UpdateMeRequest>,
 ) -> Result<StatusCode, AppError> {
@@ -423,6 +424,7 @@ async fn update_me(
             &session_public_id,
             current_password,
             new_password,
+            client,
         )
         .await?;
     }
@@ -588,7 +590,9 @@ fn update_me_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Update current user")
         .description(
             "Updates the authenticated user's own account. Currently supports password changes \
-             with `current_password` and `new_password`.",
+             with `current_password` and `new_password`. Wrong current passwords count against \
+             the account's failed-login limit, which answers 429 with `Retry-After` once it is \
+             spent.",
         )
         .response::<204, ()>()
 }
@@ -602,8 +606,12 @@ fn get_me_docs(op: TransformOperation) -> TransformOperation {
 
 #[cfg(feature = "docgen")]
 fn login_user_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Login user")
-        .description("Validates credentials and returns a session token.")
+    op.summary("Login user").description(
+        "Validates credentials and returns a session token. Failed logins are limited per \
+             client address and per username, whichever address they come from; past either \
+             limit the response is 429 with `Retry-After`. A username's limit does not apply to \
+             an address its user logged in from in the last 30 days.",
+    )
 }
 
 #[cfg(feature = "docgen")]
@@ -882,6 +890,7 @@ mod tests {
         assert_deleted_caller_unauthorized(async |headers, _| {
             status_of(
                 update_me(
+                    Extension(ClientAddress::default()),
                     headers,
                     Json(UpdateMeRequest {
                         current_password: Some("caller-password".to_string()),
@@ -1448,6 +1457,7 @@ mod tests {
         );
 
         update_me(
+            Extension(ClientAddress::default()),
             session_headers,
             Json(UpdateMeRequest {
                 current_password: Some("initial-password-abc".to_string()),
@@ -1586,6 +1596,7 @@ mod tests {
         .expect("session auth should create an api key");
 
         let status = update_me(
+            Extension(ClientAddress::default()),
             bearer_headers(&created.key),
             Json(UpdateMeRequest {
                 current_password: Some("irrelevant".to_string()),

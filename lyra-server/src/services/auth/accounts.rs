@@ -25,7 +25,11 @@ use super::{
     },
     require_principal,
 };
-use crate::services::STATE;
+use crate::services::{
+    STATE,
+    auth::caller::ClientAddress,
+    rate_limit::password_checks,
+};
 use lyra_db::{
     Permission,
     User,
@@ -150,6 +154,7 @@ pub(crate) async fn set_password(
         lyra_db::users::revoke_all_sessions_for_user(t, user_db_id)?;
         lyra_db::api_keys::delete_all_for_user(t, user_db_id)
     })?;
+    password_checks::forget_logins(user_public_id);
     drop(db);
     api_keys::forget_last_used_many(revoked_api_key_ids);
     Ok(())
@@ -163,22 +168,26 @@ enum PasswordRotationError {
     UserNotFound,
 }
 
-/// Changes the caller's own password, keeping only the session that changed it.
+/// Changes the caller's own password, keeping only the session that changed it. The current
+/// password is checked under the limit a login for the account is.
 pub(crate) async fn change_own_password(
     principal: &Principal,
     session_public_id: &str,
     current_password: &str,
     new_password: &str,
+    client: ClientAddress,
 ) -> AccountResult<()> {
     passwords::validate(new_password)?;
 
-    let checked_hash = {
+    let user = {
         let db = STATE.db.read().await;
         let user_db_id = principal.require(&db)?;
         lyra_db::users::get_by_id(&db, user_db_id)?
             .ok_or_else(|| AuthError::NotFound("user not found".to_string()))?
-            .password
     };
+    let admission = password_checks::admit(&user.username, Some(&user.id), client)
+        .map_err(AuthError::RateLimited)?;
+    let checked_hash = user.password;
     if !passwords::matches(current_password, checked_hash.clone()).await? {
         return Err(AccountError::IncorrectCurrentPassword);
     }
@@ -210,7 +219,9 @@ pub(crate) async fn change_own_password(
                 None => error.into(),
             },
         )?;
+    password_checks::forget_logins(&user.id);
     drop(db);
+    admission.refund();
     api_keys::forget_last_used_many(revoked_api_key_ids);
     Ok(())
 }
@@ -314,6 +325,119 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(5), work)
             .await
             .expect("refused before hashing")
+    }
+
+    const CURRENT_PASSWORD: &str = "current-password";
+    const NAME_BURST: u32 = 10;
+
+    /// A user whose password is [`CURRENT_PASSWORD`].
+    async fn insert_user_with_password(username: &str) -> anyhow::Result<(Principal, String)> {
+        let user_db_id = insert_user(username, lyra_db::roles::BUILTIN_USER_ROLE).await?;
+        let hash = passwords::hash(CURRENT_PASSWORD).await?;
+        STATE
+            .db
+            .write()
+            .await
+            .transaction_mut(|t| lyra_db::users::update_user_password(t, user_db_id, &hash))?;
+        let principal = user_principal(user_db_id).await?;
+        let public_id = principal.user_public_id.clone();
+        Ok((principal, public_id))
+    }
+
+    async fn change_password_from(
+        principal: &Principal,
+        current_password: &str,
+        client: ClientAddress,
+    ) -> AccountResult<()> {
+        change_own_password(
+            principal,
+            "session",
+            current_password,
+            "replacement-password",
+            client,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn changing_a_password_on_a_throttled_account_is_refused_before_hashing()
+    -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let (principal, _) = insert_user_with_password("throttled").await?;
+        password_checks::spend("throttled", NAME_BURST);
+
+        let result = without_hashing(change_password_from(
+            &principal,
+            CURRENT_PASSWORD,
+            password_checks::fresh_address(),
+        ))
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(AccountError::Auth(AuthError::RateLimited(_)))
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_wrong_current_password_is_charged_and_a_right_one_is_not() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let (principal, _) = insert_user_with_password("rotating").await?;
+        let client = password_checks::fresh_address();
+        password_checks::spend("rotating", NAME_BURST - 2);
+
+        assert!(matches!(
+            change_password_from(&principal, "wrong-password", client).await,
+            Err(AccountError::IncorrectCurrentPassword)
+        ));
+        change_password_from(&principal, CURRENT_PASSWORD, client).await?;
+
+        password_checks::spend("rotating", 1);
+        assert!(matches!(
+            change_password_from(&principal, "replacement-password", client).await,
+            Err(AccountError::Auth(AuthError::RateLimited(_)))
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_known_address_changes_its_users_password_while_the_account_is_throttled()
+    -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let (principal, user_id) = insert_user_with_password("resident").await?;
+        let home = password_checks::fresh_address();
+        password_checks::remember_login(&user_id, home);
+        password_checks::spend("resident", NAME_BURST);
+
+        change_password_from(&principal, CURRENT_PASSWORD, home).await?;
+
+        assert!(
+            password_checks::admit("resident", Some(&user_id), home).is_err(),
+            "the change forgets where the user logged in from"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn setting_a_users_password_forgets_where_they_logged_in_from() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let (_, user_id) = insert_user_with_password("resident").await?;
+        let admin_db_id = insert_user("admin", lyra_db::roles::BUILTIN_ADMIN_ROLE).await?;
+        let admin = user_principal(admin_db_id).await?;
+        let home = password_checks::fresh_address();
+        password_checks::remember_login(&user_id, home);
+        password_checks::spend("resident", NAME_BURST);
+        assert!(password_checks::admit("resident", Some(&user_id), home).is_ok());
+
+        set_password(&admin, &user_id, "long-enough-password").await?;
+
+        assert!(password_checks::admit("resident", Some(&user_id), home).is_err());
+        Ok(())
     }
 
     #[tokio::test]

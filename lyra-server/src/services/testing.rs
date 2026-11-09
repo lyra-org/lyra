@@ -377,6 +377,7 @@ mod test_state {
     fn initialize_state(library: Option<super::LibraryConfig>) -> anyhow::Result<()> {
         let (boot, created, resolved) = open_memory_state(library, Default::default())?;
         STATE.initialize(boot, created, resolved)?;
+        crate::services::rate_limit::password_checks::reset();
         STATE.generation().runtime.replace(Some(Arc::new(
             crate::services::plugin_scope::RuntimeScope::without_plugin_layer(
                 Arc::new(super::IdleDispatch),

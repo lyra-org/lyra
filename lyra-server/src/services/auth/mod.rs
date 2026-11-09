@@ -631,6 +631,14 @@ pub(crate) async fn login_with_password(
         let db = STATE.db.read().await;
         lyra_db::users::get_by_username(&db, username).map_err(AuthError::from)?
     };
+    // Reserved before any hashing and kept unless the login completes, whether the name is
+    // unknown or the password wrong.
+    let admission = crate::services::rate_limit::password_checks::admit(
+        username,
+        maybe_user.as_ref().map(|user| user.id.as_str()),
+        client,
+    )
+    .map_err(AuthError::RateLimited)?;
     let Some(user) = maybe_user else {
         passwords::match_nothing(password).await?;
         return Ok(None);
@@ -650,10 +658,14 @@ pub(crate) async fn login_with_password(
     else {
         return Ok(None);
     };
+    // Recorded under the lock that showed the password current, so a change cannot slip between.
+    crate::services::rate_limit::password_checks::remember_login(&user.id, client);
     let principal = resolve_principal(&db, user_db_id, user);
     drop(db);
 
-    create_login_result(principal, metadata).await.map(Some)
+    let login = create_login_result(principal, metadata).await?;
+    admission.refund();
+    Ok(Some(login))
 }
 
 pub(crate) async fn require_principal(bearer: Option<&str>) -> Result<Principal, AuthError> {
@@ -717,9 +729,149 @@ pub(crate) async fn ensure_default_user(config: &Config) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::rate_limit::password_checks;
 
     async fn initialize_auth_test_runtime() -> anyhow::Result<()> {
         crate::services::testing::init_library_test_state(std::path::PathBuf::from(".")).await
+    }
+
+    const LOGIN_PASSWORD: &str = "correct-login-password";
+
+    /// A user who logs in with [`LOGIN_PASSWORD`], by public id.
+    async fn insert_login_user(username: &str) -> anyhow::Result<String> {
+        let mut user = lyra_db::fixtures::test_user(username)?;
+        user.password = passwords::hash(LOGIN_PASSWORD).await?;
+        let mut db = STATE.db.write().await;
+        lyra_db::roles::ensure_builtin_roles(&mut db)?;
+        let user_db_id = lyra_db::users::create(&mut db, &user)?;
+        lyra_db::roles::ensure_user_has_role(
+            &mut db,
+            user_db_id,
+            lyra_db::roles::BUILTIN_USER_ROLE,
+        )?;
+        Ok(user.id)
+    }
+
+    async fn login_from(
+        username: &str,
+        password: &str,
+        client: caller::ClientAddress,
+    ) -> AuthResult<Option<LoginResult>> {
+        login_with_password(username, password, Default::default(), client).await
+    }
+
+    async fn login(username: &str, password: &str) -> AuthResult<Option<LoginResult>> {
+        login_from(username, password, password_checks::fresh_address()).await
+    }
+
+    const NAME_BURST: u32 = 10;
+
+    #[tokio::test]
+    async fn a_throttled_name_is_refused_without_hashing() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        initialize_auth_test_runtime().await?;
+        insert_login_user("throttled").await?;
+        password_checks::spend("throttled", NAME_BURST);
+
+        let _slots = passwords::hold_all_slots().await;
+        for username in ["throttled", " Throttled "] {
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                login(username, LOGIN_PASSWORD),
+            )
+            .await
+            .expect("refused before hashing");
+            assert!(matches!(result, Err(AuthError::RateLimited(_))));
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn unknown_and_real_names_are_charged_and_refused_alike() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        initialize_auth_test_runtime().await?;
+        insert_login_user("real-name").await?;
+
+        let mut refusals = Vec::new();
+        for username in ["real-name", "no-such-name"] {
+            password_checks::spend(username, NAME_BURST - 1);
+            assert!(login(username, "wrong-password").await?.is_none());
+            let Err(AuthError::RateLimited(retry_after)) = login(username, "wrong-password").await
+            else {
+                anyhow::bail!("{username} should be throttled once its burst is spent");
+            };
+            refusals.push(retry_after);
+        }
+
+        assert!(refusals[0].abs_diff(refusals[1]) <= std::time::Duration::from_secs(1));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_successful_login_neither_drains_nor_refills_its_name() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        initialize_auth_test_runtime().await?;
+        insert_login_user("regular").await?;
+        password_checks::spend("regular", NAME_BURST - 1);
+
+        for _ in 0..3 {
+            assert!(login("regular", LOGIN_PASSWORD).await?.is_some());
+        }
+
+        assert!(login("regular", "wrong-password").await?.is_none());
+        assert!(matches!(
+            login("regular", LOGIN_PASSWORD).await,
+            Err(AuthError::RateLimited(_))
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_address_the_user_logged_in_from_is_not_throttled_by_other_guesses()
+    -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        initialize_auth_test_runtime().await?;
+        insert_login_user("resident").await?;
+        let home = password_checks::fresh_address();
+        assert!(
+            login_from("resident", LOGIN_PASSWORD, home)
+                .await?
+                .is_some()
+        );
+        password_checks::spend("resident", NAME_BURST);
+
+        assert!(
+            login_from("resident", LOGIN_PASSWORD, home)
+                .await?
+                .is_some()
+        );
+        assert!(matches!(
+            login("resident", LOGIN_PASSWORD).await,
+            Err(AuthError::RateLimited(_))
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn the_passwordless_default_login_is_neither_throttled_nor_charged() -> anyhow::Result<()>
+    {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        initialize_auth_test_runtime().await?;
+        let mut config = STATE.config().as_ref().clone();
+        config.auth.enabled = false;
+        config.auth.allow_default_login_when_disabled = true;
+        crate::services::testing::publish_config(config);
+        ensure_default_user(&STATE.config()).await?;
+
+        password_checks::spend(DEFAULT_USERNAME, NAME_BURST - 1);
+        for _ in 0..3 {
+            assert!(login(DEFAULT_USERNAME, "").await?.is_some());
+        }
+        password_checks::spend(DEFAULT_USERNAME, 1);
+        password_checks::spend("elsewhere", NAME_BURST);
+        assert!(login(DEFAULT_USERNAME, "").await?.is_some());
+        assert!(login("elsewhere", "").await?.is_none());
+        Ok(())
     }
 
     fn library_insert(name: &str, suffix: &str) -> lyra_db::libraries::LibraryInsert {

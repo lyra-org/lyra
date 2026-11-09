@@ -6,6 +6,8 @@
 //! Token-bucket primitives and login throttling, shared with the HTTP request
 //! limiter in `routes::rate_limit`.
 
+pub(crate) mod password_checks;
+
 use std::{
     collections::HashMap,
     sync::{
@@ -132,6 +134,8 @@ pub(crate) enum BucketKey {
     Authenticated(Identity),
     Lookup(ClientAddress),
     Login(ClientAddress),
+    /// A hash of the account name a password was submitted for.
+    LoginName(u64),
 }
 
 pub(crate) struct Bucket {
