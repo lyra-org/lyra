@@ -38,7 +38,14 @@ pub struct SyncRunRecord {
     pub failure_count: u64,
 }
 
-pub fn create(db: &mut impl super::DbAccess, record: &SyncRunRecord) -> anyhow::Result<DbId> {
+pub fn create(db: &mut DbAny, record: &SyncRunRecord) -> anyhow::Result<DbId> {
+    db.transaction_mut(|t| create_in_transaction(t, record))
+}
+
+pub(crate) fn create_in_transaction(
+    db: &mut DbAnyTransactionMut<'_>,
+    record: &SyncRunRecord,
+) -> anyhow::Result<DbId> {
     let result = db.exec_mut(QueryBuilder::insert().element(record).query())?;
     let run_db_id = result
         .ids()
@@ -78,6 +85,36 @@ pub(crate) fn update_in_transaction(
         ],
         record,
     )
+}
+
+/// Stores `record` unless a newer one of its run is, in one transaction. Writes nothing once the
+/// run's library is gone.
+pub fn persist(db: &mut DbAny, record: &SyncRunRecord) -> anyhow::Result<()> {
+    db.transaction_mut(|t| persist_in_transaction(t, record))
+}
+
+fn persist_in_transaction(
+    db: &mut DbAnyTransactionMut<'_>,
+    record: &SyncRunRecord,
+) -> anyhow::Result<()> {
+    if super::lookup::find_node_id_by_id(db, &record.library_id)?.is_none() {
+        return Ok(());
+    }
+    match get_by_id(db, &record.id)? {
+        // A write that lost the race to the lock leaves the newer record in place.
+        Some(stored) if stored.sequence >= record.sequence => {}
+        Some(stored) => update_in_transaction(
+            db,
+            &SyncRunRecord {
+                db_id: stored.db_id,
+                ..record.clone()
+            },
+        )?,
+        None => {
+            create_in_transaction(db, record)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn list(db: &impl super::DbAccess) -> anyhow::Result<Vec<SyncRunRecord>> {
@@ -167,7 +204,77 @@ pub fn active_for_library(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_db::new_test_db;
+    use crate::test_db::{
+        insert_library,
+        new_test_db,
+    };
+
+    /// A finished run of `library_id`, numbered by `sequence`.
+    fn finished_run(library_id: &str, id: &str, kind: &str, sequence: u64) -> SyncRunRecord {
+        SyncRunRecord {
+            db_id: None,
+            id: id.to_string(),
+            library_id: library_id.to_string(),
+            kind: kind.to_string(),
+            status: "succeeded".to_string(),
+            started_at_ms: sequence,
+            updated_at_ms: sequence,
+            finished_at_ms: Some(sequence),
+            error: None,
+            cancellation_requested: false,
+            sequence,
+            progress_mode: "determinate".to_string(),
+            total_state: "final".to_string(),
+            completed_units: 0,
+            failed_units: 0,
+            skipped_units: 0,
+            total_units: 0,
+            current_stage: None,
+            current_subject: None,
+            active_units: 0,
+            failure_count: 0,
+        }
+    }
+
+    fn library_public_id(db: &DbAny, library: DbId) -> anyhow::Result<String> {
+        Ok(crate::libraries::get_by_id(db, library)?
+            .expect("library exists")
+            .id)
+    }
+
+    #[test]
+    fn an_out_of_date_write_keeps_the_newer_record() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let library = insert_library(&mut db, "Music", "/runs")?;
+        let library_id = library_public_id(&db, library)?;
+        let newest = SyncRunRecord {
+            status: "running".to_string(),
+            ..finished_run(&library_id, "run", "library_sync", 9)
+        };
+        persist(&mut db, &newest)?;
+
+        let late = SyncRunRecord {
+            status: "planning".to_string(),
+            sequence: 5,
+            ..newest.clone()
+        };
+        persist(&mut db, &late)?;
+
+        let stored = get_by_id(&db, "run")?.expect("run");
+        assert_eq!((stored.status.as_str(), stored.sequence), ("running", 9));
+        Ok(())
+    }
+
+    #[test]
+    fn nothing_is_written_once_the_library_is_gone() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let run = finished_run("gone", "run", "library_sync", 1);
+
+        persist(&mut db, &run)?;
+
+        assert!(get_by_id(&db, "run")?.is_none());
+        Ok(())
+    }
 
     #[test]
     fn create_update_and_lookup_sync_run() -> anyhow::Result<()> {

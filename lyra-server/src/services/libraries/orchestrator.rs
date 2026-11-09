@@ -1611,33 +1611,14 @@ async fn reconcile_interrupted_runs(db: &DbAsync) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn persist_record(db: &DbAsync, mut record: lyra_db::sync_runs::SyncRunRecord) {
-    let run_id = record.id.clone();
-    let result = async {
+async fn persist_record(db: &DbAsync, record: lyra_db::sync_runs::SyncRunRecord) {
+    let result = {
         // Writes sync run records only.
         let mut db_write = db.write_outside_catalog().await;
-        if lyra_db::lookup::find_node_id_by_id(&*db_write, &record.library_id)?.is_none() {
-            return Ok(());
-        }
-        let existing = lyra_db::sync_runs::get_by_id(&db_write, &run_id)?;
-        // A write that lost the race to the lock leaves the newer record in place.
-        if existing
-            .as_ref()
-            .is_some_and(|stored| stored.sequence >= record.sequence)
-        {
-            return Ok(());
-        }
-        record.db_id = existing.as_ref().and_then(|run| run.db_id);
-        if existing.is_some() {
-            lyra_db::sync_runs::update(&mut db_write, &record)?;
-        } else {
-            lyra_db::sync_runs::create(&mut db_write, &record)?;
-        }
-        Ok::<(), anyhow::Error>(())
-    }
-    .await;
+        lyra_db::sync_runs::persist(&mut db_write, &record)
+    };
     if let Err(err) = result {
-        tracing::warn!(run_id, error = %err, "failed to persist sync run summary");
+        tracing::warn!(run_id = %record.id, error = %err, "failed to persist sync run summary");
     }
 }
 
