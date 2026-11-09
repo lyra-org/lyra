@@ -941,7 +941,8 @@ api.get(P .. "/Sessions", function(ctx: ApiContext)
 		return api.response.json(200, {})
 	end
 
-	return api.response.json(200, active_sessions.list_visible(principal, controllable_user_id))
+	local device_id = requests.parse_query_string(query, { "deviceId", "DeviceId" }, nil)
+	return api.response.json(200, active_sessions.list_visible(principal, controllable_user_id, device_id))
 end, { auth = "public", case_insensitive = true })
 
 syncplay.register(sessions, get_owned_session)

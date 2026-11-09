@@ -448,16 +448,19 @@ end
 
 -- The one listing behind both GET /Sessions and the socket push. Admins see every user's sessions
 -- and others their own, as upstream. The host verifies the dispatch principal first, so a deleted
--- user's listing fails.
-function module.list_visible(principal: Principal, controllable_user_id: string?): { JsonValue }
+-- user's listing fails. `device_id` keeps one device's sessions, in any case as upstream.
+function module.list_visible(principal: Principal, controllable_user_id: string?, device_id: string?): { JsonValue }
 	if controllable_user_id and not session.can_control_user(principal, controllable_user_id) then
 		return {}
 	end
 
+	local device = if device_id then string.lower(device_id) else nil
 	local listing: Listing = { now_playing_tracks = {} }
 	local result: { JsonValue } = {}
 	for _, dto in list_sessions(principal, session.is_admin(principal), listing) do
-		if controllable_user_id == nil or dto.SupportsRemoteControl == true then
+		local controllable = controllable_user_id == nil or dto.SupportsRemoteControl == true
+		local on_device = device == nil or (type(dto.DeviceId) == "string" and string.lower(dto.DeviceId) == device)
+		if controllable and on_device then
 			table.insert(result, dto)
 		end
 	end

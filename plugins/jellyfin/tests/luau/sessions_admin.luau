@@ -27,11 +27,11 @@ local body = { ItemId = item_ids.encode(fixture.ids.song), PositionTicks = 0 }
 local reported = session.handle_playback_report_route(request(fixture.api_keys.phone, body), "started")
 assert(reported.status == 204, `the listener's report is accepted, got {reported.status}`)
 
-local function sessions_of(api_key: string, controllable_user_id: string?): { [string]: any }
+local function sessions_of(api_key: string, controllable_user_id: string?, device_id: string?): { [string]: any }
 	local principal = session.require_jellyfin_principal(request(api_key))
 	assert(principal, "the api key authenticates")
 	local by_device: { [string]: any } = {}
-	for _, dto in active_sessions.list_visible(principal, controllable_user_id) do
+	for _, dto in active_sessions.list_visible(principal, controllable_user_id, device_id) do
 		by_device[(dto :: any).DeviceId] = dto
 	end
 	return by_device
@@ -60,6 +60,12 @@ assert(admin_view.desk, "and their own connection")
 local listener_view = sessions_of(fixture.api_keys.phone)
 assert(listener_view.phone and listener_view.speaker, "the listener sees their own sessions")
 assert(listener_view.desk == nil, "and not the admin's")
+
+-- A client finds its own session by its device, named in any case.
+local on_phone = sessions_of(fixture.api_keys.admin_key, nil, "PHONE")
+assert(on_phone.phone and on_phone.speaker == nil and on_phone.desk == nil, "one device's sessions alone")
+assert(next(sessions_of(fixture.api_keys.admin_key, nil, "tablet")) == nil, "none for a device with no session")
+assert(sessions_of(fixture.api_keys.phone, fixture.users.listener, "phone").phone == nil, "with the other filters")
 
 assert(
 	#active_controllable(fixture.api_keys.admin_key, fixture.users.listener) == 0,
