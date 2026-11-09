@@ -274,6 +274,15 @@ planned end, when its reported position reaches the track's duration; a
 buffering one until five minutes after its last report. With the
 setting off, updates are only reported.
 
+A subscription is checked ahead of its day while the server refuses to
+load an unpinned plugin installed from it because the plugin's `lyra`
+requirement excludes the server, as after a server upgrade: once at
+startup, without delaying it, or within minutes of a reload that refuses
+such a plugin. The check is the daily one, so the setting, holds, and the
+wait for nothing to be playing apply as they do there. Each such install
+is checked early once; a check that fails, or that fails to update the
+plugin, is tried again after five minutes, doubling up to a day.
+
 Plugins without a repository source are local: bundled or hand-copied.
 Repository installs, updates, and uninstalls never touch them. A plugin
 whose source record cannot be read is reported as invalid; reinstalling

@@ -407,6 +407,10 @@ impl PluginState {
         )
     }
 
+    pub(crate) fn discovery_errors(&self) -> Arc<[PluginDiscoveryError]> {
+        self.discovered().1
+    }
+
     /// What the published runtime's discovery loaded and what it left out.
     pub(crate) fn discovered(&self) -> (Arc<[PluginManifest]>, Arc<[PluginDiscoveryError]>) {
         self.scope().map_or_else(
