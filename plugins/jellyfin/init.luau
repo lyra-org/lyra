@@ -45,6 +45,7 @@ constants.configure_root_item_id(resolve_root_item_id())
 local active_sessions = require("@self/protocol/active_sessions")
 local audio_routes = require("@self/routes/audio")
 local bitrate_test = require("@self/routes/bitrate_test")
+local capability_routes = require("@self/routes/capabilities")
 local catalog = require("@self/protocol/items/catalog")
 local discovery = require("@self/protocol/discovery")
 local filters = require("@self/protocol/items/filters")
@@ -107,26 +108,7 @@ type SessionEntry = active_sessions.SessionEntry
 
 local sessions = active_sessions.entries
 
--- Returns nil on miss, scope mismatch, or closed sender. Mismatch is logged so
--- a hash collision is distinguishable from the normal miss. A closed entry
--- stays for its socket handler to release.
-local function get_owned_session(session_id: string?, principal: session.Principal): SessionEntry?
-	if not session_id then
-		return nil
-	end
-	local entry = sessions[session_id]
-	if not entry then
-		return nil
-	end
-	if entry.user_id ~= principal.user_id then
-		warn(`session user_id mismatch: principal={principal.user_id}, entry={entry.user_id}, session_id={session_id}`)
-		return nil
-	end
-	if entry.sender:is_closed() then
-		return nil
-	end
-	return entry
-end
+local get_owned_session = active_sessions.get_owned
 
 socket_routes.register()
 
@@ -940,64 +922,11 @@ end, { auth = "public", case_insensitive = true })
 api.head(P .. "/MusicGenres/{name}/Images/{imageType}/{imageIndex}", function(ctx: ApiContext)
 	return session.handle_genre_image_request(ctx)
 end, { auth = "public", case_insensitive = true })
--- Merge rule: Full wins on collision, non-Full fills gaps. Without a live
--- WS entry there's nowhere to stash caps; 204 silently so non-WS clients
--- aren't broken.
-local function handle_capabilities_post(ctx: ApiContext, body_is_object: boolean): ApiResponse
-	local principal = session.require_jellyfin_principal(ctx)
-	if not principal then
-		return session.unauthorized()
-	end
-
-	local identity = session.resolve_client_identity(ctx)
-	if not identity then
-		return api.response.empty(204)
-	end
-
-	local session_id = session.build_session_id(principal, identity)
-	local entry = get_owned_session(session_id, principal)
-	if not entry then
-		return api.response.empty(204)
-	end
-
-	if body_is_object then
-		local request = if ctx then ctx.request else nil
-		local request_json = if request then request.json else nil
-		if request_json ~= nil and type(request_json) ~= "table" then
-			return responses.bad_request("invalid capabilities request body")
-		end
-		local parsed = session.parse_client_capabilities(request_json)
-		if parsed then
-			entry.capabilities = parsed
-			local full_keys: { [string]: boolean } = {}
-			for key in parsed do
-				full_keys[key] = true
-			end
-			entry.full_capability_keys = full_keys
-		end
-	else
-		local request = if ctx then ctx.request else nil
-		local query = if request then request.query else nil
-		local partial = session.parse_client_capabilities_query(query)
-		if partial and next(partial) ~= nil then
-			local merged: JsonObject = if entry.capabilities then table.clone(entry.capabilities) else {}
-			for key, value in partial do
-				if not entry.full_capability_keys[key] then
-					merged[key] = value
-				end
-			end
-			entry.capabilities = merged
-		end
-	end
-
-	return api.response.empty(204)
-end
-
 api.post(P .. "/Sessions/Capabilities", function(ctx: ApiContext)
-	return handle_capabilities_post(ctx, false)
+	return capability_routes.handle(ctx, false)
 end, { auth = "public", case_insensitive = true })
 api.post(P .. "/Sessions/Capabilities/Full", function(ctx: ApiContext)
-	return handle_capabilities_post(ctx, true)
+	return capability_routes.handle(ctx, true)
 end, { auth = "public", case_insensitive = true })
 local function handle_send_command_error(err: unknown): ApiResponse
 	local kind = errors.kind(err)

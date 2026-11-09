@@ -1,0 +1,11 @@
+run_as = "listener"
+
+[[users]]
+key = "listener"
+
+[[users]]
+key = "other"
+
+[[api_keys]]
+key = "phone"
+user = "listener"

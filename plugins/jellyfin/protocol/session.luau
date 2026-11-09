@@ -1040,6 +1040,11 @@ local CAPABILITY_BOOL_FIELDS = {
 	"SupportsPersistentIdentifier",
 }
 local CAPABILITY_STRING_ARRAY_FIELDS = { "PlayableMediaTypes", "SupportedCommands" }
+-- What a declaration may hold, since each is stored. Upstream has about 50 general commands.
+local MAX_CAPABILITY_LIST_LENGTH = 128
+local MAX_CAPABILITY_STRING_LENGTH = 256
+module.MAX_CAPABILITY_LIST_LENGTH = MAX_CAPABILITY_LIST_LENGTH
+module.MAX_CAPABILITY_STRING_LENGTH = MAX_CAPABILITY_STRING_LENGTH
 
 local function to_string_array(value: JsonValue): { JsonValue }?
 	if type(value) ~= "table" then
@@ -1047,11 +1052,31 @@ local function to_string_array(value: JsonValue): { JsonValue }?
 	end
 	local result: { JsonValue } = {}
 	for _, item: JsonValue in value :: { JsonValue } do
-		if type(item) == "string" then
+		if #result >= MAX_CAPABILITY_LIST_LENGTH then
+			break
+		end
+		if type(item) == "string" and #item <= MAX_CAPABILITY_STRING_LENGTH then
 			table.insert(result, item)
 		end
 	end
 	return result
+end
+
+-- The fields upstream always serializes. A declaration without them would be an empty table,
+-- which encodes as a JSON array.
+local function with_capability_defaults(capabilities: JsonObject, persistent_identifier: boolean): JsonObject
+	for _, field in CAPABILITY_STRING_ARRAY_FIELDS do
+		if capabilities[field] == nil then
+			capabilities[field] = {} :: { JsonValue }
+		end
+	end
+	if capabilities.SupportsMediaControl == nil then
+		capabilities.SupportsMediaControl = false
+	end
+	if capabilities.SupportsPersistentIdentifier == nil then
+		capabilities.SupportsPersistentIdentifier = persistent_identifier
+	end
+	return capabilities
 end
 
 local function parse_bool_string(raw: string?): boolean?
@@ -1079,12 +1104,10 @@ local function parse_csv_array(raw: string?): { JsonValue }?
 			table.insert(result, trimmed)
 		end
 	end
-	return result
+	return to_string_array(result)
 end
 
--- Non-/Full variant carries capability hints in query params. Only writes
--- keys it actually sees so the caller's merge logic never clobbers fields
--- the client didn't send.
+-- The non-/Full declaration, from query params, with upstream's defaults for what it leaves out.
 function module.parse_client_capabilities_query(query: ApiQueryParams?): JsonObject?
 	if type(query) ~= "table" then
 		return nil
@@ -1107,7 +1130,7 @@ function module.parse_client_capabilities_query(query: ApiQueryParams?): JsonObj
 			result[key] = parsed
 		end
 	end
-	return result
+	return with_capability_defaults(result, true)
 end
 
 function module.parse_client_capabilities(body: JsonValue): JsonObject?
@@ -1118,7 +1141,7 @@ function module.parse_client_capabilities(body: JsonValue): JsonObject?
 	local caps: JsonObject = {}
 	for _, field in CAPABILITY_STRING_FIELDS do
 		local value = raw[field]
-		if type(value) == "string" then
+		if type(value) == "string" and #value <= MAX_CAPABILITY_STRING_LENGTH then
 			caps[field] = value
 		end
 	end
@@ -1134,7 +1157,7 @@ function module.parse_client_capabilities(body: JsonValue): JsonObject?
 			caps[field] = parsed
 		end
 	end
-	return caps
+	return with_capability_defaults(caps, false)
 end
 
 -- Length-prefixed material prevents cross-tuple collisions on arbitrary
@@ -1172,9 +1195,10 @@ function module.build_session_info(
 		LastActivityDate = activity_iso,
 		LastPlaybackCheckIn = activity_iso,
 		IsActive = true,
-		SupportsRemoteControl = true,
+		SupportsRemoteControl = false,
+		SupportsMediaControl = false,
 		HasCustomDeviceName = false,
-		PlayableMediaTypes = { "Audio" },
+		PlayableMediaTypes = {},
 		SupportedCommands = {},
 		AdditionalUsers = {},
 	}

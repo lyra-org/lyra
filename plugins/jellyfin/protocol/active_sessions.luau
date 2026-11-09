@@ -5,6 +5,7 @@
 -- www.meshiplaw.com/lyra.
 
 local api = require("@lyra/api")
+local datastore = require("@lyra/datastore")
 local errors = require("@lyra/errors")
 local playback_sessions = require("@lyra/playback_sessions")
 local tracks = require("@lyra/tracks")
@@ -33,9 +34,6 @@ export type SessionEntry = {
 	device_id: string,
 	info: JsonObject,
 	capabilities: JsonObject?,
-	-- Keys set by the most recent /Capabilities/Full. Non-Full merges must
-	-- skip these so Full stays authoritative and removal-via-Full works.
-	full_capability_keys: { [string]: boolean },
 	subscribed_sessions: boolean,
 	-- os.clock() of the last Sessions push.
 	last_sessions_push_s: number?,
@@ -70,6 +68,78 @@ local last_connection_order = 0
 function module.next_connection_order(): number
 	last_connection_order += 1
 	return last_connection_order
+end
+
+-- Returns nil on miss, scope mismatch, or closed sender. Mismatch is logged so
+-- a hash collision is distinguishable from the normal miss. A closed entry
+-- stays for its socket handler to release.
+function module.get_owned(session_id: string?, principal: Principal): SessionEntry?
+	if not session_id then
+		return nil
+	end
+	local entry = entries[session_id]
+	if not entry then
+		return nil
+	end
+	if entry.user_id ~= principal.user_id then
+		warn(`session user_id mismatch: principal={principal.user_id}, entry={entry.user_id}, session_id={session_id}`)
+		return nil
+	end
+	if entry.sender:is_closed() then
+		return nil
+	end
+	return entry
+end
+
+-- Upstream keeps a device's capabilities across its sessions, and a client declares before opening
+-- its socket. Without the declaration a session is no cast target.
+local CAPABILITIES_STORE_NAME = "session_capabilities"
+local CAPABILITIES_TTL_MS = 30 * 24 * 60 * 60 * 1000
+
+local capabilities_store: datastore.DataStore? = nil
+
+local function get_capabilities_store(): datastore.DataStore
+	if capabilities_store == nil then
+		capabilities_store = datastore.get_or_create(CAPABILITIES_STORE_NAME)
+	end
+	return capabilities_store :: datastore.DataStore
+end
+
+-- Replaces what the session declared, on its open socket and for any socket it opens later.
+function module.declare_capabilities(session_id: string, principal: Principal, capabilities: JsonObject)
+	local function apply()
+		local entry = module.get_owned(session_id, principal)
+		if entry then
+			entry.capabilities = capabilities
+		end
+	end
+	apply()
+	get_capabilities_store():set(
+		session_id,
+		{ user_id = principal.user_id, capabilities = capabilities },
+		{ ttl_ms = CAPABILITIES_TTL_MS }
+	)
+	-- The write yields, and a socket that reconnected meanwhile may have restored the older one.
+	apply()
+end
+
+-- Gives an admitted socket its session's last declaration. Runs after admission so one arriving
+-- during the read, which reaches the socket directly, isn't overwritten by an older one.
+function module.restore_capabilities(entry: SessionEntry)
+	local ok, stored = pcall(function()
+		return get_capabilities_store():get(entry.session_id)
+	end)
+	if not ok then
+		warn(`could not read declared capabilities (user_id={entry.user_id}): {tostring(stored)}`)
+		return
+	end
+	if entry.capabilities ~= nil or type(stored) ~= "table" then
+		return
+	end
+	local declaration = stored :: { [string]: JsonValue }
+	if declaration.user_id == entry.user_id and type(declaration.capabilities) == "table" then
+		entry.capabilities = declaration.capabilities :: JsonObject
+	end
 end
 
 local function close_socket(entry: SessionEntry)
@@ -301,8 +371,13 @@ local function list_sessions(principal: Principal, all_users: boolean, listing: 
 		listed[device] = true
 		local dto: JsonObject = table.clone(entry.info)
 		set_activity(dto, entry.last_activity)
-		if entry.capabilities then
-			dto.Capabilities = entry.capabilities
+		local capabilities = entry.capabilities
+		if capabilities then
+			dto.Capabilities = capabilities
+			dto.SupportsMediaControl = capabilities.SupportsMediaControl == true
+			dto.SupportsRemoteControl = capabilities.SupportsMediaControl == true
+			dto.SupportedCommands = capabilities.SupportedCommands or ({} :: { JsonValue })
+			dto.PlayableMediaTypes = capabilities.PlayableMediaTypes or ({} :: { JsonValue })
 		end
 		local conn = connection_by_device[device]
 		local playing = latest(reported_by_device[device], if conn then driven_by_connection[conn.id] else nil)

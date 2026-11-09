@@ -58,7 +58,6 @@ function module.handle(reader: api.ApiWebSocketReader, sender: api.ApiWebSocketS
 		device_id = identity.device_id,
 		info = info,
 		capabilities = nil,
-		full_capability_keys = {},
 		subscribed_sessions = false,
 		last_sessions_push_s = nil,
 		last_activity = iso_now,
@@ -91,6 +90,7 @@ function module.handle(reader: api.ApiWebSocketReader, sender: api.ApiWebSocketS
 		return
 	end
 	active_sessions.admit(entry)
+	active_sessions.restore_capabilities(entry)
 
 	pcall(function()
 		sender:send(websocket.encode("ForceKeepAlive", websocket.lost_seconds, nil))
