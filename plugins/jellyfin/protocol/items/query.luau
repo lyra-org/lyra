@@ -80,10 +80,20 @@ local SORT_KEYS: { [Entity]: { [string]: { string } } } = {
 		sortname = { "name" },
 		name = { "name" },
 		runtime = { "total_duration" },
+		datecreated = { "date_created" },
 		playcount = { "listen_count" },
 		dateplayed = { "last_played_at" },
 		random = { "random" },
 	},
+}
+
+-- Playlists aren't catalog entities, so the listing sorts them itself, by these keys.
+local PLAYLIST_SORT_KEYS: { [string]: { string } } = {
+	sortname = { "name" },
+	name = { "name" },
+	runtime = { "runtime" },
+	datecreated = { "date_created" },
+	random = { "random" },
 }
 
 local function direction(value: string?): "ascending" | "descending"
@@ -99,8 +109,7 @@ function module.direction(sort_order: string?): "ascending" | "descending"
 end
 
 -- Pairs each `SortBy` key with the `SortOrder` at its index; keys past the orders take the first.
-local function translate_sort(entity: Entity, sort_by: { string }, sort_order: string?): { SortTerm }
-	local keys = SORT_KEYS[entity]
+local function translate_sort(keys: { [string]: { string } }, sort_by: { string }, sort_order: string?): { SortTerm }
 	local orders = string.split(sort_order or "", ",")
 	local terms: { SortTerm } = {}
 	local seen: { [string]: boolean } = {}
@@ -148,7 +157,7 @@ function module.sort(entity: Entity, options: ItemsQueryOptions): Sort
 		sort_by = { "SortName" }
 	end
 
-	local terms = translate_sort(entity, sort_by, options.sort_order)
+	local terms = translate_sort(SORT_KEYS[entity], sort_by, options.sort_order)
 	local seed: number? = nil
 	for _, term in terms do
 		if term.key == "random" then
@@ -156,6 +165,13 @@ function module.sort(entity: Entity, options: ItemsQueryOptions): Sort
 		end
 	end
 	return { sort = terms, seed = seed }
+end
+
+-- The sort for the playlists of a listing, as `name`, `runtime`, `date_created` and `random` terms:
+-- by name without a `SortBy`.
+function module.playlist_sort(options: ItemsQueryOptions): { SortTerm }
+	local sort_by = if #options.sort_by > 0 then options.sort_by else { "SortName" }
+	return translate_sort(PLAYLIST_SORT_KEYS, sort_by, options.sort_order)
 end
 
 -- Lyra ids for Jellyfin item ids; nil when there are ids but none is an item id, so the

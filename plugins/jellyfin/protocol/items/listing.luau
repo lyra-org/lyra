@@ -17,6 +17,7 @@ local tracks = require("@lyra/tracks")
 local artwork = require("./images")
 local catalog = require("./catalog")
 local constants = require("../../constants")
+local enrichment = require("./enrichment")
 local instant_mix = require("./instant_mix")
 local item_ids = require("./identifiers")
 local lookups = require("./lookups")
@@ -90,9 +91,58 @@ local function person_source(options: ItemsQueryOptions, scope: Scope, appears_i
 	end
 end
 
+-- Orders playlist stubs by the terms, then by name and id. Random draws anew on every call.
+local function sort_playlists(stubs: { ItemInfo }, terms: { query.SortTerm }): ()
+	local playlist_ids: { [ItemInfo]: string } = {}
+	local created: { [ItemInfo]: number } = {}
+	local names: { [ItemInfo]: string } = {}
+	local ids: { string } = {}
+	for _, stub in stubs do
+		local playlist = stub._raw :: Playlist
+		playlist_ids[stub] = playlist.id
+		created[stub] = tonumber(playlist.created_at_ms) or 0
+		names[stub] = string.lower(stub.SortName or "")
+		table.insert(ids, playlist.id)
+	end
+	local columns: { { [ItemInfo]: any } } = {}
+	for index, term in terms do
+		local column: { [ItemInfo]: any } = names :: any
+		if term.key == "runtime" then
+			local ticks = enrichment.playlist_runtime_ticks(ids)
+			column = {}
+			for _, stub in stubs do
+				column[stub] = ticks[playlist_ids[stub]] or 0
+			end
+		elseif term.key == "date_created" then
+			column = created :: any
+		elseif term.key == "random" then
+			column = {}
+			for _, stub in stubs do
+				column[stub] = math.random()
+			end
+		end
+		columns[index] = column
+	end
+	table.sort(stubs, function(a: ItemInfo, b: ItemInfo): boolean
+		for index, term in terms do
+			local a_value, b_value = columns[index][a], columns[index][b]
+			if a_value ~= b_value then
+				if term.order == "descending" then
+					return a_value > b_value
+				end
+				return a_value < b_value
+			end
+		end
+		if names[a] ~= names[b] then
+			return names[a] < names[b]
+		end
+		return playlist_ids[a] < playlist_ids[b]
+	end)
+end
+
 -- Playlists aren't catalog entities. They list only under the filters that mean something for a
--- playlist, and sort by name. As upstream, under a parent they list only when they are the one
--- type named, and then only those with a track under that parent.
+-- playlist, and sort as `query.playlist_sort` says. As upstream, under a parent they list only
+-- when they are the one type named, and then only those with a track under that parent.
 local function playlist_source(options: ItemsQueryOptions, scope: Scope): Source?
 	local catalog_only = #options.album_ids > 0
 		or #options.artist_ids > 0
@@ -234,14 +284,7 @@ local function playlist_source(options: ItemsQueryOptions, scope: Scope): Source
 			table.insert(stubs, stub)
 		end
 	end
-	local descending = query.direction(options.sort_order) == "descending"
-	table.sort(stubs, function(a: ItemInfo, b: ItemInfo): boolean
-		local a_name, b_name = string.lower(a.SortName or ""), string.lower(b.SortName or "")
-		if descending then
-			return a_name > b_name
-		end
-		return a_name < b_name
-	end)
+	sort_playlists(stubs, query.playlist_sort(options))
 
 	return function(offset, limit)
 		local page = results.paginate_items(stubs, offset, limit)

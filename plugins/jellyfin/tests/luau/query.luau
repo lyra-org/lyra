@@ -30,6 +30,7 @@ local parent_id = string.rep("p", 21)
 assert(keys("track", {}) == "disc ascending,track ascending,sort_name ascending", keys("track", {}))
 assert(keys("release", {}) == "sort_name ascending")
 assert(keys("genre", { SortBy = "SortName" }) == "name ascending")
+assert(keys("genre", { SortBy = "DateCreated", SortOrder = "Descending" }) == "date_created descending")
 
 -- Each key takes the order at its index; keys past the orders take the first.
 local paired = keys("track", { SortBy = "PlayCount,Name,DateCreated", SortOrder = "Descending,Ascending" })
