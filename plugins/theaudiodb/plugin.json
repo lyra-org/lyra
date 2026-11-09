@@ -7,11 +7,11 @@
   "description": "Resolves artist and release artwork and metadata from TheAudioDB",
   "entrypoint": "init.luau",
   "scopes": [
-    "harmony.http",
+    { "id": "harmony.http", "reason": "Looks up artists and releases on TheAudioDB." },
     "harmony.serde",
     "lyra.libraries",
     "lyra.locale",
-    "lyra.metadata",
+    { "id": "lyra.metadata", "reason": "Adds artwork and details from TheAudioDB to your library." },
     "lyra.plugins"
   ]
 }

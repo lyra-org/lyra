@@ -7,10 +7,10 @@
   "description": "Fetches lyrics from the LRCLIB community database",
   "entrypoint": "init.luau",
   "scopes": [
-    "harmony.http",
+    { "id": "harmony.http", "reason": "Searches LRCLIB for lyrics using track details from your library." },
     "harmony.serde",
-    "lyra.metadata",
-    "lyra.lyrics",
+    { "id": "lyra.metadata", "reason": "Provides lyrics from LRCLIB to tracks in your library." },
+    { "id": "lyra.lyrics", "reason": "Parses synced lyrics from LRCLIB. It doesn't touch anyone's personal lyrics." },
     "lyra.datastore"
   ]
 }

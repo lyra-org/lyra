@@ -7,13 +7,13 @@
   "description": "Sync your listens to ListenBrainz",
   "entrypoint": "init.luau",
   "scopes": [
-    "harmony.http",
+    { "id": "harmony.http", "reason": "Sends listens to ListenBrainz using each user's own token." },
     "harmony.serde",
     "lyra.entities",
-    "lyra.listens",
-    "lyra.listens.all",
-    "lyra.playback_sessions",
-    "lyra.playback_sessions.all",
+    { "id": "lyra.listens", "reason": "Needed for lyra.listens.all. It only watches for new listens and never changes them." },
+    { "id": "lyra.listens.all", "reason": "Submits new listens for every user who has added a ListenBrainz token." },
+    { "id": "lyra.playback_sessions", "reason": "Needed for lyra.playback_sessions.all. It only watches what's playing and never changes it." },
+    { "id": "lyra.playback_sessions.all", "reason": "Sends the current track as 'playing now' for users with a token." },
     "lyra.plugins"
   ]
 }
