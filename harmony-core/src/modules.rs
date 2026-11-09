@@ -1149,6 +1149,22 @@ impl LuauRequireRuntime {
         origin: &ChunkOrigin,
         eval: impl FnOnce(&ResolvedSource, crate::TaskGroupId) -> anyhow::Result<Vec<luau::Value>>,
     ) -> std::result::Result<Arc<[luau::Value]>, ModuleLoadError> {
+        match self.start_source_load(specifier, origin)? {
+            SourceLoadStart::Cached(values) => Ok(values),
+            SourceLoadStart::Started(load) => {
+                let result = eval(&load.source, load.task_group);
+                self.finish_source_load(load, result)
+            }
+        }
+    }
+
+    /// The checks and bookkeeping before a source is evaluated. A [`SourceLoad`] it starts stays
+    /// in flight, so a cycle is still refused, until [`Self::finish_source_load`].
+    pub(crate) fn start_source_load(
+        &self,
+        specifier: &str,
+        origin: &ChunkOrigin,
+    ) -> std::result::Result<SourceLoadStart, ModuleLoadError> {
         // Registered module namespaces are reserved: `@<ns>/typo` must fail
         // as an unknown module instead of resolving to a plugin named `<ns>`.
         if let Some(target) = specifier.strip_prefix('@') {
@@ -1185,7 +1201,7 @@ impl LuauRequireRuntime {
         };
 
         if let Some(values) = self.source_cache.borrow().get(&source.cache_key) {
-            return Ok(values);
+            return Ok(SourceLoadStart::Cached(values));
         }
 
         if !self
@@ -1199,7 +1215,21 @@ impl LuauRequireRuntime {
         }
 
         let generation = self.plugin_generation(source.origin.plugin.as_deref());
-        let result = eval(&source, task_group);
+        Ok(SourceLoadStart::Started(SourceLoad {
+            source,
+            task_group,
+            generation,
+        }))
+    }
+
+    pub(crate) fn finish_source_load(
+        &self,
+        load: SourceLoad,
+        result: anyhow::Result<Vec<luau::Value>>,
+    ) -> std::result::Result<Arc<[luau::Value]>, ModuleLoadError> {
+        let SourceLoad {
+            source, generation, ..
+        } = load;
         self.in_flight_sources
             .borrow_mut()
             .remove(&source.cache_key.0);
@@ -1212,6 +1242,18 @@ impl LuauRequireRuntime {
         }
         Ok(values)
     }
+}
+
+/// A source being evaluated by its caller, between the two halves of a load.
+pub(crate) struct SourceLoad {
+    pub(crate) source: ResolvedSource,
+    pub(crate) task_group: crate::TaskGroupId,
+    generation: u64,
+}
+
+pub(crate) enum SourceLoadStart {
+    Cached(Arc<[luau::Value]>),
+    Started(SourceLoad),
 }
 
 /// The error `require` raises for a failed load. A module whose code raised a kinded error or ran

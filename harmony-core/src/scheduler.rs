@@ -129,6 +129,8 @@ enum LuauThreadStart {
         limit: ResumeLimit,
         completion: Option<Rc<LocalLuauTaskCompletion>>,
     },
+    /// Immediately, under the scheduler's own limit, reporting to the completion.
+    WithCompletion(Rc<LocalLuauTaskCompletion>),
 }
 
 impl TaskHandle {
@@ -884,6 +886,24 @@ impl LocalScheduler {
         );
     }
 
+    /// Runs `thread` under the scheduler's own resume budget, reporting to `completion`.
+    pub fn schedule_luau_thread_with_completion(
+        &self,
+        context: CallContext,
+        vm: luau::Vm,
+        thread: luau::Thread,
+        args: Vec<luau::Value>,
+        completion: Rc<LocalLuauTaskCompletion>,
+    ) {
+        self.schedule_luau_thread_start(
+            context,
+            vm,
+            thread,
+            args,
+            LuauThreadStart::WithCompletion(completion),
+        );
+    }
+
     pub fn schedule_luau_thread_with_budget_and_completion(
         &self,
         context: CallContext,
@@ -963,7 +983,9 @@ impl LocalScheduler {
                     .checked_add(*delay)
                     .unwrap_or_else(Instant::now),
             ),
-            LuauThreadStart::Immediate | LuauThreadStart::Limited { .. } => None,
+            LuauThreadStart::Immediate
+            | LuauThreadStart::Limited { .. }
+            | LuauThreadStart::WithCompletion(_) => None,
         };
         let args = self.prepare_luau_thread_start_args(key, &thread, args, wake_at);
         let handle =
@@ -978,6 +1000,19 @@ impl LocalScheduler {
                     .scheduler
                     .borrow_mut()
                     .spawn_luau_thread_after(context, delay, vm.clone(), thread.clone(), args),
+                LuauThreadStart::WithCompletion(completion) => {
+                    let options = LuauTaskOptions {
+                        completion: Some(completion),
+                        ..self.scheduler.borrow().default_luau_task_options()
+                    };
+                    self.scheduler.borrow_mut().spawn_luau_thread_with_options(
+                        context,
+                        vm.clone(),
+                        thread.clone(),
+                        args,
+                        options,
+                    )
+                }
                 LuauThreadStart::Limited { limit, completion } => {
                     self.scheduler.borrow_mut().spawn_luau_thread_with_options(
                         context,
