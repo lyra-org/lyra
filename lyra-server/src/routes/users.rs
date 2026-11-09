@@ -339,7 +339,8 @@ async fn update_password(
     Path(user_id): Path<String>,
     Json(body): Json<UpdatePasswordRequest>,
 ) -> Result<StatusCode, AppError> {
-    let principal = require_manage_users(bearer_credential(&headers)).await?;
+    let principal = forbid_api_key_credential(&headers).await?.principal;
+    require_permission(&principal, Permission::ManageUsers)?;
     accounts::set_password(&principal, &user_id, &body.password).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -566,8 +567,8 @@ fn update_password_docs(op: TransformOperation) -> TransformOperation {
         .description(
             "Updates another user's password and revokes all their sessions. Requires \
              ManageUsers permission, every permission the user holds, and access to every \
-             library they can access. Callers change their own password through the current \
-             user endpoint.",
+             library they can access. API keys are refused. Callers change their own password \
+             through the current user endpoint.",
         )
         .response::<204, ()>()
 }
@@ -1460,6 +1461,39 @@ mod tests {
             api_keys::resolve_api_key(&created.key).await?.is_none(),
             "api key must not resolve after password rotation"
         );
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_password_refuses_an_api_key() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let headers =
+            create_headers_with_permissions("manager", "manager", vec![Permission::ManageUsers])
+                .await?;
+        let (_, Json(created)) = create_api_key(
+            headers,
+            Json(CreateApiKeyRequest {
+                name: "script".to_string(),
+            }),
+        )
+        .await
+        .expect("session auth should create an api key");
+        let (target_id, _) = create_user("listener").await?;
+
+        let status = status_of(
+            update_password(
+                bearer_headers(&created.key),
+                Path(target_id),
+                Json(UpdatePasswordRequest {
+                    password: "long-enough-password".to_string(),
+                }),
+            )
+            .await,
+        );
+        assert_eq!(status, StatusCode::FORBIDDEN);
 
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())
