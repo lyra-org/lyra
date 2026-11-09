@@ -65,8 +65,8 @@ modules predate some of them.
 - A kinded error is a userdata whose `tostring` is its message. Other host errors stay strings,
   and `errors.kind` returns nil for anything that isn't a kinded error.
 - The kinds are `not_found`, `forbidden` (the caller may not do it), `unauthenticated` (the
-  credential the call acts for no longer verifies) and `conflict` (the target's state refuses the
-  change).
+  credential the call acts for no longer verifies), `conflict` (the target's state refuses the
+  change) and `invalid` (the arguments are malformed, whatever the target's state).
 - A provider refresh handler ending with `not_found`, which a write to an entity that no longer
   exists raises, counts as skipped rather than failed; what it saved first stays.
 - A kind joins the list only when it means the same for any module, with nothing specific to one

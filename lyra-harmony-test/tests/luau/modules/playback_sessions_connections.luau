@@ -40,7 +40,7 @@ assert(
 		playback_sessions.send_command,
 		"target does not support command: stop",
 		{ connection_id = speaker.id, action = "stop" }
-	) == nil
+	) == "conflict"
 )
 assert(
 	rejects(

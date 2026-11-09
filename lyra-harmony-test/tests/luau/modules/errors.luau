@@ -23,8 +23,9 @@ end)) == "not_found", "through a coroutine")
 
 assert(kind_of(playback_sessions.list_connections, { all_users = true }) == "forbidden")
 
+assert(kind_of(playback_sessions.send_command, { connection_id = "missing", action = "jump" } :: any) == "invalid")
+
 -- Everything else has no kind.
-assert(kind_of(playback_sessions.send_command, { connection_id = "missing", action = "jump" }) == nil)
 assert(kind_of(error, "not_found") == nil)
 assert(kind_of(error, { kind = "not_found" }) == nil)
 assert(errors.kind(nil) == nil)

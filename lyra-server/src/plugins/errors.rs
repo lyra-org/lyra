@@ -24,6 +24,7 @@ pub(crate) enum ErrorKind {
     Forbidden,
     Unauthenticated,
     Conflict,
+    Invalid,
 }
 
 pub(crate) fn kinded(kind: ErrorKind, error: impl std::fmt::Display) -> luau::Error {

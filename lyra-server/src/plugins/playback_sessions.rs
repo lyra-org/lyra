@@ -114,11 +114,51 @@ struct LatestQueueInfo {
 #[derive(Clone, Debug, Deserialize)]
 struct SendCommandRequest {
     connection_id: String,
-    action: RemoteAction,
-    position_ms: Option<u64>,
-    level: Option<f32>,
-    playback_id: Option<String>,
-    queue_revision: Option<u64>,
+    #[serde(flatten)]
+    command: SendCommandAction,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+enum SendCommandAction {
+    Play,
+    Pause,
+    Unpause,
+    Stop,
+    Seek {
+        position_ms: u64,
+    },
+    NextTrack,
+    PreviousTrack,
+    SetVolume {
+        level: f32,
+    },
+    HandoffQueue {
+        playback_id: String,
+        queue_revision: u64,
+    },
+}
+
+impl From<SendCommandAction> for RemoteCommand {
+    fn from(action: SendCommandAction) -> Self {
+        match action {
+            SendCommandAction::Play => Self::Play,
+            SendCommandAction::Pause => Self::Pause,
+            SendCommandAction::Unpause => Self::Unpause,
+            SendCommandAction::Stop => Self::Stop,
+            SendCommandAction::Seek { position_ms } => Self::Seek { position_ms },
+            SendCommandAction::NextTrack => Self::NextTrack,
+            SendCommandAction::PreviousTrack => Self::PreviousTrack,
+            SendCommandAction::SetVolume { level } => Self::SetVolume { level },
+            SendCommandAction::HandoffQueue {
+                playback_id,
+                queue_revision,
+            } => Self::HandoffQueue {
+                playback_id,
+                queue_revision,
+            },
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -559,42 +599,28 @@ impl PlaybackSessionsModule {
     }
 
     #[harmony(
-        description = "Sends a remote control command to a connection. Raises a `not_found` error when the source or target connection or its user is missing, and a `forbidden` error when the caller may not control the target."
+        description = "Sends a remote control command to a connection, returning once it is queued for the target, or for `handoff_queue` once the target applied it. Raises a `not_found` error when the source or target connection or its user is missing; a `forbidden` error when the caller may not control the target; and a `conflict` error when the target did not declare the command. A request that doesn't match its `action`, and a `set_volume` level that isn't a number, raise an `invalid` error, sending nothing; a value with no JSON form, such as a function, raises an error with no kind.",
+        args(request: SendCommandRequest)
     )]
     async fn send_command(
-        request: args::Json<SendCommandRequest>,
+        request: args::JsonArg,
         #[context] db: Db,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<()> {
-        let request = request.0;
+        let request: SendCommandRequest =
+            serde_json::from_value(request.0).map_err(|error| kinded(ErrorKind::Invalid, error))?;
+        let connection_id = request.connection_id.trim();
+        if connection_id.is_empty() {
+            return Err(kinded(
+                ErrorKind::Invalid,
+                "connection_id must be a non-empty string",
+            ));
+        }
         crate::plugins::auth::require_user_db_id(&principal, &*db.read().await)?;
-        let connection_id = require_non_empty_string(request.connection_id, "connection_id")?;
-        let command = match request.action {
-            RemoteAction::Play => RemoteCommand::Play,
-            RemoteAction::Pause => RemoteCommand::Pause,
-            RemoteAction::Unpause => RemoteCommand::Unpause,
-            RemoteAction::Stop => RemoteCommand::Stop,
-            RemoteAction::Seek => RemoteCommand::Seek {
-                position_ms: required(request.position_ms, "position_ms", "seek")?,
-            },
-            RemoteAction::NextTrack => RemoteCommand::NextTrack,
-            RemoteAction::PreviousTrack => RemoteCommand::PreviousTrack,
-            RemoteAction::SetVolume => RemoteCommand::SetVolume {
-                level: required(request.level, "level", "set_volume")?,
-            },
-            RemoteAction::HandoffQueue => RemoteCommand::HandoffQueue {
-                playback_id: required(request.playback_id, "playback_id", "handoff_queue")?,
-                queue_revision: required(
-                    request.queue_revision,
-                    "queue_revision",
-                    "handoff_queue",
-                )?,
-            },
-        };
         control::send(
             Controller::User(&principal.user_public_id),
-            &connection_id,
-            command,
+            connection_id,
+            request.command.into(),
         )
         .await
         .map_err(control_error)
@@ -607,6 +633,8 @@ fn control_error(error: ControlError) -> luau::Error {
         | ControlError::TargetNotFound
         | ControlError::UserNotFound => kinded(ErrorKind::NotFound, error),
         ControlError::NotAuthorized => kinded(ErrorKind::Forbidden, error),
+        ControlError::Unsupported(_) => kinded(ErrorKind::Conflict, error),
+        ControlError::InvalidLevel => kinded(ErrorKind::Invalid, error),
         error => crate::plugins::runtime_error(error),
     }
 }
@@ -660,10 +688,6 @@ async fn list_active_playbacks(
     harmony_luau::serializable_to_luau_owned(&result)
 }
 
-fn required<T>(value: Option<T>, field: &str, action: &str) -> luau::runtime::Result<T> {
-    value.ok_or_else(|| crate::plugins::runtime_error(format!("{field} required for {action}")))
-}
-
 /// The verified principal's database id, and the users `owners` covers whose playback it may read.
 fn owned_users(
     db: &agdb::DbAny,
@@ -705,13 +729,19 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
             LuauPlaybackEvent::type_alias_descriptor(),
             LuauPlaybackState::type_alias_descriptor(),
             LuauRemoteAction::type_alias_descriptor(),
+            TypeAliasDescriptor::new(
+                "SendCommandRequest",
+                send_command_request_type(),
+                Some(
+                    "A remote control command for the connection `connection_id`, as `list_connections` gives it, tagged by `action`. `set_volume`'s `level` is on a scale of 0 to 1, clamped to it. `handoff_queue` takes a durable playback id and its exact queue revision.",
+                ),
+            ),
         ],
         &[
             LuauPlaybackUpdatePayload::interface_descriptor(),
             PlaybackSessionReportRequest::interface_descriptor(),
             QueueSaveRequest::interface_descriptor(),
             LatestQueueInfo::interface_descriptor(),
-            SendCommandRequest::interface_descriptor(),
             ConnectionInfo::interface_descriptor(),
             PlaybackInfo::interface_descriptor(),
             ActivePlaybackInfo::interface_descriptor(),
@@ -855,49 +885,47 @@ impl DescribeInterface for LatestQueueInfo {
     }
 }
 
+#[cfg(feature = "docgen")]
 impl LuauTypeInfo for SendCommandRequest {
     fn luau_type() -> LuauType {
         LuauType::literal("SendCommandRequest")
     }
 }
 
-impl DescribeInterface for SendCommandRequest {
-    fn interface_descriptor() -> InterfaceDescriptor {
-        let mut descriptor = InterfaceDescriptor::new("SendCommandRequest", None);
-        descriptor.fields.extend([
-            FieldDescriptor {
-                name: "connection_id",
-                ty: String::luau_type(),
-                description: Some("The target connection's `id`."),
-            },
-            FieldDescriptor {
-                name: "action",
-                ty: LuauRemoteAction::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "position_ms",
-                ty: Option::<u64>::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "level",
-                ty: Option::<f32>::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "playback_id",
-                ty: Option::<String>::luau_type(),
-                description: Some("Durable playback ID required for handoff_queue."),
-            },
-            FieldDescriptor {
-                name: "queue_revision",
-                ty: Option::<u64>::luau_type(),
-                description: Some("Exact queue revision required for handoff_queue."),
-            },
-        ]);
-        descriptor
+/// [`SendCommandRequest`] as Luau reads it: one table type per action.
+#[cfg(any(test, feature = "docgen"))]
+fn send_command_request_type() -> LuauType {
+    fn command(action: &'static str, fields: Vec<(&'static str, LuauType)>) -> LuauType {
+        let field = |name, ty| FieldDescriptor {
+            name,
+            ty,
+            description: None,
+        };
+        let mut all = vec![
+            field("action", LuauType::string_literal(action)),
+            field("connection_id", String::luau_type()),
+        ];
+        all.extend(fields.into_iter().map(|(name, ty)| field(name, ty)));
+        LuauType::object(all)
     }
+
+    LuauType::union(vec![
+        command("play", vec![]),
+        command("pause", vec![]),
+        command("unpause", vec![]),
+        command("stop", vec![]),
+        command("seek", vec![("position_ms", u64::luau_type())]),
+        command("next_track", vec![]),
+        command("previous_track", vec![]),
+        command("set_volume", vec![("level", f32::luau_type())]),
+        command(
+            "handoff_queue",
+            vec![
+                ("playback_id", String::luau_type()),
+                ("queue_revision", u64::luau_type()),
+            ],
+        ),
+    ])
 }
 
 impl LuauTypeInfo for ActivePlaybackInfo {
@@ -1260,23 +1288,118 @@ impl DescribeInterface for LuauPlaybackUpdatePayload {
 
 #[cfg(test)]
 mod tests {
+    use harmony_luau::StringEnum;
+
     use super::*;
 
-    #[test]
-    fn send_command_descriptor_includes_durable_handoff_queue() {
-        let descriptor = SendCommandRequest::interface_descriptor();
-        let playback_id = descriptor
-            .fields
-            .iter()
-            .find(|field| field.name == "playback_id")
-            .expect("playback_id must be exposed to Luau");
-        let queue_revision = descriptor
-            .fields
-            .iter()
-            .find(|field| field.name == "queue_revision")
-            .expect("queue_revision must be exposed to Luau");
+    fn command_type(action: &str) -> Vec<FieldDescriptor> {
+        let LuauType::Union(members) = send_command_request_type() else {
+            panic!("a union of the actions");
+        };
+        members
+            .into_iter()
+            .find_map(|member| match member {
+                LuauType::Object(fields)
+                    if fields.iter().any(|field| {
+                        field.name == "action"
+                            && matches!(field.ty, LuauType::StringLiteral(found) if found == action)
+                    }) =>
+                {
+                    Some(fields)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no table type for {action}"))
+    }
 
-        assert_eq!(playback_id.ty, Option::<String>::luau_type());
-        assert_eq!(queue_revision.ty, Option::<u64>::luau_type());
+    fn field_type(action: &str, name: &str) -> LuauType {
+        command_type(action)
+            .into_iter()
+            .find(|field| field.name == name)
+            .unwrap_or_else(|| panic!("{action} has no {name}"))
+            .ty
+    }
+
+    #[test]
+    fn send_command_request_types_each_actions_fields() {
+        assert_eq!(
+            field_type("handoff_queue", "playback_id"),
+            String::luau_type()
+        );
+        assert_eq!(
+            field_type("handoff_queue", "queue_revision"),
+            u64::luau_type()
+        );
+        assert_eq!(field_type("seek", "position_ms"), u64::luau_type());
+        assert_eq!(command_type("pause").len(), 2);
+    }
+
+    /// A value of the declared type, or nothing for an optional field.
+    fn sample(ty: &LuauType) -> Option<serde_json::Value> {
+        match ty {
+            LuauType::StringLiteral(value) => Some(serde_json::json!(value)),
+            LuauType::Optional(_) => None,
+            ty if *ty == String::luau_type() => Some(serde_json::json!("id")),
+            ty if *ty == u64::luau_type() => Some(serde_json::json!(1)),
+            ty => panic!("no sample for {ty}"),
+        }
+    }
+
+    #[test]
+    fn send_command_request_declares_every_action_and_decodes_it() {
+        let LuauType::Union(members) = send_command_request_type() else {
+            panic!("a union of the actions");
+        };
+        let mut declared = Vec::new();
+        for member in members {
+            let LuauType::Object(fields) = member else {
+                panic!("a table type");
+            };
+            let json = fields
+                .iter()
+                .filter_map(|field| Some((field.name.to_string(), sample(&field.ty)?)))
+                .collect::<serde_json::Map<_, _>>();
+            let request: SendCommandRequest =
+                serde_json::from_value(serde_json::Value::Object(json.clone()))
+                    .unwrap_or_else(|error| panic!("{json:?}: {error}"));
+            let action = RemoteCommand::from(request.command).action();
+            assert_eq!(action.as_str(), json["action"]);
+            declared.push(action.as_str());
+        }
+        let mut actions = LuauRemoteAction::VALUES.to_vec();
+        actions.sort_unstable();
+        declared.sort_unstable();
+        assert_eq!(declared, actions);
+    }
+
+    #[test]
+    fn send_command_request_needs_its_actions_fields() {
+        for (json, expected) in [
+            (
+                serde_json::json!({ "connection_id": "c", "action": "seek" }),
+                "missing field `position_ms`",
+            ),
+            (
+                serde_json::json!({ "connection_id": "c", "action": "handoff_queue", "playback_id": "p" }),
+                "missing field `queue_revision`",
+            ),
+            (
+                serde_json::json!({ "connection_id": "c", "action": "rewind" }),
+                "unknown variant `rewind`, expected one of `play`, `pause`",
+            ),
+            (
+                serde_json::json!({ "connection_id": "c" }),
+                "missing field `action`",
+            ),
+            (
+                serde_json::json!({ "action": "pause" }),
+                "missing field `connection_id`",
+            ),
+        ] {
+            let error = serde_json::from_value::<SendCommandRequest>(json)
+                .expect_err("malformed")
+                .to_string();
+            assert!(error.contains(expected), "{error}");
+        }
     }
 }
