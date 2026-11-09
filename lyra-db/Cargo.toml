@@ -12,7 +12,7 @@ nightly = []
 testing = []
 
 [dependencies]
-agdb = { version = "0.15.0", features = ["serde"] }
+agdb = { version = "0.16.2", features = ["serde"] }
 anyhow = { workspace = true }
 blake3 = { workspace = true }
 lofty = "=0.25.4"
