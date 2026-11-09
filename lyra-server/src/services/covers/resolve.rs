@@ -150,6 +150,50 @@ fn find_cover_in_directory(dir: &Path, roots: &MediaRoots) -> Result<Option<Path
     Ok(candidates.into_iter().next().map(|(_, path)| path))
 }
 
+/// The folders a release's local cover may come from.
+#[derive(Default)]
+pub(crate) struct CoverDirs {
+    /// The folders that are the release's alone, in search order: each track's folder, then the
+    /// one above it.
+    pub(crate) owned: Vec<PathBuf>,
+    /// Every folder looked at, the release's alone or not.
+    considered: Vec<PathBuf>,
+    /// Whether the audio in every folder looked at has been read, so the verdicts are final.
+    settled: bool,
+    /// The library roots the folders were judged within. Nothing can be said about a cover
+    /// outside them.
+    judged_roots: Vec<PathBuf>,
+}
+
+impl CoverDirs {
+    /// Whether a local cover stored at `path` is known not to be the release's: it is in a library
+    /// judged here, in a folder the entries read cover and the release doesn't own, and nothing
+    /// about the release's folders is still to be read. A release with no files to judge by
+    /// rejects nothing.
+    pub(crate) fn rejects(&self, folders: &AudioFolders, path: &Path) -> bool {
+        self.settled
+            && !self.considered.is_empty()
+            && self.judged_roots.iter().any(|root| path.starts_with(root))
+            && path
+                .parent()
+                .is_some_and(|dir| folders.indexes(dir) && !self.owns(dir))
+    }
+
+    pub(crate) fn owns(&self, dir: &Path) -> bool {
+        self.owned.iter().any(|owned| owned == dir)
+    }
+
+    /// The folders that must list before a cover stored at `path` may be dropped: a disc or
+    /// library root that is unavailable is no evidence.
+    pub(crate) fn evidence_for(&self, path: &Path) -> Vec<PathBuf> {
+        self.considered
+            .iter()
+            .cloned()
+            .chain(path.parent().map(Path::to_path_buf))
+            .collect()
+    }
+}
+
 /// The folders around the release's tracks, sorted out by who the audio in them belongs to:
 /// a track's own folder counts when all the audio directly in it is the release's, and the folder
 /// above when all the audio beneath it is, so a folder of several releases gives none of them
@@ -160,11 +204,21 @@ pub(crate) fn cover_dirs_for_release(
     release_id: DbId,
     tracks: &[Track],
     library_root: Option<&Path>,
-) -> Result<Vec<PathBuf>> {
+) -> Result<CoverDirs> {
     let mut seen_tracks = HashSet::new();
     let mut judged = HashSet::new();
+    let mut considered = HashSet::new();
     let mut owned = HashSet::new();
-    let mut dirs = Vec::new();
+    let mut dirs = CoverDirs {
+        settled: true,
+        judged_roots: folders
+            .roots()
+            .iter()
+            .filter(|root| library_root.is_none_or(|scope| *root == scope))
+            .cloned()
+            .collect(),
+        ..CoverDirs::default()
+    };
 
     for track in tracks {
         let Some(track_id) = track.db_id.as_ref() else {
@@ -202,11 +256,20 @@ pub(crate) fn cover_dirs_for_release(
             }
 
             for (dir, depth) in candidate_dirs {
-                if judged.insert((dir.to_path_buf(), depth))
-                    && folders.claim(db, dir, release_id, depth)? == FolderClaim::Sole
-                    && owned.insert(dir.to_path_buf())
-                {
-                    dirs.push(dir.to_path_buf());
+                if !judged.insert((dir.to_path_buf(), depth)) {
+                    continue;
+                }
+                if considered.insert(dir.to_path_buf()) {
+                    dirs.considered.push(dir.to_path_buf());
+                }
+                match folders.claim(db, dir, release_id, depth)? {
+                    FolderClaim::Sole => {
+                        if owned.insert(dir.to_path_buf()) {
+                            dirs.owned.push(dir.to_path_buf());
+                        }
+                    }
+                    FolderClaim::Unsettled => dirs.settled = false,
+                    FolderClaim::Disputed => {}
                 }
             }
         }
@@ -411,7 +474,7 @@ mod tests {
             &tracks,
             Some(Path::new("/music")),
         )?;
-        assert_eq!(dirs, vec![PathBuf::from("/music")]);
+        assert_eq!(dirs.owned, vec![PathBuf::from("/music")]);
 
         Ok(())
     }

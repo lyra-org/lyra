@@ -49,6 +49,7 @@ use crate::services::{
         configured_covers_root,
         record_local_release_cover,
         refresh_gone_covers_for_library,
+        revalidate_local_covers_for_library,
         sync_release_cover_for_tracks,
     },
     metadata::{
@@ -554,6 +555,7 @@ pub(crate) async fn sync_library_pipeline(
         .await;
     }
     progress.check_cancelled()?;
+    revalidate_local_covers(db, library, library_db_id).await;
     refresh_gone_covers(db, library, library_db_id).await;
     if !stages.covers.skips() {
         sync_changed_artist_covers(db, library, &plans, stages.covers, &progress).await?;
@@ -689,6 +691,24 @@ async fn sync_changed_artist_covers(
     };
     sync_artist_covers(&artists, paths, options, None, progress).await?;
     Ok(())
+}
+
+/// Checks every stored local cover against the folders as the scan left them, which the release
+/// passes above skip for releases whose audio is unchanged, though another album arriving beside
+/// them can take a folder away from them.
+async fn revalidate_local_covers(db: &DbAsync, library: &Library, library_db_id: DbId) {
+    match revalidate_local_covers_for_library(db, library_db_id, Some(&library.path)).await {
+        Ok(changed) => tracing::debug!(
+            library_db_id = library_db_id.0,
+            changed,
+            "scan revalidated stored local covers"
+        ),
+        Err(err) => tracing::warn!(
+            library_db_id = library_db_id.0,
+            error = %format_args!("{err:#}"),
+            "scan could not revalidate stored local covers"
+        ),
+    }
 }
 
 /// Searches again for the covers whose file is gone, which the release passes above skip for
@@ -2866,6 +2886,31 @@ FILE "album.flac" WAVE
         release_of(entry_for(library, audio).await?.db_id.expect("entry db_id")).await
     }
 
+    /// Stores a cover for `release` from `source` at `path`.
+    async fn store_cover(
+        release: DbId,
+        source: lyra_db::covers::CoverSource,
+        path: &Path,
+    ) -> anyhow::Result<()> {
+        STATE.db.write().await.transaction_mut(|t| {
+            lyra_db::covers::upsert(
+                t,
+                release,
+                source,
+                lyra_db::covers::Cover {
+                    db_id: None,
+                    id: nanoid::nanoid!(),
+                    path: path.to_string_lossy().into_owned(),
+                    mime_type: "image/png".to_string(),
+                    hash: source.as_str().to_string(),
+                    blurhash: None,
+                    provider_id: None,
+                },
+            )
+        })?;
+        Ok(())
+    }
+
     /// The library-wide release cover pass a refresh ends with.
     async fn refresh_release_covers(library: &Library) -> anyhow::Result<usize> {
         let covers_root = configured_covers_root();
@@ -2989,6 +3034,137 @@ FILE "album.flac" WAVE
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn a_rescan_and_a_refresh_drop_a_stored_cover_from_a_shared_folder() -> anyhow::Result<()>
+    {
+        use lyra_db::covers::CoverSource;
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cover-stored-wrong").await?;
+        let (one, two) = (root.join("Mix/one.flac"), root.join("Mix/two.flac"));
+        tagged_file(&one, &("One", 1, None, None))?;
+        tagged_file(&two, &("Two", 1, None, None))?;
+        let wrong = root.join("Mix/cover.png");
+        std::fs::write(&wrong, PNG_1X1)?;
+        sync(&library).await?;
+        let (first, second) = (
+            sole_release_of(&library, &one).await?,
+            sole_release_of(&library, &two).await?,
+        );
+        let elsewhere = tempfile::tempdir()?;
+        for (name, source) in [
+            ("manual.png", CoverSource::Manual),
+            ("provider.png", CoverSource::Provider),
+        ] {
+            let kept = elsewhere.path().join(name);
+            std::fs::write(&kept, PNG_1X1)?;
+            store_cover(first, source, &kept).await?;
+        }
+        store_cover(first, CoverSource::Local, &wrong).await?;
+        store_cover(second, CoverSource::Local, &wrong).await?;
+
+        change_album_directory(&root.join("Mix"), "later.txt", 10)?;
+        shift_mtime(&one, 10)?;
+        sync(&library).await?;
+
+        assert_eq!(local_cover_of(&library, &one).await?, None, "the rescan");
+        let kept = lyra_db::covers::sources(&*STATE.db.read().await, first)?
+            .into_iter()
+            .map(|sourced| sourced.source)
+            .collect::<Vec<_>>();
+        assert_eq!(kept.len(), 2, "the manual and provider covers stay");
+        assert!(kept.contains(&CoverSource::Manual) && kept.contains(&CoverSource::Provider));
+
+        store_cover(second, CoverSource::Local, &wrong).await?;
+        refresh_release_covers(&library).await?;
+        assert_eq!(local_cover_of(&library, &two).await?, None, "the refresh");
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_locked_release_keeps_a_stored_cover_from_a_shared_folder() -> anyhow::Result<()> {
+        use lyra_db::covers::CoverSource;
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cover-stored-locked").await?;
+        let (one, two) = (root.join("Mix/one.flac"), root.join("Mix/two.flac"));
+        tagged_file(&one, &("One", 1, None, None))?;
+        tagged_file(&two, &("Two", 1, None, None))?;
+        let wrong = root.join("Mix/cover.png");
+        std::fs::write(&wrong, PNG_1X1)?;
+        sync(&library).await?;
+        let release = sole_release_of(&library, &one).await?;
+        store_cover(release, CoverSource::Local, &wrong).await?;
+        {
+            let mut db_write = STATE.db.write().await;
+            let mut locked =
+                lyra_db::releases::get_by_id(&*db_write, release)?.expect("release exists");
+            locked.locked = Some(true);
+            lyra_db::releases::update(&mut db_write, &locked)?;
+        }
+
+        refresh_release_covers(&library).await?;
+
+        assert_eq!(
+            local_cover_of(&library, &one).await?,
+            Some(wrong.to_string_lossy().into_owned())
+        );
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_stored_cover_stays_while_a_release_folder_is_unavailable() -> anyhow::Result<()> {
+        use lyra_db::covers::CoverSource;
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cover-stored-unavailable").await?;
+        let one = album_track(&root.join("Road Trip/One"), "One")?;
+        album_track(&root.join("Road Trip/Two"), "Two")?;
+        let wrong = root.join("Road Trip/cover.png");
+        std::fs::write(&wrong, PNG_1X1)?;
+        sync(&library).await?;
+        let release = sole_release_of(&library, &one).await?;
+        store_cover(release, CoverSource::Local, &wrong).await?;
+
+        // The album's folder goes away, as an unmounted disc would.
+        let away = root.join("Road Trip/One.away");
+        std::fs::rename(root.join("Road Trip/One"), &away)?;
+        refresh_release_covers(&library).await?;
+        let kept = Some(wrong.to_string_lossy().into_owned());
+        assert_eq!(local_cover_of(&library, &one).await?, kept, "unmounted");
+        std::fs::rename(&away, root.join("Road Trip/One"))?;
+
+        // The album's folder is there but doesn't list.
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let one_dir = root.join("Road Trip/One");
+            std::fs::set_permissions(&one_dir, std::fs::Permissions::from_mode(0o000))?;
+            if std::fs::read_dir(&one_dir).is_err() {
+                let result = refresh_release_covers(&library).await;
+                std::fs::set_permissions(&one_dir, std::fs::Permissions::from_mode(0o755))?;
+                assert!(result.is_err(), "the unlistable folder went unreported");
+                assert_eq!(local_cover_of(&library, &one).await?, kept, "unlistable");
+            } else {
+                std::fs::set_permissions(&one_dir, std::fs::Permissions::from_mode(0o755))?;
+            }
+        }
+
+        refresh_release_covers(&library).await?;
+        assert_eq!(
+            local_cover_of(&library, &one).await?,
+            None,
+            "listable again"
+        );
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_file_marked_missing_still_counts_against_the_folder() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         crate::services::testing::init_default_test_state()?;
@@ -3005,6 +3181,35 @@ FILE "album.flac" WAVE
 
         refresh_release_covers(&library).await?;
         assert_eq!(local_cover_of(&library, &one).await?, None);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_track_on_two_releases_gives_neither_the_folder() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cover-two-releases").await?;
+        let audio = album_track(&root.join("Album"), "Album")?;
+        std::fs::write(root.join("Album/cover.png"), PNG_1X1)?;
+        sync(&library).await?;
+        assert!(local_cover_of(&library, &audio).await?.is_some());
+        {
+            let entry = entry_for(&library, &audio).await?.db_id.expect("entry");
+            let mut db = STATE.db.write().await;
+            let track = lyra_db::tracks::get_by_entry(&db, entry)?[0]
+                .db_id
+                .clone()
+                .map(DbId::from)
+                .expect("track");
+            let other = lyra_db::fixtures::insert_release(&mut db, "Other")?;
+            lyra_db::fixtures::connect(&mut db, library.db_id.expect("library"), other)?;
+            lyra_db::fixtures::connect(&mut db, other, track)?;
+        }
+
+        refresh_release_covers(&library).await?;
+
+        assert_eq!(local_cover_of(&library, &audio).await?, None);
         let _ = std::fs::remove_dir_all(root);
         Ok(())
     }
@@ -3049,6 +3254,125 @@ FILE "album.flac" WAVE
             "once read, the album's own folder gives its cover again"
         );
         let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_scan_drops_the_cover_of_an_album_it_did_not_change() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cover-unchanged-album").await?;
+        let one = album_track(&root.join("Road Trip/One"), "One")?;
+        std::fs::write(root.join("Road Trip/cover.png"), PNG_1X1)?;
+        sync(&library).await?;
+        assert_eq!(
+            local_cover_of(&library, &one).await?,
+            Some(cover_path(&root.join("Road Trip"))),
+            "alone beneath the folder, the album takes its image"
+        );
+
+        album_track(&root.join("Road Trip/Two"), "Two")?;
+        sync(&library).await?;
+
+        assert_eq!(local_cover_of(&library, &one).await?, None);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_unchanged_scan_repairs_stored_covers_but_not_without_evidence() -> anyhow::Result<()>
+    {
+        use lyra_db::covers::CoverSource;
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cover-unchanged-scan").await?;
+        let parent = root.join("Road Trip");
+        let (one, two, three) = (
+            album_track(&parent.join("One"), "One")?,
+            album_track(&parent.join("Two"), "Two")?,
+            album_track(&parent.join("Three"), "Three")?,
+        );
+        std::fs::write(parent.join("Two/cover.png"), PNG_1X1)?;
+        let wrong = parent.join("cover.png");
+        std::fs::write(&wrong, PNG_1X1)?;
+        sync(&library).await?;
+        for audio in [&one, &two, &three] {
+            store_cover(
+                sole_release_of(&library, audio).await?,
+                CoverSource::Local,
+                &wrong,
+            )
+            .await?;
+        }
+
+        sync(&library).await?;
+
+        assert_eq!(local_cover_of(&library, &one).await?, None, "dropped");
+        assert_eq!(
+            local_cover_of(&library, &two).await?,
+            Some(cover_path(&parent.join("Two"))),
+            "replaced by the image in its own folder"
+        );
+
+        store_cover(
+            sole_release_of(&library, &three).await?,
+            CoverSource::Local,
+            &wrong,
+        )
+        .await?;
+        std::fs::remove_dir_all(parent.join("Three"))?;
+        sync(&library).await?;
+        assert_eq!(
+            local_cover_of(&library, &three).await?,
+            Some(wrong.to_string_lossy().into_owned()),
+            "an unavailable folder is no evidence"
+        );
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn refreshing_one_library_keeps_a_shared_release_s_cover_in_another() -> anyhow::Result<()>
+    {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (first_root, first) = empty_library("cover-shared-first").await?;
+        let second_root = tempfile::tempdir()?.keep();
+        let second = {
+            let mut db = STATE.db.write().await;
+            let path = second_root.to_str().expect("UTF-8 temp path");
+            let id = lyra_db::test_db::insert_library(&mut db, "Second", path)?;
+            lyra_db::libraries::get_by_id(&*db, id)?.expect("library")
+        };
+        let kept = album_track(&first_root.join("Album"), "One")?;
+        let other = album_track(&second_root.join("Album"), "Two")?;
+        std::fs::write(first_root.join("Album/cover.png"), PNG_1X1)?;
+        sync(&first).await?;
+        sync(&second).await?;
+        let (winner, loser) = (
+            sole_release_of(&first, &kept).await?,
+            sole_release_of(&second, &other).await?,
+        );
+        STATE.db.write().await.transaction_mut(|t| {
+            crate::services::providers::merge_release_into_inside_tx(t, winner, loser)
+        })?;
+        assert_eq!(sole_release_of(&second, &other).await?, winner);
+        let expected = Some(cover_path(&first_root.join("Album")));
+        assert_eq!(local_cover_of(&first, &kept).await?, expected);
+
+        refresh_release_covers(&second).await?;
+        assert_eq!(
+            local_cover_of(&first, &kept).await?,
+            expected,
+            "the refresh"
+        );
+
+        shift_mtime(&other, 10)?;
+        sync(&second).await?;
+        assert_eq!(local_cover_of(&first, &kept).await?, expected, "the scan");
+        let _ = std::fs::remove_dir_all(first_root);
+        let _ = std::fs::remove_dir_all(second_root);
         Ok(())
     }
 

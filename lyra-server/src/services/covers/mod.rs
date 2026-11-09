@@ -205,6 +205,7 @@ pub(crate) use sync::{
     forget_gone_covers,
     record_local_release_cover,
     refresh_gone_covers_for_library,
+    revalidate_local_covers_for_library,
     sync_and_persist_release_covers_for_library,
     sync_artist_cover,
     sync_release_cover_for_tracks,

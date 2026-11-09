@@ -36,19 +36,18 @@ use lyra_db::{
 /// file itself is not there. A directory that is missing or fails to list, as on a library or
 /// covers root that is unavailable, is no evidence.
 pub(crate) fn confirmed_gone(path: &Path) -> bool {
-    let Some(dir) = path.parent() else {
-        return false;
-    };
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return false;
-    };
-    if entries.into_iter().any(|entry| entry.is_err()) {
+    if !path.parent().is_some_and(lists_fully) {
         return false;
     }
     matches!(
         std::fs::symlink_metadata(path),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound
     )
+}
+
+/// Whether the directory exists and every one of its entries can be read.
+pub(crate) fn lists_fully(dir: &Path) -> bool {
+    std::fs::read_dir(dir).is_ok_and(|mut entries| entries.all(|entry| entry.is_ok()))
 }
 
 fn cover_gone(cover: &Cover) -> bool {
@@ -91,6 +90,10 @@ impl StoredCover {
 
     pub(crate) fn source(&self) -> CoverSource {
         self.source
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        Path::new(&self.path)
     }
 
     /// The cover, when the owner read is still there and still holds it, at the same file, from

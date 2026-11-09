@@ -67,6 +67,7 @@ pub(super) enum FolderClaim {
 #[derive(Default)]
 pub(crate) struct AudioFolders {
     folders: HashMap<PathBuf, AudioFolder>,
+    roots: Vec<PathBuf>,
 }
 
 impl AudioFolders {
@@ -76,6 +77,7 @@ impl AudioFolders {
             let Some(library_id) = library.db_id else {
                 continue;
             };
+            folders.roots.push(library.path.clone());
             for entry in lyra_db::entries::load_existing(db, library_id)? {
                 if entry.kind != EntryKind::File || entry.file_kind.as_deref() != Some("audio") {
                     continue;
@@ -100,6 +102,17 @@ impl AudioFolders {
     /// The folders of every library holding the release, for judging it alone.
     pub(crate) fn of_release(db: &impl DbAccess, release_id: DbId) -> Result<Self> {
         Self::of_libraries(db, &lyra_db::libraries::get_by_release(db, release_id)?)
+    }
+
+    /// The roots of the libraries whose audio this holds.
+    pub(super) fn roots(&self) -> &[PathBuf] {
+        &self.roots
+    }
+
+    /// Whether the entries read hold any audio in or beneath `dir`. A folder inside a library's
+    /// root without any may just be one its scans couldn't read, so nothing is known about it.
+    pub(super) fn indexes(&self, dir: &Path) -> bool {
+        self.folders.contains_key(dir)
     }
 
     /// The folder at `dir`, linked into the folder above it up to `root` when it is new.
