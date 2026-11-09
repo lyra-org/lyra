@@ -49,9 +49,11 @@ use crate::{
             api_keys,
             login_with_password,
             logout_with_token,
+            owners,
             require_grantable_permissions,
             require_manage_roles,
             require_manage_users,
+            require_permission,
             require_principal,
             sessions::SessionMetadata,
         },
@@ -294,6 +296,8 @@ async fn delete_user(
     let principal = require_manage_users(bearer_credential(&headers)).await?;
 
     let mut db = STATE.db.write().await;
+    let caller = principal.current(&db)?;
+    require_permission(&caller, Permission::ManageUsers)?;
     let user = lyra_db::users::get_by_public_id(&db, &user_id)?
         .ok_or_else(|| AppError::not_found(format!("user not found: {user_id}")))?;
     let user_db_id = user
@@ -304,17 +308,18 @@ async fn delete_user(
         return Err(AppError::bad_request("cannot delete the default user"));
     }
 
-    if user_db_id == principal.require(&db)? {
+    if user_db_id == caller.require(&db)? {
         return Err(AppError::bad_request("cannot delete yourself"));
     }
 
-    if lyra_db::roles::has_admin_role(&db, user_db_id)? {
-        if !lyra_db::roles::has_permission(&principal.permissions, Permission::Admin) {
-            return Err(AppError::forbidden("cannot delete an admin user"));
-        }
-        if lyra_db::roles::count_admins(&db)? <= 1 {
-            return Err(AppError::bad_request("cannot delete the last admin"));
-        }
+    if !owners::holds_permissions_of(&*db, &caller, user_db_id)? {
+        return Err(AppError::forbidden(
+            "cannot delete a user with permissions you do not hold",
+        ));
+    }
+
+    if lyra_db::roles::has_admin_role(&db, user_db_id)? && lyra_db::roles::count_admins(&db)? <= 1 {
+        return Err(AppError::bad_request("cannot delete the last admin"));
     }
 
     let revoked_api_key_ids = db.transaction_mut(|t| -> anyhow::Result<Vec<agdb::DbId>> {
@@ -347,6 +352,8 @@ async fn update_role(
     let principal = require_manage_roles(bearer_credential(&headers)).await?;
 
     let mut db = STATE.db.write().await;
+    let caller = principal.current(&db)?;
+    require_permission(&caller, Permission::ManageRoles)?;
     let user = lyra_db::users::get_by_public_id(&db, &user_id)?
         .ok_or_else(|| AppError::not_found(format!("user not found: {user_id}")))?;
     let user_db_id = user
@@ -359,22 +366,22 @@ async fn update_role(
         .db_id
         .ok_or_else(|| AppError::not_found("role has no db_id"))?;
 
-    require_grantable_permissions(&principal, &target_role.permissions)?;
+    require_grantable_permissions(&caller, &target_role.permissions)?;
+
+    if !owners::holds_permissions_of(&*db, &caller, user_db_id)? {
+        return Err(AppError::forbidden(
+            "cannot change the role of a user with permissions you do not hold",
+        ));
+    }
 
     let target_has_admin = target_role.permissions.contains(&Permission::Admin);
     let current_is_admin = lyra_db::roles::has_admin_role(&db, user_db_id)?;
-
-    if current_is_admin
-        && !lyra_db::roles::has_permission(&principal.permissions, Permission::Admin)
-    {
-        return Err(AppError::forbidden("cannot change an admin user's role"));
-    }
 
     if current_is_admin && !target_has_admin {
         if user.username == DEFAULT_USERNAME {
             return Err(AppError::bad_request("cannot demote the default user"));
         }
-        if user_db_id == principal.require(&db)? {
+        if user_db_id == caller.require(&db)? {
             return Err(AppError::bad_request("cannot demote yourself"));
         }
         if lyra_db::roles::count_admins(&db)? <= 1 {
@@ -547,8 +554,8 @@ fn list_users_docs(op: TransformOperation) -> TransformOperation {
 fn delete_user_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Delete user")
         .description(
-            "Deletes a user and revokes all their sessions. Requires ManageUsers permission. \
-             Deleting admin users requires Admin permission. The default user cannot be deleted.",
+            "Deletes a user and revokes all their sessions. Requires ManageUsers permission and \
+             every permission the user holds. The default user cannot be deleted.",
         )
         .response::<204, ()>()
 }
@@ -558,7 +565,8 @@ fn update_password_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Update user password")
         .description(
             "Updates a user's password and revokes all their sessions. Requires ManageUsers \
-             permission.",
+             permission, every permission the user holds, and access to every library they can \
+             access.",
         )
         .response::<204, ()>()
 }
@@ -567,8 +575,8 @@ fn update_password_docs(op: TransformOperation) -> TransformOperation {
 fn update_role_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Update user role")
         .description(
-            "Assigns a role to a user. Requires ManageRoles permission. Assigning admin-capable \
-             roles or changing an admin user's role also requires Admin permission.",
+            "Assigns a role to a user. Requires ManageRoles permission, every permission the \
+             role grants, and every permission the user holds now.",
         )
         .response::<204, ()>()
 }
@@ -1117,6 +1125,102 @@ mod tests {
         .into_response()
         .status();
         assert_eq!(status, StatusCode::FORBIDDEN);
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    async fn create_user_with_permissions(
+        username: &str,
+        permissions: Vec<Permission>,
+    ) -> anyhow::Result<String> {
+        let (public_id, db_id) = create_user(username).await?;
+        let mut db = STATE.db.write().await;
+        lyra_db::roles::create(
+            &mut db,
+            &lyra_db::roles::Role {
+                db_id: None,
+                id: nanoid!(),
+                name: format!("{username}-role"),
+                permissions,
+            },
+        )?;
+        lyra_db::roles::ensure_user_has_role(&mut db, db_id, &format!("{username}-role"))?;
+        Ok(public_id)
+    }
+
+    #[tokio::test]
+    async fn managers_cannot_act_on_a_user_holding_more_than_they_do() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let headers = create_headers_with_permissions(
+            "manager",
+            "manager",
+            vec![Permission::ManageUsers, Permission::ManageRoles],
+        )
+        .await?;
+        let target_id = create_user_with_permissions(
+            "plugin-owner",
+            vec![Permission::ManageUsers, Permission::ManagePlugins],
+        )
+        .await?;
+
+        assert_eq!(
+            status_of(delete_user(headers.clone(), Path(target_id.clone())).await),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            status_of(
+                update_password(
+                    headers.clone(),
+                    Path(target_id.clone()),
+                    Json(UpdatePasswordRequest {
+                        password: "long-enough-password".to_string(),
+                    }),
+                )
+                .await
+            ),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            status_of(
+                update_role(
+                    headers,
+                    Path(target_id.clone()),
+                    Json(UpdateRoleRequest {
+                        role: lyra_db::roles::BUILTIN_USER_ROLE.to_string(),
+                    }),
+                )
+                .await
+            ),
+            StatusCode::FORBIDDEN
+        );
+
+        let db = STATE.db.read().await;
+        let target = lyra_db::users::get_by_public_id(&db, &target_id)?.expect("target remains");
+        let role = lyra_db::roles::get_role_for_user(&db, target.db_id.expect("stored id"))?
+            .expect("target keeps its role");
+        assert_eq!(role.name, "plugin-owner-role");
+        drop(db);
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn managers_can_delete_a_peer() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let headers =
+            create_headers_with_permissions("manager", "manager", vec![Permission::ManageUsers])
+                .await?;
+        let peer_id = create_user_with_permissions("peer", vec![Permission::ManageUsers]).await?;
+
+        delete_user(headers, Path(peer_id.clone()))
+            .await
+            .expect("a peer holds nothing the caller lacks");
+
+        assert!(lyra_db::users::get_by_public_id(&*STATE.db.read().await, &peer_id)?.is_none());
 
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())

@@ -313,8 +313,9 @@ pub(crate) async fn list_sessions(
     plugin_id: &str,
 ) -> Result<Vec<SessionInfo>, AuthError> {
     let db = STATE.db.read().await;
+    let principal = principal.current(&db)?;
     let principal_db_id = principal.require(&*db)?;
-    let users = owners::resolve(&*db, principal, principal_db_id, owners)?;
+    let users = owners::resolve(&*db, &principal, principal_db_id, owners)?;
 
     let mut sessions = Vec::new();
     for user in users {
@@ -358,6 +359,7 @@ pub(crate) async fn revoke_session(
     session_public_id: &str,
 ) -> Result<bool, AuthError> {
     let mut db = STATE.db.write().await;
+    let principal = principal.current(&db)?;
     let principal_db_id = principal.require(&*db)?;
     let Some((session_id, _)) = lyra_db::users::find_session_by_public_id(&*db, session_public_id)?
     else {
@@ -365,7 +367,7 @@ pub(crate) async fn revoke_session(
     };
     let owner_db_id = lyra_db::users::session_owner(&*db, session_id)?.and_then(|user| user.db_id);
     let manages = match owner_db_id {
-        Some(owner_db_id) => owners::manages(&*db, principal, principal_db_id, owner_db_id)?,
+        Some(owner_db_id) => owners::manages(&*db, &principal, principal_db_id, owner_db_id)?,
         None => lyra_db::roles::has_permission(&principal.permissions, Permission::ManageUsers),
     };
     if !manages {
@@ -544,6 +546,55 @@ mod tests {
         let other = list_sessions(&principal, Owners::Principal, "other").await?;
         assert_eq!(other.len(), 1);
         assert!(other[0].plugin_data.is_null());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_manager_narrowed_since_it_authenticated_loses_those_it_no_longer_covers()
+    -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let role = |name: &str, permissions| lyra_db::roles::Role {
+            db_id: None,
+            id: nanoid!(),
+            name: name.to_string(),
+            permissions,
+        };
+        let (manager_id, target_id) = {
+            let mut db = STATE.db.write().await;
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
+            lyra_db::roles::create(
+                &mut db,
+                &role(
+                    "broad",
+                    vec![Permission::ManageUsers, Permission::ManagePlugins],
+                ),
+            )?;
+            lyra_db::roles::create(&mut db, &role("narrow", vec![Permission::ManageUsers]))?;
+            let manager =
+                lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("manager")?)?;
+            let target = lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("target")?)?;
+            lyra_db::roles::ensure_user_has_role(&mut db, manager, "broad")?;
+            lyra_db::roles::ensure_user_has_role(&mut db, target, "broad")?;
+            (manager, target)
+        };
+        crate::services::testing::create_session(target_id, SessionMetadata::default()).await?;
+        let principal = crate::services::testing::user_principal(manager_id).await?;
+        let target_public_id = lyra_db::users::get_by_id(&*STATE.db.read().await, target_id)?
+            .expect("target exists")
+            .id;
+        let session_id = list_sessions(&principal, Owners::User(&target_public_id), "external")
+            .await?
+            .remove(0)
+            .id;
+
+        lyra_db::roles::ensure_user_has_role(&mut *STATE.db.write().await, manager_id, "narrow")?;
+
+        assert!(matches!(
+            list_sessions(&principal, Owners::User(&target_public_id), "external").await,
+            Err(AuthError::Forbidden(_))
+        ));
+        assert!(!revoke_session(&principal, &session_id).await?);
         Ok(())
     }
 

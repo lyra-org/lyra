@@ -359,7 +359,7 @@ impl PlaybackSessionsModule {
     }
 
     #[harmony(
-        description = "Lists open WebSocket connections of Lyra's own clients, oldest first, with the playback each drives. Without a query, lists the dispatch principal's own; another user's or all users' require the manage_users permission, and an admin's also the admin permission. All users' leaves out the admins' without it. A playback whose current track the principal can't see is left out of its connection. Needs the `lyra.playback_sessions.all` scope too.",
+        description = "Lists open WebSocket connections of Lyra's own clients, oldest first, with the playback each drives. Without a query, lists the dispatch principal's own; another user's or all users' require the manage_users permission and every permission that user holds. All users' leaves out those the principal lacks a permission of. A playback whose current track the principal can't see is left out of its connection. Needs the `lyra.playback_sessions.all` scope too.",
         returns(Vec<ConnectionInfo>)
     )]
     async fn list_connections(
@@ -434,7 +434,7 @@ impl PlaybackSessionsModule {
     }
 
     #[harmony(
-        description = "Lists another user's live playbacks, with `user_id`, or every user's, with `all_users`, as `list_playbacks` lists the dispatch principal's; the query must give one of them. Another user's or all users' require the manage_users permission, and an admin's also the admin permission. All users' leaves out the admins' without it. Playbacks whose current track the principal can't see are left out. Needs the `lyra.playback_sessions.all` scope too.",
+        description = "Lists another user's live playbacks, with `user_id`, or every user's, with `all_users`, as `list_playbacks` lists the dispatch principal's; the query must give one of them. Another user's or all users' require the manage_users permission and every permission that user holds. All users' leaves out those the principal lacks a permission of. Playbacks whose current track the principal can't see are left out. Needs the `lyra.playback_sessions.all` scope too.",
         returns(Vec<ActivePlaybackInfo>)
     )]
     async fn list_user_playbacks(
@@ -671,7 +671,10 @@ fn owned_users(
     owners: owners::Owners<'_>,
 ) -> luau::runtime::Result<(agdb::DbId, Vec<lyra_db::User>)> {
     let viewer_db_id = crate::plugins::auth::require_user_db_id(principal, db)?;
-    let users = owners::resolve(db, principal, viewer_db_id, owners)
+    let current = principal
+        .current(db)
+        .map_err(crate::plugins::errors::auth_error)?;
+    let users = owners::resolve(db, &current, viewer_db_id, owners)
         .map_err(crate::plugins::errors::auth_error)?;
     Ok((viewer_db_id, users))
 }

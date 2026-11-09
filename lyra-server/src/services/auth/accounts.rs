@@ -18,6 +18,7 @@ use super::{
     Principal,
     Recheck,
     api_keys,
+    owners,
     passwords::{
         self,
         InvalidPassword,
@@ -130,7 +131,8 @@ pub(crate) async fn create_user(
     })
 }
 
-/// Sets another user's password and signs them out everywhere. Only admins may set an admin's.
+/// Sets another user's password and signs them out everywhere. Whoever sets it can sign in as
+/// that user, so the caller must already hold everything the account would give them.
 pub(crate) async fn set_password(
     principal: &Principal,
     user_public_id: &str,
@@ -264,10 +266,19 @@ fn authorize_set_password(
         .ok_or_else(|| AuthError::NotFound(format!("user not found: {user_public_id}")))?
         .db_id
         .ok_or_else(|| AuthError::NotFound(format!("user has no db_id: {user_public_id}")))?;
-    if lyra_db::roles::has_admin_role(db, user_db_id)?
-        && !lyra_db::roles::has_permission(&caller.permissions, Permission::Admin)
+    if !owners::holds_permissions_of(db, &caller, user_db_id)? {
+        return Err(AuthError::Forbidden(
+            "cannot set the password of a user with permissions you do not hold".to_string(),
+        )
+        .into());
+    }
+    if !lyra_db::libraries::accessible_library_ids(db, user_db_id)?
+        .is_subset(&caller.accessible_library_ids)
     {
-        return Err(AuthError::Forbidden("cannot set an admin user's password".to_string()).into());
+        return Err(AuthError::Forbidden(
+            "cannot set the password of a user with libraries you cannot access".to_string(),
+        )
+        .into());
     }
     Ok(user_db_id)
 }
@@ -332,6 +343,90 @@ mod tests {
             result,
             Err(AccountError::Auth(AuthError::Forbidden(_)))
         ));
+        Ok(())
+    }
+
+    async fn insert_user_with_permissions(
+        username: &str,
+        permissions: Vec<Permission>,
+    ) -> anyhow::Result<(DbId, String)> {
+        let role_name = format!("{username}-role");
+        let mut db = STATE.db.write().await;
+        lyra_db::roles::create(
+            &mut db,
+            &lyra_db::roles::Role {
+                db_id: None,
+                id: nanoid!(),
+                name: role_name.clone(),
+                permissions,
+            },
+        )?;
+        let user = lyra_db::fixtures::test_user(username)?;
+        let public_id = user.id.clone();
+        let user_db_id = lyra_db::users::create(&mut db, &user)?;
+        lyra_db::roles::ensure_user_has_role(&mut db, user_db_id, &role_name)?;
+        Ok((user_db_id, public_id))
+    }
+
+    async fn grant_library(user_db_id: DbId, library_db_id: DbId) -> anyhow::Result<()> {
+        lyra_db::libraries::grant_access(
+            &mut *STATE.db.write().await,
+            user_db_id,
+            library_db_id,
+            lyra_db::libraries::AccessKind::ReadWrite,
+        )
+    }
+
+    #[tokio::test]
+    async fn setting_the_password_of_a_user_holding_more_is_refused_before_hashing()
+    -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let (caller_db_id, _) =
+            insert_user_with_permissions("manager", vec![Permission::ManageUsers]).await?;
+        let (_, target_id) = insert_user_with_permissions(
+            "plugin-owner",
+            vec![Permission::ManageUsers, Permission::ManagePlugins],
+        )
+        .await?;
+        let caller = user_principal(caller_db_id).await?;
+
+        let result =
+            without_hashing(set_password(&caller, &target_id, "long-enough-password")).await;
+
+        assert!(matches!(
+            result,
+            Err(AccountError::Auth(AuthError::Forbidden(_)))
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn setting_a_password_needs_every_library_the_user_has() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        let (caller_db_id, _) =
+            insert_user_with_permissions("manager", vec![Permission::ManageUsers]).await?;
+        let (target_db_id, target_id) =
+            insert_user_with_permissions("listener", Vec::new()).await?;
+        let library_db_id = lyra_db::test_db::insert_library(
+            &mut *STATE.db.write().await,
+            "Private",
+            "/accounts/private",
+        )?;
+        grant_library(target_db_id, library_db_id).await?;
+
+        let caller = user_principal(caller_db_id).await?;
+        let refused =
+            without_hashing(set_password(&caller, &target_id, "long-enough-password")).await;
+        assert!(matches!(
+            refused,
+            Err(AccountError::Auth(AuthError::Forbidden(_)))
+        ));
+
+        grant_library(caller_db_id, library_db_id).await?;
+        let caller = user_principal(caller_db_id).await?;
+        set_password(&caller, &target_id, "long-enough-password").await?;
         Ok(())
     }
 

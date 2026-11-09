@@ -19,7 +19,7 @@ use super::{
 };
 
 /// Whose data a read covers. Anyone's but the principal's requires [`Permission::ManageUsers`],
-/// and an admin's also [`Permission::Admin`].
+/// and every permission that user holds, per [`holds_permissions_of`].
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Owners<'a> {
     Principal,
@@ -27,8 +27,8 @@ pub(crate) enum Owners<'a> {
     All,
 }
 
-/// The users `owners` covers that the principal may read for. A named admin the principal may
-/// not read for is refused; all users leaves them out. A named user that doesn't exist is none.
+/// The users `owners` covers that the principal may read for. A named user the principal may not
+/// read for is refused; all users leaves them out. A named user that doesn't exist is none.
 pub(crate) fn resolve(
     db: &impl lyra_db::DbAccess,
     principal: &Principal,
@@ -50,7 +50,7 @@ pub(crate) fn resolve(
                 && !manages(db, principal, principal_db_id, user_db_id)?
             {
                 return Err(AuthError::Forbidden(
-                    "Admin permission required for an admin's data".to_string(),
+                    "cannot read the data of a user with permissions you do not hold".to_string(),
                 ));
             }
             user.into_iter().collect()
@@ -70,9 +70,8 @@ pub(crate) fn resolve(
     })
 }
 
-/// Whether the principal may see and manage `owner_db_id`'s personal data: its own, anyone's with
-/// [`Permission::ManageUsers`], and an admin's only with [`Permission::Admin`] as well, like the
-/// user routes that delete an admin or set their password.
+/// Whether the principal may see and manage `owner_db_id`'s personal data: its own, and with
+/// [`Permission::ManageUsers`] that of anyone it [holds the permissions of](holds_permissions_of).
 pub(crate) fn manages(
     db: &impl lyra_db::DbAccess,
     principal: &Principal,
@@ -85,8 +84,21 @@ pub(crate) fn manages(
     if !lyra_db::roles::has_permission(&principal.permissions, Permission::ManageUsers) {
         return Ok(false);
     }
-    Ok(
-        lyra_db::roles::has_permission(&principal.permissions, Permission::Admin)
-            || !lyra_db::roles::has_admin_role(db, owner_db_id)?,
-    )
+    holds_permissions_of(db, principal, owner_db_id)
+}
+
+/// Whether the principal holds every permission `user_db_id` does. Acting on a user who holds
+/// more would reach past what the principal could grant itself. Peers qualify, so admins can
+/// manage admins.
+pub(crate) fn holds_permissions_of(
+    db: &impl lyra_db::DbAccess,
+    principal: &Principal,
+    user_db_id: DbId,
+) -> anyhow::Result<bool> {
+    let theirs = lyra_db::roles::get_role_for_user(db, user_db_id)?
+        .map(|role| role.permissions)
+        .unwrap_or_default();
+    Ok(theirs
+        .into_iter()
+        .all(|permission| lyra_db::roles::has_permission(&principal.permissions, permission)))
 }

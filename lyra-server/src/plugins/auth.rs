@@ -338,8 +338,8 @@ impl AuthModule {
     #[harmony(
         description = "Lists live sessions, oldest first, never their tokens. Without a query, lists \
                      the calling principal's own; another user's or all users' require the \
-                     manage_users permission, and an admin's also the admin permission. All \
-                     users' leaves out the admins' without it.",
+                     manage_users permission and every permission that user holds. All users' \
+                     leaves out those the principal lacks a permission of.",
         returns(Vec<SessionInfo>)
     )]
     async fn list_sessions(
@@ -365,8 +365,8 @@ impl AuthModule {
 
     #[harmony(
         description = "Revokes a session by its public id and reports whether it was revoked. \
-                     Another user's session counts only with the manage_users permission, and an \
-                     admin's also with the admin permission."
+                     Another user's session counts only with the manage_users permission and \
+                     every permission that user holds."
     )]
     async fn revoke_session(
         session_id: String,

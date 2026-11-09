@@ -11,9 +11,17 @@ admin = true
 [[users]]
 key = "listener"
 
+[[users]]
+key = "plugin_owner"
+permissions = ["manage_users", "manage_plugins"]
+
 [[sessions]]
 key = "manager_web"
 user = "manager"
+
+[[sessions]]
+key = "plugin_owner_web"
+user = "plugin_owner"
 
 [[sessions]]
 key = "admin_web"

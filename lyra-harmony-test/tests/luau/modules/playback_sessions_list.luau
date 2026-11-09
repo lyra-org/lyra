@@ -50,7 +50,7 @@ assert(phone.started_at_ms > 0 and phone.updated_at_ms >= phone.started_at_ms)
 assert(#playback_sessions.list_user_playbacks({ user_id = fixture.users.listener }) == 1)
 
 local ok, err = pcall(playback_sessions.list_user_playbacks, { user_id = fixture.users.admin })
-assert(not ok and string.find(tostring(err), "Admin permission required", 1, true), tostring(err))
+assert(not ok and string.find(tostring(err), "permissions you do not hold", 1, true), tostring(err))
 
 -- Another user's or every user's must be named; the caller's own come from list_playbacks.
 ok, err = pcall(playback_sessions.list_user_playbacks, {})
