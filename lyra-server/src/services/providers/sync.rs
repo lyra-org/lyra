@@ -371,7 +371,9 @@ mod tests {
         // Four refreshes hold every permit, one of them calling the provider, leaving the fifth
         // library waiting for a permit.
         for _ in 0..500 {
-            if !dispatch.calls(handler).is_empty() {
+            if crate::services::providers::registry::tests::calls_at_lock("held").await == 4
+                && !dispatch.calls(handler).is_empty()
+            {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;

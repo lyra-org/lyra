@@ -694,6 +694,18 @@ pub(crate) mod tests {
             .len()
     }
 
+    /// How many calls hold or are waiting for `provider_id`'s call lock.
+    pub(crate) async fn calls_at_lock(provider_id: &str) -> usize {
+        crate::services::STATE
+            .generation()
+            .providers
+            .call_locks
+            .lock()
+            .await
+            .get(provider_id)
+            .map_or(0, |lock| Arc::strong_count(lock) - 1)
+    }
+
     pub(crate) fn id_registration(
         registry: &ProviderRegistry,
         provider_id: &str,
