@@ -30,6 +30,11 @@ function module.scope_entity_type(scope: string?): string?
 	return if ok and type(element_type) == "string" then element_type else nil
 end
 
+-- The kinds of entity a Jellyfin client can name as an item.
+module.ITEM_KINDS = (
+	{ Track = true, Release = true, Artist = true, Genre = true, Playlist = true, Library = true } :: any
+) :: { [string]: boolean }
+
 -- The kind of entity `item_id` is, when the caller can see it. A playlist is visible as upstream
 -- shows it, to its owner or as a public one, whatever the caller's role.
 function module.visible_kind(item_id: string, user_id: string?): string?

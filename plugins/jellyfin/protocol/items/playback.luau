@@ -18,6 +18,7 @@ local JELLYFIN_PLUGIN_ID = constants.JELLYFIN_PLUGIN_ID
 local PLAYBACK_COMPLETION_TOLERANCE_MS = constants.PLAYBACK_COMPLETION_TOLERANCE_MS
 
 local item_ids = require("./identifiers")
+local lookups = require("./lookups")
 local media = require("./media")
 local requests = require("./requests")
 local responses = require("./responses")
@@ -1133,19 +1134,30 @@ function module.reporter(session_key: string): SessionReporter?
 	return reporters[session_key]
 end
 
-function module.resolve_playback_info_item(ctx: ApiContext?): (string?, Track?, ApiResponse?)
+-- As upstream, an item the caller can see that has no media sources is a bad request, the plugin's
+-- synthetic folders included, and one it can't see is not found.
+function module.resolve_playback_info_item(ctx: ApiContext?, user_id: string): (string?, Track?, ApiResponse?)
 	local params = if ctx then ctx.params else nil
 	local raw_item_id = if params then params.id else nil
 	if not raw_item_id then
 		return nil, nil, module.bad_request("missing item id")
 	end
 
-	local track = module.resolve_track_for_playback(item_ids.decode(raw_item_id))
-	if not track then
-		return nil, nil, module.not_found("item not found")
+	local item_id = item_ids.decode(raw_item_id)
+	local track = module.resolve_track_for_playback(item_id)
+	if track then
+		return track.id, track, nil
 	end
 
-	return track.id, track, nil
+	local kind = if item_id then lookups.visible_kind(item_id, user_id) else nil
+	if
+		constants.is_root_item_id(raw_item_id)
+		or constants.is_playlists_folder_id(raw_item_id)
+		or (kind and kind ~= "Track" and lookups.ITEM_KINDS[kind])
+	then
+		return nil, nil, module.bad_request("the item has no media sources and cannot be played")
+	end
+	return nil, nil, module.not_found("item not found")
 end
 
 function module.resolve_requested_play_session_id(request: ApiRequest?, request_json: PlaybackPayload?): string?

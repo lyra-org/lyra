@@ -1,0 +1,61 @@
+run_as = "listener"
+
+[[users]]
+key = "listener"
+
+[[users]]
+key = "owner"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener"]
+
+[[libraries]]
+key = "hidden"
+name = "Hidden"
+
+[[artists]]
+key = "band"
+name = "Band"
+
+[[genres]]
+key = "rock"
+name = "Rock"
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+artists = ["band"]
+genres = ["rock"]
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+file = "song.opus"
+
+[[releases]]
+key = "secret_album"
+title = "Secret"
+library = "hidden"
+
+[[tracks]]
+key = "secret_song"
+title = "Secret Song"
+release = "secret_album"
+file = "song.opus"
+
+[[playlists]]
+key = "mine"
+owner = "listener"
+name = "Mine"
+tracks = ["song"]
+
+[[playlists]]
+key = "private"
+owner = "owner"
+name = "Private"
+public = false
+tracks = ["song"]

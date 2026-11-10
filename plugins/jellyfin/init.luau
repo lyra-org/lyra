@@ -990,7 +990,7 @@ api.get(P .. "/Items/{id}/PlaybackInfo", function(ctx: ApiContext)
 		return session.unauthorized()
 	end
 
-	local item_id, track, resolve_err = playback.resolve_playback_info_item(ctx)
+	local item_id, track, resolve_err = playback.resolve_playback_info_item(ctx, principal.user_id)
 	if resolve_err then
 		return resolve_err or responses.bad_request("invalid playback item")
 	end
@@ -1040,7 +1040,7 @@ api.post(P .. "/Items/{id}/PlaybackInfo", function(ctx: ApiContext)
 		return session.unauthorized()
 	end
 
-	local item_id, track, resolve_err = playback.resolve_playback_info_item(ctx)
+	local item_id, track, resolve_err = playback.resolve_playback_info_item(ctx, principal.user_id)
 	if resolve_err then
 		return resolve_err or responses.bad_request("invalid playback item")
 	end
