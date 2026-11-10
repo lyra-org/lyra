@@ -43,6 +43,15 @@ local function extract_integer_param(raw: string?): (number?, string?)
 	return math.floor(value), nil
 end
 
+-- The host's output depth for a `maxAudioBitDepth`: the deepest it offers within the limit, or its
+-- shallowest when the limit is lower still. Upstream only refuses to copy a deeper source.
+local function output_bit_depth(max_bit_depth: number?): number?
+	if max_bit_depth == nil or max_bit_depth >= 32 then
+		return nil
+	end
+	return if max_bit_depth >= 24 then 24 else 16
+end
+
 local function jellyfin_ticks_to_ms(ticks: number?): number?
 	if ticks == nil then
 		return nil
@@ -358,6 +367,7 @@ function module.handle_universal_route(ctx: ApiContext): ApiResponse
 		bitrate_bps = settings.bitrate_bps,
 		sample_rate_hz = sample_rate_hz,
 		channels = settings.channels,
+		bit_depth = output_bit_depth(bit_depth),
 		start_offset_ms = start_offset_ms,
 	}
 	return api.response.stream_track(track_id, options)
@@ -409,7 +419,8 @@ function module.handle_stream_route(ctx: ApiContext): ApiResponse
 	if sample_rate_err then
 		return responses.bad_request(`audioSampleRate {sample_rate_err}`)
 	end
-	local _, bit_depth_err = extract_integer_param(requests.parse_query_string(query, { "maxAudioBitDepth" }, nil))
+	local bit_depth, bit_depth_err =
+		extract_integer_param(requests.parse_query_string(query, { "maxAudioBitDepth" }, nil))
 	if bit_depth_err then
 		return responses.bad_request(`maxAudioBitDepth {bit_depth_err}`)
 	end
@@ -461,6 +472,7 @@ function module.handle_stream_route(ctx: ApiContext): ApiResponse
 		bitrate_bps = settings.bitrate_bps,
 		sample_rate_hz = sample_rate_hz,
 		channels = settings.channels,
+		bit_depth = output_bit_depth(bit_depth),
 		start_offset_ms = jellyfin_ticks_to_ms(start_ticks),
 	})
 end

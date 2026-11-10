@@ -142,3 +142,17 @@ assert(
 	request(audio.handle_hls_main_route, ids.song, fixture.api_keys.desk, { audioCodec = "opus,ac3" }).status == 400,
 	"an HLS codec the server doesn't encode"
 )
+
+-- `maxAudioBitDepth` caps the output at the deepest the server offers within it, on both routes; a
+-- limit no source exceeds caps nothing.
+local function capped(handler, api_key: string?, max: string?): number?
+	local response = request(handler, ids.song, api_key, { container = "flac", maxAudioBitDepth = max })
+	assert(response.kind == "stream_track", `depth {max} kind {response.kind} status {response.status}`)
+	return response.options.bit_depth
+end
+for max, depth in { ["8"] = 16, ["16"] = 16, ["20"] = 16, ["24"] = 24 } do
+	assert(capped(audio.handle_stream_route, nil, max) == depth, `stream depth for {max}`)
+end
+assert(capped(audio.handle_stream_route, nil, "32") == nil, "stream depth for 32")
+assert(capped(audio.handle_stream_route, nil, nil) == nil, "stream depth unasked")
+assert(capped(audio.handle_universal_route, fixture.api_keys.desk, "16") == 16, "universal depth")
