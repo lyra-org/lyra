@@ -6,7 +6,7 @@ local users = require("@lyra/users")
 -- While authentication is on, the default user is no account.
 local listed = {}
 for _, user in users.list() do
-	table.insert(listed, user.user_id)
+	table.insert(listed, user.id)
 end
 assert(#listed == 1 and listed[1] == fixture.users.admin)
 

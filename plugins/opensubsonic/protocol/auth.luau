@@ -6,6 +6,7 @@
 
 local api = require("@lyra/api")
 local auth = require("@lyra/auth")
+local users = require("@lyra/users")
 
 local request = require("./request")
 local response = require("./response")
@@ -37,6 +38,12 @@ end
 local function resolve_api_key(key: string): ResolvedAuth?
 	local resolved = auth.resolve_auth(key)
 	return if resolved and resolved.credential.kind == "api_key" then resolved else nil
+end
+
+-- Whether `username` names the key's owner, compared as Lyra's sign-in compares usernames.
+local function owns(resolved: ResolvedAuth, username: string): boolean
+	local named = users.list({ username = username })[1]
+	return named ~= nil and named.id == resolved.principal.user_id
 end
 
 local function present(query: ApiQueryParams, name: string): boolean
@@ -81,7 +88,7 @@ function module.authenticate(query: ApiQueryParams): (ResolvedAuth?, SubsonicErr
 		local password = request.param_or_empty(query, "p") :: string
 		local key = decode_password(password)
 		local resolved = if key and key ~= "" then resolve_api_key(key) else nil
-		if not resolved or string.lower(resolved.principal.username) ~= string.lower(username) then
+		if not resolved or not owns(resolved, username) then
 			return nil, response.error(40, "Wrong username or password; use an API key as the password", help_url)
 		end
 		return resolved, nil

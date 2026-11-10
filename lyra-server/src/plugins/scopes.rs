@@ -1818,6 +1818,6 @@ mod tests {
                 "chains(track_ids)",
             ],
         ),
-        ("lyra/users", &["list()"]),
+        ("lyra/users", &["list(options)", "get(ids)"]),
     ];
 }

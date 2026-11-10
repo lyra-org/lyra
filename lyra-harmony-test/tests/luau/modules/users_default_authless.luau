@@ -6,7 +6,7 @@ local users = require("@lyra/users")
 -- While authentication is off, the default user is an account like any other.
 local listed = {}
 for _, user in users.list() do
-	listed[user.user_id] = true
+	listed[user.id] = true
 end
 assert(listed[fixture.users.admin] and listed[fixture.users.default])
 

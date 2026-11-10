@@ -81,7 +81,6 @@ type ApiResponse = api.ApiResponse
 type JsonValue = api.JsonValue
 type JsonObject = { [string]: JsonValue }
 type PlaybackPayload = { [string]: string | number | boolean? }
-type PublicUser = users.PublicUser
 
 type PublicSystemInfo = system_info.PublicSystemInfo
 
@@ -114,21 +113,6 @@ socket_routes.register()
 user_data_changes.subscribe()
 
 local AUTH_PROVIDER_ID = "Lyra"
-
-local function find_public_user_by_id(user_id: string): PublicUser?
-	local listed_users = users.list()
-	if listed_users == nil then
-		return nil
-	end
-
-	for _, user in listed_users do
-		if user.user_id == user_id then
-			return user
-		end
-	end
-
-	return nil
-end
 
 local function root_folder_json(user_id: string): JsonObject
 	local views = catalog.to_music_view_items(false)
@@ -223,7 +207,7 @@ api.get(P .. "/Users", function(ctx: ApiContext): ApiResponse
 	end
 
 	if not session.is_admin(principal) then
-		return api.response.json(200, { session.to_jellyfin_user(principal) })
+		return api.response.json(200, { session.principal_to_jellyfin_user(principal) })
 	end
 
 	local result: { JsonValue } = {}
@@ -249,10 +233,10 @@ api.get(P .. "/Users/{id}", function(ctx: ApiContext): ApiResponse
 		return session.unauthorized()
 	end
 	if user_id == principal.user_id then
-		return api.response.json(200, session.to_jellyfin_user(principal))
+		return api.response.json(200, session.principal_to_jellyfin_user(principal))
 	end
 
-	local user = find_public_user_by_id(user_id)
+	local user = users.get({ user_id })[user_id]
 	if not user then
 		return responses.not_found("user not found")
 	end
@@ -275,7 +259,7 @@ local function handle_user_configuration_post(ctx: ApiContext, raw_user_id: stri
 		user_id = decoded
 	end
 	if user_id ~= principal.user_id then
-		if not find_public_user_by_id(user_id) then
+		if not users.get({ user_id })[user_id] then
 			return responses.not_found("user not found")
 		end
 		if not session.is_admin(principal) then
@@ -439,7 +423,7 @@ api.get(P .. "/Users/Me", function(ctx: ApiContext)
 		return session.unauthorized()
 	end
 
-	return api.response.json(200, session.to_jellyfin_user(principal))
+	return api.response.json(200, session.principal_to_jellyfin_user(principal))
 end, { auth = "public", case_insensitive = true })
 local function respond_with_user_views(ctx: ApiContext, principal: session.Principal): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil

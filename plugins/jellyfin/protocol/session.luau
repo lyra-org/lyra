@@ -41,7 +41,7 @@ type PlaylistCreate = playlists.PlaylistCreate
 type PlaylistFields = playlists.PlaylistFields
 type Permission = auth.Permission
 type UserIdentity = {
-	user_id: string,
+	id: string,
 	username: string,
 	permissions: { Permission },
 }
@@ -252,21 +252,30 @@ end
 
 function module.to_jellyfin_user(user: UserIdentity): JsonValue
 	return {
-		Id = item_ids.encode(user.user_id),
+		Id = item_ids.encode(user.id),
 		Name = user.username,
 		ServerId = SERVER_ID,
 		HasPassword = true,
 		HasConfiguredPassword = true,
 		HasConfiguredEasyPassword = false,
-		Configuration = preferences.user_configuration(user.user_id),
+		Configuration = preferences.user_configuration(user.id),
 		Policy = build_jellyfin_user_policy(user),
 	}
+end
+
+-- The caller, described as `to_jellyfin_user` describes a listed user.
+function module.principal_to_jellyfin_user(principal: Principal): JsonValue
+	return module.to_jellyfin_user({
+		id = principal.user_id,
+		username = principal.username,
+		permissions = principal.permissions,
+	})
 end
 
 function module.to_authentication_result(login_result: LoginResult): JsonValue
 	local principal = login_result.principal
 	return {
-		User = module.to_jellyfin_user(principal),
+		User = module.principal_to_jellyfin_user(principal),
 		AccessToken = tostring(login_result.token),
 		ServerId = SERVER_ID,
 		SessionInfo = nil,

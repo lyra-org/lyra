@@ -6,7 +6,7 @@ local users = require("@lyra/users")
 
 local listed = {}
 for _, user in users.list() do
-	listed[user.user_id] = user
+	listed[user.id] = user
 end
 
 assert(listed[fixture.users.default] == nil, "the default user is no account while authentication is on")

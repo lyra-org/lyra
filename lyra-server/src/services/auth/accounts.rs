@@ -82,6 +82,14 @@ pub(crate) fn get_by_public_id(
     Ok(lyra_db::users::get_by_public_id(db, id)?.filter(is_account))
 }
 
+/// The user with this username, compared as sign-in compares it, if it reads as an account.
+pub(crate) fn get_by_username(
+    db: &impl lyra_db::DbAccess,
+    username: &str,
+) -> anyhow::Result<Option<User>> {
+    Ok(lyra_db::users::get_by_username(db, username)?.filter(is_account))
+}
+
 pub(crate) struct CreatedUser {
     pub(crate) id: String,
     pub(crate) username: String,

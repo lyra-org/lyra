@@ -13,13 +13,13 @@ local response = require("../protocol/response")
 
 type ApiResponse = api.ApiResponse
 type JsonObject = { [string]: any }
-type PublicUser = users.PublicUser
+type User = users.User
 type Request = request.Request
 
 -- Every user streams, rates, makes playlists, and gets cover art. Lyra records every user's
 -- listens. Downloads need the download permission. Settings and passwords change in Lyra rather
 -- than through this API, and Lyra has no uploads, comments, podcasts, jukebox, shares, or video.
-local function user_item(user: PublicUser): JsonObject
+local function user_item(user: User): JsonObject
 	local permissions = user.permissions
 	local folder_ids: { number } = {}
 	for _, library_id in user.library_ids do
@@ -50,16 +50,14 @@ module.methods = {
 	-- Usernames match as sign-in matches them. Only an admin may name another user.
 	getUser = function(req: Request): ApiResponse
 		local caller = req.auth.principal
-		local wanted = string.lower(request.required(req.params, "username"))
-		if wanted ~= string.lower(caller.username) and not request.holds(caller.permissions, "admin") then
+		local user = users.list({ username = request.required(req.params, "username") })[1]
+		if not request.holds(caller.permissions, "admin") and not (user and user.id == caller.user_id) then
 			return request.fail(50, "Only admins can read another user")
 		end
-		for _, user in users.list() do
-			if string.lower(user.username) == wanted then
-				return response.ok(req.params, { user = user_item(user) })
-			end
+		if not user then
+			return request.not_found("User")
 		end
-		return request.not_found("User")
+		return response.ok(req.params, { user = user_item(user) })
 	end,
 
 	getUsers = function(req: Request): ApiResponse

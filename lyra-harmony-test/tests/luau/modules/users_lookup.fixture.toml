@@ -1,0 +1,21 @@
+run_as = "émile"
+
+[[users]]
+key = "admin"
+admin = true
+
+[[users]]
+key = "émile"
+permissions = ["download"]
+
+[[users]]
+key = "default"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["émile"]
+
+[[libraries]]
+key = "archive"
+name = "Archive"

@@ -50,10 +50,11 @@ local function describe(
 		end
 	end
 	local found: { [string]: Track } = if #track_ids > 0 then tracks.get(track_ids) else {}
-	local usernames: { [string]: string } = {}
-	for _, user in users.list() do
-		usernames[user.user_id] = user.username
+	local owner_ids: { string } = {}
+	for _, playlist in listed do
+		table.insert(owner_ids, playlist.owner_id)
 	end
+	local owners = users.get(owner_ids)
 	local playlist_ids: { string } = {}
 	for _, playlist in listed do
 		table.insert(playlist_ids, playlist.id)
@@ -79,7 +80,7 @@ local function describe(
 			name = playlist.name,
 			comment = playlist.description,
 			coverArt = cover_art_ids[playlist.id],
-			owner = usernames[playlist.owner_id],
+			owner = if owners[playlist.owner_id] then owners[playlist.owner_id].username else nil,
 			public = playlist.is_public == true,
 			songCount = #entry_tracks,
 			duration = dates.seconds(duration_ms),
@@ -169,18 +170,11 @@ module.methods = {
 			if not request.holds(req.auth.principal.permissions, "admin") then
 				return request.fail(50, "Only admins can name a user")
 			end
-			local wanted = string.lower(username)
-			local found: string? = nil
-			for _, user in users.list() do
-				if string.lower(user.username) == wanted then
-					found = user.user_id
-					break
-				end
-			end
-			if not found then
+			local named = users.list({ username = username })[1]
+			if not named then
 				return request.not_found("User")
 			end
-			user_id = found
+			user_id = named.id
 		end
 
 		local listed = listed_for(user_id, caller_id)

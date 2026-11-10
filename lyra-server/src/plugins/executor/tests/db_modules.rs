@@ -160,7 +160,7 @@ fn plugin_executor_exposes_db_backed_lyra_users_module() -> Result<()> {
             local listed = users.list()
             executor_users_count = #listed
             executor_users_first = listed[1].username
-            executor_users_first_id = listed[1].user_id
+            executor_users_first_id = listed[1].id
             executor_users_first_role = listed[1].role
             executor_users_second = listed[2].username
             executor_users_second_role = listed[2].role

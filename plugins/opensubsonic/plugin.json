@@ -32,6 +32,6 @@
     "lyra.releases",
     "lyra.server",
     "lyra.tracks",
-    { "id": "lyra.users", "reason": "Lists accounts for user endpoints and shows playlist owners." }
+    { "id": "lyra.users", "reason": "Matches usernames at sign-in, lists accounts for user endpoints and shows playlist owners." }
   ]
 }
