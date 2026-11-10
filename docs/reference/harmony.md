@@ -89,7 +89,7 @@ Bindings live in the crate that owns the exposed module, and for Lyra's types in
 - Option tables and other hand-read arguments implement `FromLuau` and `LuauTypeInfo` side by side,
   so what a function reads and what its definition says stay in step.
 - The macros generate the runtime binding and the definitions from one source. Run
-  `cargo run -p lyra-docs -- setup` after changing a module surface.
+  `cargo run -p lyra-docgen -- setup` after changing a module surface.
 
 ## Naming
 

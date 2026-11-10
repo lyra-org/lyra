@@ -1529,7 +1529,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "lyra-docs"
+name = "lyra-docgen"
 version = "0.0.2-dev.2"
 dependencies = [
  "anyhow",

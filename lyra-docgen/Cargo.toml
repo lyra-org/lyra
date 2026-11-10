@@ -1,11 +1,11 @@
 [package]
-name = "lyra-docs"
+name = "lyra-docgen"
 version.workspace = true
 edition = "2024"
 license-file = "../LICENSE"
 
 [[bin]]
-name = "lyra-docs"
+name = "lyra-docgen"
 path = "src/main.rs"
 
 [dependencies]

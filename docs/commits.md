@@ -89,6 +89,7 @@ Lyra support crate scopes:
 ```text
 chromaprint
 db
+docgen
 ffmpeg
 metadata
 ```

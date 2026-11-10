@@ -3,7 +3,7 @@
 ## Project Structure & Module Organization
 - `lyra-server/`: main Rust server crate.
 - `lyra-db/`: database crate and the primary home for database access and query logic; `lyra_db::test_db` is available to dependents' tests through its `testing` feature.
-- `lyra-docs/`: generates the Luau definitions and the OpenAPI/AsyncAPI documents (`list`, `print`, `generate`, `setup`) from the renderers `lyra-server` exposes under its `docgen` feature.
+- `lyra-docgen/`: generates the Luau definitions and the OpenAPI/AsyncAPI documents (`list`, `print`, `generate`, `setup`) from the renderers `lyra-server` exposes under its `docgen` feature.
 - `lyra-server/src/services/`: shared business logic used by both `routes/` and `plugins/`.
 - `lyra-server/src/plugins/`: plugin system integration and core capabilities such as metadata providers; follow `docs/plugin-api.md` for the Luau module surfaces.
 - `lyra-server/src/routes/`: REST API route definitions and handlers; follow `docs/api.md` for REST conventions, and describe what an endpoint does in its OpenAPI description.
@@ -31,7 +31,7 @@ cargo run -p lyra-server -- serve
 ```sh
 luau-lsp analyze --no-flags-enabled --flag=LuauSolverV2=true --platform standard --base-luaurc .luaurc --definitions=.lyra/defs/globals.d.luau <file1.luau> <file2.luau>
 ```
-Run `cargo run -p lyra-docs -- setup` before Luau analysis after changing Rust-defined Luau module surfaces or generated Luau definitions.
+Run `cargo run -p lyra-docgen -- setup` before Luau analysis after changing Rust-defined Luau module surfaces or generated Luau definitions.
 
 ## Coding Style & Naming Conventions
 - Format Rust code with `cargo +nightly fmt` and Luau scripts with `stylua`.

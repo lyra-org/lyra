@@ -287,7 +287,7 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
     guard
 }
 
-/// Ids of the Luau definition sources the server renders, for `lyra-docs`.
+/// Ids of the Luau definition sources the server renders, for `lyra-docgen`.
 #[cfg(feature = "docgen")]
 pub fn lyra_doc_source_ids() -> impl Iterator<Item = &'static str> {
     plugins::lyra_doc_source_ids()

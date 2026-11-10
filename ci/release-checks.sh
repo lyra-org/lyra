@@ -20,7 +20,7 @@ workspace_version() {
 # Paths whose changes reach the server a release runs on.
 server_changed() {
 	! git diff --quiet "$1" "$2" -- Cargo.toml Cargo.lock 'harmony-*' 'lyra-*' \
-		':(exclude)lyra-docs' ':(exclude)lyra-harmony-test'
+		':(exclude)lyra-docgen' ':(exclude)lyra-harmony-test'
 }
 
 plugin_manifest() {

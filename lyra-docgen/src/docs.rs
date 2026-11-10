@@ -176,7 +176,7 @@ pub(crate) fn run_command(args: &[String]) -> Result<()> {
 }
 
 fn docs_command_usage() -> &'static str {
-    "usage:\n  lyra-docs list\n  lyra-docs print <source|openapi|asyncapi>\n  lyra-docs generate --out-dir <dir>\n  lyra-docs setup"
+    "usage:\n  lyra-docgen list\n  lyra-docgen print <source|openapi|asyncapi>\n  lyra-docgen generate --out-dir <dir>\n  lyra-docgen setup"
 }
 
 fn write_api_docs(out_dir: &Path, print_paths: bool) -> Result<()> {
