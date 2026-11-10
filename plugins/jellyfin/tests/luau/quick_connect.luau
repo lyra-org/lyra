@@ -1,5 +1,6 @@
 local fixture, harness = ...
 local auth = require("@lyra/auth")
+local constants = require("../../constants")
 local item_ids = require("../../protocol/items/identifiers")
 local quick_connect = require("../../routes/quick_connect")
 
@@ -55,8 +56,17 @@ local function failed(response: any, status: number, why: string)
 	assert(response.body == ERROR_PROCESSING_REQUEST, `{why}: body {tostring(response.body)}`)
 end
 
+-- Quick Connect is off until its setting turns it on, and then begins nothing.
+assert(constants.QUICK_CONNECT_ENABLED == false, "off by default")
+assert(call(quick_connect.handle_enabled, {}).body == false, "reads as off by default")
+local while_off = call(quick_connect.handle_initiate, { authorization = `MediaBrowser {IDENTITY}` })
+assert(while_off.status == 401 and while_off.body == "Quick connect is disabled", "initiate while off")
+assert(call(quick_connect.handle_connect, { query = { secret = "s" } }).status == 401, "connect while off")
+failed(call(quick_connect.handle_authenticate, { json = { Secret = "s" } }), 401, "signing in while off")
+
+constants.QUICK_CONNECT_ENABLED = true
 local enabled = call(quick_connect.handle_enabled, {})
-assert(enabled.status == 200 and enabled.body == true, "Quick Connect is on while authentication is")
+assert(enabled.status == 200 and enabled.body == true, "Quick Connect is on with its setting and authentication")
 
 -- Initiate wants all four parts of the identity, from the request alone, and takes no caller.
 for _, partial in

@@ -4,9 +4,9 @@
 -- You can obtain one here:
 -- www.meshiplaw.com/lyra.
 
--- Upstream's Quick Connect on Lyra's device logins. With authentication off Quick Connect is off,
--- and every route answers as upstream's does with it turned off, after the checks upstream makes
--- first. Unlike upstream, the session is created when the client signs in, not when it is
+-- Upstream's Quick Connect on Lyra's device logins. With its setting or authentication off Quick
+-- Connect is off, and every route answers as upstream's does with it turned off, after the checks
+-- upstream makes first. Unlike upstream, the session is created when the client signs in, not when it is
 -- authorized.
 
 local api = require("@lyra/api")
@@ -42,7 +42,7 @@ local UNBIASED_RANDOM_COUNT = RANDOM_COUNT - RANDOM_COUNT % CODE_COUNT
 local MAX_CODE_ATTEMPTS = 8
 
 local function available(): boolean
-	return auth.capabilities().enabled
+	return constants.QUICK_CONNECT_ENABLED and auth.capabilities().enabled
 end
 
 local function generate_code(): string

@@ -1,9 +1,13 @@
 local fixture, harness = ...
+local constants = require("../../constants")
 local item_ids = require("../../protocol/items/identifiers")
 local quick_connect = require("../../routes/quick_connect")
 
 -- With authentication off Quick Connect is off, so its routes answer as upstream's do with it
 -- turned off, after the checks upstream makes before it looks at the setting.
+
+-- The setting is on, so what answers here is authentication being off.
+constants.QUICK_CONNECT_ENABLED = true
 
 local IDENTITY = 'Client="Finamp", Device="Pixel", DeviceId="pixel", Version="1"'
 

@@ -34,6 +34,7 @@ local module = {
 	DISCOVERY_ENABLED = true,
 	DISCOVERY_PORT = 7359,
 	ACCEPT_LEGACY_AUTH_HEADERS = true,
+	QUICK_CONNECT_ENABLED = false,
 }
 
 function module.configure_root_item_id(value: string)
@@ -93,6 +94,11 @@ function module.declare_settings(builder: SettingsBuilder)
 		description = "Accept the legacy credential forms Jellyfin gates behind EnableLegacyAuthorization: the X-Emby-Token and X-MediaBrowser-Token headers, the X-Emby-Authorization header, the api_key query parameter, and the Emby authorization scheme. The Authorization header with the MediaBrowser scheme and the ApiKey query parameter are always accepted.",
 		default = true,
 	})
+	builder:bool("quick_connect_enabled", {
+		label = "Quick Connect",
+		description = "Let a client sign in by showing a six-digit code that a signed-in device approves. These codes are easier to guess than the six-letter codes of Lyra's own device login: someone with an account who guesses one signs the waiting client in to their own account. Takes effect when the plugin restarts.",
+		default = false,
+	})
 end
 
 function module.configure_server_id(server_id: string)
@@ -123,6 +129,7 @@ function module.configure_settings(config: SettingsConfig)
 	module.DISCOVERY_ENABLED = bool_setting(config, "discovery_enabled", module.DISCOVERY_ENABLED)
 	module.ACCEPT_LEGACY_AUTH_HEADERS =
 		bool_setting(config, "accept_legacy_auth_headers", module.ACCEPT_LEGACY_AUTH_HEADERS)
+	module.QUICK_CONNECT_ENABLED = bool_setting(config, "quick_connect_enabled", module.QUICK_CONNECT_ENABLED)
 end
 
 return module
