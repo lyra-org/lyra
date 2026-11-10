@@ -38,6 +38,8 @@ export type SessionEntry = {
 	-- Kept current by the socket's re-auth loop, alongside its dispatch principal.
 	principal: Principal,
 	device_id: string,
+	-- The name the client sent, which the session goes by while its device has no custom name.
+	client_device_name: string,
 	info: JsonObject,
 	capabilities: JsonObject?,
 	subscribed_sessions: boolean,
@@ -113,6 +115,17 @@ local function get_capabilities_store(): datastore.DataStore
 end
 
 -- Replaces what the session declared, on its open socket and for any socket it opens later.
+-- As upstream, the name a device's sessions go by reaches its live sessions at once. Clearing it
+-- puts back the name the client sent, where upstream waits for the session's next request.
+function module.apply_device_name(device_id: string, custom_name: string?)
+	for _, entry in entries do
+		if entry.device_id == device_id then
+			entry.info.HasCustomDeviceName = custom_name ~= nil
+			entry.info.DeviceName = custom_name or entry.client_device_name
+		end
+	end
+end
+
 function module.declare_capabilities(session_id: string, principal: Principal, capabilities: JsonObject)
 	local function apply()
 		local entry = module.get_owned(session_id, principal)

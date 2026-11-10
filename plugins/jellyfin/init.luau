@@ -1327,7 +1327,12 @@ api.get(P .. "/Devices/Options", function(ctx: ApiContext)
 	return session.require_admin(ctx) or preferences.device_options_get(ctx)
 end, { auth = "public", case_insensitive = true })
 api.post(P .. "/Devices/Options", function(ctx: ApiContext)
-	return session.require_admin(ctx) or preferences.device_options_set(ctx)
+	local response = session.require_admin(ctx) or preferences.device_options_set(ctx)
+	local device_id = preferences.requested_device_id(ctx)
+	if response.status == 204 and device_id then
+		active_sessions.apply_device_name(device_id, preferences.session_device_name(device_id))
+	end
+	return response
 end, { auth = "public", case_insensitive = true })
 api.get(P .. "/DisplayPreferences/{displayPreferencesId}", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)

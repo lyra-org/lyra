@@ -311,6 +311,14 @@ function module.device_custom_name(device_id: string): string?
 	return if type(custom_name) == "string" then custom_name else nil
 end
 
+-- The name a device's sessions go by, when it has one: a blank name is none.
+function module.session_device_name(device_id: string): string?
+	local custom_name = module.device_custom_name(device_id)
+	return if custom_name and string.find(custom_name, "%S") then custom_name else nil
+end
+
+module.requested_device_id = require_device_id
+
 function module.device_options_set(ctx: ApiContext): ApiResponse
 	local device_id = require_device_id(ctx)
 	if not device_id then

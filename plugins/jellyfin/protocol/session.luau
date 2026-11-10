@@ -1236,12 +1236,13 @@ function module.build_session_info(
 	identity: ClientIdentity,
 	activity_iso: string
 ): JsonObject
+	local custom_name = preferences.session_device_name(identity.device_id)
 	return {
 		Id = session_id,
 		UserId = item_ids.encode(principal.user_id),
 		UserName = principal.username,
 		Client = identity.client,
-		DeviceName = identity.device,
+		DeviceName = custom_name or identity.device,
 		DeviceId = identity.device_id,
 		ApplicationVersion = identity.version,
 		ServerId = SERVER_ID,
@@ -1250,7 +1251,7 @@ function module.build_session_info(
 		IsActive = true,
 		SupportsRemoteControl = false,
 		SupportsMediaControl = false,
-		HasCustomDeviceName = false,
+		HasCustomDeviceName = custom_name ~= nil,
 		PlayableMediaTypes = {},
 		SupportedCommands = {},
 		AdditionalUsers = {},

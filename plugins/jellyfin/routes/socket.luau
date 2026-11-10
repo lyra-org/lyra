@@ -57,6 +57,7 @@ function module.handle(reader: api.ApiWebSocketReader, sender: api.ApiWebSocketS
 		user_id = principal.user_id,
 		principal = principal,
 		device_id = identity.device_id,
+		client_device_name = identity.device,
 		info = info,
 		capabilities = nil,
 		subscribed_sessions = false,
