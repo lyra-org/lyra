@@ -337,6 +337,12 @@ pub async fn run_plugins_add(build: BuildInfo, url: &str, git_ref: Option<&str>)
         if !plugin.scopes.is_empty() {
             println!("  scopes: {}", plugin.scopes.join(", "));
         }
+        if !plugin.hosts.is_empty() {
+            println!(
+                "  hosts: {}",
+                plugins::scopes::describe_hosts(&plugin.hosts)
+            );
+        }
     }
     for held in &report.held {
         eprintln!("held {} v{}: {}", held.id, held.release.version, held.hold);

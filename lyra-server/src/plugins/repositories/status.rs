@@ -21,8 +21,12 @@ use harmony_core::{
         PLUGIN_CONFIG_FILENAME,
         PluginManifest,
     },
-    scopes::ScopedPlugin,
+    scopes::{
+        ScopeGrowth,
+        ScopedPlugin,
+    },
 };
+use harmony_http::HostEntry;
 use harmony_repository::{
     ListedPlugin,
     SourceRecord,
@@ -30,7 +34,10 @@ use harmony_repository::{
 use lyra_db::plugin_repositories as repo_db;
 
 use crate::plugins::scopes::{
+    ScopeDetail,
     ScopeGain,
+    describe_hosts,
+    host_entries,
     scope_gains,
 };
 use semver::{
@@ -83,6 +90,9 @@ pub(crate) struct OfferedRelease {
     pub(crate) scopes: Vec<String>,
     /// What its author says some of them are for at the release, by scope.
     pub(crate) scope_reasons: BTreeMap<String, String>,
+    /// What the scopes taking a grant let it reach at the release, by
+    /// scope.
+    pub(crate) scope_grants: BTreeMap<String, Vec<String>>,
     /// The plugins it depends on at the release.
     pub(crate) dependencies: BTreeMap<String, Dependency>,
 }
@@ -108,6 +118,8 @@ pub(super) type Offered = Result<OfferedRelease, Unoffered>;
 pub(super) const UNSTORED_REASON: &str =
     "the repository offers no release of the plugin; refresh it for the reason";
 
+const UNREADABLE_REASON: &str = "the stored release cannot be read; refresh the repository";
+
 pub(super) fn listed_offer(plugin: &ListedPlugin) -> Offered {
     match &plugin.offer {
         Ok(offer) => Ok(OfferedRelease {
@@ -115,6 +127,7 @@ pub(super) fn listed_offer(plugin: &ListedPlugin) -> Offered {
             commit: offer.commit.clone(),
             scopes: offer.manifest.scopes.clone(),
             scope_reasons: offer.manifest.scope_reasons.clone(),
+            scope_grants: offer.manifest.scope_grants.clone(),
             dependencies: offer.manifest.dependencies.clone(),
         }),
         Err(error) => Err(match error.required_host() {
@@ -140,7 +153,7 @@ pub(super) fn stored_offer(entry: &repo_db::PluginRepositoryEntry) -> Offered {
         });
     };
     let unreadable = |_| Unoffered::Unknown {
-        reason: "the stored release cannot be read; refresh the repository".to_string(),
+        reason: UNREADABLE_REASON.to_string(),
     };
     let dependencies = entry
         .dependencies
@@ -155,10 +168,35 @@ pub(super) fn stored_offer(entry: &repo_db::PluginRepositoryEntry) -> Offered {
             ))
         })
         .collect::<Result<_, Unoffered>>()?;
+    let scopes = entry.scopes.clone().unwrap_or_default();
+    let scope_grants: BTreeMap<String, Vec<String>> = entry
+        .scope_grants
+        .iter()
+        .flatten()
+        .map(|grant| (grant.scope.clone(), grant.items.clone()))
+        .collect();
+    // A release no manifest parser would have offered: one stored before
+    // the scope listed hosts, or with a host that does not read back as a
+    // manifest's own.
+    if scopes.iter().any(|scope| scope == harmony_http::SCOPE) {
+        let listed = scope_grants
+            .get(harmony_http::SCOPE)
+            .and_then(|items| host_entries(items).ok());
+        if !listed.is_some_and(|hosts| {
+            hosts
+                .iter()
+                .all(|host| !matches!(host, HostEntry::NamedBy { .. }))
+        }) {
+            return Err(Unoffered::Unknown {
+                reason: UNREADABLE_REASON.to_string(),
+            });
+        }
+    }
     Ok(OfferedRelease {
         version: Version::parse(version).map_err(unreadable)?,
         commit: commit.clone(),
-        scopes: entry.scopes.clone().unwrap_or_default(),
+        scopes,
+        scope_grants,
         scope_reasons: entry
             .scope_reasons
             .iter()
@@ -202,13 +240,26 @@ pub(super) fn stored_scope_reasons(offered: &OfferedRelease) -> Vec<repo_db::Plu
         .collect()
 }
 
+/// The scope grants a subscription stores for `offered`.
+pub(super) fn stored_scope_grants(offered: &OfferedRelease) -> Vec<repo_db::PluginScopeGrant> {
+    offered
+        .scope_grants
+        .iter()
+        .map(|(scope, items)| repo_db::PluginScopeGrant {
+            scope: scope.clone(),
+            items: items.clone(),
+        })
+        .collect()
+}
+
 /// Why an update to a newer release waits for an admin.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Hold {
-    /// The release lets plugins reach scopes they could not before: the
-    /// updated plugin, or installed plugins depending on it, keyed by id.
-    /// An update that names the release grants them.
-    AddsScopes { gains: BTreeMap<String, ScopeGain> },
+    /// The release lets plugins reach more than they could before, in
+    /// scopes, in hosts under the outbound HTTP scope, or both: the updated
+    /// plugin, or installed plugins depending on it, keyed by id. An update
+    /// that names the release grants them.
+    AddsReach { gains: BTreeMap<String, ScopeGain> },
     /// Plugins depend on this one at versions outside the release's; no
     /// update applies until they change.
     BreaksDependents { dependents: Vec<Requirement> },
@@ -232,7 +283,7 @@ impl std::fmt::Display for Hold {
                 .join(", ")
         };
         match self {
-            Self::AddsScopes { gains } => {
+            Self::AddsReach { gains } => {
                 let reaches = gains
                     .iter()
                     .map(|(id, ScopeGain { growth, .. })| {
@@ -240,13 +291,21 @@ impl std::fmt::Display for Hold {
                             .unresolved
                             .iter()
                             .map(|dependency| format!("unknown dependency {dependency}"));
-                        let reached: Vec<_> =
-                            growth.scopes.iter().cloned().chain(unknown).collect();
+                        let hosts = gained_hosts(growth);
+                        let hosts = (!hosts.is_empty())
+                            .then(|| format!("hosts {}", describe_hosts(&hosts)));
+                        let reached: Vec<_> = growth
+                            .scopes
+                            .iter()
+                            .cloned()
+                            .chain(hosts)
+                            .chain(unknown)
+                            .collect();
                         format!("{id} ({})", reached.join(", "))
                     })
                     .collect::<Vec<_>>()
                     .join(", ");
-                write!(f, "lets plugins reach new scopes: {reaches}")
+                write!(f, "lets plugins reach more: {reaches}")
             }
             Self::BreaksDependents { dependents } => {
                 write!(f, "breaks dependents {}", requirements(dependents))
@@ -258,6 +317,21 @@ impl std::fmt::Display for Hold {
                 write!(f, "forms a dependency cycle of {}", plugins.join(", "))
             }
         }
+    }
+}
+
+/// The hosts `growth` lets a plugin newly send requests to, an entry naming
+/// a setting with the plugin whose setting it is. Any host when the plugin
+/// newly reaches the outbound HTTP scope through a plugin listing none, as
+/// an installed dependency from before hosts were listed, whether or not it
+/// reached the scope before, or when what it gains cannot be read.
+pub(crate) fn gained_hosts(growth: &ScopeGrowth) -> Vec<HostEntry> {
+    if growth.ungranted.contains(harmony_http::SCOPE) {
+        return vec![HostEntry::Any];
+    }
+    match growth.grants.get(harmony_http::SCOPE) {
+        Some(items) => host_entries(items).unwrap_or_else(|_| vec![HostEntry::Any]),
+        None => Vec::new(),
     }
 }
 
@@ -296,6 +370,26 @@ impl Reach<'_> {
         };
         reasons.get(scope).cloned()
     }
+
+    /// The hosts this version reaches through `scope`, when it is the
+    /// outbound HTTP scope: the ones it lists, or any host when it lists
+    /// none that can be read, as an install from before hosts were listed,
+    /// which holds count as reaching any.
+    pub(super) fn scope_hosts(&self, scope: &str) -> Option<Vec<HostEntry>> {
+        (scope == harmony_http::SCOPE).then(|| {
+            self.scope_grant(scope)
+                .and_then(|items| host_entries(items).ok())
+                .unwrap_or_else(|| vec![HostEntry::Any])
+        })
+    }
+
+    /// What this version says of `scope`, for the effects it gives.
+    pub(super) fn scope_detail(&self, scope: &str) -> ScopeDetail {
+        ScopeDetail {
+            author_reason: self.scope_reason(scope),
+            hosts: self.scope_hosts(scope),
+        }
+    }
 }
 
 impl ScopedPlugin for Reach<'_> {
@@ -316,7 +410,7 @@ impl ScopedPlugin for Reach<'_> {
     fn scope_grant(&self, scope: &str) -> Option<&[String]> {
         match self {
             Self::Installed(manifest) => manifest.scope_grant(scope),
-            Self::Release(..) => None,
+            Self::Release(_, release) => release.scope_grants.get(scope).map(Vec::as_slice),
         }
     }
 
@@ -340,20 +434,20 @@ fn scope_hold(
         installed,
         plugins,
         &Reach::Release(candidate.id, candidate.release),
-        Reach::scope_reason,
+        Reach::scope_detail,
     );
-    (!gains.is_empty()).then_some(Hold::AddsScopes { gains })
+    (!gains.is_empty()).then_some(Hold::AddsReach { gains })
 }
 
 /// Which of `candidates`, installed together over the `installed`
 /// plugins, wait, and why. A candidate not approved waits when it lets a
-/// plugin reach new scopes, against the installed plugins or against the
+/// plugin reach new scopes or hosts, against the installed plugins or against the
 /// plugins as they would be afterwards: the installed ones with each other
 /// candidate not held replaced by its release. Dependencies are judged
 /// against the latter, cycles among them included. Holding one can change
 /// what another reaches or break it, so this repeats until no further
 /// candidate is held. A dependency problem takes precedence over added
-/// scopes, which approval cannot resolve.
+/// reach, which approval cannot resolve.
 pub(super) fn holds(
     installed: &[PluginManifest],
     candidates: &[Candidate<'_>],
@@ -387,7 +481,7 @@ pub(super) fn holds(
         }
         let mut changed = Vec::new();
         for candidate in candidates {
-            if matches!(held.get(candidate.id), None | Some(Hold::AddsScopes { .. }))
+            if matches!(held.get(candidate.id), None | Some(Hold::AddsReach { .. }))
                 && let Some(hold) = dependency_hold(candidate, &after)
             {
                 changed.push((candidate.id.to_string(), hold));
@@ -603,8 +697,6 @@ fn offered_status(
 
 #[cfg(test)]
 mod tests {
-    use harmony_core::scopes::ScopeGrowth;
-
     use super::{
         super::plugin_access,
         *,
@@ -654,6 +746,7 @@ mod tests {
             commit: "2".repeat(40),
             scopes: Vec::new(),
             scope_reasons: BTreeMap::new(),
+            scope_grants: BTreeMap::new(),
             dependencies: dependencies(requires),
         }
     }
@@ -692,7 +785,7 @@ mod tests {
         holds(installed, &candidates)
             .into_iter()
             .map(|(id, hold)| match hold {
-                Hold::AddsScopes { gains } => {
+                Hold::AddsReach { gains } => {
                     let gains = gains
                         .into_iter()
                         .map(|(id, gained)| {
@@ -704,7 +797,7 @@ mod tests {
                             (id, gain(growth))
                         })
                         .collect();
-                    (id, Hold::AddsScopes { gains })
+                    (id, Hold::AddsReach { gains })
                 }
                 hold => (id, hold),
             })
@@ -720,9 +813,9 @@ mod tests {
         }
     }
 
-    /// An [`Hold::AddsScopes`] letting each plugin reach its scopes.
+    /// An [`Hold::AddsReach`] letting each plugin reach its scopes.
     fn adds(gains: &[(&str, &[&str])]) -> Hold {
-        Hold::AddsScopes {
+        Hold::AddsReach {
             gains: gains
                 .iter()
                 .map(|(id, scopes)| {
@@ -885,7 +978,7 @@ mod tests {
             held(&installed, &[("a", &optional)]),
             [(
                 "a".into(),
-                Hold::AddsScopes {
+                Hold::AddsReach {
                     gains: [(
                         "a".into(),
                         gain(ScopeGrowth {
@@ -993,7 +1086,7 @@ mod tests {
             approved: false,
         }];
 
-        let Some(Hold::AddsScopes { gains }) = holds(&installed, &candidates).remove("a") else {
+        let Some(Hold::AddsReach { gains }) = holds(&installed, &candidates).remove("a") else {
             panic!("a is held for its scopes");
         };
         let effects = |id: &str| {
@@ -1038,7 +1131,7 @@ mod tests {
             },
         ];
 
-        let Some(Hold::AddsScopes { gains }) = holds(&installed, &candidates).remove("a") else {
+        let Some(Hold::AddsReach { gains }) = holds(&installed, &candidates).remove("a") else {
             panic!("a is held for reaching http through c once d drops it");
         };
         assert_eq!(
@@ -1102,7 +1195,7 @@ mod tests {
         hold: Option<Hold>,
         id: &str,
     ) -> BTreeSet<(String, &'static str, Option<String>)> {
-        let Some(Hold::AddsScopes { gains }) = hold else {
+        let Some(Hold::AddsReach { gains }) = hold else {
             panic!("expected a hold for added scopes");
         };
         sources(&gains[id].effects)
@@ -1178,7 +1271,7 @@ mod tests {
             ],
         );
 
-        assert!(matches!(held.get("h"), Some(Hold::AddsScopes { .. })));
+        assert!(matches!(held.get("h"), Some(Hold::AddsReach { .. })));
         assert_eq!(
             gained_sources(held.remove("c"), "c"),
             BTreeSet::from([
@@ -1322,6 +1415,462 @@ mod tests {
             BTreeSet::from([
                 source("a", "lyra.metadata", Some("offered a")),
                 source("c", "harmony.http", Some("installed c")),
+            ])
+        );
+    }
+
+    const HTTP: &str = "harmony.http";
+
+    fn hosts(items: &[&str]) -> Vec<String> {
+        let mut items: Vec<String> = items.iter().map(ToString::to_string).collect();
+        items.sort();
+        items
+    }
+
+    /// `manifest` declaring the outbound HTTP scope for `items`.
+    fn requesting(mut manifest: PluginManifest, items: &[&str]) -> PluginManifest {
+        manifest.scopes.push(HTTP.to_string());
+        manifest.scope_grants.insert(HTTP.to_string(), hosts(items));
+        manifest
+    }
+
+    /// `release` declaring the outbound HTTP scope for `items`.
+    fn release_requesting(mut release: OfferedRelease, items: &[&str]) -> OfferedRelease {
+        release.scopes.push(HTTP.to_string());
+        release.scope_grants.insert(HTTP.to_string(), hosts(items));
+        release
+    }
+
+    /// The hosts each plugin gains from the hold on `id`, with the scopes
+    /// it gains.
+    fn host_gains(
+        held: &HashMap<String, Hold>,
+        id: &str,
+    ) -> BTreeMap<String, (Vec<String>, Vec<String>)> {
+        let Some(Hold::AddsReach { gains }) = held.get(id) else {
+            panic!("{id} is held for what it reaches: {held:?}");
+        };
+        gains
+            .iter()
+            .map(|(plugin, gain)| {
+                (
+                    plugin.clone(),
+                    (
+                        gain.growth.scopes.iter().cloned().collect(),
+                        gained_hosts(&gain.growth)
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect(),
+                    ),
+                )
+            })
+            .collect()
+    }
+
+    fn candidate<'a>(id: &'a str, release: &'a OfferedRelease) -> Candidate<'a> {
+        Candidate {
+            id,
+            release,
+            approved: false,
+        }
+    }
+
+    #[test]
+    fn an_update_reaching_new_hosts_is_held_for_them() {
+        let installed = [requesting(
+            manifest("a", "1.0.0", &[]),
+            &["example.org", "*.cdn.example"],
+        )];
+
+        for (items, why) in [
+            (&["example.org", "*.cdn.example"][..], "the same hosts"),
+            (&["example.org"][..], "fewer hosts"),
+            (&[][..], "no hosts"),
+            (
+                &["example.org", "a.cdn.example", "*.eu.cdn.example"][..],
+                "hosts a wildcard already covered",
+            ),
+        ] {
+            let update = release_requesting(release("2.0.0", &[]), items);
+            assert!(
+                holds(&installed, &[candidate("a", &update)]).is_empty(),
+                "{why}"
+            );
+        }
+
+        for (items, gained) in [
+            (
+                &["example.org", "*.cdn.example", "other.example"][..],
+                &["other.example"][..],
+            ),
+            (&["cdn.example"][..], &["cdn.example"][..]),
+            (&["*.example.org"][..], &["*.example.org"][..]),
+            (&["@base_url", "example.org"][..], &["@a/base_url"][..]),
+            (&["*"][..], &["*"][..]),
+        ] {
+            let update = release_requesting(release("2.0.0", &[]), items);
+            let held = holds(&installed, &[candidate("a", &update)]);
+            assert_eq!(
+                host_gains(&held, "a"),
+                BTreeMap::from([("a".to_string(), (Vec::new(), hosts(gained)))]),
+                "{items:?}"
+            );
+        }
+
+        let any = [requesting(manifest("a", "1.0.0", &[]), &["*"])];
+        let update = release_requesting(release("2.0.0", &[]), &["@base_url", "example.org"]);
+        assert!(
+            holds(&any, &[candidate("a", &update)]).is_empty(),
+            "any host covers every entry"
+        );
+    }
+
+    #[test]
+    fn a_setting_named_by_one_plugin_never_covers_another_plugins() {
+        let helper = requesting(manifest("helper", "1.0.0", &[]), &["@base_url"]);
+        let caller = requesting(manifest("caller", "1.0.0", &[("helper", "^1")]), &[]);
+        let installed = [helper, caller];
+        let update = release_requesting(release("1.1.0", &[("helper", "^1")]), &["@base_url"]);
+
+        let held = holds(&installed, &[candidate("caller", &update)]);
+
+        assert_eq!(
+            host_gains(&held, "caller"),
+            BTreeMap::from([(
+                "caller".to_string(),
+                (Vec::new(), hosts(&["@caller/base_url"]))
+            )]),
+            "the caller's own stored setting names a host the helper's never reached"
+        );
+        assert_eq!(
+            held["caller"].to_string(),
+            "lets plugins reach more: caller (hosts the host of caller's `base_url` setting)"
+        );
+    }
+
+    #[test]
+    fn a_setting_a_plugin_keeps_naming_is_no_gain() {
+        let installed = [
+            requesting(manifest("helper", "1.0.0", &[]), &["@base_url"]),
+            requesting(
+                manifest("caller", "1.0.0", &[("helper", "^1")]),
+                &["@base_url", "example.org"],
+            ),
+        ];
+        let caller = release_requesting(release("1.1.0", &[("helper", "^1")]), &["@base_url"]);
+        let helper = release_requesting(release("1.1.0", &[]), &["@base_url"]);
+
+        assert!(
+            holds(
+                &installed,
+                &[candidate("caller", &caller), candidate("helper", &helper)]
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_new_dependency_on_an_install_listing_no_hosts_gains_any_host() {
+        let mut legacy = manifest("legacy", "1.0.0", &[]);
+        legacy.scopes.push(HTTP.to_string());
+        let installed = [
+            legacy,
+            requesting(manifest("a", "1.0.0", &[]), &["example.org"]),
+        ];
+        let update = release_requesting(release("1.1.0", &[("legacy", "^1")]), &["example.org"]);
+
+        let held = holds(&installed, &[candidate("a", &update)]);
+
+        assert_eq!(
+            host_gains(&held, "a"),
+            BTreeMap::from([("a".to_string(), (Vec::new(), hosts(&["*"])))])
+        );
+    }
+
+    #[test]
+    fn the_http_scope_first_reached_through_an_install_listing_no_hosts_gains_any_host() {
+        let mut legacy = manifest("legacy", "1.0.0", &[]);
+        legacy.scopes.push(HTTP.to_string());
+        let installed = [legacy, manifest("a", "1.0.0", &[])];
+        let update = release("1.1.0", &[("legacy", "^1")]);
+
+        let held = holds(&installed, &[candidate("a", &update)]);
+
+        assert_eq!(
+            host_gains(&held, "a"),
+            BTreeMap::from([("a".to_string(), (vec![HTTP.to_string()], hosts(&["*"])))])
+        );
+        assert_eq!(
+            held["a"].to_string(),
+            "lets plugins reach more: a (harmony.http, hosts any host)"
+        );
+        let Some(Hold::AddsReach { gains }) = held.get("a") else {
+            unreachable!();
+        };
+        assert_eq!(
+            gains["a"]
+                .effects
+                .iter()
+                .flat_map(|effect| &effect.via)
+                .map(|source| (source.plugin.as_str(), source.hosts.clone()))
+                .collect::<Vec<_>>(),
+            [("legacy", Some(vec![HostEntry::Any]))]
+        );
+    }
+
+    #[test]
+    fn approving_a_release_grants_the_hosts_it_reaches() {
+        let installed = [requesting(manifest("a", "1.0.0", &[]), &["example.org"])];
+        let update = release_requesting(release("2.0.0", &[]), &["other.example"]);
+
+        let approved = Candidate {
+            id: "a",
+            release: &update,
+            approved: true,
+        };
+        assert!(holds(&installed, &[approved]).is_empty());
+    }
+
+    #[test]
+    fn a_newly_reached_http_scope_is_held_with_its_hosts() {
+        let installed = [manifest("a", "1.0.0", &[])];
+        let update = release_requesting(release("2.0.0", &[]), &["example.org"]);
+
+        let held = holds(&installed, &[candidate("a", &update)]);
+
+        assert_eq!(
+            host_gains(&held, "a"),
+            BTreeMap::from([(
+                "a".to_string(),
+                (vec![HTTP.to_string()], hosts(&["example.org"]))
+            )])
+        );
+        let Some(Hold::AddsReach { gains }) = held.get("a") else {
+            unreachable!();
+        };
+        assert_eq!(
+            gains["a"]
+                .effects
+                .iter()
+                .flat_map(|effect| &effect.via)
+                .map(|source| source.hosts.clone())
+                .collect::<Vec<_>>(),
+            [Some(vec![HostEntry::Host("example.org".into())])],
+            "the effect's source carries the release's hosts"
+        );
+        assert_eq!(
+            held["a"].to_string(),
+            "lets plugins reach more: a (harmony.http, hosts example.org)"
+        );
+    }
+
+    #[test]
+    fn hosts_a_dependency_gains_hold_its_update_for_its_dependents_too() {
+        let installed = [
+            requesting(manifest("helper", "1.0.0", &[]), &["example.org"]),
+            requesting(
+                manifest("plugin", "1.0.0", &[("helper", "^1")]),
+                &["*.plugin.example"],
+            ),
+            manifest("indirect", "1.0.0", &[("plugin", "^1")]),
+            requesting(manifest("unrelated", "1.0.0", &[]), &["example.org"]),
+        ];
+        let update = release_requesting(
+            release("1.1.0", &[]),
+            &["example.org", "api.plugin.example", "new.example"],
+        );
+
+        let held = holds(&installed, &[candidate("helper", &update)]);
+
+        let gained = |items: &[&str]| (Vec::new(), hosts(items));
+        assert_eq!(
+            host_gains(&held, "helper"),
+            BTreeMap::from([
+                (
+                    "helper".to_string(),
+                    gained(&["api.plugin.example", "new.example"])
+                ),
+                ("indirect".to_string(), gained(&["new.example"])),
+                ("plugin".to_string(), gained(&["new.example"])),
+            ]),
+            "a dependent's own hosts cover what it already reached"
+        );
+        assert_eq!(
+            held["helper"].to_string(),
+            "lets plugins reach more: helper (hosts api.plugin.example, new.example), \
+             indirect (hosts new.example), plugin (hosts new.example)"
+        );
+    }
+
+    #[test]
+    fn an_installed_manifest_without_hosts_reaches_any_host() {
+        let mut legacy = manifest("a", "1.0.0", &[]);
+        legacy.scopes.push(HTTP.to_string());
+        let update = release_requesting(release("2.0.0", &[]), &["example.org", "*"]);
+
+        assert!(
+            holds(&[legacy], &[candidate("a", &update)]).is_empty(),
+            "listing hosts only narrows a plugin that listed none"
+        );
+    }
+
+    fn stored(scopes: &[&str], grants: Option<&[&str]>) -> repo_db::PluginRepositoryEntry {
+        repo_db::PluginRepositoryEntry {
+            db_id: None,
+            plugin_id: "a".into(),
+            subpath: None,
+            source_origin: None,
+            version: Some("2.0.0".into()),
+            name: Some("A".into()),
+            description: None,
+            commit: Some("2".repeat(40)),
+            scopes: Some(scopes.iter().map(ToString::to_string).collect()),
+            requires: None,
+            error: None,
+            dependencies: None,
+            scope_reasons: None,
+            scope_grants: grants.map(|items| {
+                vec![repo_db::PluginScopeGrant {
+                    scope: HTTP.into(),
+                    items: hosts(items),
+                }]
+            }),
+            position: None,
+        }
+    }
+
+    #[test]
+    fn stored_releases_keep_their_hosts() {
+        let listed = release_requesting(release("2.0.0", &[]), &["example.org", "@base_url"]);
+        let entry = repo_db::PluginRepositoryEntry {
+            scope_grants: Some(stored_scope_grants(&listed)),
+            ..stored(&[HTTP], None)
+        };
+
+        assert_eq!(stored_offer(&entry), Ok(listed));
+        assert_eq!(
+            stored_offer(&stored(&[HTTP], Some(&[])))
+                .expect("offered")
+                .scope_grants,
+            BTreeMap::from([(HTTP.to_string(), Vec::new())]),
+            "a release listing no hosts is still a release"
+        );
+    }
+
+    #[test]
+    fn a_stored_release_with_a_host_that_does_not_read_back_is_not_offered() {
+        for items in [
+            &["Example.org"][..],
+            &["example.org", "https://example.org"][..],
+            &["@other/base_url"][..],
+        ] {
+            assert_eq!(
+                stored_offer(&stored(&[HTTP], Some(items))),
+                Err(Unoffered::Unknown {
+                    reason: "the stored release cannot be read; refresh the repository".into()
+                }),
+                "{items:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_stored_release_without_the_hosts_its_scope_requires_is_not_offered() {
+        assert_eq!(
+            stored_offer(&stored(&["lyra.metadata", HTTP], None)),
+            Err(Unoffered::Unknown {
+                reason: "the stored release cannot be read; refresh the repository".into()
+            }),
+            "stored before releases listed hosts"
+        );
+        assert!(
+            stored_offer(&stored(&["lyra.metadata"], None)).is_ok(),
+            "other scopes take no hosts"
+        );
+    }
+
+    /// The hosts on the egress sources of `depender`'s preview, depending
+    /// on `dep`, for the `installed` and `offered` versions of `dep`.
+    fn previewed_dependency_hosts(
+        installed: Option<PluginManifest>,
+        offered: Option<OfferedRelease>,
+    ) -> Vec<(String, Option<Vec<String>>)> {
+        let depender = release_requesting(release("1.0.0", &[("dep", "^1")]), &["own.example"]);
+        let plugin = Reach::Release("depender", &depender);
+        let installed: Vec<_> = installed.iter().map(Reach::Installed).collect();
+        let offered: Vec<_> = offered
+            .iter()
+            .map(|release| Reach::Release("dep", release))
+            .collect();
+        plugin_access(&plugin, &installed, &offered)
+            .effects
+            .iter()
+            .flat_map(|effect| &effect.via)
+            .map(|source| {
+                let hosts = source
+                    .hosts
+                    .as_ref()
+                    .map(|hosts| hosts.iter().map(ToString::to_string).collect());
+                (source.plugin.clone(), hosts)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn previews_show_each_plugins_own_hosts_and_a_dependencys_across_its_versions() {
+        let installed = |items: &[&str]| Some(requesting(manifest("dep", "1.0.0", &[]), items));
+        let offered = |items: &[&str]| Some(release_requesting(release("1.1.0", &[]), items));
+        let shown = |dep: Option<&[&str]>| {
+            vec![
+                ("dep".to_string(), dep.map(hosts)),
+                ("depender".to_string(), Some(hosts(&["own.example"]))),
+            ]
+        };
+
+        assert_eq!(
+            previewed_dependency_hosts(installed(&["a.example"]), None),
+            shown(Some(&["a.example"])),
+            "only installed"
+        );
+        assert_eq!(
+            previewed_dependency_hosts(installed(&["a.example"]), offered(&["b.example", "*"])),
+            shown(Some(&["*", "a.example", "b.example"])),
+            "either version may be the one that runs"
+        );
+        let mut legacy = manifest("dep", "1.0.0", &[]);
+        legacy.scopes.push(HTTP.to_string());
+        assert_eq!(
+            previewed_dependency_hosts(Some(legacy.clone()), offered(&["b.example"])),
+            shown(Some(&["*", "b.example"])),
+            "an installed version listing none counts as reaching any host"
+        );
+        assert_eq!(
+            previewed_dependency_hosts(Some(legacy), None),
+            shown(Some(&["*"])),
+            "as it does for a plugin first installed over it"
+        );
+    }
+
+    #[test]
+    fn only_the_http_scope_carries_hosts() {
+        let mut sockets = release("1.0.0", &[]);
+        sockets.scopes = vec!["harmony.net".into(), "lyra.metadata".into()];
+        let plugin = Reach::Release("a", &release_requesting(sockets, &["example.org"]));
+
+        let access = plugin_access(&plugin, &[], &[]);
+
+        let carried: BTreeSet<_> = access
+            .effects
+            .iter()
+            .flat_map(|effect| &effect.via)
+            .map(|source| (source.scope.def().id, source.hosts.is_some()))
+            .collect();
+        assert_eq!(
+            carried,
+            BTreeSet::from([
+                ("harmony.http", true),
+                ("harmony.net", false),
+                ("lyra.metadata", false),
             ])
         );
     }

@@ -58,6 +58,7 @@ use tokio::sync::{
 use crate::plugins::scopes::{
     PluginEffect,
     RiskAssessment,
+    ScopeDetail,
     ScopeGain,
     effects_of,
     scope_gains,
@@ -89,6 +90,7 @@ use status::{
     stored_dependencies,
     stored_error,
     stored_offer,
+    stored_scope_grants,
     stored_scope_reasons,
 };
 pub(crate) use status::{
@@ -97,6 +99,7 @@ pub(crate) use status::{
     OfferedRelease,
     Requirement,
     UpdateStatus,
+    gained_hosts,
     installed_manifests,
     installed_statuses,
 };
@@ -349,20 +352,38 @@ fn plugin_access(
             .map(|(scope, via)| (scope.as_str(), via)),
         |id, scope| {
             if id == plugin.id() {
-                return plugin.scope_reason(scope);
+                return plugin.scope_detail(scope);
             }
             // Either version of a dependency may be the one that runs, so
-            // only text they agree on describes it.
-            let mut reasons = versions(id)
-                .into_iter()
-                .map(|version| version.scope_reason(scope));
-            let reason = reasons.next()??;
-            reasons
-                .all(|other| other.as_ref() == Some(&reason))
-                .then_some(reason)
+            // only text they agree on describes it, and the hosts of both
+            // are within its reach.
+            let versions = versions(id);
+            let mut reasons = versions.iter().map(|version| version.scope_reason(scope));
+            let author_reason = reasons.next().flatten().and_then(|reason| {
+                reasons
+                    .all(|other| other.as_ref() == Some(&reason))
+                    .then_some(reason)
+            });
+            let hosts = versions
+                .iter()
+                .filter(|version| version.scopes().iter().any(|declared| declared == scope))
+                .map(|version| version.scope_hosts(scope))
+                .collect::<Option<Vec<_>>>()
+                .map(|hosts| {
+                    hosts
+                        .into_iter()
+                        .flatten()
+                        .collect::<BTreeSet<_>>()
+                        .into_iter()
+                        .collect()
+                });
+            ScopeDetail {
+                author_reason,
+                hosts,
+            }
         },
     );
-    let mut widens = scope_gains(installed, installed, plugin, Reach::scope_reason);
+    let mut widens = scope_gains(installed, installed, plugin, Reach::scope_detail);
     widens.remove(plugin.id());
     PluginAccess {
         risk: RiskAssessment::of(effects.iter().map(|effect| &effect.effect)),
@@ -502,6 +523,7 @@ fn listing_entries(listing: &RepositoryListing) -> Vec<repo_db::PluginRepository
                 commit: offered.as_ref().map(|offered| offered.commit.clone()),
                 dependencies: offered.as_ref().map(stored_dependencies),
                 scope_reasons: offered.as_ref().map(stored_scope_reasons),
+                scope_grants: offered.as_ref().map(stored_scope_grants),
                 scopes: offered.map(|offered| offered.scopes),
                 requires,
                 error: plugin.offer.as_ref().err().map(ToString::to_string),
@@ -680,6 +702,8 @@ pub(crate) struct InstalledPlugin {
     pub(crate) version: String,
     pub(crate) commit: String,
     pub(crate) scopes: Vec<String>,
+    /// The hosts it may send HTTP requests to.
+    pub(crate) hosts: Vec<harmony_http::HostEntry>,
 }
 
 #[derive(Debug, Clone)]
@@ -910,6 +934,7 @@ fn install_selected(selection: ResolvedSelection, plugins_dir: &Path) -> Install
                 version: manifest.version.to_string(),
                 commit: record.commit,
                 scopes: manifest.scopes.clone(),
+                hosts: crate::plugins::scopes::http_hosts(manifest),
             }
         })
         .collect();
@@ -1024,6 +1049,7 @@ fn candidate_release(candidate: &PluginCandidate) -> OfferedRelease {
         commit: candidate.source.commit.clone(),
         scopes: manifest.scopes.clone(),
         scope_reasons: manifest.scope_reasons.clone(),
+        scope_grants: manifest.scope_grants.clone(),
         dependencies: manifest.dependencies.clone(),
     }
 }
@@ -1144,7 +1170,7 @@ pub(crate) struct UpdateReport {
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum UpdateSelection<'a> {
     /// Every repository-managed plugin, to newer releases that need no
-    /// approval: one letting plugins reach new scopes is held.
+    /// approval: one letting plugins reach new scopes or HTTP hosts is held.
     All,
     /// The named plugins, each only to the release its status showed,
     /// granting the scopes that release lets plugins reach.
@@ -2241,7 +2267,7 @@ mod tests {
         subscribe(&forge.origin, &[]).await?;
         let r2 = "2".repeat(40);
         let reached = |hold: &Hold| match hold {
-            Hold::AddsScopes { gains } => gains
+            Hold::AddsReach { gains } => gains
                 .iter()
                 .map(|(id, gain)| (id.clone(), gain.growth.scopes.clone()))
                 .collect::<Vec<_>>(),
@@ -2365,7 +2391,7 @@ mod tests {
         let [held] = &report.held[..] else {
             panic!("expected one held plugin: {report:?}");
         };
-        let Hold::AddsScopes { gains } = &held.hold else {
+        let Hold::AddsReach { gains } = &held.hold else {
             panic!("held for its scopes: {held:?}");
         };
         let reached: Vec<_> = gains
@@ -2817,6 +2843,7 @@ mod tests {
                 commit: Some("1".repeat(40)),
                 scopes: Some(Vec::new()),
                 scope_reasons: None,
+                scope_grants: None,
                 dependencies: None,
                 position: None,
                 requires: None,
@@ -2999,8 +3026,22 @@ mod tests {
             .collect()
     }
 
+    /// The hosts on the sources of `effects`, as manifests write them.
+    fn effect_hosts(effects: &[crate::plugins::scopes::PluginEffect]) -> Vec<Option<Vec<String>>> {
+        effects
+            .iter()
+            .flat_map(|effect| &effect.via)
+            .map(|source| {
+                source
+                    .hosts
+                    .as_ref()
+                    .map(|hosts| hosts.iter().map(ToString::to_string).collect())
+            })
+            .collect()
+    }
+
     #[tokio::test]
-    async fn live_and_stored_previews_carry_scope_reasons() -> anyhow::Result<()> {
+    async fn live_and_stored_previews_carry_scope_reasons_and_hosts() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         crate::plugins::testing::init_default_test_state()?;
         let forge = catalog_forge(
@@ -3011,14 +3052,23 @@ mod tests {
         .await?;
         let plugins_dir = tempfile::TempDir::new()?;
         let listing = list(&forge.origin, None, &BuildInfo::default()).await?;
-        let expected = [("changed".to_string(), Some("Fetches things.".to_string()))];
+        let expected = (
+            vec![("changed".to_string(), Some("Fetches things.".to_string()))],
+            vec![Some(vec![
+                "*.example.org".to_string(),
+                "example.org".to_string(),
+            ])],
+        );
         let reasons = |plugins: &[PluginPreview]| {
             let changed = plugins
                 .iter()
                 .find(|plugin| plugin.id == "changed")
                 .and_then(|plugin| plugin.access.as_ref())
                 .expect("previewed with access");
-            effect_reasons(&changed.effects)
+            (
+                effect_reasons(&changed.effects),
+                effect_hosts(&changed.effects),
+            )
         };
 
         assert_eq!(
@@ -3064,7 +3114,7 @@ mod tests {
         subscribe(&forge.origin, &[]).await?;
         let expected = vec![("changed".to_string(), Some("Fetches things.".to_string()))];
         let held_reasons = |held: &HeldPlugin| {
-            let Hold::AddsScopes { gains } = &held.hold else {
+            let Hold::AddsReach { gains } = &held.hold else {
                 panic!("held for its scopes: {held:?}");
             };
             effect_reasons(&gains["changed"].effects)
@@ -3075,6 +3125,17 @@ mod tests {
             panic!("expected one held plugin: {report:?}");
         };
         assert_eq!(held_reasons(held), expected, "judged from the listing");
+        let Hold::AddsReach { gains } = &held.hold else {
+            unreachable!();
+        };
+        assert_eq!(
+            gained_hosts(&gains["changed"].growth)
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            ["*.example.org", "example.org"],
+            "a newly reached HTTP scope gains every host it lists"
+        );
 
         let client = http_client(&BuildInfo::default())?;
         let listing = list(&forge.origin, None, &BuildInfo::default()).await?;
@@ -3687,6 +3748,7 @@ mod tests {
                 commit: "1".repeat(40),
                 scopes: Vec::new(),
                 scope_reasons: BTreeMap::new(),
+                scope_grants: BTreeMap::new(),
                 dependencies: Default::default(),
             })
         };
@@ -3750,6 +3812,7 @@ mod tests {
             commit: version.map(|_| "1".repeat(40)),
             scopes: version.map(|_| Vec::new()),
             scope_reasons: None,
+            scope_grants: None,
             dependencies: None,
             position: None,
             requires: None,
@@ -3866,6 +3929,7 @@ mod tests {
             commit: Some("1".repeat(40)),
             scopes: Some(Vec::new()),
             scope_reasons: None,
+            scope_grants: None,
             dependencies: None,
             position: None,
             requires: None,
@@ -4099,6 +4163,7 @@ mod tests {
             commit: Some("1".repeat(40)),
             scopes: Some(Vec::new()),
             scope_reasons: None,
+            scope_grants: None,
             dependencies: None,
             position: None,
             requires: None,
@@ -4416,6 +4481,7 @@ mod tests {
                     requires: None,
                     error: None,
                     scope_reasons: None,
+                    scope_grants: None,
                     dependencies: None,
                     position: None,
                 }],

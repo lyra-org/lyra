@@ -686,6 +686,17 @@ pub(crate) struct EffectSource {
     /// What the plugin's author says the scope is for, from the version of
     /// the plugin the effect was worked out from.
     pub(crate) author_reason: Option<String>,
+    /// The hosts the plugin reaches through the scope, when it is the
+    /// outbound HTTP scope: the ones it lists, or any host for a plugin
+    /// from before hosts were listed.
+    pub(crate) hosts: Option<Vec<harmony_http::HostEntry>>,
+}
+
+/// What a plugin's manifest says of one scope it declares, beyond the id.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ScopeDetail {
+    pub(crate) author_reason: Option<String>,
+    pub(crate) hosts: Option<Vec<harmony_http::HostEntry>>,
 }
 
 /// One thing a plugin can do, and the plugins and scopes that let it.
@@ -707,11 +718,11 @@ impl PluginEffect {
 }
 
 /// The effects of `scopes`, each scope id paired with the plugins that
-/// declare it, merged so each effect appears once. `author_reason` gives what
-/// a plugin's author says a scope, by id, is for.
+/// declare it, merged so each effect appears once. `detail` gives what a
+/// plugin's manifest says of a scope, by id.
 pub(crate) fn effects_of<'a>(
     scopes: impl IntoIterator<Item = (&'a str, &'a BTreeSet<String>)>,
-    author_reason: impl Fn(&str, &str) -> Option<String>,
+    detail: impl Fn(&str, &str) -> ScopeDetail,
 ) -> Vec<PluginEffect> {
     let mut merged: BTreeMap<Effect, BTreeSet<EffectSource>> = BTreeMap::new();
     for (id, via) in scopes {
@@ -722,10 +733,17 @@ pub(crate) fn effects_of<'a>(
             merged
                 .entry(*effect)
                 .or_default()
-                .extend(via.iter().map(|plugin| EffectSource {
-                    plugin: plugin.clone(),
-                    scope,
-                    author_reason: author_reason(plugin, id),
+                .extend(via.iter().map(|plugin| {
+                    let ScopeDetail {
+                        author_reason,
+                        hosts,
+                    } = detail(plugin, id);
+                    EffectSource {
+                        plugin: plugin.clone(),
+                        scope,
+                        author_reason,
+                        hosts,
+                    }
                 }));
         }
     }
@@ -802,16 +820,37 @@ const HOST_SETTING_KEY: &str = "setting";
 /// The hosts `manifest` lists for its outbound HTTP scope; none when it does
 /// not declare the scope.
 pub(crate) fn http_hosts(manifest: &PluginManifest) -> Vec<harmony_http::HostEntry> {
-    host_entries(
-        manifest
-            .scope_grant(harmony_http::SCOPE)
-            .unwrap_or_default(),
-    )
+    let items = manifest
+        .scope_grant(harmony_http::SCOPE)
+        .unwrap_or_default();
+    // The manifest parser wrote the items, so each reads back.
+    host_entries(items).unwrap_or_default()
 }
 
-/// The entries the grant `items` of the outbound HTTP scope hold.
-pub(crate) fn host_entries(items: &[String]) -> Vec<harmony_http::HostEntry> {
-    items.iter().filter_map(|item| item.parse().ok()).collect()
+/// `hosts` as a list for admins, in English.
+pub(crate) fn describe_hosts(hosts: &[harmony_http::HostEntry]) -> String {
+    use harmony_http::HostEntry;
+
+    hosts
+        .iter()
+        .map(|host| match host {
+            HostEntry::Any => "any host".to_string(),
+            HostEntry::Named(setting) => format!("the host of its `{setting}` setting"),
+            HostEntry::NamedBy { plugin, name } => {
+                format!("the host of {plugin}'s `{name}` setting")
+            }
+            host => host.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The entries the grant `items` of the outbound HTTP scope hold, or what
+/// is wrong with the first that is none.
+pub(crate) fn host_entries<'a>(
+    items: impl IntoIterator<Item = &'a String>,
+) -> Result<Vec<harmony_http::HostEntry>, String> {
+    items.into_iter().map(|item| item.parse()).collect()
 }
 
 /// What one plugin newly reaches once a candidate is installed.
@@ -832,13 +871,13 @@ pub(crate) struct ScopeGain {
 /// What installing `candidate` among `plugins`, replacing the one with its
 /// id if any, lets each plugin newly reach, by [`scope_growth`]. `plugins`
 /// may already hold other updates; each plugin's previous risk is judged
-/// from the `installed` ones. `scope_reason` gives what a plugin's author
-/// says a scope is for.
+/// from the `installed` ones. `scope_detail` gives what a plugin's manifest
+/// says of a scope.
 pub(crate) fn scope_gains<P: ScopedPlugin>(
     installed: &[P],
     plugins: &[P],
     candidate: &P,
-    scope_reason: impl Fn(&P, &str) -> Option<String>,
+    scope_detail: impl Fn(&P, &str) -> ScopeDetail,
 ) -> BTreeMap<String, ScopeGain> {
     let installed_as = |id: &str| installed.iter().find(|plugin| plugin.id() == id);
     let after = |id: &str| {
@@ -854,7 +893,7 @@ pub(crate) fn scope_gains<P: ScopedPlugin>(
                 .scopes
                 .iter()
                 .map(|(scope, via)| (scope.as_str(), via)),
-            |_, _| None,
+            |_, _| ScopeDetail::default(),
         );
         RiskAssessment::of(effects.iter().map(|effect| &effect.effect))
     };
@@ -871,7 +910,11 @@ pub(crate) fn scope_gains<P: ScopedPlugin>(
                     .scopes
                     .iter()
                     .filter_map(|scope| Some((scope.as_str(), reach.scopes.get(scope)?))),
-                |plugin, scope| scope_reason(after(plugin)?, scope),
+                |plugin, scope| {
+                    after(plugin)
+                        .map(|plugin| scope_detail(plugin, scope))
+                        .unwrap_or_default()
+                },
             );
             Some((
                 id,
@@ -932,7 +975,10 @@ mod tests {
                 ("harmony.net", &dependency),
                 ("lyra.libraries", &own),
             ],
-            |plugin, _| (plugin == "plugin").then(|| "Fetches things.".to_string()),
+            |plugin, scope| super::ScopeDetail {
+                author_reason: (plugin == "plugin").then(|| "Fetches things.".to_string()),
+                hosts: (scope == "harmony.http").then(|| vec!["example.org".parse().unwrap()]),
+            },
         );
 
         assert_eq!(effects.len(), 2);
@@ -944,11 +990,13 @@ mod tests {
                     plugin: "helper".into(),
                     scope: Scope::HarmonyNet,
                     author_reason: None,
+                    hosts: None,
                 },
                 EffectSource {
                     plugin: "plugin".into(),
                     scope: Scope::HarmonyHttp,
                     author_reason: Some("Fetches things.".into()),
+                    hosts: Some(vec![harmony_http::HostEntry::Host("example.org".into())]),
                 },
             ])
         );
@@ -1341,7 +1389,7 @@ mod tests {
             &installed,
             &installed,
             &Plugin::new(&["harmony.http", "lyra.listens", "lyra.listens.all"]),
-            |_, _| None,
+            |_, _| super::ScopeDetail::default(),
         );
         let gain = &gains["demo"];
         assert_eq!(

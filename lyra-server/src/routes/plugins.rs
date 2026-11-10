@@ -214,10 +214,11 @@ struct OfferedReleaseResponse {
     scopes: Vec<String>,
 }
 
-/// Why an update waits for an admin. `adds_scopes`: the release lets the
-/// plugin, or installed plugins depending on it, reach scopes they could
-/// not before, through their own scopes or their dependencies', listed in
-/// `gains`; an update request naming the release grants them. `breaks_dependents`: `dependents` require versions
+/// Why an update waits for an admin. `adds_reach`: the release lets the
+/// plugin, or installed plugins depending on it, reach more than they could
+/// before, through their own scopes or their dependencies': scopes, hosts
+/// they may send HTTP requests to, or both, listed in `gains`, where either
+/// list may be empty; an update request naming the release grants them. `breaks_dependents`: `dependents` require versions
 /// of this plugin outside the release's. `unmet_dependencies`: the release
 /// requires `dependencies` that would be missing or at other versions.
 /// `dependency_cycle`: the release would leave `plugins` depending on each
@@ -228,7 +229,7 @@ struct OfferedReleaseResponse {
 #[derive(Serialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 enum HoldResponse {
-    AddsScopes {
+    AddsReach {
         gains: Vec<ScopeGainResponse>,
     },
     BreaksDependents {
@@ -257,8 +258,61 @@ struct ScopeGainResponse {
     effects: Vec<EffectResponse>,
     /// Scopes the plugin would newly reach.
     scopes: Vec<String>,
+    /// Hosts the plugin would newly be able to send HTTP requests to,
+    /// through its own `harmony.http` scope or its dependencies': every
+    /// host of that scope when `scopes` lists it, and otherwise the ones no
+    /// host it reaches now covers. An entry of kind `any` is every host.
+    hosts: Vec<HostResponse>,
     /// Dependencies the plugin would newly reach whose scopes are unknown.
     unresolved_dependencies: Vec<String>,
+}
+
+/// A destination a plugin's manifest lists for its HTTP requests. `host`:
+/// the host `host` alone, a name or an IP address. `subdomains`: every name
+/// under `host` at any depth, but not `host` itself. `setting`: the host of
+/// the URL stored as the server-level setting `setting` of the plugin that
+/// lists the entry, read when that plugin starts; nothing while that
+/// setting is unset. A gain names that plugin in `plugin`, since the same
+/// setting name in two plugins is two destinations; an effect source omits
+/// it, the source's own `plugin` being the one. `any`: every host, without
+/// limit. A listed name can resolve to any address,
+/// and ports are not limited.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum HostResponse {
+    Host {
+        host: String,
+    },
+    Subdomains {
+        host: String,
+    },
+    Setting {
+        setting: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        plugin: Option<String>,
+    },
+    Any,
+}
+
+impl From<harmony_http::HostEntry> for HostResponse {
+    fn from(entry: harmony_http::HostEntry) -> Self {
+        use harmony_http::HostEntry;
+
+        match entry {
+            HostEntry::Any => Self::Any,
+            HostEntry::Host(host) => Self::Host { host },
+            HostEntry::Subdomains(host) => Self::Subdomains { host },
+            HostEntry::Named(setting) => Self::Setting {
+                setting,
+                plugin: None,
+            },
+            HostEntry::NamedBy { plugin, name } => Self::Setting {
+                setting: name,
+                plugin: Some(plugin),
+            },
+        }
+    }
 }
 
 /// One plugin's requirement on another: the dependent's on the held
@@ -418,7 +472,7 @@ struct RepositoryInstallRequest {
 #[derive(Deserialize)]
 struct UpdatePluginsRequest {
     /// Plugins to update, each to the release `commit` its status offered,
-    /// granting the scopes that release lets plugins reach. Omitted updates
+    /// granting the scopes and HTTP hosts that release lets plugins reach. Omitted updates
     /// every repository-managed plugin whose update is not held. An empty
     /// list is rejected.
     #[serde(default)]
@@ -610,6 +664,16 @@ struct EffectSourceResponse {
     /// repeats it under each, so clients may group by plugin and scope.
     #[serde(skip_serializing_if = "Option::is_none")]
     author_reason: Option<String>,
+    /// The hosts the plugin may send HTTP requests to through the scope,
+    /// as its manifest lists them; an empty list is no host at all. Only
+    /// `harmony.http` carries it: other scopes giving the same effect, such
+    /// as `harmony.net`, are not limited to any hosts. In a preview, a
+    /// dependency's are those of its installed and offered versions
+    /// together. A version listing none, as an installed one from before
+    /// hosts were listed, which does not load, counts as reaching any host
+    /// and gives one entry of kind `any`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hosts: Option<Vec<HostResponse>>,
 }
 
 /// `exposes` and `authority`: as the effects of those kinds.
@@ -714,6 +778,9 @@ impl From<PluginEffect> for EffectResponse {
                     plugin: source.plugin,
                     scope: source.scope.def().id,
                     author_reason: source.author_reason,
+                    hosts: source
+                        .hosts
+                        .map(|hosts| hosts.into_iter().map(Into::into).collect()),
                 })
                 .collect(),
         }
@@ -752,6 +819,10 @@ fn scope_gain_responses(gains: BTreeMap<String, ScopeGain>) -> Vec<ScopeGainResp
             risk: gain.risk.into(),
             previous_risk: gain.previous_risk.into(),
             effects: gain.effects.into_iter().map(Into::into).collect(),
+            hosts: repositories_service::gained_hosts(&gain.growth)
+                .into_iter()
+                .map(Into::into)
+                .collect(),
             scopes: gain.growth.scopes.into_iter().collect(),
             unresolved_dependencies: gain.growth.unresolved.into_iter().collect(),
         })
@@ -1013,7 +1084,7 @@ fn hold_response(hold: repositories_service::Hold) -> HoldResponse {
             .collect()
     };
     match hold {
-        Hold::AddsScopes { gains } => HoldResponse::AddsScopes {
+        Hold::AddsReach { gains } => HoldResponse::AddsReach {
             gains: scope_gain_responses(gains),
         },
         Hold::BreaksDependents { dependents } => HoldResponse::BreaksDependents {
@@ -1705,7 +1776,7 @@ fn get_settings_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn list_plugins_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List plugins").description(
-        "Returns every installed plugin, sorted by id: the plugins the runtime loaded, the plugin directories it left out when it last loaded them, and plugins added since. `load` tells them apart: a `state` of `loaded`, or `not_loaded` with the `reason`, such as a manifest that requires another server version. A plugin that did not load is described by its manifest on disk when that can be read, and by its id and installed release otherwise, and can still be updated or uninstalled. Each plugin carries where it was installed from: a `source` of kind `repository` (origin, ref, version, commit, pinned, official, status, offered, hold, installed_at, installed_automatically), `local`, or `invalid` (error) when the source record could not be read and the plugin should be uninstalled or reinstalled. `pinned` is true for tag and commit installs, which updates never move. `status` compares the installed version with the release that the subscribed repository of the same origin and ref last offered this server (`up_to_date`, `update_available`, `incompatible` with the `requires` that excludes this server, or `unknown` with the `reason` when it offered nothing for another reason, such as a missing `versions.json`, or no such subscription lists the plugin), without contacting the forge; refreshing the repository or updating plugins stores the offered releases. `offered` is the release on offer (version, commit, scopes) and `hold` why an available update to it waits for an admin: `adds_scopes` with the `gains` of each plugin it would let reach new scopes, through its own or its dependencies', with what they let it do and its risk before and after, `breaks_dependents` with each dependent's id and requirement, `unmet_dependencies` with each dependency the release requires that would be missing or at another version, or `dependency_cycle` with the `plugins` it would leave depending on each other in a cycle. Dependencies are judged as if every available update were installed together. `installed_automatically` is true when the daily update check, not a request, installed the release at `installed_at`.",
+        "Returns every installed plugin, sorted by id: the plugins the runtime loaded, the plugin directories it left out when it last loaded them, and plugins added since. `load` tells them apart: a `state` of `loaded`, or `not_loaded` with the `reason`, such as a manifest that requires another server version. A plugin that did not load is described by its manifest on disk when that can be read, and by its id and installed release otherwise, and can still be updated or uninstalled. Each plugin carries where it was installed from: a `source` of kind `repository` (origin, ref, version, commit, pinned, official, status, offered, hold, installed_at, installed_automatically), `local`, or `invalid` (error) when the source record could not be read and the plugin should be uninstalled or reinstalled. `pinned` is true for tag and commit installs, which updates never move. `status` compares the installed version with the release that the subscribed repository of the same origin and ref last offered this server (`up_to_date`, `update_available`, `incompatible` with the `requires` that excludes this server, or `unknown` with the `reason` when it offered nothing for another reason, such as a missing `versions.json`, or no such subscription lists the plugin), without contacting the forge; refreshing the repository or updating plugins stores the offered releases. `offered` is the release on offer (version, commit, scopes) and `hold` why an available update to it waits for an admin: `adds_reach` with the `gains` of each plugin it would let reach new scopes or HTTP hosts, through its own scopes or its dependencies', with what the scopes let it do and its risk before and after, `breaks_dependents` with each dependent's id and requirement, `unmet_dependencies` with each dependency the release requires that would be missing or at another version, or `dependency_cycle` with the `plugins` it would leave depending on each other in a cycle. Dependencies are judged as if every available update were installed together. `installed_automatically` is true when the daily update check, not a request, installed the release at `installed_at`.",
     )
 }
 
@@ -1747,7 +1818,7 @@ fn install_repository_plugins_docs(op: TransformOperation) -> TransformOperation
 #[cfg(feature = "docgen")]
 fn update_installed_plugins_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Update installed plugins").description(
-        "Re-lists the recorded origin and ref of the selected plugins (or every repository-managed plugin when `plugins` is omitted) and reinstalls those it offers a newer release of that runs on this server. Each selected plugin names the release `commit` its status offered; one offered at another commit now fails on its own. A newer release that would let the plugin, or an installed plugin depending on it, reach scopes or unknown dependencies it could not before is `held` (`adds_scopes`, with those `gains`) unless the request names it, which grants them; one outside a dependent's requirement is always `held` (`breaks_dependents`), as is one requiring a plugin that would be missing or at another version (`unmet_dependencies`) or one that would leave plugins depending on each other in a cycle (`dependency_cycle`). Holds are judged against the plugins as they would be after the update, and again after downloading, against the releases that downloaded: one needing a release that failed is `held` then. The updates are written to disk together: when one cannot be, none is. Pinned plugins are reported `up_to_date` without a forge call. Plugins no release of their repository runs on this server are reported `incompatible`, with the `requires` that excludes it, and nothing is downloaded for them. Each origin is listed once, only newer releases are downloaded, and the plugin runtime reloads once. Returns per-plugin results.",
+        "Re-lists the recorded origin and ref of the selected plugins (or every repository-managed plugin when `plugins` is omitted) and reinstalls those it offers a newer release of that runs on this server. Each selected plugin names the release `commit` its status offered; one offered at another commit now fails on its own. A newer release that would let the plugin, or an installed plugin depending on it, reach scopes, HTTP hosts or unknown dependencies it could not before is `held` (`adds_reach`, with those `gains`) unless the request names it, which grants them; one outside a dependent's requirement is always `held` (`breaks_dependents`), as is one requiring a plugin that would be missing or at another version (`unmet_dependencies`) or one that would leave plugins depending on each other in a cycle (`dependency_cycle`). Holds are judged against the plugins as they would be after the update, and again after downloading, against the releases that downloaded: one needing a release that failed is `held` then. The updates are written to disk together: when one cannot be, none is. Pinned plugins are reported `up_to_date` without a forge call. Plugins no release of their repository runs on this server are reported `incompatible`, with the `requires` that excludes it, and nothing is downloaded for them. Each origin is listed once, only newer releases are downloaded, and the plugin runtime reloads once. Returns per-plugin results.",
     )
 }
 
@@ -2368,6 +2439,7 @@ mod tests {
                 commit: None,
                 scopes: None,
                 scope_reasons: None,
+                scope_grants: None,
                 dependencies: None,
                 position: None,
                 requires: None,
@@ -2456,6 +2528,7 @@ mod tests {
                         })
                         .collect(),
                 ),
+                scope_grants: None,
                 dependencies: None,
                 position: None,
                 requires: None,
@@ -2501,7 +2574,7 @@ mod tests {
         assert_eq!(
             scoped["hold"],
             serde_json::json!({
-                "reason": "adds_scopes",
+                "reason": "adds_reach",
                 "gains": [{
                     "plugin": "scoped",
                     "risk": { "level": "standard", "reasons": [] },
@@ -2517,6 +2590,7 @@ mod tests {
                         "description": "Changes the library's metadata",
                     }],
                     "scopes": ["lyra.metadata"],
+                    "hosts": [],
                     "unresolved_dependencies": [],
                 }],
             })
@@ -2538,6 +2612,7 @@ mod tests {
             plugin: plugin.into(),
             scope: Scope::HarmonyHttp,
             author_reason: author_reason.map(Into::into),
+            hosts: None,
         };
         let json = serde_json::to_value(EffectResponse::from(PluginEffect {
             effect: Effect::Egress,
@@ -2550,6 +2625,119 @@ mod tests {
                 { "plugin": "a", "scope": "harmony.http", "author_reason": "Fetches things." },
                 { "plugin": "b", "scope": "harmony.http" },
             ])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn effect_sources_and_gains_carry_hosts_by_kind() -> anyhow::Result<()> {
+        use crate::plugins::scopes::{
+            Effect,
+            EffectSource,
+            PluginEffect,
+            Risk,
+            RiskAssessment,
+            Scope,
+        };
+        use harmony_core::scopes::ScopeGrowth;
+
+        let hosts = |items: &[&str]| -> Vec<harmony_http::HostEntry> {
+            items.iter().map(|item| item.parse().unwrap()).collect()
+        };
+        let source = |plugin: &str, scope: Scope, hosts: Option<Vec<_>>| EffectSource {
+            plugin: plugin.into(),
+            scope,
+            author_reason: None,
+            hosts,
+        };
+        let json = serde_json::to_value(EffectResponse::from(PluginEffect {
+            effect: Effect::Egress,
+            via: [
+                source(
+                    "listed",
+                    Scope::HarmonyHttp,
+                    Some(hosts(&[
+                        "example.org",
+                        "*.example.org",
+                        "192.0.2.7",
+                        "@base_url",
+                    ])),
+                ),
+                source("none", Scope::HarmonyHttp, Some(Vec::new())),
+                source("sockets", Scope::HarmonyNet, None),
+                source("wide", Scope::HarmonyHttp, Some(hosts(&["*"]))),
+            ]
+            .into(),
+        }))?;
+
+        assert_eq!(
+            json["via"],
+            serde_json::json!([
+                {
+                    "plugin": "listed",
+                    "scope": "harmony.http",
+                    "hosts": [
+                        { "kind": "host", "host": "example.org" },
+                        { "kind": "subdomains", "host": "example.org" },
+                        { "kind": "host", "host": "192.0.2.7" },
+                        { "kind": "setting", "setting": "base_url" },
+                    ],
+                },
+                { "plugin": "none", "scope": "harmony.http", "hosts": [] },
+                { "plugin": "sockets", "scope": "harmony.net" },
+                { "plugin": "wide", "scope": "harmony.http", "hosts": [{ "kind": "any" }] },
+            ])
+        );
+        assert_eq!(
+            json["description"], "Sends data off the server",
+            "the description names no hosts, as other scopes give the effect unbounded"
+        );
+
+        let gain = |growth: ScopeGrowth| {
+            let gains = BTreeMap::from([(
+                "plugin".to_string(),
+                ScopeGain {
+                    growth,
+                    effects: Vec::new(),
+                    risk: RiskAssessment {
+                        risk: Risk::Standard,
+                        reasons: Vec::new(),
+                    },
+                    previous_risk: Risk::Standard,
+                },
+            )]);
+            serde_json::to_value(scope_gain_responses(gains)).map(|json| json[0]["hosts"].clone())
+        };
+        let items = |items: &[&str]| {
+            BTreeMap::from([(
+                "harmony.http".to_string(),
+                items.iter().map(ToString::to_string).collect(),
+            )])
+        };
+        assert_eq!(
+            gain(ScopeGrowth {
+                grants: items(&["*.archive.org", "@helper/base_url"]),
+                ..ScopeGrowth::default()
+            })?,
+            serde_json::json!([
+                { "kind": "subdomains", "host": "archive.org" },
+                { "kind": "setting", "setting": "base_url", "plugin": "helper" },
+            ])
+        );
+        assert_eq!(
+            gain(ScopeGrowth {
+                grants: items(&["*"]),
+                ..ScopeGrowth::default()
+            })?,
+            serde_json::json!([{ "kind": "any" }])
+        );
+        assert_eq!(
+            gain(ScopeGrowth {
+                ungranted: ["harmony.http".to_string()].into(),
+                ..ScopeGrowth::default()
+            })?,
+            serde_json::json!([{ "kind": "any" }]),
+            "reaching the scope through a plugin listing no hosts is reaching any host"
         );
         Ok(())
     }
@@ -2947,6 +3135,7 @@ mod tests {
                     scope: "lyra.metadata".into(),
                     reason: "Adds details.".into(),
                 }]),
+                scope_grants: None,
                 dependencies: None,
                 position: None,
                 requires: None,

@@ -247,6 +247,7 @@ pub(crate) mod tests {
                     commit: Some("b".repeat(40)),
                     scopes: Some(Vec::new()),
                     scope_reasons: None,
+                    scope_grants: None,
                     dependencies: None,
                     position: None,
                     requires: None,

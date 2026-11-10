@@ -67,6 +67,10 @@ pub struct PluginRepositoryEntry {
     /// What the plugin's author says some of its scopes are for at that
     /// release; unset on entries stored before reasons were.
     pub scope_reasons: Option<Vec<PluginScopeReason>>,
+    /// What some of its scopes let the plugin reach at that release, for
+    /// the scopes that take a grant; unset on entries stored before grants
+    /// were.
+    pub scope_grants: Option<Vec<PluginScopeGrant>>,
     /// Where the listing placed the plugin, assigned on storing; unset on
     /// entries stored before positions were.
     pub position: Option<u64>,
@@ -88,6 +92,16 @@ pub struct PluginDependency {
 pub struct PluginScopeReason {
     pub scope: String,
     pub reason: String,
+}
+
+/// What a release's `plugin.json` says a scope lets the plugin reach, such
+/// as the hosts of its HTTP scope.
+#[derive(DbTypeMarker, DbSerialize, DbValue, Clone, Debug, PartialEq, Eq)]
+pub struct PluginScopeGrant {
+    pub scope: String,
+    /// The grant's items, stored as the module owning the scope writes
+    /// them and read back by it alone.
+    pub items: Vec<String>,
 }
 
 const DEFAULT_SEEDED_KEY: &str = "default_repository_seeded";
@@ -484,6 +498,7 @@ mod tests {
             commit: None,
             scopes: None,
             scope_reasons: None,
+            scope_grants: None,
             dependencies: None,
             position: None,
             requires: None,
@@ -630,6 +645,41 @@ mod tests {
             panic!("expected one entry");
         };
         assert_eq!(read.scope_reasons, None);
+        Ok(())
+    }
+
+    #[test]
+    fn entries_stored_before_scope_grants_read_as_having_none() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let stored = PluginRepositoryEntry {
+            scope_grants: Some(vec![PluginScopeGrant {
+                scope: "harmony.http".into(),
+                items: vec!["*.example.org".into(), "example.org".into()],
+            }]),
+            ..entry("a", "t1")
+        };
+        let db_id = create(
+            &mut db,
+            &repository("https://github.com/lyra/plugins"),
+            std::slice::from_ref(&stored),
+        )?;
+        let [read] = &entries(&db, db_id)?[..] else {
+            panic!("expected one entry");
+        };
+        assert_eq!(read.scope_grants, stored.scope_grants);
+        let entry_id = read.db_id.expect("stored entry has an id");
+
+        db.exec_mut(
+            QueryBuilder::remove()
+                .values(["scope_grants"])
+                .ids(entry_id)
+                .query(),
+        )?;
+
+        let [read] = &entries(&db, db_id)?[..] else {
+            panic!("expected one entry");
+        };
+        assert_eq!(read.scope_grants, None);
         Ok(())
     }
 

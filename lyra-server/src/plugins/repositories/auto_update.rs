@@ -231,7 +231,8 @@ struct RefusedInstall {
 }
 
 /// The installs in `plugins_dir` that `errors` refused for the server
-/// version and that an update check of one of `repositories` takes up.
+/// version, or for a grant this server requires of a scope, and that an
+/// update check of one of `repositories` takes up.
 fn refused_installs(
     plugins_dir: &Path,
     repositories: &[repo_db::PluginRepository],
@@ -246,7 +247,13 @@ fn refused_installs(
         .collect();
     errors
         .iter()
-        .filter(|error| matches!(error.error, PluginLoadError::IncompatibleHost { .. }))
+        .filter(|error| {
+            matches!(
+                error.error,
+                PluginLoadError::IncompatibleHost { .. }
+                    | PluginLoadError::MissingScopeGrant { .. }
+            )
+        })
         .flat_map(|error| &error.directories)
         .filter_map(|plugin| {
             let record = load_managed_record(plugins_dir, plugin).ok()?;
@@ -837,6 +844,90 @@ mod tests {
             dir.join(harmony_core::plugin::PLUGIN_CONFIG_FILENAME),
             manifest_json("changed", "1.0.0", ANOTHER_SERVER),
         )?;
+        Ok(())
+    }
+
+    /// `changed` at `version`, declaring the outbound HTTP scope with
+    /// `hosts`, or as manifests did before they listed hosts.
+    fn changed_requesting(version: &str, hosts: Option<&[&str]>) -> anyhow::Result<String> {
+        let mut manifest: serde_json::Value =
+            serde_json::from_str(&manifest_json("changed", version, HOST_REQUIREMENT))?;
+        let mut http = serde_json::json!({ "id": "harmony.http", "reason": "Fetches things." });
+        if let Some(hosts) = hosts {
+            http["hosts"] = serde_json::json!(hosts);
+        }
+        manifest["scopes"] = serde_json::json!([http]);
+        Ok(manifest.to_string())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn plugins_refused_for_listing_no_http_hosts_are_updated_early_without_a_hold()
+    -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        lyra_db::server::ensure(&mut *STATE.db.write().await)?;
+        RELOAD_PENDING.store(false, Ordering::Release);
+        let forge = catalog_forge(
+            HOST_REQUIREMENT,
+            HOST_REQUIREMENT,
+            changed_requesting("2.0.0", Some(&["example.org"]))?,
+        )
+        .await?;
+        let plugins_dir = tempfile::TempDir::new()?;
+        load_changed(plugins_dir.path(), &forge.origin, |dir| {
+            std::fs::write(
+                dir.join(harmony_core::plugin::PLUGIN_CONFIG_FILENAME),
+                changed_requesting("1.0.0", None)?,
+            )?;
+            Ok(())
+        })
+        .await?;
+        checked_just_now(&forge.origin).await?;
+        assert!(crate::plugins::STATE.manifests().is_empty());
+        let errors = crate::plugins::STATE.discovery_errors();
+        assert!(
+            matches!(
+                &errors[..],
+                [PluginDiscoveryError {
+                    error: PluginLoadError::MissingScopeGrant { scope, .. },
+                    ..
+                }] if scope == harmony_http::SCOPE
+            ),
+            "{errors:?}"
+        );
+        assert!(!harmony_http::test_plugin_reaches(
+            "changed",
+            "https://example.org/"
+        ));
+
+        let (mut retries, mut early) = (Retries::default(), EarlyChecks::default());
+        check_refused(plugins_dir.path(), &mut retries, &mut early).await;
+
+        let record = load_managed_record(plugins_dir.path(), "changed")?;
+        assert_eq!(
+            record.version,
+            Version::new(2, 0, 0),
+            "an install that listed no hosts reached any, so listing them holds nothing"
+        );
+        assert!(record.installed_automatically);
+
+        reload_when_idle(&mut None, now_ms()).await;
+
+        let loaded: Vec<_> = crate::plugins::STATE
+            .manifests()
+            .iter()
+            .map(|manifest| (manifest.id.clone(), manifest.version.to_string()))
+            .collect();
+        assert_eq!(loaded, [("changed".to_string(), "2.0.0".to_string())]);
+        assert!(crate::plugins::STATE.discovery_errors().is_empty());
+        assert!(harmony_http::test_plugin_reaches(
+            "changed",
+            "https://example.org/"
+        ));
+        assert!(!harmony_http::test_plugin_reaches(
+            "changed",
+            "https://other.example/"
+        ));
         Ok(())
     }
 
