@@ -24,6 +24,7 @@ use super::{
         InvalidPassword,
     },
     require_principal,
+    setup_code,
 };
 use crate::services::{
     STATE,
@@ -96,12 +97,13 @@ pub(crate) struct CreatedUser {
     pub(crate) role: &'static str,
 }
 
-/// Creates a user. Until a real admin exists anyone may create one, and it becomes the admin;
-/// after that the caller needs `ManageUsers`.
+/// Creates a user. Until a real admin exists anyone holding the setup code, where one is
+/// required, may create one, and it becomes the admin; after that the caller needs `ManageUsers`.
 pub(crate) async fn create_user(
     bearer: Option<&str>,
     username: &str,
     password: &str,
+    setup_code: Option<&str>,
 ) -> AccountResult<CreatedUser> {
     let normalized_username = validate_username(username)?;
     if normalized_username == DEFAULT_USERNAME {
@@ -121,12 +123,19 @@ pub(crate) async fn create_user(
         caller.as_ref(),
         username,
         &normalized_username,
+        setup_code,
     )?;
 
     let password_hash = passwords::hash(password).await?;
 
     let mut db = STATE.db.write().await;
-    let role = authorize_create(&db, caller.as_ref(), username, &normalized_username)?;
+    let role = authorize_create(
+        &db,
+        caller.as_ref(),
+        username,
+        &normalized_username,
+        setup_code,
+    )?;
     let user = User {
         db_id: None,
         id: nanoid(),
@@ -135,6 +144,9 @@ pub(crate) async fn create_user(
     };
     let user_db_id = lyra_db::users::create(&mut db, &user)?;
     lyra_db::roles::ensure_user_has_role(&mut db, user_db_id, role)?;
+    if role == lyra_db::roles::BUILTIN_ADMIN_ROLE {
+        setup_code::retire();
+    }
 
     Ok(CreatedUser {
         id: user.id,
@@ -258,12 +270,14 @@ fn authorize_create(
     caller: Option<&Principal>,
     username: &str,
     normalized_username: &str,
+    setup_code: Option<&str>,
 ) -> AccountResult<&'static str> {
     let role = if lyra_db::roles::has_non_default_admin(db)? {
         let caller = caller.ok_or(AuthError::MissingBearerCredential)?;
         caller.current_with(db, Permission::ManageUsers)?;
         lyra_db::roles::BUILTIN_USER_ROLE
     } else {
+        setup_code::check(setup_code)?;
         lyra_db::roles::BUILTIN_ADMIN_ROLE
     };
     if lyra_db::users::get_by_username(db, normalized_username)?.is_some() {
@@ -315,6 +329,7 @@ mod tests {
     use super::*;
     use crate::services::testing::{
         init_default_test_state,
+        require_setup_code,
         runtime_test_lock,
         user_principal,
     };
@@ -454,7 +469,8 @@ mod tests {
         init_default_test_state()?;
         insert_user("first-admin", lyra_db::roles::BUILTIN_ADMIN_ROLE).await?;
 
-        let result = without_hashing(create_user(None, "intruder", "long-enough-password")).await;
+        let result =
+            without_hashing(create_user(None, "intruder", "long-enough-password", None)).await;
 
         assert!(matches!(
             result,
@@ -614,6 +630,91 @@ mod tests {
         Ok(())
     }
 
+    async fn create_first_admin(setup_code: Option<&str>) -> AccountResult<CreatedUser> {
+        create_user(None, "first-admin", "long-enough-password", setup_code).await
+    }
+
+    fn assert_refused(result: AccountResult<CreatedUser>, message: &str) {
+        match result {
+            Err(AccountError::Auth(AuthError::Forbidden(refusal))) => assert_eq!(refusal, message),
+            Err(error) => panic!("expected a refusal, got {error}"),
+            Ok(_) => panic!("expected a refusal, got an account"),
+        }
+    }
+
+    async fn ensure_builtin_roles() -> anyhow::Result<()> {
+        lyra_db::roles::ensure_builtin_roles(&mut *STATE.db.write().await)
+    }
+
+    #[tokio::test]
+    async fn first_admin_without_the_setup_code_is_refused_before_hashing() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        ensure_builtin_roles().await?;
+        let code = require_setup_code().await?.expect("a code is drawn");
+        let wrong = if code.starts_with('A') { "B" } else { "A" }.to_string() + &code[1..];
+
+        assert_refused(
+            without_hashing(create_first_admin(None)).await,
+            "setup code required",
+        );
+        assert_refused(
+            without_hashing(create_first_admin(Some(&wrong))).await,
+            "incorrect setup code",
+        );
+        assert!(!lyra_db::roles::has_non_default_admin(
+            &*STATE.db.read().await
+        )?);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn the_setup_code_creates_the_first_admin_and_dies_with_it() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        ensure_builtin_roles().await?;
+        let code = require_setup_code().await?.expect("a code is drawn");
+        let typed = format!(
+            " {}-{}-{}\n",
+            &code[..4].to_lowercase(),
+            &code[4..8],
+            &code[8..]
+        );
+
+        let first = create_first_admin(Some(&typed)).await?;
+        assert_eq!(first.role, lyra_db::roles::BUILTIN_ADMIN_ROLE);
+
+        let admin_db_id = lyra_db::users::get_by_public_id(&*STATE.db.read().await, &first.id)?
+            .and_then(|user| user.db_id)
+            .expect("the admin is stored");
+        lyra_db::roles::ensure_user_has_role(
+            &mut *STATE.db.write().await,
+            admin_db_id,
+            lyra_db::roles::BUILTIN_USER_ROLE,
+        )?;
+        assert_refused(
+            without_hashing(create_user(
+                None,
+                "second-admin",
+                "long-enough-password",
+                Some(&code),
+            ))
+            .await,
+            "setup is closed: this server has no setup code",
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_claimed_server_draws_no_setup_code() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        insert_user("first-admin", lyra_db::roles::BUILTIN_ADMIN_ROLE).await?;
+
+        assert!(require_setup_code().await?.is_none());
+        Ok(())
+    }
+
     #[tokio::test]
     async fn first_user_becomes_admin_and_closes_setup() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
@@ -623,11 +724,11 @@ mod tests {
             lyra_db::roles::ensure_builtin_roles(&mut db)?;
         }
 
-        let first = create_user(None, "First-Admin", "long-enough-password").await?;
+        let first = create_user(None, "First-Admin", "long-enough-password", None).await?;
         assert_eq!(first.username, "first-admin");
         assert_eq!(first.role, lyra_db::roles::BUILTIN_ADMIN_ROLE);
 
-        let second = create_user(None, "second-admin", "long-enough-password").await;
+        let second = create_user(None, "second-admin", "long-enough-password", None).await;
         assert!(matches!(
             second,
             Err(AccountError::Auth(AuthError::MissingBearerCredential))

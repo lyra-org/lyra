@@ -126,6 +126,13 @@ struct UserRequest {
         schemars(description = "ASCII password, minimum 8 characters.")
     )]
     password: String,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "The setup code the server logged at startup, in any case, with or without its dashes. Read only when the request creates the first admin."
+        )
+    )]
+    setup_code: Option<String>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -348,8 +355,13 @@ async fn create_user(
     headers: HeaderMap,
     Json(user): Json<UserRequest>,
 ) -> Result<(StatusCode, Json<PublicUser>), AppError> {
-    let created =
-        accounts::create_user(bearer_credential(&headers), &user.username, &user.password).await?;
+    let created = accounts::create_user(
+        bearer_credential(&headers),
+        &user.username,
+        &user.password,
+        user.setup_code.as_deref(),
+    )
+    .await?;
     Ok((
         StatusCode::CREATED,
         Json(PublicUser {
@@ -697,7 +709,10 @@ fn create_user_docs(op: TransformOperation) -> TransformOperation {
         .description(
             "Creates a new user account. Requires ManageUsers permission after initial setup. \
              During initial setup (no admin exists), the first user is created as admin without \
-             authentication.",
+             authentication. While the public server info reports `setup.setup_code_required`, \
+             that request must carry the setup code the server logged at startup in \
+             `setup_code`: a missing or incorrect code is refused with 403, as is every such \
+             request on a server that lost its admins while running, until it restarts.",
         )
         .response::<201, Json<PublicUser>>()
 }

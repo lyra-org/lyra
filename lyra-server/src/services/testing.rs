@@ -107,6 +107,20 @@ pub(crate) async fn merge_entities(winner_id: &str, loser_id: &str) -> anyhow::R
     Ok(())
 }
 
+/// Starts the server over as one that takes a setup code, returning the code it drew, if any.
+#[cfg(test)]
+pub(crate) async fn require_setup_code() -> anyhow::Result<Option<String>> {
+    use crate::services::auth::setup_code;
+
+    let boot = STATE.boot.get();
+    STATE.boot.replace(Arc::new(Boot {
+        require_setup_code: true,
+        ..(*boot).clone()
+    }));
+    setup_code::issue().await?;
+    Ok(setup_code::current())
+}
+
 /// The dispatcher of a scope with no runtime behind it: nothing it is asked to run starts.
 #[cfg(test)]
 pub(crate) struct IdleDispatch;
@@ -302,6 +316,7 @@ fn memory_boot() -> anyhow::Result<Boot> {
         transcode_cache_dir: data_dir.join("transcodes"),
         cover_cache_dir: data_dir.join("cover-transforms"),
         hls_dir: data_dir.join("hls"),
+        require_setup_code: false,
         data_dir,
         db: DbConfig {
             kind: DbKind::Memory,

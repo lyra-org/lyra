@@ -17,6 +17,8 @@ use crate::services::STATE;
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct Status {
     pub(crate) account_required: bool,
+    /// Whether creating that account takes the setup code the server logged at startup.
+    pub(crate) setup_code_required: bool,
     pub(crate) plugin_selection_required: bool,
 }
 
@@ -30,6 +32,7 @@ pub(crate) async fn status() -> anyhow::Result<Status> {
     };
     Ok(Status {
         account_required,
+        setup_code_required: account_required && crate::services::auth::setup_code::required(),
         plugin_selection_required: !skipped
             && !has_installed_plugins(&STATE.boot.get().plugins_dir).await?,
     })

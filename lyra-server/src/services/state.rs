@@ -32,6 +32,7 @@ use crate::services::{
     auth::{
         device_logins::DeviceLoginStore,
         media_tokens::MediaTokenStore,
+        setup_code::SetupCode,
         socket_tickets::SocketTicketStore,
     },
     boot::Boot,
@@ -143,6 +144,7 @@ pub(crate) struct AuthCaches {
     pub(crate) media_tokens: MediaTokenStore,
     pub(crate) socket_tickets: SocketTicketStore,
     pub(crate) device_logins: DeviceLoginStore,
+    pub(crate) setup_code: SetupCode,
 }
 
 /// Everything services derive from the current database/config generation. A

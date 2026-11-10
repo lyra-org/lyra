@@ -26,6 +26,7 @@ fn default_server_info() -> crate::plugins::server::ServerInfo {
         published_url: None,
         setup: crate::services::setup::Status {
             account_required: true,
+            setup_code_required: false,
             plugin_selection_required: true,
         },
     }
@@ -1202,6 +1203,7 @@ fn plugin_executor_reads_server_info_from_vm_context() -> Result<()> {
             published_url: Some("https://lyra.example".to_string()),
             setup: crate::services::setup::Status {
                 account_required: false,
+                setup_code_required: false,
                 plugin_selection_required: true,
             },
         },

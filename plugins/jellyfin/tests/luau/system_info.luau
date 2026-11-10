@@ -11,7 +11,7 @@ local function info(published_url: string?, base_url: string?)
 		port = 4746,
 		tls = false,
 		published_url = published_url,
-		setup = { account_required = false, plugin_selection_required = false },
+		setup = { account_required = false, setup_code_required = false, plugin_selection_required = false },
 	}
 	local ctx = {
 		plugin_id = "jellyfin",

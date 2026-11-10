@@ -86,8 +86,9 @@ fn server_info_table(info: &ServerInfo) -> luau::OwnedTable {
     table.set_field("port", i64::from(info.port));
     table.set_field("tls", info.tls);
     table.set_field("published_url", info.published_url.clone());
-    let mut setup = luau::OwnedTable::with_capacity(0, 2);
+    let mut setup = luau::OwnedTable::with_capacity(0, 3);
     setup.set_field("account_required", info.setup.account_required);
+    setup.set_field("setup_code_required", info.setup.setup_code_required);
     setup.set_field(
         "plugin_selection_required",
         info.setup.plugin_selection_required,
@@ -145,6 +146,13 @@ impl DescribeInterface for ServerInfo {
                         name: "account_required",
                         ty: bool::luau_type(),
                         description: None,
+                    },
+                    FieldDescriptor {
+                        name: "setup_code_required",
+                        ty: bool::luau_type(),
+                        description: Some(
+                            "Whether creating that account takes the setup code the server logged at startup.",
+                        ),
                     },
                     FieldDescriptor {
                         name: "plugin_selection_required",

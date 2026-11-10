@@ -28,6 +28,8 @@ pub(crate) struct Boot {
     /// Where HLS jobs write their segments. Server-owned: its startup purge and cleanup touch
     /// nothing outside it.
     pub(crate) hls_dir: PathBuf,
+    /// Whether creating the first admin takes the setup code.
+    pub(crate) require_setup_code: bool,
     pub(crate) build: BuildInfo,
 }
 

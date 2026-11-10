@@ -103,6 +103,7 @@ fn server_info() -> crate::plugins::server::ServerInfo {
         published_url: None,
         setup: crate::services::setup::Status {
             account_required: true,
+            setup_code_required: false,
             plugin_selection_required: true,
         },
     }

@@ -4,8 +4,8 @@
 // www.meshiplaw.com/lyra.
 
 //! Values needed before the database opens: the listening port, its TLS
-//! files, the data directory, and the database location. Resolved env > file
-//! > default.
+//! files, the data directory, the database location, and whether claiming the
+//! server takes a setup code. Resolved env > file > default.
 
 use anyhow::{
     Context,
@@ -35,6 +35,7 @@ pub(crate) const DEFAULT_PORT: u16 = 4746;
 const LYRA_DATA_DIR_ENV: &str = "LYRA_DATA_DIR";
 const LYRA_DB_DIR_ENV: &str = "LYRA_DB_DIR";
 const LYRA_PORT_ENV: &str = "LYRA_PORT";
+const LYRA_REQUIRE_SETUP_CODE_ENV: &str = "LYRA_REQUIRE_SETUP_CODE";
 const LYRA_TLS_CERT_ENV: &str = "LYRA_TLS_CERT";
 const LYRA_TLS_KEY_ENV: &str = "LYRA_TLS_KEY";
 const DEFAULT_DATA_DIR: &str = "data";
@@ -49,6 +50,7 @@ pub(crate) struct BootEnv {
     pub(crate) data_dir: Option<OsString>,
     pub(crate) db_dir: Option<OsString>,
     pub(crate) port: Option<OsString>,
+    pub(crate) require_setup_code: Option<OsString>,
     pub(crate) tls_cert: Option<OsString>,
     pub(crate) tls_key: Option<OsString>,
 }
@@ -59,6 +61,7 @@ impl BootEnv {
             data_dir: env::var_os(LYRA_DATA_DIR_ENV),
             db_dir: env::var_os(LYRA_DB_DIR_ENV),
             port: env::var_os(LYRA_PORT_ENV),
+            require_setup_code: env::var_os(LYRA_REQUIRE_SETUP_CODE_ENV),
             tls_cert: env::var_os(LYRA_TLS_CERT_ENV),
             tls_key: env::var_os(LYRA_TLS_KEY_ENV),
         }
@@ -72,6 +75,8 @@ pub(crate) struct BootConfig {
     pub(crate) tls: Option<TlsPaths>,
     pub(crate) data_dir: PathBuf,
     pub(crate) db: DbConfig,
+    /// Whether creating the first admin takes the setup code the server logs at startup.
+    pub(crate) require_setup_code: bool,
 }
 
 /// The PEM certificate chain and private key the port serves HTTPS with.
@@ -88,6 +93,7 @@ impl Default for BootConfig {
             tls: None,
             data_dir: PathBuf::from(DEFAULT_DATA_DIR),
             db: DbConfig::default(),
+            require_setup_code: true,
         }
     }
 }
@@ -101,6 +107,7 @@ impl BootConfig {
             boot.port = port;
         }
         apply_port_override(&mut boot, env.port)?;
+        apply_require_setup_code_override(&mut boot, env.require_setup_code)?;
         boot.tls = resolve_tls(file, env.tls_cert, env.tls_key)?;
         boot.data_dir = data_dir_path(env.data_dir)?;
         if let Some(db) = &file.db {
@@ -167,6 +174,22 @@ fn apply_port_override(boot: &mut BootConfig, raw: Option<OsString>) -> Result<(
     Ok(())
 }
 
+fn apply_require_setup_code_override(boot: &mut BootConfig, raw: Option<OsString>) -> Result<()> {
+    let Some(raw) = raw else {
+        return Ok(());
+    };
+    let value = raw.to_string_lossy();
+    boot.require_setup_code = match value.trim() {
+        "" => return Ok(()),
+        "true" => true,
+        "false" => false,
+        other => bail!(
+            "invalid {LYRA_REQUIRE_SETUP_CODE_ENV} value '{other}': expected 'true' or 'false'"
+        ),
+    };
+    Ok(())
+}
+
 /// Each path resolves on its own, so the environment may replace one and leave the other to the
 /// file. Relative paths stay relative to the working directory.
 fn resolve_tls(
@@ -220,6 +243,7 @@ mod tests {
         DEFAULT_PORT,
         TlsPaths,
         apply_port_override,
+        apply_require_setup_code_override,
         data_dir_path,
         resolve_db_path,
     };
@@ -346,6 +370,35 @@ mod tests {
         let error = apply_port_override(&mut boot, Some(OsString::from("70000")))
             .expect_err("out-of-range port should be rejected");
         assert!(error.to_string().contains("LYRA_PORT"));
+    }
+
+    #[test]
+    fn setup_code_is_required_unless_the_env_says_false() -> anyhow::Result<()> {
+        let mut boot = BootConfig::default();
+        assert!(boot.require_setup_code);
+
+        apply_require_setup_code_override(&mut boot, Some(OsString::new()))?;
+        assert!(boot.require_setup_code);
+
+        apply_require_setup_code_override(&mut boot, Some(OsString::from("false")))?;
+        assert!(!boot.require_setup_code);
+
+        apply_require_setup_code_override(&mut boot, None)?;
+        assert!(!boot.require_setup_code);
+
+        apply_require_setup_code_override(&mut boot, Some(OsString::from(" true ")))?;
+        assert!(boot.require_setup_code);
+        Ok(())
+    }
+
+    #[test]
+    fn setup_code_env_rejects_anything_but_true_and_false() {
+        for value in ["1", "no", "TRUE", "False", "yes"] {
+            let mut boot = BootConfig::default();
+            let error = apply_require_setup_code_override(&mut boot, Some(OsString::from(value)))
+                .expect_err("only true and false are accepted");
+            assert!(error.to_string().contains("LYRA_REQUIRE_SETUP_CODE"));
+        }
     }
 
     #[test]

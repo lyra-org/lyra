@@ -657,6 +657,7 @@ mod tests {
         let value = serde_json::to_value(info)?;
         assert!(value.get("setup_complete").is_none());
         assert_eq!(value["setup"]["account_required"], true);
+        assert_eq!(value["setup"]["setup_code_required"], false);
 
         let headers = headers_with(vec![Permission::Admin])
             .await
@@ -675,6 +676,24 @@ mod tests {
         let Json(info) = get_server_info().await.expect("request succeeds");
         assert!(!info.setup.account_required);
         assert!(!info.setup.plugin_selection_required);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn public_setup_asks_for_the_setup_code_only_while_unclaimed() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        initialize_test_state(&[]).await.expect("request succeeds");
+        crate::services::testing::require_setup_code().await?;
+        let Json(info) = get_server_info().await.expect("request succeeds");
+        assert!(info.setup.account_required);
+        assert!(info.setup.setup_code_required);
+
+        headers_with(vec![Permission::Admin])
+            .await
+            .expect("request succeeds");
+        let Json(info) = get_server_info().await.expect("request succeeds");
+        assert!(!info.setup.account_required);
+        assert!(!info.setup.setup_code_required);
         Ok(())
     }
 

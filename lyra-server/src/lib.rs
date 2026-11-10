@@ -85,6 +85,7 @@ pub async fn run_server(build: BuildInfo, capture: Option<CaptureArgs>) -> Resul
         transcode_cache_dir: loaded.boot.transcode_cache_dir(),
         cover_cache_dir: loaded.boot.cover_cache_dir(),
         hls_dir: loaded.boot.hls_dir(),
+        require_setup_code: loaded.boot.require_setup_code,
         data_dir: loaded.boot.data_dir,
         db: loaded.boot.db,
         plugins_dir,
@@ -202,6 +203,7 @@ async fn serve(
         log_task_failure("plugin update checks", update_checks.await);
     });
 
+    services::auth::setup_code::issue().await?;
     routes::serve_app(app, config.as_ref(), listener, tls, shutdown_token).await?;
 
     tracing::info!("server stopped, running shutdown cleanup");
