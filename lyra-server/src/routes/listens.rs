@@ -1409,3 +1409,79 @@ mod tests {
         }
     }
 }
+
+/// A report of what a page of the caller's listens costs with a large history. Run it with
+/// `cargo +nightly test --release -p lyra-server --features nightly --lib -- routes::listens::benches::report --ignored --nocapture`.
+#[cfg(all(test, feature = "nightly"))]
+mod benches {
+    use super::*;
+    use crate::services::catalog::benches::{
+        median,
+        ms,
+        search_fixture,
+    };
+
+    const LIMIT: u64 = 100;
+
+    #[test]
+    #[ignore = "a report for release builds"]
+    fn report() {
+        let count = |name: &str, default: usize| {
+            std::env::var(name)
+                .ok()
+                .and_then(|count| count.parse().ok())
+                .unwrap_or(default)
+        };
+        let track_count = count("CATALOG_REPORT_TRACKS", 100_000);
+        let listened = count("LISTENS_REPORT_TRACKS", 20_000).min(track_count);
+        let (mut db, principal) = search_fixture(track_count, 1, false);
+        let user_db_id = principal.require(&db).unwrap();
+        let tracks = lyra_db::roots::member_ids(&db, lyra_db::roots::Root::Tracks).unwrap();
+        let step = (tracks.len() / listened).max(1);
+        let mut listens = 0_u64;
+        for (index, track) in tracks.into_iter().step_by(step).take(listened).enumerate() {
+            for play in 0..=index % 5 {
+                lyra_db::fixtures::insert_listen(
+                    &mut db,
+                    user_db_id,
+                    track,
+                    1_700_000_000_000 + listens * 200_000 + play as u64,
+                )
+                .unwrap();
+                listens += 1;
+            }
+        }
+
+        let page = |offset: u64| {
+            let mut rows = summary_rows(&db, &principal, user_db_id).unwrap();
+            sort_listen_rows(&mut rows, None, None, false).unwrap();
+            let page = routes::PageQuery {
+                limit: Some(LIMIT),
+                offset: Some(offset),
+            }
+            .resolve()
+            .slice(rows);
+            (page.items.len() as u64, page.total)
+        };
+        println!(
+            "{track_count} tracks, one-library user with {listens} listens of {listened} tracks, \
+             pages of {LIMIT}"
+        );
+        for offset in [0, listened as u64 / 2] {
+            let (items, total) = page(offset);
+            assert_eq!(items, LIMIT);
+            println!(
+                "  listens page at offset {offset} of {total}: {}",
+                ms(median(9, || page(offset).0))
+            );
+        }
+        println!(
+            "    reading the summaries: {}",
+            ms(median(9, || {
+                lyra_db::listens::list_summaries_for_user(&db, user_db_id)
+                    .unwrap()
+                    .len() as u64
+            }))
+        );
+    }
+}

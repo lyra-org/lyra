@@ -8,7 +8,7 @@
 
 pub(crate) mod artists;
 #[cfg(all(test, feature = "nightly"))]
-mod benches;
+pub(crate) mod benches;
 pub(crate) mod genres;
 pub(crate) mod index;
 pub(crate) mod lookups;

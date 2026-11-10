@@ -37,6 +37,7 @@ use super::{
         Catalog,
         Context,
         Query,
+        leading_in,
         page_in,
     },
     releases::Releases,
@@ -276,6 +277,41 @@ impl Bench {
         page_in(&cx, &query, offset, Some(500)).unwrap().items.len() as u64
     }
 
+    /// Gives the viewer listens of one track in five, for the listen count sort to order.
+    fn listen(&mut self) -> u64 {
+        let user = self.viewer.user_db_id("the listens").unwrap();
+        let mut listens = 0;
+        let tracks = roots::member_ids(&self.db, Root::Tracks).unwrap();
+        for (index, track) in tracks.into_iter().step_by(5).enumerate() {
+            for _ in 0..=index % 3 {
+                lyra_db::fixtures::insert_listen(
+                    &mut self.db,
+                    user,
+                    track,
+                    1_700_000_000_000 + listens * 200_000,
+                )
+                .unwrap();
+                listens += 1;
+            }
+        }
+        self.index = Arc::new(Snapshot::build(&self.db).unwrap());
+        listens
+    }
+
+    /// A page of 100 tracks under `sort`: its ids in order, then their rows. `page_in` also
+    /// reads the rows' availability from the server's index, which a database that is not the
+    /// server's builds anew on every call.
+    fn sorted_page(&self, key: super::tracks::TrackKey, offset: usize) -> u64 {
+        let cx = Context::with(Arc::clone(&self.index), &self.db, &self.viewer);
+        let mut query = Query::<Tracks>::new(Default::default());
+        query.sort = vec![(key, super::Direction::Descending)];
+        query.seed = 0x5eed;
+        let ids = leading_in(&cx, &query, Some(offset + 100)).unwrap();
+        lyra_db::tracks::get_by_ids(&self.db, &ids[offset.min(ids.len())..])
+            .unwrap()
+            .len() as u64
+    }
+
     /// Searches tracks, artists and releases, as the search endpoint does.
     fn search(&self, term: &str) -> u64 {
         self.page::<Tracks>(Some(term), 0, 20)
@@ -364,7 +400,7 @@ access_cases!(tracks_1k, 1_000);
 access_cases!(tracks_10k, 10_000);
 
 /// The median of `runs` timings of `work`.
-fn median(runs: usize, mut work: impl FnMut() -> u64) -> Duration {
+pub(crate) fn median(runs: usize, mut work: impl FnMut() -> u64) -> Duration {
     black_box(work());
     let mut times = (0..runs)
         .map(|_| {
@@ -377,7 +413,7 @@ fn median(runs: usize, mut work: impl FnMut() -> u64) -> Duration {
     times[runs / 2]
 }
 
-fn ms(duration: Duration) -> String {
+pub(crate) fn ms(duration: Duration) -> String {
     format!("{:.2} ms", duration.as_secs_f64() * 1e3)
 }
 
@@ -423,6 +459,19 @@ fn report() {
             "  full sync, 500 tracks a page: {}",
             ms(median(3, || bench.sync(track_count)))
         );
+        let listens = bench.listen();
+        for (name, key) in [
+            ("listen count", super::tracks::TrackKey::ListenCount),
+            ("random", super::tracks::TrackKey::Random),
+        ] {
+            for offset in [0, track_count / 2] {
+                assert_eq!(bench.sorted_page(key, offset), 100);
+                println!(
+                    "  track page of 100 by {name} at offset {offset}, {listens} listens: {}",
+                    ms(median(9, || bench.sorted_page(key, offset)))
+                );
+            }
+        }
         if admin {
             println!(
                 "  index rebuild: {}",
