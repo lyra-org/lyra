@@ -1,0 +1,24 @@
+run_as = "listener"
+auth_disabled = true
+
+[[users]]
+key = "listener"
+
+[[users]]
+key = "other"
+
+[[users]]
+key = "admin"
+admin = true
+
+[[api_keys]]
+key = "phone"
+user = "listener"
+
+[[api_keys]]
+key = "console"
+user = "admin"
+
+[[users]]
+key = "default"
+admin = true

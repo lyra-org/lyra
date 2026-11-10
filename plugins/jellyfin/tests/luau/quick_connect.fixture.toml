@@ -1,4 +1,5 @@
 run_as = "listener"
+rate_limit_disabled = true
 
 [[users]]
 key = "listener"
@@ -10,10 +11,14 @@ key = "other"
 key = "admin"
 admin = true
 
-[[api_keys]]
+[[sessions]]
 key = "phone"
 user = "listener"
 
-[[api_keys]]
+[[sessions]]
 key = "console"
 user = "admin"
+
+[[api_keys]]
+key = "script"
+user = "listener"

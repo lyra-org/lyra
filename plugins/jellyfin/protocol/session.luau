@@ -65,6 +65,13 @@ type PlaylistResponseInfo = {
 	Shares: { PlaylistUserPermission },
 	ItemIds: { string },
 }
+-- What a login saves on its session of the client that made it.
+export type LoginIdentity = {
+	client: string,
+	device: string,
+	device_id: string,
+	version: string,
+}
 export type ClientIdentity = {
 	client: string,
 	device: string,
@@ -432,6 +439,25 @@ function module.resolve_client_identity(
 	return identity, nil
 end
 
+-- The identity a request sends itself, or nil unless it names all four parts, as upstream's Quick
+-- Connect wants before anything else.
+function module.request_login_identity(ctx: ApiContext?): LoginIdentity?
+	local request = if ctx then ctx.request else nil
+	if not request then
+		return nil
+	end
+	local client, device, device_id, version = request_identity(request)
+	if not client or not device or not device_id or not version then
+		return nil
+	end
+	return {
+		client = client,
+		device = device,
+		device_id = device_id,
+		version = version,
+	}
+end
+
 -- The session metadata a login records, from the identity the login request sends.
 function module.login_metadata(ctx: ApiContext): (string?, string?)
 	local request = ctx.request
@@ -440,8 +466,14 @@ function module.login_metadata(ctx: ApiContext): (string?, string?)
 	return requests.trim(request.headers["user-agent"]), client_name
 end
 
-function module.remember_login_identity(ctx: ApiContext, resolved_auth: ResolvedAuth, token: string)
-	local identity = module.resolve_client_identity(ctx, resolved_auth, token)
+-- `saved` speaks for a client whose own request has since ended, as a Quick Connect sign-in's does.
+function module.remember_login_identity(
+	ctx: ApiContext,
+	resolved_auth: ResolvedAuth,
+	token: string,
+	saved: LoginIdentity?
+)
+	local identity: LoginIdentity? = saved or module.resolve_client_identity(ctx, resolved_auth, token)
 	if identity then
 		auth.set_session_data(token, {
 			client = identity.client,
