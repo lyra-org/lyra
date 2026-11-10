@@ -1625,7 +1625,6 @@ dependencies = [
  "lyra-ffmpeg",
  "lyra-metadata",
  "matchit",
- "multimap",
  "nanoid",
  "percent-encoding",
  "rand 0.9.5",
@@ -1740,15 +1739,6 @@ checksum = "ac9557c559cd6fc9867e122e20d2cbefc9ca29d80d027a8e39310920ed2f0a97"
 dependencies = [
  "num-traits",
  "pxfm",
-]
-
-[[package]]
-name = "multimap"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
-dependencies = [
- "serde",
 ]
 
 [[package]]

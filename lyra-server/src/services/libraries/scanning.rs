@@ -17,7 +17,6 @@ use std::{
 };
 
 use blake3::Hasher;
-use multimap::MultiMap;
 use nanoid::nanoid;
 use rayon::iter::{
     IntoParallelIterator,
@@ -335,14 +334,14 @@ pub(crate) fn diff_and_match_moves(
         .iter()
         .map(|entry| entry.full_path.clone())
         .collect::<HashSet<_>>();
-    let mut db_by_sha1: MultiMap<String, &Entry> = MultiMap::new();
+    let mut db_by_sha1: HashMap<String, Vec<&Entry>> = HashMap::new();
     for e in stored.entries() {
         if e.kind == EntryKind::File
             && !scanned_paths.contains(&e.full_path)
             && !is_protected(&e.full_path, protected)
             && let Some(ref h) = e.hash
         {
-            db_by_sha1.insert(h.clone(), e);
+            db_by_sha1.entry(h.clone()).or_default().push(e);
         }
     }
 
@@ -373,21 +372,19 @@ pub(crate) fn diff_and_match_moves(
             .map(|&index| enriched[index].full_path.clone())
             .collect(),
     );
-    let mut new_by_hash: MultiMap<String, usize> = MultiMap::new();
+    let mut new_by_hash: HashMap<String, Vec<usize>> = HashMap::new();
     for &index in &new_files {
         let entry = &mut enriched[index];
         entry.hash = hashes
             .get(entry.full_path.to_string_lossy().as_ref())
             .cloned();
         if let Some(hash) = &entry.hash {
-            new_by_hash.insert(hash.clone(), index);
+            new_by_hash.entry(hash.clone()).or_default().push(index);
         }
     }
-    for (hash, indices) in new_by_hash.iter_all() {
-        let ([index], Some([old])) = (
-            indices.as_slice(),
-            db_by_sha1.get_vec(hash).map(Vec::as_slice),
-        ) else {
+    for (hash, indices) in &new_by_hash {
+        let ([index], Some([old])) = (indices.as_slice(), db_by_sha1.get(hash).map(Vec::as_slice))
+        else {
             continue;
         };
         let entry = &mut enriched[*index];
