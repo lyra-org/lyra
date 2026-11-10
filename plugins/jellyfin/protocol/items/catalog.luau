@@ -1326,10 +1326,15 @@ function helpers.to_track_item(
 	else
 		source = media.resolve_playback_source_for_track(track, include_media_info == true)
 	end
-	local container = media.jellyfin_container(source)
 	if include_media_info == true then
-		local built_sources, built_streams =
-			media.build_media_info(track, source, track.id, track.track_title, has_lyrics, container)
+		local built_sources, built_streams = media.build_media_info(
+			track,
+			source,
+			track.id,
+			track.track_title,
+			has_lyrics,
+			media.item_source_container(source)
+		)
 		media_sources, media_streams = built_sources :: any, built_streams :: any
 	end
 	local album_id = if release then item_ids.encode(release.id) else nil
@@ -1349,7 +1354,7 @@ function helpers.to_track_item(
 		IsFolder = false,
 		MediaType = "Audio",
 		LocationType = "FileSystem",
-		Container = container,
+		Container = media.probed_container(source),
 		SortName = track_sort_name,
 		RunTimeTicks = run_time_ticks,
 		DateCreated = helpers.unix_ms_to_iso8601(track.file_created_at_ms or track.created_at_ms),

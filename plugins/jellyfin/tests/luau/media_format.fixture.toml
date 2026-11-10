@@ -7,3 +7,19 @@ key = "viewer"
 key = "song"
 title = "Song"
 file = "song.opus"
+
+[[libraries]]
+key = "books"
+name = "Books"
+users = ["viewer"]
+
+[[releases]]
+key = "shelf"
+title = "Shelf"
+library = "books"
+
+[[tracks]]
+key = "book"
+title = "Book"
+release = "shelf"
+file = "book.m4b"

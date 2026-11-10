@@ -84,6 +84,24 @@ function module.probed_container(source: PlaybackSourceInfo?): string?
 	return module.jellyfin_container(source)
 end
 
+-- What an item's media source reports for a file whose format goes by several names: the file's
+-- extension, if it is one of them or an audiobook's `m4b`, else the first name. Upstream's item
+-- DTOs do the same, without `m4b`. Without the file there is nothing to go by.
+function module.item_source_container(source: PlaybackSourceInfo?): string?
+	local names = module.probed_container(source)
+	local entry = if source then source.entry else nil
+	if names == nil or entry == nil or string.find(names, ",", 1, true) == nil then
+		return module.jellyfin_container(source)
+	end
+	local extension = string.match(entry.full_path or entry.name or "", "%.([^%./\\]+)$")
+	local lowered = if extension then string.lower(extension) else nil
+	local listed = string.split(names, ",")
+	if lowered and (lowered == "m4b" or table.find(listed, lowered)) then
+		return lowered
+	end
+	return listed[1]
+end
+
 -- A source cut from a longer file, as a cue sheet's tracks are. Upstream has no such source; the
 -- file can't be handed over as the track, and its size isn't the track's, so clients are told to
 -- transcode, as upstream tells them for a source it can't direct play.
