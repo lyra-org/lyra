@@ -31,15 +31,21 @@
 //! when the list changes, as a prompt for this review. A module must declare
 //! every class it hands out for its methods to be listed.
 
-use std::collections::{
-    BTreeMap,
-    BTreeSet,
+use std::{
+    collections::{
+        BTreeMap,
+        BTreeSet,
+    },
+    sync::Arc,
 };
 
 use harmony_core::{
     GatedModule,
     ModuleSpec,
-    plugin::PluginHost,
+    plugin::{
+        PluginHost,
+        PluginManifest,
+    },
     scopes::{
         EffectiveScopes,
         ScopeGrowth,
@@ -782,7 +788,30 @@ pub(crate) fn plugin_host() -> PluginHost {
     )
     .expect("lyra is not a fixed manifest field")
     .with_scope_parents(scope_parents())
+    .with_scope_grant(
+        harmony_http::SCOPE,
+        Arc::new(harmony_http::HostsGrant::new(HOST_SETTING_KEY)),
+    )
     .with_reserved_ids(crate::routes::RESERVED_PLUGIN_IDS.iter().copied())
+}
+
+/// The key of a `hosts` entry naming one of the plugin's server-level
+/// settings, whose stored value gives the host.
+const HOST_SETTING_KEY: &str = "setting";
+
+/// The hosts `manifest` lists for its outbound HTTP scope; none when it does
+/// not declare the scope.
+pub(crate) fn http_hosts(manifest: &PluginManifest) -> Vec<harmony_http::HostEntry> {
+    host_entries(
+        manifest
+            .scope_grant(harmony_http::SCOPE)
+            .unwrap_or_default(),
+    )
+}
+
+/// The entries the grant `items` of the outbound HTTP scope hold.
+pub(crate) fn host_entries(items: &[String]) -> Vec<harmony_http::HostEntry> {
+    items.iter().filter_map(|item| item.parse().ok()).collect()
 }
 
 /// What one plugin newly reaches once a candidate is installed.
@@ -1838,4 +1867,98 @@ mod tests {
         ),
         ("lyra/users", &["list(options)", "get(ids)"]),
     ];
+
+    #[test]
+    fn manifests_list_the_hosts_of_the_http_scope() {
+        use harmony_core::plugin::PluginLoadError;
+        use harmony_http::HostEntry;
+        use serde_json::json;
+
+        let load = |http: serde_json::Value| {
+            let manifest = json!({
+                "schema_version": 1,
+                "id": "demo",
+                "name": "Demo",
+                "version": "1.0.0",
+                "lyra": concat!("=", env!("CARGO_PKG_VERSION")),
+                "description": "",
+                "scopes": [http],
+            });
+            harmony_core::plugin::PluginManager::load_manifest(
+                std::path::Path::new("plugin.json"),
+                manifest.to_string().as_bytes(),
+                &super::plugin_host(),
+            )
+        };
+        let listing = |hosts: serde_json::Value| json!({ "id": "harmony.http", "reason": "Fetches things.", "hosts": hosts });
+
+        let loaded = load(listing(json!([
+            "musicbrainz.org",
+            { "setting": "base_url" },
+            "*.archive.org",
+        ])))
+        .expect("valid hosts")
+        .manifest;
+        assert_eq!(
+            super::http_hosts(&loaded),
+            [
+                HostEntry::Subdomains("archive.org".into()),
+                HostEntry::Named("base_url".into()),
+                HostEntry::Host("musicbrainz.org".into()),
+            ]
+        );
+
+        for http in [
+            json!("harmony.http"),
+            json!({ "id": "harmony.http", "reason": "Fetches things." }),
+        ] {
+            let error = load(http.clone()).expect_err("hosts are required");
+            assert!(
+                matches!(
+                    &error,
+                    PluginLoadError::MissingScopeGrant { scope, key, .. }
+                        if scope == "harmony.http" && key == "hosts"
+                ),
+                "{http}: {error}"
+            );
+        }
+
+        let too_many: Vec<String> = (0..33).map(|index| format!("h{index}.example")).collect();
+        let mut other_key = listing(json!([]));
+        other_key["ports"] = json!([443]);
+        for (http, expected) in [
+            (listing(json!(["Example.org"])), "write 'example.org'"),
+            (
+                listing(json!(["https://example.org"])),
+                "is not a host name or address",
+            ),
+            (
+                listing(json!(["a.example", "a.example"])),
+                "'a.example' is listed more than once",
+            ),
+            (
+                listing(json!([{ "option": "base_url" }])),
+                "holds only `setting` with a name",
+            ),
+            (
+                listing(json!(too_many)),
+                "it lists 33 items, exceeds cap of 32",
+            ),
+            (
+                other_key,
+                "gives scope 'harmony.http' an unknown field `ports`",
+            ),
+            (
+                json!({ "id": "harmony.net", "reason": "Opens sockets.", "hosts": [] }),
+                "gives scope 'harmony.net' an unknown field `hosts`",
+            ),
+        ] {
+            match load(http.clone()) {
+                Err(PluginLoadError::ConfigParseError { error, .. }) => {
+                    assert!(error.contains(expected), "{http}: {error}")
+                }
+                other => panic!("{http}: expected a parse error, got {other:?}"),
+            }
+        }
+    }
 }

@@ -96,7 +96,8 @@ use super::{
 /// handler, with the extension its bytes call for.
 ///
 /// Registering a cover handler is the `harmony.http` scope gate, so the
-/// download needs no scope check of its own. The owner is looked up here,
+/// download needs no scope check of its own, and it reaches only the hosts
+/// the owning plugin lists. The owner is looked up here,
 /// not when the URL was produced, so that URLs queued by a batch sync are
 /// skipped once their plugin unloads or loses the handler.
 pub(super) async fn download_cover(

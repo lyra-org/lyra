@@ -966,6 +966,7 @@ dependencies = [
  "percent-encoding",
  "reqwest",
  "rustls",
+ "serde_json",
  "tokio",
  "tracing",
  "url",

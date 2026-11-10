@@ -87,12 +87,28 @@ pub(crate) fn write_plugin(
             "lyra": HOST_REQUIREMENT,
             "description": "",
             "entrypoint": "init.luau",
-            "scopes": scopes,
+            "scopes": scope_entries(scopes),
         })
         .to_string(),
     )?;
     std::fs::write(directory.join("init.luau"), init)?;
     Ok(())
+}
+
+/// `scopes` as a manifest's entries, the outbound HTTP scope allowing every host.
+#[cfg(test)]
+pub(crate) fn scope_entries(scopes: &[&str]) -> Vec<serde_json::Value> {
+    scopes
+        .iter()
+        .map(|scope| match *scope {
+            harmony_http::SCOPE => serde_json::json!({
+                "id": scope,
+                "reason": "Sends requests.",
+                "hosts": ["*"],
+            }),
+            scope => serde_json::json!(scope),
+        })
+        .collect()
 }
 
 /// Makes reloads discover the plugins in `plugins_dir`.

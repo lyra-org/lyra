@@ -7,7 +7,11 @@
   "description": "Enriches album genres and artist descriptions from WikiData and Wikipedia",
   "entrypoint": "init.luau",
   "scopes": [
-    { "id": "harmony.http", "reason": "Looks up genres and artists on Wikidata and Wikipedia." },
+    {
+      "id": "harmony.http",
+      "reason": "Looks up genres and artists on Wikidata and Wikipedia.",
+      "hosts": ["www.wikidata.org", "*.wikipedia.org"]
+    },
     "harmony.serde",
     "lyra.datastore",
     "lyra.genres",

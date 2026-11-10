@@ -386,11 +386,15 @@ pub async fn exec_plugins(
         anyhow::bail!("plugin discovery failed: {details}");
     }
 
+    let manifests = runtime.plugin_manifests().await?;
+    for manifest in &manifests {
+        crate::plugins::lifecycle::set_http_hosts(manifest).await;
+    }
     runtime
         .scope()
         .plugin
         .manifests
-        .replace(Arc::from(runtime.plugin_manifests().await?));
+        .replace(Arc::from(manifests));
     crate::plugins::STATE.publish_runtime(&crate::services::STATE.generation(), runtime.clone());
     runtime.exec_all().await?;
 

@@ -58,7 +58,10 @@ impl TempPluginDir {
                 "lyra": crate::plugins::testing::HOST_REQUIREMENT,
                 "description": "Artist cover pass test",
                 "entrypoint": "init.luau",
-                "scopes": ["harmony.http", "lyra.metadata"],
+                "scopes": [
+                    { "id": "harmony.http", "reason": "Fetches covers.", "hosts": ["127.0.0.1"] },
+                    "lyra.metadata",
+                ],
             }))?,
         )?;
         std::fs::write(
@@ -146,6 +149,9 @@ async fn publish_test_runtime(plugin: &TempPluginDir) -> Result<PluginExecutorHa
         Some(STATE.settings.clone()),
     )?;
     assert!(errors.is_empty(), "{errors:?}");
+    for manifest in runtime.plugin_manifests().await? {
+        crate::plugins::lifecycle::set_http_hosts(&manifest).await;
+    }
     runtime.exec_plugin(PLUGIN_ID).await?;
     crate::plugins::STATE.publish_runtime(&crate::services::STATE.generation(), runtime.clone());
     Ok(runtime)

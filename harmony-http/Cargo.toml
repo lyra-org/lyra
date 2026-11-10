@@ -13,6 +13,7 @@ fastrand = "2"
 httpdate = "1"
 percent-encoding = { workspace = true }
 reqwest = { workspace = true, default-features = false, features = ["charset", "http2", "json", "rustls-no-provider", "system-proxy"] }
+serde_json = { workspace = true }
 rustls = { workspace = true, default-features = false, features = ["ring", "std", "tls12"] }
 tokio = { workspace = true, features = ["sync", "time"] }
 tracing = { workspace = true }

@@ -7,7 +7,11 @@
   "description": "AI-powered music similarity and mix generation via AudioMuse",
   "entrypoint": "init.luau",
   "scopes": [
-    { "id": "harmony.http", "reason": "Talks to the AudioMuse server you configure to analyze tracks and build mixes." },
+    {
+      "id": "harmony.http",
+      "reason": "Talks to the AudioMuse server you configure to analyze tracks and build mixes.",
+      "hosts": [{ "setting": "base_url" }]
+    },
     "harmony.serde",
     { "id": "lyra.api", "reason": "Adds routes to start an AudioMuse analysis and check its status and health." },
     { "id": "lyra.mix", "reason": "Provides AudioMuse mixes, which can start from the listener's recent listens." },

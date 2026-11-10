@@ -3477,6 +3477,10 @@ FILE "album.flac" WAVE
         }
 
         let (url, server) = cover_server().await?;
+        harmony_http::set_plugin_hosts(
+            "release_covers_plugin",
+            [harmony_http::HostEntry::Host("127.0.0.1".into())],
+        );
         let dispatch = FakePluginDispatch::install();
         let handler = dispatch
             .register_artist_cover_handler(

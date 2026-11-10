@@ -7,7 +7,11 @@
   "description": "Sync your listens to ListenBrainz",
   "entrypoint": "init.luau",
   "scopes": [
-    { "id": "harmony.http", "reason": "Sends listens to ListenBrainz using each user's own token." },
+    {
+      "id": "harmony.http",
+      "reason": "Sends listens to ListenBrainz using each user's own token.",
+      "hosts": ["api.listenbrainz.org"]
+    },
     "harmony.serde",
     "lyra.entities",
     { "id": "lyra.listens", "reason": "Needed for lyra.listens.all. It only watches for new listens and never changes them." },

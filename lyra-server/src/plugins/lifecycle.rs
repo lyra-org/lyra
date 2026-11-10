@@ -80,10 +80,11 @@ impl PluginRegistries {
         self.restart_lock.clone().lock_owned().await
     }
 
-    /// Replaces the plugin's buckets with empty ones and sweeps its HTTP limits. Routes are the
-    /// caller's to rebuild, as an unpublished scope has none installed.
+    /// Replaces the plugin's buckets with empty ones, sweeps its HTTP limits and forgets its
+    /// HTTP hosts. Routes are the caller's to rebuild, as an unpublished scope has none installed.
     async fn clear_plugin(&self, scope: &VmScope, plugin_id: &PluginId) {
         scope.teardown_plugin(plugin_id).await;
+        harmony_http::remove_plugin_hosts(plugin_id.as_str());
         harmony_http::mark_plugin_limits_stale(plugin_id.as_str()).await;
         harmony_http::clear_plugin_cache(plugin_id.as_str());
         sweep_stale_http_limits(plugin_id).await;
@@ -258,7 +259,13 @@ impl PluginRegistries {
             harmony_http::clear_plugin_cache(plugin_id.as_str());
             if !new_ids.contains(plugin_id) {
                 sweep_stale_http_limits(plugin_id).await;
+                harmony_http::remove_plugin_hosts(plugin_id.as_str());
             }
+        }
+        // From the manifests this runtime loaded, with the old one stopped and none of its own
+        // code run yet.
+        for manifest in runtime.scope().plugin.manifests.get().iter() {
+            set_http_hosts(manifest).await;
         }
 
         let exec = if shutdown.is_cancelled() {
@@ -303,12 +310,17 @@ impl PluginRegistries {
         Ok(PublishOutcome::Published)
     }
 
+    /// Leaves no runtime published, stopping `runtime` and forgetting the HTTP hosts set for
+    /// its plugins.
     async fn abandon_runtime(
         &self,
         runtime: &crate::plugins::bootstrap::PluginRuntime,
     ) -> PublishOutcome {
         crate::services::STATE.generation().runtime.replace(None);
         stop_unpublished(runtime).await;
+        for manifest in runtime.scope().plugin.manifests.get().iter() {
+            harmony_http::remove_plugin_hosts(&manifest.id);
+        }
         PublishOutcome::ShuttingDown
     }
 
@@ -451,6 +463,15 @@ impl PluginRegistries {
         // own; the sweep drops the rest.
         harmony_http::mark_plugin_limits_stale(plugin_id.as_str()).await;
         harmony_http::clear_plugin_cache(plugin_id.as_str());
+        if let Some(manifest) = scope
+            .plugin
+            .manifests
+            .get()
+            .iter()
+            .find(|manifest| manifest.id == plugin_id.as_str())
+        {
+            set_http_hosts(manifest).await;
+        }
 
         scope.begin_staging(plugin_id.clone());
         let restarted = {
@@ -534,12 +555,52 @@ async fn sweep_stale_http_limits(plugin_id: &PluginId) {
     harmony_http::remove_stale_plugin_limits(plugin_id.as_str()).await;
 }
 
+/// Sets the hosts the plugin's requests may reach, for the run about to start, to the ones
+/// `manifest` lists. An entry naming a setting allows the host of the URL or host stored as the
+/// plugin's own server-level setting of that name, and nothing while none is stored: a default
+/// the plugin declares never counts, nor does a user's setting.
+pub(crate) async fn set_http_hosts(manifest: &harmony_core::plugin::PluginManifest) {
+    use harmony_http::HostEntry;
+
+    let entries = crate::plugins::scopes::http_hosts(manifest);
+    let stored = if entries
+        .iter()
+        .any(|entry| matches!(entry, HostEntry::Named(_)))
+    {
+        let db = crate::services::STATE.db.read().await;
+        crate::services::settings::plugins::load_stored_values(&db, &manifest.id).unwrap_or_else(
+            |error| {
+                tracing::warn!(
+                    plugin_id = %manifest.id,
+                    error = %format!("{error:#}"),
+                    "could not read the settings naming the plugin's HTTP hosts"
+                );
+                Default::default()
+            },
+        )
+    } else {
+        Default::default()
+    };
+    let hosts = entries.into_iter().filter_map(|entry| match entry {
+        HostEntry::Named(setting) => stored
+            .get(&setting)
+            .and_then(serde_json::Value::as_str)
+            .and_then(HostEntry::of_address),
+        entry => Some(entry),
+    });
+    harmony_http::set_plugin_hosts(&manifest.id, hosts);
+}
+
 fn plugin_ids(manifests: &[harmony_core::plugin::PluginManifest]) -> Vec<PluginId> {
     manifests
         .iter()
         .filter_map(|manifest| PluginId::new(manifest.id.clone()).ok())
         .collect()
 }
+
+#[cfg(test)]
+#[path = "lifecycle/http_hosts_tests.rs"]
+mod http_hosts_tests;
 
 #[cfg(test)]
 #[path = "lifecycle/reentry_tests.rs"]

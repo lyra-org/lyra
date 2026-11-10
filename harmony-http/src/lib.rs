@@ -4,8 +4,17 @@
 // www.meshiplaw.com/lyra.
 
 mod cache;
+mod hosts;
 
 pub use cache::MAX_CACHE_TTL_MS;
+pub use hosts::{
+    HostEntry,
+    HostsGrant,
+    host_not_allowed_message,
+    remove_plugin_hosts,
+    set_plugin_hosts,
+    test_plugin_reaches,
+};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -968,33 +977,61 @@ fn jittered_backoff(cap: Duration) -> Duration {
     Duration::from_nanos(fastrand::u64(0..=cap_nanos))
 }
 
+/// The `error_kind` of a request refused because the plugin's hosts do not
+/// allow the host of its URL, or of a redirect it was sent to.
+pub const HOST_NOT_ALLOWED: &str = "host_not_allowed";
+
+/// The error answering a request to `url` that `allowed` refuses.
+fn host_refusal(allowed: Option<&hosts::AllowedHosts>, url: &url::Url) -> Option<HttpResponse> {
+    let reason = allowed?.refusal(url)?;
+    tracing::debug!(reason, "request refused");
+    Some(HttpResponse::error(HOST_NOT_ALLOWED, None, reason))
+}
+
 /// Every outbound request, a plugin's own or one the host makes on its
 /// behalf, runs through here, attributed to `plugin`. Each hop of a redirect
-/// chain runs under the limits of the host it reaches.
+/// chain runs under the limits of the host it reaches, and reaches it only
+/// when the plugin's hosts, as they stand when the request starts, allow it.
+/// A request outside any plugin reaches any host.
 async fn execute_request(plugin: Option<&str>, options: HttpRequestOptions) -> HttpResponse {
     let span = tracing::debug_span!("http_request", plugin, url = loggable_url(&options.url));
-    let request = cache::cached(plugin, options, |options| {
-        run_request(options, |opts| async move {
-            execute_single_request(&opts).await
+    let request = async {
+        let allowed = plugin.map(hosts::snapshot);
+        // Ahead of the cache, which answers without following anything.
+        if let Ok(url) = url::Url::parse(&options.url)
+            && is_http_scheme(&url)
+            && let Some(refused) = host_refusal(allowed.as_deref(), &url)
+        {
+            return refused;
+        }
+        cache::cached(plugin, options, |options| {
+            run_request(options, allowed.clone(), |opts| async move {
+                execute_single_request(&opts).await
+            })
         })
-    });
+        .await
+    };
     tracing::Instrument::instrument(request, span).await
 }
 
 /// Runs `options` and the redirects it leads to within its `timeout_ms`,
 /// answering a `timeout` error once it runs out. `request_fn` sends each
 /// attempt; tests pass a fake in place of [`execute_single_request`].
-async fn run_request<F, Fut>(options: HttpRequestOptions, request_fn: F) -> HttpResponse
+async fn run_request<F, Fut>(
+    options: HttpRequestOptions,
+    allowed: Option<Arc<hosts::AllowedHosts>>,
+    request_fn: F,
+) -> HttpResponse
 where
     F: Fn(HttpRequestOptions) -> Fut,
     Fut: std::future::Future<Output = HttpResponse>,
 {
     let Some(timeout_ms) = options.timeout_ms else {
-        return follow_redirects(options, request_fn).await;
+        return follow_redirects(options, allowed.as_deref(), request_fn).await;
     };
     tokio::time::timeout(
         Duration::from_millis(timeout_ms),
-        follow_redirects(options, request_fn),
+        follow_redirects(options, allowed.as_deref(), request_fn),
     )
     .await
     .unwrap_or_else(|_| {
@@ -1006,7 +1043,11 @@ where
     })
 }
 
-async fn follow_redirects<F, Fut>(mut options: HttpRequestOptions, request_fn: F) -> HttpResponse
+async fn follow_redirects<F, Fut>(
+    mut options: HttpRequestOptions,
+    allowed: Option<&hosts::AllowedHosts>,
+    request_fn: F,
+) -> HttpResponse
 where
     F: Fn(HttpRequestOptions) -> Fut,
     Fut: std::future::Future<Output = HttpResponse>,
@@ -1029,6 +1070,9 @@ where
             }
         } else if let Some(reason) = redirect_refusal(&url, &visited) {
             return HttpResponse::error("redirect", None, reason);
+        }
+        if let Some(refused) = host_refusal(allowed, &url) {
+            return refused;
         }
 
         let response = execute_request_loop(options.clone(), &request_fn).await;
@@ -1147,9 +1191,9 @@ impl std::error::Error for Error {}
 
 /// Makes `request` on behalf of `plugin_id`, as the plugin's own request
 /// would run: under the same per-host rate limits, cooldowns and
-/// concurrency caps, with the default user agent and redirect policy. The
-/// host decides whether the plugin may reach the network; this only runs the
-/// request.
+/// concurrency caps, with the default user agent and redirect policy, and
+/// to the plugin's hosts alone. The host decides whether the plugin may
+/// reach the network; this only runs the request.
 pub async fn request_as(plugin_id: &str, request: Request) -> Result<Response, Error> {
     let options = HttpRequestOptions {
         url: request.url,
@@ -1193,6 +1237,20 @@ fn get_default_user_agent() -> Option<String> {
         .clone()
 }
 
+/// The module plugins send HTTP requests through.
+///
+/// A plugin's requests reach only the hosts set for it, and none until some
+/// are, so a host application installing this module for plugins must:
+///
+/// - register [`HostsGrant`] for the scope it gates the module behind with
+///   `PluginHost::with_scope_grant`, so manifests list their hosts and
+///   updates reaching more are seen;
+/// - call [`set_plugin_hosts`] with each plugin's own list before the
+///   plugin's entrypoint runs, on every start, reload and restart, passing
+///   the host each named entry stands for in its place;
+/// - call [`remove_plugin_hosts`] when a plugin is torn down or uninstalled.
+///
+/// A chunk outside any plugin is not bound by any list.
 pub struct HttpModule;
 
 async fn configure_rate_limit(
@@ -1830,7 +1888,9 @@ impl DescribeInterface for HttpResponse {
             FieldDescriptor {
                 name: "error_kind",
                 ty: Option::<String>::luau_type(),
-                description: Some("Transport error category when `success` is false."),
+                description: Some(
+                    "Transport error category when `success` is false; `host_not_allowed` when the plugin's manifest does not list the host of the URL, or of a redirect.",
+                ),
             },
             FieldDescriptor {
                 name: "retries",
@@ -2473,6 +2533,215 @@ mod tests {
         .into_bytes()
     }
 
+    fn allow(plugin_id: &str, hosts: &[&str]) {
+        super::set_plugin_hosts(
+            plugin_id,
+            hosts.iter().map(|host| host.parse().expect("host entry")),
+        );
+    }
+
+    fn get(url: String) -> super::HttpRequestOptions {
+        options(super::HttpMethod::Get, url)
+    }
+
+    #[tokio::test]
+    async fn a_plugin_reaches_only_its_hosts() {
+        use std::sync::atomic::{
+            AtomicUsize,
+            Ordering,
+        };
+        static HITS: AtomicUsize = AtomicUsize::new(0);
+
+        let port = serve(|_, _, _| {
+            HITS.fetch_add(1, Ordering::SeqCst);
+            ok(b"reached")
+        })
+        .await;
+        let url = format!("http://127.0.0.1:{port}/");
+
+        let response = super::execute_request(Some("hosts-none-set"), get(url.clone())).await;
+        assert_eq!(
+            response.error_kind.as_deref(),
+            Some(super::HOST_NOT_ALLOWED),
+            "a plugin without a list reaches no host"
+        );
+        assert_eq!(response.status_code, None);
+        assert_eq!(
+            response.status_message,
+            "host '127.0.0.1' is not among the plugin's hosts"
+        );
+
+        allow("hosts-other", &["localhost", "*.example.org"]);
+        let response = super::execute_request(Some("hosts-other"), get(url.clone())).await;
+        assert_eq!(
+            response.error_kind.as_deref(),
+            Some(super::HOST_NOT_ALLOWED)
+        );
+        let error = super::request_as("hosts-other", super::Request::get(url.clone()))
+            .await
+            .expect_err("a request on the plugin's behalf is bound by its hosts");
+        assert_eq!(error.kind(), super::HOST_NOT_ALLOWED);
+        assert_eq!(HITS.load(Ordering::SeqCst), 0, "nothing was sent");
+
+        allow("hosts-listed", &["127.0.0.1"]);
+        let response = super::execute_request(Some("hosts-listed"), get(url.clone())).await;
+        assert!(response.success, "{:?}", response.status_message);
+        let response = super::execute_request(None, get(url)).await;
+        assert!(
+            response.success,
+            "a request outside any plugin is not bound"
+        );
+        assert_eq!(HITS.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn every_redirect_hop_must_be_among_the_plugins_hosts() {
+        // `127.0.0.1` and `localhost` are two hosts.
+        let port = serve(|path, _, port| match path {
+            "/start" => redirect(&format!("http://localhost:{port}/landed")),
+            _ => ok(b"landed"),
+        })
+        .await;
+        let start = format!("http://127.0.0.1:{port}/start");
+
+        allow("hosts-first-hop", &["127.0.0.1"]);
+        let response = super::execute_request(Some("hosts-first-hop"), get(start.clone())).await;
+        assert_eq!(
+            response.error_kind.as_deref(),
+            Some(super::HOST_NOT_ALLOWED)
+        );
+        assert_eq!(
+            response.status_message,
+            "host 'localhost' is not among the plugin's hosts"
+        );
+
+        allow("hosts-both-hops", &["127.0.0.1", "localhost"]);
+        let response = super::execute_request(Some("hosts-both-hops"), get(start)).await;
+        assert!(response.success, "{:?}", response.status_message);
+        assert_eq!(response.body.0, b"landed");
+    }
+
+    #[tokio::test]
+    async fn a_request_keeps_the_hosts_it_started_with() {
+        let port = serve(|path, _, port| match path {
+            "/start" => {
+                super::remove_plugin_hosts("hosts-snapshot");
+                redirect(&format!("http://localhost:{port}/landed"))
+            }
+            _ => ok(b"landed"),
+        })
+        .await;
+        allow("hosts-snapshot", &["127.0.0.1", "localhost"]);
+
+        let start = format!("http://127.0.0.1:{port}/start");
+        let response = super::execute_request(Some("hosts-snapshot"), get(start.clone())).await;
+        assert!(response.success, "{:?}", response.status_message);
+
+        let response = super::execute_request(Some("hosts-snapshot"), get(start)).await;
+        assert_eq!(
+            response.error_kind.as_deref(),
+            Some(super::HOST_NOT_ALLOWED),
+            "the next request reads the hosts anew"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_kept_response_does_not_answer_for_a_host_no_longer_allowed() {
+        use std::sync::atomic::{
+            AtomicUsize,
+            Ordering,
+        };
+        static HITS: AtomicUsize = AtomicUsize::new(0);
+
+        let port = serve(|_, _, _| {
+            HITS.fetch_add(1, Ordering::SeqCst);
+            ok(b"kept")
+        })
+        .await;
+        let request = || {
+            let mut options = get(format!("http://127.0.0.1:{port}/"));
+            options.cache_ttl_ms = Some(60_000);
+            options
+        };
+
+        allow("hosts-cached", &["127.0.0.1"]);
+        for _ in 0..2 {
+            let response = super::execute_request(Some("hosts-cached"), request()).await;
+            assert!(response.success, "{:?}", response.status_message);
+        }
+        assert_eq!(HITS.load(Ordering::SeqCst), 1, "the response was kept");
+
+        allow("hosts-cached", &[]);
+        let response = super::execute_request(Some("hosts-cached"), request()).await;
+        assert_eq!(
+            response.error_kind.as_deref(),
+            Some(super::HOST_NOT_ALLOWED)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn luau_sees_a_refused_host_as_an_error_kind() -> harmony_luau::runtime::Result<()> {
+        let vm = harmony_luau::Vm::new()?;
+        vm.data().insert(harmony_core::LocalScheduler::new())?;
+        let scheduler = vm.data().get::<harmony_core::LocalScheduler>()?;
+        let origin = harmony_core::ChunkOrigin {
+            plugin: Some(std::sync::Arc::from("luau-hosts-plugin")),
+            ..harmony_core::ChunkOrigin::default()
+        };
+        let spec = HttpModule::module_spec();
+        let table = harmony_core::luau::install_module(&vm, &origin, &spec)?;
+        vm.set_global_table("http", &table)?;
+        allow("luau-hosts-plugin", &["listed.example"]);
+
+        let root = vm.load_chunk(&harmony_luau::Chunk::new(
+            std::sync::Arc::<[u8]>::from(
+                &br#"
+                    local response = http.request({
+                        url = "https://unlisted.example/path?key=secret",
+                        method = http.HttpMethod.Get,
+                    })
+                    seen_success = response.success
+                    seen_status = response.status_code
+                    seen_kind = response.error_kind
+                    seen_message = response.status_message
+                "#[..],
+            ),
+            harmony_luau::ChunkOrigin::default(),
+        ))?;
+        let thread = vm.create_thread(&root)?;
+        scheduler.spawn_luau_thread(
+            harmony_core::CallContext::default(),
+            vm.clone(),
+            thread,
+            vec![],
+        );
+        for _ in 0..100 {
+            scheduler.poll_ready();
+            tokio::task::yield_now().await;
+        }
+
+        let values = vm.eval(
+            std::sync::Arc::<[u8]>::from(
+                &b"return seen_success, seen_status, seen_kind, seen_message"[..],
+            ),
+            harmony_luau::ChunkOrigin::default(),
+        )?;
+        let text = |value: &harmony_luau::Value| match value {
+            harmony_luau::Value::String(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+            other => format!("{other:?}"),
+        };
+        assert_eq!(
+            values.iter().map(text).collect::<Vec<_>>(),
+            [
+                "Boolean(false)",
+                "Nil",
+                "host_not_allowed",
+                "host 'unlisted.example' is not among the plugin's hosts",
+            ]
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     async fn request_as_follows_redirects_up_to_the_limit() {
         let port = serve(|path, _, port| {
@@ -2485,6 +2754,7 @@ mod tests {
         })
         .await;
         let at = |hop: usize| super::Request::get(format!("http://127.0.0.1:{port}/{hop}"));
+        allow("test", &["127.0.0.1"]);
 
         let response = super::request_as("test", at(super::MAX_REDIRECTS))
             .await
@@ -2510,6 +2780,7 @@ mod tests {
         })
         .await;
         let request = |path: &str| super::Request::get(format!("http://127.0.0.1:{port}{path}"));
+        allow("test", &["127.0.0.1"]);
 
         for path in ["/declared", "/streamed"] {
             let error = super::request_as("test", request(path).max_body_bytes(63))
@@ -2606,6 +2877,7 @@ mod tests {
     #[tokio::test]
     async fn request_errors_omit_url_credentials() {
         let port = serve(|_, _, _| Vec::new()).await;
+        allow("test", &["127.0.0.1"]);
         let url = format!("http://user:hunter2@127.0.0.1:{port}/rest/ping?apiKey=secret#frag");
 
         let error = super::request_as("test", super::Request::get(url))
@@ -2802,6 +3074,7 @@ mod tests {
         let started = Instant::now();
         let response = super::run_request(
             options_with_timeout(&format!("https://{host}/x"), Some(100)),
+            None,
             |_| async { ok_response() },
         )
         .await;
@@ -2816,6 +3089,7 @@ mod tests {
         let started = Instant::now();
         let response = super::run_request(
             options_with_timeout(&format!("https://{host}/x"), Some(100)),
+            None,
             |_| async { super::HttpResponse::error("retry", Some(503), "unavailable".into()) },
         )
         .await;
@@ -2837,6 +3111,7 @@ mod tests {
         let started = Instant::now();
         let response = super::run_request(
             options_with_timeout(&format!("https://{host}/x"), Some(100)),
+            None,
             |_| {
                 let attempts = attempts.clone();
                 async move {
@@ -2864,6 +3139,7 @@ mod tests {
     async fn a_request_within_its_timeout_answers_as_usual() {
         let response = super::run_request(
             options_with_timeout("https://timeout-in-time-test.example/x", Some(1000)),
+            None,
             |_| async { ok_response() },
         )
         .await;
@@ -2887,6 +3163,7 @@ mod tests {
         let started = Instant::now();
         let response = super::run_request(
             options_with_timeout(&format!("https://{first}/start"), Some(100)),
+            None,
             |opts| {
                 let hops = hops.clone();
                 async move {
@@ -2925,14 +3202,15 @@ mod tests {
             let timeout_ms = *timeout_ms;
             requests.push(tokio::spawn(async move {
                 let admitted = std::sync::Arc::new(std::sync::Mutex::new(None));
-                let response = super::run_request(options_with_timeout(&url, timeout_ms), |_| {
-                    let admitted = admitted.clone();
-                    async move {
-                        *admitted.lock().unwrap() = Some(started.elapsed());
-                        ok_response()
-                    }
-                })
-                .await;
+                let response =
+                    super::run_request(options_with_timeout(&url, timeout_ms), None, |_| {
+                        let admitted = admitted.clone();
+                        async move {
+                            *admitted.lock().unwrap() = Some(started.elapsed());
+                            ok_response()
+                        }
+                    })
+                    .await;
                 let admitted = *admitted.lock().unwrap();
                 if response.success { admitted } else { None }
             }));
@@ -2974,6 +3252,7 @@ mod tests {
             let admitted = std::sync::Arc::new(std::sync::Mutex::new(None));
             super::run_request(
                 options_with_timeout(&format!("https://{host}/x"), None),
+                None,
                 |_| {
                     let admitted = admitted.clone();
                     async move {

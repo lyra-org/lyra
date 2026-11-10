@@ -2909,7 +2909,8 @@ mod tests {
     fn changed_with_http() -> String {
         let mut manifest: serde_json::Value =
             serde_json::from_str(&changed_at(HOST_REQUIREMENT)).expect("manifest");
-        manifest["scopes"] = serde_json::json!(["harmony.http"]);
+        manifest["scopes"] =
+            serde_json::json!(crate::plugins::testing::scope_entries(&["harmony.http"]));
         manifest.to_string()
     }
 
@@ -2979,7 +2980,11 @@ mod tests {
     /// `changed` 2.0.0, explaining `harmony.http` with `reason`.
     fn changed_explaining_http(reason: &str) -> anyhow::Result<String> {
         let mut manifest: serde_json::Value = serde_json::from_str(&changed_at(HOST_REQUIREMENT))?;
-        manifest["scopes"] = serde_json::json!([{ "id": "harmony.http", "reason": reason }]);
+        manifest["scopes"] = serde_json::json!([{
+            "id": "harmony.http",
+            "reason": reason,
+            "hosts": ["*.example.org", "example.org"],
+        }]);
         Ok(manifest.to_string())
     }
 
