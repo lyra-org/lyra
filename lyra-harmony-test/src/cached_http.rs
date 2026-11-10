@@ -189,6 +189,8 @@ pub type LiveRequestCount = Arc<AtomicUsize>;
 pub type CacheMisses = Arc<RwLock<Vec<String>>>;
 /// Ordered request trace for one test run.
 pub type RequestTrace = Arc<RwLock<Vec<RequestTraceEntry>>>;
+/// The hosts requested during one test run that the plugin's manifest does not list.
+pub type UnlistedHosts = Arc<RwLock<std::collections::BTreeSet<String>>>;
 
 pub fn new_accessed_keys() -> AccessedKeys {
     Arc::new(RwLock::new(HashSet::new()))
@@ -210,6 +212,10 @@ pub fn new_request_trace() -> RequestTrace {
     Arc::new(RwLock::new(Vec::new()))
 }
 
+pub fn new_unlisted_hosts() -> UnlistedHosts {
+    Arc::new(RwLock::new(std::collections::BTreeSet::new()))
+}
+
 pub async fn take_cache_misses(cache_misses: &CacheMisses) -> Vec<String> {
     std::mem::take(&mut *cache_misses.write().await)
 }
@@ -223,6 +229,7 @@ pub(crate) struct CachedHttpState {
     pub(crate) live_request_count: LiveRequestCount,
     pub(crate) cache_misses: CacheMisses,
     pub(crate) request_trace: RequestTrace,
+    pub(crate) unlisted_hosts: UnlistedHosts,
     pub(crate) live_policy: LivePolicy,
     pub(crate) plugin_id: String,
 }
@@ -421,6 +428,13 @@ fn request_callback(
     let options = request_options_from_luau(&options_table)?;
     let future = luau::ScheduledFuture::new(async move {
         state.request_count.fetch_add(1, Ordering::Relaxed);
+
+        // Stored responses would otherwise hide a host the server refuses the plugin.
+        if !harmony_http::test_plugin_reaches(&state.plugin_id, &options.url) {
+            let host = extract_domain(&options.url).unwrap_or_else(|| options.url.clone());
+            state.unlisted_hosts.write().await.insert(host.clone());
+            return Ok(host_not_allowed_value(&host));
+        }
 
         let cache_key = xxh3_hex(&options.url);
         {
@@ -656,6 +670,26 @@ fn body_too_large_value(status_code: u16, limit: usize) -> luau::Value {
     table.set_field("cookies", luau::OwnedTable::with_capacity(0, 0));
     table.set_field("body", luau::Value::String(Vec::new()));
     table.set_field("error_kind", luau::Value::String(b"body".to_vec()));
+    table.set_field("retries", luau::Value::Number(0.0));
+    table.set_field("rate_limited", false);
+    luau::Value::TableData(table)
+}
+
+/// The response `harmony/http` gives a request to a host the plugin does not list.
+fn host_not_allowed_value(host: &str) -> luau::Value {
+    let mut table = luau::OwnedTable::with_capacity(0, 8);
+    table.set_field("success", false);
+    table.set_field(
+        "status_message",
+        luau::Value::String(harmony_http::host_not_allowed_message(host).into_bytes()),
+    );
+    table.set_field("headers", luau::OwnedTable::with_capacity(0, 0));
+    table.set_field("cookies", luau::OwnedTable::with_capacity(0, 0));
+    table.set_field("body", luau::Value::String(Vec::new()));
+    table.set_field(
+        "error_kind",
+        luau::Value::String(harmony_http::HOST_NOT_ALLOWED.as_bytes().to_vec()),
+    );
     table.set_field("retries", luau::Value::Number(0.0));
     table.set_field("rate_limited", false);
     luau::Value::TableData(table)

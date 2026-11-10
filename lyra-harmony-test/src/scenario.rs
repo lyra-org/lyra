@@ -91,6 +91,7 @@ pub async fn run(options: RunOptions<'_>) -> anyhow::Result<RunResult> {
     let live_request_count = crate::cached_http::new_live_request_count();
     let cache_misses = crate::cached_http::new_cache_misses();
     let request_trace = crate::cached_http::new_request_trace();
+    let unlisted_hosts = crate::cached_http::new_unlisted_hosts();
     let library = lyra_server::testing::LibraryFixtureConfig {
         directory: PathBuf::from(&scenario.library.directory),
         language: scenario.library.language.clone(),
@@ -113,6 +114,7 @@ pub async fn run(options: RunOptions<'_>) -> anyhow::Result<RunResult> {
         live_request_count: live_request_count.clone(),
         cache_misses: cache_misses.clone(),
         request_trace: request_trace.clone(),
+        unlisted_hosts: unlisted_hosts.clone(),
         live_policy,
         plugin_id: plugin.id().to_string(),
     });
@@ -150,6 +152,13 @@ pub async fn run(options: RunOptions<'_>) -> anyhow::Result<RunResult> {
     {
         failures.push(format!(
             "  request limit exceeded: {total_requests} requests (max {max})"
+        ));
+    }
+
+    for host in unlisted_hosts.read().await.iter() {
+        failures.push(format!(
+            "  request to {host}, which the `hosts` of harmony.http in the plugin's manifest do \
+             not list"
         ));
     }
 
