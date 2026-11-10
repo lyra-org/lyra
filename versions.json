@@ -1,4 +1,5 @@
 [
+  { "commit": "ef61ef193c346c4e10af168f02b7a7bf9238bdad", "lyra": "0.0.2-dev.2" },
   { "commit": "1255c1f46f3939e71786189b2d28544dc3ae47db", "lyra": "0.0.2-dev.1" },
   { "commit": "0af6303ca3116c3eeeec3fd02071e7f7a017c917", "lyra": "0.0.1" },
   { "commit": "b98d64513a0c0febc53249e21cbf61abccf12d16", "lyra": "0.0.1-dev.5" },
