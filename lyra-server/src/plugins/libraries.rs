@@ -44,6 +44,8 @@ use crate::{
         auth::{
             Principal,
             access,
+            owners::Owners,
+            resolve_principal,
         },
         libraries::{
             LibraryRun,
@@ -111,7 +113,7 @@ impl Reader {
 
 #[harmony_macros::module(
     id = "lyra/libraries",
-    description = "The libraries the caller can see, and their syncs and metadata refreshes. A library runs one sync or refresh at a time. `sync`, `refresh` and `cancel_sync` need the `lyra.libraries.manage` scope too, and a calling user with the manage_libraries permission, as the database has them when the call runs.",
+    description = "The libraries the caller can see, and their syncs and metadata refreshes. A library runs one sync or refresh at a time. `sync`, `refresh` and `cancel_sync` need the `lyra.libraries.manage` scope too, and a calling user with the manage_libraries permission, as the database has them when the call runs. `by_user` needs the `lyra.libraries.all` scope too.",
     docs_feature = "docgen"
 )]
 impl LibrariesModule {
@@ -178,6 +180,44 @@ impl LibrariesModule {
             values.push((entity_db_id, list));
         }
         Ok(entities.keyed(values))
+    }
+
+    #[harmony(
+        description = "The libraries each of these users can see, keyed by user id, in the order they were created: every library for an admin, none for a user granted none. Users that don't exist are absent. The caller's own id needs nothing more; another user's requires the manage_users permission and every permission that user holds, and raises without them. Needs the `lyra.libraries.all` scope too.",
+        returns(HashMap<String, Vec<LibraryRecord>>)
+    )]
+    async fn by_user(
+        user_ids: UniqueIds,
+        #[context] db: Db,
+        #[context] principal: Principal,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let db = db.read().await;
+        let libraries = lyra_db::libraries::get(&*db)?;
+        let reader = Reader(Some(
+            principal
+                .current(&db)
+                .map_err(crate::plugins::errors::auth_error)?,
+        ));
+        let mut by_user = luau::OwnedTable::with_capacity(0, user_ids.0.len());
+        for user_id in user_ids.0 {
+            let (_, users) =
+                crate::plugins::auth::owned_users(&db, &principal, Owners::User(&user_id))?;
+            let Some(user) = users.into_iter().next() else {
+                continue;
+            };
+            let Some(user_db_id) = user.db_id else {
+                continue;
+            };
+            let user = resolve_principal(&db, user_db_id, user);
+            let mut list = luau::OwnedTable::new();
+            for library in &libraries {
+                if user.accessible_library_ids.contains(&library.id) {
+                    list.push_array(reader.record(library.clone())?);
+                }
+            }
+            by_user.set_field(user_id, list);
+        }
+        Ok(by_user)
     }
 
     #[harmony(

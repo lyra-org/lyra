@@ -20,6 +20,7 @@
     { "id": "lyra.favorites", "reason": "Syncs starred items with Subsonic apps." },
     "lyra.genres",
     "lyra.libraries",
+    { "id": "lyra.libraries.all", "reason": "Lists the music folders each user can browse." },
     { "id": "lyra.libraries.manage", "reason": "Lets Subsonic apps start a library scan." },
     { "id": "lyra.listens", "reason": "Shows play counts and records scrobbles from Subsonic apps." },
     { "id": "lyra.lyrics", "reason": "Shows lyrics in Subsonic apps." },

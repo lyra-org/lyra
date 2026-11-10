@@ -4,6 +4,7 @@ without_scopes = [
   "lyra.favorites.all",
   "lyra.genres.manage",
   "lyra.labels.manage",
+  "lyra.libraries.all",
   "lyra.libraries.manage",
   "lyra.listens.all",
   "lyra.lyrics.all",

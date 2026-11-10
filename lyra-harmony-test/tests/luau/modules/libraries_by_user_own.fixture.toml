@@ -1,0 +1,12 @@
+run_as = "listener"
+
+[[users]]
+key = "listener"
+
+[[users]]
+key = "other"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener", "other"]

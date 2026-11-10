@@ -392,6 +392,12 @@ scopes! {
         module: libraries::LibrariesModule::module_spec,
         effects: &[],
     },
+    LibrariesAll => {
+        id: "lyra.libraries.all",
+        within: Libraries,
+        functions: &["by_user"],
+        effects: &[Effect::ReadsPersonal(PersonalKind::LibraryAccess, Users::All)],
+    },
     LibrariesManage => {
         id: "lyra.libraries.manage",
         within: Libraries,
@@ -1059,6 +1065,7 @@ mod tests {
                 "lyra.labels.manage",
                 &["Changes the library's record labels"],
             ),
+            ("lyra.libraries.all", &["Reads every user's library access"]),
             (
                 "lyra.libraries.manage",
                 &[
@@ -1246,6 +1253,7 @@ mod tests {
             ("lyra.favorites.all", "lyra.favorites"),
             ("lyra.genres.manage", "lyra.genres"),
             ("lyra.labels.manage", "lyra.labels"),
+            ("lyra.libraries.all", "lyra.libraries"),
             ("lyra.libraries.manage", "lyra.libraries"),
             ("lyra.listens.all", "lyra.listens"),
             ("lyra.lyrics.all", "lyra.lyrics"),
@@ -1645,6 +1653,7 @@ mod tests {
                 "list()",
                 "get(library_ids)",
                 "by_entity(entity_ids)",
+                "by_user(user_ids) [lyra.libraries.all]",
                 "sync(library_id, options) [lyra.libraries.manage]",
                 "refresh(library_id, options) [lyra.libraries.manage]",
                 "sync_status(library_ids, options)",

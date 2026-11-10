@@ -20,6 +20,7 @@ local function rejects(f: (...any) -> ...any, message: string, ...: any)
 	assert(string.find(tostring(err), message, 1, true), `error {err}`)
 end
 
+rejects(libraries.by_user, "libraries.by_user requires the lyra.libraries.all scope", { "id" })
 rejects(libraries.sync, "libraries.sync requires the lyra.libraries.manage scope", "id")
 rejects(libraries.refresh, "libraries.refresh requires the lyra.libraries.manage scope", "id")
 rejects(libraries.cancel_sync, "libraries.cancel_sync requires the lyra.libraries.manage scope", "id")

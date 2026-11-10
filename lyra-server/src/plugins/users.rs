@@ -39,19 +39,12 @@ struct UserRecord {
     username: String,
     role: Option<String>,
     permissions: Vec<&'static str>,
-    library_ids: Vec<String>,
 }
 
 impl UserRecord {
-    /// `user` with the libraries it can see among `libraries`, in their order.
-    fn of(db: &agdb::DbAny, libraries: &[lyra_db::Library], user: lyra_db::User) -> Option<Self> {
+    fn of(db: &agdb::DbAny, user: lyra_db::User) -> Option<Self> {
         let principal = resolve_principal(db, user.db_id?, user);
         Some(Self {
-            library_ids: libraries
-                .iter()
-                .filter(|library| principal.accessible_library_ids.contains(&library.id))
-                .map(|library| library.id.clone())
-                .collect(),
             permissions: permission_names(&principal.permissions),
             id: principal.user_public_id,
             username: principal.username,
@@ -101,10 +94,9 @@ impl UsersModule {
                 .collect(),
             None => accounts::list(&*db)?,
         };
-        let libraries = lyra_db::libraries::get(&*db)?;
         let users = users
             .into_iter()
-            .filter_map(|user| UserRecord::of(&db, &libraries, user))
+            .filter_map(|user| UserRecord::of(&db, user))
             .collect::<Vec<_>>();
         harmony_luau::serializable_to_luau_owned(users)
     }
@@ -115,13 +107,12 @@ impl UsersModule {
     )]
     async fn get(ids: UniqueIds, #[context] db: Db) -> luau::runtime::Result<luau::OwnedTable> {
         let db = db.read().await;
-        let libraries = lyra_db::libraries::get(&*db)?;
         let mut table = luau::OwnedTable::with_capacity(0, ids.0.len());
         for id in ids.0 {
             let Some(user) = accounts::get_by_public_id(&*db, &id)? else {
                 continue;
             };
-            if let Some(user) = UserRecord::of(&db, &libraries, user) {
+            if let Some(user) = UserRecord::of(&db, user) {
                 table.set_field(id, harmony_luau::serializable_to_luau_owned(user)?);
             }
         }
@@ -158,13 +149,6 @@ impl DescribeInterface for UserRecord {
                 name: "permissions",
                 ty: Vec::<LuauPermission>::luau_type(),
                 description: Some("What the user's role grants; empty without one."),
-            },
-            FieldDescriptor {
-                name: "library_ids",
-                ty: Vec::<String>::luau_type(),
-                description: Some(
-                    "The libraries the user can see, in creation order; every library for admins.",
-                ),
             },
         ]);
         descriptor

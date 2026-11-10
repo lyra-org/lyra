@@ -13,10 +13,8 @@ end
 assert(count == 2, `two users, got {count}`)
 assert(found[admin].id == admin and found[admin].username == "admin" and found[admin].role == "admin")
 assert(table.find(found[admin].permissions, "admin") ~= nil, "the admin's permissions")
-assert(#found[admin].library_ids == 2, "an admin sees every library")
 assert(found[emile].id == emile and found[emile].username == "émile")
 assert(#found[emile].permissions == 1 and found[emile].permissions[1] == "download", "a role's permissions")
-assert(#found[emile].library_ids == 1 and found[emile].library_ids[1] == fixture.libraries.music, "granted libraries")
 assert(next(users.get({})) == nil, "no ids")
 
 -- A username matches as sign-in matches it, whatever its case, and names at most one user.
