@@ -10,11 +10,14 @@ local entities = require("@lyra/entities")
 
 local crypt = require("@harmony/crypt")
 
+local artwork = require("../protocol/items/images")
 local constants = require("../constants")
 local item_ids = require("../protocol/items/identifiers")
+local lookups = require("../protocol/items/lookups")
 local playlist_access = require("../protocol/playlist_access")
 local responses = require("../protocol/items/responses")
 local session = require("../protocol/session")
+local statics = require("../protocol/statics")
 
 local P = constants.ROUTE_PREFIX
 
@@ -102,7 +105,85 @@ end
 local MAX_BASE64_BYTES = 4 * math.ceil(covers.MAX_IMAGE_BYTES / 3)
 local MAX_UPLOAD_BODY_BYTES = MAX_BASE64_BYTES + 2 * math.ceil(MAX_BASE64_BYTES / 76)
 
+-- The item's images, as far as Lyra knows them: its one primary image, without the file's size
+-- or dimensions. The caller must be signed in, and the plugin's own folders have no image.
+function module.handle_item_image_infos(ctx: ApiContext): ApiResponse
+	local principal = session.require_jellyfin_principal(ctx)
+	if not principal then
+		return session.unauthorized()
+	end
+	local raw_id = ctx.params.imageId
+	if constants.is_root_item_id(raw_id) or constants.is_playlists_folder_id(raw_id) then
+		return api.response.json(200, {})
+	end
+	local item_id = item_ids.decode(raw_id)
+	local kind = if item_id then lookups.visible_kind(item_id, principal.user_id) else nil
+	if not item_id or not kind or not lookups.ITEM_KINDS[kind] then
+		return responses.not_found("item not found")
+	end
+	local cover = artwork.get_item_cover_file(item_id)
+	if not cover then
+		return api.response.json(200, {})
+	end
+	return api.response.json(
+		200,
+		{
+			{
+				ImageType = "Primary",
+				ImageTag = cover.hash,
+				Size = 0,
+				BlurHash = cover.blurhash,
+			},
+		} :: any
+	)
+end
+
+local PUBLIC = { auth = "public", case_insensitive = true }
+
+local function get_and_head(path: string, handler: (ApiContext) -> ApiResponse)
+	api.get(P .. path, handler, PUBLIC :: any)
+	api.head(P .. path, handler, PUBLIC :: any)
+end
+
+-- Lyra has no artwork of these types, and no studios, so upstream would answer 404 to anyone: for
+-- an unknown item, one the caller can't see, or one without the image.
+local function handle_missing_image(_ctx: ApiContext): ApiResponse
+	return statics.image_not_found_response()
+end
+
+local NON_PRIMARY_IMAGE_TYPES = {
+	"Backdrop",
+	"Logo",
+	"Thumb",
+	"Art",
+	"Banner",
+	"Disc",
+	"Box",
+	"BoxRear",
+	"Menu",
+	"Chapter",
+	"Screenshot",
+	"Profile",
+}
+
+local IMAGE_PATH_VALUES = "/{imageIndex}/{tag}/{format}/{maxWidth}/{maxHeight}/{percentPlayed}/{unplayedCount}"
+
 function module.register()
+	get_and_head("/Items/{imageId}/Images/Primary", session.handle_primary_image_request)
+	get_and_head("/Items/{imageId}/Images/Primary/{imageIndex}", session.handle_primary_image_request)
+	get_and_head("/Items/{imageId}/Images/Primary" .. IMAGE_PATH_VALUES, session.handle_primary_image_path_request)
+	for _, image_type in NON_PRIMARY_IMAGE_TYPES do
+		local path = "/Items/{imageId}/Images/" .. image_type
+		get_and_head(path, handle_missing_image)
+		get_and_head(path .. "/{imageIndex}", handle_missing_image)
+		get_and_head(path .. IMAGE_PATH_VALUES, handle_missing_image)
+	end
+	get_and_head("/Studios/{name}/Images/{imageType}", handle_missing_image)
+	get_and_head("/Studios/{name}/Images/{imageType}/{imageIndex}", handle_missing_image)
+	get_and_head("/UserImage", session.handle_user_image_request)
+	get_and_head("/Users/{userId}/Images/{imageType}", session.handle_user_images_route_request)
+	get_and_head("/Users/{userId}/Images/{imageType}/{imageIndex}", session.handle_user_images_route_request)
+	api.get(P .. "/Items/{imageId}/Images", module.handle_item_image_infos, PUBLIC :: any)
 	api.post(P .. "/Items/{imageId}/Images/Primary", module.handle_set_primary_image, {
 		auth = "public",
 		case_insensitive = true,

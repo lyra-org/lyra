@@ -867,12 +867,6 @@ api.get(P .. "/MusicGenres", listing_routes.handle_genres, { auth = "public", ca
 api.get(P .. "/Studios", function(ctx: ApiContext)
 	return handle_studios_route(ctx)
 end, { auth = "public", case_insensitive = true })
-api.get(P .. "/Items/{imageId}/Images/Primary", function(ctx: ApiContext)
-	return session.handle_primary_image_request(ctx)
-end, { auth = "public", case_insensitive = true })
-api.head(P .. "/Items/{imageId}/Images/Primary", function(ctx: ApiContext)
-	return session.handle_primary_image_request(ctx)
-end, { auth = "public", case_insensitive = true })
 image_routes.register()
 item_refresh.register()
 scheduled_tasks.register()
@@ -1360,47 +1354,4 @@ api.post(P .. "/DisplayPreferences/{displayPreferencesId}", function(ctx: ApiCon
 	end
 	return preferences.display_prefs_set(ctx, principal.user_id, prefs_id)
 end, { auth = "public", case_insensitive = true })
--- Lyra has no artwork of these types, so upstream would answer 404 to anyone: for an unknown
--- item, one the caller can't see, or one without the image.
-local function handle_missing_image_route(_ctx: ApiContext): ApiResponse
-	return statics.image_not_found_response()
-end
-
-local NON_PRIMARY_IMAGE_TYPES = {
-	"Backdrop",
-	"Logo",
-	"Thumb",
-	"Art",
-	"Banner",
-	"Disc",
-	"Box",
-	"BoxRear",
-	"Menu",
-	"Chapter",
-	"Screenshot",
-	"Profile",
-}
-for _, image_type in NON_PRIMARY_IMAGE_TYPES do
-	api.get(
-		P .. "/Items/{imageId}/Images/" .. image_type,
-		handle_missing_image_route,
-		{ auth = "public", case_insensitive = true }
-	)
-	api.head(
-		P .. "/Items/{imageId}/Images/" .. image_type,
-		handle_missing_image_route,
-		{ auth = "public", case_insensitive = true }
-	)
-	api.get(
-		P .. "/Items/{imageId}/Images/" .. image_type .. "/{imageIndex}",
-		handle_missing_image_route,
-		{ auth = "public", case_insensitive = true }
-	)
-	api.head(
-		P .. "/Items/{imageId}/Images/" .. image_type .. "/{imageIndex}",
-		handle_missing_image_route,
-		{ auth = "public", case_insensitive = true }
-	)
-end
-
 discovery.start(server_info)

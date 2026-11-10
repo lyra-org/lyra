@@ -947,8 +947,7 @@ function module.to_playlist_user_permission(playlist: Playlist, user_id: string)
 end
 
 -- The bound on one side of an image: its explicit maximum, else the smallest size asked for.
-local function image_bound(query: ApiQueryParams?, max_key: string, size_keys: { string }): number?
-	local max = requests.parse_query_int(query, { max_key }, nil, 1, nil)
+local function image_bound(max: number?, query: ApiQueryParams?, size_keys: { string }): number?
 	if max then
 		return max
 	end
@@ -962,24 +961,50 @@ local function image_bound(query: ApiQueryParams?, max_key: string, size_keys: {
 	return bound
 end
 
-local function respond_with_primary_image(ctx: ApiContext?, cover_info: artwork.ResolvedCoverInfo): ApiResponse
+-- What the long form of the primary image route carries in its path, in place of the query.
+type ImageRouteValues = {
+	format: string,
+	tag: string,
+	max_width: number?,
+	max_height: number?,
+}
+
+local function respond_with_primary_image(
+	ctx: ApiContext?,
+	cover_info: artwork.ResolvedCoverInfo,
+	route_values: ImageRouteValues?
+): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local format_query = requests.parse_query_string(query, { "format" }, nil)
+	local format_query = if route_values
+		then route_values.format
+		else requests.parse_query_string(query, { "format" }, nil)
 	local requested_format = requests.normalize_image_format(format_query)
 	if format_query ~= nil and requested_format == nil then
 		return responses.bad_request("invalid image format")
 	end
+	-- The long form's maximums come from its path alone, as upstream binds them.
+	local function query_max(key: string): number?
+		return requests.parse_query_int(query, { key }, nil, 1, nil)
+	end
 	local options: CoverServeOptions = {
 		format = requested_format,
 		quality = requests.parse_query_int(query, { "quality" }, nil, 0, 100),
-		max_width = image_bound(query, "MaxWidth", { "fillWidth", "width" }),
-		max_height = image_bound(query, "MaxHeight", { "fillHeight", "height" }),
+		max_width = image_bound(
+			if route_values then route_values.max_width else query_max("MaxWidth"),
+			query,
+			{ "fillWidth", "width" }
+		),
+		max_height = image_bound(
+			if route_values then route_values.max_height else query_max("MaxHeight"),
+			query,
+			{ "fillHeight", "height" }
+		),
 	}
 
 	-- Upstream's caching: a request naming the image `tag` gets an immutable response validated by
 	-- that tag, and `Cache-Control: no-cache` turns caching off.
 	local request_headers = if ctx and ctx.request then ctx.request.headers else nil
-	local tag = requests.parse_query_string(query, { "tag" }, nil)
+	local tag = if route_values then route_values.tag else requests.parse_query_string(query, { "tag" }, nil)
 	local headers = {
 		["vary"] = "Accept",
 		["content-disposition"] = "attachment",
@@ -1003,13 +1028,43 @@ local function respond_with_primary_image(ctx: ApiContext?, cover_info: artwork.
 	return response
 end
 
+-- The range of an upstream route's `int`.
+local MIN_ROUTE_INT = -2147483648
+local MAX_ROUTE_INT = 2147483647
+
+-- What answers a request for an image other than the first: the route's index, else the query's,
+-- as an optionally signed whole number, as upstream's binding reads it. Lyra keeps one image of a
+-- kind, so any other index is not found; nil means the first image.
+local function refused_image_index(ctx: ApiContext?): ApiResponse?
+	local params = if ctx then ctx.params else nil
+	local route_index = if params then params.imageIndex else nil
+	local query = if ctx and ctx.request then ctx.request.query else nil
+	local raw = if type(route_index) == "string"
+		then route_index
+		else requests.parse_query_string(query, { "imageIndex" }, nil)
+	if raw == nil then
+		return nil
+	end
+	local sign, digits = string.match(raw, "^([+-]?)(%d+)$")
+	local magnitude = if digits then tonumber(digits) else nil
+	local index = if magnitude and sign == "-" then -magnitude else magnitude
+	if index == nil or index < MIN_ROUTE_INT or index > MAX_ROUTE_INT then
+		return responses.bad_request("invalid image index")
+	end
+	return if index ~= 0 then responses.not_found("image not found") else nil
+end
+
 -- Artwork routes are public, as upstream: an anonymous caller gets any item's image, and a caller
 -- with valid credentials only the images of items it can see. Invalid credentials read as none.
-function module.handle_primary_image_request(ctx: ApiContext?): ApiResponse
+local function serve_item_primary_image(ctx: ApiContext?, route_values: ImageRouteValues?): ApiResponse
 	local params = if ctx then ctx.params else nil
 	local image_id = if params then params.imageId else nil
 	if not image_id then
 		return responses.bad_request("missing image id")
+	end
+	local refused = refused_image_index(ctx)
+	if refused then
+		return refused
 	end
 
 	local item_id = item_ids.decode(image_id)
@@ -1021,7 +1076,45 @@ function module.handle_primary_image_request(ctx: ApiContext?): ApiResponse
 	if not cover_info then
 		return responses.not_found("image not found")
 	end
-	return respond_with_primary_image(ctx, cover_info)
+	return respond_with_primary_image(ctx, cover_info, route_values)
+end
+
+function module.handle_primary_image_request(ctx: ApiContext?): ApiResponse
+	return serve_item_primary_image(ctx, nil)
+end
+
+-- A bound the path gives, where upstream reads zero as no bound; false for what isn't a number.
+local function route_bound(raw: string?): number? | false
+	local bound = if raw and string.match(raw, "^%-?%d+$") then tonumber(raw) else nil
+	if bound == nil then
+		return false
+	end
+	return if bound > 0 then bound else nil
+end
+
+-- `Items/{id}/Images/Primary/{index}/{tag}/{format}/{maxWidth}/{maxHeight}/{percentPlayed}/{unplayedCount}`:
+-- the path gives what the query gives the short form. The overlays it can name have no Lyra meaning.
+function module.handle_primary_image_path_request(ctx: ApiContext): ApiResponse
+	local params = ctx.params
+	local tag = params.tag
+	local format = params.format
+	if not tag or not format then
+		return responses.bad_request("missing image route values")
+	end
+	local max_width = route_bound(params.maxWidth)
+	local max_height = route_bound(params.maxHeight)
+	if max_width == false or max_height == false then
+		return responses.bad_request("invalid image bound")
+	end
+	if not tonumber(params.percentPlayed) or not string.match(params.unplayedCount or "", "^%-?%d+$") then
+		return responses.bad_request("invalid image overlay")
+	end
+	return serve_item_primary_image(ctx, {
+		format = format,
+		tag = tag,
+		max_width = max_width,
+		max_height = max_height,
+	})
 end
 
 local function serve_public_image_by_name(
@@ -1039,13 +1132,9 @@ local function serve_public_image_by_name(
 		return responses.not_found("image not found")
 	end
 
-	local raw_image_index = if params then params.imageIndex else nil
-	local image_index = if type(raw_image_index) == "string" then tonumber(raw_image_index) else 0
-	if image_index == nil or image_index ~= math.floor(image_index) or image_index < 0 then
-		return responses.bad_request("invalid image index")
-	end
-	if image_index ~= 0 then
-		return responses.not_found("image not found")
+	local refused = refused_image_index(ctx)
+	if refused then
+		return refused
 	end
 
 	local cover_info = find_cover(name)
@@ -1071,6 +1160,38 @@ function module.handle_genre_image_request(ctx: ApiContext?): ApiResponse
 	return serve_public_image_by_name(ctx, function(name)
 		return artwork.get_artwork_file(catalog.find_genre_id_by_name(name))
 	end)
+end
+
+-- Lyra stores no user avatars, so what remains of upstream's user image routes is refusing the
+-- requests that name nobody or can't be read.
+local function refused_user_id(raw_user_id: string?): ApiResponse?
+	local user_guid = item_ids.normalize_guid(raw_user_id)
+	if not user_guid then
+		return responses.bad_request("invalid user id")
+	elseif user_guid == item_ids.EMPTY_GUID then
+		return responses.bad_request("UserId is required if unauthenticated")
+	end
+	return nil
+end
+
+function module.handle_user_image_request(ctx: ApiContext?): ApiResponse
+	local query = if ctx and ctx.request then ctx.request.query else nil
+	local raw_user_id = requests.parse_query_string(query, { "userId" }, nil)
+	if raw_user_id == nil then
+		if module.require_jellyfin_principal(ctx) == nil then
+			return responses.bad_request("UserId is required if unauthenticated")
+		end
+		return responses.not_found("image not found")
+	end
+	local refused = refused_user_id(raw_user_id)
+	return refused or responses.not_found("image not found")
+end
+
+function module.handle_user_images_route_request(ctx: ApiContext?): ApiResponse
+	local params = if ctx then ctx.params else nil
+	return refused_user_id(if params then params.userId else nil)
+		or refused_image_index(ctx)
+		or responses.not_found("image not found")
 end
 
 -- Whitelist of capability fields the plugin forwards to callers of

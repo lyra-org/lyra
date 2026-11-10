@@ -1,0 +1,40 @@
+run_as = "listener"
+
+[[users]]
+key = "listener"
+
+[[api_keys]]
+key = "phone"
+user = "listener"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener"]
+
+[[libraries]]
+key = "hidden"
+name = "Hidden"
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+cover = "cover.png"
+blurhash = "L00000fQfQfQ"
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+
+[[releases]]
+key = "plain"
+title = "Plain"
+library = "music"
+
+[[releases]]
+key = "secret"
+title = "Secret"
+library = "hidden"
+cover = "hidden_cover.png"
