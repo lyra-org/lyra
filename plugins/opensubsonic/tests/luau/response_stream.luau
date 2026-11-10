@@ -63,3 +63,37 @@ assert(missing.kind == "text" and string.find(missing.body, '"code":10', 1, true
 local twice = { name = "album", each_batch = function() end }
 local ok, err = pcall(response.ok_stream, query({ f = "json" }), "searchResult3", { twice, twice })
 assert(not ok and string.find(tostring(err), "list album comes twice", 1, true), tostring(err))
+
+-- A container's plain fields sit among its lists in key order, as a whole document encodes them.
+local fields = { zeta = "last", alpha = 1, flag = false, note = 'a "b" & <c>' }
+local function streamed_fields(params: { [string]: string }, items: { any }): string
+	local stream = harness.plugin:call(function()
+		return response.ok_stream(query(params), "playlist", {
+			{
+				name = "entry",
+				each_batch = function(emit)
+					for start = 1, #items, 2 do
+						emit({ table.unpack(items, start, math.min(start + 1, #items)) })
+					end
+				end,
+			},
+		}, fields)
+	end)
+	return harness.plugin:read_body(stream)
+end
+for _, params in { { f = "json" }, { f = "jsonp", callback = "handle" }, {} } :: { { [string]: string } } do
+	for _, items in { songs, {} } :: { { any } } do
+		local document = table.clone(fields) :: { [string]: any }
+		if #items > 0 then
+			document.entry = items
+		end
+		local whole = response.ok(query(params), { playlist = document }) :: any
+		local body = streamed_fields(params, items)
+		assert(body == whole.body, `{params.f or "xml"}: streamed\n{body}\nwhole\n{whole.body}`)
+	end
+end
+
+local both_ok, both_err = pcall(response.ok_stream, query({ f = "json" }), "playlist", { twice }, { album = "x" })
+assert(not both_ok and string.find(tostring(both_err), "both a field and a list", 1, true), tostring(both_err))
+local table_ok, table_err = pcall(response.ok_stream, query({ f = "json" }), "playlist", {}, { list = {} })
+assert(not table_ok and string.find(tostring(table_err), "isn't a plain value", 1, true), tostring(table_err))

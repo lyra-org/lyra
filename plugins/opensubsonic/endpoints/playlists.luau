@@ -32,13 +32,37 @@ local function listed_for(user_id: string, caller_id: string): { Playlist }
 	return playlists.query(query).items
 end
 
--- The `playlist` of each playlist, in order, from its visible entries, and each one's entry
--- tracks by playlist id, in order and with repeats.
+-- The `playlist` of a playlist showing `song_count` songs lasting `duration_ms`.
+local function playlist_fields(
+	playlist: Playlist,
+	owners: { [string]: users.User },
+	cover_art_ids: { [string]: string },
+	caller_id: string,
+	song_count: number,
+	duration_ms: number
+): JsonObject
+	local created_at_ms = playlist.created_at_ms or 0
+	return {
+		id = playlist.id,
+		name = playlist.name,
+		comment = playlist.description,
+		coverArt = cover_art_ids[playlist.id],
+		owner = if owners[playlist.owner_id] then owners[playlist.owner_id].username else nil,
+		public = playlist.is_public == true,
+		songCount = song_count,
+		duration = dates.seconds(duration_ms),
+		created = dates.iso8601(created_at_ms),
+		changed = dates.iso8601(playlist.updated_at_ms or created_at_ms),
+		readonly = playlist.owner_id ~= caller_id,
+	}
+end
+
+-- The `playlist` of each playlist, in order, from its visible entries.
 local function describe(
 	listed: { Playlist },
 	links_by_playlist: { [string]: { PlaylistEntry } },
 	caller_id: string
-): ({ JsonObject }, { [string]: { Track } })
+): { JsonObject }
 	local track_ids: { string } = {}
 	local seen: { [string]: boolean } = {}
 	for _, links in links_by_playlist do
@@ -51,46 +75,27 @@ local function describe(
 	end
 	local found: { [string]: Track } = if #track_ids > 0 then tracks.get(track_ids) else {}
 	local owner_ids: { string } = {}
-	for _, playlist in listed do
-		table.insert(owner_ids, playlist.owner_id)
-	end
-	local owners = users.get(owner_ids)
 	local playlist_ids: { string } = {}
 	for _, playlist in listed do
+		table.insert(owner_ids, playlist.owner_id)
 		table.insert(playlist_ids, playlist.id)
 	end
+	local owners = users.get(owner_ids)
 	local cover_art_ids = cover_art.ids(playlist_ids)
 
 	local items: { JsonObject } = {}
-	local entries_by_playlist: { [string]: { Track } } = {}
 	for _, playlist in listed do
-		local entry_tracks: { Track } = {}
-		local duration_ms = 0
+		local song_count, duration_ms = 0, 0
 		for _, link in links_by_playlist[playlist.id] or {} do
 			local track = found[link.track_id]
 			if track and track.available then
-				table.insert(entry_tracks, track)
+				song_count += 1
 				duration_ms += track.duration_ms or 0
 			end
 		end
-		entries_by_playlist[playlist.id] = entry_tracks
-		local created_at_ms = playlist.created_at_ms or 0
-		local described: JsonObject = {
-			id = playlist.id,
-			name = playlist.name,
-			comment = playlist.description,
-			coverArt = cover_art_ids[playlist.id],
-			owner = if owners[playlist.owner_id] then owners[playlist.owner_id].username else nil,
-			public = playlist.is_public == true,
-			songCount = #entry_tracks,
-			duration = dates.seconds(duration_ms),
-			created = dates.iso8601(created_at_ms),
-			changed = dates.iso8601(playlist.updated_at_ms or created_at_ms),
-			readonly = playlist.owner_id ~= caller_id,
-		}
-		table.insert(items, described)
+		table.insert(items, playlist_fields(playlist, owners, cover_art_ids, caller_id, song_count, duration_ms))
 	end
-	return items, entries_by_playlist
+	return items
 end
 
 local function check_count(count: number, what: string)
@@ -150,15 +155,47 @@ local function owned_playlist(req: Request, name: string): Playlist
 	return playlist
 end
 
-local function playlist_response(req: Request, playlist: Playlist): ApiResponse
-	local caller_id = req.auth.principal.user_id
-	local items, entries = describe({ playlist }, playlists.entries({ playlist.id }), caller_id)
-	local item = items[1]
-	local entry_tracks = entries[playlist.id]
-	if #entry_tracks > 0 then
-		item.entry = songs.list(entry_tracks)
+-- The tracks these ids name that the caller sees and can play, in order and with repeats.
+local function playable_tracks(ids: { string }): { Track }
+	local found = tracks.get(ids)
+	local shown: { Track } = {}
+	for _, id in ids do
+		local track = found[id]
+		if track and track.available then
+			table.insert(shown, track)
+		end
 	end
-	return response.ok(req.params, { playlist = item })
+	return shown
+end
+
+-- Only the entries' ids stay in memory: the tracks are read a batch at a time, for the song count
+-- and the duration and again for the songs.
+local function playlist_response(req: Request, playlist: Playlist): ApiResponse
+	local links: { PlaylistEntry } = playlists.entries({ playlist.id })[playlist.id] or {}
+	local entry_ids: { string } = {}
+	for _, link in links do
+		table.insert(entry_ids, link.track_id)
+	end
+	local song_count, duration_ms = 0, 0
+	response.in_batches(entry_ids, function(batch)
+		for _, track in playable_tracks(batch) do
+			song_count += 1
+			duration_ms += track.duration_ms or 0
+		end
+	end)
+	local fields = playlist_fields(
+		playlist,
+		users.get({ playlist.owner_id }),
+		cover_art.ids({ playlist.id }),
+		req.auth.principal.user_id,
+		song_count,
+		duration_ms
+	)
+	return response.ok_stream(req.params, "playlist", {
+		response.batched("entry", entry_ids, function(batch)
+			return songs.list(playable_tracks(batch))
+		end),
+	}, fields :: any)
 end
 
 module.methods = {

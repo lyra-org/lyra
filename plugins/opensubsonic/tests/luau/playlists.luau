@@ -115,8 +115,9 @@ local form = call.raw("createPlaylist", {}, {
 	bare = true,
 })
 local serde = require("@harmony/serde")
-local form_body = (serde.json.decode(form.body) :: any)["subsonic-response"]
-assert(form_body.status == "ok" and form_body.playlist.name == "Form list!", `form post {form.body}`)
+local form_text = call.body(form)
+local form_body = (serde.json.decode(form_text) :: any)["subsonic-response"]
+assert(form_body.status == "ok" and form_body.playlist.name == "Form list!", `form post {form_text}`)
 call.same(call.ids(form_body.playlist.entry), { ids.a, ids.b }, "form post songs")
 
 -- Only the owner deletes, and a deleted playlist is gone.

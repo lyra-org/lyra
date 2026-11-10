@@ -147,6 +147,29 @@ export type StreamedList = {
 -- Items fetched and encoded at a time, so a page of any size streams in bounded memory.
 local BATCH_SIZE = 500
 
+-- Hands `each` the items a batch at a time, in order.
+function module.in_batches<T>(items: { T }, each: ({ T }) -> ())
+	for start = 1, #items, BATCH_SIZE do
+		each(table.move(items, start, math.min(start + BATCH_SIZE - 1, #items), 1, {}))
+	end
+end
+
+-- The list `name` of `items`, in order, which `build` turns into list items a batch at a time. A
+-- batch may build to fewer items than it holds.
+function module.batched<T>(name: string, items: { T }, build: ({ T }) -> { JsonObject }): StreamedList
+	return {
+		name = name,
+		each_batch = function(emit)
+			module.in_batches(items, function(batch)
+				local built = build(batch)
+				if #built > 0 then
+					emit(built)
+				end
+			end)
+		end,
+	}
+end
+
 -- The list `name` of up to `count` items from `offset` on, which `fetch` finds and `build` turns
 -- into list items, a batch at a time.
 function module.paged<T>(
@@ -175,28 +198,45 @@ function module.paged<T>(
 	}
 end
 
--- An `ok` response whose `container` holds `lists`, in order, each sent as its batches are written,
--- so a long list never exists whole. The document is as `ok` would answer with the same lists; a
--- failure while producing aborts it.
-function module.ok_stream(query: ApiQueryParams, container: string, lists: { StreamedList }): ApiResponse
+-- An `ok` response whose `container` holds the plain values `fields` and `lists`, in order, each list
+-- sent as its batches are written, so a long list never exists whole. The document is as `ok` would
+-- answer with the same values; a failure while producing aborts it.
+function module.ok_stream(
+	query: ApiQueryParams,
+	container: string,
+	lists: { StreamedList },
+	fields: JsonObject?
+): ApiResponse
 	local format = format_of(query)
 	if not format then
 		-- Fails as `ok` does.
 		return module.ok(query)
 	end
-	local names: { [string]: boolean } = {}
+	local list_named: { [string]: StreamedList } = {}
 	for _, list in lists do
-		assert(not names[list.name], `list {list.name} comes twice`)
-		names[list.name] = true
+		assert(not list_named[list.name], `list {list.name} comes twice`)
+		list_named[list.name] = list
 	end
-	local fields = envelope("ok")
+	local container_fields: JsonObject = fields or {}
+	local container_keys: { string } = {}
+	for key, value in container_fields do
+		assert(type(value) ~= "table", `field {key} isn't a plain value`)
+		assert(not list_named[key], `{key} is both a field and a list`)
+		table.insert(container_keys, key)
+	end
+	for name in list_named do
+		table.insert(container_keys, name)
+	end
+	table.sort(container_keys)
+
+	local outer = envelope("ok")
 	local headers = { ["content-type"] = format.content_type }
 
 	if format.json then
 		local callback = format.callback
 		-- In key order, as a whole document encodes.
 		local keys: { string } = {}
-		for key in fields do
+		for key in outer do
 			table.insert(keys, key)
 		end
 		table.sort(keys)
@@ -205,7 +245,7 @@ function module.ok_stream(query: ApiQueryParams, container: string, lists: { Str
 			local function write_fields(before: boolean)
 				for _, key in keys do
 					if (key < container) == before then
-						encoder:field(key, fields[key])
+						encoder:field(key, outer[key])
 					end
 				end
 			end
@@ -216,14 +256,19 @@ function module.ok_stream(query: ApiQueryParams, container: string, lists: { Str
 			encoder:begin_object("subsonic-response")
 			write_fields(true)
 			encoder:begin_object(container)
-			for _, list in lists do
+			for _, key in container_keys do
+				local list = list_named[key]
+				if not list then
+					encoder:field(key, container_fields[key])
+					continue
+				end
 				local open = false
 				list.each_batch(function(items)
 					if #items == 0 then
 						return
 					end
 					if not open then
-						encoder:begin_array(list.name)
+						encoder:begin_array(key)
 						open = true
 					end
 					encoder:items(items :: any)
@@ -243,13 +288,13 @@ function module.ok_stream(query: ApiQueryParams, container: string, lists: { Str
 		end, headers)
 	end
 
-	local attributes: JsonObject = table.clone(fields)
+	local attributes: JsonObject = table.clone(outer)
 	attributes.xmlns = XML_NAMESPACE
 	return api.response.stream(200, function(writer)
 		local encoder = serde.xml.encoder()
 		writer:write(XML_DECLARATION)
 		encoder:begin_element("subsonic-response", attributes :: any)
-		encoder:begin_element(container)
+		encoder:begin_element(container, fields :: any)
 		for _, list in lists do
 			list.each_batch(function(items)
 				local elements = {}
