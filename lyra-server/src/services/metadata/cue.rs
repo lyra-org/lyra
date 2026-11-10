@@ -252,7 +252,9 @@ pub(super) fn parse_cue_timestamp_to_frames(raw: &str) -> Option<u32> {
     if parts.next().is_some() {
         return None;
     }
-    Some(mm.saturating_mul(60 * 75) + ss.saturating_mul(75) + ff)
+    mm.checked_mul(60 * 75)?
+        .checked_add(ss.checked_mul(75)?)?
+        .checked_add(ff)
 }
 
 pub(super) fn frames_to_ms(frames: u32) -> u64 {
@@ -1112,6 +1114,16 @@ FILE "02 second.wav" WAVE
             parsed.tracks[1].index01_frames,
             parse_cue_timestamp_to_frames("00:00:00")
         );
+    }
+
+    #[test]
+    fn parse_cue_timestamp_to_frames_rejects_overflowing_timestamps() {
+        assert_eq!(
+            parse_cue_timestamp_to_frames("00:00:4294967295"),
+            Some(u32::MAX)
+        );
+        assert_eq!(parse_cue_timestamp_to_frames("00:01:4294967295"), None);
+        assert_eq!(parse_cue_timestamp_to_frames("954438:00:00"), None);
     }
 
     #[test]

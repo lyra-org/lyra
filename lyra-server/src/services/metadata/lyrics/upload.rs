@@ -345,7 +345,11 @@ fn parse_lrc_timestamp(value: &str) -> Result<Option<u64>, &'static str> {
         _ => return Err("timestamp fraction must be centiseconds or milliseconds"),
     };
 
-    Ok(Some((minutes * 60 + seconds) * 1000 + millis))
+    minutes
+        .checked_mul(60_000)
+        .and_then(|ms| ms.checked_add(seconds * 1000 + millis))
+        .map(Some)
+        .ok_or("timestamp overflow")
 }
 
 /// Strip Enhanced-LRC `<mm:ss.xx>` word cues and emit the corresponding
@@ -442,6 +446,12 @@ mod tests {
         assert_eq!(parse_lrc_timestamp("01:02.34").unwrap(), Some(62_340));
         assert_eq!(parse_lrc_timestamp("01:02.345").unwrap(), Some(62_345));
         assert_eq!(parse_lrc_timestamp("01:02").unwrap(), Some(62_000));
+    }
+
+    #[test]
+    fn parse_lrc_timestamp_rejects_overflowing_minutes() {
+        assert!(parse_lrc_timestamp("307445734561825860:00").is_err());
+        assert!(parse_enhanced_lrc_words("<10018446737095615:00>").is_err());
     }
 
     #[test]
