@@ -9,6 +9,7 @@ local auth = require("@lyra/auth")
 
 type ApiContext = api.ApiContext
 type ApiQueryParams = api.ApiQueryParams
+type Permission = auth.Permission
 type ResolvedAuth = auth.ResolvedAuth
 
 export type SubsonicError = {
@@ -181,6 +182,16 @@ function module.bool(params: ApiQueryParams, name: string): boolean?
 		return false
 	end
 	return module.fail(0, `Invalid boolean for {name}: {value}`)
+end
+
+-- Whether `permissions` include `permission`. As in Lyra, an admin holds every permission.
+function module.holds(permissions: { Permission }, permission: Permission): boolean
+	for _, held in permissions do
+		if held == "admin" or held == permission then
+			return true
+		end
+	end
+	return false
 end
 
 return module

@@ -20,7 +20,10 @@ use serde::{
 };
 use std::sync::Arc;
 
+use harmony_luau::StringEnum;
+
 use crate::plugins::args::JsonArg;
+use crate::plugins::types::LuauPermission;
 use crate::services::auth::{
     AuthCredential as ServiceAuthCredential,
     AuthError,
@@ -42,7 +45,7 @@ pub(crate) struct Principal {
     pub(crate) user_id: String,
     pub(crate) username: String,
     pub(crate) role: Option<String>,
-    pub(crate) permissions: Vec<String>,
+    pub(crate) permissions: Vec<&'static str>,
 }
 
 #[derive(Serialize)]
@@ -203,16 +206,16 @@ pub(crate) fn to_plugin_principal(principal: ServicePrincipal) -> Principal {
         user_id: principal.user_public_id,
         username: principal.username,
         role: principal.role_name,
-        permissions: principal
-            .permissions
-            .iter()
-            .filter_map(|p| {
-                serde_json::to_value(p)
-                    .ok()
-                    .and_then(|v| v.as_str().map(String::from))
-            })
-            .collect(),
+        permissions: permission_names(&principal.permissions),
     }
+}
+
+/// The permissions as plugins spell them.
+pub(crate) fn permission_names(permissions: &[lyra_db::Permission]) -> Vec<&'static str> {
+    permissions
+        .iter()
+        .map(|permission| LuauPermission::from(*permission).as_str())
+        .collect()
 }
 
 pub(crate) fn to_plugin_credential(credential: ServiceAuthCredential) -> AuthCredential {
@@ -658,7 +661,7 @@ impl DescribeInterface for Principal {
             },
             FieldDescriptor {
                 name: "permissions",
-                ty: Vec::<String>::luau_type(),
+                ty: Vec::<LuauPermission>::luau_type(),
                 description: None,
             },
         ]);
@@ -902,7 +905,10 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
 
     harmony_luau::render_definition_file_with_support(
         &AuthModule::module_descriptor(),
-        &[JsonValue::type_alias_descriptor()],
+        &[
+            JsonValue::type_alias_descriptor(),
+            LuauPermission::type_alias_descriptor(),
+        ],
         &[
             AuthCapabilities::interface_descriptor(),
             Principal::interface_descriptor(),

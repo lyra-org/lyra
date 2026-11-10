@@ -20,9 +20,10 @@ local routes = {}
 
 -- A 403 response unless the caller may configure the plugin.
 local function require_manage_plugins(ctx: ApiContext): ApiResponse?
-	local permissions = if ctx.auth then ctx.auth.principal.permissions else {}
-	if table.find(permissions, "admin") or table.find(permissions, "manage_plugins") then
-		return nil
+	for _, permission in if ctx.auth then ctx.auth.principal.permissions else {} do
+		if permission == "admin" or permission == "manage_plugins" then
+			return nil
+		end
 	end
 	return api.response.json(403, { error = "requires the manage_plugins permission" })
 end

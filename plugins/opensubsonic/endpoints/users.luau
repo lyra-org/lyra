@@ -16,10 +16,6 @@ type JsonObject = { [string]: any }
 type PublicUser = users.PublicUser
 type Request = request.Request
 
-local function is_admin(permissions: { string }): boolean
-	return table.find(permissions, "admin") ~= nil
-end
-
 -- Every user streams, rates, makes playlists, and gets cover art. Lyra records every user's
 -- listens. Downloads need the download permission. Settings and passwords change in Lyra rather
 -- than through this API, and Lyra has no uploads, comments, podcasts, jukebox, shares, or video.
@@ -32,9 +28,9 @@ local function user_item(user: PublicUser): JsonObject
 	return {
 		username = user.username,
 		scrobblingEnabled = true,
-		adminRole = is_admin(permissions),
+		adminRole = request.holds(permissions, "admin"),
 		settingsRole = false,
-		downloadRole = is_admin(permissions) or table.find(permissions, "download") ~= nil,
+		downloadRole = request.holds(permissions, "download"),
 		uploadRole = false,
 		playlistRole = true,
 		coverArtRole = true,
@@ -55,7 +51,7 @@ module.methods = {
 	getUser = function(req: Request): ApiResponse
 		local caller = req.auth.principal
 		local wanted = string.lower(request.required(req.params, "username"))
-		if wanted ~= string.lower(caller.username) and not is_admin(caller.permissions) then
+		if wanted ~= string.lower(caller.username) and not request.holds(caller.permissions, "admin") then
 			return request.fail(50, "Only admins can read another user")
 		end
 		for _, user in users.list() do
@@ -67,7 +63,7 @@ module.methods = {
 	end,
 
 	getUsers = function(req: Request): ApiResponse
-		if not is_admin(req.auth.principal.permissions) then
+		if not request.holds(req.auth.principal.permissions, "admin") then
 			return request.fail(50, "Only admins can list users")
 		end
 		local items: { JsonObject } = {}

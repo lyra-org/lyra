@@ -212,8 +212,7 @@ local function lyrics_text(info: LyricsInfo): string
 end
 
 local function can_download(req: Request): boolean
-	local permissions = req.auth.principal.permissions
-	return table.find(permissions, "admin") ~= nil or table.find(permissions, "download") ~= nil
+	return request.holds(req.auth.principal.permissions, "download")
 end
 
 local COVER_FAILED = "The cover art can't be served"

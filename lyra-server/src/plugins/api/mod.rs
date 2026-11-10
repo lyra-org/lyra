@@ -903,6 +903,7 @@ fn support_aliases() -> Vec<TypeAliasDescriptor> {
     let mut aliases = vec![
         ApiMethod::type_alias_descriptor(),
         RouteAuthMode::type_alias_descriptor(),
+        crate::plugins::types::LuauPermission::type_alias_descriptor(),
         TypeAliasDescriptor::new(
             "ApiHeaders",
             LuauType::map(String::luau_type(), String::luau_type()),

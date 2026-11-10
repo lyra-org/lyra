@@ -39,10 +39,11 @@ type Playlist = playlists.Playlist
 type PlaylistEntry = playlists.PlaylistEntry
 type PlaylistCreate = playlists.PlaylistCreate
 type PlaylistFields = playlists.PlaylistFields
+type Permission = auth.Permission
 type UserIdentity = {
 	user_id: string,
 	username: string,
-	permissions: { string },
+	permissions: { Permission },
 }
 type AuthenticateRequest = {
 	username: string,
@@ -74,7 +75,7 @@ export type ClientIdentity = {
 }
 
 -- Mirrors the server: the admin permission grants every other permission.
-function module.has_permission(user: { permissions: { string } }, permission_name: string): boolean
+function module.has_permission(user: { permissions: { Permission } }, permission_name: Permission): boolean
 	for _, permission in user.permissions do
 		if permission == permission_name or permission == "admin" then
 			return true

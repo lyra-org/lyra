@@ -248,6 +248,24 @@ mirror_string_enum!(
 );
 
 mirror_string_enum!(
+    LuauPermission for lyra_db::Permission,
+    "Permission",
+    description = "What a user may do beyond playing what their libraries hold. `admin` grants every other.",
+    [
+        Admin,
+        ManageUsers,
+        ManageRoles,
+        ManageLibraries,
+        SyncMetadata,
+        ManagePlugins,
+        ManageProviders,
+        ManageMetadata,
+        ManageServer,
+        Download,
+    ]
+);
+
+mirror_string_enum!(
     LuauSyncRunKind for crate::services::libraries::SyncRunKind,
     "SyncRunKind",
     [
@@ -638,6 +656,7 @@ mod tests {
             LuauPlayPlacement,
             crate::services::remote::constants::PlayPlacement,
         >();
+        assert_spelled_as_serialized::<LuauPermission, lyra_db::Permission>();
         assert_spelled_as_serialized::<LuauSyncRunKind, crate::services::libraries::SyncRunKind>();
         assert_spelled_as_serialized::<LuauSyncRunStatus, crate::services::libraries::SyncRunStatus>(
         );

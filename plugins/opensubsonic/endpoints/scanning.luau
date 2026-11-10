@@ -49,8 +49,7 @@ local module = {}
 module.methods = {
 	getScanStatus = scan_status,
 	startScan = function(req: Request): ApiResponse
-		local permissions = req.auth.principal.permissions
-		if not (table.find(permissions, "admin") or table.find(permissions, "manage_libraries")) then
+		if not request.holds(req.auth.principal.permissions, "manage_libraries") then
 			return request.fail(50, "Only users who manage libraries can start a scan")
 		end
 		-- A library running a refresh starts no sync, and reports no scan.

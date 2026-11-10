@@ -25,10 +25,6 @@ type Track = tracks.Track
 
 local module = {}
 
-local function is_admin(req: Request): boolean
-	return table.find(req.auth.principal.permissions, "admin") ~= nil
-end
-
 -- The playlists listed for a user: for the caller, its own and everyone's public ones; for
 -- another user, that user's public ones.
 local function listed_for(user_id: string, caller_id: string): { Playlist }
@@ -170,7 +166,7 @@ module.methods = {
 		local user_id = caller_id
 		local username = request.param(req.params, "username")
 		if username then
-			if not is_admin(req) then
+			if not request.holds(req.auth.principal.permissions, "admin") then
 				return request.fail(50, "Only admins can name a user")
 			end
 			local wanted = string.lower(username)

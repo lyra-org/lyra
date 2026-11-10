@@ -14,7 +14,10 @@ use harmony_luau::{
 use serde::Serialize;
 
 use crate::{
-    plugins::db::Db,
+    plugins::{
+        db::Db,
+        types::LuauPermission,
+    },
     services::auth::{
         accounts,
         resolve_principal,
@@ -90,7 +93,7 @@ impl DescribeInterface for PublicUser {
             },
             FieldDescriptor {
                 name: "permissions",
-                ty: Vec::<String>::luau_type(),
+                ty: Vec::<LuauPermission>::luau_type(),
                 description: None,
             },
             FieldDescriptor {
@@ -107,11 +110,14 @@ impl DescribeInterface for PublicUser {
 
 #[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
-    use harmony_luau::DescribeModule;
+    use harmony_luau::{
+        DescribeModule,
+        DescribeTypeAlias,
+    };
 
     harmony_luau::render_definition_file_with_support(
         &UsersModule::module_descriptor(),
-        &[],
+        &[LuauPermission::type_alias_descriptor()],
         &[PublicUser::interface_descriptor()],
         &[],
     )
