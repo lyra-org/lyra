@@ -63,7 +63,8 @@ A preview is a POST to `<mutation path>/preview`. It takes the mutation's input,
 nothing, and binds nothing: the mutation checks everything again when it runs. A value a
 mutation compares against what the preview saw goes in the input as `expected`, which a preview
 ignores. A mismatch is a 409 with a `code` and `current`, what a new preview would report in place
-of `expected`.
+of `expected`. `POST /api/users/device-logins/approve/preview` is the exception to changing
+nothing: a code it doesn't find counts against the caller's limit on guessing codes.
 
 ## Metadata Change Sets
 

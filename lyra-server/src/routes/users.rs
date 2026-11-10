@@ -47,6 +47,10 @@ use crate::{
             AuthCredential,
             accounts,
             api_keys,
+            device_logins::{
+                self,
+                DeviceLoginClaim,
+            },
             login_with_password,
             logout_with_token,
             owners,
@@ -145,6 +149,96 @@ struct LoginRequest {
     )]
     #[serde(default)]
     client_name: Option<String>,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+struct BeginDeviceLoginRequest {
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Optional human-readable client label shown to the approver and stored with the session."
+        )
+    )]
+    #[serde(default)]
+    client_name: Option<String>,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct BeginDeviceLoginResponse {
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Six-letter login code for the device to show.")
+    )]
+    code: String,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Secret the device claims the login with.")
+    )]
+    secret: String,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Creation time as an RFC3339 timestamp.")
+    )]
+    created_at: String,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Expiry time as an RFC3339 timestamp.")
+    )]
+    expires_at: String,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+struct ClaimDeviceLoginRequest {
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Secret the device login began with.")
+    )]
+    secret: String,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum ClaimDeviceLoginResponse {
+    Pending,
+    Complete {
+        #[cfg_attr(feature = "docgen", schemars(description = "Session token."))]
+        token: String,
+    },
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+struct ApproveDeviceLoginRequest {
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Login code the device shows; case and whitespace are ignored.")
+    )]
+    code: String,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct DeviceLoginPreviewResponse {
+    client_name: Option<String>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Address the device login began from.")
+    )]
+    address: String,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Creation time as an RFC3339 timestamp.")
+    )]
+    created_at: String,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Expiry time as an RFC3339 timestamp.")
+    )]
+    expires_at: String,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -452,6 +546,72 @@ async fn get_me(
     }))
 }
 
+fn user_agent(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
+}
+
+async fn begin_device_login(
+    Extension(client): Extension<ClientAddress>,
+    headers: HeaderMap,
+    Json(body): Json<BeginDeviceLoginRequest>,
+) -> Result<(StatusCode, Json<BeginDeviceLoginResponse>), AppError> {
+    let begun = device_logins::begin(
+        SessionMetadata {
+            user_agent: user_agent(&headers),
+            client_name: body.client_name,
+        },
+        client,
+        None,
+        None,
+    )?;
+    Ok((
+        StatusCode::CREATED,
+        Json(BeginDeviceLoginResponse {
+            code: begun.code,
+            secret: begun.secret,
+            created_at: crate::services::timestamps::unix_ms_to_rfc3339_i64(begun.created_at_ms),
+            expires_at: crate::services::timestamps::unix_ms_to_rfc3339_i64(begun.expires_at_ms),
+        }),
+    ))
+}
+
+async fn claim_device_login(
+    Json(body): Json<ClaimDeviceLoginRequest>,
+) -> Result<Json<ClaimDeviceLoginResponse>, AppError> {
+    Ok(Json(match device_logins::claim(&body.secret).await? {
+        DeviceLoginClaim::Pending => ClaimDeviceLoginResponse::Pending,
+        DeviceLoginClaim::Complete { login, .. } => {
+            ClaimDeviceLoginResponse::Complete { token: login.token }
+        }
+    }))
+}
+
+async fn approve_device_login(
+    headers: HeaderMap,
+    Json(body): Json<ApproveDeviceLoginRequest>,
+) -> Result<StatusCode, AppError> {
+    let auth = forbid_api_key_credential(&headers).await?;
+    device_logins::approve(&auth.principal, &auth.credential, &body.code, None).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn preview_device_login_approval(
+    headers: HeaderMap,
+    Json(body): Json<ApproveDeviceLoginRequest>,
+) -> Result<Json<DeviceLoginPreviewResponse>, AppError> {
+    let auth = forbid_api_key_credential(&headers).await?;
+    let preview = device_logins::lookup(&auth.principal, &body.code)?;
+    Ok(Json(DeviceLoginPreviewResponse {
+        client_name: preview.client_name,
+        address: preview.client.to_string(),
+        created_at: crate::services::timestamps::unix_ms_to_rfc3339_i64(preview.created_at_ms),
+        expires_at: crate::services::timestamps::unix_ms_to_rfc3339_i64(preview.expires_at_ms),
+    }))
+}
+
 async fn login_user(
     Extension(client): Extension<ClientAddress>,
     headers: HeaderMap,
@@ -472,10 +632,7 @@ async fn login_user(
     }
 
     let metadata = SessionMetadata {
-        user_agent: headers
-            .get(USER_AGENT)
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_string),
+        user_agent: user_agent(&headers),
         client_name: body.client_name,
     };
 
@@ -615,6 +772,38 @@ fn login_user_docs(op: TransformOperation) -> TransformOperation {
 }
 
 #[cfg(feature = "docgen")]
+fn begin_device_login_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Begin device login")
+        .description(
+            "Starts a sign-in for a device that shows a six-letter login code for an already signed-in device to approve. The device keeps `secret` and claims with it. The request lives 10 minutes. Counts against the client address's login limit; past it the response is 429 with `Retry-After`. An address keeps at most its 8 newest waiting requests and the server its 4096 newest, dropping the oldest. Answers 403 while authentication is disabled.",
+        )
+        .response::<201, Json<BeginDeviceLoginResponse>>()
+}
+
+#[cfg(feature = "docgen")]
+fn claim_device_login_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Claim device login").description(
+        "Returns `pending` until the device login is approved, then signs in the device holding `secret` and returns its session token. Claiming again returns the same token until 10 minutes after the first claim, so a client can retry. Answers 404 when the secret is unknown or expired, or when since the approval the approved user was deleted, that user's password changed, or the session that approved was revoked, and 403 while authentication is disabled.",
+    )
+}
+
+#[cfg(feature = "docgen")]
+fn approve_device_login_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Approve device login")
+        .description(
+            "Approves the login code a device shows, signing that device in as the caller. API keys cannot approve. Answers 404 when the code is unknown or expired and 409 when it is already approved; a first approval wins. Too many unknown codes answer 429 with `Retry-After`. Answers 403 while authentication is disabled.",
+        )
+        .response::<204, ()>()
+}
+
+#[cfg(feature = "docgen")]
+fn preview_device_login_approval_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Preview device login approval").description(
+        "Shows which device a login code belongs to before approving it, and approves nothing. API keys cannot preview. Answers 404 when the code is unknown or expired, and 403 while authentication is disabled. Codes it doesn't find count against the same limit as approvals, which answers 429 with `Retry-After`.",
+    )
+}
+
+#[cfg(feature = "docgen")]
 fn logout_user_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Logout user")
         .description("Revokes the current bearer session token when it is a session token.")
@@ -652,6 +841,13 @@ pub fn user_routes() -> Router {
         .route("/{user_id}/role", put(update_role))
         .route("/login", post(login_user))
         .route("/logout", post(logout_user))
+        .route("/device-logins", post(begin_device_login))
+        .route("/device-logins/claim", post(claim_device_login))
+        .route("/device-logins/approve", post(approve_device_login))
+        .route(
+            "/device-logins/approve/preview",
+            post(preview_device_login_approval),
+        )
 }
 
 #[cfg(feature = "docgen")]
@@ -674,6 +870,25 @@ pub(crate) fn user_openapi_routes() -> aide::axum::ApiRouter {
         .api_route("/{user_id}/role", put_with(update_role, update_role_docs))
         .api_route("/login", post_with(login_user, login_user_docs))
         .api_route("/logout", post_with(logout_user, logout_user_docs))
+        .api_route(
+            "/device-logins",
+            post_with(begin_device_login, begin_device_login_docs),
+        )
+        .api_route(
+            "/device-logins/claim",
+            post_with(claim_device_login, claim_device_login_docs),
+        )
+        .api_route(
+            "/device-logins/approve",
+            post_with(approve_device_login, approve_device_login_docs),
+        )
+        .api_route(
+            "/device-logins/approve/preview",
+            post_with(
+                preview_device_login_approval,
+                preview_device_login_approval_docs,
+            ),
+        )
 }
 
 pub(super) fn me_account_routes() -> Router {
@@ -1797,6 +2012,200 @@ mod tests {
             assert_eq!(error.into_response().status(), StatusCode::BAD_REQUEST);
         }
 
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    async fn auth_enabled_test_runtime() -> anyhow::Result<PathBuf> {
+        let test_dir = initialize_test_runtime().await?;
+        let mut config = STATE.config().as_ref().clone();
+        config.auth.enabled = true;
+        crate::services::testing::publish_config(config);
+        Ok(test_dir)
+    }
+
+    async fn begin_rest_device_login() -> Result<BeginDeviceLoginResponse, AppError> {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            USER_AGENT,
+            "Device Agent".parse().expect("valid user agent"),
+        );
+        let (status, Json(begun)) = begin_device_login(
+            Extension(crate::services::rate_limit::password_checks::fresh_address()),
+            headers,
+            Json(BeginDeviceLoginRequest {
+                client_name: Some("Living Room".to_string()),
+            }),
+        )
+        .await?;
+        assert_eq!(status, StatusCode::CREATED);
+        Ok(begun)
+    }
+
+    async fn claim_rest_device_login(secret: &str) -> Result<ClaimDeviceLoginResponse, AppError> {
+        let Json(claim) = claim_device_login(Json(ClaimDeviceLoginRequest {
+            secret: secret.to_string(),
+        }))
+        .await?;
+        Ok(claim)
+    }
+
+    async fn approve_rest_device_login(headers: &HeaderMap, code: &str) -> StatusCode {
+        match approve_device_login(
+            headers.clone(),
+            Json(ApproveDeviceLoginRequest {
+                code: code.to_string(),
+            }),
+        )
+        .await
+        {
+            Ok(status) => status,
+            Err(error) => error.into_response().status(),
+        }
+    }
+
+    #[tokio::test]
+    async fn device_login_runs_from_a_code_to_a_session() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = auth_enabled_test_runtime().await?;
+        let (user_id, user_db_id) = create_user("device-owner").await?;
+        let session =
+            crate::services::testing::create_session(user_db_id, Default::default()).await?;
+        let approver = bearer_headers(&session.token);
+
+        let begun = begin_rest_device_login().await.expect("begins");
+        assert_eq!(begun.code.len(), 6);
+        assert!(begun.code.bytes().all(|byte| byte.is_ascii_uppercase()));
+        assert!(matches!(
+            claim_rest_device_login(&begun.secret)
+                .await
+                .expect("claims"),
+            ClaimDeviceLoginResponse::Pending
+        ));
+
+        let Json(preview) = preview_device_login_approval(
+            approver.clone(),
+            Json(ApproveDeviceLoginRequest {
+                code: begun.code.clone(),
+            }),
+        )
+        .await
+        .expect("previews");
+        assert_eq!(preview.client_name.as_deref(), Some("Living Room"));
+        assert_ne!(preview.address, "unknown");
+        assert_eq!(preview.created_at, begun.created_at);
+
+        assert_eq!(
+            approve_rest_device_login(&approver, &begun.code.to_lowercase()).await,
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            approve_rest_device_login(&approver, &begun.code).await,
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            approve_rest_device_login(&approver, "NOSUCH").await,
+            StatusCode::NOT_FOUND
+        );
+
+        let ClaimDeviceLoginResponse::Complete { token } = claim_rest_device_login(&begun.secret)
+            .await
+            .expect("claims")
+        else {
+            anyhow::bail!("an approved login completes");
+        };
+        let ClaimDeviceLoginResponse::Complete { token: retried } =
+            claim_rest_device_login(&begun.secret)
+                .await
+                .expect("claims")
+        else {
+            anyhow::bail!("a retried claim completes");
+        };
+        assert_eq!(token, retried);
+
+        let auth = crate::services::auth::require_auth(Some(&token)).await?;
+        assert_eq!(auth.principal.user_public_id, user_id);
+        assert_eq!(auth.client_name.as_deref(), Some("Living Room"));
+
+        let unknown = claim_rest_device_login("no-such-secret").await.err();
+        assert_eq!(
+            unknown.expect("not found").into_response().status(),
+            StatusCode::NOT_FOUND
+        );
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn device_login_approval_refuses_api_keys() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = auth_enabled_test_runtime().await?;
+        let (_, user_db_id) = create_user("key-holder").await?;
+        let principal = crate::services::testing::user_principal(user_db_id).await?;
+        let key = api_keys::create_api_key(&principal, "script").await?;
+        let begun = begin_rest_device_login().await.expect("begins");
+
+        assert_eq!(
+            approve_rest_device_login(&bearer_headers(&key.key), &begun.code).await,
+            StatusCode::FORBIDDEN
+        );
+        let preview = preview_device_login_approval(
+            bearer_headers(&key.key),
+            Json(ApproveDeviceLoginRequest {
+                code: begun.code.clone(),
+            }),
+        )
+        .await
+        .err();
+        assert_eq!(
+            preview.expect("refused").into_response().status(),
+            StatusCode::FORBIDDEN
+        );
+        assert!(matches!(
+            claim_rest_device_login(&begun.secret)
+                .await
+                .expect("claims"),
+            ClaimDeviceLoginResponse::Pending
+        ));
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn device_login_is_forbidden_while_authentication_is_disabled() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let mut config = STATE.config().as_ref().clone();
+        config.auth.enabled = false;
+        crate::services::testing::publish_config(config);
+        crate::services::auth::ensure_default_user(&STATE.config()).await?;
+
+        let begin = begin_rest_device_login().await.err();
+        assert_eq!(
+            begin.expect("refused").into_response().status(),
+            StatusCode::FORBIDDEN
+        );
+        let claim = claim_rest_device_login("secret").await.err();
+        assert_eq!(
+            claim.expect("refused").into_response().status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            approve_rest_device_login(&HeaderMap::new(), "ABCDEF").await,
+            StatusCode::FORBIDDEN
+        );
+        let preview = preview_device_login_approval(
+            HeaderMap::new(),
+            Json(ApproveDeviceLoginRequest {
+                code: "ABCDEF".to_string(),
+            }),
+        )
+        .await
+        .err();
+        assert_eq!(
+            preview.expect("refused").into_response().status(),
+            StatusCode::FORBIDDEN
+        );
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())
     }

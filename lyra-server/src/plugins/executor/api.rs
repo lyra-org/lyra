@@ -32,7 +32,7 @@ impl PluginExecutor {
     ) {
         let dispatch_auth = crate::plugins::auth::DispatchAuth::default();
         if let Some(auth) = request.auth.as_ref() {
-            dispatch_auth.record(auth.principal.clone());
+            dispatch_auth.record_auth(auth);
         }
         let prepare = || {
             let routes = self.vm.data().get::<crate::plugins::api::ApiRouteStore>()?;

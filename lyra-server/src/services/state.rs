@@ -30,6 +30,7 @@ use tokio::sync::OwnedRwLockReadGuard;
 
 use crate::services::{
     auth::{
+        device_logins::DeviceLoginStore,
         media_tokens::MediaTokenStore,
         socket_tickets::SocketTicketStore,
     },
@@ -142,6 +143,7 @@ pub(crate) struct AuthCaches {
     pub(crate) session_last_seen: StdMutex<HashMap<String, i64>>,
     pub(crate) media_tokens: MediaTokenStore,
     pub(crate) socket_tickets: SocketTicketStore,
+    pub(crate) device_logins: DeviceLoginStore,
 }
 
 /// Everything services derive from the current database/config generation. A

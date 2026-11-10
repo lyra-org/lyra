@@ -27,6 +27,7 @@ pub(crate) mod access;
 pub(crate) mod accounts;
 pub(crate) mod api_keys;
 pub(crate) mod caller;
+pub(crate) mod device_logins;
 pub(crate) mod media_tokens;
 pub(crate) mod owners;
 pub(crate) mod passwords;
@@ -355,6 +356,7 @@ pub(crate) async fn require_can_create_library(bearer: Option<&str>) -> AuthResu
     require_permission_principal(bearer, Permission::ManageLibraries).await
 }
 
+#[derive(Clone)]
 pub(crate) struct LoginResult {
     pub(crate) token: String,
 }

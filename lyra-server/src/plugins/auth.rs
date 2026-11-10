@@ -22,13 +22,21 @@ use std::sync::Arc;
 
 use harmony_luau::StringEnum;
 
-use crate::plugins::args::JsonArg;
+use crate::plugins::args::{
+    self,
+    JsonArg,
+};
 use crate::plugins::types::LuauPermission;
 use crate::services::auth::{
     AuthCredential as ServiceAuthCredential,
     AuthError,
     Principal as ServicePrincipal,
     ResolvedAuth as ServiceResolvedAuth,
+    device_logins::{
+        self,
+        DeviceLoginClaim,
+        DeviceLoginError,
+    },
     login_with_password,
     logout_with_token,
     owners::Owners,
@@ -98,6 +106,132 @@ impl LoginOutcome {
             result: None,
             retry_after_seconds: Some(retry_after.as_secs().max(1)),
         }
+    }
+}
+
+/// The `options` argument of `begin_device_login`.
+#[derive(Default)]
+struct BeginDeviceLoginOptions {
+    code: Option<String>,
+    client_name: Option<String>,
+    user_agent: Option<String>,
+    data: Option<serde_json::Value>,
+}
+
+impl<'vm> luau::FromLuau<'vm> for BeginDeviceLoginOptions {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let options: luau::Table = reader.read()?;
+        args::reject_unknown_fields(
+            &options,
+            "options",
+            &["code", "client_name", "user_agent", "data"],
+        )?;
+        Ok(Self {
+            code: options.optional_string_field("code")?,
+            client_name: options.optional_string_field("client_name")?,
+            user_agent: options.optional_string_field("user_agent")?,
+            data: Some(harmony_serde::luau_to_json(&options.get("data")?)?),
+        })
+    }
+}
+
+/// The `options` argument of `approve_device_login`.
+#[derive(Default)]
+struct ApproveDeviceLoginOptions {
+    user_id: Option<String>,
+}
+
+impl<'vm> luau::FromLuau<'vm> for ApproveDeviceLoginOptions {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let options: luau::Table = reader.read()?;
+        args::reject_unknown_fields(&options, "options", &["user_id"])?;
+        Ok(Self {
+            user_id: options.optional_string_field("user_id")?,
+        })
+    }
+}
+
+#[derive(Serialize)]
+struct BegunDeviceLogin {
+    code: String,
+    secret: String,
+    created_at_ms: i64,
+    expires_at_ms: i64,
+}
+
+#[derive(Serialize)]
+struct BeginDeviceLoginOutcome {
+    status: &'static str,
+    result: Option<BegunDeviceLogin>,
+    retry_after_seconds: Option<u64>,
+}
+
+impl BeginDeviceLoginOutcome {
+    fn refused(status: &'static str, retry_after: Option<std::time::Duration>) -> Self {
+        Self {
+            status,
+            result: None,
+            retry_after_seconds: retry_after_seconds(retry_after),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct DeviceLoginRequest {
+    code: String,
+    client_name: Option<String>,
+    data: Option<serde_json::Value>,
+    created_at_ms: i64,
+    expires_at_ms: i64,
+}
+
+#[derive(Serialize)]
+struct DeviceLoginStatusOutcome {
+    status: &'static str,
+    result: Option<DeviceLoginRequest>,
+}
+
+#[derive(Serialize)]
+struct ApproveDeviceLoginOutcome {
+    status: &'static str,
+    retry_after_seconds: Option<u64>,
+}
+
+impl ApproveDeviceLoginOutcome {
+    fn new(status: &'static str, retry_after: Option<std::time::Duration>) -> Self {
+        Self {
+            status,
+            retry_after_seconds: retry_after_seconds(retry_after),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct ClaimDeviceLoginOutcome {
+    status: &'static str,
+    result: Option<LoginResult>,
+    data: Option<serde_json::Value>,
+}
+
+impl ClaimDeviceLoginOutcome {
+    fn unresolved(status: &'static str) -> Self {
+        Self {
+            status,
+            result: None,
+            data: None,
+        }
+    }
+}
+
+fn retry_after_seconds(retry_after: Option<std::time::Duration>) -> Option<u64> {
+    retry_after.map(|retry_after| retry_after.as_secs().max(1))
+}
+
+/// A device login failure that isn't an outcome a plugin handles, raised for it.
+fn device_login_error(error: DeviceLoginError) -> luau::Error {
+    match error {
+        DeviceLoginError::Auth(error) => crate::plugins::errors::auth_error(error),
+        error => crate::plugins::runtime_error(error),
     }
 }
 
@@ -271,11 +405,18 @@ impl luau::FromCallFrame for LoginClient {
     }
 }
 
-crate::plugins::limits::module_limits!(&[crate::plugins::limits::Limit {
-    name: "MAX_SESSION_DATA_BYTES",
-    value: crate::services::auth::sessions::MAX_PLUGIN_SESSION_DATA_BYTES,
-    description: "The most bytes of JSON `set_session_data` stores; it raises past them.",
-}]);
+crate::plugins::limits::module_limits!(&[
+    crate::plugins::limits::Limit {
+        name: "MAX_SESSION_DATA_BYTES",
+        value: crate::services::auth::sessions::MAX_PLUGIN_SESSION_DATA_BYTES,
+        description: "The most bytes of JSON `set_session_data` stores; it raises past them.",
+    },
+    crate::plugins::limits::Limit {
+        name: "MAX_DEVICE_LOGIN_DATA_BYTES",
+        value: crate::services::auth::device_logins::MAX_DEVICE_LOGIN_DATA_BYTES,
+        description: "The most bytes of JSON `begin_device_login` keeps as `data`; it raises past them.",
+    }
+]);
 
 #[harmony_macros::module(
     id = "lyra/auth",
@@ -340,7 +481,7 @@ impl AuthModule {
             Err(err) => return Err(crate::plugins::errors::auth_error(err)),
         }
         if let Some(dispatch_auth) = &dispatch_auth.0 {
-            dispatch_auth.record(resolved.principal.clone());
+            dispatch_auth.record_auth(&resolved);
         }
         harmony_luau::serializable_to_luau_owned(to_plugin_auth(resolved))
     }
@@ -445,6 +586,161 @@ impl AuthModule {
     }
 
     #[harmony(
+        description = "Starts a device login for a client that wants to sign in, charged as a login attempt against the request's address. The client shows `code` for a signed-in device to approve, and claims with `secret`. It lives 10 minutes. `status` is `code_taken` when another device login holds the `code` the caller gave. It raises when `data` is past `MAX_DEVICE_LOGIN_DATA_BYTES` bytes of JSON, and for a `code` that isn't 6 to 32 ASCII letters and digits. `status` is `disabled` while authentication is, which makes every device login function answer so.",
+        returns(BeginDeviceLoginOutcome)
+    )]
+    async fn begin_device_login(
+        options: Option<BeginDeviceLoginOptions>,
+        #[context] client: LoginClient,
+    ) -> luau::runtime::Result<luau::Value> {
+        let options = options.unwrap_or_default();
+        let metadata = SessionMetadata {
+            user_agent: options.user_agent,
+            client_name: sessions::tidy_client_name(options.client_name),
+        };
+        let outcome =
+            match device_logins::begin(metadata, client.0, options.data, options.code.as_deref()) {
+                Ok(begun) => BeginDeviceLoginOutcome {
+                    status: "ok",
+                    result: Some(BegunDeviceLogin {
+                        code: begun.code,
+                        secret: begun.secret,
+                        created_at_ms: begun.created_at_ms,
+                        expires_at_ms: begun.expires_at_ms,
+                    }),
+                    retry_after_seconds: None,
+                },
+                Err(DeviceLoginError::Disabled) => {
+                    BeginDeviceLoginOutcome::refused("disabled", None)
+                }
+                Err(DeviceLoginError::CodeTaken) => {
+                    BeginDeviceLoginOutcome::refused("code_taken", None)
+                }
+                Err(DeviceLoginError::Auth(AuthError::RateLimited(retry_after))) => {
+                    BeginDeviceLoginOutcome::refused("rate_limited", Some(retry_after))
+                }
+                Err(error) => return Err(device_login_error(error)),
+            };
+        harmony_luau::serializable_to_luau_owned(outcome)
+    }
+
+    #[harmony(
+        description = "Reads the device login behind `secret` and never signs anyone in. `result` is nil unless `status` is `pending` or `approved`; an unknown or expired secret is `not_found`.",
+        returns(DeviceLoginStatusOutcome)
+    )]
+    async fn device_login_status(secret: String) -> luau::runtime::Result<luau::Value> {
+        let outcome = match device_logins::status(&secret) {
+            Ok(status) => DeviceLoginStatusOutcome {
+                status: if status.approved {
+                    "approved"
+                } else {
+                    "pending"
+                },
+                result: Some(DeviceLoginRequest {
+                    code: status.code,
+                    client_name: status.client_name,
+                    data: status.data,
+                    created_at_ms: status.created_at_ms,
+                    expires_at_ms: status.expires_at_ms,
+                }),
+            },
+            Err(DeviceLoginError::Disabled) => DeviceLoginStatusOutcome {
+                status: "disabled",
+                result: None,
+            },
+            Err(DeviceLoginError::NotFound) => DeviceLoginStatusOutcome {
+                status: "not_found",
+                result: None,
+            },
+            Err(error) => return Err(device_login_error(error)),
+        };
+        harmony_luau::serializable_to_luau_owned(outcome)
+    }
+
+    #[harmony(
+        description = "Approves the device login behind `code`, ignoring case and whitespace, for the calling principal or `user_id`. Naming another user needs the manage_users permission and every permission that user holds, and raises `forbidden` otherwise. The approving credential must be a session this dispatch resolved, and the approval dies with it; an API key raises `forbidden`, since a key must not sign anyone in. The first approval wins. Too many codes it doesn't find make it `rate_limited` for that principal.",
+        returns(ApproveDeviceLoginOutcome)
+    )]
+    async fn approve_device_login(
+        code: String,
+        options: Option<ApproveDeviceLoginOptions>,
+        #[context] caller: CredentialedCaller,
+    ) -> luau::runtime::Result<luau::Value> {
+        let options = options.unwrap_or_default();
+        if matches!(caller.credential, ServiceAuthCredential::ApiKey { .. }) {
+            return Err(crate::plugins::errors::auth_error(AuthError::Forbidden(
+                "an api key cannot approve a device login".to_string(),
+            )));
+        }
+        let outcome = match device_logins::approve(
+            &caller.principal,
+            &caller.credential,
+            &code,
+            options.user_id.as_deref(),
+        )
+        .await
+        {
+            Ok(()) => ApproveDeviceLoginOutcome::new("ok", None),
+            Err(DeviceLoginError::Disabled) => ApproveDeviceLoginOutcome::new("disabled", None),
+            Err(DeviceLoginError::NotFound) => ApproveDeviceLoginOutcome::new("not_found", None),
+            Err(DeviceLoginError::AlreadyApproved) => {
+                ApproveDeviceLoginOutcome::new("already_approved", None)
+            }
+            Err(DeviceLoginError::UserNotFound) => {
+                ApproveDeviceLoginOutcome::new("user_not_found", None)
+            }
+            Err(DeviceLoginError::Auth(AuthError::RateLimited(retry_after))) => {
+                ApproveDeviceLoginOutcome::new("rate_limited", Some(retry_after))
+            }
+            Err(error) => return Err(device_login_error(error)),
+        };
+        harmony_luau::serializable_to_luau_owned(outcome)
+    }
+
+    #[harmony(
+        description = "Signs in the client holding `secret`. The first call after the approval creates a session; repeats return the same result until the device login expires, 10 minutes after the first. `result` is what `login` gives when `status` is `ok`, and nil otherwise, as is `data`, what the device login began with; one whose user was deleted, whose user's password changed, or whose approving session was revoked since the approval, or whose session is gone, is `not_found`.",
+        returns(ClaimDeviceLoginOutcome)
+    )]
+    async fn claim_device_login(secret: String) -> luau::runtime::Result<luau::Value> {
+        let (login, data) = match device_logins::claim(&secret).await {
+            Ok(DeviceLoginClaim::Complete { login, data }) => (login, data),
+            Ok(DeviceLoginClaim::Pending) => {
+                return harmony_luau::serializable_to_luau_owned(
+                    ClaimDeviceLoginOutcome::unresolved("pending"),
+                );
+            }
+            Err(DeviceLoginError::Disabled) => {
+                return harmony_luau::serializable_to_luau_owned(
+                    ClaimDeviceLoginOutcome::unresolved("disabled"),
+                );
+            }
+            Err(DeviceLoginError::NotFound) => {
+                return harmony_luau::serializable_to_luau_owned(
+                    ClaimDeviceLoginOutcome::unresolved("not_found"),
+                );
+            }
+            Err(error) => return Err(device_login_error(error)),
+        };
+        let resolved = match resolve_auth_from_bearer(Some(&login.token)).await {
+            Ok(Some(resolved)) => resolved,
+            Ok(None) | Err(AuthError::SessionExpired) => {
+                return harmony_luau::serializable_to_luau_owned(
+                    ClaimDeviceLoginOutcome::unresolved("not_found"),
+                );
+            }
+            Err(error) => return Err(crate::plugins::errors::auth_error(error)),
+        };
+        harmony_luau::serializable_to_luau_owned(ClaimDeviceLoginOutcome {
+            status: "ok",
+            result: Some(LoginResult {
+                principal: to_plugin_principal(resolved.principal),
+                token: login.token,
+            }),
+            data,
+        })
+    }
+
+    #[harmony(
         description = "Returns the current authentication capabilities.",
         returns(AuthCapabilities)
     )]
@@ -470,22 +766,40 @@ pub(crate) struct DispatchClient(pub(crate) crate::services::auth::caller::Clien
 /// principal-requiring host functions, and bound to the API response so
 /// request handling outside the VM can authorize against it.
 #[derive(Clone, Default)]
-pub(crate) struct DispatchAuth(Arc<std::sync::Mutex<Option<ServicePrincipal>>>);
+pub(crate) struct DispatchAuth(Arc<std::sync::Mutex<Option<DispatchCaller>>>);
+
+#[derive(Clone)]
+struct DispatchCaller {
+    principal: ServicePrincipal,
+    /// What the principal authenticated with; none for a principal recorded without one.
+    credential: Option<ServiceAuthCredential>,
+}
 
 impl DispatchAuth {
+    /// Acts for `principal` with no credential to show for it.
     pub(crate) fn record(&self, principal: ServicePrincipal) {
-        *self.0.lock().expect("dispatch auth slot poisoned") = Some(principal);
+        *self.0.lock().expect("dispatch auth slot poisoned") = Some(DispatchCaller {
+            principal,
+            credential: None,
+        });
+    }
+
+    pub(crate) fn record_auth(&self, auth: &ServiceResolvedAuth) {
+        *self.0.lock().expect("dispatch auth slot poisoned") = Some(DispatchCaller {
+            principal: auth.principal.clone(),
+            credential: Some(auth.credential.clone()),
+        });
     }
 
     /// Replaces the principal only while the slot still acts for the same user,
     /// leaving a principal the plugin resolved for someone else in place.
     pub(crate) fn refresh(&self, principal: ServicePrincipal) {
         let mut slot = self.0.lock().expect("dispatch auth slot poisoned");
-        if slot
-            .as_ref()
-            .is_some_and(|current| current.user_public_id == principal.user_public_id)
+        if let Some(current) = slot
+            .as_mut()
+            .filter(|current| current.principal.user_public_id == principal.user_public_id)
         {
-            *slot = Some(principal);
+            current.principal = principal;
         }
     }
 
@@ -496,7 +810,38 @@ impl DispatchAuth {
     }
 
     pub(crate) fn principal(&self) -> Option<ServicePrincipal> {
+        self.caller().map(|caller| caller.principal)
+    }
+
+    fn caller(&self) -> Option<DispatchCaller> {
         self.0.lock().expect("dispatch auth slot poisoned").clone()
+    }
+}
+
+/// The dispatch's principal and the credential it authenticated with, which a function that binds
+/// its effect to that credential takes from its call. Refused without either.
+struct CredentialedCaller {
+    principal: ServicePrincipal,
+    credential: ServiceAuthCredential,
+}
+
+impl luau::FromCallFrame for CredentialedCaller {
+    fn from_call_frame(_vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
+        let caller = context
+            .caller
+            .get::<DispatchAuth>()
+            .ok()
+            .and_then(|auth| auth.caller());
+        match caller {
+            Some(DispatchCaller {
+                principal,
+                credential: Some(credential),
+            }) => Ok(Self {
+                principal,
+                credential,
+            }),
+            _ => Err(no_dispatch_principal()),
+        }
     }
 }
 
@@ -785,6 +1130,201 @@ impl DescribeInterface for LoginOutcome {
     }
 }
 
+impl LuauTypeInfo for BeginDeviceLoginOptions {
+    fn luau_type() -> LuauType {
+        LuauType::literal("BeginDeviceLoginOptions")
+    }
+}
+
+impl LuauTypeInfo for ApproveDeviceLoginOptions {
+    fn luau_type() -> LuauType {
+        LuauType::literal("ApproveDeviceLoginOptions")
+    }
+}
+
+impl LuauTypeInfo for BegunDeviceLogin {
+    fn luau_type() -> LuauType {
+        LuauType::literal("BegunDeviceLogin")
+    }
+}
+
+impl LuauTypeInfo for BeginDeviceLoginOutcome {
+    fn luau_type() -> LuauType {
+        LuauType::literal("BeginDeviceLoginOutcome")
+    }
+}
+
+impl LuauTypeInfo for DeviceLoginRequest {
+    fn luau_type() -> LuauType {
+        LuauType::literal("DeviceLoginRequest")
+    }
+}
+
+impl LuauTypeInfo for DeviceLoginStatusOutcome {
+    fn luau_type() -> LuauType {
+        LuauType::literal("DeviceLoginStatusOutcome")
+    }
+}
+
+impl LuauTypeInfo for ApproveDeviceLoginOutcome {
+    fn luau_type() -> LuauType {
+        LuauType::literal("ApproveDeviceLoginOutcome")
+    }
+}
+
+impl LuauTypeInfo for ClaimDeviceLoginOutcome {
+    fn luau_type() -> LuauType {
+        LuauType::literal("ClaimDeviceLoginOutcome")
+    }
+}
+
+#[cfg(feature = "docgen")]
+fn described(
+    name: &'static str,
+    ty: LuauType,
+    description: Option<&'static str>,
+) -> FieldDescriptor {
+    FieldDescriptor {
+        name,
+        ty,
+        description,
+    }
+}
+
+#[cfg(feature = "docgen")]
+fn device_login_interfaces() -> Vec<InterfaceDescriptor> {
+    fn interface(name: &'static str, fields: Vec<FieldDescriptor>) -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new(name, None);
+        descriptor.fields.extend(fields);
+        descriptor
+    }
+    let retry_after = || described("retry_after_seconds", Option::<u64>::luau_type(), None);
+    vec![
+        interface(
+            "BeginDeviceLoginOptions",
+            vec![
+                described(
+                    "code",
+                    Option::<String>::luau_type(),
+                    Some(
+                        "The caller's own code, for a client whose codes have a shape of their own: 6 to 32 ASCII letters and digits, stored without whitespace and in upper case. Default six letters the server draws.",
+                    ),
+                ),
+                described(
+                    "client_name",
+                    Option::<String>::luau_type(),
+                    Some(
+                        "Labels the client to approvers and on its session; control and invisible characters are stripped and it is cut to 128 characters. Default none.",
+                    ),
+                ),
+                described(
+                    "user_agent",
+                    Option::<String>::luau_type(),
+                    Some("Recorded on the session. Default none."),
+                ),
+                described(
+                    "data",
+                    Option::<JsonValue>::luau_type(),
+                    Some(
+                        "JSON kept with the device login and returned by `device_login_status` and `claim_device_login` to whoever holds the secret. Default none.",
+                    ),
+                ),
+            ],
+        ),
+        interface(
+            "ApproveDeviceLoginOptions",
+            vec![described(
+                "user_id",
+                Option::<String>::luau_type(),
+                Some("Signs in this user instead of the caller. Default the caller."),
+            )],
+        ),
+        interface(
+            "BegunDeviceLogin",
+            vec![
+                described("code", String::luau_type(), Some("The code to show.")),
+                described(
+                    "secret",
+                    String::luau_type(),
+                    Some("What the client claims with."),
+                ),
+                described("created_at_ms", i64::luau_type(), None),
+                described("expires_at_ms", i64::luau_type(), None),
+            ],
+        ),
+        interface(
+            "BeginDeviceLoginOutcome",
+            vec![
+                described(
+                    "status",
+                    LuauType::literal("\"ok\" | \"code_taken\" | \"disabled\" | \"rate_limited\""),
+                    None,
+                ),
+                described("result", Option::<BegunDeviceLogin>::luau_type(), None),
+                retry_after(),
+            ],
+        ),
+        interface(
+            "DeviceLoginRequest",
+            vec![
+                described("code", String::luau_type(), None),
+                described("client_name", Option::<String>::luau_type(), None),
+                described(
+                    "data",
+                    Option::<JsonValue>::luau_type(),
+                    Some("What the device login began with."),
+                ),
+                described("created_at_ms", i64::luau_type(), None),
+                described(
+                    "expires_at_ms",
+                    i64::luau_type(),
+                    Some("Restarts when the device login is approved and when it is claimed."),
+                ),
+            ],
+        ),
+        interface(
+            "DeviceLoginStatusOutcome",
+            vec![
+                described(
+                    "status",
+                    LuauType::literal("\"pending\" | \"approved\" | \"not_found\" | \"disabled\""),
+                    None,
+                ),
+                described("result", Option::<DeviceLoginRequest>::luau_type(), None),
+            ],
+        ),
+        interface(
+            "ApproveDeviceLoginOutcome",
+            vec![
+                described(
+                    "status",
+                    LuauType::literal(
+                        "\"ok\" | \"not_found\" | \"already_approved\" | \"user_not_found\" | \"rate_limited\" | \"disabled\"",
+                    ),
+                    None,
+                ),
+                retry_after(),
+            ],
+        ),
+        interface(
+            "ClaimDeviceLoginOutcome",
+            vec![
+                described(
+                    "status",
+                    LuauType::literal("\"ok\" | \"pending\" | \"not_found\" | \"disabled\""),
+                    None,
+                ),
+                described("result", Option::<LoginResult>::luau_type(), None),
+                described(
+                    "data",
+                    Option::<JsonValue>::luau_type(),
+                    Some("What the device login began with, when `status` is `ok`."),
+                ),
+            ],
+        ),
+    ]
+}
+
 impl LuauTypeInfo for OwnersQuery {
     fn luau_type() -> LuauType {
         LuauType::literal("OwnersQuery")
@@ -918,7 +1458,10 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
             LoginOutcome::interface_descriptor(),
             OwnersQuery::interface_descriptor(),
             SessionInfo::interface_descriptor(),
-        ],
+        ]
+        .into_iter()
+        .chain(device_login_interfaces())
+        .collect::<Vec<_>>(),
         &[],
     )
 }

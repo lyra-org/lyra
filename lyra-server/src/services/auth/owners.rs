@@ -43,18 +43,15 @@ pub(crate) fn resolve(
         Owners::Principal => lyra_db::users::get_by_id(db, principal_db_id)?
             .into_iter()
             .collect(),
-        Owners::User(user_id) => {
-            require_permission(principal, Permission::ManageUsers)?;
-            let user = accounts::get_by_public_id(db, user_id)?;
-            if let Some(user_db_id) = user.as_ref().and_then(|user| user.db_id)
-                && !manages(db, principal, principal_db_id, user_db_id)?
-            {
-                return Err(AuthError::Forbidden(
-                    "cannot read the data of a user with permissions you do not hold".to_string(),
-                ));
-            }
-            user.into_iter().collect()
-        }
+        Owners::User(user_id) => managed_account(
+            db,
+            principal,
+            principal_db_id,
+            user_id,
+            "cannot read the data of a user with permissions you do not hold",
+        )?
+        .into_iter()
+        .collect(),
         Owners::All => {
             require_permission(principal, Permission::ManageUsers)?;
             let mut users = Vec::new();
@@ -68,6 +65,25 @@ pub(crate) fn resolve(
             users
         }
     })
+}
+
+/// The account `user_id` names, or `None` without one, which the principal may act for. Needs
+/// [`Permission::ManageUsers`]; `refusal` is the error for an account it doesn't [`manages`].
+pub(crate) fn managed_account(
+    db: &impl lyra_db::DbAccess,
+    principal: &Principal,
+    principal_db_id: DbId,
+    user_id: &str,
+    refusal: &str,
+) -> Result<Option<User>, AuthError> {
+    require_permission(principal, Permission::ManageUsers)?;
+    let user = accounts::get_by_public_id(db, user_id)?;
+    if let Some(user_db_id) = user.as_ref().and_then(|user| user.db_id)
+        && !manages(db, principal, principal_db_id, user_db_id)?
+    {
+        return Err(AuthError::Forbidden(refusal.to_string()));
+    }
+    Ok(user)
 }
 
 /// Whether the principal may see and manage `owner_db_id`'s personal data: its own, and with

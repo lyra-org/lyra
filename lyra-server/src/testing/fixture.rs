@@ -58,6 +58,9 @@ pub struct Fixture {
     /// Whether the test runs with authentication disabled.
     #[serde(default)]
     auth_disabled: bool,
+    /// Whether the test runs with rate limits off.
+    #[serde(default)]
+    rate_limit_disabled: bool,
     /// Library plugins the test's plugin depends on and can require.
     #[serde(default)]
     plugins: Vec<Plugin>,
@@ -702,6 +705,10 @@ impl Fixture {
 
     pub(crate) fn auth_disabled(&self) -> bool {
         self.auth_disabled
+    }
+
+    pub(crate) fn rate_limit_disabled(&self) -> bool {
+        self.rate_limit_disabled
     }
 
     pub(crate) fn without_scopes(&self) -> &[String] {

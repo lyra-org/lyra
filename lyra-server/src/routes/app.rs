@@ -325,6 +325,8 @@ fn is_public_rest_operation(method: &str, path: &str) -> bool {
         (method, path),
         ("GET", "/api/server/public")
             | ("POST", "/api/users/login")
+            | ("POST", "/api/users/device-logins")
+            | ("POST", "/api/users/device-logins/claim")
             | ("GET", "/api/covers/{id}")
             | ("GET", "/api/stream/hls/{session_id}/{segment}")
     )
@@ -341,6 +343,10 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("PUT", "/api/users/{user_id}/password"),
     ("PUT", "/api/users/{user_id}/role"),
     ("POST", "/api/users/login"),
+    ("POST", "/api/users/device-logins"),
+    ("POST", "/api/users/device-logins/claim"),
+    ("POST", "/api/users/device-logins/approve"),
+    ("POST", "/api/users/device-logins/approve/preview"),
     ("GET", "/api/me/"),
     ("PATCH", "/api/me/"),
     ("GET", "/api/me/api-keys"),

@@ -434,6 +434,12 @@ pub async fn run_luau_plugin_test_file(
     })?;
     let relative_path_text = relative_path.to_string_lossy().replace('\\', "/");
 
+    if fixture.is_some_and(Fixture::rate_limit_disabled) {
+        let mut startup = STATE.startup_config.get().as_ref().clone();
+        startup.rate_limit.enabled = false;
+        STATE.startup_config.replace(std::sync::Arc::new(startup));
+    }
+
     if fixture.is_some_and(Fixture::auth_disabled) {
         let mut config = STATE.config().as_ref().clone();
         config.auth.enabled = false;

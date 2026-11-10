@@ -1,0 +1,21 @@
+run_as = "manager"
+rate_limit_disabled = true
+
+[[users]]
+key = "manager"
+permissions = ["manage_users"]
+
+[[users]]
+key = "listener"
+
+[[users]]
+key = "owner"
+admin = true
+
+[[sessions]]
+key = "manager_phone"
+user = "manager"
+
+[[api_keys]]
+key = "manager_script"
+user = "manager"

@@ -33,6 +33,7 @@ use crate::services::{
         access::AccessError,
         accounts::AccountError,
         api_keys::ApiKeyServiceError,
+        device_logins::DeviceLoginError,
         passwords::InvalidPassword,
     },
     catalog::{
@@ -221,6 +222,23 @@ impl From<AuthError> for AppError {
             AuthError::NotFound(msg) => Self::not_found(msg),
             AuthError::RateLimited(retry_after) => Self::too_many_requests(retry_after),
             AuthError::Internal(err) => err.into(),
+        }
+    }
+}
+
+impl From<DeviceLoginError> for AppError {
+    fn from(err: DeviceLoginError) -> Self {
+        match err {
+            DeviceLoginError::Disabled => Self::forbidden(err.to_string()),
+            DeviceLoginError::NotFound | DeviceLoginError::UserNotFound => {
+                Self::not_found(err.to_string())
+            }
+            DeviceLoginError::AlreadyApproved => Self::conflict(err.to_string()),
+            DeviceLoginError::CodeTaken => Self::conflict(err.to_string()),
+            DeviceLoginError::DataTooLarge | DeviceLoginError::InvalidCode => {
+                Self::bad_request(err.to_string())
+            }
+            DeviceLoginError::Auth(err) => err.into(),
         }
     }
 }

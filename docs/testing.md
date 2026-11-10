@@ -55,6 +55,7 @@ a scope another kept one narrows can't go:
 run_as = "owner"
 without_scopes = ["lyra.ratings"]
 auth_disabled = true         # optional; the server runs with authentication off
+rate_limit_disabled = true   # optional; rate limits are off, for a test that begins many logins
 
 [[plugins]]                  # a one-file library plugin the test's plugin depends on and requires
 id = "notes"

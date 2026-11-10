@@ -74,7 +74,7 @@ fn socket_auth(
     let dispatch_auth = crate::plugins::auth::DispatchAuth::default();
     let reauth = match (auth_mode, auth) {
         (RouteAuthMode::Required, Some(auth)) => {
-            dispatch_auth.record(auth.principal.clone());
+            dispatch_auth.record_auth(auth);
             Some(SocketReauth {
                 headers: headers.clone(),
                 user_public_id: auth.principal.user_public_id.clone(),

@@ -43,7 +43,7 @@ pub(crate) struct SessionMetadata {
 }
 
 impl SessionMetadata {
-    fn normalized(self) -> Result<Self, ClientNameError> {
+    pub(super) fn normalized(self) -> Result<Self, ClientNameError> {
         Ok(Self {
             user_agent: normalize_text(self.user_agent),
             client_name: normalize_client_name(self.client_name)?,
@@ -184,6 +184,16 @@ pub(crate) async fn create_session_for_user(
     principal: &Principal,
     metadata: SessionMetadata,
 ) -> Result<CreatedSession, AuthError> {
+    create_session_for_user_when(principal, metadata, |_, _| Ok(true)).await
+}
+
+/// [`create_session_for_user`], only if `allowed` holds under the write lock that inserts the
+/// session. A refusal is [`AuthError::InvalidBearerCredential`], as a deleted user's is.
+pub(crate) async fn create_session_for_user_when(
+    principal: &Principal,
+    metadata: SessionMetadata,
+    allowed: impl FnOnce(&agdb::DbAny, DbId) -> anyhow::Result<bool>,
+) -> Result<CreatedSession, AuthError> {
     let metadata = metadata.normalized()?;
     let token = random_hex_secret::<SESSION_TOKEN_BYTES>();
     let token_hash = hash_secret(&token);
@@ -206,6 +216,9 @@ pub(crate) async fn create_session_for_user(
     };
     let mut db_write = STATE.db.write().await;
     let user_db_id = principal.require(&db_write)?;
+    if !allowed(&db_write, user_db_id)? {
+        return Err(AuthError::InvalidBearerCredential);
+    }
     lyra_db::users::login(db_write.deref_mut(), user_db_id, &session)?;
     drop(db_write);
     // Seed the cache so the next request inside the debounce window is a no-op.
