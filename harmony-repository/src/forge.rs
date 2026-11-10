@@ -206,6 +206,18 @@ impl RepoSpec {
         format!("{}://{}", self.scheme, self.host)
     }
 
+    /// Whether the network between here and the repository cannot alter what
+    /// is fetched from it: it uses TLS, or never leaves this machine.
+    pub fn is_protected_in_transit(&self) -> bool {
+        self.scheme == "https"
+            || Url::parse(&self.base_url()).is_ok_and(|url| match url.host() {
+                Some(url::Host::Domain(domain)) => domain == "localhost",
+                Some(url::Host::Ipv4(address)) => address.is_loopback(),
+                Some(url::Host::Ipv6(address)) => address.is_loopback(),
+                None => false,
+            })
+    }
+
     /// Canonical form used for persistence and self-reference comparison.
     pub fn canonical_url(&self) -> String {
         let origin = format!("{}/{}/{}", self.base_url(), self.namespace, self.repo_name);
@@ -713,6 +725,33 @@ mod tests {
         assert_eq!(spec.host, "127.0.0.1:3000");
         assert_eq!(spec.forge, Forge::Gitea);
         assert_eq!(spec.base_url(), "http://127.0.0.1:3000");
+    }
+
+    #[test]
+    fn only_tls_and_loopback_are_protected_in_transit() {
+        for url in [
+            "https://github.com/owner/repo",
+            "https://192.168.1.5/owner/repo",
+            "http://localhost:3000/owner/repo",
+            "http://LOCALHOST/owner/repo",
+            "http://127.0.0.1:3000/owner/repo",
+            "http://127.8.9.10/owner/repo",
+            "http://[::1]:3000/owner/repo",
+        ] {
+            let spec = RepoSpec::parse(url, None).unwrap();
+            assert!(spec.is_protected_in_transit(), "{url}");
+        }
+        for url in [
+            "http://github.com/owner/repo",
+            "http://192.168.1.5:3000/owner/repo",
+            "http://[fd00::1]:3000/owner/repo",
+            "http://nas.local/owner/repo",
+            "http://localhost.example.org/owner/repo",
+            "http://127.0.0.1.example.org/owner/repo",
+        ] {
+            let spec = RepoSpec::parse(url, None).unwrap();
+            assert!(!spec.is_protected_in_transit(), "{url}");
+        }
     }
 
     #[test]

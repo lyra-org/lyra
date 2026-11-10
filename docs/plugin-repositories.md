@@ -275,6 +275,18 @@ planned end, when its reported position reaches the track's duration; a
 buffering one until five minutes after its last report. With the
 setting off, updates are only reported.
 
+Updates from a repository reached over plain HTTP are only reported, whatever
+the setting, unless it is on this machine (`localhost` or a loopback address).
+Anyone on the network could replace what such a repository serves. Installing
+them by hand still works.
+
+Releases are not signed, and the server does not verify what it downloads
+beyond the TLS connection to the forge. Automatic updates therefore trust the
+repository and its forge: whoever can publish there can run code with the
+scopes the plugin already reaches on every server that has it installed. A
+release needing more scopes is still held. Pin a plugin to a tag or commit, or
+turn the setting off, to install new code only when an admin chooses to.
+
 A subscription is checked ahead of its day while the server refuses to
 load an unpinned plugin installed from it because the plugin's `lyra`
 requirement excludes the server, as after a server upgrade: once at

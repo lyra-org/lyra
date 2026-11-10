@@ -314,10 +314,11 @@ pub(super) static RELOAD_PENDING: AtomicBool = AtomicBool::new(false);
 
 /// Lists one subscribed `repository`, stores what it offers on it, and
 /// judges the newer releases of its installed plugins. When `install` is
-/// set, those that need no approval are reinstalled, recorded as
-/// automatic; otherwise they are only reported as available. The runtime
-/// is not reloaded; that waits for [`apply_pending_reload`]. A
-/// subscription removed in the meantime is not checked.
+/// set and the network cannot alter what the repository serves, those that
+/// need no approval are reinstalled, recorded as automatic; otherwise they
+/// are only reported as available. The runtime is not reloaded; that waits
+/// for [`apply_pending_reload`]. A subscription removed in the meantime is
+/// not checked.
 pub(super) async fn check_subscription(
     repository: &repo_db::PluginRepository,
     plugins_dir: &Path,
@@ -370,7 +371,7 @@ pub(super) async fn check_subscription(
         })
         .collect();
     settle_updates([&mut listed], &manifests, false);
-    if !install {
+    if !install || !spec.is_protected_in_transit() {
         return Ok(available_updates(listed.outcomes, offered));
     }
     let source = resolve_update_source(&client, listed, &UnpackBudget::new())
