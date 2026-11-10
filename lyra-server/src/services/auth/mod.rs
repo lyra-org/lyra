@@ -268,6 +268,7 @@ impl AuthCredential {
 
 /// The principal of `user_public_id` as `credential` authenticates them now, read under the
 /// caller's guard, or `None` when the user is gone or the credential no longer authenticates them.
+/// No credential authenticates the default user while authentication is enabled.
 pub(crate) fn live_principal(
     db: &impl lyra_db::DbAccess,
     user_public_id: &str,
@@ -279,7 +280,9 @@ pub(crate) fn live_principal(
     if !credential.is_live(db, user_db_id)? {
         return Ok(None);
     }
-    Principal::load(db, user_db_id)
+    let principal = Principal::load(db, user_db_id)?;
+    Ok(principal
+        .filter(|principal| !STATE.config().auth.enabled || principal.username != DEFAULT_USERNAME))
 }
 
 #[derive(Clone, Debug)]
@@ -1229,11 +1232,19 @@ mod tests {
         let session =
             crate::services::testing::create_session(default_db_id, Default::default()).await?;
         let api_key = api_keys::create_api_key(&default_principal, "left behind").await?;
+        let mut credentials = Vec::new();
         for bearer in [&session.token, &api_key.key] {
             let auth = resolve_auth_from_bearer(Some(bearer))
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("default credential should resolve"))?;
             assert_ne!(auth.credential, AuthCredential::Default);
+            let live = live_principal(
+                &*STATE.db.read().await,
+                &default_principal.user_public_id,
+                &auth.credential,
+            )?;
+            assert!(live.is_some());
+            credentials.push(auth.credential);
         }
 
         let password = "known-default-password";
@@ -1253,6 +1264,14 @@ mod tests {
                 require_auth(Some(bearer)).await,
                 Err(AuthError::InvalidBearerCredential)
             ));
+        }
+        for credential in &credentials {
+            let live = live_principal(
+                &*STATE.db.read().await,
+                &default_principal.user_public_id,
+                credential,
+            )?;
+            assert!(live.is_none());
         }
         let login = login_with_password(
             DEFAULT_USERNAME,
