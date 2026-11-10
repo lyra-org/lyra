@@ -49,7 +49,6 @@ use crate::{
             require_auth,
             require_principal,
         },
-        pagination::SnapshotKey,
         playback_sessions::{
             self as sessions,
             PlaybackMutation,
@@ -322,7 +321,6 @@ fn map_playback_error(error: PlaybackError) -> AppError {
         }
         PlaybackError::Session(error) => error.into(),
         PlaybackError::Database(error) => anyhow::Error::from(error).into(),
-        PlaybackError::Pagination(error) => error.into(),
         PlaybackError::Internal(error) => error.into(),
     }
 }
@@ -386,10 +384,7 @@ async fn list_playbacks(
     let principal = require_principal(bearer_credential(&headers)).await?;
     let inc = parse_inc(query.inc)?;
     let active_only = query.active.unwrap_or(false);
-    let page_request = query.page.resolve_snapshot();
-    let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "playbacks")
-        .field(Some(if active_only { "active" } else { "all" }))
-        .finish();
+    let page_request = query.page.resolve();
     let current_ms = now_ms()?;
     let snapshots = if inc.controller {
         Some(remote_registry::list_user_connections(&principal.user_public_id).await)
@@ -402,69 +397,40 @@ async fn list_playbacks(
         .transpose()
         .map_err(map_playback_error)?
         .unwrap_or_default();
-    let (records, next_cursor) = if let Some(page) = page_request.resume(&snapshot_key)? {
-        let mut records = Vec::with_capacity(page.item_ids.len());
-        for id in page.item_ids {
-            let Some(playback_db_id) = lyra_db::lookup::find_node_id_by_id(&*db, &id)? else {
-                continue;
-            };
-            if let Some(record) =
-                playbacks::get_visible_detail(&db, playback_db_id, &principal, current_ms)
-                    .map_err(map_playback_error)?
-            {
-                records.push(record);
+    let mut projections =
+        playbacks::list_visible_projections(&db, &principal, active_only, current_ms)
+            .map_err(map_playback_error)?;
+    projections.sort_by(|left, right| {
+        right
+            .updated_at_ms
+            .cmp(&left.updated_at_ms)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    let page = page_request
+        .slice(projections)
+        .try_map_items(|projections| {
+            let mut records = Vec::with_capacity(projections.len());
+            for projection in projections {
+                if let Some(record) =
+                    playbacks::get_visible_detail(&db, projection.db_id, &principal, current_ms)?
+                {
+                    records.push(record);
+                }
             }
-        }
-        (records, page.next_cursor)
-    } else {
-        let mut projections =
-            playbacks::list_visible_projections(&db, &principal, active_only, current_ms)
-                .map_err(map_playback_error)?;
-        projections.sort_by(|left, right| {
-            right
-                .updated_at_ms
-                .cmp(&left.updated_at_ms)
-                .then_with(|| left.id.cmp(&right.id))
-        });
-        let page = page_request.start(
-            &snapshot_key,
-            projections
-                .iter()
-                .map(|projection| projection.id.clone())
-                .collect(),
-        )?;
-        let mut records = Vec::with_capacity(page.item_ids.len());
-        for id in &page.item_ids {
-            let Some(playback_db_id) = lyra_db::lookup::find_node_id_by_id(&*db, id)? else {
-                continue;
-            };
-            if let Some(record) =
-                playbacks::get_visible_detail(&db, playback_db_id, &principal, current_ms)
-                    .map_err(map_playback_error)?
-            {
-                records.push(record);
-            }
-        }
-        (records, page.next_cursor)
-    };
-    let responses = records
-        .iter()
-        .map(|record| {
-            playback_to_response(
-                &record.playback,
-                record.current_session.as_ref(),
-                record.current_client.as_ref(),
-                &principal.user_public_id,
-                current_ms,
-                inc,
-                &connections,
-            )
+            Ok::<_, playbacks::PlaybackError>(records)
         })
-        .collect::<Vec<_>>();
-    Ok(Json(PageResponse {
-        items: responses,
-        next_cursor,
-    }))
+        .map_err(map_playback_error)?;
+    Ok(Json(page.map(|record| {
+        playback_to_response(
+            &record.playback,
+            record.current_session.as_ref(),
+            record.current_client.as_ref(),
+            &principal.user_public_id,
+            current_ms,
+            inc,
+            &connections,
+        )
+    })))
 }
 
 async fn create_playback(
@@ -575,11 +541,11 @@ fn create_docs(op: TransformOperation) -> TransformOperation {
 fn list_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List playbacks").description(
         concat!(
-            "Returns `{ items, next_cursor }` for the authenticated user's playback contexts, including plugin-reported playback, ordered by most recently updated. `active=true` filters the initial snapshot to playbacks whose current session is live. ",
+            "Returns `{ items, total, offset }` for the authenticated user's playback contexts, including plugin-reported playback, ordered by most recently updated. `active=true` keeps only playbacks whose current session is live. ",
             live_window_description!(),
             " ",
             reported_context_expiry_description!(),
-            " Of queue-backed playbacks, a user keeps the 100 most recently updated inactive ones, and older inactive ones are removed. `client_name` and `plugin_id` name the client and plugin of the current track's play. A queue-backed playback whose current track the caller can no longer see is listed without `current`, though still with those; `GET /queue` gives what of its queue is playable. A null `queue_revision` means there is no server-managed queue. `inc=controller` includes the WebSocket connection driving each playback as `controller`, or `null` when none is. Drive pagination from `next_cursor`."
+            " Of queue-backed playbacks, a user keeps the 100 most recently updated inactive ones, and older inactive ones are removed. `client_name` and `plugin_id` name the client and plugin of the current track's play. A queue-backed playback whose current track the caller can no longer see is listed without `current`, though still with those; `GET /queue` gives what of its queue is playable. A null `queue_revision` means there is no server-managed queue. `inc=controller` includes the WebSocket connection driving each playback as `controller`, or `null` when none is. `offset` and `limit` page through the list as it is at each request; `limit` defaults to 100 and is capped at 500."
         ),
     )
 }

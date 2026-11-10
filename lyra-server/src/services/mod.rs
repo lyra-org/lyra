@@ -50,7 +50,6 @@ pub(crate) mod metadata;
 pub(crate) mod mix;
 pub(crate) mod opaque_ids;
 pub(crate) mod options;
-pub(crate) mod pagination;
 pub(crate) mod playback_sessions;
 pub(crate) mod playback_sources;
 pub(crate) mod playbacks;

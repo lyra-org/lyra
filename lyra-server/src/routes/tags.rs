@@ -43,7 +43,6 @@ use crate::{
     services::STATE,
     services::{
         auth::require_authenticated,
-        pagination::SnapshotKey,
         tags::{
             self as tag_service,
             CreateResult,
@@ -196,30 +195,12 @@ async fn list_tags(
     Query(query): Query<ListQuery>,
 ) -> Result<Json<PageResponse<TagResponse>>, AppError> {
     let principal = require_authenticated(bearer_credential(&headers)).await?;
-    let page_request = query.page.resolve_snapshot();
-    let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "tags").finish();
+    let page_request = query.page.resolve();
 
     let db = STATE.db.read().await;
     let user_db_id = principal.require(&db)?;
-    let (tags, next_cursor) = if let Some(page) = page_request.resume(&snapshot_key)? {
-        (
-            tag_service::hydrate_tag_snapshot(&db, user_db_id, &page.item_ids)?,
-            page.next_cursor,
-        )
-    } else {
-        let mut tags = tag_service::list_for_user(&db, user_db_id)?;
-        let page = page_request.start(
-            &snapshot_key,
-            tags.iter().map(|tag| tag.id.clone()).collect(),
-        )?;
-        tags.truncate(page.item_ids.len());
-        (tags, page.next_cursor)
-    };
-
-    Ok(Json(PageResponse {
-        items: tags.into_iter().map(tag_to_response).collect(),
-        next_cursor,
-    }))
+    let tags = tag_service::list_for_user(&db, user_db_id)?;
+    Ok(Json(page_request.slice(tags).map(tag_to_response)))
 }
 
 async fn get_tag(
@@ -246,33 +227,13 @@ async fn list_tag_targets(
     if !crate::services::opaque_ids::is_public_id(&id) {
         return Err(AppError::bad_request(format!("malformed tag id: {id}")));
     }
-    let page_request = query.page.resolve_snapshot();
-    let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "tag-targets")
-        .field(Some(&id))
-        .finish();
+    let page_request = query.page.resolve();
 
     let db = STATE.db.read().await;
     let user_db_id = principal.require(&db)?;
     let tag_db_id = tag_service::resolve_owned_tag_id(&db, user_db_id, &id)?;
-    let (targets, next_cursor) = if let Some(page) = page_request.resume(&snapshot_key)? {
-        (
-            tag_service::hydrate_target_snapshot(&db, user_db_id, tag_db_id, &page.item_ids)?,
-            page.next_cursor,
-        )
-    } else {
-        let mut targets = tag_service::list_targets(&db, user_db_id, tag_db_id)?;
-        let page = page_request.start(
-            &snapshot_key,
-            targets.iter().map(|target| target.snapshot_id()).collect(),
-        )?;
-        targets.truncate(page.item_ids.len());
-        (targets, page.next_cursor)
-    };
-
-    Ok(Json(PageResponse {
-        items: targets.into_iter().map(|target| target.target_id).collect(),
-        next_cursor,
-    }))
+    let targets = tag_service::list_targets(&db, user_db_id, tag_db_id)?;
+    Ok(Json(page_request.slice(targets)))
 }
 
 async fn get_tag_target_state(
@@ -367,10 +328,9 @@ fn create_tag_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn list_tags_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List tags").description(
-        "Returns `{ items, next_cursor }` for the authenticated user's tags, ordered by creation \
-         time descending with a stable tiebreaker. The first page creates a bounded snapshot, so \
-         later renames and inserts do not shift continuation pages. `next_cursor` is the only \
-         termination signal.",
+        "Returns `{ items, total, offset }` for the authenticated user's tags, ordered by \
+         creation time descending with a stable tiebreaker. `offset` and `limit` page through \
+         the list as it is at each request; `limit` defaults to 100 and is capped at 500.",
     )
 }
 
@@ -383,9 +343,9 @@ fn get_tag_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn list_tag_targets_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List tag targets").description(
-        "Returns public target IDs as `{ items, next_cursor }` in a bounded snapshot order. \
-         Continuation pages recheck edge existence and target visibility, so removed or newly \
-         hidden targets are skipped. `next_cursor` is the only termination signal.",
+        "Returns public target IDs as `{ items, total, offset }`, leaving out targets the \
+         caller cannot see. `offset` and `limit` page through the list as it is at each \
+         request; `limit` defaults to 100 and is capped at 500.",
     )
 }
 
@@ -509,6 +469,81 @@ mod tests {
         let status = response.status();
         let body = to_bytes(response.into_body(), usize::MAX).await?;
         Ok((status, String::from_utf8(body.to_vec())?))
+    }
+
+    /// Checks that pages of two hold each of the list's `count` items once and in order, and
+    /// that a page past the end is empty. Returns the items.
+    async fn assert_pages(
+        routes: &Router,
+        uri: &str,
+        auth: &str,
+        count: usize,
+    ) -> anyhow::Result<Vec<serde_json::Value>> {
+        let page = async |query: &str| -> anyhow::Result<serde_json::Value> {
+            let (status, body) = send(routes, "GET", &format!("{uri}?{query}"), auth, None).await?;
+            anyhow::ensure!(status == StatusCode::OK, "{status}: {body}");
+            Ok(serde_json::from_str(&body)?)
+        };
+        let items =
+            |page: &serde_json::Value| page["items"].as_array().cloned().unwrap_or_default();
+
+        let whole = page("").await?;
+        assert_eq!(whole["total"], count);
+        assert_eq!(items(&whole).len(), count);
+        let mut paged = Vec::new();
+        for offset in (0..count).step_by(2) {
+            let page = page(&format!("limit=2&offset={offset}")).await?;
+            assert_eq!(page["total"], count);
+            assert_eq!(page["offset"], offset);
+            paged.extend(items(&page));
+        }
+        assert_eq!(paged, items(&whole));
+
+        let past = page(&format!("limit=2&offset={}", count + 3)).await?;
+        assert!(items(&past).is_empty());
+        assert_eq!(past["total"], count);
+        assert_eq!(past["offset"], count);
+        Ok(paged)
+    }
+
+    #[tokio::test]
+    async fn tags_and_their_targets_page_by_offset() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        init_library_test_state(std::path::PathBuf::from(".")).await?;
+
+        let user_db_id = {
+            let mut db = STATE.db.write().await;
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
+            let user_db_id =
+                lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("tags-pages")?)?;
+            lyra_db::roles::ensure_user_has_role(
+                &mut db,
+                user_db_id,
+                lyra_db::roles::BUILTIN_ADMIN_ROLE,
+            )?;
+            let library = insert_library(&mut db, "Tag Pages", "/tmp/lyra-tags-pages")?;
+            for index in 0..5 {
+                let track = insert_track(&mut db, &format!("Tagged {index}"))?;
+                connect(&mut db, library, track)?;
+                tag_service::create(&mut db, user_db_id, track, &NewTag::parse("Mood", "blue")?)?;
+                let own = NewTag::parse(&format!("Tag {index}"), "blue")?;
+                tag_service::create(&mut db, user_db_id, track, &own)?;
+            }
+            user_db_id
+        };
+        let session =
+            crate::services::testing::create_session(user_db_id, Default::default()).await?;
+        let auth = format!("Bearer {}", session.token);
+        let routes = me_tag_routes();
+
+        let tags = assert_pages(&routes, "/", &auth, 6).await?;
+        let mood = tags
+            .iter()
+            .find(|tag| tag["tag"] == "Mood")
+            .and_then(|tag| tag["id"].as_str())
+            .ok_or_else(|| anyhow::anyhow!("the shared tag is listed"))?;
+        assert_pages(&routes, &format!("/{mood}/targets"), &auth, 5).await?;
+        Ok(())
     }
 
     #[tokio::test]

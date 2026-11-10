@@ -501,13 +501,6 @@ fn tag_target_edges_from(db: &impl DbAccess, tag_id: DbId) -> anyhow::Result<Vec
         .collect())
 }
 
-fn edge_is_tag_target(edge: &DbElement) -> bool {
-    edge.values.iter().any(|value| {
-        matches!(&value.key, DbValue::String(key) if key == TAG_EDGE_KEY)
-            && value.value == DbValue::I64(1)
-    })
-}
-
 fn has_target_edge(db: &impl DbAccess, tag_id: DbId, target_db_id: DbId) -> anyhow::Result<bool> {
     for element in tag_target_edges_from(db, tag_id)? {
         if element.to == target_db_id {
@@ -613,31 +606,6 @@ pub fn list_targets(db: &impl DbAccess, tag_id: DbId) -> anyhow::Result<Vec<TagT
         .collect::<Vec<_>>();
     targets.sort_by_key(|target| target.target_db_id.0);
     Ok(targets)
-}
-
-pub fn get_targets_by_edge_ids(
-    db: &impl DbAccess,
-    tag_id: DbId,
-    edge_ids: &[DbId],
-) -> anyhow::Result<HashMap<DbId, TagTarget>> {
-    if edge_ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-    Ok(db
-        .exec(QueryBuilder::select().ids(edge_ids).query())?
-        .elements
-        .into_iter()
-        .filter(|edge| edge.from == tag_id && edge.to.0 > 0 && edge_is_tag_target(edge))
-        .map(|edge| {
-            (
-                edge.id,
-                TagTarget {
-                    edge_db_id: edge.id,
-                    target_db_id: edge.to,
-                },
-            )
-        })
-        .collect())
 }
 
 pub(crate) fn remove_outbound_for_user(

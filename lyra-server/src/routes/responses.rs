@@ -26,10 +26,50 @@ pub(crate) struct PageResponse<T> {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Opaque cursor for the bounded collection snapshot; `null` on the last page. Sole termination signal."
+            description = "How many items the whole list holds, under the request's filters."
         )
     )]
-    pub next_cursor: Option<String>,
+    pub total: u64,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Where `items` starts in the list: the requested `offset`, or `total` when that is past the end."
+        )
+    )]
+    pub offset: u64,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "The seed of the shuffle, present when the list is sorted at random. Send it as `seed` with another `offset` to page through the same shuffle."
+        )
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
+}
+
+impl<T> PageResponse<T> {
+    /// The page with each item mapped, keeping its place in the list.
+    pub(crate) fn map<U>(self, map: impl FnMut(T) -> U) -> PageResponse<U> {
+        PageResponse {
+            items: self.items.into_iter().map(map).collect(),
+            total: self.total,
+            offset: self.offset,
+            seed: self.seed,
+        }
+    }
+
+    /// The page with its items replaced by what `convert` makes of them together.
+    pub(crate) fn try_map_items<U, E>(
+        self,
+        convert: impl FnOnce(Vec<T>) -> Result<Vec<U>, E>,
+    ) -> Result<PageResponse<U>, E> {
+        Ok(PageResponse {
+            items: convert(self.items)?,
+            total: self.total,
+            offset: self.offset,
+            seed: self.seed,
+        })
+    }
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]

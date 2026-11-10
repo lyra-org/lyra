@@ -50,15 +50,15 @@ use self::{
         Context,
     },
 };
+#[cfg(test)]
+pub(crate) use pipeline::order;
 pub(crate) use pipeline::{
     NameRange,
     PersonalData,
     PersonalFilter,
     Query,
     counts,
-    leading,
     numbers,
-    order,
     page,
 };
 

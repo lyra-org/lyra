@@ -476,30 +476,23 @@ impl<C: Catalog> Query<C> {
     }
 }
 
-/// Every matching id in order, for cursor snapshots.
+/// Every matching id in order.
+#[cfg(test)]
 pub(crate) fn order<C: Catalog>(
     db: &DbAny,
     viewer: &Viewer,
     query: &Query<C>,
 ) -> Result<Vec<DbId>, CatalogError> {
-    leading(db, viewer, query, None)
-}
-
-/// The first `keep` matching ids in order, or every one without a `keep`.
-pub(crate) fn leading<C: Catalog>(
-    db: &DbAny,
-    viewer: &Viewer,
-    query: &Query<C>,
-    keep: Option<usize>,
-) -> Result<Vec<DbId>, CatalogError> {
     leading_in(
         &Context::filtered::<C>(db, viewer, &query.filter)?,
         query,
-        keep,
+        None,
     )
 }
 
-/// [`leading`] in an existing context.
+/// The first `keep` matching ids in order, or every one without a `keep`, in an existing
+/// context.
+#[cfg(test)]
 pub(crate) fn leading_in<C: Catalog>(
     cx: &Context<'_>,
     query: &Query<C>,

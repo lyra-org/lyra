@@ -57,6 +57,17 @@ list of the same entities.
 - Each endpoint has one path. Moving an endpoint removes the old path rather than leaving
   an alias.
 
+## Lists
+
+A paged list endpoint takes `offset` and `limit` beside its filters and sort, and returns
+`{ items, total, offset }`, as plugin queries do (`docs/plugin-api.md`):
+
+- Every page is read from the data as it is at that request. The server keeps nothing between
+  pages, so any page can be requested at any time, and a change between two requests can shift
+  the items by as many as it added or removed.
+- A catalog list and the plugin query for the same entities page through the same service call
+  (`services::catalog::page`), so both order and count alike.
+
 ## Previews
 
 A preview is a POST to `<mutation path>/preview`. It takes the mutation's input, changes

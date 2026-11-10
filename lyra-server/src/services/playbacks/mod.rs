@@ -22,7 +22,6 @@ use crate::services::{
         Principal,
         access,
     },
-    pagination,
     playback_sessions,
 };
 
@@ -179,8 +178,6 @@ pub(crate) enum PlaybackError {
     Session(#[from] playback_sessions::PlaybackServiceError),
     #[error(transparent)]
     Database(#[from] agdb::DbError),
-    #[error(transparent)]
-    Pagination(#[from] pagination::PaginationError),
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -778,11 +775,6 @@ pub(crate) fn list_projections_with_current(
     now_ms: u64,
 ) -> Result<Vec<(lyra_db::playbacks::PlaybackListProjection, Option<DbId>)>, PlaybackError> {
     let projections = lyra_db::playbacks::list_projections_for_user(db, owner_db_id)?;
-    if projections.len() > lyra_db::playbacks::MAX_PLAYBACKS_PER_USER
-        || projections.len() > pagination::snapshot_item_capacity()
-    {
-        return Err(pagination::PaginationError::SnapshotTooLarge.into());
-    }
     let projection_ids = projections
         .iter()
         .map(|projection| projection.db_id)

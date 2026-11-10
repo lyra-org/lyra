@@ -61,14 +61,12 @@ use crate::{
                 ArtistFilter,
                 Artists,
             },
-            pipeline::Catalog,
         },
         covers::{
             self,
             ResolvedCover,
             shown::CoverTarget,
         },
-        pagination::SnapshotKey,
         releases as release_service,
     },
 };
@@ -129,6 +127,8 @@ struct ArtistListQuery {
     pub(crate) available: super::AvailableQuery,
     #[serde(flatten)]
     page: super::PageQuery,
+    #[serde(flatten)]
+    seed: super::SeedQuery,
 }
 
 pub(crate) struct ArtistListOptions {
@@ -139,18 +139,18 @@ pub(crate) struct ArtistListOptions {
     sort_order: Option<String>,
     personal: catalog::PersonalFilter,
     available: Option<bool>,
-    page_request: super::SnapshotPageRequest,
+    page_request: super::PageRequest,
 }
 
 impl ArtistListOptions {
-    /// The options `GET /api/artists?query=` runs with only `inc`, personal filters and paging, so a
-    /// search cursor resumes on that endpoint. Any other filter or sort would change the cursor key.
+    /// The options `GET /api/artists?query=` runs with only `inc`, personal filters and paging, so
+    /// that endpoint carries on a search's list at later offsets.
     pub(crate) fn for_query(
         inc: Option<Vec<String>>,
         query: String,
         personal: catalog::PersonalFilter,
         available: Option<bool>,
-        page_request: super::SnapshotPageRequest,
+        page_request: super::PageRequest,
     ) -> Self {
         Self {
             inc,
@@ -487,14 +487,6 @@ pub(crate) fn artist_page(
     } = options;
     let includes = parse_inc(inc)?;
     let search_term = super::parse_text_query(query);
-    let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "artists")
-        .field(search_term.as_deref())
-        .field(library_id.as_deref())
-        .values(sort_by.as_deref())
-        .field(sort_order.as_deref())
-        .personal(personal)
-        .flag(available)
-        .finish();
     let sort = super::parse_catalog_sort(sort_by, sort_order)?;
     let library = crate::services::auth::access::resolve_optional_library_filter(
         db,
@@ -502,38 +494,22 @@ pub(crate) fn artist_page(
         library_id.as_deref(),
     )?;
 
-    let (artists, next_cursor) = if let Some(page) = page_request.resume(&snapshot_key)? {
-        let artists = super::load_snapshot_items(
-            db,
-            &page.item_ids,
-            lyra_db::artists::get_by_id,
-            |db, artist_db_id| access::artist_accessible(db, principal, artist_db_id),
-        )?;
-        (artists, page.next_cursor)
-    } else {
-        let viewer = catalog::Viewer::user(db, principal.clone())?;
-        let mut query = catalog::Query::<Artists>::new(ArtistFilter {
-            library,
-            personal,
-            available,
-            ..ArtistFilter::default()
-        });
-        query.search = search_term;
-        query.sort = sort;
-        query.seed = rand::random();
-        let ids = catalog::leading(db, &viewer, &query, page_request.rank_limit())?;
-        let page = page_request.start(&snapshot_key, super::public_ids(db, &ids)?)?;
-        (
-            Artists::hydrate(db, &ids[..page.item_ids.len()])?
-                .into_iter()
-                .map(|listed| listed.item)
-                .collect(),
-            page.next_cursor,
-        )
-    };
-    let details = artist_service::list_details_for_artists(db, includes.service, artists)?;
-    let items = artist_responses(db, principal, details, includes)?;
-    Ok(PageResponse { items, next_cursor })
+    let viewer = catalog::Viewer::user(db, principal.clone())?;
+    let mut query = catalog::Query::<Artists>::new(ArtistFilter {
+        library,
+        personal,
+        available,
+        ..ArtistFilter::default()
+    });
+    query.search = search_term;
+    query.sort = sort;
+    page_request
+        .catalog(db, &viewer, query)?
+        .try_map_items(|artists| {
+            let artists = artists.into_iter().map(|listed| listed.item).collect();
+            let details = artist_service::list_details_for_artists(db, includes.service, artists)?;
+            artist_responses(db, principal, details, includes)
+        })
 }
 
 pub(crate) async fn get_artist_response(
@@ -568,8 +544,9 @@ async fn get_artists(
         personal,
         available,
         page,
+        seed,
     } = list_query;
-    let page = page.resolve_snapshot();
+    let page = page.resolve().seeded(seed)?;
     let principal = require_authenticated(bearer_credential(&headers)).await?;
     let personal = personal.parse()?;
     Ok(Json(
@@ -637,7 +614,7 @@ async fn search_artist_covers(
 #[cfg(feature = "docgen")]
 fn list_artists_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List artists").description(
-        "Returns artists as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `sort_by`, `sort_order`, `rated`, `min_rating`, `max_rating`, `favorite`, `listened`, `available`, `limit`, `cursor`. `available=true` keeps the artists whose `available` field is true, counting only their tracks that can play; `available=false` keeps the artists credited on a track that can't play, or on a release holding one, partly playable ones included, counting only such tracks. `min_rating` and `max_rating` filter artists by the authenticated user's inclusive personal rating range; either bound excludes unrated artists. `rated=true` keeps only artists the user has rated and `rated=false` only those they have not; `rated=false` cannot be combined with a rating bound. `favorite=true` keeps only artists the user has favorited and `favorite=false` the rest. `listened=true` keeps only artists with at least one listened track among their credited tracks or releases and `listened=false` the rest. `library_id` scopes results to artists credited by releases or tracks belonging to that public library ID, and the `release_count`, `track_count`, `total_duration`, `listen_count` and `last_played_at` sort keys to the releases in it and their tracks. `sort_by` supports `sort_name`, `name`, `date_created`, `last_played_at`, `listen_count`, `release_count`, `track_count`, `total_duration`, `rating` (the authenticated user's personal rating; unrated artists sort last in both directions), `rated_at` (when the authenticated user last set their rating), `favorited_at` (when they first favorited the artist), and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` matches artist names and sort names, and the names of duplicates merged into the artist; each of its words must start a word, ignoring case, accents, apostrophes and punctuation; no character is an operator, and a word in a script written without spaces, such as Japanese, matches anywhere in a word. It defaults ordering to relevance: exact names rank first, then names starting with the query, then names holding every word, then names holding some, then matches only through related items. Use `inc` to include releases, tracks, relations, and/or covers. When `inc=covers`, artist cover metadata includes a public image URL. When `inc=relations`, add `relation_covers` to include public image metadata for related artists. When `inc=releases`, use `release_artists`, `release_covers`, and/or `artist_covers` to hydrate those nested release fields. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
+        "Returns artists as `{ items, total, offset }`, where `total` counts every artist the filters keep. Supported query parameters: `inc`, `query`, `library_id`, `sort_by`, `sort_order`, `rated`, `min_rating`, `max_rating`, `favorite`, `listened`, `available`, `limit`, `offset`, `seed`. `available=true` keeps the artists whose `available` field is true, counting only their tracks that can play; `available=false` keeps the artists credited on a track that can't play, or on a release holding one, partly playable ones included, counting only such tracks. `min_rating` and `max_rating` filter artists by the authenticated user's inclusive personal rating range; either bound excludes unrated artists. `rated=true` keeps only artists the user has rated and `rated=false` only those they have not; `rated=false` cannot be combined with a rating bound. `favorite=true` keeps only artists the user has favorited and `favorite=false` the rest. `listened=true` keeps only artists with at least one listened track among their credited tracks or releases and `listened=false` the rest. `library_id` scopes results to artists credited by releases or tracks belonging to that public library ID, and the `release_count`, `track_count`, `total_duration`, `listen_count` and `last_played_at` sort keys to the releases in it and their tracks. `sort_by` supports `sort_name`, `name`, `date_created`, `last_played_at`, `listen_count`, `release_count`, `track_count`, `total_duration`, `rating` (the authenticated user's personal rating; unrated artists sort last in both directions), `rated_at` (when the authenticated user last set their rating), `favorited_at` (when they first favorited the artist), `random`, and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. `offset` skips that many items and defaults to 0; every page is read from the catalog as it is at that request, and an `offset` at or past the end returns no items. A `random` sort also returns its `seed`: send it back with later offsets to page through the same shuffle, or leave it out for a new one. `query` matches artist names and sort names, and the names of duplicates merged into the artist; each of its words must start a word, ignoring case, accents, apostrophes and punctuation; no character is an operator, and a word in a script written without spaces, such as Japanese, matches anywhere in a word. It defaults ordering to relevance: exact names rank first, then names starting with the query, then names holding every word, then names holding some, then matches only through related items. Use `inc` to include releases, tracks, relations, and/or covers. When `inc=covers`, artist cover metadata includes a public image URL. When `inc=relations`, add `relation_covers` to include public image metadata for related artists. When `inc=releases`, use `release_artists`, `release_covers`, and/or `artist_covers` to hydrate those nested release fields. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
     )
 }
 
@@ -1075,7 +1052,7 @@ mod tests {
                 sort_by: None,
                 sort_order: None,
                 personal: catalog::PersonalFilter::default(),
-                page_request: super::super::SnapshotPageRequest::first_page(100),
+                page_request: super::super::PageRequest::first(100),
                 available: None,
             },
         )
@@ -1137,7 +1114,7 @@ mod tests {
                 sort_by: None,
                 sort_order: None,
                 personal: catalog::PersonalFilter::default(),
-                page_request: super::super::SnapshotPageRequest::first_page(100),
+                page_request: super::super::PageRequest::first(100),
                 available: None,
             },
         )
@@ -1153,7 +1130,7 @@ mod tests {
                 "Visible Track Artist".to_string()
             ]
         );
-        assert!(page.next_cursor.is_none());
+        assert_eq!(page.total, 2);
         Ok(())
     }
 
@@ -1206,7 +1183,7 @@ mod tests {
                     rating: exact_four,
                     ..catalog::PersonalFilter::default()
                 },
-                page_request: super::super::SnapshotPageRequest::first_page(100),
+                page_request: super::super::PageRequest::first(100),
                 available: None,
             },
         )
@@ -1215,7 +1192,7 @@ mod tests {
 
         assert_eq!(page.items.len(), 1);
         assert_eq!(page.items[0].name, "Four Star Artist");
-        assert!(page.next_cursor.is_none());
+        assert_eq!(page.total, page.items.len() as u64);
         Ok(())
     }
 
@@ -1227,7 +1204,7 @@ mod tests {
             sort_by: sort_by.map(|value| vec![value.to_string()]),
             sort_order: sort_order.map(str::to_string),
             personal: catalog::PersonalFilter::default(),
-            page_request: super::super::SnapshotPageRequest::first_page(100),
+            page_request: super::super::PageRequest::first(100),
             available: None,
         }
     }
@@ -1283,7 +1260,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_artist_responses_resume_rechecks_access() -> anyhow::Result<()> {
+    async fn list_artist_responses_later_page_leaves_out_artists_made_hidden() -> anyhow::Result<()>
+    {
         let _guard = runtime_test_lock().await;
         let _test_dir = initialize_test_runtime().await?;
 
@@ -1302,33 +1280,31 @@ mod tests {
             (library_id, library, release)
         };
         let principal = user_principal(HashSet::from([library_id])).await;
-        let page = |cursor: Option<String>| ArtistListOptions {
+        let page = |offset: u64| ArtistListOptions {
             page_request: super::super::PageQuery {
                 limit: Some(1),
-                cursor,
+                offset: Some(offset),
             }
-            .resolve_snapshot(),
+            .resolve(),
             ..list_options(None, None)
         };
 
-        let first = list_artist_responses(&principal, page(None))
+        let first = list_artist_responses(&principal, page(0))
             .await
             .map_err(|err| anyhow::anyhow!("{err:?}"))?;
         assert_eq!(first.items.len(), 1);
-        let cursor = first
-            .next_cursor
-            .ok_or_else(|| anyhow::anyhow!("expected a second page"))?;
+        assert_eq!(first.total, 2);
 
         {
             let mut db = STATE.db.write().await;
             lyra_db::graph::remove_edges_between(&mut *db, library, release)?;
         }
 
-        let second = list_artist_responses(&principal, page(Some(cursor)))
+        let second = list_artist_responses(&principal, page(1))
             .await
             .map_err(|err| anyhow::anyhow!("{err:?}"))?;
         assert!(second.items.is_empty());
-        assert!(second.next_cursor.is_none());
+        assert_eq!(second.total, 0);
         Ok(())
     }
 
@@ -1413,7 +1389,7 @@ mod tests {
                 sort_by: Some(vec!["name".to_string()]),
                 sort_order: Some("descending".to_string()),
                 personal: catalog::PersonalFilter::default(),
-                page_request: super::super::SnapshotPageRequest::first_page(100),
+                page_request: super::super::PageRequest::first(100),
                 available: None,
             },
         )
@@ -1422,7 +1398,7 @@ mod tests {
 
         let names: Vec<String> = page.items.into_iter().map(|artist| artist.name).collect();
         assert_eq!(names, vec!["Charlie", "Bravo", "Alpha"]);
-        assert!(page.next_cursor.is_none());
+        assert_eq!(page.total, 3);
         Ok(())
     }
 

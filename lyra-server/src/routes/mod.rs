@@ -89,11 +89,7 @@ pub use metadata::metadata_routes;
 pub(crate) use metadata::reingest_request_gate;
 pub use mix::mix_routes;
 pub use mixers::mixer_routes;
-pub(crate) use pagination::{
-    SnapshotPageRequest,
-    load_snapshot_items,
-    public_ids,
-};
+pub(crate) use pagination::PageRequest;
 pub use playlists::playlist_routes;
 pub(crate) use plugins::RESERVED_PLUGIN_IDS;
 pub use plugins::plugin_routes;
@@ -182,10 +178,25 @@ pub(crate) struct PageQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Opaque cursor from the previous page's `next_cursor`. Repeat the same collection-shaping query parameters on continuation requests. Cursors are bound to the authenticated user and collection snapshot; expired, evicted, or mismatched cursors return 409 and pagination must restart."
+            description = "How many items of the list to skip. Default 0. At or past the end, the page has no items."
         )
     )]
-    cursor: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_scalar")]
+    offset: Option<u64>,
+}
+
+/// The `seed` of catalog list endpoints that sort at random.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Default, Deserialize)]
+pub(crate) struct SeedQuery {
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Optional: the shuffle a `random` sort pages through. Without one the server picks it and returns it as `seed`; send that with later offsets to page through the same shuffle. It only affects a `random` sort, and whenever present it must be an integer from 0 to 9007199254740991, or the request fails with 400."
+        )
+    )]
+    #[serde(default, deserialize_with = "deserialize_optional_scalar")]
+    pub(crate) seed: Option<u64>,
 }
 
 /// The `favorite`, `listened` and rating filters on catalog list endpoints.

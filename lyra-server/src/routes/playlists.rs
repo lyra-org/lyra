@@ -65,7 +65,6 @@ use crate::{
         },
         covers::shown::CoverTarget,
         entities::resolve_track_artists,
-        pagination::SnapshotKey,
         playlists,
     },
 };
@@ -534,14 +533,7 @@ async fn get_playlists(
     let principal = require_principal(bearer_credential(&headers)).await?;
     let inc = parse_inc(inc)?;
     let search_term = super::parse_text_query(query);
-    let page_request = page.resolve_snapshot();
-    let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "playlists")
-        .field(search_term.as_deref())
-        .values(sort_by.as_deref())
-        .field(sort_order.as_deref())
-        .field(owner_id.as_deref())
-        .flag(favorite)
-        .finish();
+    let page_request = page.resolve();
     let sort = parse_playlist_sort_specs(sort_by, sort_order)?;
 
     let db = &*STATE.db.read().await;
@@ -549,43 +541,22 @@ async fn get_playlists(
         .as_deref()
         .map(|owner_id| resolve_owner_filter(db, owner_id))
         .transpose()?;
-    let (page_playlists, next_cursor, mut summaries) = if let Some(page) =
-        page_request.resume(&snapshot_key)?
-    {
-        let playlists_page = super::load_snapshot_items(
-            db,
-            &page.item_ids,
-            lyra_db::playlists::get_by_id,
-            |db, playlist_db_id| {
-                crate::services::auth::access::playlist_accessible(db, &principal, playlist_db_id)
-            },
-        )?;
-        (playlists_page, page.next_cursor, HashMap::new())
-    } else {
-        let (mut playlists_page, summaries) = playlists::list_visible(
-            db,
-            &principal,
-            playlists::PlaylistFilter {
-                owner,
-                favorite,
-                ..playlists::PlaylistFilter::default()
-            },
-            &sort,
-            search_term.as_deref(),
-        )
-        .map_err(invalid_request)?;
-        let page = page_request.start(
-            &snapshot_key,
-            playlists_page
-                .iter()
-                .map(|playlist| playlist.id.clone())
-                .collect(),
-        )?;
-        playlists_page.truncate(page.item_ids.len());
-        (playlists_page, page.next_cursor, summaries)
-    };
+    let (playlists, mut summaries) = playlists::list_visible(
+        db,
+        &principal,
+        playlists::PlaylistFilter {
+            owner,
+            favorite,
+            ..playlists::PlaylistFilter::default()
+        },
+        &sort,
+        search_term.as_deref(),
+    )
+    .map_err(invalid_request)?;
+    let page = page_request.slice(playlists);
 
-    let playlist_db_ids = page_playlists
+    let playlist_db_ids = page
+        .items
         .iter()
         .filter_map(|playlist| playlist.db_id.clone().map(DbId::from))
         .collect::<Vec<_>>();
@@ -596,7 +567,8 @@ async fn get_playlists(
     }
     let mut owners = playlists::owner_ids(db, &playlist_db_ids)?;
     let covers = if inc.covers {
-        let targets = page_playlists
+        let targets = page
+            .items
             .iter()
             .map(CoverTarget::Playlist)
             .collect::<Vec<_>>();
@@ -605,29 +577,32 @@ async fn get_playlists(
         HashMap::new()
     };
 
-    let mut items = Vec::with_capacity(page_playlists.len());
-    for playlist in page_playlists {
-        let playlist_db_id: DbId = playlist
-            .db_id
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("playlist missing db_id"))?
-            .into();
-        let tracks = if inc.tracks {
-            Some(build_tracks(db, &principal, playlist_db_id, inc)?)
-        } else {
-            None
-        };
-        let cover = route_covers::cover_field(&covers, inc.covers, Some(playlist_db_id));
-        items.push(playlist_to_response(
-            playlist,
-            tracks,
-            cover,
-            owners.remove(&playlist_db_id),
-            summaries.get(&playlist_db_id).copied().unwrap_or_default(),
-        ));
-    }
+    let page = page.try_map_items(|playlists| {
+        let mut items = Vec::with_capacity(playlists.len());
+        for playlist in playlists {
+            let playlist_db_id: DbId = playlist
+                .db_id
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("playlist missing db_id"))?
+                .into();
+            let tracks = if inc.tracks {
+                Some(build_tracks(db, &principal, playlist_db_id, inc)?)
+            } else {
+                None
+            };
+            let cover = route_covers::cover_field(&covers, inc.covers, Some(playlist_db_id));
+            items.push(playlist_to_response(
+                playlist,
+                tracks,
+                cover,
+                owners.remove(&playlist_db_id),
+                summaries.get(&playlist_db_id).copied().unwrap_or_default(),
+            ));
+        }
+        Ok::<_, AppError>(items)
+    })?;
 
-    Ok(Json(PageResponse { items, next_cursor }))
+    Ok(Json(page))
 }
 
 async fn get_playlist(
@@ -889,7 +864,7 @@ fn create_playlist_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn list_playlists_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List playlists")
-        .description("Returns a cursor-paginated page of the playlists the authenticated user can see: their own and every public playlist. `owner_id` keeps one user's playlists; pass the authenticated user's ID for their own. `favorite=true` keeps only playlists the user has favorited and `favorite=false` the rest. `sort_by` supports `name`, `created_at`, `updated_at`, `track_count`, `total_duration`, `favorited_at` (when the user first favorited the playlist; unfavorited playlists sort last in both directions), `relevance` (how well the name matches `query`, which it needs), and `id`. Without `sort_by`, a `query` ranks by relevance and anything else is by name. Track counts and durations are always included. Use `inc` to include tracks, artists, releases, covers.")
+        .description("Returns the playlists the authenticated user can see, their own and every public playlist, as `{ items, total, offset }`. `offset` and `limit` page through the list as it is at each request; `limit` defaults to 100 and is capped at 500. `owner_id` keeps one user's playlists; pass the authenticated user's ID for their own. `favorite=true` keeps only playlists the user has favorited and `favorite=false` the rest. `sort_by` supports `name`, `created_at`, `updated_at`, `track_count`, `total_duration`, `favorited_at` (when the user first favorited the playlist; unfavorited playlists sort last in both directions), `relevance` (how well the name matches `query`, which it needs), and `id`. Without `sort_by`, a `query` ranks by relevance and anything else is by name. Track counts and durations are always included. Use `inc` to include tracks, artists, releases, covers.")
 }
 
 #[cfg(feature = "docgen")]
@@ -1264,6 +1239,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_playlists_pages_the_visible_playlists_by_offset() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_default_test_state()?;
+        let expected = (0..5).map(|n| format!("List {n}")).collect::<Vec<_>>();
+        let user = {
+            let mut db = STATE.db.write().await;
+            let user = create_test_user(&mut db)?;
+            for name in &expected {
+                seed_playlist(&mut db, user, name)?;
+            }
+            let other = lyra_db::test_db::insert_user(&mut db, "playlist-pages-other")?;
+            seed_playlist(&mut db, other, "List Hidden")?;
+            user
+        };
+        let headers = session_headers(user).await?;
+        let page = async |offset: usize| {
+            let uri: axum::http::Uri = format!("/?limit=2&offset={offset}").parse()?;
+            let Json(page) = get_playlists(headers.clone(), Query::try_from_uri(&uri)?)
+                .await
+                .map_err(|error| anyhow!("{error:?}"))?;
+            anyhow::Ok(page)
+        };
+
+        let mut names = Vec::new();
+        for offset in [0, 2, 4] {
+            let page = page(offset).await?;
+            assert_eq!((page.total, page.offset), (5, offset as u64));
+            names.extend(page.items.into_iter().map(|playlist| playlist.name));
+        }
+        assert_eq!(names, expected);
+
+        let past = page(9).await?;
+        assert!(past.items.is_empty());
+        assert_eq!((past.total, past.offset), (5, 5));
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn owner_filter_names_the_default_user_only_while_auth_is_off() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         crate::plugins::testing::init_default_test_state()?;
@@ -1405,43 +1418,6 @@ mod tests {
         assert!(inc.tracks, "releases should imply tracks");
 
         Ok(())
-    }
-
-    #[test]
-    fn snapshot_key_separates_collection_shaping_inputs() {
-        let key = |search: Option<&str>, sort_by: Option<&[String]>, order: Option<&str>| {
-            SnapshotKey::builder("user", "playlists")
-                .field(search)
-                .values(sort_by)
-                .field(order)
-                .finish()
-        };
-        let name = [String::from("name")];
-        let count = [String::from("track_count")];
-        let registry = crate::services::pagination::SnapshotRegistry::default();
-        let items = || vec!["a".to_string(), "b".to_string()];
-
-        // A cursor minted under one shaping must not resume under another.
-        let page = registry
-            .start(&key(None, Some(&name), Some("ascending")), items(), 1)
-            .expect("first page");
-        let cursor = page.next_cursor.expect("cursor");
-        for other in [
-            key(Some("jazz"), Some(&name), Some("ascending")),
-            key(None, Some(&count), Some("ascending")),
-            key(None, Some(&name), Some("descending")),
-        ] {
-            assert!(
-                registry.resume(&other, &cursor, 1).is_err(),
-                "cursor must be bound to search term, sort key, and direction"
-            );
-        }
-        assert!(
-            registry
-                .resume(&key(None, Some(&name), Some("ascending")), &cursor, 1)
-                .is_ok(),
-            "identical shaping must resume"
-        );
     }
 
     #[test]

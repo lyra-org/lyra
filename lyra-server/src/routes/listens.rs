@@ -3,7 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use agdb::DbId;
+use agdb::{
+    DbAny,
+    DbId,
+};
 #[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
@@ -51,7 +54,6 @@ use crate::{
             SubmissionOutcome,
             SubmittedPlay,
         },
-        pagination::SnapshotKey,
         playback_sessions as playback_service,
         providers::provider_registry,
     },
@@ -341,35 +343,6 @@ fn listen_row_to_response(row: ListenRow) -> ListenResponse {
     }
 }
 
-fn listen_row_id(row: &ListenRow) -> String {
-    format!(
-        "{}\0{}\0{}\0{}",
-        row.user_id,
-        row.track_id,
-        row.listen_count,
-        row.last_played_ms
-            .map(|value| value.to_string())
-            .unwrap_or_default(),
-    )
-}
-
-fn parse_listen_row_id(raw: &str) -> Option<ListenRow> {
-    let mut fields = raw.splitn(4, '\0');
-    let user_id = fields.next()?.to_string();
-    let track_id = fields.next()?.to_string();
-    let listen_count = fields.next()?.parse().ok()?;
-    let last_played_ms = match fields.next()? {
-        "" => None,
-        value => Some(value.parse().ok()?),
-    };
-    Some(ListenRow {
-        user_id,
-        track_id,
-        listen_count,
-        last_played_ms,
-    })
-}
-
 fn validate_merge_usage(
     track_id: Option<&str>,
     merge_unique_external_ids: bool,
@@ -494,11 +467,19 @@ async fn rows_for_user(
 
     let db = STATE.db.read().await;
     let (user_db_id, _) = owner.resolve(&db, principal)?;
-    let summaries = lyra_db::listens::list_summaries_for_user(&db, user_db_id)?;
+    Ok(summary_rows(&db, principal, user_db_id)?)
+}
+
+/// A row for each track `user_db_id` has listened to that `principal` can see.
+fn summary_rows(
+    db: &DbAny,
+    principal: &Principal,
+    user_db_id: DbId,
+) -> anyhow::Result<Vec<ListenRow>> {
+    let summaries = lyra_db::listens::list_summaries_for_user(db, user_db_id)?;
     let mut rows = Vec::with_capacity(summaries.len());
     for summary in summaries {
-        if !crate::services::auth::access::entity_accessible(&*db, principal, summary.track_db_id)?
-        {
+        if !crate::services::auth::access::entity_accessible(db, principal, summary.track_db_id)? {
             continue;
         }
         rows.push(ListenRow {
@@ -590,44 +571,6 @@ async fn rows_for_managed_listens(
         });
     }
     Ok(rows)
-}
-
-async fn hydrate_listen_rows(
-    principal: &Principal,
-    item_ids: &[String],
-) -> Result<Vec<ListenRow>, AppError> {
-    let rows = item_ids
-        .iter()
-        .filter_map(|item_id| parse_listen_row_id(item_id))
-        .collect::<Vec<_>>();
-    let db = STATE.db.read().await;
-    let track_public_ids = rows
-        .iter()
-        .map(|row| row.track_id.as_str())
-        .collect::<Vec<_>>();
-    let track_db_ids = lyra_db::lookup::find_node_ids_by_ids(&db, &track_public_ids)?;
-    let mut visible_users = HashMap::new();
-    let mut hydrated = Vec::with_capacity(rows.len());
-    for row in rows {
-        let user_exists = match visible_users.get(&row.user_id).copied() {
-            Some(exists) => exists,
-            None => {
-                let exists = accounts::get_by_public_id(&*db, &row.user_id)?.is_some();
-                visible_users.insert(row.user_id.clone(), exists);
-                exists
-            }
-        };
-        if !user_exists {
-            continue;
-        }
-        let Some(track_db_id) = track_db_ids.get(&row.track_id).copied() else {
-            continue;
-        };
-        if crate::services::auth::access::entity_accessible(&db, principal, track_db_id)? {
-            hydrated.push(row);
-        }
-    }
-    Ok(hydrated)
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -768,41 +711,21 @@ pub(super) async fn get_me_listens(
     Query(query): Query<MeListenQuery>,
 ) -> Result<Json<PageResponse<MeListenResponse>>, AppError> {
     let principal = require_principal(bearer_credential(&headers)).await?;
-    let page_request = query.page.clone().resolve_snapshot();
+    let page_request = query.page.resolve();
     let merge_unique_external_ids = query.merge_unique_external_ids.unwrap_or(false);
     validate_merge_usage(query.track_id.as_deref(), merge_unique_external_ids)?;
-    let merge_context = merge_unique_external_ids.to_string();
-    let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "me-listens")
-        .field(query.track_id.as_deref())
-        .values(query.sort_by.as_deref())
-        .field(query.sort_order.as_deref())
-        .field(Some(&merge_context))
-        .finish();
 
-    let (rows, next_cursor) = if let Some(page) = page_request.resume(&snapshot_key)? {
-        let rows = hydrate_listen_rows(&principal, &page.item_ids).await?;
-        (rows, page.next_cursor)
-    } else {
-        let mut rows = rows_for_user(
-            &principal,
-            ListenOwner::Principal,
-            query.track_id.clone(),
-            merge_unique_external_ids,
-        )
-        .await?;
-        sort_listen_rows(
-            &mut rows,
-            query.sort_by.clone(),
-            query.sort_order.clone(),
-            false,
-        )?;
-        let page = page_request.start(&snapshot_key, rows.iter().map(listen_row_id).collect())?;
-        rows.truncate(page.item_ids.len());
-        (rows, page.next_cursor)
-    };
-
-    let items = rows.into_iter().map(listen_row_to_me_response).collect();
-    Ok(Json(PageResponse { items, next_cursor }))
+    let mut rows = rows_for_user(
+        &principal,
+        ListenOwner::Principal,
+        query.track_id,
+        merge_unique_external_ids,
+    )
+    .await?;
+    sort_listen_rows(&mut rows, query.sort_by, query.sort_order, false)?;
+    Ok(Json(
+        page_request.slice(rows).map(listen_row_to_me_response),
+    ))
 }
 
 async fn get_listens(
@@ -811,42 +734,17 @@ async fn get_listens(
 ) -> Result<Json<PageResponse<ListenResponse>>, AppError> {
     let principal = require_principal(bearer_credential(&headers)).await?;
     require_permission(&principal, Permission::ManageLibraries)?;
-    let page_request = query.page.clone().resolve_snapshot();
-    let merge_unique_external_ids = query.merge_unique_external_ids.unwrap_or(false);
-    validate_merge_usage(query.track_id.as_deref(), merge_unique_external_ids)?;
-    let merge_context = merge_unique_external_ids.to_string();
-    let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "listens")
-        .field(query.user_id.as_deref())
-        .field(query.track_id.as_deref())
-        .values(query.sort_by.as_deref())
-        .field(query.sort_order.as_deref())
-        .field(Some(&merge_context))
-        .finish();
+    let page_request = query.page.clone().resolve();
 
-    let (rows, next_cursor) = if let Some(page) = page_request.resume(&snapshot_key)? {
-        let rows = hydrate_listen_rows(&principal, &page.item_ids).await?;
-        (rows, page.next_cursor)
-    } else {
-        let mut rows = rows_for_managed_listens(&principal, &query).await?;
-        sort_listen_rows(
-            &mut rows,
-            query.sort_by.clone(),
-            query.sort_order.clone(),
-            true,
-        )?;
-        let page = page_request.start(&snapshot_key, rows.iter().map(listen_row_id).collect())?;
-        rows.truncate(page.item_ids.len());
-        (rows, page.next_cursor)
-    };
-
-    let items = rows.into_iter().map(listen_row_to_response).collect();
-    Ok(Json(PageResponse { items, next_cursor }))
+    let mut rows = rows_for_managed_listens(&principal, &query).await?;
+    sort_listen_rows(&mut rows, query.sort_by, query.sort_order, true)?;
+    Ok(Json(page_request.slice(rows).map(listen_row_to_response)))
 }
 
 #[cfg(feature = "docgen")]
 pub(super) fn get_me_listens_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List my listen summaries").description(
-        "Returns authenticated user-scoped per-track listen summaries as `{ items, next_cursor }`. Defaults to listen_count descending, then last_played_at descending. The first page creates a bounded snapshot of row identities and summary values.",
+        "Returns authenticated user-scoped per-track listen summaries as `{ items, total, offset }`. Defaults to listen_count descending, then last_played_at descending. `offset` and `limit` page through the summaries as they are at each request; `limit` defaults to 100 and is capped at 500.",
     )
 }
 
@@ -860,7 +758,7 @@ pub(super) fn submit_me_listens_docs(op: TransformOperation) -> TransformOperati
 #[cfg(feature = "docgen")]
 fn get_listens_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List listen summaries").description(
-        "Requires ManageLibraries or Admin. Returns per-user per-track listen summaries for visible library content as `{ items, next_cursor }`. The default user's listens are left out, and `user_id` naming it finds no user, while authentication is enabled. The first page creates a bounded snapshot; continuation pages recheck current user and track visibility.",
+        "Requires ManageLibraries or Admin. Returns per-user per-track listen summaries for visible library content as `{ items, total, offset }`. The default user's listens are left out, and `user_id` naming it finds no user, while authentication is enabled. `offset` and `limit` page through the summaries as they are at each request; `limit` defaults to 100 and is capped at 500.",
     )
 }
 
@@ -1132,34 +1030,49 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn a_continuation_drops_its_rows_only_while_auth_is_on() -> anyhow::Result<()> {
+        async fn pages_count_it_only_while_auth_is_off() -> anyhow::Result<()> {
             let _guard = crate::services::testing::runtime_test_lock().await;
             let fixture = setup().await?;
-            let principal = {
-                let db = STATE.db.read().await;
-                let admin_db_id = lyra_db::users::get_by_public_id(&db, &fixture.admin_id)?
-                    .and_then(|user| user.db_id)
-                    .expect("admin exists");
-                drop(db);
-                crate::services::testing::user_principal(admin_db_id).await?
-            };
-            let item_ids = vec![listen_row_id(&ListenRow {
-                user_id: fixture.default_id.clone(),
-                track_id: fixture.track_id.clone(),
-                listen_count: 1,
-                last_played_ms: None,
-            })];
-
-            let hydrated = hydrate_listen_rows(&principal, &item_ids)
+            let page = async |offset: u64| {
+                get_listens(
+                    fixture.headers.clone(),
+                    Query(ListenQuery {
+                        user_id: None,
+                        track_id: None,
+                        page: routes::PageQuery {
+                            limit: Some(1),
+                            offset: Some(offset),
+                        },
+                        sort_by: Some(vec!["user_id".to_string()]),
+                        sort_order: None,
+                        merge_unique_external_ids: None,
+                    }),
+                )
                 .await
-                .map_err(|error| anyhow::anyhow!("{error:?}"))?;
-            assert!(hydrated.is_empty());
+                .map(|Json(page)| page)
+                .map_err(|error| anyhow::anyhow!("{error:?}"))
+            };
+
+            let first = page(0).await?;
+            assert_eq!(first.total, 1);
+            assert_eq!(first.items[0].user_id, fixture.admin_id);
+            assert!(page(1).await?.items.is_empty());
 
             set_auth_enabled(false);
-            let hydrated = hydrate_listen_rows(&principal, &item_ids)
-                .await
-                .map_err(|error| anyhow::anyhow!("{error:?}"))?;
-            assert_eq!(hydrated.len(), 1);
+            let mut users = Vec::new();
+            for offset in [0, 1] {
+                let page = page(offset).await?;
+                assert_eq!(page.total, 2);
+                assert_eq!(page.offset, offset);
+                users.extend(page.items.into_iter().map(|item| item.user_id));
+            }
+            assert_eq!(
+                users,
+                sorted(vec![fixture.admin_id.clone(), fixture.default_id.clone()])
+            );
+            let past = page(5).await?;
+            assert!(past.items.is_empty());
+            assert_eq!((past.total, past.offset), (2, 2));
             Ok(())
         }
     }

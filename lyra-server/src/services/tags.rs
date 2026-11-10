@@ -283,40 +283,12 @@ pub(crate) fn list_for_user(db: &DbAny, owner_db_id: DbId) -> Result<Vec<Tag>, T
     lyra_db::tags::list_for_user(db, owner_db_id).map_err(TagServiceError::Internal)
 }
 
-pub(crate) fn hydrate_tag_snapshot(
-    db: &DbAny,
-    owner_db_id: DbId,
-    public_tag_ids: &[String],
-) -> Result<Vec<Tag>, TagServiceError> {
-    let mut tags = Vec::with_capacity(public_tag_ids.len());
-    for public_tag_id in public_tag_ids {
-        match get_by_public_id(db, owner_db_id, public_tag_id) {
-            Ok(tag) => tags.push(tag),
-            Err(TagServiceError::NotFound) => {}
-            Err(err) => return Err(err),
-        }
-    }
-    Ok(tags)
-}
-
-#[derive(Debug)]
-pub(crate) struct TargetListItem {
-    edge_db_id: DbId,
-    pub(crate) target_id: String,
-}
-
-impl TargetListItem {
-    pub(crate) fn snapshot_id(&self) -> String {
-        format!("{}:{}", self.edge_db_id.0, self.target_id)
-    }
-}
-
-/// Target list for a tag, filtered by caller-side visibility.
+/// The public ids of a tag's targets, filtered by caller-side visibility.
 pub(crate) fn list_targets(
     db: &DbAny,
     owner_db_id: DbId,
     tag_db_id: DbId,
-) -> Result<Vec<TargetListItem>, TagServiceError> {
+) -> Result<Vec<String>, TagServiceError> {
     ensure_owner(db, tag_db_id, owner_db_id)?;
     let targets = lyra_db::tags::list_targets(db, tag_db_id).map_err(TagServiceError::Internal)?;
 
@@ -333,65 +305,11 @@ pub(crate) fn list_targets(
         if targetable(db, &visibility, target.target_db_id).map_err(TagServiceError::Internal)?
             && let Some(target_id) = target_ids.get(&target.target_db_id)
         {
-            filtered.push(TargetListItem {
-                edge_db_id: target.edge_db_id,
-                target_id: target_id.clone(),
-            });
+            filtered.push(target_id.clone());
         }
     }
 
     Ok(filtered)
-}
-
-pub(crate) fn hydrate_target_snapshot(
-    db: &DbAny,
-    owner_db_id: DbId,
-    tag_db_id: DbId,
-    snapshot_ids: &[String],
-) -> Result<Vec<TargetListItem>, TagServiceError> {
-    ensure_owner(db, tag_db_id, owner_db_id)?;
-    let identities = snapshot_ids
-        .iter()
-        .filter_map(|snapshot_id| {
-            let (edge_db_id, target_id) = snapshot_id.split_once(':')?;
-            Some((DbId(edge_db_id.parse::<i64>().ok()?), target_id))
-        })
-        .collect::<Vec<_>>();
-    let edge_ids = identities
-        .iter()
-        .map(|(edge_db_id, _)| *edge_db_id)
-        .collect::<Vec<_>>();
-    let mut targets = lyra_db::tags::get_targets_by_edge_ids(db, tag_db_id, &edge_ids)
-        .map_err(TagServiceError::Internal)?;
-    let target_db_ids = targets
-        .values()
-        .map(|target| target.target_db_id)
-        .collect::<Vec<_>>();
-    let target_ids = lyra_db::lookup::find_ids_by_db_ids(db, &target_db_ids)
-        .map_err(TagServiceError::Internal)?;
-    let visibility =
-        TargetVisibility::for_user(db, owner_db_id).map_err(TagServiceError::Internal)?;
-
-    let mut items = Vec::with_capacity(identities.len());
-    for (edge_db_id, expected_target_id) in identities {
-        let Some(target) = targets.remove(&edge_db_id) else {
-            continue;
-        };
-        if !targetable(db, &visibility, target.target_db_id).map_err(TagServiceError::Internal)? {
-            continue;
-        }
-        let Some(target_id) = target_ids.get(&target.target_db_id) else {
-            continue;
-        };
-        if target_id != expected_target_id {
-            continue;
-        }
-        items.push(TargetListItem {
-            edge_db_id,
-            target_id: target_id.clone(),
-        });
-    }
-    Ok(items)
 }
 
 fn visible_targets(

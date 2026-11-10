@@ -304,6 +304,63 @@ async fn response_keeps_initiating_and_controlling_client_names_distinct() -> an
 }
 
 #[tokio::test]
+async fn list_playbacks_pages_by_offset() -> anyhow::Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    let fixture = setup_admin_with_tracks().await?;
+    for index in 0..5 {
+        let (status, _) = create_playback(
+            fixture.headers.clone(),
+            Json(PlaybackCreateRequest {
+                play_id: format!("route-test-page-{index:04}"),
+                queue: QueueSnapshot::single(fixture.first_track_id.clone()),
+                position_ms: Some(0),
+                duration_ms: Some(100_000),
+                state: Some(PlaybackState::Paused),
+                rate: None,
+                counts_as_listen: None,
+                connection_session_key: None,
+            }),
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+        assert_eq!(status, StatusCode::CREATED);
+    }
+    let page = async |limit: u64, offset: u64| {
+        let query = PlaybackQuery {
+            page: routes::PageQuery {
+                limit: Some(limit),
+                offset: Some(offset),
+            },
+            ..PlaybackQuery::default()
+        };
+        let Json(page) = list_playbacks(fixture.headers.clone(), Query(query))
+            .await
+            .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+        anyhow::Ok((
+            page.items
+                .into_iter()
+                .map(|playback| playback.id)
+                .collect::<Vec<_>>(),
+            page.total,
+            page.offset,
+        ))
+    };
+
+    let (whole, total, _) = page(100, 0).await?;
+    assert_eq!((whole.len(), total), (5, 5));
+    let mut paged = Vec::new();
+    for offset in [0, 2, 4] {
+        let (ids, total, at) = page(2, offset).await?;
+        assert_eq!((total, at), (5, offset));
+        paged.extend(ids);
+    }
+    assert_eq!(paged, whole);
+
+    assert_eq!(page(2, 9).await?, (Vec::new(), 5, 5));
+    Ok(())
+}
+
+#[tokio::test]
 async fn create_replace_queue_and_advance_current_track() -> anyhow::Result<()> {
     let _guard = crate::services::testing::runtime_test_lock().await;
     let fixture = setup_admin_with_tracks().await?;

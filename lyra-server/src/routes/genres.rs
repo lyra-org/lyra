@@ -44,13 +44,11 @@ use crate::{
                 GenreFilter,
                 Genres,
             },
-            pipeline::Catalog,
         },
         covers::{
             display::CoverFilter,
             shown::CoverTarget,
         },
-        pagination::SnapshotKey,
     },
 };
 use lyra_db::genres;
@@ -119,6 +117,8 @@ struct GenreListQuery {
     available: super::AvailableQuery,
     #[serde(flatten)]
     page: super::PageQuery,
+    #[serde(flatten)]
+    seed: super::SeedQuery,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -224,21 +224,15 @@ async fn list_genres(
         sort_order,
         available,
         page,
+        seed,
     } = query;
     let available = available.available;
-    let page_request = page.resolve_snapshot();
+    let page_request = page.resolve().seeded(seed)?;
     let principal = require_authenticated(bearer_credential(&headers)).await?;
     let inc = parse_genre_inc(inc)?;
     let search_term = super::parse_text_query(query);
 
     let db = &*STATE.db.read().await;
-    let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "genres")
-        .field(search_term.as_deref())
-        .field(library_id.as_deref())
-        .values(sort_by.as_deref())
-        .field(sort_order.as_deref())
-        .flag(available)
-        .finish();
     let library_scope = crate::services::auth::access::resolve_optional_library_filter(
         db,
         &principal,
@@ -246,33 +240,20 @@ async fn list_genres(
     )?;
     let sort = super::parse_catalog_sort(sort_by, sort_order)?;
     let viewer = catalog::Viewer::user(db, principal.clone())?;
-    let (genres, next_cursor) = if let Some(page) = page_request.resume(&snapshot_key)? {
-        let genres = super::load_snapshot_items(
-            db,
-            &page.item_ids,
-            genres::get_by_id,
-            |db, genre_db_id| genre_accessible_to_principal(db, &principal, genre_db_id),
-        )?;
-        (genres, page.next_cursor)
-    } else {
-        let mut query = catalog::Query::<Genres>::new(GenreFilter {
-            library: library_scope,
-            available,
-            ..GenreFilter::default()
-        });
-        query.search = search_term;
-        query.sort = sort;
-        query.seed = rand::random();
-        let ids = catalog::order(db, &viewer, &query)?;
-        let page = page_request.start(&snapshot_key, super::public_ids(db, &ids)?)?;
-        let genres = Genres::hydrate(db, &ids[..page.item_ids.len()])?
-            .into_iter()
-            .map(|listed| listed.item)
-            .collect::<Vec<_>>();
-        (genres, page.next_cursor)
-    };
+    let mut query = catalog::Query::<Genres>::new(GenreFilter {
+        library: library_scope,
+        available,
+        ..GenreFilter::default()
+    });
+    query.search = search_term;
+    query.sort = sort;
+    let page = page_request.catalog(db, &viewer, query)?;
     let covers = if inc.covers {
-        let targets = genres.iter().map(CoverTarget::Genre).collect::<Vec<_>>();
+        let targets = page
+            .items
+            .iter()
+            .map(|listed| CoverTarget::Genre(&listed.item))
+            .collect::<Vec<_>>();
         route_covers::resolve_covers(
             db,
             &CoverFilter::new(&viewer).in_library(library_scope),
@@ -283,19 +264,15 @@ async fn list_genres(
     };
 
     let availability = crate::services::catalog::Availability::of(db)?;
-    let items: Vec<GenreResponse> = genres
-        .into_iter()
-        .map(|genre| {
-            let genre_db_id = genre.db_id.clone().map(DbId::from);
-            let mut response = genre_to_response(&availability, genre);
-            if inc.covers {
-                response.cover = route_covers::cover_field(&covers, true, genre_db_id);
-            }
-            response
-        })
-        .collect();
-
-    Ok(Json(PageResponse { items, next_cursor }))
+    Ok(Json(page.map(|listed| {
+        let genre = listed.item;
+        let genre_db_id = genre.db_id.clone().map(DbId::from);
+        let mut response = genre_to_response(&availability, genre);
+        if inc.covers {
+            response.cover = route_covers::cover_field(&covers, true, genre_db_id);
+        }
+        response
+    })))
 }
 
 async fn get_genre(
@@ -353,7 +330,7 @@ async fn get_genre(
 #[cfg(feature = "docgen")]
 fn list_genres_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List genres").description(
-        "Returns genres as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `sort_by`, `sort_order`, `available`, `limit`, `cursor`. `available=true` keeps the genres whose `available` field is true, counting only their tracks that can play; `available=false` keeps the genres of a release holding a track that can't play, partly playable ones included, counting only such tracks. Results are limited to genres attached to releases visible to the authenticated user. `library_id` scopes results to releases belonging to that public library ID. `sort_by` supports `name`, `date_created`, `last_played_at`, `listen_count`, `release_count`, `track_count`, `total_duration`, and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` matches genre names and aliases; each of its words must start a word, ignoring case, accents, apostrophes and punctuation; no character is an operator, and a word in a script written without spaces, such as Japanese, matches anywhere in a word. Exact names rank first, then names starting with the query, then names holding every word, then names holding some, then matches only through related items. `inc=covers` includes personalized display cover metadata.",
+        "Returns genres as `{ items, total, offset }`, where `total` counts every genre the filters keep. Supported query parameters: `inc`, `query`, `library_id`, `sort_by`, `sort_order`, `available`, `limit`, `offset`, `seed`. `available=true` keeps the genres whose `available` field is true, counting only their tracks that can play; `available=false` keeps the genres of a release holding a track that can't play, partly playable ones included, counting only such tracks. Results are limited to genres attached to releases visible to the authenticated user. `library_id` scopes results to releases belonging to that public library ID. `sort_by` supports `name`, `date_created`, `last_played_at`, `listen_count`, `release_count`, `track_count`, `total_duration`, `random`, and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. `offset` skips that many items and defaults to 0; every page is read from the catalog as it is at that request, and an `offset` at or past the end returns no items. A `random` sort also returns its `seed`: send it back with later offsets to page through the same shuffle, or leave it out for a new one. `query` matches genre names and aliases; each of its words must start a word, ignoring case, accents, apostrophes and punctuation; no character is an operator, and a word in a script written without spaces, such as Japanese, matches anywhere in a word. Exact names rank first, then names starting with the query, then names holding every word, then names holding some, then matches only through related items. `inc=covers` includes personalized display cover metadata.",
     )
 }
 
@@ -505,6 +482,7 @@ mod tests {
                 sort_by: None,
                 sort_order: None,
                 page: Default::default(),
+                seed: Default::default(),
                 available: Default::default(),
             }),
         )
@@ -513,12 +491,12 @@ mod tests {
 
         assert_eq!(genres.items.len(), 1);
         assert_eq!(genres.items[0].name, "Rock");
-        assert!(genres.next_cursor.is_none());
+        assert_eq!(genres.total, genres.items.len() as u64);
         Ok(())
     }
 
     #[tokio::test]
-    async fn list_genres_cursor_keeps_query_snapshot_stable() -> anyhow::Result<()> {
+    async fn list_genres_pages_query_matches_by_offset() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         setup_route_test().await?;
 
@@ -548,8 +526,9 @@ mod tests {
                 sort_order: None,
                 page: crate::routes::PageQuery {
                     limit: Some(1),
-                    cursor: None,
+                    offset: None,
                 },
+                seed: Default::default(),
                 available: Default::default(),
             }),
         )
@@ -558,18 +537,7 @@ mod tests {
 
         assert_eq!(first_page.items.len(), 1);
         assert_eq!(first_page.items[0].name, "Acid Jazz");
-        let cursor = first_page
-            .next_cursor
-            .ok_or_else(|| anyhow::anyhow!("expected another matching genre"))?;
-
-        {
-            let mut db = STATE.db.write().await;
-            let library_db_id = lyra_db::lookup::find_node_id_by_id(&db, &library_id)?
-                .ok_or_else(|| anyhow::anyhow!("genre search library missing"))?;
-            let release = insert_test_release(&mut db, "Aardvark Search Release")?;
-            connect(&mut db, library_db_id, release)?;
-            lyra_db::genres::sync_release_genres(&mut *db, release, &["Aardvark".to_string()])?;
-        }
+        assert_eq!(first_page.total, 2);
 
         let Json(second_page) = list_genres(
             headers,
@@ -581,8 +549,9 @@ mod tests {
                 sort_order: None,
                 page: crate::routes::PageQuery {
                     limit: Some(1),
-                    cursor: Some(cursor),
+                    offset: Some(1),
                 },
+                seed: Default::default(),
                 available: Default::default(),
             }),
         )
@@ -591,7 +560,65 @@ mod tests {
 
         assert_eq!(second_page.items.len(), 1);
         assert_eq!(second_page.items[0].name, "Ambient");
-        assert!(second_page.next_cursor.is_none());
+        assert_eq!(second_page.total, 2);
+        assert_eq!(second_page.offset, 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_genres_later_page_reads_the_list_as_it_is_now() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let add_genre = async |library: DbId, name: &str| -> anyhow::Result<()> {
+            let mut db = STATE.db.write().await;
+            let release = insert_test_release(&mut db, &format!("{name} Shift Release"))?;
+            connect(&mut db, library, release)?;
+            lyra_db::genres::sync_release_genres(&mut *db, release, &[name.to_string()])?;
+            Ok(())
+        };
+        let (library, library_id) = {
+            let mut db = STATE.db.write().await;
+            let library = insert_library(&mut db, "Genre Shift", "/tmp/lyra-genre-shift")?;
+            let library_id = lyra_db::libraries::get_by_id(&db, library)?
+                .ok_or_else(|| anyhow::anyhow!("genre shift library missing"))?
+                .id;
+            (library, library_id)
+        };
+        for name in ["Ambient", "Blues", "Rock"] {
+            add_genre(library, name).await?;
+        }
+        let headers = create_admin_headers("genre-shift-admin").await?;
+        let page = async |offset: u64| {
+            let Json(page) = list_genres(
+                headers.clone(),
+                Query(GenreListQuery {
+                    inc: None,
+                    query: None,
+                    library_id: Some(library_id.clone()),
+                    sort_by: None,
+                    sort_order: None,
+                    page: crate::routes::PageQuery {
+                        limit: Some(1),
+                        offset: Some(offset),
+                    },
+                    seed: Default::default(),
+                    available: Default::default(),
+                }),
+            )
+            .await
+            .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+            let names = page.items.into_iter().map(|genre| genre.name);
+            anyhow::Ok((names.collect::<Vec<_>>(), page.total))
+        };
+
+        assert_eq!(page(0).await?, (vec!["Ambient".to_string()], 3));
+
+        // A genre sorting before the first page shifts the list by one, so the next offset
+        // repeats the item already seen and the total counts the new genre.
+        add_genre(library, "Aardvark").await?;
+        assert_eq!(page(1).await?, (vec!["Ambient".to_string()], 4));
+        assert_eq!(page(2).await?, (vec!["Blues".to_string()], 4));
         Ok(())
     }
 
@@ -610,6 +637,7 @@ mod tests {
                 sort_by: sort_by.map(|value| vec![value.to_string()]),
                 sort_order: sort_order.map(str::to_string),
                 page: Default::default(),
+                seed: Default::default(),
                 available: Default::default(),
             }),
         )
@@ -734,6 +762,7 @@ mod tests {
                 sort_by: None,
                 sort_order: None,
                 page: Default::default(),
+                seed: Default::default(),
                 available: Default::default(),
             }),
         )
@@ -806,6 +835,7 @@ mod tests {
                 sort_by: None,
                 sort_order: None,
                 page: Default::default(),
+                seed: Default::default(),
                 available: Default::default(),
             }),
         )
@@ -814,7 +844,7 @@ mod tests {
 
         assert_eq!(genres.items.len(), 1);
         assert_eq!(genres.items[0].name, "Rock");
-        assert!(genres.next_cursor.is_none());
+        assert_eq!(genres.total, genres.items.len() as u64);
         Ok(())
     }
 
@@ -944,6 +974,7 @@ mod tests {
                 sort_by: None,
                 sort_order: None,
                 page: Default::default(),
+                seed: Default::default(),
                 available: Default::default(),
             }),
         )
@@ -1007,6 +1038,7 @@ mod tests {
                 sort_by: None,
                 sort_order: None,
                 page: Default::default(),
+                seed: Default::default(),
                 available: Default::default(),
             }),
         )
@@ -1082,6 +1114,7 @@ mod tests {
                 sort_by: None,
                 sort_order: None,
                 page: Default::default(),
+                seed: Default::default(),
                 available: Default::default(),
             }),
         )
@@ -1144,6 +1177,7 @@ mod tests {
                 sort_by: None,
                 sort_order: None,
                 page: Default::default(),
+                seed: Default::default(),
                 available: Default::default(),
             }),
         )

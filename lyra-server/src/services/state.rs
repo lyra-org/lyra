@@ -38,7 +38,6 @@ use crate::services::{
     hls::cleanup::HlsCleanupState,
     libraries::LibraryConfig,
     libraries::LibrarySyncRegistries,
-    pagination::SnapshotRegistry,
     playback_sessions::PlaybackUpdateRegistries,
     playbacks::{
         bindings::ConnectionBindings,
@@ -162,7 +161,6 @@ pub(crate) struct GenerationState {
     pub(crate) auth_caches: AuthCaches,
     pub(crate) providers: ProviderLocks,
     pub(crate) merge_journal: crate::services::metadata::merge_journal::MergeJournal,
-    pub(crate) pagination: SnapshotRegistry,
     pub(crate) playback_updates: PlaybackUpdateRegistries,
     pub(crate) connection_bindings: ConnectionBindings,
     pub(crate) socket_claims: SocketClaims,

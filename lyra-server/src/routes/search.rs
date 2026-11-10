@@ -23,7 +23,7 @@ use crate::routes::request::bearer_credential;
 use crate::{
     routes::{
         AppError,
-        SnapshotPageRequest,
+        PageRequest,
         artists::{
             ArtistListOptions,
             artist_page,
@@ -77,15 +77,6 @@ struct SearchQuery {
     )]
     #[serde(default, deserialize_with = "super::deserialize_optional_scalar")]
     limit: Option<u64>,
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(
-            description = "Whether a branch with more than `limit` matches returns a `next_cursor` \
-        for its list endpoint. Defaults to false, which keeps no cursor snapshot."
-        )
-    )]
-    #[serde(default)]
-    paginate: bool,
     #[cfg_attr(
         feature = "docgen",
         schemars(
@@ -150,13 +141,7 @@ async fn search_responses(
     }
     let personal = params.personal.parse()?;
     let limit = page_limit(params.limit);
-    let page_request = || {
-        if params.paginate {
-            SnapshotPageRequest::first_page(limit)
-        } else {
-            SnapshotPageRequest::only_page(limit)
-        }
-    };
+    let page_request = || PageRequest::first(limit);
     let available = params.available.available;
     let tracks = TrackListOptions::for_query(
         params.track_inc,
@@ -193,8 +178,8 @@ async fn search_responses(
     .map_err(|err| AppError::from(anyhow::anyhow!("search task failed: {err}")))?
 }
 
-fn page_limit(limit: Option<u64>) -> usize {
-    limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT) as usize
+fn page_limit(limit: Option<u64>) -> u64 {
+    limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT)
 }
 
 #[cfg(feature = "docgen")]
@@ -217,13 +202,10 @@ fn search_docs(op: TransformOperation) -> TransformOperation {
          equal pair matches an exact rating. `rated=true` keeps only rated entities and \
          `rated=false` only unrated ones; `rated=false` cannot be combined with a bound. \
          `favorite`, `listened` and `available` filter as on each list endpoint. \
-         Without `paginate=true`, every `next_cursor` is `null`. With it, a branch with more \
-         than `limit` matches returns a `next_cursor` for its list endpoint, resumed there with \
-         the same `query`, `favorite`, `listened`, `available`, `rated`, `min_rating` and \
-         `max_rating` and no \
-         other filter or sort; `limit` \
-         and `inc` may differ. Each such cursor takes one of the user's limited cursor \
-         snapshots and may evict their oldest.",
+         Each branch is `{ items, total, offset }`, with `total` counting every match and \
+         `offset` 0. A branch with more matches than `limit` carries on at its list endpoint, \
+         with `offset` and the same `query`, `favorite`, `listened`, `available`, `rated`, \
+         `min_rating` and `max_rating` and no other filter or sort.",
     )
 }
 
@@ -320,7 +302,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn search_ranks_each_type_before_the_limit_and_keeps_no_cursor() -> anyhow::Result<()> {
+    async fn search_ranks_each_type_before_the_limit_and_counts_every_match() -> anyhow::Result<()>
+    {
         let _guard = runtime_test_lock().await;
         setup().await?;
         {
@@ -335,9 +318,9 @@ mod tests {
 
         let response = search(&principal, "query=blue&limit=1").await?;
         assert_eq!(names(&response), (vec!["Blue"], vec!["Blue"], vec!["Blue"]));
-        assert!(response.tracks.next_cursor.is_none());
-        assert!(response.artists.next_cursor.is_none());
-        assert!(response.releases.next_cursor.is_none());
+        assert_eq!(response.tracks.total, 4);
+        assert_eq!(response.artists.total, 2);
+        assert_eq!(response.releases.total, 2);
         Ok(())
     }
 
@@ -365,7 +348,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn paginated_search_continues_on_the_list_endpoint() -> anyhow::Result<()> {
+    async fn search_continues_on_the_list_endpoint_by_offset() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         setup().await?;
         {
@@ -376,13 +359,11 @@ mod tests {
         }
         let principal = principal(true, HashSet::new()).await;
 
-        let first = search(&principal, "query=blue&limit=1&paginate=true").await?;
+        let first = search(&principal, "query=blue&limit=1").await?;
         assert_eq!(names(&first).2, vec!["Blue"]);
-        let cursor = first
-            .releases
-            .next_cursor
-            .ok_or_else(|| anyhow::anyhow!("expected a release cursor"))?;
-        assert!(first.tracks.next_cursor.is_none());
+        assert_eq!(first.releases.total, 3);
+        assert_eq!(first.releases.offset, 0);
+        assert_eq!(first.tracks.total, 0);
 
         let rest = list_release_responses(
             &principal,
@@ -393,9 +374,9 @@ mod tests {
                 None,
                 super::super::PageQuery {
                     limit: Some(10),
-                    cursor: Some(cursor),
+                    offset: Some(1),
                 }
-                .resolve_snapshot(),
+                .resolve(),
             ),
         )
         .await
@@ -407,47 +388,6 @@ mod tests {
             .collect::<Vec<_>>();
         rest.sort();
         assert_eq!(rest, vec!["Blue Train", "Kind of Blue"]);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn unpaginated_searches_keep_no_snapshot_to_evict_a_cursor() -> anyhow::Result<()> {
-        let _guard = runtime_test_lock().await;
-        setup().await?;
-        {
-            let mut db = STATE.db.write().await;
-            for title in ["Blue", "Blue Train", "Kind of Blue"] {
-                insert_release(&mut db, title)?;
-            }
-        }
-        let principal = principal(true, HashSet::new()).await;
-        let cursor = search(&principal, "query=blue&limit=1&paginate=true")
-            .await?
-            .releases
-            .next_cursor
-            .ok_or_else(|| anyhow::anyhow!("expected a release cursor"))?;
-
-        // More searches than a user has snapshots, each with more matches than its page holds.
-        for _ in 0..12 {
-            search(&principal, "query=blue&limit=1").await?;
-        }
-        let rest = list_release_responses(
-            &principal,
-            ReleaseListOptions::for_query(
-                None,
-                "blue".to_string(),
-                crate::services::catalog::PersonalFilter::default(),
-                None,
-                super::super::PageQuery {
-                    limit: Some(10),
-                    cursor: Some(cursor),
-                }
-                .resolve_snapshot(),
-            ),
-        )
-        .await
-        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
-        assert_eq!(rest.items.len(), 2);
         Ok(())
     }
 
@@ -600,8 +540,8 @@ mod tests {
 
     #[test]
     fn search_limit_defaults_and_clamps() {
-        assert_eq!(page_limit(None), DEFAULT_LIMIT as usize);
+        assert_eq!(page_limit(None), DEFAULT_LIMIT);
         assert_eq!(page_limit(Some(0)), 1);
-        assert_eq!(page_limit(Some(9_999)), MAX_LIMIT as usize);
+        assert_eq!(page_limit(Some(9_999)), MAX_LIMIT);
     }
 }

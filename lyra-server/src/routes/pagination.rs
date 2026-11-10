@@ -3,138 +3,151 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use crate::{
-    services::STATE,
-    services::pagination::{
-        PaginationError,
-        SnapshotKey,
-        SnapshotPage,
+use agdb::DbAny;
+
+use super::{
+    AppError,
+    responses::PageResponse,
+};
+use crate::services::catalog::{
+    self,
+    pipeline::{
+        Catalog,
+        KeyKind,
+        SortKey,
     },
 };
 
-use super::AppError;
+/// The largest seed: the largest integer a JSON number carries exactly through a JavaScript
+/// client.
+pub(crate) const MAX_SEED: u64 = (1 << 53) - 1;
 
-#[derive(Clone)]
-pub(crate) struct SnapshotPageRequest {
-    limit: usize,
-    cursor: Option<String>,
-    /// Whether a first page longer than `limit` keeps a snapshot to resume from.
-    snapshot: bool,
-    generation: std::sync::Arc<crate::services::state::GenerationState>,
+/// The page of a list a request asks for.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PageRequest {
+    offset: u64,
+    limit: u64,
+    seed: Option<u64>,
 }
 
 impl super::PageQuery {
-    pub(crate) fn resolve_snapshot(self) -> SnapshotPageRequest {
-        SnapshotPageRequest {
+    pub(crate) fn resolve(self) -> PageRequest {
+        PageRequest {
+            offset: self.offset.unwrap_or(0),
             limit: self
                 .limit
                 .unwrap_or(super::DEFAULT_PAGE_LIMIT)
-                .clamp(1, super::PAGE_HARD_LIMIT) as usize,
-            cursor: self.cursor,
-            snapshot: true,
-            generation: STATE.generation(),
+                .clamp(1, super::PAGE_HARD_LIMIT),
+            seed: None,
         }
     }
 }
 
-impl SnapshotPageRequest {
-    pub(crate) fn first_page(limit: usize) -> Self {
+impl PageRequest {
+    pub(crate) fn first(limit: u64) -> Self {
         Self {
-            limit: limit.clamp(1, super::PAGE_HARD_LIMIT as usize),
-            cursor: None,
-            snapshot: true,
-            generation: STATE.generation(),
+            offset: 0,
+            limit: limit.clamp(1, super::PAGE_HARD_LIMIT),
+            seed: None,
         }
     }
 
-    /// A first page that never continues, so it keeps no snapshot.
-    pub(crate) fn only_page(limit: usize) -> Self {
-        Self {
-            snapshot: false,
-            ..Self::first_page(limit)
+    /// The page with the seed a random sort shuffles by.
+    pub(crate) fn seeded(mut self, seed: super::SeedQuery) -> Result<Self, AppError> {
+        if seed.seed.is_some_and(|seed| seed > MAX_SEED) {
+            return Err(AppError::bad_request(format!(
+                "seed must be at most {MAX_SEED}"
+            )));
+        }
+        self.seed = seed.seed;
+        Ok(self)
+    }
+
+    /// The page's items of `items`, the whole list in order.
+    pub(crate) fn slice<T>(&self, items: Vec<T>) -> PageResponse<T> {
+        let total = items.len() as u64;
+        let offset = self.offset.min(total);
+        PageResponse {
+            items: items
+                .into_iter()
+                .skip(usize::try_from(offset).unwrap_or(usize::MAX))
+                .take(usize::try_from(self.limit).unwrap_or(usize::MAX))
+                .collect(),
+            total,
+            offset,
+            seed: None,
         }
     }
 
-    /// How many leading items a fresh page ranks, or `None` when it ranks every item to snapshot.
-    pub(crate) fn rank_limit(&self) -> Option<usize> {
-        (!self.snapshot).then_some(self.limit)
-    }
-
-    pub(crate) fn resume(&self, key: &SnapshotKey) -> Result<Option<SnapshotPage>, AppError> {
-        self.cursor
-            .as_deref()
-            .map(|cursor| {
-                self.generation
-                    .pagination
-                    .resume(key, cursor, self.limit)
-                    .map_err(AppError::from)
-            })
-            .transpose()
-    }
-
-    pub(crate) fn start(
+    /// The page's entities of the catalog list `query` describes, shuffled by the page's seed,
+    /// or one picked here, when the query sorts at random.
+    pub(crate) fn catalog<C: Catalog>(
         &self,
-        key: &SnapshotKey,
-        mut item_ids: Vec<String>,
-    ) -> Result<SnapshotPage, AppError> {
-        if !self.snapshot {
-            item_ids.truncate(self.limit);
-            return Ok(SnapshotPage {
-                item_ids,
-                next_cursor: None,
+        db: &DbAny,
+        viewer: &catalog::Viewer,
+        mut query: catalog::Query<C>,
+    ) -> Result<PageResponse<C::Item>, AppError> {
+        let seed = query
+            .sort
+            .iter()
+            .any(|(key, _)| key.kind() == KeyKind::Random)
+            .then(|| {
+                self.seed
+                    .unwrap_or_else(|| rand::random::<u64>() & MAX_SEED)
             });
-        }
-        self.generation
-            .pagination
-            .start(key, item_ids, self.limit)
-            .map_err(AppError::from)
-    }
-}
-
-/// The public ids of `db_ids`, in the same order, for a cursor snapshot.
-pub(crate) fn public_ids(db: &agdb::DbAny, db_ids: &[agdb::DbId]) -> anyhow::Result<Vec<String>> {
-    let mut public_ids = lyra_db::lookup::find_ids_by_db_ids(db, db_ids)?;
-    db_ids
-        .iter()
-        .map(|db_id| {
-            public_ids
-                .remove(db_id)
-                .ok_or_else(|| anyhow::anyhow!("element {} has no public id", db_id.0))
+        query.seed = seed.unwrap_or_default();
+        let page = catalog::page(db, viewer, &query, self.offset, Some(self.limit))?;
+        Ok(PageResponse {
+            items: page.items,
+            total: page.total,
+            offset: page.offset,
+            seed,
         })
-        .collect()
+    }
 }
 
-pub(crate) fn load_snapshot_items<T>(
-    db: &agdb::DbAny,
-    item_ids: &[String],
-    mut load: impl FnMut(&agdb::DbAny, agdb::DbId) -> anyhow::Result<Option<T>>,
-    mut is_visible: impl FnMut(&agdb::DbAny, agdb::DbId) -> anyhow::Result<bool>,
-) -> anyhow::Result<Vec<T>> {
-    let public_ids = item_ids.iter().map(String::as_str).collect::<Vec<_>>();
-    let db_ids = lyra_db::lookup::find_node_ids_by_ids(db, &public_ids)?;
-    let mut items = Vec::with_capacity(item_ids.len());
-    for public_id in item_ids {
-        let Some(db_id) = db_ids.get(public_id).copied() else {
-            continue;
-        };
-        if !is_visible(db, db_id)? {
-            continue;
-        }
-        if let Some(item) = load(db, db_id)? {
-            items.push(item);
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(offset: u64, limit: u64) -> PageRequest {
+        PageRequest {
+            offset,
+            limit,
+            seed: None,
         }
     }
-    Ok(items)
-}
 
-impl From<PaginationError> for AppError {
-    fn from(err: PaginationError) -> Self {
-        match err {
-            PaginationError::MalformedCursor => Self::bad_request(err.to_string()),
-            PaginationError::ExpiredCursor | PaginationError::ContextMismatch => {
-                Self::conflict(err.to_string())
-            }
-            PaginationError::SnapshotTooLarge => Self::service_unavailable(err.to_string()),
+    #[test]
+    fn slice_pages_through_a_list_once_and_in_order() {
+        let items = (0..7).collect::<Vec<_>>();
+        let mut seen = Vec::new();
+        for offset in [0, 3, 6] {
+            let page = request(offset, 3).slice(items.clone());
+            assert_eq!(page.total, 7);
+            assert_eq!(page.offset, offset);
+            seen.extend(page.items);
         }
+        assert_eq!(seen, items);
+    }
+
+    #[test]
+    fn slice_past_the_end_is_empty_with_the_total() {
+        for offset in [3, 4, u64::MAX] {
+            let page = request(offset, 2).slice(vec!["a", "b", "c"]);
+            assert!(page.items.is_empty());
+            assert_eq!(page.total, 3);
+            assert_eq!(page.offset, 3);
+        }
+    }
+
+    #[test]
+    fn seeded_rejects_a_seed_javascript_would_round() {
+        let seed = |seed| request(0, 1).seeded(crate::routes::SeedQuery { seed: Some(seed) });
+        assert_eq!(
+            seed(MAX_SEED).ok().and_then(|page| page.seed),
+            Some(MAX_SEED)
+        );
+        assert!(seed(MAX_SEED + 1).is_err());
     }
 }
