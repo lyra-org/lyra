@@ -25,7 +25,11 @@ Every plugin directory contains a `plugin.json`:
   "entrypoint": "init.luau",
   "scopes": [
     "harmony.serde",
-    { "id": "harmony.http", "reason": "Looks up your albums on MusicBrainz." }
+    {
+      "id": "harmony.http",
+      "reason": "Looks up your albums on MusicBrainz.",
+      "hosts": ["musicbrainz.org", "coverartarchive.org", "archive.org", "*.archive.org"]
+    }
   ],
   "dependencies": {
     "shared-helper": "0.2",
@@ -71,14 +75,51 @@ declaring only the module's scope gets each such function as a stub
 raising an error that names the scope it lacks. Declaring a narrow scope
 without its module's fails to load. Each scope may be listed once.
 
-An entry of `scopes` is either a scope id, or an object with exactly `id`
-and `reason` saying why the plugin needs that scope. A scope without a
-reason is written as a plain id. A reason is one line of plain text of up
-to 200 characters, without control characters; a manifest breaking any of
-these rules fails to load. A reason changes nothing about what a plugin can
-do and never causes an update to be held. Previews and held updates show
-it only on the effects a scope gives, so a reason on a scope with no effect
-is not returned.
+An entry of `scopes` is either a scope id, or an object with `id` and
+`reason` saying why the plugin needs that scope; only `harmony.http` takes
+another key, `hosts`. A scope without a reason is written as a plain id. A
+reason is one line of plain text of up to 200 characters, without control
+characters; a manifest breaking any of these rules fails to load. A reason
+changes nothing about what a plugin can do and never causes an update to be
+held. Previews and held updates show it only on the effects a scope gives,
+so a reason on a scope with no effect is not returned.
+
+### HTTP Hosts
+
+A plugin declaring `harmony.http` lists the hosts it sends requests to in
+the `hosts` of that scope's entry, which therefore takes the object form. A
+plugin declaring the scope without `hosts` fails to load. Up to 32 entries
+are allowed, each listed once:
+
+- `"musicbrainz.org"`: that host alone.
+- `"*.archive.org"`: every name under `archive.org` at any depth, but not
+  `archive.org` itself.
+- `"*"`: any host.
+- `{ "setting": "base_url" }`: the host of the URL, or bare host, stored as
+  the plugin's own server-level setting `base_url`, for a destination an
+  admin types in. It allows nothing while the setting is unset or holds no
+  host. A default the plugin declares for the setting does not count, nor
+  does a user's setting, and a saved setting applies from the plugin's next
+  start.
+
+A host is written as requests match it: lowercase, without a scheme, port,
+path or trailing dot, and an internationalized name in its `xn--` form. An
+IP address is allowed only by an entry naming it, never by a `*.` entry:
+IPv4 in dotted decimal, IPv6 in brackets in its shortest form, such as
+`[2001:db8::1]`. A manifest writing a host any other way fails to load.
+
+The server refuses a request from the plugin's code to any other host, with
+the response's `error_kind` set to `host_not_allowed`, and likewise every
+redirect a request is sent to, so list the hosts a listed one redirects to.
+The same holds for the requests the server makes for the plugin, such as
+downloading a cover from a URL the plugin returned. The list is the
+plugin's own: a dependency's code is bound by the dependency's list, even
+when the plugin calls it.
+
+The list says which named destinations an admin approved, nothing more. It
+does not keep a plugin away from private or local addresses: a listed name
+can resolve to any address, and any port of a listed host is allowed. It
+does not bound `harmony.net`, whose sockets reach any address.
 
 ## Releases
 
@@ -248,16 +289,24 @@ date.
 
 A plugin can use what its dependencies `require`, so it reaches its own
 scopes and those of every plugin it depends on, directly or not, optional
-dependencies included. An update is held, and waits for an admin, when the
-newer release would let the updated plugin, or an installed plugin
-depending on it, reach a scope it could not before, or a dependency whose
-scopes are unknown because it is not installed. It is also held when an
+dependencies included, and the HTTP hosts any of them lists. An update is
+held, and waits for an admin, when the newer release would let the updated
+plugin, or an installed plugin depending on it, reach a scope it could not
+before, a host that none it reached before covers, or a dependency whose
+scopes are unknown because it is not installed. `*.example.org` covers the
+names under it and narrower `*.` entries, `*` covers everything, and an
+entry naming a setting is covered only by `*` or by the same plugin's entry
+of that name: each plugin's setting is its own, so a dependency naming
+`base_url` does not cover the plugin naming it too. An installed plugin
+whose manifest predates `hosts` counts as reaching any host, so the update
+that lists them is not held for them, and an update that newly depends on
+such a plugin is held as reaching any host. It is also held when an
 installed plugin's dependency on it excludes the new version, or when the
 release needs a plugin that would be missing or at another version. Holds
 are judged against the plugins as they would be with the other available
 updates installed. An update request names each plugin with the release
-commit its status offered; naming a release grants the scopes it lets
-plugins reach, while one with a dependency problem is not applied until
+commit its status offered; naming a release grants the scopes and hosts it
+lets plugins reach, while one with a dependency problem is not applied until
 the plugins involved change. Approving one release grants nothing another
 release would reach through it.
 
@@ -283,13 +332,15 @@ them by hand still works.
 Releases are not signed, and the server does not verify what it downloads
 beyond the TLS connection to the forge. Automatic updates therefore trust the
 repository and its forge: whoever can publish there can run code with the
-scopes the plugin already reaches on every server that has it installed. A
-release needing more scopes is still held. Pin a plugin to a tag or commit, or
+scopes the plugin already reaches, to the hosts it already reaches, on every
+server that has it installed. A release needing more scopes or hosts is
+still held. Pin a plugin to a tag or commit, or
 turn the setting off, to install new code only when an admin chooses to.
 
 A subscription is checked ahead of its day while the server refuses to
 load an unpinned plugin installed from it because the plugin's `lyra`
-requirement excludes the server, as after a server upgrade: once at
+requirement excludes the server, or because it declares `harmony.http`
+without `hosts`, as after a server upgrade: once at
 startup, without delaying it, or within minutes of a reload that refuses
 such a plugin. The check is the daily one, so the setting, holds, and the
 wait for nothing to be playing apply as they do there. Each such install
@@ -313,7 +364,9 @@ check, or daily check, and shows subscribed repositories and their
 plugins from it without contacting the forge, judging each plugin's
 status against the plugins installed at the time. Every repository can be
 refreshed in one request, one at a time as the daily check does, which
-stores what each offers and installs nothing. An
+stores what each offers and installs nothing. A release of a plugin
+declaring `harmony.http` that was stored before releases listed hosts
+cannot be read, and shows as unknown until its repository is refreshed. An
 install names each plugin with the release commit its preview showed, so
 the scopes approved are the scopes granted: a plugin whose offered release
 has changed since fails to install.
@@ -329,7 +382,7 @@ server computes it on read from the plugin's source, never from
 plugin it depends only on the source record, so removing or re-adding the
 subscription doesn't change it.
 
-Previews, and updates held for the scopes they reach, describe what the
+Previews, and updates held for what they reach, describe what the
 scopes reached let a plugin do, and which scopes, declared by the plugin
 or its dependencies, each effect comes through: send data off the server, add endpoints or listen on the
 network, sign users in and manage their sessions, read or change personal
@@ -350,7 +403,16 @@ them. Descriptions are for display; clients act on the kinds, data ids and
 levels. Where the plugin's author gave a scope a reason, that effect source
 carries it as `author_reason`, the author's own unverified text from the
 version the effect was worked out from. A preview omits it for a dependency
-whose installed and offered versions don't give the same reason. Filtering or
+whose installed and offered versions don't give the same reason. The source
+of an effect given by `harmony.http` also carries `hosts`, the hosts that
+plugin lists, each tagged by `kind`: `host`, `subdomains`, `setting`, or
+`any` for `*`; a dependency's are those of its installed and offered
+versions together. An installed plugin from before hosts were listed
+shows as `any`. A gain lists the `hosts` the plugin would newly reach in
+the same form, an entry of kind `setting` also naming the `plugin` whose
+setting it is. A hold for what a release reaches has the reason
+`adds_reach`, whether it adds scopes, hosts or both. The effect's description does not name hosts, since
+`harmony.net` gives the same effect unbounded by any list. Filtering or
 sorting the catalog by a user's favorites, listens or ratings needs the
 scope that gates that data. A preview counts a dependency both as installed and
 as the repository offers it, since installing them together replaces the
@@ -366,5 +428,5 @@ lyra plugins add https://github.com/owner/repo --ref v2
 ```
 
 The CLI installs every plugin at the release offered now, prints each
-one's version and scopes, and installs to disk only; the next server start
+one's version, scopes and HTTP hosts, and installs to disk only; the next server start
 or a plugin reload loads the plugins.
