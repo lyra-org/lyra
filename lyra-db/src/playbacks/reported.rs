@@ -4,15 +4,8 @@
 // www.meshiplaw.com/lyra.
 
 use agdb::{
-    DbError,
     DbId,
-    DbTypeMarker,
-    DbValue,
     QueryBuilder,
-};
-use serde::{
-    Deserialize,
-    Serialize,
 };
 
 use super::{
@@ -77,7 +70,7 @@ pub fn is_reported_lapsed(
 }
 
 /// The player session a plugin reports a playback for. The plugin is the one its sessions name.
-#[derive(Clone, Debug, Serialize, Deserialize, DbTypeMarker)]
+#[derive(Clone, Debug)]
 pub struct ReportedSource {
     pub(crate) session_key: String,
 }
@@ -85,27 +78,6 @@ pub struct ReportedSource {
 impl ReportedSource {
     pub fn session_key(&self) -> &str {
         &self.session_key
-    }
-}
-
-impl From<ReportedSource> for DbValue {
-    fn from(source: ReportedSource) -> Self {
-        (&source).into()
-    }
-}
-impl From<&ReportedSource> for DbValue {
-    fn from(source: &ReportedSource) -> Self {
-        serde_json::to_string(source)
-            .expect("reported source consists of serializable scalar fields")
-            .into()
-    }
-}
-impl TryFrom<DbValue> for ReportedSource {
-    type Error = DbError;
-    fn try_from(value: DbValue) -> Result<Self, Self::Error> {
-        serde_json::from_str(value.string()?).map_err(|error| {
-            DbError::serialization(agdb::DbErrorType::TypeError, error.to_string())
-        })
     }
 }
 
@@ -172,7 +144,7 @@ pub fn insert_reported(
                 .key("db_element_id")
                 .value("Playback")
                 .and()
-                .keys("reported")
+                .keys("reported_session_key")
                 .query(),
         )?
         .elements
@@ -227,7 +199,7 @@ pub fn expire_reported_for_user(
                 .key("db_element_id")
                 .value("Playback")
                 .and()
-                .keys("reported")
+                .keys("reported_session_key")
                 .and()
                 .key("updated_at_ms")
                 .less_than(cutoff)
@@ -252,7 +224,7 @@ pub fn expire_reported(
                 .key("db_element_id")
                 .value("Playback")
                 .and()
-                .keys("reported")
+                .keys("reported_session_key")
                 .and()
                 .key("updated_at_ms")
                 .less_than(cutoff)

@@ -146,7 +146,7 @@ struct PlaybackRecord {
     db_element_id: String,
     db_id: Option<DbId>,
     id: String,
-    reported: Option<ReportedSource>,
+    reported_session_key: Option<String>,
     queue_revision: Option<u64>,
     queue_track_ids: Option<Vec<String>>,
     queue_current_index: Option<u64>,
@@ -159,15 +159,15 @@ struct PlaybackRecord {
 impl PlaybackRecord {
     fn from_playback(playback: &Playback) -> Self {
         let queue = playback.queue();
-        let reported = match &playback.source {
+        let reported_session_key = match &playback.source {
             PlaybackSource::Queue(_) => None,
-            PlaybackSource::Reported(source) => Some(source.clone()),
+            PlaybackSource::Reported(source) => Some(source.session_key.clone()),
         };
         Self {
             db_element_id: "Playback".to_owned(),
             db_id: playback.db_id,
             id: playback.id.clone(),
-            reported,
+            reported_session_key,
             queue_revision: queue.map(|queue| queue.revision),
             queue_track_ids: queue.map(|queue| queue.track_ids.clone()),
             queue_current_index: queue.map(|queue| queue.current_index),
@@ -202,9 +202,9 @@ impl PlaybackRecord {
             (None, None, None, None, None) => None,
             _ => anyhow::bail!("playback {} has incomplete queue fields", self.id),
         };
-        let source = match (queue, self.reported) {
+        let source = match (queue, self.reported_session_key) {
             (Some(queue), None) => PlaybackSource::Queue(queue),
-            (None, Some(source)) => PlaybackSource::Reported(source),
+            (None, Some(session_key)) => PlaybackSource::Reported(ReportedSource { session_key }),
             (Some(_), Some(_)) => anyhow::bail!("playback {} has a queue and a reporter", self.id),
             (None, None) => anyhow::bail!("playback {} has no queue or reporter", self.id),
         };
@@ -339,7 +339,7 @@ pub fn list_projections_for_user(
     let keys = [
         "db_element_id",
         "id",
-        "reported",
+        "reported_session_key",
         "queue_revision",
         "updated_at_ms",
     ]
@@ -587,7 +587,7 @@ fn projection_from_element(
     let reported = element
         .values
         .iter()
-        .any(|kv| kv.key == DbValue::from("reported"));
+        .any(|kv| kv.key == DbValue::from("reported_session_key"));
     let updated_at_ms = match value("updated_at_ms")? {
         DbValue::U64(value) => value,
         value => anyhow::bail!(
