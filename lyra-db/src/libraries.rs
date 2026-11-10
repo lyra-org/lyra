@@ -58,8 +58,9 @@ impl Library {
 /// The bounds of [`Library::purge_missing_after_days`].
 pub const PURGE_MISSING_AFTER_DAYS: std::ops::RangeInclusive<u32> = 1..=3650;
 
+/// Every library, in the order they were created.
 pub fn get(db: &impl super::DbAccess) -> anyhow::Result<Vec<Library>> {
-    let libraries: Vec<Library> = db
+    let mut libraries: Vec<Library> = db
         .exec(
             QueryBuilder::select()
                 .elements::<Library>()
@@ -71,6 +72,8 @@ pub fn get(db: &impl super::DbAccess) -> anyhow::Result<Vec<Library>> {
                 .query(),
         )?
         .try_into()?;
+    // A node's edges read newest first.
+    libraries.reverse();
 
     Ok(libraries)
 }
@@ -903,6 +906,21 @@ mod tests {
     use crate::nanoid;
     use crate::test_db::new_test_db;
     use agdb::DbAny;
+
+    #[test]
+    fn libraries_come_in_the_order_they_were_created() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        for name in ["First", "Second", "Third"] {
+            crate::test_db::insert_library(&mut db, name, &format!("/tmp/lyra-created-{name}"))?;
+        }
+
+        let names = get(&db)?
+            .into_iter()
+            .map(|library| library.name)
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["First", "Second", "Third"]);
+        Ok(())
+    }
 
     #[test]
     fn libraries_for_an_entity_come_in_db_id_order() -> anyhow::Result<()> {
