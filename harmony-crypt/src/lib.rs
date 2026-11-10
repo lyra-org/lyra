@@ -3,6 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+mod md5;
+
 use std::fmt;
 
 use base64::Engine;
@@ -83,7 +85,7 @@ impl CryptModule {
 
 fn hash_bytes(algorithm: HashAlgorithm, bytes: &[u8]) -> String {
     match algorithm {
-        HashAlgorithm::Md5 => format!("{:x}", md5::compute(bytes)),
+        HashAlgorithm::Md5 => hex_bytes(&md5::digest(bytes)),
         HashAlgorithm::Sha1 => format!("{:x}", sha1::Sha1::digest(bytes)),
         HashAlgorithm::Sha256 => format!("{:x}", Sha256::digest(bytes)),
         HashAlgorithm::Sha384 => format!("{:x}", Sha384::digest(bytes)),
