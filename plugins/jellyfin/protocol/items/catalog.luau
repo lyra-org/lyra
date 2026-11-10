@@ -714,96 +714,6 @@ function helpers.album_gain_db(track_items: { Track }): number?
 	return nil
 end
 
-function helpers.build_media_info(
-	track: TrackLike?,
-	source: PlaybackSourceInfo?,
-	item_id: string?,
-	fallback_name: string?,
-	has_lyrics: boolean?
-): ({ MediaSourceInfo }, { MediaStreamInfo }, string?)
-	local entry = if source then source.entry else nil
-	local media_item_id = item_ids.encode(item_id)
-	local container = media.jellyfin_container(source)
-	local codec = media.jellyfin_codec(source)
-	local trimmed = media.is_trimmed(source)
-	local size = if entry and entry.size and not trimmed then tonumber(entry.size) else nil
-	local bitrate = if source then source.bitrate_bps else nil
-	local direct_playable = source ~= nil and media_item_id ~= nil and not trimmed
-
-	local media_stream: MediaStreamInfo = {
-		Codec = codec,
-		Type = "Audio",
-		Index = 0,
-		Channels = if source then source.channel_count else nil,
-		SampleRate = if source then source.sample_rate_hz else nil,
-		BitDepth = if source then source.bit_depth else nil,
-		IsDefault = true,
-		IsForced = false,
-		IsHearingImpaired = false,
-		IsOriginal = false,
-		IsInterlaced = false,
-		IsExternal = false,
-		IsTextSubtitleStream = false,
-		SupportsExternalStream = false,
-	}
-	if bitrate then
-		media_stream.BitRate = bitrate
-	end
-	local media_streams: { MediaStreamInfo } = { media_stream }
-	local media_stream_values: { JsonValue } = { media_stream }
-	if has_lyrics then
-		local lyric_stream: MediaStreamInfo = {
-			Type = "Lyric",
-			Index = 1,
-			IsDefault = false,
-			IsForced = false,
-			IsHearingImpaired = false,
-			IsOriginal = false,
-			IsInterlaced = false,
-			IsExternal = false,
-			IsTextSubtitleStream = false,
-			SupportsExternalStream = false,
-		}
-		table.insert(media_streams, lyric_stream)
-		table.insert(media_stream_values, lyric_stream)
-	end
-
-	local media_source: MediaSourceInfo = {
-		Protocol = "File",
-		Id = media_item_id,
-		Path = if entry then entry.full_path else nil,
-		Type = "Default",
-		Container = container,
-		Size = size,
-		Name = if entry
-			then (entry.name or fallback_name or tostring(item_id))
-			else (fallback_name or tostring(item_id)),
-		IsRemote = false,
-		RunTimeTicks = if track then enrichment.ms_to_ticks(track.duration_ms) else nil,
-		ReadAtNativeFramerate = false,
-		IgnoreDts = false,
-		IgnoreIndex = false,
-		GenPtsInput = false,
-		SupportsTranscoding = true,
-		SupportsDirectStream = direct_playable,
-		SupportsDirectPlay = direct_playable,
-		IsInfiniteStream = false,
-		RequiresOpening = false,
-		RequiresClosing = false,
-		RequiresLooping = false,
-		SupportsProbing = false,
-		MediaStreams = media_stream_values,
-		Bitrate = bitrate,
-		DefaultAudioStreamIndex = 0,
-		HasSegments = false,
-	}
-	if entry and entry.hash then
-		media_source.ETag = tostring(entry.hash)
-	end
-
-	return { media_source }, media_streams, container
-end
-
 function helpers.person_type_for_credit(credit_type: CreditType, source: ArtistCreditSource): PersonType
 	if credit_type == CreditType.Artist then
 		return if source == ArtistCreditSource.Release then "AlbumArtist" else "Artist"
@@ -1410,18 +1320,17 @@ function helpers.to_track_item(
 	end
 	local media_sources: { MediaSourceInfo }? = nil
 	local media_streams: { MediaStreamInfo }? = nil
-	local container = nil
 	local source = nil
 	if context and context.has_source_prefetch then
 		source = helpers.lookup_by_id(context.playback_source_by_track_id, track.id)
 	else
 		source = media.resolve_playback_source_for_track(track, include_media_info == true)
 	end
+	local container = media.jellyfin_container(source)
 	if include_media_info == true then
-		media_sources, media_streams, container =
-			helpers.build_media_info(track, source, track.id, track.track_title, has_lyrics)
-	else
-		container = media.jellyfin_container(source)
+		local built_sources, built_streams =
+			media.build_media_info(track, source, track.id, track.track_title, has_lyrics, container)
+		media_sources, media_streams = built_sources :: any, built_streams :: any
 	end
 	local album_id = if release then item_ids.encode(release.id) else nil
 	local track_item_id = item_ids.encode(track.id)

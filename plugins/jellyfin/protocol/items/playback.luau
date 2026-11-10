@@ -26,7 +26,6 @@ local responses = require("./responses")
 local next_generated_play_session_id = 1
 type Track = tracks.Track
 type PlaybackSourceInfo = playback_sources.PlaybackSourceInfo
-type EntryInfo = playback_sources.EntryInfo
 type ApiContext = api.ApiContext
 type ApiRequest = api.ApiRequest
 type ApiResponse = api.ApiResponse
@@ -53,55 +52,8 @@ export type PlaybackReporter = {
 	client_name: string?,
 }
 
-type MediaStream = {
-	Codec: string?,
-	Type: string,
-	Index: number,
-	Channels: number?,
-	SampleRate: number?,
-	BitDepth: number?,
-	IsDefault: boolean,
-	IsForced: boolean,
-	IsHearingImpaired: boolean,
-	IsOriginal: boolean,
-	IsInterlaced: boolean,
-	IsExternal: boolean,
-	IsTextSubtitleStream: boolean,
-	SupportsExternalStream: boolean,
-	BitRate: number?,
-}
-
-type MediaSource = {
-	Protocol: string,
-	Id: string?,
-	Path: string?,
-	Type: string,
-	Container: string?,
-	Size: number?,
-	Name: string,
-	IsRemote: boolean,
-	RunTimeTicks: number?,
-	ReadAtNativeFramerate: boolean,
-	IgnoreDts: boolean,
-	IgnoreIndex: boolean,
-	GenPtsInput: boolean,
-	SupportsTranscoding: boolean,
-	SupportsDirectStream: boolean,
-	SupportsDirectPlay: boolean,
-	IsInfiniteStream: boolean,
-	RequiresOpening: boolean,
-	RequiresClosing: boolean,
-	RequiresLooping: boolean,
-	SupportsProbing: boolean,
-	MediaStreams: { MediaStream },
-	Bitrate: number?,
-	TranscodingContainer: string?,
-	TranscodingUrl: string?,
-	TranscodingSubProtocol: string?,
-	DefaultAudioStreamIndex: number?,
-	HasSegments: boolean,
-	ETag: string?,
-}
+type MediaSource = media.MediaSource
+type MediaStream = media.MediaStream
 
 type AudioPlaybackLimits = {
 	max_bitrate_bps: number?,
@@ -273,15 +225,6 @@ local function ensure_playback_session_id(requested_play_session_id: string?): s
 	local new_id = tostring(next_generated_play_session_id)
 	next_generated_play_session_id += 1
 	return new_id
-end
-
-local function ms_to_ticks(duration_ms: number?): number?
-	local value = tonumber(duration_ms)
-	if not value then
-		return nil
-	end
-
-	return math.floor(value * 10000)
 end
 
 local function json_string_field(object: JsonObject?, key: string): string?
@@ -873,94 +816,6 @@ local function apply_device_profile(
 	return stream, nil
 end
 
-local function build_media_info(
-	track: Track?,
-	source: PlaybackSourceInfo?,
-	item_id: string?,
-	fallback_name: string?,
-	has_lyrics: boolean?
-): ({ MediaSource }, { MediaStream }, string?)
-	local entry: EntryInfo? = if source and type(source.entry) == "table" then source.entry else nil
-	local media_item_id = item_ids.encode(item_id)
-	local container = media.probed_container(source)
-	local codec = media.jellyfin_codec(source)
-	local trimmed = media.is_trimmed(source)
-	local size = if entry and entry.size and not trimmed then tonumber(entry.size) else nil
-	local bitrate = if source then source.bitrate_bps else nil
-	local direct_playable = source ~= nil and media_item_id ~= nil and not trimmed
-
-	local media_stream: MediaStream = {
-		Codec = codec,
-		Type = "Audio",
-		Index = 0,
-		Channels = if source then source.channel_count else nil,
-		SampleRate = if source then source.sample_rate_hz else nil,
-		BitDepth = if source then source.bit_depth else nil,
-		IsDefault = true,
-		IsForced = false,
-		IsHearingImpaired = false,
-		IsOriginal = false,
-		IsInterlaced = false,
-		IsExternal = false,
-		IsTextSubtitleStream = false,
-		SupportsExternalStream = false,
-	}
-	if bitrate then
-		media_stream.BitRate = bitrate
-	end
-	local media_streams = { media_stream }
-	if has_lyrics then
-		local lyric_stream: MediaStream = {
-			Type = "Lyric",
-			Index = 1,
-			IsDefault = false,
-			IsForced = false,
-			IsHearingImpaired = false,
-			IsOriginal = false,
-			IsInterlaced = false,
-			IsExternal = false,
-			IsTextSubtitleStream = false,
-			SupportsExternalStream = false,
-		}
-		table.insert(media_streams, lyric_stream)
-	end
-
-	local media_source: MediaSource = {
-		Protocol = "File",
-		Id = media_item_id,
-		Path = if entry then entry.full_path else nil,
-		Type = "Default",
-		Container = container,
-		Size = size,
-		Name = if entry
-			then (entry.name or fallback_name or tostring(item_id))
-			else (fallback_name or tostring(item_id)),
-		IsRemote = false,
-		RunTimeTicks = if track then ms_to_ticks(track.duration_ms) else nil,
-		ReadAtNativeFramerate = false,
-		IgnoreDts = false,
-		IgnoreIndex = false,
-		GenPtsInput = false,
-		SupportsTranscoding = true,
-		SupportsDirectStream = direct_playable,
-		SupportsDirectPlay = direct_playable,
-		IsInfiniteStream = false,
-		RequiresOpening = false,
-		RequiresClosing = false,
-		RequiresLooping = false,
-		SupportsProbing = false,
-		MediaStreams = media_streams,
-		Bitrate = bitrate,
-		DefaultAudioStreamIndex = 0,
-		HasSegments = false,
-	}
-	if entry and entry.hash then
-		media_source.ETag = tostring(entry.hash)
-	end
-
-	return { media_source }, media_streams, container
-end
-
 function module.build_audio_media_source(item_id: string?, track: Track?, public: boolean?): MediaSource?
 	local source = if public
 		then media.resolve_public_playback_source(track, true)
@@ -972,8 +827,14 @@ function module.build_audio_media_source(item_id: string?, track: Track?, public
 		end)
 		has_lyrics = ok and entries ~= nil and #entries > 0
 	end
-	local media_sources, _ =
-		build_media_info(track, source, item_id, if track then track.track_title else item_id, has_lyrics)
+	local media_sources = media.build_media_info(
+		track,
+		source,
+		item_id,
+		if track then track.track_title else item_id,
+		has_lyrics,
+		media.probed_container(source)
+	)
 	return media_sources[1]
 end
 
@@ -1205,8 +1066,14 @@ function module.build_playback_info(
 		end)
 		has_lyrics = ok and entries ~= nil and #entries > 0
 	end
-	local media_sources, _ =
-		build_media_info(track, source, item_id, if track then track.track_title else item_id, has_lyrics)
+	local media_sources = media.build_media_info(
+		track,
+		source,
+		item_id,
+		if track then track.track_title else item_id,
+		has_lyrics,
+		media.probed_container(source)
+	)
 	local primary_media_source = media_sources[1]
 	if requested_media_source_id ~= nil then
 		local primary_media_source_id = module.trim(if primary_media_source then primary_media_source.Id else nil)
