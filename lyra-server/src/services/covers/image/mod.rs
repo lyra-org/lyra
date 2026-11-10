@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+mod blurhash;
 mod cache;
 mod header;
 
@@ -450,10 +451,7 @@ pub(crate) fn cover_blurhash(path: &Path) -> Option<String> {
         return None;
     }
     let (_, image) = decode_cover(&read_cover_file(path).ok()?).ok()?;
-    let small = image.thumbnail(128, 128);
-    let (sw, sh) = small.dimensions();
-    let bytes = small.to_rgba8();
-    blurhash::encode(4, 3, sw, sh, bytes.as_raw()).ok()
+    Some(blurhash::encode(&image.thumbnail(128, 128).to_rgba8()))
 }
 
 #[cfg(test)]
