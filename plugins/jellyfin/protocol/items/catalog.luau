@@ -815,27 +815,102 @@ function helpers.people_from_artist_relations(relations: { ArtistRelationInfo }?
 	return people
 end
 
-function helpers.resolve_people_for_item(
-	entity_id: string?,
-	entity_type: "release" | "track",
+function helpers.artists_as_people(artist_items: { ArtistProjectionItem }, person_type: PersonType): { PersonItem }
+	local people: { PersonItem } = {}
+	for _, artist in artist_items do
+		local person: PersonItem = { Name = artist.Name, Id = artist.Id, Type = person_type }
+		table.insert(people, person)
+	end
+	return people
+end
+
+-- As upstream's prober, a track's People open with its album's artists, then its own credits.
+function helpers.resolve_people_for_track(
+	track_id: string,
+	release_artists: { ArtistProjectionItem },
 	context: ItemContext?
 ): { PersonItem }?
 	if context == nil or context.include_people ~= true then
 		return nil
 	end
-	if entity_id == nil then
-		return {}
-	end
 
-	local credits = helpers.lookup_by_id(context.credited_artists_by_owner_id, entity_id)
+	local credits = helpers.lookup_by_id(context.credited_artists_by_owner_id, track_id)
 	if credits == nil then
-		credits = helpers.query_credits(entity_id, entity_type)
+		credits = helpers.query_credits(track_id, "track")
 		if credits ~= nil then
-			context.credited_artists_by_owner_id[entity_id] = credits
+			context.credited_artists_by_owner_id[track_id] = credits
 		end
 	end
 
-	return helpers.people_from_credits(credits)
+	local people = helpers.artists_as_people(release_artists, "AlbumArtist")
+	local album_artist: { [string]: boolean } = {}
+	for _, person in people do
+		album_artist[person.Id] = true
+	end
+	for _, person in helpers.people_from_credits(credits) do
+		if person.Type ~= "AlbumArtist" or not album_artist[person.Id] then
+			table.insert(people, person)
+		end
+	end
+	return people
+end
+
+-- Tracks by disc and number, keeping their given order where those can't tell them apart.
+function helpers.in_album_order(release_tracks: { Track }): { Track }
+	local ordered = table.clone(release_tracks)
+	local given: { [Track]: number } = {}
+	for index, track in release_tracks do
+		given[track] = index
+	end
+	table.sort(ordered, function(a: Track, b: Track): boolean
+		if (a.disc or 0) ~= (b.disc or 0) then
+			return (a.disc or 0) < (b.disc or 0)
+		end
+		if (a.track or 0) ~= (b.track or 0) then
+			return (a.track or 0) < (b.track or 0)
+		end
+		return given[a] < given[b]
+	end)
+	return ordered
+end
+
+-- As upstream's album metadata: its album artists, then its tracks' artists, those on the most
+-- tracks first and in order of first appearance among equals.
+function helpers.resolve_people_for_release(
+	release_artists: { ArtistProjectionItem },
+	release_tracks: { Track },
+	context: ItemContext?
+): { PersonItem }?
+	if context == nil or context.include_people ~= true then
+		return nil
+	end
+
+	local artists: { ArtistProjectionItem } = {}
+	local tracks_of: { [string]: number } = {}
+	local position: { [string]: number } = {}
+	for _, track in helpers.in_album_order(release_tracks) do
+		local _, _, track_artists = helpers.collect_artist_projection(track.id, "track", context)
+		for _, artist in track_artists do
+			if tracks_of[artist.Id] == nil then
+				tracks_of[artist.Id] = 0
+				table.insert(artists, artist)
+				position[artist.Id] = #artists
+			end
+			tracks_of[artist.Id] += 1
+		end
+	end
+	table.sort(artists, function(a: ArtistProjectionItem, b: ArtistProjectionItem): boolean
+		if tracks_of[a.Id] ~= tracks_of[b.Id] then
+			return tracks_of[a.Id] > tracks_of[b.Id]
+		end
+		return position[a.Id] < position[b.Id]
+	end)
+
+	local people = helpers.artists_as_people(release_artists, "AlbumArtist")
+	for _, person in helpers.artists_as_people(artists, "Artist") do
+		table.insert(people, person)
+	end
+	return people
 end
 
 function helpers.resolve_people_for_artist(artist_id: string?, context: ItemContext?): { PersonItem }?
@@ -1191,7 +1266,7 @@ function helpers.to_release_item(
 		AlbumArtists = artist_items,
 		Artists = artist_names,
 		ArtistItems = artist_items,
-		People = helpers.resolve_people_for_item(release.id, "release", context),
+		People = helpers.resolve_people_for_release(artist_items, release_tracks, context),
 		ChildCount = #release_tracks,
 		RunTimeTicks = runtime_ticks,
 		NormalizationGain = helpers.album_gain_db(release_tracks),
@@ -1291,6 +1366,7 @@ function helpers.to_track_item(
 	local release_artist_name = artist_name
 	local release_artist_names = artist_names
 	local release_artist_items = artist_items
+	local album_artists: { ArtistProjectionItem } = {}
 	if release then
 		local resolved_release_artist_name, resolved_release_artist_names, resolved_release_artist_items =
 			helpers.collect_artist_projection(release.id, "release", context)
@@ -1303,6 +1379,7 @@ function helpers.to_track_item(
 		if #resolved_release_artist_items > 0 then
 			release_artist_items = resolved_release_artist_items
 		end
+		album_artists = resolved_release_artist_items
 		if artist_name == nil and #release_artist_names > 0 then
 			artist_name = release_artist_name
 			artist_names = release_artist_names
@@ -1369,7 +1446,7 @@ function helpers.to_track_item(
 		AlbumArtists = release_artist_items,
 		Artists = artist_names,
 		ArtistItems = artist_items,
-		People = helpers.resolve_people_for_item(track.id, "track", context),
+		People = helpers.resolve_people_for_track(track.id, album_artists, context),
 		Genres = helpers.genre_names(track_genres),
 		GenreItems = helpers.genre_items(track_genres),
 		Tags = helpers.tag_names(helpers.resolve_tag_infos(track.id, context)),
@@ -1764,6 +1841,12 @@ function helpers.prefetch_credit_relations(context: ItemContext, seed: Realizati
 	for _, track_id in seed.track_ids do
 		helpers.append_unique_id(track_id, ids, seen)
 	end
+	-- A release's People count its tracks' artists.
+	for _, release_tracks in context.release_tracks_by_release_id do
+		for _, track in release_tracks :: { Track } do
+			helpers.append_unique_id(track.id, ids, seen)
+		end
+	end
 	if #ids == 0 then
 		return
 	end
@@ -1949,9 +2032,9 @@ function helpers.build_realization_context(stubs: { ItemInfo }, options: ItemsQu
 	helpers.prefetch_release_covers(context, seed)
 	helpers.prefetch_artist_covers(context, seed)
 	helpers.prefetch_release_artists_and_genres(context, seed, options)
+	helpers.prefetch_release_tracks(context, seed)
 	helpers.prefetch_credit_relations(context, seed)
 	helpers.prefetch_provider_ids(context, seed)
-	helpers.prefetch_release_tracks(context, seed)
 	helpers.prefetch_artist_people_relations(context, seed)
 	helpers.prefetch_track_stats_and_media(context, seed, options)
 	helpers.prefetch_ratings(context, seed)
@@ -2013,6 +2096,48 @@ function helpers.realize_stubs(stubs: { ItemInfo }, options: ItemsQueryOptions):
 		end
 	end
 	return items
+end
+
+-- The `People` each track or release stub would realize with, by its id, reading only what they
+-- need. The release a track shows its artists from depends on the images, as when realizing.
+function module.people_of_stubs(stubs: { ItemInfo }, options: ItemsQueryOptions): { [string]: { PersonItem } }
+	local people_options = table.clone(options)
+	people_options.enable_user_data = false
+	people_options.include_people = true
+	local context = helpers.new_realization_context(people_options)
+	local seed = helpers.collect_realization_seed(stubs, context)
+	helpers.prefetch_track_artists(context, seed)
+	helpers.prefetch_track_releases(context, seed)
+	helpers.prefetch_release_covers(context, seed)
+	helpers.prefetch_release_tracks(context, seed)
+	helpers.prefetch_credit_relations(context, seed)
+
+	local parent_scope = lookups.scope(options.parent_id)
+	local scoped_release_id = if parent_scope.entity_type == "Release" then parent_scope.id else nil
+	local people_by_id: { [string]: { PersonItem } } = {}
+	for _, stub in stubs do
+		local track = if stub._type == "track" then helpers.track_like_from_raw(stub._raw) else nil
+		local release = if stub._type == "release" then helpers.release_like_from_raw(stub._raw) else nil
+		if track then
+			local album = helpers.resolve_release_for_track(
+				track,
+				scoped_release_id,
+				helpers.should_include_images(context),
+				context
+			)
+			local album_artists: { ArtistProjectionItem } = {}
+			if album then
+				local _, _, projected = helpers.collect_artist_projection(album.id, "release", context)
+				album_artists = projected
+			end
+			people_by_id[track.id] = helpers.resolve_people_for_track(track.id, album_artists, context) or {}
+		elseif release then
+			local _, _, artist_items = helpers.collect_artist_projection(release.id, "release", context)
+			local release_tracks = context.release_tracks_by_release_id[release.id] or {}
+			people_by_id[release.id] = helpers.resolve_people_for_release(artist_items, release_tracks, context) or {}
+		end
+	end
+	return people_by_id
 end
 
 -- Artwork routes are public, so this resolves names without a caller; it only ever leads to

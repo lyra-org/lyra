@@ -43,16 +43,63 @@ type Emit = ({ ItemInfo }) -> ()
 
 local module = {}
 
+-- As upstream, `PersonIds` with `PersonTypes` keeps the items listing one of those people as one of
+-- those types. A credit query can't say so, since its filter has no type and each item takes
+-- People from its release or tracks, so this reads the source's matches and looks at what `People`
+-- shows. The ids of those it keeps, or nil without both filters.
+local function ids_listing_people(source: Source, options: ItemsQueryOptions): { string }?
+	if #options.person_ids == 0 or #options.person_types == 0 then
+		return nil
+	end
+
+	local wanted_people: { [string]: boolean } = {}
+	for _, person_id in options.person_ids do
+		wanted_people[person_id] = true
+	end
+	local wanted_types: { [string]: boolean } = {}
+	for _, person_type in options.person_types do
+		wanted_types[person_type] = true
+	end
+	local kept: { string } = {}
+	local offset = 0
+	while true do
+		local stubs, total = source(offset, results.BATCH_SIZE)
+		local people_by_id = catalog.people_of_stubs(stubs, options)
+		for _, stub in stubs do
+			local id = (stub._raw :: { id: string }).id
+			for _, person in people_by_id[id] or {} do
+				if wanted_people[person.Id] and wanted_types[person.Type] then
+					table.insert(kept, id)
+					break
+				end
+			end
+		end
+		offset += #stubs
+		if #stubs == 0 or offset >= total then
+			break
+		end
+	end
+	return kept
+end
+
 local function track_source(options: ItemsQueryOptions, scope: Scope): Source?
 	local built = query.tracks(options, scope)
 	if not built then
 		return nil
 	end
-	return function(offset, limit)
+	local function source(offset: number, limit: number?): ({ ItemInfo }, number)
 		built.offset, built.limit = offset, limit
 		local page = tracks.query(built)
 		return catalog.track_stubs(page.items), page.total
 	end
+	local kept = ids_listing_people(source, options)
+	if kept then
+		if #kept == 0 then
+			return nil
+		end
+		built.ids = kept
+	end
+	return source
 end
 
 local function release_source(options: ItemsQueryOptions, scope: Scope): Source?
@@ -60,11 +107,19 @@ local function release_source(options: ItemsQueryOptions, scope: Scope): Source?
 	if not built then
 		return nil
 	end
-	return function(offset, limit)
+	local function source(offset: number, limit: number?): ({ ItemInfo }, number)
 		built.offset, built.limit = offset, limit
 		local page = releases.query(built)
 		return catalog.release_stubs(page.items), page.total
 	end
+	local kept = ids_listing_people(source, options)
+	if kept then
+		if #kept == 0 then
+			return nil
+		end
+		built.ids = kept
+	end
+	return source
 end
 
 local function artist_source(options: ItemsQueryOptions, scope: Scope, role: CreditRole?): Source?
@@ -79,9 +134,70 @@ local function artist_source(options: ItemsQueryOptions, scope: Scope, role: Cre
 	end
 end
 
+-- The ids of the artists `built` matches with these credits.
+local function credited_artist_ids(
+	built: artists.ArtistQuery,
+	credit_types: { artists.CreditType },
+	role: CreditRole?,
+	into: { [string]: boolean }
+)
+	local paged = table.clone(built)
+	paged.credit_types = credit_types
+	paged.credit_role = role
+	paged.sort = nil
+	paged.seed = nil
+	paged.offset = 0
+	paged.limit = results.BATCH_SIZE
+	while true do
+		local page = artists.query(paged)
+		for _, artist in page.items do
+			into[artist.id] = true
+		end
+		local read = (paged.offset :: number) + #page.items
+		paged.offset = read
+		if #page.items == 0 or read >= page.total then
+			break
+		end
+	end
+end
+
+-- Narrows `built` to the artists holding an artist credit on a release or a credit of its other
+-- types, which one query can't ask, as its credit types and role hold together. False when none do.
+local function narrow_to_album_artists_or_others(built: artists.ArtistQuery): boolean
+	local others: { artists.CreditType } = {}
+	for _, credit_type in built.credit_types or {} do
+		if credit_type ~= artists.CreditType.Artist then
+			table.insert(others, credit_type)
+		end
+	end
+	local matching: { [string]: boolean } = {}
+	credited_artist_ids(built, { artists.CreditType.Artist }, "release", matching)
+	credited_artist_ids(built, others, nil, matching)
+
+	local ids: { string } = {}
+	if built.ids then
+		for _, id in built.ids do
+			if matching[id] then
+				table.insert(ids, id)
+			end
+		end
+	else
+		for id in matching do
+			table.insert(ids, id)
+		end
+	end
+	if #ids == 0 then
+		return false
+	end
+	built.ids = ids
+	built.credit_types = query.ANY_CREDIT_TYPES
+	built.credit_role = nil
+	return true
+end
+
 local function person_source(options: ItemsQueryOptions, scope: Scope, appears_in: Scope?): Source?
-	local built = query.people(options, scope, appears_in)
-	if not built then
+	local built, mixes_album_artists = query.people(options, scope, appears_in)
+	if not built or (mixes_album_artists and not narrow_to_album_artists_or_others(built)) then
 		return nil
 	end
 	return function(offset, limit)

@@ -1,0 +1,70 @@
+run_as = "admin"
+
+# "Album" is credited to Band. Rare is on one track, Often on all three, Sometimes on two.
+
+[[users]]
+key = "admin"
+admin = true
+
+[[artists]]
+key = "band"
+name = "Band"
+
+[[artists]]
+key = "rare"
+name = "Rare"
+
+[[artists]]
+key = "often"
+name = "Often"
+
+[[artists]]
+key = "sometimes"
+name = "Sometimes"
+
+[[artists]]
+key = "tied"
+name = "Tied"
+
+[[releases]]
+key = "album"
+title = "Album"
+artists = ["band"]
+
+[[tracks]]
+key = "one"
+title = "One"
+release = "album"
+disc = 1
+track = 1
+artists = ["rare", "often"]
+
+[[tracks]]
+key = "two"
+title = "Two"
+release = "album"
+disc = 1
+track = 2
+artists = ["sometimes", "often"]
+
+[[tracks]]
+key = "three"
+title = "Three"
+release = "album"
+disc = 1
+track = 3
+artists = ["often", "sometimes", "tied"]
+
+[[artists]]
+key = "solo"
+name = "Solo"
+
+[[releases]]
+key = "bare"
+title = "Bare"
+
+[[tracks]]
+key = "loose"
+title = "Loose"
+release = "bare"
+artists = ["solo"]

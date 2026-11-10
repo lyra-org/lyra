@@ -606,28 +606,32 @@ local function credit_types_for(person_types: { string }): { CreditType }
 	return credit_types
 end
 
+-- The credit types of a listing of every kind of person.
+module.ANY_CREDIT_TYPES = ANY_CREDIT_TYPES
+
 -- People are artists holding a credit of the requested person types, any credit by default.
--- Artist credits count as both Artist and AlbumArtist, except that AlbumArtist alone asks for
--- release credits. `appears_in` is `AppearsInItemId`: people credited on a release or track, or
+-- Artist credits count as both Artist and AlbumArtist, except that AlbumArtist without Artist asks
+-- for release credits. `appears_in` is `AppearsInItemId`: people credited on a release or track, or
 -- voicing an artist.
-function module.people(options: ItemsQueryOptions, scope: Scope, appears_in: Scope?): ArtistQuery?
+function module.people(options: ItemsQueryOptions, scope: Scope, appears_in: Scope?): (ArtistQuery?, boolean)
 	local query = module.artists(options, scope, nil)
 	if not query then
-		return nil
+		return nil, false
 	end
 	query.credit_types = ANY_CREDIT_TYPES
+	local mixed = false
 	if #options.person_types > 0 then
 		local credit_types = credit_types_for(options.person_types)
 		if #credit_types == 0 then
-			return nil
+			return nil, false
 		end
 		query.credit_types = credit_types
-		if
-			table.find(options.person_types, "AlbumArtist")
-			and not table.find(options.person_types, "Artist")
-			and #credit_types == 1
-		then
-			query.credit_role = "release"
+		if table.find(options.person_types, "AlbumArtist") and not table.find(options.person_types, "Artist") then
+			if #credit_types == 1 then
+				query.credit_role = "release"
+			else
+				mixed = true
+			end
 		end
 	end
 	if #options.exclude_person_types > 0 then
@@ -635,11 +639,11 @@ function module.people(options: ItemsQueryOptions, scope: Scope, appears_in: Sco
 	end
 
 	if appears_in == nil then
-		return query
+		return query, mixed
 	end
 	local item_id = appears_in.id
 	if item_id == nil then
-		return nil
+		return nil, false
 	end
 	if appears_in.entity_type == "Release" then
 		query.release_ids = intersect(query.release_ids, { item_id })
@@ -657,16 +661,17 @@ function module.people(options: ItemsQueryOptions, scope: Scope, appears_in: Sco
 		-- A voice actor needn't have a credit of their own.
 		query.credit_types = nil
 		query.exclude_credit_types = nil
+		mixed = false
 	else
-		return nil
+		return nil, false
 	end
 	local narrowed = { query.ids, query.release_ids, query.track_ids }
 	for _, ids in narrowed do
 		if ids ~= nil and #ids == 0 then
-			return nil
+			return nil, false
 		end
 	end
-	return query
+	return query, mixed
 end
 
 function module.genres(options: ItemsQueryOptions, scope: Scope): GenreQuery?

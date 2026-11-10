@@ -38,6 +38,8 @@ credits = [{ artist = "prod", type = "producer" }]
 key = "song"
 title = "Song"
 release = "album"
+disc = 1
+track = 1
 artists = ["singer"]
 credits = [{ artist = "comp", type = "composer" }]
 
@@ -45,3 +47,5 @@ credits = [{ artist = "comp", type = "composer" }]
 key = "other"
 title = "Other"
 release = "album"
+disc = 1
+track = 2

@@ -41,8 +41,18 @@ check(persons({ PersonTypes = "Artist" }), "Band:Person,Singer:Person (2)", "art
 check(persons({ PersonTypes = "AlbumArtist" }), "Band:Person (1)", "AlbumArtist alone means release credits")
 check(
 	persons({ PersonTypes = "AlbumArtist,Composer" }),
+	"Band:Person,Comp:Person (2)",
+	"AlbumArtist among other types still means release credits"
+)
+check(
+	persons({ PersonTypes = "Artist,Composer" }),
 	"Band:Person,Comp:Person,Singer:Person (3)",
-	"AlbumArtist among other types counts artist credits anywhere"
+	"Artist among other types counts artist credits anywhere"
+)
+check(
+	persons({ PersonTypes = "AlbumArtist,Composer", AppearsInItemId = item_ids.encode(ids.song) }),
+	"Comp:Person (1)",
+	"the mix narrows with the rest of the listing, and the track's own artist holds no release credit"
 )
 check(persons({ PersonTypes = "Composer" }), "Comp:Person (1)", "one credit type")
 check(persons({ PersonTypes = "Director" }), " (0)", "a type no credit maps to")
@@ -64,9 +74,53 @@ check(
 )
 
 -- An item's People include its artist credits, typed by where the credit sits.
-check(people(ids.song), "Singer:Artist,Comp:Composer", "a track's own credits")
-check(people(ids.other), "Band:AlbumArtist,Prod:Producer", "a track without credits takes its release's")
-check(people(ids.album), "Band:AlbumArtist,Prod:Producer", "a release's credits")
+check(people(ids.song), "Band:AlbumArtist,Singer:Artist,Comp:Composer", "a track opens with its album's artists")
+check(people(ids.other), "Band:AlbumArtist,Prod:Producer", "a track without credits takes its release's, once")
+check(people(ids.album), "Band:AlbumArtist,Singer:Artist,Band:Artist", "an album's artists and its tracks'")
+
+-- `PersonIds` with `PersonTypes` reads the People a listing shows.
+local catalog = require("../../protocol/items/catalog")
+local tracks = require("@lyra/tracks")
+local shown = parse({ Fields = "People" })
+local song_track = tracks.get({ ids.song })[ids.song]
+local realized = catalog.realize(catalog.track_stubs({ song_track }), shown)[1]
+local read = catalog.people_of_stubs(catalog.track_stubs({ song_track }), parse({}))[ids.song]
+assert(#read == #realized.People, "as many people as realizing")
+for index, person in read do
+	local other = realized.People[index]
+	assert(person.Id == other.Id and person.Type == other.Type and person.Role == other.Role, "the same people")
+end
+
+-- `PersonIds` with `PersonTypes` keeps the items listing the person as one of those types.
+local function items(params: { [string]: string }): string
+	local listed = listing.list_items(parse(params))
+	local names = {}
+	for _, item in listed do
+		table.insert(names, item.Name)
+	end
+	table.sort(names)
+	return table.concat(names, ",")
+end
+local function ask(person: string, types: string?, include: string): { [string]: string }
+	return {
+		PersonIds = item_ids.encode(ids[person]),
+		PersonTypes = types,
+		IncludeItemTypes = include,
+		Recursive = "true",
+	}
+end
+
+check(items(ask("band", "AlbumArtist", "Audio")), "Other,Song", "a release's artist is its tracks' album artist")
+check(items(ask("band", "Artist", "Audio")), "", "that artist isn't a track's artist")
+check(items(ask("singer", "Artist", "Audio")), "Song", "a track's artist")
+check(items(ask("singer", "AlbumArtist", "Audio")), "", "isn't its album artist")
+check(items(ask("comp", "Composer", "Audio")), "Song", "a composer")
+check(items(ask("comp", "Artist,Composer", "Audio")), "Song", "any of the types")
+check(items(ask("band", nil, "Audio")), "Other,Song", "without types, any credit")
+check(items(ask("band", "AlbumArtist", "MusicAlbum")), "Album", "an album's artist")
+check(items(ask("singer", "Artist", "MusicAlbum")), "Album", "its tracks' artist is the album's Artist")
+check(items(ask("singer", "AlbumArtist", "MusicAlbum")), "", "but not its album artist")
+check(items(ask("prod", "Producer", "MusicAlbum")), "", "an album no longer lists its producers")
 
 -- `/Persons/{name}` resolves an artist to the artist itself.
 local band = listing.find_person_by_name("band", fixture.users.admin)

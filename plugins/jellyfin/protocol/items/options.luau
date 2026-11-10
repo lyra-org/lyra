@@ -32,6 +32,8 @@ export type ItemsQueryOptions = {
 	studio_ids: { string },
 	-- `ArtistIds` and `PersonIds`: an artist credited in either role.
 	artist_ids: { string },
+	-- `PersonIds` alone, which `PersonTypes` narrows.
+	person_ids: { string },
 	-- `AlbumArtistIds`: an artist credited on the release.
 	release_artist_ids: { string },
 	-- `ContributingArtistIds`: an artist credited on a track but not on its release.
@@ -223,6 +225,7 @@ function module.parse(query: ApiQueryParams?): ItemsQueryOptions
 		exclude_artist_ids = parse_item_ids(query, { "ExcludeArtistIds" }),
 		studio_ids = parse_item_ids(query, { "StudioIds" }),
 		artist_ids = merge(parse_item_ids(query, { "ArtistIds" }), parse_item_ids(query, { "PersonIds" })),
+		person_ids = parse_item_ids(query, { "PersonIds" }),
 		release_artist_ids = parse_item_ids(query, { "AlbumArtistIds" }),
 		contributing_artist_ids = parse_item_ids(query, { "ContributingArtistIds" }),
 		album_ids = parse_item_ids(query, { "AlbumIds" }),
