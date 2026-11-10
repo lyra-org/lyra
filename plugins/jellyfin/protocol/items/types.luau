@@ -27,6 +27,7 @@ export type PersonType =
 	| "Engineer"
 	| "Mixer"
 	| "Remixer"
+	| "Narrator"
 
 export type ArtistProjectionItem = {
 	Id: string,

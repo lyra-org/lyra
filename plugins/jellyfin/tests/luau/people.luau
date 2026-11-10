@@ -46,6 +46,7 @@ check(
 )
 check(persons({ PersonTypes = "Composer" }), "Comp:Person (1)", "one credit type")
 check(persons({ PersonTypes = "Director" }), " (0)", "a type no credit maps to")
+check(persons({ PersonTypes = "Narrator" }), " (0)", "narrators, which no credit maps to")
 check(
 	persons({ ExcludePersonTypes = "Artist,AlbumArtist" }),
 	"Comp:Person,Prod:Person (2)",
