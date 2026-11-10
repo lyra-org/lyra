@@ -341,7 +341,7 @@ fn plugin_access(
             .filter(|candidate| candidate.id() == id)
             .collect()
     };
-    let effective = EffectiveScopes::of_any(plugin, versions);
+    let effective = EffectiveScopes::of_any(&crate::plugins::plugin_host(), plugin, versions);
     let effects = effects_of(
         effective
             .scopes

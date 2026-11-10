@@ -903,6 +903,7 @@ mod tests {
             entrypoint: Some("init.luau".to_string()),
             scopes: Vec::new(),
             scope_reasons: Default::default(),
+            scope_grants: Default::default(),
             dependencies: Default::default(),
         });
         crate::plugins::STATE

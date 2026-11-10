@@ -16,6 +16,7 @@ fn manifest(id: &str, scopes: &[&str]) -> harmony_core::plugin::PluginManifest {
         entrypoint: Some("init.luau".to_string()),
         scopes: scopes.iter().map(|scope| scope.to_string()).collect(),
         scope_reasons: Default::default(),
+        scope_grants: Default::default(),
         dependencies: Default::default(),
     }
 }

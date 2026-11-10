@@ -72,6 +72,7 @@ fn manifest(id: &str, scopes: &[&str]) -> PluginManifest {
         entrypoint: Some("init.luau".into()),
         scopes: scopes.iter().map(|scope| scope.to_string()).collect(),
         scope_reasons: Default::default(),
+        scope_grants: Default::default(),
         dependencies: Default::default(),
     }
 }

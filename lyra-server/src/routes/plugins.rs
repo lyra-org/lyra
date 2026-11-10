@@ -2085,6 +2085,7 @@ mod tests {
             entrypoint: None,
             scopes: Vec::new(),
             scope_reasons: BTreeMap::new(),
+            scope_grants: BTreeMap::new(),
             dependencies: Default::default(),
         }
     }

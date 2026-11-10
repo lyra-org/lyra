@@ -313,6 +313,13 @@ impl ScopedPlugin for Reach<'_> {
         }
     }
 
+    fn scope_grant(&self, scope: &str) -> Option<&[String]> {
+        match self {
+            Self::Installed(manifest) => manifest.scope_grant(scope),
+            Self::Release(..) => None,
+        }
+    }
+
     fn dependency_ids(&self) -> impl Iterator<Item = &str> {
         let dependencies = match self {
             Self::Installed(manifest) => &manifest.dependencies,
@@ -636,6 +643,7 @@ mod tests {
             entrypoint: None,
             scopes: Vec::new(),
             scope_reasons: BTreeMap::new(),
+            scope_grants: BTreeMap::new(),
             dependencies: dependencies(requires),
         }
     }
@@ -666,7 +674,8 @@ mod tests {
     }
 
     /// [`held`], with the `approved` releases named by the request. Gains
-    /// are reduced to what is reached, as [`gain`] builds them.
+    /// are reduced to the scopes and unknown dependencies reached, as
+    /// [`gain`] builds them.
     fn held_approving(
         installed: &[PluginManifest],
         releases: &[(&str, &OfferedRelease)],
@@ -686,7 +695,14 @@ mod tests {
                 Hold::AddsScopes { gains } => {
                     let gains = gains
                         .into_iter()
-                        .map(|(id, gained)| (id, gain(gained.growth)))
+                        .map(|(id, gained)| {
+                            let growth = ScopeGrowth {
+                                scopes: gained.growth.scopes,
+                                unresolved: gained.growth.unresolved,
+                                ..ScopeGrowth::default()
+                            };
+                            (id, gain(growth))
+                        })
                         .collect();
                     (id, Hold::AddsScopes { gains })
                 }

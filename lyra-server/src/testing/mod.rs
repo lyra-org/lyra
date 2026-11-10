@@ -354,6 +354,7 @@ fn library_manifest(
         entrypoint: None,
         scopes,
         scope_reasons: BTreeMap::new(),
+        scope_grants: BTreeMap::new(),
         dependencies: BTreeMap::new(),
     })
 }

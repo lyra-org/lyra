@@ -56,6 +56,7 @@ use crate::{
         CapabilityPolicy,
         load_chunk_with_require,
     },
+    scopes::ScopeGrant,
 };
 use harmony_luau::{
     CapabilityId,
@@ -72,6 +73,8 @@ pub const PLUGIN_CONFIG_MAX_BYTES: u64 = 64 * 1024;
 pub(crate) const PLUGIN_CONFIG_MAX_SCOPE_LEN: usize = 128;
 pub(crate) const PLUGIN_CONFIG_MAX_SCOPE_REASON_CHARS: usize = 200;
 pub(crate) const PLUGIN_CONFIG_MAX_DEPENDENCIES: usize = 32;
+/// The most items a scope's grant may list.
+pub const PLUGIN_CONFIG_MAX_SCOPE_GRANT_ITEMS: usize = 32;
 
 /// The fixed top-level fields of `plugin.json` and of the release entries
 /// a repository's `versions.json` lists, which a host's name must not
@@ -91,14 +94,15 @@ pub const RESERVED_HOST_NAMES: &[&str] = &[
 /// What manifests are checked against: the running host's name, which is
 /// the top-level key holding each manifest's requirement on the host, the
 /// host's version, which that requirement must match, the scope ids its
-/// modules register, the scopes that only narrow another, and the plugin
-/// ids it addresses something else by.
+/// modules register, the scopes that only narrow another, the grants some
+/// scopes take, and the plugin ids it addresses something else by.
 #[derive(Debug, Clone)]
 pub struct PluginHost {
     name: String,
     version: Version,
     scope_ids: HashSet<Arc<str>>,
     scope_parents: HashMap<Arc<str>, Arc<str>>,
+    scope_grants: HashMap<Arc<str>, Arc<dyn ScopeGrant>>,
     reserved_ids: HashSet<String>,
 }
 
@@ -118,8 +122,26 @@ impl PluginHost {
             version,
             scope_ids,
             scope_parents: HashMap::new(),
+            scope_grants: HashMap::new(),
             reserved_ids: HashSet::new(),
         })
+    }
+
+    /// Has manifests declaring `scope` say what it lets them reach, in the
+    /// key of the scope's entry that `grant` names. A manifest declaring
+    /// the scope without that key still parses, and is refused at load.
+    pub fn with_scope_grant(
+        mut self,
+        scope: impl Into<Arc<str>>,
+        grant: Arc<dyn ScopeGrant>,
+    ) -> Self {
+        self.scope_grants.insert(scope.into(), grant);
+        self
+    }
+
+    /// The grant `scope` takes, when it takes one.
+    pub fn scope_grant(&self, scope: &str) -> Option<&dyn ScopeGrant> {
+        self.scope_grants.get(scope).map(Arc::as_ref)
     }
 
     /// Scopes, each paired with its parent, that gate part of what the
@@ -199,6 +221,9 @@ pub struct PluginManifest {
     /// What the plugin's author says each scope is for, by scope id, holding
     /// only the scopes given a reason. Unverified text, for hosts to show.
     pub scope_reasons: BTreeMap<String, String>,
+    /// What each scope given a grant lets the plugin reach, by scope id: the
+    /// grant's items as [`ScopeGrant::parse`] returned them.
+    pub scope_grants: BTreeMap<String, Vec<String>>,
     /// Keyed by plugin id.
     pub dependencies: BTreeMap<String, Dependency>,
 }
@@ -235,7 +260,11 @@ impl PluginManifest {
                 )));
             }
         };
-        let (scopes, scope_reasons) = declared_scopes(&fields.id, fields.scopes)?;
+        let DeclaredScopes {
+            scopes,
+            reasons: scope_reasons,
+            grants: scope_grants,
+        } = declared_scopes(&fields.id, fields.scopes, host)?;
         Ok(Self {
             schema_version: fields.schema_version,
             id: fields.id,
@@ -246,6 +275,7 @@ impl PluginManifest {
             entrypoint: fields.entrypoint,
             scopes,
             scope_reasons,
+            scope_grants,
             dependencies: fields.dependencies,
         })
     }
@@ -282,10 +312,13 @@ fn deserialize_other_fields<'de, D: Deserializer<'de>>(
 }
 
 /// One entry of a manifest's `scopes`: a bare scope id, or
-/// `{ "id": "<scope>", "reason": "<why the plugin needs it>" }`.
+/// `{ "id": "<scope>", "reason": "<why the plugin needs it>" }` with, for a
+/// scope that takes a grant, the grant under its key.
 struct ScopeEntry {
     id: String,
     reason: Option<String>,
+    /// The entry's other keys, each once, in the order written.
+    other: Vec<(String, serde_json::Value)>,
 }
 
 impl<'de> Deserialize<'de> for ScopeEntry {
@@ -303,21 +336,38 @@ impl<'de> Deserialize<'de> for ScopeEntry {
                 Ok(ScopeEntry {
                     id: value.to_string(),
                     reason: None,
+                    other: Vec::new(),
                 })
             }
 
-            fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<ScopeEntry, A::Error> {
-                #[derive(Deserialize)]
-                #[serde(deny_unknown_fields)]
-                struct Table {
-                    id: String,
-                    reason: String,
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<ScopeEntry, A::Error> {
+                let mut id: Option<String> = None;
+                let mut reason: Option<String> = None;
+                let mut other: Vec<(String, serde_json::Value)> = Vec::new();
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "id" => {
+                            if id.replace(map.next_value()?).is_some() {
+                                return Err(de::Error::duplicate_field("id"));
+                            }
+                        }
+                        "reason" => {
+                            if reason.replace(map.next_value()?).is_some() {
+                                return Err(de::Error::duplicate_field("reason"));
+                            }
+                        }
+                        _ => {
+                            if other.iter().any(|(seen, _)| *seen == key) {
+                                return Err(de::Error::custom(format!("duplicate field `{key}`")));
+                            }
+                            other.push((key, map.next_value()?));
+                        }
+                    }
                 }
-
-                let table = Table::deserialize(de::value::MapAccessDeserializer::new(map))?;
                 Ok(ScopeEntry {
-                    id: table.id,
-                    reason: Some(table.reason),
+                    id: id.ok_or_else(|| de::Error::missing_field("id"))?,
+                    reason: Some(reason.ok_or_else(|| de::Error::missing_field("reason"))?),
+                    other,
                 })
             }
         }
@@ -326,18 +376,28 @@ impl<'de> Deserialize<'de> for ScopeEntry {
     }
 }
 
-/// Splits plugin `plugin_id`'s `scopes` into the scope ids, in the author's
-/// order, and the reasons given for some of them. Checked here so no parsed
-/// manifest carries a reason that isn't fit to show.
+struct DeclaredScopes {
+    /// The scope ids, in the author's order.
+    scopes: Vec<String>,
+    reasons: BTreeMap<String, String>,
+    grants: BTreeMap<String, Vec<String>>,
+}
+
+/// Splits plugin `plugin_id`'s `scopes` into the scope ids, the reasons
+/// given for some of them and the grants `host`'s scopes take. Checked here
+/// so no parsed manifest carries a reason that isn't fit to show, or a grant
+/// its scope did not accept.
 fn declared_scopes<E: de::Error>(
     plugin_id: &str,
     entries: Vec<ScopeEntry>,
-) -> Result<(Vec<String>, BTreeMap<String, String>), E> {
+    host: &PluginHost,
+) -> Result<DeclaredScopes, E> {
     let plugin = truncate_for_error(plugin_id);
     let mut scopes = Vec::with_capacity(entries.len());
     let mut reasons = BTreeMap::new();
+    let mut grants = BTreeMap::new();
     let mut listed = HashSet::with_capacity(entries.len());
-    for ScopeEntry { id, reason } in entries {
+    for ScopeEntry { id, reason, other } in entries {
         let scope = truncate_for_error(&id);
         if !listed.insert(id.clone()) {
             return Err(E::custom(format!(
@@ -352,9 +412,37 @@ fn declared_scopes<E: de::Error>(
             }
             reasons.insert(id.clone(), reason);
         }
+        let grant = host.scope_grant(&id);
+        for (key, value) in other {
+            let Some(grant) = grant.filter(|grant| grant.key() == key) else {
+                return Err(E::custom(format!(
+                    "plugin '{plugin}' gives scope '{scope}' an unknown field `{}`",
+                    truncate_for_error(&key)
+                )));
+            };
+            let items = grant
+                .parse(&value)
+                .and_then(|items| match items.len() {
+                    count if count > PLUGIN_CONFIG_MAX_SCOPE_GRANT_ITEMS => Err(format!(
+                        "it lists {count} items, exceeds cap of \
+                         {PLUGIN_CONFIG_MAX_SCOPE_GRANT_ITEMS}"
+                    )),
+                    _ => Ok(items),
+                })
+                .map_err(|problem| {
+                    E::custom(format!(
+                        "plugin '{plugin}' gives scope '{scope}' an invalid `{key}`: {problem}"
+                    ))
+                })?;
+            grants.insert(id.clone(), items);
+        }
         scopes.push(id);
     }
-    Ok((scopes, reasons))
+    Ok(DeclaredScopes {
+        scopes,
+        reasons,
+        grants,
+    })
 }
 
 fn scope_reason_problem(reason: &str) -> Option<String> {
@@ -617,6 +705,13 @@ pub enum PluginLoadError {
         scope: String,
         parent: String,
     },
+    /// The plugin declares `scope` without the grant, under `key` of the
+    /// scope's entry, that the scope requires.
+    MissingScopeGrant {
+        plugin_id: String,
+        scope: String,
+        key: String,
+    },
     TooManyDependencies {
         plugin_id: String,
         count: usize,
@@ -729,6 +824,15 @@ impl fmt::Display for PluginLoadError {
                 f,
                 "plugin '{plugin_id}' declares scope '{scope}' without '{parent}', the scope it \
                  narrows"
+            ),
+            PluginLoadError::MissingScopeGrant {
+                plugin_id,
+                scope,
+                key,
+            } => write!(
+                f,
+                "plugin '{plugin_id}' declares scope '{scope}' without `{key}`, which the scope \
+                 requires"
             ),
             PluginLoadError::TooManyDependencies {
                 plugin_id,
@@ -1290,6 +1394,17 @@ impl PluginManager {
                     plugin_id: manifest.id.clone(),
                     scope: scope.clone(),
                     parent: parent.to_string(),
+                });
+            }
+        }
+        for scope in &manifest.scopes {
+            if let Some(grant) = host.scope_grant(scope)
+                && !manifest.scope_grants.contains_key(scope)
+            {
+                return Err(PluginLoadError::MissingScopeGrant {
+                    plugin_id: manifest.id.clone(),
+                    scope: scope.clone(),
+                    key: grant.key().to_string(),
                 });
             }
         }
@@ -1994,6 +2109,7 @@ mod tests {
             entrypoint: Some("init.luau".to_string()),
             scopes: scopes.iter().map(|scope| scope.to_string()).collect(),
             scope_reasons: BTreeMap::new(),
+            scope_grants: BTreeMap::new(),
             dependencies: BTreeMap::new(),
         }
     }
@@ -3893,6 +4009,205 @@ mod tests {
             let manifest = load_scopes(reason(&accepted)).unwrap().manifest;
             assert_eq!(manifest.scope_reasons["net"], accepted);
         }
+    }
+
+    /// Items are lowercase words, written as an array, in the key `words`.
+    #[derive(Debug)]
+    struct Words;
+
+    impl crate::scopes::ScopeGrant for Words {
+        fn key(&self) -> &str {
+            "words"
+        }
+
+        fn parse(&self, value: &serde_json::Value) -> Result<Vec<String>, String> {
+            let words: Vec<String> = serde_json::from_value(value.clone())
+                .map_err(|error| format!("it is not a list of words: {error}"))?;
+            let mut items = std::collections::BTreeSet::new();
+            for word in words {
+                if word.is_empty() || !word.chars().all(|c| c.is_ascii_lowercase()) {
+                    return Err(format!("'{word}' is not a lowercase word"));
+                }
+                if !items.insert(word.clone()) {
+                    return Err(format!("'{word}' is listed more than once"));
+                }
+            }
+            Ok(items.into_iter().collect())
+        }
+
+        fn covers(&self, granted: &[String], item: &str) -> bool {
+            granted.iter().any(|word| word == item)
+        }
+    }
+
+    fn load_granted_scopes(scopes: serde_json::Value) -> Result<LoadedManifest, PluginLoadError> {
+        let host = PluginHost::new(
+            "host",
+            Version::new(0, 0, 1),
+            HashSet::from([Arc::<str>::from("net"), Arc::<str>::from("dns")]),
+        )
+        .unwrap()
+        .with_scope_grant("net", Arc::new(Words));
+        let json = manifest_json("demo", "").replace(r#"["net"]"#, &scopes.to_string());
+        PluginManager::load_manifest(std::path::Path::new("plugin.json"), json.as_bytes(), &host)
+    }
+
+    fn grant_parse_error(scopes: serde_json::Value) -> String {
+        match load_granted_scopes(scopes) {
+            Err(PluginLoadError::ConfigParseError { error, .. }) => error,
+            other => panic!("expected a parse error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_scope_entry_holds_the_grant_its_scope_takes() {
+        let manifest = load_granted_scopes(serde_json::json!([
+            "dns",
+            { "id": "net", "reason": "Fetches things.", "words": ["b", "a"] },
+        ]))
+        .unwrap()
+        .manifest;
+
+        assert_eq!(manifest.scopes, ["dns", "net"]);
+        assert_eq!(
+            manifest.scope_grants,
+            BTreeMap::from([("net".to_string(), vec!["a".to_string(), "b".to_string()])])
+        );
+
+        let empty = load_granted_scopes(
+            serde_json::json!([{ "id": "net", "reason": "Encodes things.", "words": [] }]),
+        )
+        .unwrap()
+        .manifest;
+        assert_eq!(empty.scope_grants["net"], Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_scope_entry_takes_no_key_but_its_scopes_grant() {
+        for (scopes, expected) in [
+            (
+                serde_json::json!([{ "id": "net", "reason": "r", "words": [], "extra": 1 }]),
+                "plugin 'demo' gives scope 'net' an unknown field `extra`",
+            ),
+            (
+                serde_json::json!([{ "id": "dns", "reason": "r", "words": [] }]),
+                "plugin 'demo' gives scope 'dns' an unknown field `words`",
+            ),
+            (
+                serde_json::json!([{ "id": "net", "words": [] }]),
+                "missing field `reason`",
+            ),
+            (
+                serde_json::json!([{ "id": "net", "reason": "r", "words": "a" }]),
+                "plugin 'demo' gives scope 'net' an invalid `words`: it is not a list of words",
+            ),
+            (
+                serde_json::json!([{ "id": "net", "reason": "r", "words": ["A"] }]),
+                "an invalid `words`: 'A' is not a lowercase word",
+            ),
+            (
+                serde_json::json!([{ "id": "net", "reason": "r", "words": ["a", "a"] }]),
+                "an invalid `words`: 'a' is listed more than once",
+            ),
+        ] {
+            let error = grant_parse_error(scopes.clone());
+            assert!(error.contains(expected), "{scopes}: {error}");
+        }
+
+        for (field, twice) in [
+            ("id", r#"{"id":"net","id":"net","reason":"r","words":[]}"#),
+            (
+                "reason",
+                r#"{"id":"net","reason":"r","reason":"r","words":[]}"#,
+            ),
+            (
+                "words",
+                r#"{"id":"net","reason":"r","words":[],"words":[]}"#,
+            ),
+        ] {
+            let json = manifest_json("demo", "").replace(r#""net""#, twice);
+            let error = match load_manifest(json.as_bytes()) {
+                Err(PluginLoadError::ConfigParseError { error, .. }) => error,
+                other => panic!("expected a parse error: {other:?}"),
+            };
+            assert!(
+                error.contains(&format!("duplicate field `{field}`")),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_grant_lists_no_more_items_than_its_cap() {
+        let words = |count: usize| -> Vec<String> {
+            (0..count)
+                .map(|index| {
+                    let first = char::from(b'a' + (index / 26) as u8);
+                    let second = char::from(b'a' + (index % 26) as u8);
+                    format!("{first}{second}")
+                })
+                .collect()
+        };
+        let scopes =
+            |count| serde_json::json!([{ "id": "net", "reason": "r", "words": words(count) }]);
+        let cap = super::PLUGIN_CONFIG_MAX_SCOPE_GRANT_ITEMS;
+
+        let manifest = load_granted_scopes(scopes(cap)).unwrap().manifest;
+        assert_eq!(manifest.scope_grants["net"].len(), cap);
+        assert!(
+            grant_parse_error(scopes(cap + 1))
+                .ends_with("an invalid `words`: it lists 33 items, exceeds cap of 32")
+        );
+    }
+
+    #[test]
+    fn a_scope_without_its_required_grant_parses_but_does_not_load() {
+        let object = serde_json::json!([{ "id": "net", "reason": "Fetches things." }]);
+        for scopes in [serde_json::json!(["net"]), object.clone()] {
+            let error = load_granted_scopes(scopes.clone()).unwrap_err();
+            assert!(
+                matches!(
+                    &error,
+                    PluginLoadError::MissingScopeGrant { plugin_id, scope, key }
+                        if plugin_id == "demo" && scope == "net" && key == "words"
+                ),
+                "{scopes}: {error}"
+            );
+            assert_eq!(
+                error.to_string(),
+                "plugin 'demo' declares scope 'net' without `words`, which the scope requires"
+            );
+        }
+
+        let host = PluginHost::new(
+            "host",
+            Version::new(0, 0, 1),
+            HashSet::from([Arc::<str>::from("net")]),
+        )
+        .unwrap()
+        .with_scope_grant("net", Arc::new(Words));
+        let json = manifest_json("demo", "").replace(r#"["net"]"#, &object.to_string());
+        let parsed = PluginManifest::from_json(&json, &host).expect("the manifest still parses");
+        assert_eq!(parsed.scopes, ["net"]);
+        assert!(parsed.scope_grants.is_empty());
+    }
+
+    #[test]
+    fn a_host_mismatch_is_reported_before_a_missing_grant() {
+        let host = PluginHost::new(
+            "host",
+            Version::new(0, 0, 2),
+            HashSet::from([Arc::<str>::from("net")]),
+        )
+        .unwrap()
+        .with_scope_grant("net", Arc::new(Words));
+        let error = PluginManager::load_manifest(
+            std::path::Path::new("plugin.json"),
+            manifest_json("demo", "").as_bytes(),
+            &host,
+        )
+        .unwrap_err();
+        assert!(matches!(error, PluginLoadError::IncompatibleHost { .. }));
     }
 
     #[test]

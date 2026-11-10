@@ -829,12 +829,13 @@ pub(crate) fn scope_gains<P: ScopedPlugin>(
         );
         RiskAssessment::of(effects.iter().map(|effect| &effect.effect))
     };
-    scope_growth(plugins, candidate)
+    let host = plugin_host();
+    scope_growth(&host, plugins, candidate)
         .into_iter()
         .filter_map(|(id, growth)| {
-            let reach = EffectiveScopes::of(after(&id)?, after);
+            let reach = EffectiveScopes::of(&host, after(&id)?, after);
             let previous_risk = installed_as(&id)
-                .map(|plugin| risk_of(&EffectiveScopes::of(plugin, installed_as)).risk)
+                .map(|plugin| risk_of(&EffectiveScopes::of(&host, plugin, installed_as)).risk)
                 .unwrap_or(Risk::Standard);
             let effects = effects_of(
                 growth
@@ -1293,6 +1294,10 @@ mod tests {
 
         fn scopes(&self) -> &[String] {
             &self.0
+        }
+
+        fn scope_grant(&self, _scope: &str) -> Option<&[String]> {
+            None
         }
 
         fn dependency_ids(&self) -> impl Iterator<Item = &str> {
