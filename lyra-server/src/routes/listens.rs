@@ -32,7 +32,11 @@ use std::{
 };
 
 use crate::routes::request::bearer_credential;
-use crate::services::catalog::Direction;
+use crate::services::catalog::{
+    self,
+    Direction,
+    tracks::Tracks,
+};
 use crate::{
     routes::{
         self,
@@ -467,7 +471,29 @@ async fn rows_for_user(
 
     let db = STATE.db.read().await;
     let (user_db_id, _) = owner.resolve(&db, principal)?;
-    Ok(summary_rows(&db, principal, user_db_id)?)
+    summary_rows(&db, principal, user_db_id)
+}
+
+/// Keeps the summaries of tracks `principal` can see, as the catalog lists tracks for it,
+/// whether or not they can play.
+fn retain_visible(
+    db: &DbAny,
+    principal: &Principal,
+    summaries: &mut Vec<lyra_db::listens::ListenSummary>,
+) -> Result<(), AppError> {
+    let viewer = catalog::Viewer::user(db, principal.clone())?;
+    if viewer.sees_everything() {
+        return Ok(());
+    }
+    let tracks = summaries
+        .iter()
+        .map(|summary| summary.track_db_id)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let visible = catalog::lookups::visible::<Tracks>(db, &viewer, &tracks)?;
+    summaries.retain(|summary| visible.contains(&summary.track_db_id));
+    Ok(())
 }
 
 /// A row for each track `user_db_id` has listened to that `principal` can see.
@@ -475,21 +501,18 @@ fn summary_rows(
     db: &DbAny,
     principal: &Principal,
     user_db_id: DbId,
-) -> anyhow::Result<Vec<ListenRow>> {
-    let summaries = lyra_db::listens::list_summaries_for_user(db, user_db_id)?;
-    let mut rows = Vec::with_capacity(summaries.len());
-    for summary in summaries {
-        if !crate::services::auth::access::entity_accessible(db, principal, summary.track_db_id)? {
-            continue;
-        }
-        rows.push(ListenRow {
+) -> Result<Vec<ListenRow>, AppError> {
+    let mut summaries = lyra_db::listens::list_summaries_for_user(db, user_db_id)?;
+    retain_visible(db, principal, &mut summaries)?;
+    Ok(summaries
+        .into_iter()
+        .map(|summary| ListenRow {
             user_id: summary.user_public_id,
             track_id: summary.track_public_id,
             listen_count: summary.count,
             last_played_ms: summary.last_played,
-        });
-    }
-    Ok(rows)
+        })
+        .collect())
 }
 
 async fn rows_for_managed_listens(
@@ -528,17 +551,11 @@ async fn rows_for_managed_listens(
         track_filter.as_ref().map(|filter| &filter.track_public_ids),
     )?;
     summaries.retain(|summary| account_ids.contains(&summary.user_public_id));
+    retain_visible(&db, principal, &mut summaries)?;
 
     if let Some(track_id) = query.track_id.as_deref() {
         let mut rows_by_user: HashMap<String, ListenRow> = HashMap::new();
         for summary in summaries {
-            if !crate::services::auth::access::entity_accessible(
-                &*db,
-                principal,
-                summary.track_db_id,
-            )? {
-                continue;
-            }
             let entry = rows_by_user
                 .entry(summary.user_public_id.clone())
                 .or_insert_with(|| ListenRow {
@@ -557,20 +574,15 @@ async fn rows_for_managed_listens(
         return Ok(rows_by_user.into_values().collect());
     }
 
-    let mut rows = Vec::with_capacity(summaries.len());
-    for summary in summaries {
-        if !crate::services::auth::access::entity_accessible(&*db, principal, summary.track_db_id)?
-        {
-            continue;
-        }
-        rows.push(ListenRow {
+    Ok(summaries
+        .into_iter()
+        .map(|summary| ListenRow {
             user_id: summary.user_public_id,
             track_id: summary.track_public_id,
             listen_count: summary.count,
             last_played_ms: summary.last_played,
-        });
-    }
-    Ok(rows)
+        })
+        .collect())
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -868,6 +880,134 @@ mod tests {
         let ids = rows.into_iter().map(|row| row.user_id).collect::<Vec<_>>();
         assert_eq!(ids, vec!["user-a", "user-b"]);
     }
+    /// A release holding one track, in `library`, with one listen of the track by `user`.
+    fn listened_track(
+        db: &mut DbAny,
+        user: DbId,
+        library: DbId,
+        title: &str,
+    ) -> anyhow::Result<String> {
+        let release = lyra_db::fixtures::insert_release(db, title)?;
+        let track = lyra_db::fixtures::insert_track(db, title)?;
+        lyra_db::fixtures::connect(db, library, release)?;
+        lyra_db::fixtures::connect(db, release, track)?;
+        lyra_db::fixtures::insert_listen(db, user, track, 1_700_000_000_000)?;
+        lyra_db::lookup::find_id_by_db_id(db, track)?
+            .ok_or_else(|| anyhow::anyhow!("track has no public id"))
+    }
+
+    fn track_ids(rows: Vec<ListenRow>) -> HashSet<String> {
+        rows.into_iter().map(|row| row.track_id).collect()
+    }
+
+    #[test]
+    fn summary_rows_hold_only_tracks_the_catalog_shows_the_viewer() -> anyhow::Result<()> {
+        use axum::response::IntoResponse;
+
+        let mut db = lyra_db::test_db::new_test_db()?;
+        let user = lyra_db::test_db::insert_user(&mut db, "limited-listener")?;
+        let shown = lyra_db::test_db::insert_library(&mut db, "Shown", "/listens/shown")?;
+        let hidden = lyra_db::test_db::insert_library(&mut db, "Hidden", "/listens/hidden")?;
+        let seen = listened_track(&mut db, user, shown, "Seen")?;
+        let unseen = listened_track(&mut db, user, hidden, "Unseen")?;
+        let orphan = lyra_db::fixtures::insert_track(&mut db, "Orphan")?;
+        lyra_db::fixtures::insert_listen(&mut db, user, orphan, 1_700_000_000_000)?;
+        let orphan = lyra_db::lookup::find_id_by_db_id(&db, orphan)?.expect("track exists");
+
+        let shown_id = lyra_db::libraries::get_by_id(&db, shown)?
+            .expect("library exists")
+            .id;
+        let listed = |db: &DbAny, permissions, libraries| {
+            let principal = Principal::for_user(db, user, permissions, libraries);
+            summary_rows(db, &principal, user).map(track_ids)
+        };
+        let ok = |listed: Result<HashSet<String>, AppError>| {
+            listed.map_err(|error| anyhow::anyhow!("{error:?}"))
+        };
+
+        assert_eq!(
+            ok(listed(&db, Vec::new(), HashSet::from([shown_id.clone()])))?,
+            HashSet::from([seen.clone()])
+        );
+        assert!(ok(listed(&db, Vec::new(), HashSet::new()))?.is_empty());
+        assert_eq!(
+            ok(listed(&db, vec![Permission::Admin], HashSet::new()))?,
+            HashSet::from([seen, unseen, orphan])
+        );
+
+        // A caller who no longer exists is refused, as the catalog lists refuse it.
+        let caller = lyra_db::test_db::insert_user(&mut db, "deleted-caller")?;
+        let principal = Principal::for_user(&db, caller, vec![Permission::Admin], HashSet::new());
+        lyra_db::test_db::recycle_user(&mut db, caller, "replacement")?;
+        let Err(error) = summary_rows(&db, &principal, user) else {
+            anyhow::bail!("a deleted caller listed listens");
+        };
+        assert_eq!(
+            error.into_response().status(),
+            axum::http::StatusCode::UNAUTHORIZED
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn all_users_listens_hold_only_tracks_the_catalog_shows_the_caller() -> anyhow::Result<()>
+    {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_library_test_state(std::path::PathBuf::from(".")).await?;
+        let (manager, admin, seen, unseen) = {
+            let mut db = STATE.db.write().await;
+            let listener = lyra_db::test_db::insert_user(&mut db, "all-users-listener")?;
+            let caller = lyra_db::test_db::insert_user(&mut db, "all-users-manager")?;
+            let shown = lyra_db::test_db::insert_library(&mut db, "Shown", "/all-listens/shown")?;
+            let hidden =
+                lyra_db::test_db::insert_library(&mut db, "Hidden", "/all-listens/hidden")?;
+            let seen = listened_track(&mut db, listener, shown, "Seen")?;
+            let unseen = listened_track(&mut db, listener, hidden, "Unseen")?;
+            let shown_id = lyra_db::libraries::get_by_id(&db, shown)?
+                .expect("library exists")
+                .id;
+            let principal = |permission, libraries| {
+                Principal::for_user(&*db, caller, vec![permission], libraries)
+            };
+            (
+                principal(Permission::ManageLibraries, HashSet::from([shown_id])),
+                principal(Permission::Admin, HashSet::new()),
+                seen,
+                unseen,
+            )
+        };
+        let listed = async |principal: &Principal, track_id: Option<&String>| {
+            let query = ListenQuery {
+                user_id: None,
+                track_id: track_id.cloned(),
+                page: routes::PageQuery::default(),
+                sort_by: None,
+                sort_order: None,
+                merge_unique_external_ids: None,
+            };
+            rows_for_managed_listens(principal, &query)
+                .await
+                .map(track_ids)
+        };
+        let both = HashSet::from([seen.clone(), unseen.clone()]);
+
+        assert_eq!(
+            listed(&manager, None).await.ok(),
+            Some(HashSet::from([seen.clone()]))
+        );
+        assert_eq!(
+            listed(&manager, Some(&seen)).await.ok(),
+            Some(HashSet::from([seen]))
+        );
+        assert!(listed(&manager, Some(&unseen)).await.is_err());
+        assert_eq!(listed(&admin, None).await.ok(), Some(both));
+        assert_eq!(
+            listed(&admin, Some(&unseen)).await.ok(),
+            Some(HashSet::from([unseen]))
+        );
+        Ok(())
+    }
+
     mod default_user {
         use axum::{
             http::{
@@ -1423,9 +1563,13 @@ mod benches {
 
     const LIMIT: u64 = 100;
 
-    #[test]
+    #[tokio::test]
     #[ignore = "a report for release builds"]
-    fn report() {
+    async fn report() {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::plugins::testing::init_library_test_state(std::path::PathBuf::from("."))
+            .await
+            .unwrap();
         let count = |name: &str, default: usize| {
             std::env::var(name)
                 .ok()
@@ -1451,6 +1595,10 @@ mod benches {
                 listens += 1;
             }
         }
+        // The rows read the catalog index, which only the server's database keeps between
+        // requests.
+        *STATE.db.write().await = db;
+        let db = STATE.db.read().await;
 
         let page = |offset: u64| {
             let mut rows = summary_rows(&db, &principal, user_db_id).unwrap();
@@ -1475,6 +1623,12 @@ mod benches {
                 ms(median(9, || page(offset).0))
             );
         }
+        println!(
+            "    reading the summaries and keeping the visible ones: {}",
+            ms(median(9, || {
+                summary_rows(&db, &principal, user_db_id).unwrap().len() as u64
+            }))
+        );
         println!(
             "    reading the summaries: {}",
             ms(median(9, || {
