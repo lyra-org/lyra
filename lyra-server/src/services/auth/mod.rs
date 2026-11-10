@@ -27,6 +27,7 @@ pub(crate) mod access;
 pub(crate) mod accounts;
 pub(crate) mod api_keys;
 pub(crate) mod caller;
+mod codes;
 pub(crate) mod device_logins;
 pub(crate) mod media_tokens;
 pub(crate) mod owners;

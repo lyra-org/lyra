@@ -25,10 +25,6 @@ use crate::services::{
     state::GenerationState,
 };
 use agdb::DbId;
-use argon2::password_hash::rand_core::{
-    OsRng,
-    RngCore,
-};
 
 use super::{
     AuthCredential,
@@ -37,6 +33,7 @@ use super::{
     LoginResult,
     Principal,
     caller::ClientAddress,
+    codes,
     hash_secret,
     owners,
     random_hex_secret,
@@ -50,8 +47,6 @@ use super::{
 const DEVICE_LOGIN_TTL: Duration = Duration::from_secs(10 * 60);
 const SECRET_BYTES: usize = 32;
 const CODE_LENGTH: usize = 6;
-/// A-Z without I, L and O, which read as digits or as each other.
-const CODE_LETTERS: &[u8; 23] = b"ABCDEFGHJKMNPQRSTUVWXYZ";
 /// What a caller's own code must be: long enough to be worth guessing at, short enough to type.
 const GIVEN_CODE_LENGTHS: std::ops::RangeInclusive<usize> = CODE_LENGTH..=32;
 /// Gives up instead of spinning, though live requests are a sliver of either code space.
@@ -250,33 +245,8 @@ fn expires_at_ms() -> i64 {
     lyra_db::users::now_ms().saturating_add(DEVICE_LOGIN_TTL.as_millis() as i64)
 }
 
-/// A value in `0..bound` from `next`. Values at or past the last whole multiple of `bound` are
-/// drawn again, since keeping them would favour the small results.
-fn sample_below(bound: u32, mut next: impl FnMut() -> u32) -> u32 {
-    let limit = u32::MAX - u32::MAX % bound;
-    loop {
-        let value = next();
-        if value < limit {
-            return value % bound;
-        }
-    }
-}
-
-fn random_below(bound: u32) -> u32 {
-    sample_below(bound, || OsRng.next_u32())
-}
-
 fn generate_code() -> String {
-    (0..CODE_LENGTH)
-        .map(|_| char::from(CODE_LETTERS[random_below(CODE_LETTERS.len() as u32) as usize]))
-        .collect()
-}
-
-fn normalize_code(code: &str) -> String {
-    code.chars()
-        .filter(|c| !c.is_whitespace())
-        .map(|c| c.to_ascii_uppercase())
-        .collect()
+    codes::generate(CODE_LENGTH)
 }
 
 /// Starts a request for a device that wants to sign in, returning the code it shows and the
@@ -300,7 +270,7 @@ pub(crate) fn begin(
             },
         );
     };
-    let code = normalize_code(code);
+    let code = codes::normalize(code);
     if !GIVEN_CODE_LENGTHS.contains(&code.len())
         || !code.bytes().all(|byte| byte.is_ascii_alphanumeric())
     {
@@ -394,7 +364,7 @@ pub(crate) fn status(secret: &str) -> DeviceLoginResult<DeviceLoginStatus> {
 /// principal as a failed approval would, or previews would be an unthrottled way to guess codes.
 pub(crate) fn lookup(principal: &Principal, code: &str) -> DeviceLoginResult<DeviceLoginPreview> {
     require_enabled()?;
-    let code = normalize_code(code);
+    let code = codes::normalize(code);
     let now = Instant::now();
     let generation = STATE.generation();
     let mut requests = requests(&generation);
@@ -466,7 +436,7 @@ pub(crate) async fn approve(
     target: Option<&str>,
 ) -> DeviceLoginResult<()> {
     require_enabled()?;
-    let code = normalize_code(code);
+    let code = codes::normalize(code);
     let approval = authorize_approval(principal, credential, target).await?;
 
     let now = Instant::now();
@@ -771,37 +741,6 @@ mod tests {
             DeviceLoginClaim::Complete { login, .. } => login.token,
             DeviceLoginClaim::Pending => panic!("the claim should be complete"),
         }
-    }
-
-    #[test]
-    fn sampling_rejects_values_past_the_last_whole_multiple() {
-        let mut values = [u32::MAX, u32::MAX - 1, 7].into_iter();
-        assert_eq!(
-            sample_below(10, || values.next().expect("a value is accepted")),
-            7
-        );
-    }
-
-    #[test]
-    fn generated_codes_are_six_of_the_code_letters() {
-        for _ in 0..500 {
-            let code = generate_code();
-            assert_eq!(code.len(), CODE_LENGTH);
-            assert!(code.bytes().all(|byte| CODE_LETTERS.contains(&byte)));
-        }
-    }
-
-    #[test]
-    fn code_letters_leave_out_the_ambiguous_ones() {
-        for letter in [b'I', b'L', b'O'] {
-            assert!(!CODE_LETTERS.contains(&letter));
-        }
-    }
-
-    #[test]
-    fn codes_normalize_whitespace_and_case() {
-        assert_eq!(normalize_code(" ab c\tde\nf "), "ABCDEF");
-        assert_eq!(normalize_code("123 456"), "123456");
     }
 
     #[tokio::test]
