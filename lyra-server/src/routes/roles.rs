@@ -23,7 +23,7 @@ use axum::{
         patch,
     },
 };
-use nanoid::nanoid;
+use lyra_db::nanoid;
 use serde::{
     Deserialize,
     Serialize,
@@ -231,7 +231,7 @@ async fn create_role(
 
     let role = Role {
         db_id: None,
-        id: nanoid!(),
+        id: nanoid(),
         name,
         permissions,
     };
@@ -423,7 +423,7 @@ mod tests {
             lyra_db::roles::ensure_builtin_roles(&mut db)?;
             let user = User {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 username: username.to_string(),
                 password: "unused".to_string(),
             };
@@ -434,7 +434,7 @@ mod tests {
             } else {
                 let role = Role {
                     db_id: None,
-                    id: nanoid!(),
+                    id: nanoid(),
                     name: role_name.to_string(),
                     permissions: role_permissions,
                 };
@@ -599,7 +599,7 @@ mod tests {
             let mut db = STATE.db.write().await;
             let role = Role {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 name: "plugin_admin".to_string(),
                 permissions: vec![Permission::ManagePlugins],
             };

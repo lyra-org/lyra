@@ -891,7 +891,7 @@ mod tests {
         else {
             return Err(anyhow::anyhow!("hidden genre detail should be opaque"));
         };
-        let missing_genre_id = nanoid::nanoid!();
+        let missing_genre_id = lyra_db::nanoid();
         let Err(missing) = get_genre(
             headers,
             Path(missing_genre_id.clone()),

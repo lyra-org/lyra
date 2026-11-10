@@ -723,7 +723,7 @@ mod tests {
             &mut *STATE.db.write().await,
             &lyra_db::Playlist {
                 db_id: None,
-                id: nanoid::nanoid!(),
+                id: lyra_db::nanoid(),
                 name: "Mix".to_string(),
                 description: None,
                 is_public: Some(false),

@@ -482,11 +482,11 @@ pub fn update(
 
 #[cfg(test)]
 mod tests {
+    use crate::nanoid;
     use crate::roots::{
         self,
         Root,
     };
-    use nanoid::nanoid;
 
     use super::*;
     use crate::test_db::new_test_db;
@@ -501,7 +501,7 @@ mod tests {
     fn create_test_user(db: &mut DbAny) -> anyhow::Result<DbId> {
         let user = User {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             username: "testuser".to_string(),
             password: "hashed".to_string(),
         };
@@ -521,7 +521,7 @@ mod tests {
     fn create_test_track(db: &mut DbAny, title: &str) -> anyhow::Result<DbId> {
         let track = Track {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             track_title: title.to_string(),
             sort_title: None,
             year: None,
@@ -546,8 +546,8 @@ mod tests {
     fn make_session(now_ms: u64) -> PlaybackSession {
         PlaybackSession {
             db_id: None,
-            id: nanoid!(),
-            play_id: nanoid!(),
+            id: nanoid(),
+            play_id: nanoid(),
             client_name: None,
             plugin_id: None,
             position_ms: 0,
@@ -708,7 +708,7 @@ mod tests {
             &mut db,
             &crate::playbacks::Playback {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 source: crate::playbacks::PlaybackSource::Queue(crate::playbacks::Queue {
                     revision: 1,
                     track_ids: vec!["track".to_string()],
@@ -768,8 +768,8 @@ mod tests {
 
         let session = PlaybackSession {
             db_id: None,
-            id: nanoid!(),
-            play_id: nanoid!(),
+            id: nanoid(),
+            play_id: nanoid(),
             client_name: None,
             plugin_id: None,
             position_ms: 1000,
@@ -807,8 +807,8 @@ mod tests {
 
         let session = PlaybackSession {
             db_id: None,
-            id: nanoid!(),
-            play_id: nanoid!(),
+            id: nanoid(),
+            play_id: nanoid(),
             client_name: None,
             plugin_id: None,
             position_ms: 100,
@@ -868,8 +868,8 @@ mod tests {
 
         let session = PlaybackSession {
             db_id: None,
-            id: nanoid!(),
-            play_id: nanoid!(),
+            id: nanoid(),
+            play_id: nanoid(),
             client_name: None,
             plugin_id: None,
             position_ms: 100,

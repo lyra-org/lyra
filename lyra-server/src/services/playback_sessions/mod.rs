@@ -305,19 +305,19 @@ mod tests {
     use agdb::QueryBuilder;
     use lyra_db::IdSource;
     use lyra_db::NodeId;
+    use lyra_db::nanoid;
     use lyra_db::roots::{
         self,
         Root,
     };
     use lyra_db::test_db::new_test_db;
-    use nanoid::nanoid;
     use std::collections::HashSet;
     use std::iter::FromIterator;
 
     fn insert_track(db: &mut DbAny, title: &str, duration_ms: u64) -> anyhow::Result<DbId> {
         let track = lyra_db::Track {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             track_title: title.to_string(),
             sort_title: None,
             year: None,
@@ -463,8 +463,8 @@ mod tests {
     fn playing_session(position_ms: u64, at_ms: u64) -> PlaybackSession {
         let mut playback = PlaybackSession {
             db_id: None,
-            id: nanoid!(),
-            play_id: nanoid!(),
+            id: nanoid(),
+            play_id: nanoid(),
             client_name: None,
             plugin_id: None,
             position_ms,
@@ -809,7 +809,7 @@ mod tests {
     fn playback_mutation_counts_sparse_progress_with_elapsed_time_window() {
         let mut playback = PlaybackSession {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             client_name: None,
             plugin_id: None,
             position_ms: 0,
@@ -817,7 +817,7 @@ mod tests {
             played_ms: 0,
             last_position_ms: 0,
             state: PlaybackState::Playing,
-            play_id: nanoid::nanoid!(),
+            play_id: lyra_db::nanoid(),
             latency_allowance_used_ms: 0,
             rate_permille: 1000,
             counts_as_listen: true,
@@ -845,7 +845,7 @@ mod tests {
     fn playback_mutation_caps_a_forward_seek_at_elapsed_time_and_latency_allowance() {
         let mut playback = PlaybackSession {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             client_name: None,
             plugin_id: None,
             position_ms: 0,
@@ -853,7 +853,7 @@ mod tests {
             played_ms: 0,
             last_position_ms: 0,
             state: PlaybackState::Playing,
-            play_id: nanoid::nanoid!(),
+            play_id: lyra_db::nanoid(),
             latency_allowance_used_ms: 0,
             rate_permille: 1000,
             counts_as_listen: true,
@@ -885,8 +885,8 @@ mod tests {
     fn playback_mutation_spends_the_latency_allowance_once_per_play() {
         let mut playback = PlaybackSession {
             db_id: None,
-            id: nanoid!(),
-            play_id: nanoid!(),
+            id: nanoid(),
+            play_id: nanoid(),
             client_name: None,
             plugin_id: None,
             position_ms: 0,
@@ -928,7 +928,7 @@ mod tests {
     fn playback_mutation_credits_progress_up_to_a_pause() {
         let mut playback = PlaybackSession {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             client_name: None,
             plugin_id: None,
             position_ms: 0,
@@ -936,7 +936,7 @@ mod tests {
             played_ms: 0,
             last_position_ms: 0,
             state: PlaybackState::Playing,
-            play_id: nanoid::nanoid!(),
+            play_id: lyra_db::nanoid(),
             latency_allowance_used_ms: 0,
             rate_permille: 1000,
             counts_as_listen: true,
@@ -964,7 +964,7 @@ mod tests {
     fn playback_mutation_credits_the_final_report_after_playing() {
         let mut playback = PlaybackSession {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             client_name: None,
             plugin_id: None,
             position_ms: 22_000,
@@ -972,7 +972,7 @@ mod tests {
             played_ms: 22_000,
             last_position_ms: 22_000,
             state: PlaybackState::Playing,
-            play_id: nanoid::nanoid!(),
+            play_id: lyra_db::nanoid(),
             latency_allowance_used_ms: 0,
             rate_permille: 1000,
             counts_as_listen: true,
@@ -1000,7 +1000,7 @@ mod tests {
     fn playback_mutation_does_not_credit_progress_reported_while_paused() {
         let mut playback = PlaybackSession {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             client_name: None,
             plugin_id: None,
             position_ms: 22_000,
@@ -1008,7 +1008,7 @@ mod tests {
             played_ms: 22_000,
             last_position_ms: 22_000,
             state: PlaybackState::Paused,
-            play_id: nanoid::nanoid!(),
+            play_id: lyra_db::nanoid(),
             latency_allowance_used_ms: 0,
             rate_permille: 1000,
             counts_as_listen: true,
@@ -1036,8 +1036,8 @@ mod tests {
     fn playback_mutation_keeps_played_time_after_seeking_back_to_the_start() {
         let mut playback = PlaybackSession {
             db_id: None,
-            id: nanoid!(),
-            play_id: nanoid!(),
+            id: nanoid(),
+            play_id: nanoid(),
             client_name: None,
             plugin_id: None,
             position_ms: 150_000,
@@ -1077,8 +1077,8 @@ mod tests {
     fn playback_mutation_measures_elapsed_time_from_the_last_reported_position() {
         let mut playback = PlaybackSession {
             db_id: None,
-            id: nanoid!(),
-            play_id: nanoid!(),
+            id: nanoid(),
+            play_id: nanoid(),
             client_name: None,
             plugin_id: None,
             position_ms: 0,

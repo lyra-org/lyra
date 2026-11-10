@@ -656,7 +656,7 @@ mod tests {
                     lyra_db::covers::CoverSource::Local,
                     lyra_db::Cover {
                         db_id: None,
-                        id: nanoid::nanoid!(),
+                        id: lyra_db::nanoid(),
                         path: path.to_string_lossy().into_owned(),
                         mime_type: "image/png".to_string(),
                         hash: hash.to_string(),

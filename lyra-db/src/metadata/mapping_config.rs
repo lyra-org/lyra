@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use crate::nanoid;
 use agdb::{
     DbAny,
     DbElement,
@@ -13,7 +14,6 @@ use anyhow::{
     Context,
     anyhow,
 };
-use nanoid::nanoid;
 use serde::{
     Deserialize,
     Serialize,
@@ -101,7 +101,7 @@ pub fn ensure(
         }
         let node = MetadataMappingConfigNode {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             rules_json,
         };
         let result = t.exec_mut(QueryBuilder::insert().element(&node).query())?;

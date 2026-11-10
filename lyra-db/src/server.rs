@@ -3,13 +3,13 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use crate::nanoid;
 use agdb::{
     DbAny,
     DbElement,
     DbId,
     QueryBuilder,
 };
-use nanoid::nanoid;
 
 use super::DbAccess;
 
@@ -41,7 +41,7 @@ pub fn ensure(db: &mut DbAny) -> anyhow::Result<ServerInfo> {
             return Ok(info);
         }
 
-        let id = nanoid!();
+        let id = nanoid();
         let info = ServerInfo {
             db_id: None,
             id: id.clone(),

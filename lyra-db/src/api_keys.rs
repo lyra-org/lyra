@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use crate::nanoid;
 use agdb::{
     CountComparison,
     DbAny,
@@ -10,7 +11,6 @@ use agdb::{
     DbId,
     QueryBuilder,
 };
-use nanoid::nanoid;
 use serde::Serialize;
 
 use super::NodeId;
@@ -49,7 +49,7 @@ pub fn create(
 
     let api_key = ApiKey {
         db_id: None,
-        id: nanoid!(),
+        id: nanoid(),
         name: trimmed.to_string(),
         key_hash: key_hash.to_string(),
         created_at_ms,

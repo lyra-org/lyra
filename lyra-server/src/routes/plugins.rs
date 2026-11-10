@@ -2028,12 +2028,12 @@ mod tests {
         },
         response::IntoResponse,
     };
+    use lyra_db::nanoid;
     use lyra_db::{
         Permission,
         roles::Role,
         users::User,
     };
-    use nanoid::nanoid;
     use tokio::sync::Mutex;
 
     static REGISTRY_TEST_GUARD: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -2722,17 +2722,17 @@ mod tests {
             lyra_db::roles::ensure_builtin_roles(&mut db)?;
             let user = User {
                 db_id: None,
-                id: nanoid!(),
-                username: format!("plugin-route-test-{}", nanoid!()),
+                id: nanoid(),
+                username: format!("plugin-route-test-{}", nanoid()),
                 password: "unused".to_string(),
             };
             let user_db_id = lyra_db::users::create(&mut db, &user)?;
-            let role_name = format!("plugin-route-test-{}", nanoid!());
+            let role_name = format!("plugin-route-test-{}", nanoid());
             lyra_db::roles::create(
                 &mut db,
                 &Role {
                     db_id: None,
-                    id: nanoid!(),
+                    id: nanoid(),
                     name: role_name.clone(),
                     permissions: vec![Permission::ManagePlugins],
                 },

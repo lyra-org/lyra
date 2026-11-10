@@ -13,9 +13,9 @@ use agdb::{
 };
 
 use crate::DbAccess;
+use crate::nanoid;
 use crate::roots::MEMBERS;
 use anyhow::anyhow;
-use nanoid::nanoid;
 use serde::Serialize;
 
 use super::NodeId;
@@ -111,7 +111,7 @@ fn upsert(
     let existing_db_id = find_entry(t, datastore_id, &write.key)?.and_then(|entry| entry.db_id);
     let entry = DataStoreEntry {
         db_id: existing_db_id.clone(),
-        id: nanoid!(),
+        id: nanoid(),
         key: write.key,
         value: write.value,
         expires_at_ms: write.expires_at_ms,
@@ -273,7 +273,7 @@ pub fn get_or_create(db: &mut DbAny, plugin_id: &str, name: String) -> anyhow::R
     }
 
     db.transaction_mut(|t| -> anyhow::Result<DataStore> {
-        let datastore_id = nanoid!();
+        let datastore_id = nanoid();
         let datastore = DataStore {
             db_id: None,
             id: datastore_id.clone(),
@@ -337,7 +337,7 @@ mod tests {
         let store = get_or_create(&mut db, "demo", "cache".to_string())?;
         let duplicate = DataStore {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             ..store
         };
         let inserted = db.exec_mut(QueryBuilder::insert().element(&duplicate).query())?;

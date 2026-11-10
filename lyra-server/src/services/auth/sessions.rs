@@ -9,7 +9,7 @@ use std::{
 };
 
 use agdb::DbId;
-use nanoid::nanoid;
+use lyra_db::nanoid;
 use unicode_normalization::UnicodeNormalization;
 use unicode_properties::{
     GeneralCategory,
@@ -196,7 +196,7 @@ pub(crate) async fn create_session_for_user(
     };
     let session = Session {
         db_id: None,
-        id: nanoid!(),
+        id: nanoid(),
         token_hash,
         expires_at_ms,
         created_at_ms: now,
@@ -556,7 +556,7 @@ mod tests {
         crate::services::testing::init_default_test_state()?;
         let role = |name: &str, permissions| lyra_db::roles::Role {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             name: name.to_string(),
             permissions,
         };

@@ -309,11 +309,11 @@ pub(crate) mod tests {
         StatusCode,
         header::AUTHORIZATION,
     };
+    use lyra_db::nanoid;
     use lyra_ffmpeg::{
         AudioCodec,
         AudioFormat,
     };
-    use nanoid::nanoid;
 
     use crate::{
         plugins::testing::init_library_test_state,
@@ -355,7 +355,7 @@ pub(crate) mod tests {
                 &mut db,
                 &User {
                     db_id: None,
-                    id: nanoid!(),
+                    id: nanoid(),
                     username: username.to_string(),
                     password: "unused".to_string(),
                 },
@@ -363,12 +363,12 @@ pub(crate) mod tests {
             let role_name = if permissions.is_empty() {
                 lyra_db::roles::BUILTIN_USER_ROLE.to_string()
             } else {
-                let role_name = format!("download-test-{}", nanoid!());
+                let role_name = format!("download-test-{}", nanoid());
                 lyra_db::roles::create(
                     &mut db,
                     &Role {
                         db_id: None,
-                        id: nanoid!(),
+                        id: nanoid(),
                         name: role_name.clone(),
                         permissions,
                     },

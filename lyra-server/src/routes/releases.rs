@@ -713,7 +713,7 @@ mod tests {
     use crate::services::testing::runtime_test_lock;
 
     use super::*;
-    use nanoid::nanoid;
+    use lyra_db::nanoid;
 
     fn new_test_db() -> anyhow::Result<DbAny> {
         Ok(TestDb::new()?.into_inner())
@@ -731,7 +731,7 @@ mod tests {
     fn insert_cover_for_release(db: &mut DbAny, release_db_id: DbId) -> anyhow::Result<()> {
         let cover = lyra_db::Cover {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             path: crate::services::testing::existing_cover_path(),
             mime_type: "image/jpeg".to_string(),
             hash: "a".repeat(64),
@@ -1245,7 +1245,7 @@ mod tests {
                 .id
         };
         let (headers, user_db_id) =
-            create_admin_auth(&format!("similar-caller-{}", nanoid::nanoid!())).await?;
+            create_admin_auth(&format!("similar-caller-{}", lyra_db::nanoid())).await?;
         let (reached, result) = crate::services::testing::run_with_recycle_at(
             gap,
             similarity::get_similar_releases(
@@ -1448,7 +1448,7 @@ mod tests {
             })
         };
 
-        let missing_genre_id = nanoid!();
+        let missing_genre_id = nanoid();
         let Err(hidden) = get_releases(headers.clone(), filtered(hidden_genre_id.clone())).await
         else {
             return Err(anyhow::anyhow!("a hidden genre filter should be refused"));

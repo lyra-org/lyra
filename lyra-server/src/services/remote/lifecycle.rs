@@ -190,9 +190,9 @@ mod tests {
         let library_id = {
             let mut db = STATE.db.write().await;
             let path =
-                std::path::PathBuf::from(format!("/tmp/lyra-ws-access-{}", nanoid::nanoid!()));
+                std::path::PathBuf::from(format!("/tmp/lyra-ws-access-{}", lyra_db::nanoid()));
             let insert = lyra_db::libraries::LibraryInsert {
-                id: nanoid::nanoid!(),
+                id: lyra_db::nanoid(),
                 name: "WS Access".to_string(),
                 path_key: lyra_db::libraries::path_key_for(&path),
                 path,
@@ -245,8 +245,8 @@ mod tests {
             crate::services::playbacks::create_playback(
                 &mut db,
                 crate::services::playbacks::CreatePlaybackRequest {
-                    id: nanoid::nanoid!(),
-                    play_id: nanoid::nanoid!(),
+                    id: lyra_db::nanoid(),
+                    play_id: lyra_db::nanoid(),
                     user_db_id: bob_db_id,
                     client_name: None,
                     queue: crate::services::playbacks::ValidatedQueue {
@@ -314,8 +314,8 @@ mod tests {
             Ok(crate::services::playbacks::create_playback(
                 db,
                 crate::services::playbacks::CreatePlaybackRequest {
-                    id: nanoid::nanoid!(),
-                    play_id: nanoid::nanoid!(),
+                    id: lyra_db::nanoid(),
+                    play_id: lyra_db::nanoid(),
                     user_db_id: alice_db_id,
                     client_name: None,
                     queue: crate::services::playbacks::ValidatedQueue {

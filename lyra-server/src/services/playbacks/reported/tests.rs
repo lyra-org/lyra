@@ -8,11 +8,11 @@ use agdb::{
     DbId,
     QueryBuilder,
 };
+use lyra_db::nanoid;
 use lyra_db::{
     PlaybackState,
     test_db::new_test_db,
 };
-use nanoid::nanoid;
 
 use super::*;
 use crate::services::{
@@ -119,7 +119,7 @@ fn user_public_id(db: &DbAny, user_db_id: DbId) -> String {
 fn insert_user(db: &mut DbAny, username: &str) -> anyhow::Result<DbId> {
     let user = lyra_db::User {
         db_id: None,
-        id: nanoid!(),
+        id: nanoid(),
         username: username.to_string(),
         password: "test".to_string(),
     };
@@ -139,7 +139,7 @@ fn insert_user(db: &mut DbAny, username: &str) -> anyhow::Result<DbId> {
 fn insert_track(db: &mut DbAny, title: &str, duration_ms: u64) -> anyhow::Result<DbId> {
     let track = lyra_db::Track {
         db_id: None,
-        id: nanoid!(),
+        id: nanoid(),
         track_title: title.to_string(),
         sort_title: None,
         year: None,

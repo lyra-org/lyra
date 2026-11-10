@@ -4,6 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 use agdb::DbAny;
+use lyra_db::nanoid;
 use lyra_db::{
     IdSource,
     MetadataField,
@@ -17,7 +18,6 @@ use lyra_db::{
         insert_user,
     },
 };
-use nanoid::nanoid;
 use serde_json::{
     Value,
     json,
@@ -57,7 +57,7 @@ async fn admin() -> anyhow::Result<Principal> {
     let user = {
         let mut db = STATE.db.write().await;
         lyra_db::roles::ensure_builtin_roles(&mut db)?;
-        let user = insert_user(&mut db, &format!("changes-admin-{}", nanoid!()))?;
+        let user = insert_user(&mut db, &format!("changes-admin-{}", nanoid()))?;
         lyra_db::roles::ensure_user_has_role(&mut db, user, lyra_db::roles::BUILTIN_ADMIN_ROLE)?;
         user
     };
@@ -732,7 +732,7 @@ fn insert_running_run(db: &mut DbAny, library_id: &str) -> anyhow::Result<()> {
         db,
         &lyra_db::sync_runs::SyncRunRecord {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             library_id: library_id.to_string(),
             kind: "library_sync".to_string(),
             status: "running".to_string(),
@@ -849,13 +849,13 @@ async fn access_lost_after_the_run_check_is_read_under_the_write_guard() -> anyh
     let (user, library) = {
         let mut db = STATE.db.write().await;
         lyra_db::roles::ensure_builtin_roles(&mut db)?;
-        let user = insert_user(&mut db, &format!("changes-manager-{}", nanoid!()))?;
-        let role = format!("changes-role-{}", nanoid!());
+        let user = insert_user(&mut db, &format!("changes-manager-{}", nanoid()))?;
+        let role = format!("changes-role-{}", nanoid());
         lyra_db::roles::create(
             &mut db,
             &lyra_db::roles::Role {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 name: role.clone(),
                 permissions: vec![Permission::ManageMetadata],
             },

@@ -388,7 +388,7 @@ pub fn update_in_transaction(
 
 #[cfg(test)]
 mod tests {
-    use nanoid::nanoid;
+    use crate::nanoid;
 
     use super::*;
     use crate::fixtures::{
@@ -426,7 +426,7 @@ mod tests {
 
         let entry = super::super::entries::Entry {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             full_path: std::path::PathBuf::from("/music/test.mp3"),
             kind: super::super::entries::EntryKind::File,
             file_kind: Some("audio".to_string()),
@@ -444,7 +444,7 @@ mod tests {
 
         let source = super::super::track_sources::TrackSource {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             source_kind: "embedded_tags".to_string(),
             source_key: "key1".to_string(),
             identity: "key1".to_string(),
@@ -579,7 +579,7 @@ mod tests {
 
         let entry = super::super::entries::Entry {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             full_path: std::path::PathBuf::from("/music/orphan.mp3"),
             kind: super::super::entries::EntryKind::File,
             file_kind: Some("audio".to_string()),

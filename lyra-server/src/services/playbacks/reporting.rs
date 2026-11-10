@@ -243,8 +243,8 @@ mod tests {
         Ok(create_playback(
             db,
             CreatePlaybackRequest {
-                id: nanoid::nanoid!(),
-                play_id: nanoid::nanoid!(),
+                id: lyra_db::nanoid(),
+                play_id: lyra_db::nanoid(),
                 user_db_id,
                 client_name: None,
                 queue: ValidatedQueue {
@@ -371,12 +371,12 @@ mod tests {
         let user_db_id = lyra_db::users::create(&mut db, &user)?;
         let track_db_id = insert_track(&mut db, "Track")?;
         let track_id = lyra_db::lookup::find_id_by_db_id(&db, track_db_id)?.expect("track id");
-        let play_id = nanoid::nanoid!();
+        let play_id = lyra_db::nanoid();
         // 190 s into a 200 s track, the binding's window ends 10 s plus the grace later.
         let created = create_playback(
             &mut db,
             CreatePlaybackRequest {
-                id: nanoid::nanoid!(),
+                id: lyra_db::nanoid(),
                 play_id: play_id.clone(),
                 user_db_id,
                 client_name: None,

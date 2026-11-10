@@ -8,6 +8,7 @@ use std::path::Path;
 
 use agdb::DbAny;
 
+use lyra_db::nanoid;
 use lyra_db::{
     CreditType,
     IdSource,
@@ -32,7 +33,6 @@ use lyra_db::{
         insert_user,
     },
 };
-use nanoid::nanoid;
 use serde_json::{
     Value,
     json,
@@ -73,7 +73,7 @@ async fn admin() -> anyhow::Result<Principal> {
     let user = {
         let mut db = STATE.db.write().await;
         lyra_db::roles::ensure_builtin_roles(&mut db)?;
-        let user = insert_user(&mut db, &format!("merge-admin-{}", nanoid!()))?;
+        let user = insert_user(&mut db, &format!("merge-admin-{}", nanoid()))?;
         lyra_db::roles::ensure_user_has_role(&mut db, user, lyra_db::roles::BUILTIN_ADMIN_ROLE)?;
         user
     };
@@ -1412,7 +1412,7 @@ async fn scanned_library(root: &Path) -> anyhow::Result<lyra_db::libraries::Libr
         lyra_db::libraries::create_system(
             t,
             lyra_db::libraries::LibraryInsert {
-                id: nanoid!(),
+                id: nanoid(),
                 name: "Music".to_string(),
                 path: root.to_path_buf(),
                 path_key: lyra_db::libraries::path_key_for(root),

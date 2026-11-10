@@ -132,8 +132,8 @@ fn insert_saved_session(
     });
     let mut session = PlaybackSession {
         db_id: None,
-        id: nanoid::nanoid!(),
-        play_id: nanoid::nanoid!(),
+        id: lyra_db::nanoid(),
+        play_id: lyra_db::nanoid(),
         client_name: request.client_name.clone(),
         plugin_id: Some(request.plugin_id.to_string()),
         position_ms,
@@ -252,7 +252,7 @@ fn create_saved(
     let session_id = insert_saved_session(t, request, validated.current_track_db_id)?;
     let playback = Playback {
         db_id: None,
-        id: nanoid::nanoid!(),
+        id: lyra_db::nanoid(),
         source: lyra_db::playbacks::PlaybackSource::Queue(lyra_db::playbacks::Queue {
             revision: 1,
             track_ids: validated.snapshot.track_ids,

@@ -16,7 +16,7 @@ use agdb::{
     QueryBuilder,
 };
 
-use nanoid::nanoid;
+use crate::nanoid;
 use unicode_normalization::UnicodeNormalization;
 use unicode_properties::{
     GeneralCategory,
@@ -134,7 +134,7 @@ pub fn create(
     } else {
         let tag_node = Tag {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             tag: normalized_name.to_string(),
             color: color.to_string(),
             created_at_ms: now_ms,
@@ -684,7 +684,7 @@ mod tests {
     use agdb::DbAny;
 
     fn create_test_user(db: &mut DbAny) -> anyhow::Result<DbId> {
-        crate::test_db::insert_user(db, &nanoid!())
+        crate::test_db::insert_user(db, &nanoid())
     }
 
     fn create_test_track(db: &mut DbAny) -> anyhow::Result<DbId> {
@@ -1048,13 +1048,13 @@ mod tests {
 
     #[test]
     fn delete_playlist_preserves_tag_emptied_by_deleted_target() -> anyhow::Result<()> {
-        use nanoid::nanoid;
+        use crate::nanoid;
 
         let mut db = new_test_db()?;
         let user = create_test_user(&mut db)?;
         let playlist = crate::Playlist {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             name: "Tagged playlist".to_string(),
             description: None,
             is_public: Some(false),
@@ -1078,14 +1078,14 @@ mod tests {
     #[test]
     fn remove_outbound_for_user_does_not_touch_playlists() -> anyhow::Result<()> {
         // Regression: tag cascade must not touch playlists even though both carry an "owner" edge.
-        use nanoid::nanoid;
+        use crate::nanoid;
         let mut db = new_test_db()?;
         let user = create_test_user(&mut db)?;
         let track = create_test_track(&mut db)?;
 
         let playlist = crate::Playlist {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             name: "my playlist".to_string(),
             description: None,
             is_public: Some(true),

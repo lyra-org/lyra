@@ -105,7 +105,7 @@ impl PendingHandoffs {
             return Err("too many pending handoffs for target".to_string());
         }
         let token = loop {
-            let token = nanoid::nanoid!();
+            let token = lyra_db::nanoid();
             if !self.entries.contains_key(&token) {
                 break token;
             }
@@ -620,7 +620,7 @@ mod tests {
             &mut db,
             playbacks::CreatePlaybackRequest {
                 id: "playback".to_string(),
-                play_id: nanoid::nanoid!(),
+                play_id: lyra_db::nanoid(),
                 user_db_id,
                 client_name: None,
                 queue: playbacks::ValidatedQueue {
@@ -670,7 +670,7 @@ mod tests {
                 played_ms: 0,
                 last_position_ms: 0,
                 state: lyra_db::PlaybackState::Playing,
-                play_id: nanoid::nanoid!(),
+                play_id: lyra_db::nanoid(),
                 latency_allowance_used_ms: 0,
                 rate_permille: 1000,
                 counts_as_listen: true,

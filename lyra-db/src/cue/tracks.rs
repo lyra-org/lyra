@@ -11,7 +11,7 @@ use agdb::{
     QueryBuilder,
 };
 
-use nanoid::nanoid;
+use crate::nanoid;
 
 use crate::roots::{
     self,
@@ -64,7 +64,7 @@ pub fn upsert(
     let existing_id = find_track_id_by_identity(db, &identity)?;
     let cue_track = CueTrack {
         db_id: existing_id,
-        id: nanoid!(),
+        id: nanoid(),
         track_no,
         index00_frames,
         index01_frames,

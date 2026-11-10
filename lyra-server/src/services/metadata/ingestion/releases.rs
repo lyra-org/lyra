@@ -19,7 +19,7 @@ use agdb::{
     DbId,
     QueryBuilder,
 };
-use nanoid::nanoid;
+use lyra_db::nanoid;
 
 use super::super::{
     TrackMetadata,
@@ -386,7 +386,7 @@ fn persist_release_inner(
     let release_db_id = if let Some(release_db_id) = existing_release_id {
         let mut release = lyra_db::releases::get_by_id(db, release_db_id)?.unwrap_or(Release {
             db_id: Some(release_db_id.into()),
-            id: nanoid!(),
+            id: nanoid(),
             release_title: release_title.to_string(),
             sort_title: None,
             release_type: None,
@@ -414,7 +414,7 @@ fn persist_release_inner(
     } else {
         let release = Release {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             release_title: release_title.to_string(),
             sort_title: None,
             release_type: None,
@@ -544,7 +544,7 @@ fn persist_release_inner(
         let track_db_id = if let Some(track_db_id) = track.track_db_id {
             let mut existing = lyra_db::tracks::get_by_id(db, track_db_id)?.unwrap_or(Track {
                 db_id: Some(track_db_id.into()),
-                id: nanoid!(),
+                id: nanoid(),
                 track_title: title.clone().unwrap_or_default(),
                 sort_title: None,
                 year: None,
@@ -575,7 +575,7 @@ fn persist_release_inner(
         } else {
             let track_db = Track {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 track_title: title.clone().unwrap_or_default(),
                 sort_title: None,
                 year: None,

@@ -13,7 +13,7 @@ use agdb::{
     DbAny,
     DbId,
 };
-use nanoid::nanoid;
+use lyra_db::nanoid;
 
 use lyra_db::{
     PlaybackSession,
@@ -499,7 +499,7 @@ fn transition(
                 let started = playback_sessions::start_playback_in_transaction(
                     db,
                     StartPlaybackRequest {
-                        play_id: play_id.map_or_else(|| nanoid!(), str::to_string),
+                        play_id: play_id.map_or_else(nanoid, str::to_string),
                         track_db_id,
                         user_db_id,
                         client_name,

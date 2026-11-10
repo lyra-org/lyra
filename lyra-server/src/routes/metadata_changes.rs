@@ -216,8 +216,8 @@ mod tests {
         insert_release,
         insert_track,
     };
+    use lyra_db::nanoid;
     use lyra_db::test_db::insert_library;
-    use nanoid::nanoid;
     use tower::ServiceExt;
 
     use super::*;
@@ -371,14 +371,14 @@ mod tests {
         lyra_db::roles::ensure_builtin_roles(db)?;
         let user = lyra_db::users::create(
             db,
-            &lyra_db::fixtures::test_user(&format!("merge-{}", nanoid!()))?,
+            &lyra_db::fixtures::test_user(&format!("merge-{}", nanoid()))?,
         )?;
-        let role = format!("merge-role-{}", nanoid!());
+        let role = format!("merge-role-{}", nanoid());
         lyra_db::roles::create(
             db,
             &lyra_db::roles::Role {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 name: role.clone(),
                 permissions,
             },
@@ -643,7 +643,7 @@ mod tests {
             db,
             &lyra_db::sync_runs::SyncRunRecord {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 library_id: library_id.to_string(),
                 kind: "library_sync".to_string(),
                 status: "running".to_string(),

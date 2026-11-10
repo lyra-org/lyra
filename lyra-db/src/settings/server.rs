@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use crate::nanoid;
 use agdb::{
     DbAny,
     DbElement,
@@ -10,7 +11,6 @@ use agdb::{
     QueryBuilder,
 };
 use anyhow::anyhow;
-use nanoid::nanoid;
 use serde::Serialize;
 
 use super::SettingEntry;
@@ -53,7 +53,7 @@ pub fn ensure(db: &mut DbAny) -> anyhow::Result<ServerSettings> {
             return Ok(found);
         }
 
-        let id = nanoid!();
+        let id = nanoid();
         let node = ServerSettings {
             db_id: None,
             id: id.clone(),

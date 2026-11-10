@@ -588,7 +588,7 @@ impl Folders {
         let created = lyra_db::libraries::create_system(
             db,
             lyra_db::libraries::LibraryInsert {
-                id: nanoid::nanoid!(),
+                id: lyra_db::nanoid(),
                 name: "Fixture files".into(),
                 path_key: "/fixture-files".into(),
                 path: directory.to_path_buf(),
@@ -626,7 +626,7 @@ impl Folders {
             let full_path = root.join(&relative);
             let directory = lyra_db::Entry {
                 db_id: None,
-                id: nanoid::nanoid!(),
+                id: lyra_db::nanoid(),
                 name: component.as_os_str().to_string_lossy().into_owned(),
                 full_path,
                 kind: lyra_db::entries::EntryKind::Dir,
@@ -685,7 +685,7 @@ impl Fixture {
                 seeded.source,
                 lyra_db::Cover {
                     db_id: None,
-                    id: nanoid::nanoid!(),
+                    id: lyra_db::nanoid(),
                     mime_type: services::covers::cover_mime_from_path(&path).into(),
                     path: path.to_string_lossy().into_owned(),
                     hash: key.to_string(),
@@ -773,7 +773,7 @@ impl Fixture {
                     db,
                     &lyra_db::roles::Role {
                         db_id: None,
-                        id: nanoid::nanoid!(),
+                        id: lyra_db::nanoid(),
                         name: user.key.clone(),
                         permissions: user.permissions.clone(),
                     },
@@ -807,7 +807,7 @@ impl Fixture {
                 keys.user(&session.user)?,
                 &lyra_db::users::Session {
                     db_id: None,
-                    id: nanoid::nanoid!(),
+                    id: lyra_db::nanoid(),
                     token_hash: services::auth::hash_secret(&token),
                     expires_at_ms: 0,
                     created_at_ms: now,
@@ -858,7 +858,7 @@ impl Fixture {
             let created = lyra_db::libraries::create_system(
                 db,
                 lyra_db::libraries::LibraryInsert {
-                    id: nanoid::nanoid!(),
+                    id: lyra_db::nanoid(),
                     name: library.name.clone(),
                     path_key: key_path.to_string_lossy().into_owned(),
                     path: if holds_files {
@@ -1079,7 +1079,7 @@ impl Fixture {
                     let parent = folders.place(db, library_db_id, track.folder.as_deref())?;
                     let entry = lyra_db::Entry {
                         db_id: None,
-                        id: nanoid::nanoid!(),
+                        id: lyra_db::nanoid(),
                         name: path
                             .file_name()
                             .context("fixture track file has a name")?
@@ -1345,8 +1345,8 @@ impl Fixture {
         let position_ms = playback.position_ms.unwrap_or(0);
         let mut session = lyra_db::PlaybackSession {
             db_id: None,
-            id: nanoid::nanoid!(),
-            play_id: nanoid::nanoid!(),
+            id: lyra_db::nanoid(),
+            play_id: lyra_db::nanoid(),
             client_name: playback.client_name.clone(),
             plugin_id: playback.plugin.clone(),
             position_ms,
@@ -1368,7 +1368,7 @@ impl Fixture {
         };
         let stored = lyra_db::playbacks::Playback {
             db_id: None,
-            id: nanoid::nanoid!(),
+            id: lyra_db::nanoid(),
             source: lyra_db::playbacks::PlaybackSource::Queue(lyra_db::playbacks::Queue {
                 revision: 1,
                 track_ids,

@@ -495,7 +495,7 @@ async fn the_pass_refreshes_the_artists_it_fetches_a_cover_for_with_their_cover_
                 lyra_db::covers::CoverSource::Manual,
                 lyra_db::Cover {
                     db_id: None,
-                    id: nanoid::nanoid!(),
+                    id: lyra_db::nanoid(),
                     path: crate::services::testing::existing_cover_path(),
                     mime_type: "image/png".to_string(),
                     hash: "covered".to_string(),

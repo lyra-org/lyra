@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use crate::nanoid;
 use agdb::{
     CountComparison,
     DbAny,
@@ -10,7 +11,6 @@ use agdb::{
     DbId,
     QueryBuilder,
 };
-use nanoid::nanoid;
 use serde::Serialize;
 
 use super::NodeId;
@@ -155,7 +155,7 @@ pub fn ensure_default_user(db: &mut DbAny, password_hash: &str) -> anyhow::Resul
         db,
         &User {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             username: DEFAULT_USERNAME.to_string(),
             password: password_hash.to_string(),
         },

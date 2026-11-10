@@ -17,7 +17,7 @@ use anyhow::{
     Result,
     anyhow,
 };
-use nanoid::nanoid;
+use lyra_db::nanoid;
 use rayon::iter::{
     IntoParallelIterator,
     ParallelIterator,
@@ -141,7 +141,7 @@ async fn write_cover_image(path: &Path, bytes: &[u8]) -> Result<()> {
             .with_context(|| format!("failed to create cover directory {}", parent.display()))?;
     }
 
-    let temp = path.with_file_name(format!(".lyra-cover-tmp-{}", nanoid!()));
+    let temp = path.with_file_name(format!(".lyra-cover-tmp-{}", nanoid()));
     let written = async {
         let mut file = fs::File::create(&temp)
             .await
@@ -241,13 +241,13 @@ impl PreparedCover {
         bytes: &[u8],
         provider_id: Option<&str>,
     ) -> Result<Self> {
-        let target = dir.join(format!("{}-{}.{ext}", source.as_str(), nanoid!()));
+        let target = dir.join(format!("{}-{}.{ext}", source.as_str(), nanoid()));
         write_cover_image(&target, bytes).await?;
         let mut prepared = Self {
             source,
             pending: Some(Cover {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 path: target.to_string_lossy().into_owned(),
                 mime_type: String::new(),
                 hash: String::new(),
@@ -1257,7 +1257,7 @@ pub(super) async fn upsert_local_cover_metadata(
     db_write.transaction_mut(|t| {
         let cover = Cover {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             path: path_str,
             mime_type,
             hash,
@@ -1458,7 +1458,7 @@ async fn apply_gone_covers(db: &lyra_db::DbAsync, library_id: DbId, gone: GoneCo
                 let hash = read_cover_hash(&path)?;
                 let cover = Cover {
                     db_id: None,
-                    id: nanoid!(),
+                    id: nanoid(),
                     mime_type: cover_mime_from_path(&path).to_string(),
                     blurhash: cover_blurhash(&path),
                     path: path.to_string_lossy().into_owned(),
@@ -1634,7 +1634,7 @@ async fn sync_local_cover_metadata_from_resolved(
             }
             let cover = Cover {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 path: c.path,
                 mime_type: c.mime_type,
                 hash: c.hash,
@@ -1708,7 +1708,7 @@ mod tests {
     ];
 
     fn write_test_cover() -> anyhow::Result<PathBuf> {
-        let path = std::env::temp_dir().join(format!("lyra-test-cover-{}.png", nanoid!()));
+        let path = std::env::temp_dir().join(format!("lyra-test-cover-{}.png", nanoid()));
         std_fs::write(&path, PNG_1X1)?;
         Ok(path)
     }
@@ -1718,7 +1718,7 @@ mod tests {
         let db = lyra_db::DbAsync::new(new_test_db()?);
         let release = Release {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             release_title: "Release".to_string(),
             sort_title: None,
             release_type: None,
@@ -2242,7 +2242,7 @@ mod tests {
         let name = path.file_name().expect("file").to_string_lossy();
         let entry = lyra_db::Entry {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             full_path: path.to_path_buf(),
             kind: lyra_db::entries::EntryKind::File,
             file_kind: Some("audio".to_string()),
@@ -2259,7 +2259,7 @@ mod tests {
             .ids()[0];
         let source = lyra_db::TrackSource {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             source_kind: "embedded_tags".to_string(),
             source_key: format!("entry:{}:embedded", entry.0),
             identity: format!("entry:{}:embedded", entry.0),
@@ -2746,7 +2746,7 @@ mod tests {
                     source,
                     Cover {
                         db_id: None,
-                        id: nanoid!(),
+                        id: nanoid(),
                         path: path.to_string_lossy().into_owned(),
                         mime_type: "image/png".to_string(),
                         hash: source.as_str().to_string(),

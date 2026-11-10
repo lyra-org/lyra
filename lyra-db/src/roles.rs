@@ -15,8 +15,8 @@ use agdb::{
     QueryBuilder,
 };
 
+use crate::nanoid;
 use crate::roots::MEMBERS;
-use nanoid::nanoid;
 use serde::{
     Deserialize,
     Serialize,
@@ -317,7 +317,7 @@ pub fn ensure_builtin_roles(db: &mut DbAny) -> anyhow::Result<()> {
             db,
             &Role {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 name: BUILTIN_ADMIN_ROLE.to_string(),
                 permissions: vec![Permission::Admin],
             },
@@ -329,7 +329,7 @@ pub fn ensure_builtin_roles(db: &mut DbAny) -> anyhow::Result<()> {
             db,
             &Role {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 name: BUILTIN_USER_ROLE.to_string(),
                 permissions: vec![],
             },
@@ -540,7 +540,7 @@ mod tests {
 
         let custom_admin_role = Role {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             name: "ops-admin".to_string(),
             permissions: vec![Permission::Admin],
         };
@@ -558,7 +558,7 @@ mod tests {
         let mut db = new_test_db()?;
         let role = Role {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             name: "editor".to_string(),
             permissions: vec![Permission::ManageMetadata, Permission::Download],
         };
@@ -599,7 +599,7 @@ mod tests {
 
         let custom_admin_role = Role {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             name: "ops-admin".to_string(),
             permissions: vec![Permission::Admin],
         };

@@ -12,7 +12,7 @@ use agdb::{
     QueryBuilder,
 };
 
-use nanoid::nanoid;
+use crate::nanoid;
 
 use super::DbAccess;
 use super::roots::{
@@ -228,7 +228,7 @@ pub fn upsert(
     let existing_id = find_source_id_by_identity(db, &source.source_key)?;
     let source_node = TrackSource {
         db_id: existing_id,
-        id: nanoid!(),
+        id: nanoid(),
         source_kind: source.source_kind,
         source_key: source.source_key.clone(),
         identity: source.source_key,
@@ -451,7 +451,7 @@ mod tests {
     fn insert_entry(db: &mut DbAny) -> anyhow::Result<DbId> {
         let entry = super::super::entries::Entry {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             full_path: std::path::PathBuf::from("/music/test.mp3"),
             kind: super::super::entries::EntryKind::File,
             file_kind: Some("audio".to_string()),

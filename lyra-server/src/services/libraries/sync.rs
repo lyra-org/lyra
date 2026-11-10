@@ -2929,7 +2929,7 @@ FILE "album.flac" WAVE
                 source,
                 lyra_db::covers::Cover {
                     db_id: None,
-                    id: nanoid::nanoid!(),
+                    id: lyra_db::nanoid(),
                     path: path.to_string_lossy().into_owned(),
                     mime_type: "image/png".to_string(),
                     hash: source.as_str().to_string(),
@@ -3813,7 +3813,7 @@ FILE "album.flac" WAVE
         };
         let dir = |path: PathBuf| Entry {
             db_id: None,
-            id: nanoid::nanoid!(),
+            id: lyra_db::nanoid(),
             name: path
                 .file_name()
                 .expect("name")
@@ -4197,7 +4197,7 @@ FILE "album.flac" WAVE
                 &mut db,
                 &lyra_db::playlists::Playlist {
                     db_id: None,
-                    id: nanoid::nanoid!(),
+                    id: lyra_db::nanoid(),
                     name: "Both".to_string(),
                     description: None,
                     is_public: None,

@@ -15,12 +15,12 @@ use agdb::{
     DbAny,
     DbId,
 };
+use lyra_db::nanoid;
 use lyra_db::{
     Listen,
     ResolveId,
     entities::MetadataEntityType,
 };
-use nanoid::nanoid;
 
 use serde::{
     Deserialize,
@@ -207,7 +207,7 @@ fn record_for_track(
 
     let listen = Listen {
         db_id: None,
-        id: nanoid!(),
+        id: nanoid(),
         play_id: play.play_id.to_string(),
         track_public_id: track.id.clone(),
         started_at_ms: play.started_at_ms,

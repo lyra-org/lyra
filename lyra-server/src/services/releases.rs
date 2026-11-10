@@ -182,12 +182,12 @@ mod tests {
         insert_track,
         test_user,
     };
+    use lyra_db::nanoid;
     use lyra_db::test_db::{
         connect_artist,
         insert_library,
         new_test_db,
     };
-    use nanoid::nanoid;
     use std::collections::HashSet;
 
     fn list_details_with_query(
@@ -216,7 +216,7 @@ mod tests {
             genres.map(|values| values.into_iter().map(ToString::to_string).collect());
         let release = Release {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             release_title: title.to_string(),
             sort_title: sort_title.map(ToString::to_string),
             release_type: None,
@@ -303,7 +303,7 @@ mod tests {
 
         let track = Track {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             track_title: "So What".to_string(),
             sort_title: None,
             year: None,
@@ -331,7 +331,7 @@ mod tests {
 
         let artist = Artist {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             artist_name: "Miles Davis".to_string(),
             scan_name: "miles davis".to_string(),
             scan_aliases: Vec::new(),

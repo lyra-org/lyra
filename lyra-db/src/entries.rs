@@ -838,13 +838,13 @@ pub fn mark_missing(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::nanoid;
     use crate::roots::{
         self,
         Root,
     };
     use crate::test_db::TestDb;
     use agdb::DbValue;
-    use nanoid::nanoid;
 
     fn new_db() -> anyhow::Result<DbAny> {
         Ok(TestDb::new()?.into_inner())
@@ -877,7 +877,7 @@ mod tests {
         let mut db = new_db()?;
         let entry = Entry {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             full_path: PathBuf::from("/music/test.flac"),
             kind: EntryKind::File,
             file_kind: Some("audio".to_string()),
@@ -927,7 +927,7 @@ mod tests {
         let full_path = PathBuf::from(full_path);
         Entry {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             name: full_path
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
@@ -1374,7 +1374,7 @@ mod tests {
 
         let track = crate::tracks::Track {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             track_title: "Test Track".to_string(),
             sort_title: None,
             year: None,
@@ -1396,7 +1396,7 @@ mod tests {
 
         let entry = Entry {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             full_path: PathBuf::from("/music/test.mp3"),
             kind: EntryKind::File,
             file_kind: Some("audio".to_string()),
@@ -1414,7 +1414,7 @@ mod tests {
 
         let source = crate::track_sources::TrackSource {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             source_kind: "embedded_tags".to_string(),
             source_key: "key1".to_string(),
             identity: "key1".to_string(),
@@ -1460,7 +1460,7 @@ mod tests {
 
         let track = crate::tracks::Track {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             track_title: "Orphan Track".to_string(),
             sort_title: None,
             year: None,

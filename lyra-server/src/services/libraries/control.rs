@@ -326,7 +326,7 @@ mod tests {
             db,
             &lyra_db::roles::Role {
                 db_id: None,
-                id: nanoid::nanoid!(),
+                id: lyra_db::nanoid(),
                 name: format!("{name}-role"),
                 permissions,
             },

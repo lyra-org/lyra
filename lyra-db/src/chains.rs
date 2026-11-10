@@ -13,6 +13,7 @@ use std::collections::{
     HashSet,
 };
 
+use crate::nanoid;
 use agdb::{
     CountComparison,
     DbAny,
@@ -21,7 +22,6 @@ use agdb::{
     DbValue,
     QueryBuilder,
 };
-use nanoid::nanoid;
 
 use super::DbAccess;
 use super::NodeId;
@@ -210,7 +210,7 @@ fn replace_for_release_inside_tx(
                 QueryBuilder::insert()
                     .element(&Chain {
                         db_id: None,
-                        id: nanoid!(),
+                        id: nanoid(),
                     })
                     .query(),
             )?

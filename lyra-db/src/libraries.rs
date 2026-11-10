@@ -900,9 +900,9 @@ fn element_is_access(element: &DbElement) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::nanoid;
     use crate::test_db::new_test_db;
     use agdb::DbAny;
-    use nanoid::nanoid;
 
     #[test]
     fn libraries_for_an_entity_come_in_db_id_order() -> anyhow::Result<()> {
@@ -981,10 +981,10 @@ mod tests {
 
     // Random path so canonicalize() falls through to the lexical fallback.
     fn insert_request(name: &str, dir_suffix: &str) -> LibraryInsert {
-        let path = PathBuf::from(format!("/tmp/lyra-test-{}-{dir_suffix}", nanoid!()));
+        let path = PathBuf::from(format!("/tmp/lyra-test-{}-{dir_suffix}", nanoid()));
         let path_key = path_key_for(&path);
         LibraryInsert {
-            id: nanoid!(),
+            id: nanoid(),
             name: name.to_string(),
             path,
             path_key,
@@ -998,7 +998,7 @@ mod tests {
         let path = PathBuf::from(dir);
         let path_key = path_key_for(&path);
         LibraryInsert {
-            id: nanoid!(),
+            id: nanoid(),
             name: name.to_string(),
             path,
             path_key,
@@ -1206,11 +1206,11 @@ mod tests {
         let kept = db.transaction_mut(|t| -> anyhow::Result<_> {
             Ok(create_system(t, insert_request("Kept", "sources-kept"))?)
         })?;
-        let file_path = std::env::temp_dir().join(format!("lyra-delete-test-{}", nanoid!()));
+        let file_path = std::env::temp_dir().join(format!("lyra-delete-test-{}", nanoid()));
         std::fs::write(&file_path, b"preserve music")?;
         let entry = crate::Entry {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             full_path: file_path.clone(),
             kind: crate::entries::EntryKind::File,
             file_kind: None,
@@ -1376,7 +1376,7 @@ mod tests {
     fn create_rejects_duplicate_directory_lexically_equivalent() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         // Randomized base so canonicalize doesn't resolve a stray pre-existing dir.
-        let base = format!("/tmp/lyra-test-dup-{}/library", nanoid!());
+        let base = format!("/tmp/lyra-test-dup-{}/library", nanoid());
         db.transaction_mut(|t| -> anyhow::Result<()> {
             create_system(t, insert_request_at("First", &base))?;
             Ok(())
@@ -1653,7 +1653,7 @@ mod tests {
     fn find_node_id_accessible_to_user_rejects_non_library_node() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user_db_id = create_test_user(&mut db, "alice")?;
-        let foreign_public_id = nanoid!();
+        let foreign_public_id = nanoid();
         db.exec_mut(
             QueryBuilder::insert()
                 .nodes()
@@ -1672,9 +1672,9 @@ mod tests {
 
         use super::*;
         use crate::fixtures::test_user;
+        use crate::nanoid;
         use crate::test_db::new_test_db;
         use crate::users;
-        use nanoid::nanoid;
 
         /// 2 owned libs + 1 inaccessible (other user) + 1 foreign-typed node.
         struct ParitySetup {
@@ -1690,12 +1690,12 @@ mod tests {
             let user_db_id = users::create(&mut db, &test_user("alice").unwrap()).unwrap();
             for i in 0..2 {
                 db.transaction_mut(|t| -> anyhow::Result<()> {
-                    let path = PathBuf::from(format!("/tmp/lyra-bench-own-{i}-{}", nanoid!()));
+                    let path = PathBuf::from(format!("/tmp/lyra-bench-own-{i}-{}", nanoid()));
                     let path_key = path_key_for(&path);
                     create_with_creator(
                         t,
                         LibraryInsert {
-                            id: nanoid!(),
+                            id: nanoid(),
                             name: format!("Owned-{i}"),
                             path,
                             path_key,
@@ -1712,12 +1712,12 @@ mod tests {
             let other_user = users::create(&mut db, &test_user("other").unwrap()).unwrap();
             let inaccessible = db
                 .transaction_mut(|t| -> anyhow::Result<Library> {
-                    let path = PathBuf::from(format!("/tmp/lyra-bench-inacc-{}", nanoid!()));
+                    let path = PathBuf::from(format!("/tmp/lyra-bench-inacc-{}", nanoid()));
                     let path_key = path_key_for(&path);
                     Ok(create_with_creator(
                         t,
                         LibraryInsert {
-                            id: nanoid!(),
+                            id: nanoid(),
                             name: "Hidden".to_string(),
                             path,
                             path_key,
@@ -1729,7 +1729,7 @@ mod tests {
                     )?)
                 })
                 .unwrap();
-            let foreign_public_id = nanoid!();
+            let foreign_public_id = nanoid();
             db.exec_mut(
                 QueryBuilder::insert()
                     .nodes()

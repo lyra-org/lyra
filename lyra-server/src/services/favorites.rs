@@ -263,12 +263,12 @@ mod tests {
         connect,
         test_user,
     };
+    use lyra_db::nanoid;
     use lyra_db::test_db::insert_library;
     use lyra_db::{
         Playlist,
         users,
     };
-    use nanoid::nanoid;
 
     fn create_user(db: &mut DbAny, username: &str) -> anyhow::Result<DbId> {
         users::create(db, &test_user(username)?)
@@ -345,10 +345,10 @@ mod tests {
         let user = create_user(&mut db, "alice")?;
         let library = insert_library(&mut db, "Favorites", "/tmp/lyra-favorites-announced")?;
         let library_id = lyra_db::lookup::find_id_by_db_id(&db, library)?.expect("library id");
-        let track_id = nanoid!();
+        let track_id = nanoid();
         let track = create_track(&mut db, &track_id)?;
         connect(&mut db, library, track)?;
-        let hidden_id = nanoid!();
+        let hidden_id = nanoid();
         let hidden = create_track(&mut db, &hidden_id)?;
         let principal = principal_for(&db, user, HashSet::from([library_id]));
         let announced = || {
@@ -396,7 +396,7 @@ mod tests {
         let library_db_id = insert_library(&mut db, "Favorites", "/tmp/lyra-favorites-add")?;
         let library_public_id = lyra_db::lookup::find_id_by_db_id(&db, library_db_id)?
             .expect("library should have a public id");
-        let track_db_id = create_track(&mut db, &nanoid!())?;
+        let track_db_id = create_track(&mut db, &nanoid())?;
         connect(&mut db, library_db_id, track_db_id)?;
 
         let principal = principal_for(&db, user, HashSet::from([library_public_id]));
@@ -436,7 +436,7 @@ mod tests {
             .exec_mut(
                 QueryBuilder::insert()
                     .nodes()
-                    .values([[("id", nanoid!().as_str()).into()]])
+                    .values([[("id", nanoid().as_str()).into()]])
                     .query(),
             )?
             .ids()[0];
@@ -470,7 +470,7 @@ mod tests {
         let (mut db, _state) = crate::services::testing::publishing_test_db()?;
         let owner = create_user(&mut db, "alice")?;
         let intruder = create_user(&mut db, "bob")?;
-        let playlist = create_playlist(&mut db, owner, &nanoid!(), /* is_public= */ false)?;
+        let playlist = create_playlist(&mut db, owner, &nanoid(), /* is_public= */ false)?;
 
         let principal = principal_for(&db, intruder, HashSet::new());
         let outcome = add_for_principal(&mut db, &principal, playlist)?;
@@ -492,7 +492,7 @@ mod tests {
     fn playlist_visibility_gate_allows_owner() -> anyhow::Result<()> {
         let (mut db, _state) = crate::services::testing::publishing_test_db()?;
         let owner = create_user(&mut db, "alice")?;
-        let playlist = create_playlist(&mut db, owner, &nanoid!(), false)?;
+        let playlist = create_playlist(&mut db, owner, &nanoid(), false)?;
 
         let principal = principal_for(&db, owner, HashSet::new());
         let outcome = add_for_principal(&mut db, &principal, playlist)?;
@@ -507,7 +507,7 @@ mod tests {
         let (mut db, _state) = crate::services::testing::publishing_test_db()?;
         let owner = create_user(&mut db, "alice")?;
         let other = create_user(&mut db, "bob")?;
-        let playlist = create_playlist(&mut db, owner, &nanoid!(), true)?;
+        let playlist = create_playlist(&mut db, owner, &nanoid(), true)?;
 
         let principal = principal_for(&db, other, HashSet::new());
         let outcome = add_for_principal(&mut db, &principal, playlist)?;
@@ -525,9 +525,9 @@ mod tests {
         let hidden_library = insert_library(&mut db, "Hidden", "/tmp/lyra-favorites-check-hidden")?;
         let visible_library_id = lyra_db::lookup::find_id_by_db_id(&db, visible_library)?.unwrap();
         let principal = principal_for(&db, user, HashSet::from([visible_library_id]));
-        let favorited = create_track(&mut db, &nanoid!())?;
-        let unfavorited = create_track(&mut db, &nanoid!())?;
-        let hidden = create_track(&mut db, &nanoid!())?;
+        let favorited = create_track(&mut db, &nanoid())?;
+        let unfavorited = create_track(&mut db, &nanoid())?;
+        let hidden = create_track(&mut db, &nanoid())?;
         connect(&mut db, visible_library, favorited)?;
         connect(&mut db, visible_library, unfavorited)?;
         connect(&mut db, hidden_library, hidden)?;
@@ -554,7 +554,7 @@ mod tests {
                     .nodes()
                     .values(
                         (0..2000)
-                            .map(|_| vec![("id", nanoid!().as_str()).into()])
+                            .map(|_| vec![("id", nanoid().as_str()).into()])
                             .collect::<Vec<_>>(),
                     )
                     .query(),
@@ -577,14 +577,14 @@ mod tests {
         let hidden_library = insert_library(&mut db, "Hidden", "/tmp/lyra-favorites-seen-hidden")?;
         let visible_library_id = lyra_db::lookup::find_id_by_db_id(&db, visible_library)?.unwrap();
         let principal = principal_for(&db, user, HashSet::from([visible_library_id]));
-        let track = create_track(&mut db, &nanoid!())?;
-        let hidden_track = create_track(&mut db, &nanoid!())?;
+        let track = create_track(&mut db, &nanoid())?;
+        let hidden_track = create_track(&mut db, &nanoid())?;
         connect(&mut db, visible_library, track)?;
         connect(&mut db, hidden_library, hidden_track)?;
-        let own_playlist = create_playlist(&mut db, user, &nanoid!(), false)?;
-        let public_playlist = create_playlist(&mut db, other, &nanoid!(), true)?;
-        let private_playlist = create_playlist(&mut db, other, &nanoid!(), false)?;
-        let ownerless_playlist = create_playlist(&mut db, departed, &nanoid!(), true)?;
+        let own_playlist = create_playlist(&mut db, user, &nanoid(), false)?;
+        let public_playlist = create_playlist(&mut db, other, &nanoid(), true)?;
+        let private_playlist = create_playlist(&mut db, other, &nanoid(), false)?;
+        let ownerless_playlist = create_playlist(&mut db, departed, &nanoid(), true)?;
         let now = now_ms()?;
         for (target, kind) in [
             (track, FavoriteKind::Track),
@@ -627,7 +627,7 @@ mod tests {
         let (mut db, _state) = crate::services::testing::publishing_test_db()?;
         let owner = create_user(&mut db, "alice")?;
         let other = create_user(&mut db, "bob")?;
-        let pub_id = nanoid!();
+        let pub_id = nanoid();
         let playlist_db_id = create_playlist(&mut db, owner, &pub_id, /* is_public= */ true)?;
 
         let principal = principal_for(&db, other, HashSet::new());
@@ -677,7 +677,7 @@ mod tests {
         let library_db_id = insert_library(&mut db, "Favorites", "/tmp/lyra-favorites-remove")?;
         let library_public_id = lyra_db::lookup::find_id_by_db_id(&db, library_db_id)?
             .expect("library should have a public id");
-        let track = create_track(&mut db, &nanoid!())?;
+        let track = create_track(&mut db, &nanoid())?;
         connect(&mut db, library_db_id, track)?;
 
         let principal = principal_for(&db, user, HashSet::from([library_public_id]));

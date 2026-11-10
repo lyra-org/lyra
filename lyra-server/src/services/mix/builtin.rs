@@ -915,7 +915,7 @@ mod tests {
 
         let user = User {
             db_id: None,
-            id: nanoid::nanoid!(),
+            id: lyra_db::nanoid(),
             username: "testuser".to_string(),
             password: "hashed".to_string(),
         };
@@ -933,8 +933,8 @@ mod tests {
     ) -> anyhow::Result<()> {
         let listen = listens::Listen {
             db_id: None,
-            id: nanoid::nanoid!(),
-            play_id: nanoid::nanoid!(),
+            id: lyra_db::nanoid(),
+            play_id: lyra_db::nanoid(),
             track_public_id,
             started_at_ms: 1_000_000,
             played_ms: Some(180_000),
@@ -1296,7 +1296,7 @@ mod tests {
 
         let playlist = Playlist {
             db_id: None,
-            id: nanoid::nanoid!(),
+            id: lyra_db::nanoid(),
             name: "Mix Seed".to_string(),
             description: None,
             is_public: Some(true),
@@ -1328,7 +1328,7 @@ mod tests {
         let user_id = insert_user(&mut db)?;
         let playlist = Playlist {
             db_id: None,
-            id: nanoid::nanoid!(),
+            id: lyra_db::nanoid(),
             name: "Empty".to_string(),
             description: None,
             is_public: Some(true),

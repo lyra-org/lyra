@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use crate::nanoid;
 use agdb::{
     CountComparison,
     DbAny,
@@ -14,7 +15,6 @@ use agdb::{
     QueryBuilder,
 };
 use blake3::Hasher;
-use nanoid::nanoid;
 use serde::{
     Deserialize,
     Serialize,
@@ -750,7 +750,7 @@ fn upsert_inner(
     let existing_db_id = existing
         .as_ref()
         .and_then(|row| row.db_id.clone().map(Into::into));
-    let id = existing.map_or_else(|| nanoid!(), |row| row.id);
+    let id = existing.map_or_else(nanoid, |row| row.id);
 
     let (provider_id, provider_lyrics_id, kind, owner_db_id) = match identity {
         LyricsIdentity::Provider {
@@ -893,7 +893,7 @@ fn insert_children(
         let line_idx = u32::try_from(idx).unwrap_or(u32::MAX);
         let line_row = LyricLine {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             ts_ms: line.ts_ms,
             text: line.text.clone(),
         };
@@ -917,7 +917,7 @@ fn insert_children(
             let word_idx = u32::try_from(word_idx).unwrap_or(u32::MAX);
             let word_row = LyricWord {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 ts_ms: word.ts_ms,
                 char_start: word.char_start,
                 char_end: word.char_end,
@@ -1449,7 +1449,7 @@ mod tests {
         crate::fixtures::connect(&mut db, release, track_id)?;
         let entry = crate::entries::Entry {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             full_path: "/b/other.flac".into(),
             kind: crate::entries::EntryKind::File,
             file_kind: Some("audio".to_string()),

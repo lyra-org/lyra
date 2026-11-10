@@ -8,13 +8,13 @@ use std::collections::{
     HashSet,
 };
 
+use crate::nanoid;
 use agdb::{
     DbAny,
     DbElement,
     DbId,
     QueryBuilder,
 };
-use nanoid::nanoid;
 use rand::seq::SliceRandom;
 
 use super::DbAccess;
@@ -88,7 +88,7 @@ pub(crate) fn find_by_external_id(
 fn insert_genre(db: &mut impl DbAccess, name: &str) -> anyhow::Result<DbId> {
     let genre = Genre {
         db_id: None,
-        id: nanoid!(),
+        id: nanoid(),
         name: name.to_string(),
         scan_name: normalize(name),
         created_at_ms: Some(now_ms()),
@@ -111,7 +111,7 @@ fn insert_alias(
 ) -> anyhow::Result<()> {
     let alias_node = GenreAlias {
         db_id: None,
-        id: nanoid!(),
+        id: nanoid(),
         name: name.to_string(),
         scan_name: normalize(name),
         locale: locale.map(String::from),

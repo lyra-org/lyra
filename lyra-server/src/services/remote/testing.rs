@@ -41,7 +41,7 @@ pub(crate) async fn init() -> anyhow::Result<()> {
 pub(crate) async fn user(name: &str) -> anyhow::Result<TestUser> {
     let db_id = {
         let mut db = STATE.db.write().await;
-        let user = lyra_db::fixtures::test_user(&format!("{name}-{}", nanoid::nanoid!()))?;
+        let user = lyra_db::fixtures::test_user(&format!("{name}-{}", lyra_db::nanoid()))?;
         let db_id = lyra_db::users::create(&mut db, &user)?;
         lyra_db::roles::ensure_builtin_roles(&mut db)?;
         lyra_db::roles::ensure_user_has_role(&mut db, db_id, lyra_db::roles::BUILTIN_ADMIN_ROLE)?;
@@ -57,7 +57,7 @@ pub(crate) async fn user(name: &str) -> anyhow::Result<TestUser> {
 pub(crate) async fn listener(name: &str) -> anyhow::Result<TestUser> {
     let db_id = {
         let mut db = STATE.db.write().await;
-        let user = lyra_db::fixtures::test_user(&format!("{name}-{}", nanoid::nanoid!()))?;
+        let user = lyra_db::fixtures::test_user(&format!("{name}-{}", lyra_db::nanoid()))?;
         lyra_db::users::create(&mut db, &user)?
     };
     Ok(TestUser {
@@ -102,7 +102,7 @@ fn reporting(user: &TestUser, session_key: &str) -> Option<playbacks::ReportingC
 }
 
 fn play_id() -> String {
-    format!("connection-play-{}", nanoid::nanoid!(8))
+    format!("connection-play-{}", &lyra_db::nanoid()[..8])
 }
 
 /// Creates a playback for the user, reported by the connection with the session key, and returns
@@ -120,7 +120,7 @@ pub(crate) async fn drive_new_playback(
     let update = playbacks::create_playback(
         &mut db,
         playbacks::CreatePlaybackRequest {
-            id: nanoid::nanoid!(),
+            id: lyra_db::nanoid(),
             play_id: play_id(),
             user_db_id: user.db_id,
             client_name: None,

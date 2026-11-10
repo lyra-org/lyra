@@ -343,7 +343,7 @@ mod tests {
     use agdb::QueryBuilder;
     use std::path::Path;
 
-    use nanoid::nanoid;
+    use lyra_db::nanoid;
 
     use lyra_db::{
         Entry,
@@ -386,7 +386,7 @@ mod tests {
 
         let track_node = Track {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             track_title: "song".to_string(),
             sort_title: None,
             year: None,
@@ -410,7 +410,7 @@ mod tests {
 
         let entry = Entry {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             full_path: PathBuf::from("/music/song.mp3"),
             kind: lyra_db::entries::EntryKind::File,
             file_kind: Some("audio".to_string()),
@@ -430,7 +430,7 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("entry insert returned no id"))?;
         let source = TrackSource {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             source_kind: "embedded_tags".to_string(),
             source_key: format!("entry:{}:embedded", entry_id.0),
             identity: format!("entry:{}:embedded", entry_id.0),
@@ -470,7 +470,7 @@ mod tests {
 
         let tracks = vec![Track {
             db_id: Some(NodeId::from(track_id)),
-            id: nanoid!(),
+            id: nanoid(),
             track_title: "song".to_string(),
             sort_title: None,
             year: None,

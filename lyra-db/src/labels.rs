@@ -8,6 +8,7 @@ use std::collections::{
     HashSet,
 };
 
+use crate::nanoid;
 use agdb::{
     CountComparison,
     DbAny,
@@ -18,7 +19,6 @@ use agdb::{
     DbValue,
     QueryBuilder,
 };
-use nanoid::nanoid;
 
 use super::DbAccess;
 use super::NodeId;
@@ -240,7 +240,7 @@ pub fn absorb_aliases(db: &mut impl DbAccess, winner: DbId, loser: DbId) -> anyh
 fn insert_label(db: &mut impl DbAccess, name: &str) -> anyhow::Result<DbId> {
     let label = Label {
         db_id: None,
-        id: nanoid!(),
+        id: nanoid(),
         name: name.to_string(),
         label_scan_name: normalize_label_name(name),
         created_at_ms: Some(now_ms()),

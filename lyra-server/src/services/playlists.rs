@@ -18,7 +18,7 @@ use agdb::{
     QueryId,
 };
 use anyhow::bail;
-use nanoid::nanoid;
+use lyra_db::nanoid;
 
 use crate::services::{
     auth::{
@@ -488,7 +488,7 @@ pub(crate) fn create(
     check_id_count("track ids", request.track_db_ids.len())?;
     let mut playlist = Playlist {
         db_id: None,
-        id: nanoid!(),
+        id: nanoid(),
         name: validate_name(&request.name)?,
         description: request.description.clone(),
         is_public: request.is_public,

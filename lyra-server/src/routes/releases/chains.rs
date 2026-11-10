@@ -165,7 +165,7 @@ mod tests {
             },
         },
     };
-    use nanoid::nanoid;
+    use lyra_db::nanoid;
     use serde_json::{
         Value,
         json,
@@ -241,12 +241,12 @@ mod tests {
         let (users, release, tracks, other_track, hidden_track) = {
             let mut db = STATE.db.write().await;
             lyra_db::roles::ensure_builtin_roles(&mut db)?;
-            let role = format!("chain-manager-{}", nanoid!());
+            let role = format!("chain-manager-{}", nanoid());
             lyra_db::roles::create(
                 &mut db,
                 &lyra_db::roles::Role {
                     db_id: None,
-                    id: nanoid!(),
+                    id: nanoid(),
                     name: role.clone(),
                     permissions: vec![lyra_db::Permission::ManageMetadata],
                 },

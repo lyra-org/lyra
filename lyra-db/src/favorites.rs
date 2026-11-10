@@ -731,13 +731,13 @@ mod tests {
 
     #[test]
     fn delete_playlist_cascades_inbound_favorites() -> anyhow::Result<()> {
-        use nanoid::nanoid;
+        use crate::nanoid;
 
         let mut db = new_test_db()?;
         let user = create_test_user(&mut db)?;
         let playlist = crate::Playlist {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             name: "p".to_string(),
             description: None,
             is_public: Some(false),

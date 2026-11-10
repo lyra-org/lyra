@@ -17,12 +17,12 @@ use std::{
     },
 };
 
+use crate::nanoid;
 use agdb::{
     DbAny,
     DbId,
     QueryBuilder,
 };
-use nanoid::nanoid;
 
 use super::fixtures::{
     connect_credit,
@@ -110,7 +110,7 @@ pub fn test_session(token_hash: &str) -> super::users::Session {
     let now = super::users::now_ms();
     super::users::Session {
         db_id: None,
-        id: nanoid!(),
+        id: nanoid(),
         token_hash: token_hash.to_string(),
         expires_at_ms: 0,
         created_at_ms: now,
@@ -141,7 +141,7 @@ fn build_test_library(
     let path_key = super::libraries::path_key_for(&path);
     Ok(super::libraries::Library {
         db_id: None,
-        id: nanoid!(),
+        id: nanoid(),
         name: display,
         name_key: key,
         path,
@@ -207,7 +207,7 @@ pub fn stored_keys(db: &DbAny, db_id: DbId) -> anyhow::Result<HashSet<String>> {
 /// Hangs `node` off a track in a library the user can read, so only a search that walks past the
 /// user into the catalog reaches it.
 pub fn hang_in_users_library(db: &mut DbAny, user_db_id: DbId, node: DbId) -> anyhow::Result<()> {
-    let library = insert_library(db, &nanoid!(), &format!("/tmp/lyra-{}", nanoid!()))?;
+    let library = insert_library(db, &nanoid(), &format!("/tmp/lyra-{}", nanoid()))?;
     super::libraries::grant_access(
         db,
         user_db_id,

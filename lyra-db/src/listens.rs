@@ -411,19 +411,19 @@ pub fn list_summaries_for_user(db: &DbAny, user_db_id: DbId) -> anyhow::Result<V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::nanoid;
     use crate::roots::{
         self,
         Root,
     };
     use crate::test_db::new_test_db;
     use agdb::QueryBuilder;
-    use nanoid::nanoid;
 
     fn create_user(db: &mut DbAny) -> anyhow::Result<DbId> {
         let user = crate::users::User {
             db_id: None,
-            id: nanoid!(),
-            username: format!("user-{}", nanoid!()),
+            id: nanoid(),
+            username: format!("user-{}", nanoid()),
             password: "hash".to_string(),
         };
         crate::users::create(db, &user)
@@ -464,7 +464,7 @@ mod tests {
     ) -> anyhow::Result<DbId> {
         let listen = Listen {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             play_id: play_id.to_string(),
             track_public_id: track_public_id.to_string(),
             started_at_ms,
@@ -479,14 +479,14 @@ mod tests {
         let mut db = new_test_db()?;
         let user = create_user(&mut db)?;
         let track_db_id = create_track(&mut db, "tr-listened")?;
-        insert_listen_with_snapshot(&mut db, user, track_db_id, "tr-listened", &nanoid!(), 1)?;
+        insert_listen_with_snapshot(&mut db, user, track_db_id, "tr-listened", &nanoid(), 1)?;
         let stray = db
             .exec_mut(
                 QueryBuilder::insert()
                     .element(&Listen {
                         db_id: None,
-                        id: nanoid!(),
-                        play_id: nanoid!(),
+                        id: nanoid(),
+                        play_id: nanoid(),
                         track_public_id: "tr-listened".to_string(),
                         started_at_ms: 2,
                         played_ms: Some(180_000),
@@ -515,7 +515,7 @@ mod tests {
         let user = create_user(&mut db)?;
         let track_db_id = create_track(&mut db, "tr-original")?;
 
-        insert_listen_with_snapshot(&mut db, user, track_db_id, "tr-original", &nanoid!(), 1)?;
+        insert_listen_with_snapshot(&mut db, user, track_db_id, "tr-original", &nanoid(), 1)?;
 
         let listens: Vec<Listen> = db
             .exec(
@@ -588,7 +588,7 @@ mod tests {
         let track = create_track(&mut db, "tr-one")?;
         let listen = Listen {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             play_id: "play-untimed-0001".to_string(),
             track_public_id: "tr-one".to_string(),
             started_at_ms: 7,
@@ -619,7 +619,7 @@ mod tests {
         let user = create_user(&mut db)?;
         let track_db_id = create_track(&mut db, "tr-current")?;
 
-        insert_listen_with_snapshot(&mut db, user, track_db_id, snapshot, &nanoid!(), 1)?;
+        insert_listen_with_snapshot(&mut db, user, track_db_id, snapshot, &nanoid(), 1)?;
 
         let mut stats = get_stats(&db, &[track_db_id], user)?;
         anyhow::ensure!(stats.len() == 1, "expected exactly one stats row");
@@ -634,10 +634,10 @@ mod tests {
         let track_one = create_track(&mut db, "tr-one")?;
         let track_two = create_track(&mut db, "tr-two")?;
 
-        insert_listen_with_snapshot(&mut db, user, track_one, "tr-one", &nanoid!(), 1_000)?;
-        insert_listen_with_snapshot(&mut db, user, track_one, "tr-one", &nanoid!(), 3_000)?;
-        insert_listen_with_snapshot(&mut db, user, track_two, "tr-two", &nanoid!(), 2_000)?;
-        insert_listen_with_snapshot(&mut db, other_user, track_one, "tr-one", &nanoid!(), 9_000)?;
+        insert_listen_with_snapshot(&mut db, user, track_one, "tr-one", &nanoid(), 1_000)?;
+        insert_listen_with_snapshot(&mut db, user, track_one, "tr-one", &nanoid(), 3_000)?;
+        insert_listen_with_snapshot(&mut db, user, track_two, "tr-two", &nanoid(), 2_000)?;
+        insert_listen_with_snapshot(&mut db, other_user, track_one, "tr-one", &nanoid(), 9_000)?;
 
         let user_public_id = crate::users::get_by_id(&db, user)?
             .expect("user should exist")
@@ -671,10 +671,10 @@ mod tests {
         let track_one = create_track(&mut db, "tr-one")?;
         let track_two = create_track(&mut db, "tr-two")?;
 
-        insert_listen_with_snapshot(&mut db, user, track_one, "tr-one", &nanoid!(), 1_000)?;
-        insert_listen_with_snapshot(&mut db, user, track_one, "tr-one", &nanoid!(), 3_000)?;
-        insert_listen_with_snapshot(&mut db, other_user, track_one, "tr-one", &nanoid!(), 9_000)?;
-        insert_listen_with_snapshot(&mut db, other_user, track_two, "tr-two", &nanoid!(), 4_000)?;
+        insert_listen_with_snapshot(&mut db, user, track_one, "tr-one", &nanoid(), 1_000)?;
+        insert_listen_with_snapshot(&mut db, user, track_one, "tr-one", &nanoid(), 3_000)?;
+        insert_listen_with_snapshot(&mut db, other_user, track_one, "tr-one", &nanoid(), 9_000)?;
+        insert_listen_with_snapshot(&mut db, other_user, track_two, "tr-two", &nanoid(), 4_000)?;
 
         let user_public_id = crate::users::get_by_id(&db, user)?
             .expect("user should exist")
@@ -724,8 +724,8 @@ mod tests {
         let user = create_user(&mut db)?;
         let track = create_track(&mut db, "tr-current")?;
 
-        insert_listen_with_snapshot(&mut db, user, track, "tr-current", &nanoid!(), 1_000)?;
-        insert_listen_with_snapshot(&mut db, user, track, "tr-missing", &nanoid!(), 2_000)?;
+        insert_listen_with_snapshot(&mut db, user, track, "tr-current", &nanoid(), 1_000)?;
+        insert_listen_with_snapshot(&mut db, user, track, "tr-missing", &nanoid(), 2_000)?;
 
         let summaries = list_summaries_for_user(&db, user)?;
         assert_eq!(summaries.len(), 1);
@@ -753,10 +753,10 @@ mod tests {
         let track_one = create_track(&mut db, "tr-one")?;
         let track_two = create_track(&mut db, "tr-two")?;
 
-        insert_listen_with_snapshot(&mut db, user, track_one, "tr-one", &nanoid!(), 1_000)?;
-        insert_listen_with_snapshot(&mut db, user, track_one, "tr-one", &nanoid!(), 3_000)?;
-        insert_listen_with_snapshot(&mut db, user, track_two, "tr-old", &nanoid!(), 5_000)?;
-        insert_listen_with_snapshot(&mut db, other_user, track_two, "tr-two", &nanoid!(), 7_000)?;
+        insert_listen_with_snapshot(&mut db, user, track_one, "tr-one", &nanoid(), 1_000)?;
+        insert_listen_with_snapshot(&mut db, user, track_one, "tr-one", &nanoid(), 3_000)?;
+        insert_listen_with_snapshot(&mut db, user, track_two, "tr-old", &nanoid(), 5_000)?;
+        insert_listen_with_snapshot(&mut db, other_user, track_two, "tr-two", &nanoid(), 7_000)?;
 
         let stats = get_stats(&db, &[track_one, track_two, track_one], user)?;
         assert_eq!(stats.len(), 2);

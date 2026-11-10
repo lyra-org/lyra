@@ -179,6 +179,7 @@ mod tests {
     };
     use agdb::QueryBuilder;
     use anyhow::anyhow;
+    use lyra_db::nanoid;
     use lyra_db::roots::{
         self,
         Root,
@@ -198,7 +199,6 @@ mod tests {
         Release,
         Track,
     };
-    use nanoid::nanoid;
     use std::collections::{
         HashMap,
         HashSet,
@@ -241,7 +241,7 @@ mod tests {
             .unwrap_or_else(|| path.to_string_lossy().to_string());
         let entry = Entry {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             full_path: path.to_path_buf(),
             kind,
             file_kind: if kind == lyra_db::entries::EntryKind::File {
@@ -266,7 +266,7 @@ mod tests {
     fn insert_track(db: &mut DbAny, title: &str) -> anyhow::Result<DbId> {
         let track = Track {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             track_title: title.to_string(),
             sort_title: None,
             year: None,
@@ -288,7 +288,7 @@ mod tests {
     fn insert_release(db: &mut DbAny, title: &str) -> anyhow::Result<DbId> {
         let release = Release {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             release_title: title.to_string(),
             sort_title: None,
             release_type: None,
@@ -307,7 +307,7 @@ mod tests {
     fn insert_artist(db: &mut DbAny, name: &str) -> anyhow::Result<DbId> {
         let artist = Artist {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             artist_name: name.to_string(),
             scan_name: name.to_string(),
             scan_aliases: Vec::new(),
@@ -464,7 +464,7 @@ mod tests {
         let user_db_id = lyra_db::users::create(db, &lyra_db::fixtures::test_user(username)?)?;
         let playlist = lyra_db::playlists::Playlist {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             name: "Ingestion Cover Regression".to_string(),
             description: None,
             is_public: None,
@@ -866,7 +866,7 @@ mod tests {
         let dir_path = std::env::temp_dir().join(format!(
             "lyra-edition-signals-{}-{}",
             std::process::id(),
-            nanoid!()
+            nanoid()
         ));
         std::fs::create_dir_all(&dir_path)?;
         let file_paths = vec![

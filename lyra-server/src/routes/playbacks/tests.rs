@@ -105,7 +105,7 @@ async fn setup_admin_with_tracks() -> anyhow::Result<RouteFixture> {
     let (user_db_id, user_public_id, first_track_id, second_track_id) = {
         let mut db = STATE.db.write().await;
         lyra_db::roles::ensure_builtin_roles(&mut db)?;
-        let user = lyra_db::fixtures::test_user(&format!("playback-route-{}", nanoid!()))?;
+        let user = lyra_db::fixtures::test_user(&format!("playback-route-{}", nanoid()))?;
         let user_public_id = user.id.clone();
         let user_db_id = lyra_db::users::create(&mut db, &user)?;
         lyra_db::roles::ensure_user_has_role(
@@ -183,7 +183,7 @@ fn active_filter_requires_a_live_current_session() {
             played_ms: 0,
             last_position_ms: 0,
             state: PlaybackState::Playing,
-            play_id: nanoid::nanoid!(),
+            play_id: lyra_db::nanoid(),
             latency_allowance_used_ms: 0,
             rate_permille: 1000,
             counts_as_listen: true,
@@ -1209,7 +1209,7 @@ async fn reported_playback_shares_collection_and_rejects_queue_operations() -> a
 
     let other_user_id = {
         let mut db = STATE.db.write().await;
-        let user = lyra_db::fixtures::test_user(&format!("other-playback-user-{}", nanoid!()))?;
+        let user = lyra_db::fixtures::test_user(&format!("other-playback-user-{}", nanoid()))?;
         let user_id = lyra_db::users::create(&mut db, &user)?;
         lyra_db::roles::ensure_user_has_role(&mut db, user_id, lyra_db::roles::BUILTIN_ADMIN_ROLE)?;
         user_id

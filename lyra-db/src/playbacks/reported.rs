@@ -156,7 +156,7 @@ pub fn insert_reported(
     }
     let mut playback = Playback {
         db_id: None,
-        id: nanoid::nanoid!(),
+        id: crate::nanoid(),
         source: PlaybackSource::Reported(ReportedSource {
             session_key: session_key.to_owned(),
         }),

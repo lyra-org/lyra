@@ -1010,11 +1010,11 @@ mod tests {
         insert_release,
         insert_track,
     };
+    use lyra_db::nanoid;
     use lyra_db::test_db::{
         connect_artist,
         insert_library,
     };
-    use nanoid::nanoid;
 
     async fn admin_principal(accessible_library_ids: HashSet<String>) -> Principal {
         let mut db = STATE.db.write().await;
@@ -1048,7 +1048,7 @@ mod tests {
                 lyra_db::covers::CoverSource::Local,
                 lyra_db::Cover {
                     db_id: None,
-                    id: nanoid!(),
+                    id: nanoid(),
                     path: crate::services::testing::existing_cover_path(),
                     mime_type: "image/jpeg".to_string(),
                     hash: "a".repeat(64),

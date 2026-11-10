@@ -437,7 +437,7 @@ mod tests {
     use std::path::PathBuf;
 
     use agdb::DbAny;
-    use nanoid::nanoid;
+    use lyra_db::nanoid;
 
     use super::*;
     use lyra_db::{
@@ -515,9 +515,9 @@ mod tests {
         name: &str,
         creator_user_db_id: Option<DbId>,
     ) -> anyhow::Result<Library> {
-        let path = PathBuf::from(format!("/tmp/lyra-access-test-{}", nanoid!()));
+        let path = PathBuf::from(format!("/tmp/lyra-access-test-{}", nanoid()));
         let request = LibraryInsert {
-            id: nanoid!(),
+            id: nanoid(),
             name: name.to_string(),
             path: path.clone(),
             path_key: lyra_db::libraries::path_key_for(&path),
@@ -693,7 +693,7 @@ mod tests {
             &mut db,
             &Playlist {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 name: "Private".to_string(),
                 description: None,
                 is_public: Some(false),
@@ -706,7 +706,7 @@ mod tests {
             &mut db,
             &Playlist {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 name: "Public".to_string(),
                 description: None,
                 is_public: Some(true),
@@ -736,7 +736,7 @@ mod tests {
             &mut db,
             &Playlist {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 name: "Private".to_string(),
                 description: None,
                 is_public: Some(false),

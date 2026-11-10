@@ -3,13 +3,13 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use crate::nanoid;
 use agdb::{
     DbElement,
     DbId,
     QueryBuilder,
 };
 use anyhow::anyhow;
-use nanoid::nanoid;
 use serde::Serialize;
 
 use super::{
@@ -99,7 +99,7 @@ pub fn upsert_setting_with<A: DbAccess>(
         db_id: existing_db_id.clone(),
         id: existing_entry
             .map(|entry| entry.id.clone())
-            .unwrap_or_else(|| nanoid!()),
+            .unwrap_or_else(nanoid),
         key,
         value,
     };

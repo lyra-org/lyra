@@ -528,11 +528,11 @@ mod tests {
         },
         response::IntoResponse,
     };
+    use lyra_db::nanoid;
     use lyra_db::{
         roles::Role,
         users::User,
     };
-    use nanoid::nanoid;
     use serde_json::{
         Value,
         json,
@@ -560,17 +560,17 @@ mod tests {
             &mut db,
             &User {
                 db_id: None,
-                id: nanoid!(),
-                username: format!("server-route-test-{}", nanoid!()),
+                id: nanoid(),
+                username: format!("server-route-test-{}", nanoid()),
                 password: "unused".to_string(),
             },
         )?;
-        let role_name = format!("server-route-test-{}", nanoid!());
+        let role_name = format!("server-route-test-{}", nanoid());
         lyra_db::roles::create(
             &mut db,
             &Role {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 name: role_name.clone(),
                 permissions,
             },

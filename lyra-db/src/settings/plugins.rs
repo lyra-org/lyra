@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use crate::nanoid;
 use agdb::{
     CountComparison,
     DbElement,
@@ -10,7 +11,6 @@ use agdb::{
     QueryBuilder,
 };
 use anyhow::anyhow;
-use nanoid::nanoid;
 use serde::Serialize;
 
 use crate::{
@@ -61,7 +61,7 @@ pub fn find_with<A: DbAccess>(db: &A, plugin_id: &str) -> anyhow::Result<Option<
 }
 
 fn insert_with<A: DbAccess>(db: &mut A, plugin_id: &str) -> anyhow::Result<PluginSettings> {
-    let id = nanoid!();
+    let id = nanoid();
     let node = PluginSettings {
         db_id: None,
         id: id.clone(),
@@ -162,7 +162,7 @@ fn insert_user_with<A: DbAccess>(
     user_db_id: DbId,
     plugin_id: &str,
 ) -> anyhow::Result<UserPluginSettings> {
-    let id = nanoid!();
+    let id = nanoid();
     let node = UserPluginSettings {
         db_id: None,
         id: id.clone(),

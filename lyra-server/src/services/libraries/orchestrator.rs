@@ -23,7 +23,7 @@ use std::{
 };
 
 use agdb::DbId;
-use nanoid::nanoid;
+use lyra_db::nanoid;
 use serde::{
     Deserialize,
     Serialize,
@@ -460,7 +460,7 @@ impl SyncRunState {
     /// A queued run, numbering its summaries from `sequence`.
     fn new(kind: SyncRunKind, library_id: String, now_ms: u64, sequence: u64) -> Self {
         Self {
-            run_id: nanoid!(),
+            run_id: nanoid(),
             kind,
             library_id,
             status: SyncRunStatus::Queued,

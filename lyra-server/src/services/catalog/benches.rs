@@ -26,7 +26,7 @@ use agdb::{
     DbId,
     QueryBuilder,
 };
-use nanoid::nanoid;
+use lyra_db::nanoid;
 use test::Bencher;
 
 use super::{
@@ -123,7 +123,7 @@ fn name(index: usize, kind: &str) -> String {
 fn insert_track(db: &mut DbAny, index: usize, number: u32) -> anyhow::Result<DbId> {
     let track = Track {
         db_id: None,
-        id: nanoid!(),
+        id: nanoid(),
         track_title: name(index, "Track"),
         sort_title: (index % 10 == 3).then(|| name(index + 1, "Sort")),
         year: Some(1960 + (index % 60) as u32),
@@ -552,7 +552,7 @@ fn availability_rebuild() {
             for &track in chunk {
                 let entry = lyra_db::Entry {
                     db_id: None,
-                    id: nanoid!(),
+                    id: nanoid(),
                     full_path: format!("/availability-bench/{}.flac", track.0).into(),
                     kind: lyra_db::entries::EntryKind::File,
                     file_kind: Some("audio".into()),

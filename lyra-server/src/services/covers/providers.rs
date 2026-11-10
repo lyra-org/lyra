@@ -951,8 +951,8 @@ mod tests {
         insert_artist,
         insert_release,
     };
+    use lyra_db::nanoid;
     use lyra_db::test_db::new_test_db;
-    use nanoid::nanoid;
     use serde_json::json;
     use std::path::PathBuf;
 
@@ -1019,7 +1019,7 @@ mod tests {
         let release = lyra_db::releases::get_by_id(&db, release_id)?.expect("release");
         let library = Library {
             db_id: Some(DbId(99)),
-            id: nanoid!(),
+            id: nanoid(),
             name: "Library".to_string(),
             name_key: "library".to_string(),
             path: PathBuf::from("/music"),

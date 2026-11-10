@@ -780,7 +780,7 @@ mod tests {
                         CoverSource::Local,
                         lyra_db::Cover {
                             db_id: None,
-                            id: nanoid::nanoid!(),
+                            id: lyra_db::nanoid(),
                             path: path.to_string_lossy().into_owned(),
                             mime_type: "image/png".to_string(),
                             hash: title.to_string(),
@@ -973,7 +973,7 @@ mod tests {
                     CoverSource::Local,
                     lyra_db::Cover {
                         db_id: None,
-                        id: nanoid::nanoid!(),
+                        id: lyra_db::nanoid(),
                         path: path.to_string_lossy().into_owned(),
                         mime_type: "image/png".to_string(),
                         hash: hash.to_string(),
@@ -1077,7 +1077,7 @@ mod tests {
                 CoverSource::Local,
                 lyra_db::Cover {
                     db_id: None,
-                    id: nanoid::nanoid!(),
+                    id: lyra_db::nanoid(),
                     path: path.to_string_lossy().into_owned(),
                     mime_type: "image/png".to_string(),
                     hash: "0123456789abcdef0123456789abcdef".to_string(),

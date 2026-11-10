@@ -11,7 +11,7 @@ use agdb::{
     DbAny,
     DbId,
 };
-use nanoid::nanoid;
+use lyra_db::nanoid;
 
 use super::{
     AuthError,
@@ -121,7 +121,7 @@ pub(crate) async fn create_user(
     let role = authorize_create(&db, caller.as_ref(), username, &normalized_username)?;
     let user = User {
         db_id: None,
-        id: nanoid!(),
+        id: nanoid(),
         username: normalized_username,
         password: password_hash,
     };
@@ -486,7 +486,7 @@ mod tests {
             &mut db,
             &lyra_db::roles::Role {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 name: role_name.clone(),
                 permissions,
             },

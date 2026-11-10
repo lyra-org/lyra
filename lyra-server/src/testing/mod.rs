@@ -32,7 +32,7 @@ use agdb::{
 };
 use anyhow::Context;
 use harmony_core::ModuleSpec;
-use nanoid::nanoid;
+use lyra_db::nanoid;
 use serde::{
     Deserialize,
     Serialize,
@@ -111,7 +111,7 @@ pub async fn prepare_fixture(
             lyra_db::libraries::create_system(
                 t,
                 lyra_db::libraries::LibraryInsert {
-                    id: nanoid!(),
+                    id: nanoid(),
                     name: "Harmony Test Library".to_string(),
                     path: directory,
                     path_key,
@@ -456,7 +456,7 @@ pub async fn run_luau_plugin_test_file(
             None => {
                 let user = lyra_db::users::User {
                     db_id: None,
-                    id: nanoid!(),
+                    id: nanoid(),
                     username: LUAU_TEST_USERNAME.to_string(),
                     password: String::new(),
                 };
@@ -660,7 +660,7 @@ fn insert_file_entry(
 ) -> anyhow::Result<(DbId, String)> {
     let entry = Entry {
         db_id: None,
-        id: nanoid!(),
+        id: nanoid(),
         full_path: full_path.to_path_buf(),
         kind: lyra_db::entries::EntryKind::File,
         file_kind: lyra_db::entries::classify_file_kind(full_path).map(ToString::to_string),

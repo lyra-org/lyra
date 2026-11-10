@@ -15,8 +15,8 @@ use agdb::{
     QueryBuilder,
 };
 
+use crate::nanoid;
 use crate::roots::MEMBERS;
-use nanoid::nanoid;
 use serde::Serialize;
 
 use super::DbAccess;
@@ -265,7 +265,7 @@ fn insert_entries(
     }
     let entries = (first_position..)
         .zip(track_db_ids)
-        .map(|(position, _)| (position, nanoid!()))
+        .map(|(position, _)| (position, nanoid()))
         .collect::<Vec<_>>();
     let values = entries
         .iter()
@@ -539,6 +539,7 @@ pub(crate) fn get_by_track(db: &impl DbAccess, track_db_id: DbId) -> anyhow::Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::nanoid;
     use crate::roots::{
         self,
         Root,
@@ -548,7 +549,6 @@ mod tests {
         DbAny,
         QueryBuilder,
     };
-    use nanoid::nanoid;
 
     fn create_test_user(db: &mut DbAny) -> anyhow::Result<DbId> {
         let user_db_id = db
@@ -588,7 +588,7 @@ mod tests {
         let user_db_id = create_test_user(&mut db)?;
         let playlist = |name: &str| Playlist {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             name: name.to_string(),
             description: None,
             is_public: None,
@@ -617,7 +617,7 @@ mod tests {
 
         let playlist = Playlist {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             name: "My Playlist".to_string(),
             description: Some("A test playlist".to_string()),
             is_public: Some(false),
@@ -640,7 +640,7 @@ mod tests {
         let bob = create_test_user(&mut db)?;
         let playlist = |name: &str| Playlist {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             name: name.to_string(),
             description: None,
             is_public: Some(true),
@@ -677,7 +677,7 @@ mod tests {
 
         let p1 = Playlist {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             name: "User A Playlist".to_string(),
             description: None,
             is_public: None,
@@ -688,7 +688,7 @@ mod tests {
 
         let p2 = Playlist {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             name: "User B Playlist".to_string(),
             description: None,
             is_public: None,
@@ -715,7 +715,7 @@ mod tests {
 
         let playlist = Playlist {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             name: "Owned".to_string(),
             description: None,
             is_public: None,
@@ -739,7 +739,7 @@ mod tests {
 
         let playlist = Playlist {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             name: "Tracks Test".to_string(),
             description: None,
             is_public: None,
@@ -776,7 +776,7 @@ mod tests {
 
         let playlist = Playlist {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             name: "Position Base".to_string(),
             description: None,
             is_public: None,
@@ -808,7 +808,7 @@ mod tests {
             &mut db,
             &Playlist {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 name: "Bulk Base".to_string(),
                 description: None,
                 is_public: None,
@@ -835,7 +835,7 @@ mod tests {
             &mut db,
             &Playlist {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 name: "Inserted".to_string(),
                 description: None,
                 is_public: None,
@@ -977,7 +977,7 @@ mod tests {
 
         let playlist = Playlist {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             name: "Remove Test".to_string(),
             description: None,
             is_public: None,
@@ -1005,7 +1005,7 @@ mod tests {
 
         let playlist = Playlist {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             name: "Move Test".to_string(),
             description: None,
             is_public: None,
@@ -1042,7 +1042,7 @@ mod tests {
 
         let playlist = Playlist {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             name: "Delete Me".to_string(),
             description: None,
             is_public: None,
@@ -1066,7 +1066,7 @@ mod tests {
 
         let playlist = Playlist {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             name: "Entry Filter".to_string(),
             description: None,
             is_public: None,
@@ -1100,7 +1100,7 @@ mod tests {
         let user_db_id = create_test_user(db)?;
         let playlist = Playlist {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             name: "Positions".to_string(),
             description: None,
             is_public: None,
@@ -1239,7 +1239,7 @@ mod tests {
         for name in ["First", "Second"] {
             let playlist = Playlist {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 name: name.to_string(),
                 description: None,
                 is_public: None,
@@ -1270,7 +1270,7 @@ mod tests {
 
         let playlist = Playlist {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             name: "Dupes".to_string(),
             description: None,
             is_public: None,

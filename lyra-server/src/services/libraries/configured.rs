@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use agdb::DbAny;
-use nanoid::nanoid;
+use lyra_db::nanoid;
 
 use anyhow::{
     Result,
@@ -185,7 +185,7 @@ fn find_or_create_library_locked(
             lyra_db::libraries::create_system(
                 t,
                 lyra_db::libraries::LibraryInsert {
-                    id: nanoid!(),
+                    id: nanoid(),
                     name: display_name,
                     path: lookup_path,
                     path_key: lookup_key,
@@ -235,7 +235,7 @@ mod tests {
     use std::path::PathBuf;
 
     use agdb::DbAny;
-    use nanoid::nanoid;
+    use lyra_db::nanoid;
 
     use std::path::Path;
 
@@ -265,7 +265,7 @@ mod tests {
     }
 
     fn unique_dir() -> String {
-        format!("/tmp/lyra-bootstrap-{}", nanoid!())
+        format!("/tmp/lyra-bootstrap-{}", nanoid())
     }
 
     #[test]

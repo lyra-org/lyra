@@ -1018,7 +1018,7 @@ mod tests {
     }
 
     use anyhow::anyhow;
-    use nanoid::nanoid;
+    use lyra_db::nanoid;
 
     use lyra_db::fixtures::{
         connect,
@@ -1457,7 +1457,7 @@ mod tests {
 
         let playlist = Playlist {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             name: "Playlist".to_string(),
             description: None,
             is_public: Some(false),

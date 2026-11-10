@@ -1016,7 +1016,7 @@ pub(crate) fn delete_for_user(db: &mut impl DbAccess, user_db_id: DbId) -> anyho
 
 #[cfg(test)]
 mod tests {
-    use nanoid::nanoid;
+    use crate::nanoid;
 
     use super::*;
     use crate::{
@@ -1037,7 +1037,7 @@ mod tests {
             &mut db,
             &PlaybackSession {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 client_name: None,
                 plugin_id: None,
                 position_ms: 0,
@@ -1045,7 +1045,7 @@ mod tests {
                 played_ms: 0,
                 last_position_ms: 0,
                 state: PlaybackState::Playing,
-                play_id: nanoid::nanoid!(),
+                play_id: crate::nanoid(),
                 latency_allowance_used_ms: 0,
                 rate_permille: 1000,
                 counts_as_listen: true,
@@ -1066,7 +1066,7 @@ mod tests {
             db,
             &PlaybackSession {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 client_name: None,
                 plugin_id: None,
                 position_ms: 0,
@@ -1074,7 +1074,7 @@ mod tests {
                 played_ms: 0,
                 last_position_ms: 0,
                 state: PlaybackState::Paused,
-                play_id: nanoid!(),
+                play_id: nanoid(),
                 latency_allowance_used_ms: 0,
                 rate_permille: 1000,
                 counts_as_listen: true,
@@ -1184,7 +1184,7 @@ mod tests {
     fn playback() -> Playback {
         Playback {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             source: PlaybackSource::Queue(Queue {
                 revision: 1,
                 track_ids: vec!["track".to_string()],
@@ -1585,7 +1585,7 @@ mod tests {
             &mut db,
             &crate::Playlist {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 name: "Owned playlist".to_string(),
                 description: None,
                 is_public: None,

@@ -169,6 +169,7 @@ pub fn is_poisoned(error: &anyhow::Error) -> bool {
 pub use ids::{
     NodeId,
     ResolveId,
+    nanoid,
 };
 
 /// Deduplicate a slice of `DbId`s, discarding non-positive IDs and preserving

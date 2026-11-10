@@ -252,7 +252,7 @@ mod tests {
                     source,
                     Cover {
                         db_id: None,
-                        id: nanoid::nanoid!(),
+                        id: lyra_db::nanoid(),
                         path: path.to_string_lossy().into_owned(),
                         mime_type: "image/png".to_string(),
                         hash: source.as_str().to_string(),

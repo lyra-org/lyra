@@ -361,7 +361,7 @@ mod tests {
     };
 
     use agdb::QueryBuilder;
-    use nanoid::nanoid;
+    use lyra_db::nanoid;
 
     use super::*;
     use crate::services::auth::Principal;
@@ -386,7 +386,7 @@ mod tests {
     ) -> anyhow::Result<DbId> {
         let entry = Entry {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             full_path: PathBuf::from(format!("/music/{name}")),
             file_kind: (kind == EntryKind::File).then(|| "audio".to_string()),
             kind,

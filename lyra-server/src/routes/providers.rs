@@ -818,6 +818,7 @@ mod tests {
     };
     use anyhow::anyhow;
     use axum::http::StatusCode;
+    use lyra_db::nanoid;
     use lyra_db::roots::{
         self,
         Root,
@@ -827,7 +828,6 @@ mod tests {
         IdSource,
         Track,
     };
-    use nanoid::nanoid;
     use std::path::PathBuf;
 
     use lyra_db::fixtures::{
@@ -1012,7 +1012,7 @@ mod tests {
     ) -> anyhow::Result<DbId> {
         let track = Track {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             track_title: title.to_string(),
             sort_title: None,
             year: None,
@@ -1065,7 +1065,7 @@ mod tests {
     fn insert_entry(db: &mut DbAny, full_path: &str) -> anyhow::Result<DbId> {
         let entry = Entry {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             full_path: PathBuf::from(full_path),
             kind: lyra_db::entries::EntryKind::File,
             file_kind: Some("audio".to_string()),
@@ -1474,7 +1474,7 @@ mod tests {
                     db,
                     &lyra_db::roles::Role {
                         db_id: None,
-                        id: nanoid!(),
+                        id: nanoid(),
                         name: format!("{name}-role"),
                         permissions,
                     },

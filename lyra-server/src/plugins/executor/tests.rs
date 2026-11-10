@@ -2763,7 +2763,7 @@ fn cover_bindings_hide_inaccessible_releases() -> Result<()> {
                 lyra_db::covers::CoverSource::Local,
                 lyra_db::Cover {
                     db_id: None,
-                    id: nanoid::nanoid!(),
+                    id: lyra_db::nanoid(),
                     path: image.path().to_string_lossy().into_owned(),
                     mime_type: "image/png".into(),
                     hash: "hash".into(),
@@ -2817,7 +2817,7 @@ fn cover_artwork_bindings_serve_anonymous_public_routes() -> Result<()> {
             lyra_db::covers::CoverSource::Local,
             lyra_db::Cover {
                 db_id: None,
-                id: nanoid::nanoid!(),
+                id: lyra_db::nanoid(),
                 path: image.path().to_string_lossy().into_owned(),
                 mime_type: "image/png".into(),
                 hash: "hash".into(),
@@ -2831,7 +2831,7 @@ fn cover_artwork_bindings_serve_anonymous_public_routes() -> Result<()> {
         &mut database,
         &lyra_db::Playlist {
             db_id: None,
-            id: nanoid::nanoid!(),
+            id: lyra_db::nanoid(),
             name: "Private".into(),
             description: None,
             is_public: Some(false),
@@ -2918,7 +2918,7 @@ fn streamable_bindings_serve_anonymous_public_routes() -> Result<()> {
         .tempfile_in(directory.path())?;
     let entry = lyra_db::Entry {
         db_id: None,
-        id: nanoid::nanoid!(),
+        id: lyra_db::nanoid(),
         full_path: audio.path().to_path_buf(),
         kind: lyra_db::entries::EntryKind::File,
         file_kind: Some("audio".into()),
@@ -3077,7 +3077,7 @@ fn track_source_bindings_hide_inaccessible_tracks() -> Result<()> {
         let track = lyra_db::fixtures::insert_track(&mut fixture.db, name)?;
         let entry = lyra_db::Entry {
             db_id: None,
-            id: nanoid::nanoid!(),
+            id: lyra_db::nanoid(),
             full_path: std::path::PathBuf::from(format!("/music/{name}.flac")),
             kind: lyra_db::entries::EntryKind::File,
             file_kind: Some("audio".into()),

@@ -28,7 +28,7 @@ use axum::{
         post,
     },
 };
-use nanoid::nanoid;
+use lyra_db::nanoid;
 use serde::{
     Deserialize,
     Serialize,
@@ -482,7 +482,7 @@ async fn create_playback(
     let update = playbacks::create_playback(
         &mut db,
         playbacks::CreatePlaybackRequest {
-            id: nanoid!(),
+            id: nanoid(),
             play_id: request.play_id,
             user_db_id,
             client_name: auth.client_name,

@@ -1364,8 +1364,8 @@ mod tests {
     ) -> anyhow::Result<lyra_db::playbacks::Playback> {
         let mut session = lyra_db::PlaybackSession {
             db_id: None,
-            id: nanoid::nanoid!(),
-            play_id: nanoid::nanoid!(),
+            id: lyra_db::nanoid(),
+            play_id: lyra_db::nanoid(),
             client_name: None,
             plugin_id: None,
             position_ms,
@@ -1383,7 +1383,7 @@ mod tests {
         };
         let playback = lyra_db::playbacks::Playback {
             db_id: None,
-            id: nanoid::nanoid!(),
+            id: lyra_db::nanoid(),
             source: lyra_db::playbacks::PlaybackSource::Queue(lyra_db::playbacks::Queue {
                 revision: 3,
                 track_ids: track_ids.iter().map(ToString::to_string).collect(),
@@ -1457,8 +1457,8 @@ mod tests {
         let update = create_playback(
             &mut db,
             CreatePlaybackRequest {
-                id: nanoid::nanoid!(),
-                play_id: nanoid::nanoid!(),
+                id: lyra_db::nanoid(),
+                play_id: lyra_db::nanoid(),
                 user_db_id,
                 client_name: None,
                 queue: ValidatedQueue {
@@ -1490,11 +1490,11 @@ mod tests {
         let (mut db, user_db_id, track_db_id, _, track_id, _) = setup()?;
         // A realistic time; listens need starts after 2010.
         let t0 = 1_800_000_000_000;
-        let play_id = nanoid::nanoid!();
+        let play_id = lyra_db::nanoid();
         let created = create_playback(
             &mut db,
             CreatePlaybackRequest {
-                id: nanoid::nanoid!(),
+                id: lyra_db::nanoid(),
                 play_id: play_id.clone(),
                 user_db_id,
                 client_name: None,
@@ -1555,11 +1555,11 @@ mod tests {
         crate::services::testing::init_default_test_state()?;
         let (mut db, user_db_id, track_db_id, _, track_id, _) = setup()?;
         make_admin(&mut db, user_db_id)?;
-        let play_id = nanoid::nanoid!();
+        let play_id = lyra_db::nanoid();
         let created = create_playback(
             &mut db,
             CreatePlaybackRequest {
-                id: nanoid::nanoid!(),
+                id: lyra_db::nanoid(),
                 play_id: play_id.clone(),
                 user_db_id,
                 client_name: None,
@@ -1769,8 +1769,8 @@ mod tests {
         let created = create_playback(
             &mut db,
             CreatePlaybackRequest {
-                id: nanoid::nanoid!(),
-                play_id: nanoid::nanoid!(),
+                id: lyra_db::nanoid(),
+                play_id: lyra_db::nanoid(),
                 user_db_id,
                 client_name: None,
                 queue: ValidatedQueue {
@@ -1828,8 +1828,8 @@ mod tests {
         let created = create_playback(
             &mut db,
             CreatePlaybackRequest {
-                id: nanoid::nanoid!(),
-                play_id: nanoid::nanoid!(),
+                id: lyra_db::nanoid(),
+                play_id: lyra_db::nanoid(),
                 user_db_id,
                 client_name: None,
                 queue: ValidatedQueue {

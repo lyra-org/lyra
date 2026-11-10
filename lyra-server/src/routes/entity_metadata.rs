@@ -85,7 +85,7 @@ mod tests {
             },
         },
     };
-    use nanoid::nanoid;
+    use lyra_db::nanoid;
     use tower::ServiceExt;
 
     use super::*;
@@ -154,12 +154,12 @@ mod tests {
                 &mut db,
                 &lyra_db::fixtures::test_user("entity-metadata-reference-manager")?,
             )?;
-            let role_name = format!("metadata-manager-{}", nanoid!());
+            let role_name = format!("metadata-manager-{}", nanoid());
             lyra_db::roles::create(
                 &mut db,
                 &lyra_db::roles::Role {
                     db_id: None,
-                    id: nanoid!(),
+                    id: nanoid(),
                     name: role_name.clone(),
                     permissions: vec![lyra_db::Permission::ManageMetadata],
                 },

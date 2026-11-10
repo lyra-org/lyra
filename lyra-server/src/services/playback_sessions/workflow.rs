@@ -9,7 +9,7 @@ use agdb::{
     DbAny,
     DbId,
 };
-use nanoid::nanoid;
+use lyra_db::nanoid;
 
 use lyra_db::{
     PlaybackSession,
@@ -517,7 +517,7 @@ fn new_playback_session(
 
     PlaybackSession {
         db_id: None,
-        id: nanoid!(),
+        id: nanoid(),
         play_id,
         client_name,
         plugin_id,

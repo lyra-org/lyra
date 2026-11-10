@@ -841,6 +841,7 @@ mod tests {
         insert_release,
         insert_track,
     };
+    use lyra_db::nanoid;
     use lyra_db::roots::{
         self,
         Root,
@@ -849,7 +850,6 @@ mod tests {
         connect_artist,
         new_test_db,
     };
-    use nanoid::nanoid;
 
     use agdb::{
         QueryBuilder,
@@ -1154,7 +1154,7 @@ mod tests {
         let mut db = new_test_db()?;
         let release = Release {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             release_title: "Test Release".to_string(),
             sort_title: None,
             release_type: None,
@@ -1183,7 +1183,7 @@ mod tests {
         let mut db = new_test_db()?;
         let track = Track {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             track_title: "Test Track".to_string(),
             sort_title: None,
             year: None,
@@ -1215,7 +1215,7 @@ mod tests {
         let mut db = new_test_db()?;
         let artist = Artist {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             artist_name: "Test Artist".to_string(),
             scan_name: "test artist".to_string(),
             scan_aliases: Vec::new(),

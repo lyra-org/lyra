@@ -723,7 +723,7 @@ mod tests {
         response::IntoResponse,
     };
     use lyra_db::User;
-    use nanoid::nanoid;
+    use lyra_db::nanoid;
     use std::{
         path::PathBuf,
         time::{
@@ -747,7 +747,7 @@ mod tests {
         let mut db = STATE.db.write().await;
         let user = User {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             username: username.to_string(),
             password: "unused".to_string(),
         };
@@ -790,7 +790,7 @@ mod tests {
             lyra_db::roles::ensure_builtin_roles(&mut db)?;
             let user = User {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 username: username.to_string(),
                 password: "unused".to_string(),
             };
@@ -800,7 +800,7 @@ mod tests {
             } else {
                 let role = lyra_db::roles::Role {
                     db_id: None,
-                    id: nanoid!(),
+                    id: nanoid(),
                     name: role_name.to_string(),
                     permissions,
                 };
@@ -832,8 +832,8 @@ mod tests {
                 &mut db,
                 &User {
                     db_id: None,
-                    id: nanoid!(),
-                    username: format!("caller-{}", nanoid!()),
+                    id: nanoid(),
+                    username: format!("caller-{}", nanoid()),
                     password: crate::services::auth::passwords::hash("caller-password").await?,
                 },
             )?;
@@ -842,7 +842,7 @@ mod tests {
                 caller_db_id,
                 lyra_db::roles::BUILTIN_ADMIN_ROLE,
             )?;
-            let target = lyra_db::fixtures::test_user(&format!("target-{}", nanoid!()))?;
+            let target = lyra_db::fixtures::test_user(&format!("target-{}", nanoid()))?;
             lyra_db::users::create(&mut db, &target)?;
             (caller_db_id, target.id)
         };
@@ -1151,7 +1151,7 @@ mod tests {
             &mut db,
             &lyra_db::roles::Role {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 name: format!("{username}-role"),
                 permissions,
             },
@@ -1327,7 +1327,7 @@ mod tests {
                 &mut db,
                 &lyra_db::roles::Role {
                     db_id: None,
-                    id: nanoid!(),
+                    id: nanoid(),
                     name: "escalated".to_string(),
                     permissions: vec![Permission::ManageUsers, Permission::ManagePlugins],
                 },
@@ -1431,7 +1431,7 @@ mod tests {
             lyra_db::roles::ensure_builtin_roles(&mut db)?;
             let user = User {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 username: "rotate-user".to_string(),
                 password: initial_password_hash,
             };
@@ -1514,7 +1514,7 @@ mod tests {
         let _guard = runtime_test_lock().await;
         let test_dir = initialize_test_runtime().await?;
 
-        let target_user_id = nanoid!();
+        let target_user_id = nanoid();
         let target_user_db_id = {
             let mut db = STATE.db.write().await;
             lyra_db::roles::ensure_builtin_roles(&mut db)?;
@@ -1705,7 +1705,7 @@ mod tests {
             lyra_db::roles::ensure_builtin_roles(&mut db)?;
             let user = User {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 username: "session-meta".to_string(),
                 password: crate::services::auth::passwords::hash(password).await?,
             };
@@ -1763,7 +1763,7 @@ mod tests {
             lyra_db::roles::ensure_builtin_roles(&mut db)?;
             let user = User {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 username: "bad-client-name".to_string(),
                 password: crate::services::auth::passwords::hash(password).await?,
             };

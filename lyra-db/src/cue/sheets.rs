@@ -10,7 +10,7 @@ use agdb::{
     QueryBuilder,
 };
 
-use nanoid::nanoid;
+use crate::nanoid;
 
 use crate::roots::{
     self,
@@ -47,7 +47,7 @@ pub fn upsert(
     let existing_id = find_sheet_id_by_identity(db, &identity)?;
     let sheet = CueSheet {
         db_id: existing_id,
-        id: nanoid!(),
+        id: nanoid(),
         source_hash: source_hash.to_string(),
         identity,
     };

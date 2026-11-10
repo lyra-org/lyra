@@ -877,11 +877,11 @@ mod tests {
     fn library_insert(name: &str, suffix: &str) -> lyra_db::libraries::LibraryInsert {
         let path = std::path::PathBuf::from(format!(
             "/tmp/lyra-auth-test-{}-{suffix}",
-            nanoid::nanoid!()
+            lyra_db::nanoid()
         ));
         let path_key = lyra_db::libraries::path_key_for(&path);
         lyra_db::libraries::LibraryInsert {
-            id: nanoid::nanoid!(),
+            id: lyra_db::nanoid(),
             name: name.to_string(),
             path,
             path_key,
@@ -1365,7 +1365,7 @@ mod tests {
                 lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("library-manager")?)?;
             let role = lyra_db::roles::Role {
                 db_id: None,
-                id: nanoid::nanoid!(),
+                id: lyra_db::nanoid(),
                 name: "library-manager".to_string(),
                 permissions: vec![Permission::ManageLibraries],
             };

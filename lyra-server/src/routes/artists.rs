@@ -716,7 +716,7 @@ mod tests {
             header::AUTHORIZATION,
         },
     };
-    use nanoid::nanoid;
+    use lyra_db::nanoid;
     use std::{
         collections::HashSet,
         path::PathBuf,
@@ -776,7 +776,7 @@ mod tests {
         accessible_library_ids: HashSet<String>,
     ) -> Principal {
         let mut db = STATE.db.write().await;
-        let user_db_id = lyra_db::test_db::insert_user(&mut db, &nanoid!()).expect("insert user");
+        let user_db_id = lyra_db::test_db::insert_user(&mut db, &nanoid()).expect("insert user");
         Principal::for_user(&*db, user_db_id, permissions, accessible_library_ids)
     }
 
@@ -796,7 +796,7 @@ mod tests {
                 lyra_db::covers::CoverSource::Local,
                 lyra_db::Cover {
                     db_id: None,
-                    id: nanoid!(),
+                    id: nanoid(),
                     path: crate::services::testing::existing_cover_path(),
                     mime_type: "image/jpeg".to_string(),
                     hash: "a".repeat(64),

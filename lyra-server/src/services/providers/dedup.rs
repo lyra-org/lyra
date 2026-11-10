@@ -528,7 +528,7 @@ mod tests {
             lyra_db::libraries::create_system(
                 t,
                 lyra_db::libraries::LibraryInsert {
-                    id: nanoid::nanoid!(),
+                    id: lyra_db::nanoid(),
                     name: name.to_string(),
                     path: path.to_path_buf(),
                     path_key: lyra_db::libraries::path_key_for(path),

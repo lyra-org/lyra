@@ -119,7 +119,7 @@ impl ConnectionRegistry {
 
         let connection_id = self.next_id;
         self.next_id = id;
-        let public_id = nanoid::nanoid!();
+        let public_id = lyra_db::nanoid();
         self.public_ids.insert(public_id.clone(), connection_id);
         self.connections.insert(
             connection_id,

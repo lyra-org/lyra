@@ -526,7 +526,7 @@ mod tests {
         connect(&mut db, visible_release, replaced_id)?;
         let replaced = lyra_db::tracks::get_by_id(&db, replaced_id)?.expect("candidate exists");
         let mut replacement = replaced.clone();
-        replacement.id = nanoid::nanoid!();
+        replacement.id = lyra_db::nanoid();
         replacement.track_title = "Replacement Track".to_string();
         lyra_db::tracks::update(&mut db, &replacement)?;
 

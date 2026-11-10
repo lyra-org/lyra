@@ -88,8 +88,8 @@ mod tests {
         let reported_at_ms = now_ms - 10 * 60 * 1000;
         let mut session = lyra_db::PlaybackSession {
             db_id: None,
-            id: nanoid::nanoid!(),
-            play_id: nanoid::nanoid!(),
+            id: lyra_db::nanoid(),
+            play_id: lyra_db::nanoid(),
             client_name: None,
             plugin_id: Some("external".to_string()),
             position_ms: 0,

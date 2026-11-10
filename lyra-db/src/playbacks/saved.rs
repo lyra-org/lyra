@@ -90,7 +90,7 @@ pub fn unclaim(
 
 #[cfg(test)]
 mod tests {
-    use nanoid::nanoid;
+    use crate::nanoid;
 
     use super::*;
     use crate::{
@@ -114,8 +114,8 @@ mod tests {
     fn session() -> PlaybackSession {
         PlaybackSession {
             db_id: None,
-            id: nanoid!(),
-            play_id: nanoid!(),
+            id: nanoid(),
+            play_id: nanoid(),
             client_name: None,
             plugin_id: None,
             position_ms: 0,
@@ -136,7 +136,7 @@ mod tests {
     fn queue_playback() -> Playback {
         Playback {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             source: PlaybackSource::Queue(Queue {
                 revision: 1,
                 track_ids: vec!["track".to_string()],

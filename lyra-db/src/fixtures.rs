@@ -9,17 +9,17 @@ use super::roots::{
     self,
     Root,
 };
+use crate::nanoid;
 use agdb::{
     DbAny,
     DbId,
     QueryBuilder,
 };
-use nanoid::nanoid;
 
 pub fn insert_track(db: &mut DbAny, title: &str) -> anyhow::Result<DbId> {
     let track = super::tracks::Track {
         db_id: None,
-        id: nanoid!(),
+        id: nanoid(),
         track_title: title.to_string(),
         sort_title: None,
         year: None,
@@ -44,7 +44,7 @@ pub fn insert_track(db: &mut DbAny, title: &str) -> anyhow::Result<DbId> {
 pub fn insert_release(db: &mut DbAny, title: &str) -> anyhow::Result<DbId> {
     let release = super::releases::Release {
         db_id: None,
-        id: nanoid!(),
+        id: nanoid(),
         release_title: title.to_string(),
         sort_title: None,
         release_type: None,
@@ -66,7 +66,7 @@ pub fn insert_release(db: &mut DbAny, title: &str) -> anyhow::Result<DbId> {
 pub fn insert_artist(db: &mut DbAny, name: &str) -> anyhow::Result<DbId> {
     let artist = super::artists::Artist {
         db_id: None,
-        id: nanoid!(),
+        id: nanoid(),
         artist_name: name.to_string(),
         scan_name: name.to_lowercase(),
         scan_aliases: Vec::new(),
@@ -95,8 +95,8 @@ pub fn insert_listen(
         .ok_or_else(|| anyhow::anyhow!("track {track_db_id:?} has no public id"))?;
     let listen = super::Listen {
         db_id: None,
-        id: nanoid!(),
-        play_id: nanoid!(),
+        id: nanoid(),
+        play_id: nanoid(),
         track_public_id,
         started_at_ms,
         played_ms: Some(180_000),
@@ -111,7 +111,7 @@ pub const UNUSABLE_PASSWORD_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$bHlyYWZ
 pub fn test_user(username: &str) -> anyhow::Result<super::users::User> {
     Ok(super::users::User {
         db_id: None,
-        id: nanoid!(),
+        id: nanoid(),
         username: username.to_string(),
         password: UNUSABLE_PASSWORD_HASH.to_string(),
     })
@@ -126,7 +126,7 @@ pub fn connect(db: &mut DbAny, from: DbId, to: DbId) -> anyhow::Result<()> {
 pub fn insert_file_entry(db: &mut DbAny, parent: DbId, name: &str) -> anyhow::Result<DbId> {
     let entry = super::entries::Entry {
         db_id: None,
-        id: nanoid!(),
+        id: nanoid(),
         full_path: format!("/music/{name}").into(),
         kind: super::entries::EntryKind::File,
         file_kind: Some("audio".to_string()),

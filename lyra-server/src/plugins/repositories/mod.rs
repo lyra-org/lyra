@@ -49,7 +49,7 @@ use harmony_repository::{
     stage_candidate,
     uninstall_plugin,
 };
-use nanoid::nanoid;
+use lyra_db::nanoid;
 use tokio::sync::{
     Mutex,
     MutexGuard,
@@ -161,7 +161,7 @@ pub(crate) fn seed_default(db: &mut DbAny) -> anyhow::Result<()> {
         db,
         &repo_db::PluginRepository {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             origin: DEFAULT_ORIGIN.to_string(),
             name: manifest.name,
             description: manifest.description,
@@ -1715,7 +1715,7 @@ pub(crate) async fn add_repository(
 
     let mut record = repo_db::PluginRepository {
         db_id: None,
-        id: nanoid!(),
+        id: nanoid(),
         origin: listing.spec.canonical_url(),
         name: listed.name,
         description: listed.description,

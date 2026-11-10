@@ -15,6 +15,21 @@ use serde::{
     Serialize,
 };
 
+const NANOID_ALPHABET: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
+const NANOID_LEN: usize = 21;
+
+/// A new random public id: 21 URL-safe characters, 126 bits from the thread's cryptographic
+/// generator.
+pub fn nanoid() -> String {
+    let mut bytes = [0u8; NANOID_LEN];
+    rand::fill(&mut bytes);
+    bytes
+        .iter()
+        .map(|byte| NANOID_ALPHABET[usize::from(byte % 64)] as char)
+        .collect()
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct NodeId(DbId);
@@ -131,5 +146,30 @@ impl ResolveId {
     /// Creates a ResolveId for a known root collection alias.
     pub fn alias(name: &str) -> Self {
         ResolveId::Alias(name.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::{
+        NANOID_ALPHABET,
+        nanoid,
+    };
+
+    #[test]
+    fn nanoids_are_21_url_safe_characters() {
+        let alphabet = NANOID_ALPHABET.iter().copied().collect::<HashSet<_>>();
+        assert_eq!(alphabet.len(), 64);
+
+        let mut seen = HashSet::new();
+        for _ in 0..1_000 {
+            let id = nanoid();
+            assert_eq!(id.len(), 21);
+            assert!(id.bytes().all(|byte| alphabet.contains(&byte)), "{id}");
+            seen.extend(id.bytes());
+        }
+        assert_eq!(seen, alphabet);
     }
 }

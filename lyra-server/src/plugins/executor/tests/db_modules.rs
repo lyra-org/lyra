@@ -90,7 +90,7 @@ fn plugin_executor_exposes_db_backed_lyra_chromaprint_module() -> Result<()> {
     )?;
     let entry = lyra_db::entries::Entry {
         db_id: None,
-        id: nanoid::nanoid!(),
+        id: lyra_db::nanoid(),
         full_path: std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/assets/metadata/integration_track.flac"),
         kind: lyra_db::entries::EntryKind::File,
@@ -620,7 +620,7 @@ fn plugin_executor_exposes_db_backed_lyra_track_sources_module() -> Result<()> {
     let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Source Track")?;
     let entry = lyra_db::entries::Entry {
         db_id: None,
-        id: nanoid::nanoid!(),
+        id: lyra_db::nanoid(),
         full_path: std::path::PathBuf::from("/music/raw-source.FLAC"),
         kind: lyra_db::entries::EntryKind::File,
         file_kind: Some("audio".to_string()),
@@ -696,7 +696,7 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
     std::fs::write(&entry_path, b"plugin playback source")?;
     let entry = lyra_db::entries::Entry {
         db_id: None,
-        id: nanoid::nanoid!(),
+        id: lyra_db::nanoid(),
         full_path: entry_path.clone(),
         kind: lyra_db::entries::EntryKind::File,
         file_kind: Some("audio".to_string()),
@@ -1268,12 +1268,12 @@ fn plugin_executor_exposes_db_backed_lyra_tags_module() -> Result<()> {
     let user_public_id = user.id.clone();
     let user_db_id = lyra_db::users::create(&mut db, &user)?;
     let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Tag Track")?;
-    let suffix = nanoid::nanoid!();
+    let suffix = lyra_db::nanoid();
     let library_path = std::path::PathBuf::from(format!("/tmp/lyra-plugin-tags-{suffix}"));
     let library = lyra_db::libraries::create_with_creator(
         &mut db,
         lyra_db::libraries::LibraryInsert {
-            id: nanoid::nanoid!(),
+            id: lyra_db::nanoid(),
             name: format!("Plugin Tags {suffix}"),
             path_key: lyra_db::libraries::path_key_for(&library_path),
             path: library_path,

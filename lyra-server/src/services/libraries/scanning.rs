@@ -17,7 +17,7 @@ use std::{
 };
 
 use blake3::Hasher;
-use nanoid::nanoid;
+use lyra_db::nanoid;
 use rayon::iter::{
     IntoParallelIterator,
     ParallelIterator,
@@ -266,7 +266,7 @@ pub(crate) fn scan_fs(
 
         entries.push(Entry {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             full_path: de.path().to_path_buf(),
             name: de.file_name().to_string_lossy().into(),
             kind: if is_file {

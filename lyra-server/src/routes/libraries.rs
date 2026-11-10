@@ -23,7 +23,7 @@ use axum::{
     Router,
     routing::post,
 };
-use nanoid::nanoid;
+use lyra_db::nanoid;
 use serde::{
     Deserialize,
     Serialize,
@@ -319,7 +319,7 @@ async fn create_library(
                 lyra_db::libraries::create_with_creator(
                     t,
                     lyra_db::libraries::LibraryInsert {
-                        id: nanoid!(),
+                        id: nanoid(),
                         name: library.name,
                         path: directory,
                         path_key,
@@ -961,7 +961,7 @@ mod tests {
         let path = std::path::PathBuf::from(format!("/tmp/lyra-route-library-{suffix}"));
         let path_key = lyra_db::libraries::path_key_for(&path);
         lyra_db::libraries::LibraryInsert {
-            id: nanoid!(),
+            id: nanoid(),
             name: name.to_string(),
             path,
             path_key,
@@ -979,7 +979,7 @@ mod tests {
         let user_db_id = lyra_db::users::create(db, &lyra_db::fixtures::test_user(username)?)?;
         let role = lyra_db::roles::Role {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             name: format!("{username}-role"),
             permissions,
         };
@@ -1172,7 +1172,7 @@ mod tests {
             })?;
             let record = lyra_db::sync_runs::SyncRunRecord {
                 db_id: None,
-                id: nanoid!(),
+                id: nanoid(),
                 library_id: library.id.clone(),
                 kind: "library_sync".into(),
                 status: "running".into(),

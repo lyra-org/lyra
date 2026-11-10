@@ -15,6 +15,7 @@ use std::{
     },
 };
 
+use crate::nanoid;
 use agdb::{
     CountComparison,
     DbElement,
@@ -25,7 +26,6 @@ use agdb::{
     DbValue,
     QueryBuilder,
 };
-use nanoid::nanoid;
 
 use crate::{
     DbAccess,
@@ -390,7 +390,7 @@ pub(crate) fn ensure_profile(
 
     let profile = DisplayCoverProfile {
         db_id: None,
-        id: nanoid!(),
+        id: nanoid(),
         identity,
         target_kind: target.kind,
         scope,
@@ -1685,7 +1685,7 @@ mod tests {
     fn insert_playlist(db: &mut agdb::DbAny, user_db_id: DbId) -> anyhow::Result<(DbId, String)> {
         let playlist = crate::playlists::Playlist {
             db_id: None,
-            id: nanoid!(),
+            id: nanoid(),
             name: "Display Cover Playlist".to_string(),
             description: None,
             is_public: None,

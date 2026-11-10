@@ -488,6 +488,7 @@ mod tests {
         QueryBuilder,
     };
     use lyra_db::fixtures::test_user;
+    use lyra_db::nanoid;
     use lyra_db::roots::{
         self,
         Root,
@@ -497,7 +498,6 @@ mod tests {
         Playlist,
         users,
     };
-    use nanoid::nanoid;
 
     fn create_tag(
         db: &mut DbAny,
@@ -514,7 +514,7 @@ mod tests {
     }
 
     fn create_track(db: &mut DbAny) -> anyhow::Result<(DbId, String)> {
-        let public_id = nanoid!();
+        let public_id = nanoid();
         let track_db_id = db
             .exec_mut(
                 QueryBuilder::insert()
@@ -532,11 +532,11 @@ mod tests {
     }
 
     fn library_insert(name: &str) -> lyra_db::libraries::LibraryInsert {
-        let suffix = nanoid!();
+        let suffix = nanoid();
         let path = std::path::PathBuf::from(format!("/tmp/lyra-tags-test-{suffix}"));
         let path_key = lyra_db::libraries::path_key_for(&path);
         lyra_db::libraries::LibraryInsert {
-            id: nanoid!(),
+            id: nanoid(),
             name: format!("{name}-{suffix}"),
             path,
             path_key,
@@ -586,7 +586,7 @@ mod tests {
         owner: DbId,
         is_public: bool,
     ) -> anyhow::Result<(DbId, String)> {
-        let public_id = nanoid!();
+        let public_id = nanoid();
         let playlist = Playlist {
             db_id: None,
             id: public_id.clone(),

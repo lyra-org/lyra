@@ -15,6 +15,7 @@ use std::time::{
     UNIX_EPOCH,
 };
 
+use crate::nanoid;
 use agdb::{
     DbAny,
     DbAnyTransactionMut,
@@ -26,7 +27,6 @@ use agdb::{
     QueryBuilder,
 };
 use anyhow::anyhow;
-use nanoid::nanoid;
 use serde::{
     Deserialize,
     Serialize,
@@ -545,7 +545,7 @@ pub fn create(
 ) -> anyhow::Result<DbId> {
     let artist = Artist {
         db_id: None,
-        id: nanoid!(),
+        id: nanoid(),
         artist_name: artist_name.to_string(),
         scan_name: artist_name.to_string(),
         scan_aliases: Vec::new(),

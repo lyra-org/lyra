@@ -1000,7 +1000,7 @@ mod tests {
                 headers.clone(),
                 Json(ListenSubmissionRequest {
                     plays: vec![SubmittedPlayRequest {
-                        play_id: nanoid::nanoid!(),
+                        play_id: lyra_db::nanoid(),
                         track_id: track_id.to_string(),
                         started_at: "2026-10-01T12:00:00Z".to_string(),
                         played_ms: None,
@@ -1172,7 +1172,7 @@ mod tests {
             },
             response::IntoResponse,
         };
-        use nanoid::nanoid;
+        use lyra_db::nanoid;
 
         use super::*;
 
@@ -1207,7 +1207,7 @@ mod tests {
             let (user_db_id, long) = {
                 let mut db = STATE.db.write().await;
                 lyra_db::roles::ensure_builtin_roles(&mut db)?;
-                let user = lyra_db::fixtures::test_user(&format!("listener-{}", nanoid!()))?;
+                let user = lyra_db::fixtures::test_user(&format!("listener-{}", nanoid()))?;
                 let user_db_id = lyra_db::users::create(&mut db, &user)?;
                 if admin {
                     lyra_db::roles::ensure_user_has_role(
