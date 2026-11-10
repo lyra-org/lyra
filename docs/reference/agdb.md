@@ -44,7 +44,9 @@ project-local guidance for using agdb in Lyra.
 - Storage is a **single file** database with a write-ahead log (WAL):
   - WAL filename is `.{db_filename}` (same directory).
   - WAL records the **previous bytes** before writes; on load it is replayed in
-    reverse to restore the state before the interrupted transaction.
+    reverse to restore the state before the interrupted transaction, including
+    the file's length. The restored file is always `fdatasync`ed before the
+    WAL is cleared, whatever the `SyncMode`.
   - The WAL is cleared on commit. A `transaction_mut` keeps one WAL scope open
     for the whole closure, so the WAL grows with the bytes it overwrites.
 - Durability is controlled by `SyncMode`:
@@ -119,7 +121,7 @@ project-local guidance for using agdb in Lyra.
 
 ## Query Results
 
-- All queries return `QueryResult { result: i64, elements: Vec<DbElement> }`.
+- All queries return `QueryResult { result: u64, elements: Vec<DbElement> }`.
 - `DbElement` has `id`, `from`, `to`, and `values`:
   - For edge elements (`id < 0`), `from` / `to` are the origin and
     destination node IDs.
@@ -129,7 +131,7 @@ project-local guidance for using agdb in Lyra.
     node IDs.
 - `result` meaning depends on query:
   - Inserts: count of inserted/updated elements (or key-values for insert values).
-  - Removes: negative count of removed items.
+  - Removes: count of removed items.
   - Select/Search: number of returned elements.
 - `QueryResult::ids()` extracts the element IDs for reuse in other queries.
 - **`search()` vs `select().search()`**: A bare `search()` query returns
@@ -236,14 +238,14 @@ project-local guidance for using agdb in Lyra.
 
 - Missing IDs/aliases are **not errors**.
 - Removing nodes also removes their edges and edge values.
-- `result` is the negative count of elements explicitly removed.
+- `result` is the count of elements explicitly removed.
   Cascaded edge removals are **not** included in `result`.
 
 ### Remove Values
 
 - IDs must exist (otherwise error).
 - Missing keys are **not** errors.
-- `result` is the negative count of removed key-value pairs.
+- `result` is the count of removed key-value pairs.
 - `remove().amend(..)` / `amend_uniform(..)` is the inverse of insert amend
   (it builds an insert-values query):
   - Integers subtract with saturation; `F64` also accepts `I64`/`U64`.
@@ -251,7 +253,7 @@ project-local guidance for using agdb in Lyra.
     `TypeError`.
   - `Vec*` removes the **first** occurrence of each given element.
   - Missing keys are skipped; a missing element (id or alias) is an error.
-  - `result` counts amended key-value pairs (positive).
+  - `result` counts amended key-value pairs.
 
 ### Remove Aliases
 
@@ -260,7 +262,7 @@ project-local guidance for using agdb in Lyra.
 ### Remove Index
 
 - Missing index is **not** an error.
-- `result` is negative count of values removed from the index.
+- `result` is the count of values removed from the index.
 
 ## Select Queries
 
@@ -295,7 +297,7 @@ project-local guidance for using agdb in Lyra.
 
 ### Select Node Count
 
-- Returns one element with ID `0` and property `node_count`.
+- Returns the node count in `result`, with no elements.
 
 ## Search Queries
 
@@ -394,6 +396,8 @@ project-local guidance for using agdb in Lyra.
     Filter IDs by `db_element_id` first when type purity is not guaranteed.
 - `DbTypeMarker`: enables vectorized custom types in `DbType`.
 - `DbSerialize` and `DbValue`: enable custom value storage (e.g., enums).
+  `DbSerialize` fields may be `Option<T>` or two-element tuples, and the
+  derive accepts generic types.
 
 ## Practical Patterns
 
