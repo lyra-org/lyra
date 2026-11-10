@@ -74,9 +74,17 @@ local random = query.sort("track", parse({ SortBy = "Random" }))
 assert(random.seed ~= nil)
 assert(query.sort("track", parse({})).seed == nil)
 
--- Filters without a Lyra meaning match nothing or nothing more.
-assert(query.tracks(parse({ Filters = "Likes" }), root) == nil)
-assert(query.tracks(parse({ Filters = "Dislikes" }), root) ~= nil)
+-- As upstream, a like is a rating of 6.5 out of 10 or more: four stars. `Dislikes` narrows nothing,
+-- and the two together match nothing.
+for _, liked in { query.tracks(parse({ Filters = "Likes" }), root), query.releases(parse({ Filters = "Likes" }), root) } do
+	assert(liked.min_rating == 4, `likes: {liked.min_rating}`)
+end
+local liked_artists = query.artists(parse({ Filters = "Likes" }), root, nil)
+assert(liked_artists ~= nil and liked_artists.min_rating == 4)
+assert(query.genres(parse({ Filters = "Likes" }), root) == nil)
+local disliked = query.tracks(parse({ Filters = "Dislikes" }), root)
+assert(disliked ~= nil and disliked.min_rating == nil)
+assert(query.tracks(parse({ Filters = "Likes,Dislikes" }), root) == nil)
 -- Tracks resume from the caller's bookmarks; nothing else resumes.
 local resumable = query.tracks(parse({ Filters = "IsResumable" }), root)
 assert(resumable ~= nil and resumable.bookmarked == true)

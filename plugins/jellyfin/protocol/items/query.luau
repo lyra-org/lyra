@@ -214,8 +214,12 @@ type Common = {
 	genre_ids: { string }?,
 	favorite: boolean?,
 	listened: boolean?,
+	liked: boolean,
 	resumable: boolean,
 }
+
+-- The fewest stars upstream's like line, a rating of 6.5 out of 10, leaves a liked item.
+local MIN_LIKED_STARS = 4
 
 -- Sets a filter flag, failing when it contradicts an earlier one.
 local function flag(current: boolean?, value: boolean): (boolean?, boolean)
@@ -299,15 +303,22 @@ local function common(options: ItemsQueryOptions): Common?
 	if not favorite_ok or not played_ok then
 		return nil
 	end
-	-- Lyra has no likes. A track resumes from the caller's bookmark of it.
+	-- A track resumes from the caller's bookmark of it. `Dislikes` keeps everything, where upstream
+	-- drops the liked items; with `Likes` it matches nothing, which upstream rejects.
 	local resumable = options.resume
+	local liked, disliked = false, false
 	for _, raw_filter in options.filters do
 		local filter = string.lower(raw_filter)
 		if filter == "likes" then
-			return nil
+			liked = true
+		elseif filter == "dislikes" then
+			disliked = true
 		elseif filter == "isresumable" then
 			resumable = true
 		end
+	end
+	if liked and disliked then
+		return nil
 	end
 
 	return {
@@ -316,6 +327,7 @@ local function common(options: ItemsQueryOptions): Common?
 		genre_ids = genre_ids,
 		favorite = favorite,
 		listened = listened,
+		liked = liked,
 		resumable = resumable,
 	}
 end
@@ -402,6 +414,7 @@ function module.tracks(options: ItemsQueryOptions, scope: Scope): TrackQuery?
 	query.years = if #options.years > 0 then options.years else nil
 	query.favorite = filters.favorite
 	query.listened = filters.listened
+	query.min_rating = if filters.liked then MIN_LIKED_STARS else nil
 	query.bookmarked = if filters.resumable then true else nil
 	query.artist_ids = artist_ids
 	query.credit_role = credit_role
@@ -476,6 +489,7 @@ function module.releases(options: ItemsQueryOptions, scope: Scope): ReleaseQuery
 	query.years = if #options.years > 0 then options.years else nil
 	query.favorite = filters.favorite
 	query.listened = filters.listened
+	query.min_rating = if filters.liked then MIN_LIKED_STARS else nil
 	query.artist_ids = artist_ids
 	query.credit_role = credit_role
 	query.exclude_credit_role = exclude_credit_role
@@ -542,6 +556,7 @@ function module.artists(options: ItemsQueryOptions, scope: Scope, role: CreditRo
 	query.genre_ids = genre_ids
 	query.favorite = filters.favorite
 	query.listened = filters.listened
+	query.min_rating = if filters.liked then MIN_LIKED_STARS else nil
 	query.credit_role = role
 	query.sort_name_prefix = options.name_starts_with
 	query.sort_name_at_least = options.name_starts_with_or_greater
@@ -656,8 +671,8 @@ end
 
 function module.genres(options: ItemsQueryOptions, scope: Scope): GenreQuery?
 	local filters = common(options)
-	-- Genres can't be favourites in Lyra, and only tracks resume.
-	if not filters or filters.favorite == true or filters.resumable then
+	-- Genres can't be favourites or rated in Lyra, and only tracks resume.
+	if not filters or filters.favorite == true or filters.liked or filters.resumable then
 		return nil
 	end
 	local release_ids, albums_ok = decode(options.album_ids)

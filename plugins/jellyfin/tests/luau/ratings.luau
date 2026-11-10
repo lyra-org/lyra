@@ -81,6 +81,12 @@ for _, item in listed do
 end
 assert(listed_ratings.Liked == 8 and listed_ratings.Song == nil, "listings carry ratings")
 
+-- `Filters=Likes` keeps what reads as liked.
+local likes = listing.list_items(
+	options.for_user(options.parse({ ParentId = { hex(ids.album) }, Filters = { "Likes" } } :: any), ids.listener)
+)
+assert(#likes == 1 and likes[1].Name == "Liked", `likes: {#likes}`)
+
 -- `/Rating`: likes, a numeric rating, and no value at all, which clears as upstream.
 local body = check(rate("song", { likes = "true" }), 200, "like")
 assert(stars("song") == 5 and body.Rating == 10 and body.Likes == true, "a like is 5 stars")
