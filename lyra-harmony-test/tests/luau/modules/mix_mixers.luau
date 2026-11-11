@@ -139,11 +139,10 @@ for _, seed in seen.wide.seeds do
 	table.insert(history, seed.id)
 end
 assert(#history == 3 and history[1] == ids.s2, "explicit seed first")
-assert(table.find(history, ids.s1) and table.find(history, ids.s3), "then the listens")
+assert(history[2] == ids.s1 and history[3] == ids.s3, "then each listened track once, the latest played first")
 assert(titles(mix.blend({ from_history = true, mixer = "narrow" })) == "S2", "history blend on narrow")
 assert(#seen.narrow.seeds == 1, "narrow takes one recent listen")
-local most_recent = seen.narrow.seeds[1].id
-assert(most_recent == ids.s1 or most_recent == ids.s3, "a recent listen")
+assert(seen.narrow.seeds[1].id == ids.s1, "the track played last")
 
 -- A path keeps the mixer's order and length, leaving out only what the listener can't see.
 local path = mix.path({ seeds = { ids.s1, ids.s2 }, limit = 2 })

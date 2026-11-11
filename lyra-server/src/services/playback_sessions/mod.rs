@@ -196,7 +196,7 @@ pub(crate) struct TransactionPlaybackUpdate {
     pub(crate) playback: PlaybackRecord,
     pub(crate) event: String,
     /// The listen the report recorded, for the transaction's owner to announce after commit.
-    pub(crate) recorded_listen: Option<lyra_db::Listen>,
+    pub(crate) recorded_listen: Option<crate::services::listens::RecordedListen>,
 }
 
 impl TransactionPlaybackUpdate {

@@ -82,7 +82,6 @@ pub const ROOT_COLLECTION_ALIASES: &[&str] = &[
     "users",
     "playbacks",
     "playback_sessions",
-    "listens",
     "libraries",
     "releases",
     "chains",

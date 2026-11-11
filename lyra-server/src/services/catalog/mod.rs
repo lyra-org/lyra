@@ -22,10 +22,7 @@ mod visibility;
 
 use std::{
     cmp::Ordering,
-    collections::{
-        HashMap,
-        HashSet,
-    },
+    collections::HashMap,
 };
 
 use agdb::{
@@ -488,17 +485,9 @@ pub(crate) fn track_totals(
     let index = &cx.index;
     let listens = if listens {
         let user = cx.viewer.user_db_id("listen sort keys")?;
-        let tracks = tracks_by_owner
-            .iter()
-            .flat_map(|(_, tracks)| tracks)
-            .copied()
-            .collect::<HashSet<_>>()
+        lyra_db::listens::totals(cx.db, user)?
             .into_iter()
-            .map(|slot| index.tracks.id(slot))
-            .collect::<Vec<_>>();
-        lyra_db::listens::get_stats(cx.db, &tracks, user)?
-            .into_iter()
-            .filter_map(|stats| Some((index.tracks.slot(stats.db_id)?, stats)))
+            .filter_map(|(track, total)| Some((index.tracks.slot(track)?, total)))
             .collect()
     } else {
         std::collections::HashMap::new()
@@ -515,9 +504,10 @@ pub(crate) fn track_totals(
                 if duration != index::MISSING {
                     totals.total_duration = totals.total_duration.saturating_add(duration);
                 }
-                if let Some(stats) = listens.get(track) {
-                    totals.listen_count = totals.listen_count.saturating_add(stats.count);
-                    totals.last_played_at = totals.last_played_at.max(stats.last_played);
+                if let Some(total) = listens.get(track) {
+                    totals.listen_count = totals.listen_count.saturating_add(total.count);
+                    totals.last_played_at =
+                        totals.last_played_at.max(Some(total.last_played_at_ms));
                 }
             }
             (*owner, totals)

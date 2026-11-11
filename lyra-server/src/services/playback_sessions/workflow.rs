@@ -224,7 +224,7 @@ fn record_listen(
     db: &mut impl lyra_db::DbAccess,
     playback_record: &PlaybackRecord,
     now_ms: u64,
-) -> ServiceResult<Option<lyra_db::Listen>> {
+) -> ServiceResult<Option<crate::services::listens::RecordedListen>> {
     let playback = &playback_record.playback;
     if !playback.counts_as_listen {
         return Ok(None);

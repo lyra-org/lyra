@@ -189,11 +189,6 @@ struct ListenRow {
     last_played_ms: Option<u64>,
 }
 
-struct ResolvedTrackFilter {
-    track_db_ids: Vec<DbId>,
-    track_public_ids: HashSet<String>,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ListenSortKey {
     ListenCount,
@@ -359,20 +354,6 @@ fn validate_merge_usage(
     Ok(())
 }
 
-fn aggregate_stats(stats: Vec<lyra_db::listens::ListenStats>) -> (u64, Option<u64>) {
-    let mut listen_count = 0u64;
-    let mut last_played_ms: Option<u64> = None;
-    for stat in stats {
-        listen_count = listen_count.saturating_add(stat.count);
-        if let Some(last_played) = stat.last_played
-            && last_played > last_played_ms.unwrap_or(0)
-        {
-            last_played_ms = Some(last_played);
-        }
-    }
-    (listen_count, last_played_ms)
-}
-
 /// Provider id pairs to merge play counts across, or `None` when merging is off.
 async fn merge_track_id_pairs(
     merge_unique_external_ids: bool,
@@ -388,13 +369,14 @@ async fn merge_track_id_pairs(
     )
 }
 
-/// Resolves the track filter under the guard that reads listens with it.
+/// The tracks whose listens count for `track_id`, resolved under the guard that reads listens
+/// with them.
 fn resolve_accessible_track_filter(
     db: &agdb::DbAny,
     principal: &Principal,
     track_id: &str,
     merge_pairs: Option<&HashSet<(String, String)>>,
-) -> Result<ResolvedTrackFilter, AppError> {
+) -> Result<Vec<DbId>, AppError> {
     let track_db_id = lyra_db::lookup::find_node_id_by_id(db, track_id)?
         .ok_or_else(|| AppError::not_found(format!("Track not found: {}", track_id)))?;
     crate::services::auth::access::require_entity_accessible(db, principal, track_db_id, || {
@@ -415,14 +397,57 @@ fn resolve_accessible_track_filter(
         }
     }
 
-    let track_public_ids = lyra_db::lookup::find_ids_by_db_ids(db, &accessible_track_ids)?
-        .into_values()
-        .collect::<HashSet<_>>();
+    Ok(accessible_track_ids)
+}
 
-    Ok(ResolvedTrackFilter {
-        track_db_ids: accessible_track_ids,
-        track_public_ids,
-    })
+/// One user's listens to each track they listened to.
+struct UserTotals {
+    user_id: String,
+    totals: HashMap<DbId, lyra_db::listens::ListenTotal>,
+}
+
+impl UserTotals {
+    fn read(db: &DbAny, user_db_id: DbId, user_id: String) -> Result<Self, AppError> {
+        Ok(Self {
+            user_id,
+            totals: lyra_db::listens::totals(db, user_db_id)?,
+        })
+    }
+}
+
+/// A row for each of the users' totals of a track `principal` can see, as the catalog lists
+/// tracks for it, whether or not they can play.
+fn total_rows(
+    db: &DbAny,
+    principal: &Principal,
+    users: Vec<UserTotals>,
+) -> Result<Vec<ListenRow>, AppError> {
+    let mut tracks = users
+        .iter()
+        .flat_map(|user| user.totals.keys().copied())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let viewer = catalog::Viewer::user(db, principal.clone())?;
+    if !viewer.sees_everything() {
+        let visible = catalog::lookups::visible::<Tracks>(db, &viewer, &tracks)?;
+        tracks.retain(|track| visible.contains(track));
+    }
+    let track_ids = lyra_db::lookup::find_ids_by_db_ids(db, &tracks)?;
+    Ok(users
+        .into_iter()
+        .flat_map(|user| {
+            let track_ids = &track_ids;
+            user.totals.into_iter().filter_map(move |(track, total)| {
+                Some(ListenRow {
+                    user_id: user.user_id.clone(),
+                    track_id: track_ids.get(&track)?.clone(),
+                    listen_count: total.count,
+                    last_played_ms: Some(total.last_played_at_ms),
+                })
+            })
+        })
+        .collect())
 }
 
 /// Whose listens a per-user listing reads, resolved under the guard that reads them.
@@ -459,41 +484,22 @@ async fn rows_for_user(
         let track_filter =
             resolve_accessible_track_filter(&db, principal, &track_id, merge_pairs.as_ref())?;
         let (user_db_id, user_public_id) = owner.resolve(&db, principal)?;
-        let stats = lyra_db::listens::get_stats(&db, &track_filter.track_db_ids, user_db_id)?;
-        let (listen_count, last_played_ms) = aggregate_stats(stats);
+        let mut totals = Vec::with_capacity(track_filter.len());
+        for track in track_filter {
+            totals.extend(lyra_db::listens::total(&*db, user_db_id, track)?);
+        }
+        let stats = listen_service::ListenStats::over(totals);
         return Ok(vec![ListenRow {
             user_id: user_public_id,
             track_id,
-            listen_count,
-            last_played_ms,
+            listen_count: stats.count,
+            last_played_ms: stats.last_played_at_ms,
         }]);
     }
 
     let db = STATE.db.read().await;
-    let (user_db_id, _) = owner.resolve(&db, principal)?;
-    summary_rows(&db, principal, user_db_id)
-}
-
-/// Keeps the summaries of tracks `principal` can see, as the catalog lists tracks for it,
-/// whether or not they can play.
-fn retain_visible(
-    db: &DbAny,
-    principal: &Principal,
-    summaries: &mut Vec<lyra_db::listens::ListenSummary>,
-) -> Result<(), AppError> {
-    let viewer = catalog::Viewer::user(db, principal.clone())?;
-    if viewer.sees_everything() {
-        return Ok(());
-    }
-    let tracks = summaries
-        .iter()
-        .map(|summary| summary.track_db_id)
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    let visible = catalog::lookups::visible::<Tracks>(db, &viewer, &tracks)?;
-    summaries.retain(|summary| visible.contains(&summary.track_db_id));
-    Ok(())
+    let (user_db_id, user_id) = owner.resolve(&db, principal)?;
+    summary_rows(&db, principal, user_db_id, user_id)
 }
 
 /// A row for each track `user_db_id` has listened to that `principal` can see.
@@ -501,18 +507,13 @@ fn summary_rows(
     db: &DbAny,
     principal: &Principal,
     user_db_id: DbId,
+    user_id: String,
 ) -> Result<Vec<ListenRow>, AppError> {
-    let mut summaries = lyra_db::listens::list_summaries_for_user(db, user_db_id)?;
-    retain_visible(db, principal, &mut summaries)?;
-    Ok(summaries
-        .into_iter()
-        .map(|summary| ListenRow {
-            user_id: summary.user_public_id,
-            track_id: summary.track_public_id,
-            listen_count: summary.count,
-            last_played_ms: summary.last_played,
-        })
-        .collect())
+    total_rows(
+        db,
+        principal,
+        vec![UserTotals::read(db, user_db_id, user_id)?],
+    )
 }
 
 async fn rows_for_managed_listens(
@@ -541,48 +542,37 @@ async fn rows_for_managed_listens(
             resolve_accessible_track_filter(&db, principal, track_id, merge_pairs.as_ref())
         })
         .transpose()?;
-    let account_ids = accounts::list(&*db)?
-        .into_iter()
-        .map(|user| user.id)
-        .collect::<HashSet<_>>();
-    let mut summaries = lyra_db::listens::list_summaries(
-        &db,
-        lyra_db::listens::ListenOwners::All,
-        track_filter.as_ref().map(|filter| &filter.track_public_ids),
-    )?;
-    summaries.retain(|summary| account_ids.contains(&summary.user_public_id));
-    retain_visible(&db, principal, &mut summaries)?;
+    let mut users = Vec::new();
+    for user in accounts::list(&*db)? {
+        let Some(user_db_id) = user.db_id else {
+            continue;
+        };
+        let mut user = UserTotals::read(&db, user_db_id, user.id)?;
+        if let Some(tracks) = &track_filter {
+            user.totals.retain(|track, _| tracks.contains(track));
+        }
+        users.push(user);
+    }
+    let rows = total_rows(&db, principal, users)?;
 
     if let Some(track_id) = query.track_id.as_deref() {
         let mut rows_by_user: HashMap<String, ListenRow> = HashMap::new();
-        for summary in summaries {
+        for row in rows {
             let entry = rows_by_user
-                .entry(summary.user_public_id.clone())
+                .entry(row.user_id.clone())
                 .or_insert_with(|| ListenRow {
-                    user_id: summary.user_public_id,
+                    user_id: row.user_id,
                     track_id: track_id.to_string(),
                     listen_count: 0,
                     last_played_ms: None,
                 });
-            entry.listen_count = entry.listen_count.saturating_add(summary.count);
-            if let Some(last_played) = summary.last_played
-                && last_played > entry.last_played_ms.unwrap_or(0)
-            {
-                entry.last_played_ms = Some(last_played);
-            }
+            entry.listen_count = entry.listen_count.saturating_add(row.listen_count);
+            entry.last_played_ms = entry.last_played_ms.max(row.last_played_ms);
         }
         return Ok(rows_by_user.into_values().collect());
     }
 
-    Ok(summaries
-        .into_iter()
-        .map(|summary| ListenRow {
-            user_id: summary.user_public_id,
-            track_id: summary.track_public_id,
-            listen_count: summary.count,
-            last_played_ms: summary.last_played,
-        })
-        .collect())
+    Ok(rows)
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -919,7 +909,7 @@ mod tests {
             .id;
         let listed = |db: &DbAny, permissions, libraries| {
             let principal = Principal::for_user(db, user, permissions, libraries);
-            summary_rows(db, &principal, user).map(track_ids)
+            summary_rows(db, &principal, user, String::new()).map(track_ids)
         };
         let ok = |listed: Result<HashSet<String>, AppError>| {
             listed.map_err(|error| anyhow::anyhow!("{error:?}"))
@@ -939,7 +929,7 @@ mod tests {
         let caller = lyra_db::test_db::insert_user(&mut db, "deleted-caller")?;
         let principal = Principal::for_user(&db, caller, vec![Permission::Admin], HashSet::new());
         lyra_db::test_db::recycle_user(&mut db, caller, "replacement")?;
-        let Err(error) = summary_rows(&db, &principal, user) else {
+        let Err(error) = summary_rows(&db, &principal, user, String::new()) else {
             anyhow::bail!("a deleted caller listed listens");
         };
         assert_eq!(
@@ -1306,10 +1296,8 @@ mod tests {
         async fn listen_count(fixture: &Fixture) -> anyhow::Result<u64> {
             let db = STATE.db.read().await;
             Ok(
-                lyra_db::listens::get_counts(&db, &[fixture.long_track_db_id], fixture.user_db_id)?
-                    .get(&fixture.long_track_db_id)
-                    .copied()
-                    .unwrap_or(0),
+                lyra_db::listens::total(&*db, fixture.user_db_id, fixture.long_track_db_id)?
+                    .map_or(0, |total| total.count),
             )
         }
 
@@ -1601,7 +1589,9 @@ mod benches {
         let db = STATE.db.read().await;
 
         let page = |offset: u64| {
-            let mut rows = summary_rows(&db, &principal, user_db_id).unwrap();
+            let mut rows = summary_rows(&db, &principal, user_db_id, String::new())
+                .ok()
+                .unwrap();
             sort_listen_rows(&mut rows, None, None, false).unwrap();
             let page = routes::PageQuery {
                 limit: Some(LIMIT),
@@ -1624,17 +1614,18 @@ mod benches {
             );
         }
         println!(
-            "    reading the summaries and keeping the visible ones: {}",
+            "    reading the totals and keeping the visible ones: {}",
             ms(median(9, || {
-                summary_rows(&db, &principal, user_db_id).unwrap().len() as u64
+                summary_rows(&db, &principal, user_db_id, String::new())
+                    .ok()
+                    .unwrap()
+                    .len() as u64
             }))
         );
         println!(
-            "    reading the summaries: {}",
+            "    reading the totals: {}",
             ms(median(9, || {
-                lyra_db::listens::list_summaries_for_user(&db, user_db_id)
-                    .unwrap()
-                    .len() as u64
+                lyra_db::listens::totals(&*db, user_db_id).unwrap().len() as u64
             }))
         );
     }

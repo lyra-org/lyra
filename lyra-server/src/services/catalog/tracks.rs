@@ -389,19 +389,15 @@ impl Catalog for Tracks {
             }
             TrackKey::ListenCount | TrackKey::LastPlayedAt => {
                 let user = cx.viewer.user_db_id("listen sort keys")?;
-                let ids = slots
-                    .iter()
-                    .map(|slot| tracks.id(*slot))
-                    .collect::<Vec<_>>();
-                let listens = lyra_db::listens::get_stats(cx.db, &ids, user)?
+                let listens = lyra_db::listens::totals(cx.db, user)?
                     .into_iter()
-                    .filter_map(|stats| Some((tracks.slot(stats.db_id)?, stats)))
+                    .filter_map(|(track, total)| Some((tracks.slot(track)?, total)))
                     .collect::<HashMap<_, _>>();
                 Column::computed(tracks.len(), slots, |slot| match key {
                     TrackKey::ListenCount => {
-                        Some(listens.get(&slot).map_or(0, |stats| stats.count))
+                        Some(listens.get(&slot).map_or(0, |total| total.count))
                     }
-                    _ => listens.get(&slot).and_then(|stats| stats.last_played),
+                    _ => listens.get(&slot).map(|total| total.last_played_at_ms),
                 })
             }
             TrackKey::Rating => ratings_column(cx, tracks, slots, false)?,

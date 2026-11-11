@@ -774,10 +774,7 @@ mod tests {
             Root,
         };
         use crate::test_db::new_test_db;
-        use agdb::{
-            DbAny,
-            QueryId,
-        };
+        use agdb::DbAny;
 
         fn insert_user(db: &mut DbAny) -> DbId {
             let id = db
@@ -868,12 +865,8 @@ mod tests {
                 .exec_mut(QueryBuilder::insert().nodes().count(1).query())
                 .unwrap()
                 .ids()[0];
-            for (from, to) in [
-                (QueryId::from("listens"), listen),
-                (listen.into(), track),
-                (listen.into(), user),
-            ] {
-                db.exec_mut(QueryBuilder::insert().edges().from(from).to(to).query())
+            for to in [track, user] {
+                db.exec_mut(QueryBuilder::insert().edges().from(listen).to(to).query())
                     .unwrap();
             }
         }

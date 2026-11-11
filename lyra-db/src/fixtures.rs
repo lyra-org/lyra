@@ -91,13 +91,10 @@ pub fn insert_listen(
     track_db_id: DbId,
     started_at_ms: u64,
 ) -> anyhow::Result<DbId> {
-    let track_public_id = super::lookup::find_id_by_db_id(db, track_db_id)?
-        .ok_or_else(|| anyhow::anyhow!("track {track_db_id:?} has no public id"))?;
     let listen = super::Listen {
         db_id: None,
         id: nanoid(),
         play_id: nanoid(),
-        track_public_id,
         started_at_ms,
         played_ms: Some(180_000),
         created_at_ms: started_at_ms,

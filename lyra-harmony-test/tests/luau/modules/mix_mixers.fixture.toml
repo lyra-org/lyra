@@ -69,7 +69,14 @@ tracks = ["s1"]
 [[listens]]
 user = "listener"
 track = "s1"
+at = 1700000001000
 
 [[listens]]
 user = "listener"
 track = "s3"
+at = 1700000005000
+
+[[listens]]
+user = "listener"
+track = "s1"
+at = 1700000009000

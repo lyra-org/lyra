@@ -558,8 +558,7 @@ async fn reported_playback_expires_without_losing_credited_listen() -> anyhow::R
         lyra_db::playback_sessions::get_by_id(&db, credited.playback_session_id)?.is_none(),
         "a counted play's session goes once nothing holds it"
     );
-    let counts = lyra_db::listens::get_counts(&db, &[track], user)?;
-    assert_eq!(counts.get(&track).copied(), Some(1));
+    assert_eq!(listen_count(&db, user, track)?, 1);
     Ok(())
 }
 
@@ -1001,8 +1000,7 @@ async fn report_playback_session_credits_two_listens_for_started_replay() -> any
         T0 + 61_000,
     )?;
 
-    let counts_after_first = lyra_db::listens::get_counts(&db, &[track_db_id], user_db_id)?;
-    assert_eq!(counts_after_first.get(&track_db_id).copied(), Some(1));
+    assert_eq!(listen_count(&db, user_db_id, track_db_id)?, 1);
 
     // Explicit restart of the same track.
     report_test_playback_session_with_cleanup(
@@ -1032,8 +1030,7 @@ async fn report_playback_session_credits_two_listens_for_started_replay() -> any
         T0 + 122_000,
     )?;
 
-    let counts_after_replay = lyra_db::listens::get_counts(&db, &[track_db_id], user_db_id)?;
-    assert_eq!(counts_after_replay.get(&track_db_id).copied(), Some(2));
+    assert_eq!(listen_count(&db, user_db_id, track_db_id)?, 2);
 
     let records = collect_playback_records(&db)?;
     assert_eq!(records.len(), 2);
@@ -1073,8 +1070,7 @@ async fn report_playback_session_counts_a_seek_to_start_replay_once() -> anyhow:
         T0 + 61_000,
     )?;
 
-    let counts_after_first = lyra_db::listens::get_counts(&db, &[track_db_id], user_db_id)?;
-    assert_eq!(counts_after_first.get(&track_db_id).copied(), Some(1));
+    assert_eq!(listen_count(&db, user_db_id, track_db_id)?, 1);
 
     // No Started event — pure seek-to-zero replay within the same session.
     report_test_playback_session_with_cleanup(
@@ -1105,8 +1101,7 @@ async fn report_playback_session_counts_a_seek_to_start_replay_once() -> anyhow:
     )?;
 
     // Without a started event or a new play id, it is the same play.
-    let counts_after_replay = lyra_db::listens::get_counts(&db, &[track_db_id], user_db_id)?;
-    assert_eq!(counts_after_replay.get(&track_db_id).copied(), Some(1));
+    assert_eq!(listen_count(&db, user_db_id, track_db_id)?, 1);
 
     let records = collect_playback_records(&db)?;
     assert_eq!(records.len(), 1);
@@ -1200,8 +1195,7 @@ async fn report_playback_session_credits_two_listens_for_started_replay_via_prev
         T0 + 140_000,
     )?;
 
-    let counts = lyra_db::listens::get_counts(&db, &[track_a_id], user_db_id)?;
-    assert_eq!(counts.get(&track_a_id).copied(), Some(2));
+    assert_eq!(listen_count(&db, user_db_id, track_a_id)?, 2);
     Ok(())
 }
 
@@ -1330,8 +1324,7 @@ async fn a_new_play_id_starts_a_new_session_for_the_same_track() -> anyhow::Resu
         T0 + 85_000,
     )?;
 
-    let counts = lyra_db::listens::get_counts(&db, &[track], user)?;
-    assert_eq!(counts.get(&track).copied(), Some(2));
+    assert_eq!(listen_count(&db, user, track)?, 2);
     let first_listen = listen_for_play(&db, user, "first-play-000001")?;
     assert_eq!(first_listen.started_at_ms, T0);
     assert_eq!(
@@ -1399,8 +1392,7 @@ async fn a_play_reported_live_then_offline_counts_once() -> anyhow::Result<()> {
     })?;
 
     assert_eq!(offline, crate::services::listens::RecordOutcome::Duplicate);
-    let counts = lyra_db::listens::get_counts(&db, &[track], user)?;
-    assert_eq!(counts.get(&track).copied(), Some(1));
+    assert_eq!(listen_count(&db, user, track)?, 1);
     Ok(())
 }
 
@@ -1447,8 +1439,7 @@ async fn a_play_reported_offline_then_live_counts_once() -> anyhow::Result<()> {
         T0 + 130_000,
     )?;
 
-    let counts = lyra_db::listens::get_counts(&db, &[track], user)?;
-    assert_eq!(counts.get(&track).copied(), Some(1));
+    assert_eq!(listen_count(&db, user, track)?, 1);
     Ok(())
 }
 
@@ -1553,8 +1544,7 @@ async fn a_live_listen_keeps_the_plays_full_playing_time() -> anyhow::Result<()>
         listen_for_play(&db, user, "long-play-0000001")?.played_ms,
         Some(150_000)
     );
-    let counts = lyra_db::listens::get_counts(&db, &[track], user)?;
-    assert_eq!(counts.get(&track).copied(), Some(1));
+    assert_eq!(listen_count(&db, user, track)?, 1);
     Ok(())
 }
 #[tokio::test]
@@ -1914,12 +1904,7 @@ fn stored(db: &DbAny, record: &PlaybackRecord) -> anyhow::Result<lyra_db::Playba
 }
 
 fn listen_count(db: &DbAny, user_db_id: DbId, track_db_id: DbId) -> anyhow::Result<u64> {
-    Ok(
-        lyra_db::listens::get_counts(db, &[track_db_id], user_db_id)?
-            .get(&track_db_id)
-            .copied()
-            .unwrap_or(0),
-    )
+    Ok(lyra_db::listens::total(db, user_db_id, track_db_id)?.map_or(0, |total| total.count))
 }
 
 #[tokio::test]

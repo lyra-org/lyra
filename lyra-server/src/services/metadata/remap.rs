@@ -175,6 +175,7 @@ fn take_over(
     lyra_db::ratings::retarget(t, target, missing, RetargetLookup::Target)?;
     lyra_db::tags::retarget(t, target, missing, RetargetLookup::Target)?;
     lyra_db::bookmarks::retarget(t, target, missing)?;
+    lyra_db::listens::retarget(t, target, missing)?;
     lyra_db::lyrics::retarget_missing(t, target, missing)?;
     for kind in ["Listen", "Playlist", "PlaybackSession"] {
         retarget_inbound(t, kind, target, missing)?;
@@ -193,4 +194,104 @@ fn take_over(
         }
     }
     Ok(orphaned)
+}
+
+#[cfg(test)]
+mod tests {
+    use lyra_db::fixtures::{
+        insert_listen,
+        insert_track,
+    };
+    use lyra_db::test_db::{
+        insert_user,
+        new_test_db,
+    };
+
+    use super::*;
+
+    #[test]
+    fn listens_of_the_target_count_for_the_track_that_took_over() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let missing = insert_track(&mut db, "Missing")?;
+        let target = insert_track(&mut db, "Target")?;
+        let both = insert_user(&mut db, "both")?;
+        let target_only = insert_user(&mut db, "target-only")?;
+        let missing_only = insert_user(&mut db, "missing-only")?;
+        insert_listen(&mut db, both, missing, 5_000)?;
+        insert_listen(&mut db, both, target, 9_000)?;
+        insert_listen(&mut db, both, target, 2_000)?;
+        insert_listen(&mut db, target_only, target, 0)?;
+        insert_listen(&mut db, missing_only, missing, 7_000)?;
+        let id = |db: &DbAny, track| {
+            lyra_db::lookup::find_id_by_db_id(db, track).map(|id| id.expect("public id"))
+        };
+        let (missing_id, target_id) = (id(&db, missing)?, id(&db, target)?);
+
+        db.transaction_mut(|t| take_over(t, missing, target, &missing_id, &target_id))?;
+
+        for (user, count, last_played_at_ms) in [
+            (both, 3, 9_000),
+            (target_only, 1, 0),
+            (missing_only, 1, 7_000),
+        ] {
+            assert_eq!(
+                lyra_db::listens::total(&db, user, missing)?,
+                Some(lyra_db::listens::ListenTotal {
+                    count,
+                    last_played_at_ms,
+                })
+            );
+            assert_eq!(
+                lyra_db::listens::totals(&db, user)?.len(),
+                1,
+                "the removed track keeps no total"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_play_counted_for_the_target_is_a_duplicate_for_the_track_that_took_over()
+    -> anyhow::Result<()> {
+        use crate::services::listens::{
+            Play,
+            RecordOutcome,
+            record,
+        };
+
+        const NOW_MS: u64 = 1_800_000_000_000;
+        let mut db = new_test_db()?;
+        let missing = insert_track(&mut db, "Missing")?;
+        let target = insert_track(&mut db, "Target")?;
+        let user = insert_user(&mut db, "listener")?;
+        let play = |track_db_id, played_ms| Play {
+            play_id: "play-remapped-0001",
+            track_db_id,
+            started_at_ms: NOW_MS - 600_000,
+            played_ms,
+        };
+        let recorded = db.transaction_mut(|t| record(t, user, play(target, 40_000), NOW_MS))?;
+        assert!(matches!(recorded, RecordOutcome::Recorded(_)));
+        let id = |db: &DbAny, track| {
+            lyra_db::lookup::find_id_by_db_id(db, track).map(|id| id.expect("public id"))
+        };
+        let (missing_id, target_id) = (id(&db, missing)?, id(&db, target)?);
+        db.transaction_mut(|t| take_over(t, missing, target, &missing_id, &target_id))?;
+
+        // The player reports the same play again, now under the track that took over.
+        let again = db.transaction_mut(|t| record(t, user, play(missing, 90_000), NOW_MS))?;
+
+        assert_eq!(again, RecordOutcome::Duplicate);
+        assert_eq!(
+            lyra_db::listens::total(&db, user, missing)?.map(|total| total.count),
+            Some(1)
+        );
+        assert_eq!(
+            lyra_db::listens::get_by_play_id(&db, user, "play-remapped-0001")?
+                .and_then(|listen| listen.played_ms),
+            Some(90_000),
+            "the play still raises its listen's playing time"
+        );
+        Ok(())
+    }
 }

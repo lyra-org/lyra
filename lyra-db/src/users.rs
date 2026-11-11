@@ -358,7 +358,13 @@ pub fn delete_user(db: &mut impl super::DbAccess, user_db_id: DbId) -> anyhow::R
     super::bookmarks::remove_outbound_for_user(db, user_db_id)?;
     super::tags::remove_outbound_for_user(db, user_db_id)?;
     super::libraries::remove_access_edges_for_user(db, user_db_id)?;
+    super::listens::remove_totals_for_user(db, user_db_id)?;
+    let listens = super::listens::ids_for_user(db, user_db_id)?;
     db.exec_mut(QueryBuilder::remove().ids(user_db_id).query())?;
+    // After the user, so no removal walks the user's other listens (agnesoft/agdb#2030).
+    if !listens.is_empty() {
+        db.exec_mut(QueryBuilder::remove().ids(listens).query())?;
+    }
     Ok(())
 }
 
@@ -552,6 +558,45 @@ mod tests {
         assert!(find_by_session_token_hash(&db, "token-hash-2")?.is_none());
         assert!(get_by_id(&db, user_db_id)?.is_none());
 
+        Ok(())
+    }
+
+    #[test]
+    fn delete_user_removes_the_users_listens_and_totals() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = crate::test_db::insert_user(&mut db, "alice")?;
+        let bob_db_id = crate::test_db::insert_user(&mut db, "bob")?;
+        let silent_db_id = crate::test_db::insert_user(&mut db, "silent")?;
+        let track_db_id = crate::fixtures::insert_track(&mut db, "song")?;
+        let listens = [
+            crate::fixtures::insert_listen(&mut db, user_db_id, track_db_id, 1_000)?,
+            crate::fixtures::insert_listen(&mut db, user_db_id, track_db_id, 2_000)?,
+        ];
+        let bob_listen = crate::fixtures::insert_listen(&mut db, bob_db_id, track_db_id, 3_000)?;
+        let nodes_before = db.exec(QueryBuilder::select().node_count().query())?.result;
+
+        db.transaction_mut(|t| delete_user(t, user_db_id))?;
+        db.transaction_mut(|t| delete_user(t, silent_db_id))?;
+
+        for listen in listens {
+            assert!(
+                db.exec(QueryBuilder::select().ids(listen).query()).is_err(),
+                "a deleted user's listen stayed"
+            );
+        }
+        assert_eq!(
+            db.exec(QueryBuilder::select().node_count().query())?.result,
+            nodes_before - 5,
+            "two users, two listens and a totals node go"
+        );
+        assert_eq!(
+            crate::listens::ids_for_user(&db, bob_db_id)?,
+            vec![bob_listen]
+        );
+        assert_eq!(
+            crate::listens::total(&db, bob_db_id, track_db_id)?.map(|total| total.count),
+            Some(1)
+        );
         Ok(())
     }
 

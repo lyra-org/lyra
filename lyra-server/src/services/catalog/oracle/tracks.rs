@@ -130,10 +130,7 @@ impl Old for Tracks {
             .any(|key| matches!(key, TrackKey::ListenCount | TrackKey::LastPlayedAt))
         {
             let user = viewer.user_db_id("listen sort keys")?;
-            lyra_db::listens::get_stats(db, &ids, user)?
-                .into_iter()
-                .map(|stats| (stats.db_id, stats))
-                .collect()
+            lyra_db::listens::totals(db, user)?
         } else {
             HashMap::new()
         };
@@ -221,12 +218,11 @@ impl Old for Tracks {
                             .get(&id)
                             .map(|name| SortValue::Text(name.clone())),
                         TrackKey::ListenCount => Some(SortValue::Number(
-                            listens.get(&id).map_or(0, |stats| stats.count),
+                            listens.get(&id).map_or(0, |total| total.count),
                         )),
                         TrackKey::LastPlayedAt => listens
                             .get(&id)
-                            .and_then(|stats| stats.last_played)
-                            .map(SortValue::Number),
+                            .map(|total| SortValue::Number(total.last_played_at_ms)),
                         TrackKey::Rating => ratings
                             .get(&id)
                             .map(|edge| SortValue::Number(edge.value.get().into())),

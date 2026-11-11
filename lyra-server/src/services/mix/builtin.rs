@@ -199,52 +199,37 @@ fn builtin_from_recent_listens(
     builtin_from_seed_track_ids(db, &track_ids, viewer, limit)
 }
 
-/// The tracks of the user's recent listens, most recent first, each with the public id it was
-/// resolved from.
+/// The tracks the user played most recently, latest first, each with its public id.
 pub(super) fn recent_listen_tracks(
     db: &DbAny,
     user_db_id: DbId,
     accessible_library_ids: Option<&HashSet<String>>,
 ) -> anyhow::Result<Vec<(DbId, String)>> {
-    let mut listens: Vec<lyra_db::listens::Listen> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<lyra_db::listens::Listen>()
-                .search()
-                .to(user_db_id)
-                .where_()
-                .neighbor()
-                .end_where()
-                .query(),
-        )?
-        .try_into()?;
+    let mut recent = lyra_db::listens::totals(db, user_db_id)?
+        .into_iter()
+        .map(|(track, total)| (std::cmp::Reverse(total.last_played_at_ms), track))
+        .collect::<Vec<_>>();
+    recent.sort_unstable();
+    recent.truncate(RECENT_LISTEN_COUNT);
 
-    listens.sort_unstable_by_key(|listen| std::cmp::Reverse(listen.started_at_ms));
-    listens.truncate(RECENT_LISTEN_COUNT);
-
-    // Resolve through the snapshot, not the listen→track edge.
-    let mut track_ids = Vec::new();
-    let mut seen = HashSet::new();
-    for listen in &listens {
-        if listen.track_public_id.is_empty() {
-            continue;
-        }
-        let Some(track_db_id) =
-            lyra_db::lookup::find_id_by_index(db, "id", &listen.track_public_id, "Track")?
-        else {
-            continue;
-        };
+    let recent = recent
+        .into_iter()
+        .map(|(_, track)| track)
+        .collect::<Vec<_>>();
+    let mut public_ids = lyra_db::lookup::find_ids_by_db_ids(db, &recent)?;
+    let mut tracks = Vec::new();
+    for track_db_id in recent {
         if let Some(accessible_library_ids) = accessible_library_ids
             && !track_accessible_to_library_set(db, track_db_id, accessible_library_ids)?
         {
             continue;
         }
-        if seen.insert(track_db_id) {
-            track_ids.push((track_db_id, listen.track_public_id.clone()));
+        if let Some(public_id) = public_ids.remove(&track_db_id) {
+            tracks.push((track_db_id, public_id));
         }
     }
 
-    Ok(track_ids)
+    Ok(tracks)
 }
 
 fn track_accessible_to_library_set(
@@ -440,23 +425,13 @@ fn partition_by_listen_history(
     };
     let user_db_id = viewer.require(db)?;
 
-    let track_ids: Vec<DbId> = tracks
-        .iter()
-        .filter_map(|t| t.db_id.clone().map(DbId::from))
-        .collect();
-
-    let counts = lyra_db::listens::get_counts(db, &track_ids, user_db_id)?;
+    let listened = lyra_db::listens::listened_track_ids(db, user_db_id)?;
 
     let mut unheard = Vec::new();
     let mut heard = Vec::new();
     for track in tracks {
         let track_db_id = track.db_id.clone().map(DbId::from);
-        let listen_count = track_db_id
-            .as_ref()
-            .and_then(|id| counts.get(id))
-            .copied()
-            .unwrap_or(0);
-        if listen_count == 0 {
+        if !track_db_id.is_some_and(|id| listened.contains(&id)) {
             unheard.push(track);
         } else {
             heard.push(track);
@@ -532,7 +507,6 @@ mod tests {
             insert_track,
         },
         genres,
-        listens,
         test_db::{
             connect_artist,
             insert_library,
@@ -925,57 +899,27 @@ mod tests {
         Ok(user_id)
     }
 
-    fn insert_listen_with_snapshot(
-        db: &mut DbAny,
-        track_db_id: DbId,
-        user_db_id: DbId,
-        track_public_id: String,
-    ) -> anyhow::Result<()> {
-        let listen = listens::Listen {
-            db_id: None,
-            id: lyra_db::nanoid(),
-            play_id: lyra_db::nanoid(),
-            track_public_id,
-            started_at_ms: 1_000_000,
-            played_ms: Some(180_000),
-            created_at_ms: 1_000_000,
-        };
-        db.transaction_mut(|t| listens::insert(t, &listen, track_db_id, user_db_id))?;
-        Ok(())
-    }
-
     #[test]
-    fn recent_listen_track_ids_skips_stale_snapshot_listens() -> anyhow::Result<()> {
+    fn recent_listen_tracks_are_the_latest_played_first_each_once() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user_id = insert_user(&mut db)?;
-        let track = insert_track(&mut db, "Recycled Track")?;
-
-        insert_listen_with_snapshot(&mut db, track, user_id, "tr-recycled-original".to_string())?;
+        let early = insert_track(&mut db, "Early")?;
+        let replayed = insert_track(&mut db, "Replayed")?;
+        let late = insert_track(&mut db, "Late")?;
+        for (track, started_at_ms) in [(replayed, 1_000), (early, 2_000), (late, 3_000)] {
+            lyra_db::fixtures::insert_listen(&mut db, user_id, track, started_at_ms)?;
+        }
+        lyra_db::fixtures::insert_listen(&mut db, user_id, replayed, 4_000)?;
 
         let recents = recent_listen_tracks(&db, user_id, None)?;
-        assert!(
-            recents.is_empty(),
-            "stale-snapshot listens must not surface in mix seeds: {recents:?}"
+
+        assert_eq!(
+            recents.iter().map(|(track, _)| *track).collect::<Vec<_>>(),
+            vec![replayed, late, early]
         );
-        Ok(())
-    }
-
-    #[test]
-    fn recent_listen_track_ids_skips_kind_rebound_snapshot() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        let user_id = insert_user(&mut db)?;
-        let track = insert_track(&mut db, "Listened Track")?;
-        let release = insert_release(&mut db, "Recycled Into Release")?;
-
-        let release_public_id = lyra_db::lookup::find_id_by_db_id(&db, release)?
-            .ok_or_else(|| anyhow::anyhow!("release missing public id"))?;
-
-        insert_listen_with_snapshot(&mut db, track, user_id, release_public_id)?;
-
-        let recents = recent_listen_tracks(&db, user_id, None)?;
-        assert!(
-            recents.is_empty(),
-            "kind-rebound listens must not surface in mix seeds: {recents:?}"
+        assert_eq!(
+            Some(&recents[0].1),
+            lyra_db::lookup::find_id_by_db_id(&db, replayed)?.as_ref()
         );
         Ok(())
     }

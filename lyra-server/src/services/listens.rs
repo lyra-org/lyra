@@ -83,13 +83,21 @@ pub(crate) struct ListenPayload {
     pub played_ms: Option<u64>,
 }
 
-impl From<Listen> for ListenPayload {
-    fn from(listen: Listen) -> Self {
+/// A listen as its transaction stored it, with the public id of its track, which announcing it
+/// after the commit can no longer look up.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RecordedListen {
+    pub(crate) listen: Listen,
+    pub(crate) track_id: String,
+}
+
+impl From<RecordedListen> for ListenPayload {
+    fn from(recorded: RecordedListen) -> Self {
         Self {
-            listen_id: listen.id,
-            track_id: listen.track_public_id,
-            started_at_ms: listen.started_at_ms,
-            played_ms: listen.played_ms,
+            listen_id: recorded.listen.id,
+            track_id: recorded.track_id,
+            started_at_ms: recorded.listen.started_at_ms,
+            played_ms: recorded.listen.played_ms,
         }
     }
 }
@@ -97,7 +105,7 @@ impl From<Listen> for ListenPayload {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RecordOutcome {
     /// The play counted; the new listen is announced once its transaction commits.
-    Recorded(Listen),
+    Recorded(RecordedListen),
     /// The user already has a listen for this play.
     Duplicate,
     /// The play was too short to count.
@@ -187,9 +195,9 @@ fn record_for_track(
         let played_ms =
             played_ms.map(|ms| ms.min(latest_end_ms.saturating_sub(listen.started_at_ms)));
         if let Some(played_ms) = played_ms
-            && listen.track_public_id == track.id
             && listen.played_ms.is_none_or(|stored| played_ms > stored)
             && let Some(listen_db_id) = listen.db_id
+            && lyra_db::listens::track_of(db, listen_db_id)? == Some(play.track_db_id)
         {
             lyra_db::listens::set_played_ms(db, listen_db_id, played_ms)?;
         }
@@ -209,22 +217,27 @@ fn record_for_track(
         db_id: None,
         id: nanoid(),
         play_id: play.play_id.to_string(),
-        track_public_id: track.id.clone(),
         started_at_ms: play.started_at_ms,
         played_ms,
         created_at_ms: now_ms,
     };
     let db_id = lyra_db::listens::insert(db, &listen, play.track_db_id, user_db_id)?;
-    Ok(RecordOutcome::Recorded(Listen {
-        db_id: Some(db_id),
-        ..listen
+    Ok(RecordOutcome::Recorded(RecordedListen {
+        listen: Listen {
+            db_id: Some(db_id),
+            ..listen
+        },
+        track_id: track.id.clone(),
     }))
 }
 
 /// Tells plugins about one user's listens from one commit, as a single update, right after the
 /// commit. Listens skip the playback updates' rate limit: each is announced once, so a limited one
 /// would be lost for good. Best effort otherwise: a saturated plugin runtime drops the update.
-pub(crate) fn dispatch_recorded(user_public_id: &str, listens: impl IntoIterator<Item = Listen>) {
+pub(crate) fn dispatch_recorded(
+    user_public_id: &str,
+    listens: impl IntoIterator<Item = RecordedListen>,
+) {
     let listens = listens
         .into_iter()
         .map(ListenPayload::from)
@@ -378,6 +391,21 @@ pub(crate) struct ListenStats {
     pub(crate) last_played_at_ms: Option<u64>,
 }
 
+impl ListenStats {
+    /// The listens of several tracks counted as one.
+    pub(crate) fn over(totals: impl IntoIterator<Item = lyra_db::listens::ListenTotal>) -> Self {
+        let mut stats = Self {
+            count: 0,
+            last_played_at_ms: None,
+        };
+        for total in totals {
+            stats.count = stats.count.saturating_add(total.count);
+            stats.last_played_at_ms = stats.last_played_at_ms.max(Some(total.last_played_at_ms));
+        }
+        stats
+    }
+}
+
 /// The viewer's listens to each of the tracks, releases and artists it can see, counted as the
 /// catalog counts them to sort by: a release or artist totals the tracks it holds or is credited
 /// on. With `unique_track_id_pairs`, a track also counts the listens to every visible track that
@@ -451,7 +479,6 @@ fn merged_track_stats(
 ) -> Result<HashMap<DbId, ListenStats>, CatalogError> {
     let user_db_id = viewer.user_db_id("listen stats")?;
     let mut merged_by_track = Vec::with_capacity(tracks.len());
-    let mut merged_ids = HashSet::new();
     for track in tracks {
         let mut merged = Vec::new();
         for merged_id in super::playback_sessions::resolve_merged_track_ids_for_play_count(
@@ -460,33 +487,17 @@ fn merged_track_stats(
             unique_track_id_pairs,
         )? {
             if viewer.sees_entity(db, merged_id)? {
-                merged_ids.insert(merged_id);
                 merged.push(merged_id);
             }
         }
         merged_by_track.push((track, merged));
     }
-    let merged_ids = merged_ids.into_iter().collect::<Vec<_>>();
-    let by_id = lyra_db::listens::get_stats(db, &merged_ids, user_db_id)?
-        .into_iter()
-        .map(|stats| (stats.db_id, stats))
-        .collect::<HashMap<_, _>>();
+    let totals = lyra_db::listens::totals(db, user_db_id)?;
     Ok(merged_by_track
         .into_iter()
         .filter_map(|(track, merged)| {
-            let mut count = 0_u64;
-            let mut last_played_at_ms = None;
-            for stats in merged.iter().filter_map(|id| by_id.get(id)) {
-                count = count.saturating_add(stats.count);
-                last_played_at_ms = last_played_at_ms.max(stats.last_played);
-            }
-            (count > 0).then_some((
-                track,
-                ListenStats {
-                    count,
-                    last_played_at_ms,
-                },
-            ))
+            let stats = ListenStats::over(merged.iter().filter_map(|id| totals.get(id)).copied());
+            (stats.count > 0).then_some((track, stats))
         })
         .collect())
 }
@@ -781,21 +792,28 @@ mod tests {
 
         let outcome =
             record_in_transaction(&mut db, user, play("play-stored-0001", track, 45_000))?;
-        assert!(matches!(outcome, RecordOutcome::Recorded(_)), "{outcome:?}");
+        assert!(
+            matches!(&outcome, RecordOutcome::Recorded(recorded) if recorded.track_id == track_public_id),
+            "{outcome:?}"
+        );
         let listen_db_id = lyra_db::listens::find_by_play_id(&db, user, "play-stored-0001")?
             .ok_or_else(|| anyhow::anyhow!("listen missing"))?;
         let listen = lyra_db::graph::bulk_fetch_typed::<Listen>(&db, vec![listen_db_id], "Listen")?
             .remove(&listen_db_id)
             .ok_or_else(|| anyhow::anyhow!("listen missing"))?;
         assert_eq!(listen.play_id, "play-stored-0001");
-        assert_eq!(listen.track_public_id, track_public_id);
+        assert_eq!(lyra_db::listens::track_of(&db, listen_db_id)?, Some(track));
         assert_eq!(listen.started_at_ms, NOW_MS - 600_000);
         assert_eq!(listen.played_ms, Some(45_000));
         assert_eq!(listen.created_at_ms, NOW_MS);
 
-        let stats = lyra_db::listens::get_stats(&db, &[track], user)?;
-        assert_eq!(stats[0].count, 1);
-        assert_eq!(stats[0].last_played, Some(NOW_MS - 600_000));
+        assert_eq!(
+            lyra_db::listens::total(&db, user, track)?,
+            Some(lyra_db::listens::ListenTotal {
+                count: 1,
+                last_played_at_ms: NOW_MS - 600_000,
+            })
+        );
         Ok(())
     }
 
@@ -827,8 +845,8 @@ mod tests {
             record_in_transaction(&mut db, other_user, play("play-repeat-0001", track, 30_000))?;
         assert!(matches!(other, RecordOutcome::Recorded(_)), "{other:?}");
 
-        let stats = lyra_db::listens::get_stats(&db, &[track], user)?;
-        assert_eq!(stats[0].count, 1);
+        let total = lyra_db::listens::total(&db, user, track)?;
+        assert_eq!(total.map(|total| total.count), Some(1));
         Ok(())
     }
 
@@ -904,6 +922,27 @@ mod tests {
     fn stored_listen(db: &DbAny, user: DbId, play_id: &str) -> anyhow::Result<Listen> {
         lyra_db::listens::get_by_play_id(db, user, play_id)?
             .ok_or_else(|| anyhow::anyhow!("no listen for {play_id}"))
+    }
+
+    #[test]
+    fn a_play_of_a_removed_track_stays_a_duplicate() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user = lyra_db::test_db::insert_user(&mut db, "listener")?;
+        let gone = insert_track(&mut db, None)?;
+        let other = insert_track(&mut db, None)?;
+        record_in_transaction(&mut db, user, play("play-orphaned-0001", gone, 30_000))?;
+        db.exec_mut(agdb::QueryBuilder::remove().ids(gone).query())?;
+
+        let again =
+            record_in_transaction(&mut db, user, play("play-orphaned-0001", other, 90_000))?;
+
+        assert_eq!(again, RecordOutcome::Duplicate);
+        assert_eq!(
+            stored_listen(&db, user, "play-orphaned-0001")?.played_ms,
+            Some(30_000)
+        );
+        assert_eq!(lyra_db::listens::total(&db, user, other)?, None);
+        Ok(())
     }
 
     #[test]

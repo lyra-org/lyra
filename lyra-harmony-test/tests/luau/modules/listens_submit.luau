@@ -41,6 +41,30 @@ local stats = listens.get({ fixture.ids.long, fixture.ids.short })
 assert(stats[fixture.ids.long].count == 1, `long count {stats[fixture.ids.long].count}`)
 assert(stats[fixture.ids.short].count == 1, `short count {stats[fixture.ids.short].count}`)
 
+-- Plays queued offline arrive in any order: each counts, and the latest start stays the last play.
+local function play_at(play_id: string, offset_ms: number): listens.SubmittedPlay
+	return {
+		play_id = play_id,
+		track_id = fixture.ids.long,
+		started_at_ms = started_at_ms + offset_ms,
+		played_ms = 60000,
+	}
+end
+local batch = listens.submit({
+	play_at("queued-play-000001", 200000),
+	play_at("queued-play-000002", 400000),
+	play_at("queued-play-000003", 100000),
+})
+for play_id, outcome in batch do
+	assert(outcome == "recorded", `{play_id}: {outcome}`)
+end
+listens.submit({ play_at("queued-play-000004", 300000) })
+local queued = listens.get({ fixture.ids.long, fixture.ids.album })
+assert(queued[fixture.ids.long].count == 5, `long count {queued[fixture.ids.long].count}`)
+assert(queued[fixture.ids.long].last_played_at_ms == started_at_ms + 400000, "the latest start is the last play")
+assert(queued[fixture.ids.album].count == 6, `album count {queued[fixture.ids.album].count}`)
+assert(queued[fixture.ids.album].last_played_at_ms == started_at_ms + 400000, "a release reads its tracks' totals")
+
 assert(next(listens.submit({})) == nil, "an empty batch judges nothing")
 
 local function rejects(plays: any, message: string)
@@ -64,4 +88,4 @@ end
 rejects(too_many, "plays cap exceeded")
 
 local after = listens.get({ fixture.ids.long })
-assert(after[fixture.ids.long].count == 1, "rejected batches record nothing")
+assert(after[fixture.ids.long].count == 5, "rejected batches record nothing")

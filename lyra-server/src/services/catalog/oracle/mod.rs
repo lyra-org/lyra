@@ -282,10 +282,7 @@ pub(crate) fn track_totals(
     };
     let listens = if listens {
         let user = viewer.user_db_id("listen sort keys")?;
-        lyra_db::listens::get_stats(db, &tracks, user)?
-            .into_iter()
-            .map(|stats| (stats.db_id, stats))
-            .collect()
+        lyra_db::listens::totals(db, user)?
     } else {
         HashMap::new()
     };
@@ -300,9 +297,10 @@ pub(crate) fn track_totals(
                 if let Some(duration) = durations.get(track) {
                     totals.total_duration = totals.total_duration.saturating_add(*duration);
                 }
-                if let Some(stats) = listens.get(track) {
-                    totals.listen_count = totals.listen_count.saturating_add(stats.count);
-                    totals.last_played_at = totals.last_played_at.max(stats.last_played);
+                if let Some(total) = listens.get(track) {
+                    totals.listen_count = totals.listen_count.saturating_add(total.count);
+                    totals.last_played_at =
+                        totals.last_played_at.max(Some(total.last_played_at_ms));
                 }
             }
             (*owner, totals)
