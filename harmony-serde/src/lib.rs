@@ -96,7 +96,8 @@ impl SerdeModule {
         returns(JsonValue)
     )]
     fn yaml_decode(vm: &luau::Vm, input: String) -> luau::runtime::Result<luau::Value> {
-        let json: serde_json::Value = serde_saphyr::from_str(&input)
+        let options = serde_saphyr::options! { strict_booleans: true };
+        let json: serde_json::Value = serde_saphyr::from_str_with_options(&input, options)
             .map_err(|error| runtime_error("YAML decode failed", error))?;
         json_to_luau(vm, json, 0)
     }
