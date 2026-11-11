@@ -105,7 +105,7 @@ mod tests {
         for title in ["first", "second", "third"] {
             let release = insert_release(db, title)?;
             let track = insert_track(db, title)?;
-            connect(db, release, track)?;
+            lyra_db::fixtures::link_track(db, release, track)?;
             lyra_db::genres::sync_release_genres(db, release, &["Rock".to_string()])?;
             let path = dir.join(format!("{title}.png"));
             std::fs::write(&path, b"cover")?;
@@ -284,7 +284,7 @@ mod tests {
         let releases = covered_releases(&mut db, dir.path())?;
         let track = releases[0].1;
         for (release, _) in &releases[1..] {
-            connect(&mut db, *release, track)?;
+            lyra_db::fixtures::link_track(&mut db, *release, track)?;
         }
         let mut by_public_id = releases
             .iter()

@@ -1009,8 +1009,8 @@ mod tests {
             let track_b = insert_track(&mut db, "Personal B Track")?;
             connect(&mut db, library, release_a)?;
             connect(&mut db, library, release_b)?;
-            connect(&mut db, release_a, track_a)?;
-            connect(&mut db, release_b, track_b)?;
+            lyra_db::fixtures::link_track(&mut db, release_a, track_a)?;
+            lyra_db::fixtures::link_track(&mut db, release_b, track_b)?;
             lyra_db::libraries::grant_access(
                 &mut *db,
                 user_db_id,
@@ -1072,8 +1072,8 @@ mod tests {
             let track_b = insert_track(&mut db, "Instance B Track")?;
             connect(&mut db, library, release_a)?;
             connect(&mut db, library, release_b)?;
-            connect(&mut db, release_a, track_a)?;
-            connect(&mut db, release_b, track_b)?;
+            lyra_db::fixtures::link_track(&mut db, release_a, track_a)?;
+            lyra_db::fixtures::link_track(&mut db, release_b, track_b)?;
             lyra_db::libraries::grant_access(
                 &mut *db,
                 request_user_db_id,

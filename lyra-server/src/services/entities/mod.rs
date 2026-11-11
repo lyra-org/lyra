@@ -888,7 +888,7 @@ mod tests {
         let release_id = insert_release(&mut db, "Identified Release")?;
         let track_id = insert_track(&mut db, "Identified Track")?;
         let artist_id = insert_artist(&mut db, "Identified Artist")?;
-        lyra_db::fixtures::connect(&mut db, release_id, track_id)?;
+        lyra_db::fixtures::link_track(&mut db, release_id, track_id)?;
         add_ids(&mut db, release_id, "release-thing")?;
         add_ids(&mut db, track_id, "track-thing")?;
         add_ids(&mut db, artist_id, "artist-thing")?;

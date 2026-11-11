@@ -554,13 +554,7 @@ fn plugin_executor_exposes_db_backed_lyra_tracks_module() -> Result<()> {
     let mut db = lyra_db::test_db::new_test_db()?;
     let release_db_id = lyra_db::fixtures::insert_release(&mut db, "Raw Track Release")?;
     let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Track Module Song")?;
-    db.exec_mut(
-        agdb::QueryBuilder::insert()
-            .edges()
-            .from(release_db_id)
-            .to(track_db_id)
-            .query(),
-    )?;
+    lyra_db::fixtures::link_track(&mut db, release_db_id, track_db_id)?;
     let track_public_id = public_id(&db, track_db_id)?;
     let release_id = public_id(&db, release_db_id)?;
     let db = lyra_db::DbAsync::new(db);
@@ -942,7 +936,7 @@ fn plugin_executor_exposes_db_backed_lyra_releases_module() -> Result<()> {
     let release_db_id = lyra_db::fixtures::insert_release(&mut db, "Raw Release Module")?;
     lyra_db::fixtures::insert_release(&mut db, "Other Release")?;
     let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Release Track")?;
-    lyra_db::fixtures::connect(&mut db, release_db_id, track_db_id)?;
+    lyra_db::fixtures::link_track(&mut db, release_db_id, track_db_id)?;
     let album_artist_id = lyra_db::fixtures::insert_artist(&mut db, "Raw Album Artist")?;
     lyra_db::test_db::connect_artist(&mut db, release_db_id, album_artist_id)?;
     let guest_artist_id = lyra_db::fixtures::insert_artist(&mut db, "Raw Guest Artist")?;
@@ -1898,7 +1892,7 @@ fn entities_links_include_resolves_templates_and_functions() -> Result<()> {
         let release = lyra_db::fixtures::insert_release(&mut db, "Link Release")?;
         let track = lyra_db::fixtures::insert_track(&mut db, "Link Track")?;
         lyra_db::fixtures::connect(&mut db, library, release)?;
-        lyra_db::fixtures::connect(&mut db, release, track)?;
+        lyra_db::fixtures::link_track(&mut db, release, track)?;
         for (node, id_type, value) in [
             (release, "thing_id", "r1"),
             (release, "localized_id", "l1"),

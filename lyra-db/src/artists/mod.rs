@@ -994,8 +994,8 @@ mod tests {
     #[test]
     fn get_credited_filters_out_non_credit_neighbors() -> anyhow::Result<()> {
         use crate::fixtures::{
-            connect,
             insert_track,
+            link_track,
         };
 
         let mut db = new_test_db()?;
@@ -1005,8 +1005,8 @@ mod tests {
 
         let track1 = insert_track(&mut db, "Track 1")?;
         let track2 = insert_track(&mut db, "Track 2")?;
-        connect(&mut db, release_id, track1)?;
-        connect(&mut db, release_id, track2)?;
+        link_track(&mut db, release_id, track1)?;
+        link_track(&mut db, release_id, track2)?;
 
         let credited = get_credited(&db, release_id)?;
         assert_eq!(credited.len(), 1);
@@ -1182,7 +1182,7 @@ mod tests {
         let mut db = new_test_db()?;
         let release = insert_release(&mut db, "Album")?;
         let track = crate::fixtures::insert_track(&mut db, "Song")?;
-        crate::fixtures::connect(&mut db, release, track)?;
+        crate::fixtures::link_track(&mut db, release, track)?;
         let main = insert_artist(&mut db, "Main")?;
         let featured = insert_artist(&mut db, "Featured")?;
         link(&mut db, release, main)?;

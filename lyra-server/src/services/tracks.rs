@@ -96,10 +96,10 @@ mod tests {
     use super::*;
     use crate::services::entities::ArtistCreditSource;
     use lyra_db::fixtures::{
-        connect,
         insert_artist,
         insert_release,
         insert_track,
+        link_track,
     };
     use lyra_db::roots::{
         self,
@@ -122,7 +122,7 @@ mod tests {
         let track_id = insert_track(&mut db, "Blue Train")?;
         let artist_id = insert_artist(&mut db, "Coltrane")?;
 
-        connect(&mut db, release_id, track_id)?;
+        link_track(&mut db, release_id, track_id)?;
         connect_artist(&mut db, track_id, artist_id)?;
 
         let includes = TrackIncludes {
@@ -183,7 +183,7 @@ mod tests {
         let track_id = insert_track(&mut db, "Goodbye Pork Pie Hat")?;
         let artist_id = insert_artist(&mut db, "Mingus")?;
 
-        connect(&mut db, release_id, track_id)?;
+        link_track(&mut db, release_id, track_id)?;
         connect_artist(&mut db, track_id, artist_id)?;
 
         let includes = TrackIncludes {
@@ -214,7 +214,7 @@ mod tests {
         let track_id = insert_track(&mut db, "Track")?;
         let artist_id = insert_artist(&mut db, "Release Artist")?;
 
-        connect(&mut db, release_id, track_id)?;
+        link_track(&mut db, release_id, track_id)?;
         connect_artist(&mut db, release_id, artist_id)?;
         // No direct track -> artist edge
 

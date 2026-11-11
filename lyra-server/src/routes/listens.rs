@@ -614,7 +614,7 @@ mod tests {
         let release = lyra_db::fixtures::insert_release(db, title)?;
         let track = lyra_db::fixtures::insert_track(db, title)?;
         lyra_db::fixtures::connect(db, library, release)?;
-        lyra_db::fixtures::connect(db, release, track)?;
+        lyra_db::fixtures::link_track(db, release, track)?;
         lyra_db::fixtures::insert_listen(db, user, track, 1_700_000_000_000)?;
         lyra_db::lookup::find_id_by_db_id(db, track)?
             .ok_or_else(|| anyhow::anyhow!("track has no public id"))

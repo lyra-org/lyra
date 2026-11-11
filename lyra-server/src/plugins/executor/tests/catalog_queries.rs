@@ -41,7 +41,7 @@ fn plugin_track_query_sorts_a_release_in_album_order() -> Result<()> {
         stored.disc = Some(disc);
         stored.track = Some(track);
         lyra_db::tracks::update(&mut db, &stored)?;
-        lyra_db::fixtures::connect(&mut db, release_db_id, track_db_id)?;
+        lyra_db::fixtures::link_track(&mut db, release_db_id, track_db_id)?;
     }
 
     let release_id = public_id(&db, release_db_id)?;
@@ -104,7 +104,7 @@ fn plugin_track_query_follows_the_dispatch_principal() -> Result<()> {
         let release = lyra_db::fixtures::insert_release(&mut db, title)?;
         let track = lyra_db::fixtures::insert_track(&mut db, title)?;
         lyra_db::fixtures::connect(&mut db, library, release)?;
-        lyra_db::fixtures::connect(&mut db, release, track)?;
+        lyra_db::fixtures::link_track(&mut db, release, track)?;
     }
     let user = test_db::insert_user(&mut db, "query-viewer")?;
     let visible_library_id = lyra_db::libraries::get_by_id(&db, visible_library)?
@@ -204,7 +204,7 @@ fn catalog() -> Result<Catalog> {
         let mut stored = lyra_db::tracks::get_by_id(&db, track)?.context("track exists")?;
         stored.year = Some(year);
         lyra_db::tracks::update(&mut db, &stored)?;
-        lyra_db::fixtures::connect(&mut db, release, track)?;
+        lyra_db::fixtures::link_track(&mut db, release, track)?;
         if let Some(artist) = artist {
             test_db::connect_artist(&mut db, track, artist)?;
         }
@@ -379,7 +379,7 @@ fn plugin_catalog_query_scopes_a_library_to_what_the_principal_sees() -> Result<
         for library in libraries {
             lyra_db::fixtures::connect(&mut db, library, release)?;
         }
-        lyra_db::fixtures::connect(&mut db, release, track)?;
+        lyra_db::fixtures::link_track(&mut db, release, track)?;
         test_db::connect_artist(&mut db, release, artist)?;
     }
     let user = test_db::insert_user(&mut db, "scope-viewer")?;
@@ -609,7 +609,7 @@ fn track_query_treats_missing_and_hidden_ids_alike() -> Result<()> {
         let release = lyra_db::fixtures::insert_release(&mut db, title)?;
         let track = lyra_db::fixtures::insert_track(&mut db, title)?;
         lyra_db::fixtures::connect(&mut db, library, release)?;
-        lyra_db::fixtures::connect(&mut db, release, track)?;
+        lyra_db::fixtures::link_track(&mut db, release, track)?;
         if library == hidden_library {
             test_db::connect_artist(&mut db, track, hidden_artist)?;
             lyra_db::genres::sync_release_genres(&mut db, release, &["Hidden Genre".to_string()])?;

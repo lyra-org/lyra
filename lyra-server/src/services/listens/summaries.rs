@@ -328,7 +328,7 @@ mod tests {
         let release = insert_release(db, title)?;
         let track = insert_track(db, title)?;
         connect(db, library, release)?;
-        connect(db, release, track)?;
+        lyra_db::fixtures::link_track(db, release, track)?;
         Ok(track)
     }
 

@@ -1849,7 +1849,7 @@ mod tests {
             connect(&mut db, library, release)?;
             for track in 0..3 {
                 let track = lyra_db::fixtures::insert_track(&mut db, &format!("T{index}{track}"))?;
-                connect(&mut db, release, track)?;
+                lyra_db::fixtures::link_track(&mut db, release, track)?;
             }
             libraries.push(
                 lyra_db::libraries::get_by_id(&db, library)?
@@ -1956,7 +1956,7 @@ mod tests {
         connect(&mut db, hidden, both)?;
         connect(&mut db, hidden, only_hidden)?;
         let track = lyra_db::fixtures::insert_track(&mut db, "Hidden Track")?;
-        connect(&mut db, only_hidden, track)?;
+        lyra_db::fixtures::link_track(&mut db, only_hidden, track)?;
         let loose = lyra_db::fixtures::insert_track(&mut db, "Loose Track")?;
 
         let index = Snapshot::build(&db)?;

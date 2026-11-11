@@ -1070,8 +1070,8 @@ mod tests {
         let hidden_only = insert_track(&mut db, "Hidden Only")?;
         let release = insert_release(&mut db, "Entry Release")?;
         connect(&mut db, shown, release)?;
-        connect(&mut db, release, shared)?;
-        connect(&mut db, release, hidden_only)?;
+        lyra_db::fixtures::link_track(&mut db, release, shared)?;
+        lyra_db::fixtures::link_track(&mut db, release, hidden_only)?;
         for (track, library, name) in [
             (shared, shown, "z.flac"),
             (shared, shown, "a.flac"),
@@ -1239,9 +1239,9 @@ mod tests {
             let visible_track = insert_track(&mut db, "Visible Track")?;
             let hidden_track = insert_track(&mut db, "Hidden Track")?;
             connect(&mut db, visible_library, visible_release)?;
-            connect(&mut db, visible_release, visible_track)?;
+            lyra_db::fixtures::link_track(&mut db, visible_release, visible_track)?;
             connect(&mut db, hidden_library, hidden_release)?;
-            connect(&mut db, hidden_release, hidden_track)?;
+            lyra_db::fixtures::link_track(&mut db, hidden_release, hidden_track)?;
 
             let visible_library_id = lyra_db::libraries::get_by_id(&db, visible_library)?
                 .ok_or_else(|| anyhow::anyhow!("visible library missing"))?
@@ -1300,7 +1300,7 @@ mod tests {
             let release = insert_release(&mut db, "Recycled Rating Release")?;
             let track = insert_track(&mut db, "Rated By Replacement")?;
             connect(&mut db, library, release)?;
-            connect(&mut db, release, track)?;
+            lyra_db::fixtures::link_track(&mut db, release, track)?;
             let library_id = lyra_db::libraries::get_by_id(&db, library)?
                 .ok_or_else(|| anyhow::anyhow!("library missing"))?
                 .id;
@@ -1380,10 +1380,10 @@ mod tests {
 
             connect(&mut db, visible_library, visible_release)?;
             for track in [four_star, five_star, low_rating, unrated, other_user_rating] {
-                connect(&mut db, visible_release, track)?;
+                lyra_db::fixtures::link_track(&mut db, visible_release, track)?;
             }
             connect(&mut db, hidden_library, hidden_release)?;
-            connect(&mut db, hidden_release, hidden_rating)?;
+            lyra_db::fixtures::link_track(&mut db, hidden_release, hidden_rating)?;
 
             for (target, value) in [
                 (four_star, 4),
@@ -1533,7 +1533,7 @@ mod tests {
             let mut db = STATE.db.write().await;
             let release = insert_release(&mut db, "Covered Release")?;
             let track = insert_track(&mut db, "Covered Track")?;
-            connect(&mut db, release, track)?;
+            lyra_db::fixtures::link_track(&mut db, release, track)?;
             insert_cover_for(&mut db, release)?.id
         };
         let principal = admin_principal(HashSet::new()).await;
@@ -1584,7 +1584,7 @@ mod tests {
             let mut db = STATE.db.write().await;
             let release = insert_release(&mut db, "Detail Covered Release")?;
             let track = insert_track(&mut db, "Detail Covered Track")?;
-            connect(&mut db, release, track)?;
+            lyra_db::fixtures::link_track(&mut db, release, track)?;
             let cover_id = insert_cover_for(&mut db, release)?.id;
             let track_public_id = lyra_db::tracks::get_by_id(&db, track)?
                 .ok_or_else(|| anyhow::anyhow!("track missing"))?
@@ -1674,10 +1674,10 @@ mod tests {
             update_track_position(&mut db, disc_two_first, Some(2), Some(1))?;
             update_track_position(&mut db, other_track, Some(1), Some(1))?;
 
-            connect(&mut db, release, disc_one_second)?;
-            connect(&mut db, release, disc_one_first)?;
-            connect(&mut db, release, disc_two_first)?;
-            connect(&mut db, other_release, other_track)?;
+            lyra_db::fixtures::link_track(&mut db, release, disc_one_second)?;
+            lyra_db::fixtures::link_track(&mut db, release, disc_one_first)?;
+            lyra_db::fixtures::link_track(&mut db, release, disc_two_first)?;
+            lyra_db::fixtures::link_track(&mut db, other_release, other_track)?;
 
             lyra_db::releases::get_by_id(&db, release)?
                 .ok_or_else(|| anyhow::anyhow!("release missing"))?
@@ -1791,7 +1791,7 @@ mod tests {
             ] {
                 let track = insert_track(&mut db, title)?;
                 update_track_position(&mut db, track, disc, track_number)?;
-                connect(&mut db, release, track)?;
+                lyra_db::fixtures::link_track(&mut db, release, track)?;
             }
             lyra_db::releases::get_by_id(&db, release)?
                 .ok_or_else(|| anyhow::anyhow!("release missing"))?
@@ -2196,7 +2196,7 @@ mod tests {
             connect(&mut db, library, release)?;
             for title in ["First", "Second"] {
                 let track = insert_track(&mut db, title)?;
-                connect(&mut db, release, track)?;
+                lyra_db::fixtures::link_track(&mut db, release, track)?;
             }
             let library_id = lyra_db::libraries::get_by_id(&db, library)?
                 .ok_or_else(|| anyhow::anyhow!("library missing"))?
@@ -2251,7 +2251,7 @@ mod tests {
         connect(&mut db, library, release)?;
         for title in titles {
             let track = insert_track(&mut db, title)?;
-            connect(&mut db, release, track)?;
+            lyra_db::fixtures::link_track(&mut db, release, track)?;
         }
         let library_id = lyra_db::libraries::get_by_id(&db, library)?
             .ok_or_else(|| anyhow::anyhow!("library missing"))?

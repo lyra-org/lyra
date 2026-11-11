@@ -1428,7 +1428,7 @@ mod tests {
         let track_db_id = insert_track(&mut db, "Track Missing Direct Artist")?;
         let artist_db_id = insert_artist(&mut db, "Fallback Artist")?;
 
-        connect(&mut db, release_db_id, track_db_id)?;
+        lyra_db::fixtures::link_track(&mut db, release_db_id, track_db_id)?;
         connect(&mut db, release_db_id, artist_db_id)?;
 
         let playlist = Playlist {

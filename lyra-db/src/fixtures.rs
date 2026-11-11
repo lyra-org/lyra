@@ -119,6 +119,13 @@ pub fn connect(db: &mut DbAny, from: DbId, to: DbId) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Makes the release hold the track, as [`link_track`](super::releases::link_track) stores it,
+/// without offering the release's cover to playlists.
+pub fn link_track(db: &mut DbAny, release_db_id: DbId, track_db_id: DbId) -> anyhow::Result<()> {
+    super::graph::ensure_owned_edge(db, release_db_id, track_db_id)?;
+    Ok(())
+}
+
 /// An audio file entry named `name`, held by `parent`, a library or directory entry.
 pub fn insert_file_entry(db: &mut DbAny, parent: DbId, name: &str) -> anyhow::Result<DbId> {
     let entry = super::entries::Entry {

@@ -3234,7 +3234,7 @@ FILE "album.flac" WAVE
                 .expect("track");
             let other = lyra_db::fixtures::insert_release(&mut db, "Other")?;
             lyra_db::fixtures::connect(&mut db, library.db_id.expect("library"), other)?;
-            lyra_db::fixtures::connect(&mut db, other, track)?;
+            lyra_db::fixtures::link_track(&mut db, other, track)?;
         }
 
         refresh_release_covers(&library).await?;

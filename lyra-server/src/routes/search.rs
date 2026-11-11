@@ -402,7 +402,7 @@ mod tests {
             let release = insert_release(&mut db, "Blue Release")?;
             let track = insert_track(&mut db, "Blue Track")?;
             connect(&mut db, visible, release)?;
-            connect(&mut db, release, track)?;
+            lyra_db::fixtures::link_track(&mut db, release, track)?;
             let on_release = insert_artist(&mut db, "Blue Release Artist")?;
             let on_track = insert_artist(&mut db, "Blue Track Artist")?;
             connect_artist(&mut db, release, on_release)?;
@@ -412,7 +412,7 @@ mod tests {
             let hidden_track = insert_track(&mut db, "Blue Hidden")?;
             let hidden_artist = insert_artist(&mut db, "Blue Hidden")?;
             connect(&mut db, hidden, hidden_release)?;
-            connect(&mut db, hidden_release, hidden_track)?;
+            lyra_db::fixtures::link_track(&mut db, hidden_release, hidden_track)?;
             connect_artist(&mut db, hidden_release, hidden_artist)?;
             lyra_db::libraries::get_by_id(&db, visible)?
                 .ok_or_else(|| anyhow::anyhow!("library missing"))?
@@ -500,7 +500,7 @@ mod tests {
             let release = insert_release(&mut db, "Blue Release")?;
             let track = insert_track(&mut db, "Blue Track")?;
             connect(&mut db, shown, release)?;
-            connect(&mut db, release, track)?;
+            lyra_db::fixtures::link_track(&mut db, release, track)?;
             for (library, name) in [(shown, "shown.flac"), (hidden, "hidden.flac")] {
                 let entry = insert_file_entry(&mut db, library, name)?;
                 connect(&mut db, track, entry)?;

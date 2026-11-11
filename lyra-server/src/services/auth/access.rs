@@ -467,7 +467,7 @@ mod tests {
         let release = lyra_db::fixtures::insert_release(&mut db, "Shared")?;
         let track = insert_track(&mut db, "Song")?;
         connect(&mut db, shown, release)?;
-        connect(&mut db, release, track)?;
+        lyra_db::fixtures::link_track(&mut db, release, track)?;
         let public = |db: &DbAny, library| -> anyhow::Result<String> {
             Ok(lyra_db::libraries::get_by_id(db, library)?
                 .expect("library exists")
@@ -603,7 +603,7 @@ mod tests {
             let track = insert_track(&mut db, "Song")?;
             let artist = lyra_db::fixtures::insert_artist(&mut db, "Artist")?;
             connect(&mut db, library, release)?;
-            connect(&mut db, release, track)?;
+            lyra_db::fixtures::link_track(&mut db, release, track)?;
             lyra_db::fixtures::connect_credit(
                 &mut db,
                 release,

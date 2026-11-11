@@ -217,7 +217,7 @@ pub fn hang_in_users_library(db: &mut DbAny, user_db_id: DbId, node: DbId) -> an
     let release = super::fixtures::insert_release(db, "Release")?;
     let track = insert_track(db, "Track")?;
     super::fixtures::connect(db, library, release)?;
-    super::fixtures::connect(db, release, track)?;
+    crate::fixtures::link_track(db, release, track)?;
     super::fixtures::connect(db, track, node)?;
     Ok(())
 }

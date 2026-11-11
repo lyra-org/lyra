@@ -516,14 +516,14 @@ mod tests {
         let visible_a = insert_track(&mut db, "Visible A")?;
         let visible_b = insert_track(&mut db, "Visible B")?;
         let seed_id = insert_track(&mut db, "Visible Seed")?;
-        connect(&mut db, hidden_release, hidden_a)?;
-        connect(&mut db, hidden_release, hidden_b)?;
-        connect(&mut db, visible_release, visible_a)?;
-        connect(&mut db, visible_release, visible_b)?;
-        connect(&mut db, visible_release, seed_id)?;
+        lyra_db::fixtures::link_track(&mut db, hidden_release, hidden_a)?;
+        lyra_db::fixtures::link_track(&mut db, hidden_release, hidden_b)?;
+        lyra_db::fixtures::link_track(&mut db, visible_release, visible_a)?;
+        lyra_db::fixtures::link_track(&mut db, visible_release, visible_b)?;
+        lyra_db::fixtures::link_track(&mut db, visible_release, seed_id)?;
 
         let replaced_id = insert_track(&mut db, "Replaced Candidate")?;
-        connect(&mut db, visible_release, replaced_id)?;
+        lyra_db::fixtures::link_track(&mut db, visible_release, replaced_id)?;
         let replaced = lyra_db::tracks::get_by_id(&db, replaced_id)?.expect("candidate exists");
         let mut replacement = replaced.clone();
         replacement.id = lyra_db::nanoid();
@@ -625,13 +625,13 @@ mod tests {
             "Eyrie",
         ] {
             let track = insert_track(db, title)?;
-            connect(db, urn, track)?;
+            lyra_db::fixtures::link_track(db, urn, track)?;
             chain.push(track);
         }
         let mut others = Vec::new();
         for number in 0..8 {
             let track = insert_track(db, &format!("Portal {number}"))?;
-            connect(db, portal, track)?;
+            lyra_db::fixtures::link_track(db, portal, track)?;
             others.push(track);
         }
         lyra_db::chains::replace_for_release(db, urn, std::slice::from_ref(&chain))??;

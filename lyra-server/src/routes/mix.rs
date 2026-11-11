@@ -259,12 +259,12 @@ mod tests {
 
             for index in 0..55 {
                 let track = insert_track(&mut db, &format!("Visible Track {index:02}"))?;
-                connect(&mut db, visible_release, track)?;
+                lyra_db::fixtures::link_track(&mut db, visible_release, track)?;
             }
             let mut hidden_track = None;
             for index in 0..60 {
                 let track = insert_track(&mut db, &format!("Hidden Track {index:02}"))?;
-                connect(&mut db, hidden_release, track)?;
+                lyra_db::fixtures::link_track(&mut db, hidden_release, track)?;
                 hidden_track.get_or_insert(track);
             }
             let public_id = |id| {

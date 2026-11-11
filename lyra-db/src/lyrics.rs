@@ -1446,7 +1446,7 @@ mod tests {
         let release = crate::fixtures::insert_release(&mut db, "release")?;
         let track_id = crate::fixtures::insert_track(&mut db, "song")?;
         crate::fixtures::connect(&mut db, library_a, release)?;
-        crate::fixtures::connect(&mut db, release, track_id)?;
+        crate::fixtures::link_track(&mut db, release, track_id)?;
         let entry = crate::entries::Entry {
             db_id: None,
             id: nanoid(),

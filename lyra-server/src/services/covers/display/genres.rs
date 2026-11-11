@@ -154,7 +154,7 @@ mod tests {
     fn covered_release(db: &mut DbAny, title: &str) -> anyhow::Result<(DbId, DbId)> {
         let release = insert_release(db, title)?;
         let track = insert_track(db, title)?;
-        connect(db, release, track)?;
+        lyra_db::fixtures::link_track(db, release, track)?;
         lyra_db::genres::sync_release_genres(db, release, &["Rock".to_string()])?;
         db.transaction_mut(|t| {
             lyra_db::covers::upsert(

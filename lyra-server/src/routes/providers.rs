@@ -1097,9 +1097,9 @@ mod tests {
         let disc_2_track_1 = insert_track(&mut db, "Disc 2 Track 1", Some(2), Some(1))?;
         let track_1 = insert_track(&mut db, "Track 1", Some(1), Some(1))?;
 
-        connect(&mut db, release_db_id, track_2)?;
-        connect(&mut db, release_db_id, disc_2_track_1)?;
-        connect(&mut db, release_db_id, track_1)?;
+        lyra_db::fixtures::link_track(&mut db, release_db_id, track_2)?;
+        lyra_db::fixtures::link_track(&mut db, release_db_id, disc_2_track_1)?;
+        lyra_db::fixtures::link_track(&mut db, release_db_id, track_1)?;
 
         let context = build_release_context(&db, release_db_id, None, &IdSchemes::default())?;
         let tracks = context
@@ -1121,7 +1121,7 @@ mod tests {
         let mut db = new_test_db()?;
         let release_db_id = insert_release(&mut db, "IDs Release")?;
         let track_db_id = insert_track(&mut db, "Track With ID", Some(1), Some(1))?;
-        connect(&mut db, release_db_id, track_db_id)?;
+        lyra_db::fixtures::link_track(&mut db, release_db_id, track_db_id)?;
 
         lyra_db::external_ids::upsert(
             &mut db,
@@ -1153,7 +1153,7 @@ mod tests {
         let mut db = new_test_db()?;
         let release_db_id = insert_release(&mut db, "Manual Release")?;
         let track_db_id = insert_track(&mut db, "Plugin Track", Some(1), Some(1))?;
-        connect(&mut db, release_db_id, track_db_id)?;
+        lyra_db::fixtures::link_track(&mut db, release_db_id, track_db_id)?;
 
         lyra_db::external_ids::upsert(
             &mut db,
@@ -1206,7 +1206,7 @@ mod tests {
             &mut db,
             "/music/Aimer - Daydream (2016) [FLAC]/01 - Insane Dream.flac",
         )?;
-        connect(&mut db, release_db_id, track_db_id)?;
+        lyra_db::fixtures::link_track(&mut db, release_db_id, track_db_id)?;
         connect_track_to_entry_source(&mut db, track_db_id, entry_db_id)?;
 
         let context = build_release_context(&db, release_db_id, None, &IdSchemes::default())?;
@@ -1258,7 +1258,7 @@ mod tests {
             &mut db,
             "/mnt/mini/music/japanese/Green Apelsin/Северный ветер [2021]/01 - Северный ветер.flac",
         )?;
-        connect(&mut db, release_db_id, track_db_id)?;
+        lyra_db::fixtures::link_track(&mut db, release_db_id, track_db_id)?;
         connect_track_to_entry_source(&mut db, track_db_id, entry_db_id)?;
 
         let context = build_release_context(
@@ -1311,7 +1311,7 @@ mod tests {
         let release_db_id = insert_release(&mut db, "Fallback Release")?;
         let track_db_id = insert_track(&mut db, "Track Missing Direct Artist", Some(1), Some(1))?;
         let artist_db_id = insert_artist(&mut db, "Fallback Artist")?;
-        connect(&mut db, release_db_id, track_db_id)?;
+        lyra_db::fixtures::link_track(&mut db, release_db_id, track_db_id)?;
         connect(&mut db, release_db_id, artist_db_id)?;
 
         let context = build_release_context(&db, release_db_id, None, &IdSchemes::default())?;
@@ -1379,7 +1379,7 @@ mod tests {
         let track_db_id = insert_track(&mut db, "Ordered Track", Some(1), Some(1))?;
         let alphabetic_artist_db_id = insert_artist(&mut db, "Alpha Artist")?;
         let lead_artist_db_id = insert_artist(&mut db, "Zulu Artist")?;
-        connect(&mut db, release_db_id, track_db_id)?;
+        lyra_db::fixtures::link_track(&mut db, release_db_id, track_db_id)?;
         lyra_db::fixtures::connect_credit(
             &mut db,
             track_db_id,
@@ -1423,7 +1423,7 @@ mod tests {
         let track_db_id = insert_track(&mut db, "Track Missing Direct Artist", Some(1), Some(1))?;
         let alphabetic_artist_db_id = insert_artist(&mut db, "Alpha Artist")?;
         let lead_artist_db_id = insert_artist(&mut db, "Zulu Artist")?;
-        connect(&mut db, release_db_id, track_db_id)?;
+        lyra_db::fixtures::link_track(&mut db, release_db_id, track_db_id)?;
         lyra_db::fixtures::connect_credit(
             &mut db,
             release_db_id,

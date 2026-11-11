@@ -1553,9 +1553,9 @@ mod tests {
     use crate::{
         covers,
         fixtures::{
-            connect,
             insert_release,
             insert_track,
+            link_track,
             test_user,
         },
         genres,
@@ -1593,8 +1593,8 @@ mod tests {
         let release_b = insert_release(&mut db, "B")?;
         let track_a = insert_track(&mut db, "A1")?;
         let track_b = insert_track(&mut db, "B1")?;
-        connect(&mut db, release_a, track_a)?;
-        connect(&mut db, release_b, track_b)?;
+        link_track(&mut db, release_a, track_a)?;
+        link_track(&mut db, release_b, track_b)?;
         genres::link_to_release(&mut db, genre_db_id, release_a)?;
         genres::link_to_release(&mut db, genre_db_id, release_b)?;
         insert_cover(&mut db, release_a, "a")?;
@@ -1702,7 +1702,7 @@ mod tests {
         let user_db_id = users::create(&mut db, &test_user("playlist-covers")?)?;
         let release_db_id = insert_release(&mut db, "Covered")?;
         let track_db_id = insert_track(&mut db, "Covered Track")?;
-        connect(&mut db, release_db_id, track_db_id)?;
+        link_track(&mut db, release_db_id, track_db_id)?;
         insert_cover(&mut db, release_db_id, "playlist-winner")?;
 
         let (playlist_db_id, playlist_public_id) = insert_playlist(&mut db, user_db_id)?;
@@ -1747,7 +1747,7 @@ mod tests {
         let user_db_id = users::create(&mut db, &test_user("playlist-dirty")?)?;
         let release_db_id = insert_release(&mut db, "Covered")?;
         let track_db_id = insert_track(&mut db, "Covered Track")?;
-        connect(&mut db, release_db_id, track_db_id)?;
+        link_track(&mut db, release_db_id, track_db_id)?;
         insert_cover(&mut db, release_db_id, "clean")?;
 
         let (playlist_db_id, playlist_public_id) = insert_playlist(&mut db, user_db_id)?;
@@ -1794,8 +1794,8 @@ mod tests {
         let release_b = insert_release(&mut db, "B")?;
         let track_a = insert_track(&mut db, "A1")?;
         let track_b = insert_track(&mut db, "B1")?;
-        connect(&mut db, release_a, track_a)?;
-        connect(&mut db, release_b, track_b)?;
+        link_track(&mut db, release_a, track_a)?;
+        link_track(&mut db, release_b, track_b)?;
         insert_cover(&mut db, release_a, "version-a")?;
         insert_cover(&mut db, release_b, "version-b")?;
 
@@ -1870,8 +1870,8 @@ mod tests {
         let release_db_id = insert_release(&mut db, "Covered")?;
         let playlist_track_db_id = insert_track(&mut db, "Playlist Track")?;
         let surviving_track_db_id = insert_track(&mut db, "Surviving Track")?;
-        connect(&mut db, release_db_id, playlist_track_db_id)?;
-        connect(&mut db, release_db_id, surviving_track_db_id)?;
+        link_track(&mut db, release_db_id, playlist_track_db_id)?;
+        link_track(&mut db, release_db_id, surviving_track_db_id)?;
         insert_cover(&mut db, release_db_id, "cascade")?;
 
         let (playlist_db_id, playlist_public_id) = insert_playlist(&mut db, user_db_id)?;
@@ -1903,7 +1903,7 @@ mod tests {
         let user_db_id = users::create(&mut db, &test_user("playlist-delete")?)?;
         let release_db_id = insert_release(&mut db, "Covered")?;
         let track_db_id = insert_track(&mut db, "Covered Track")?;
-        connect(&mut db, release_db_id, track_db_id)?;
+        link_track(&mut db, release_db_id, track_db_id)?;
         insert_cover(&mut db, release_db_id, "doomed")?;
 
         let (playlist_db_id, playlist_public_id) = insert_playlist(&mut db, user_db_id)?;
@@ -1945,8 +1945,8 @@ mod tests {
         let release_b = insert_release(&mut db, "B")?;
         let track_a = insert_track(&mut db, "A1")?;
         let track_b = insert_track(&mut db, "B1")?;
-        connect(&mut db, release_a, track_a)?;
-        connect(&mut db, release_b, track_b)?;
+        link_track(&mut db, release_a, track_a)?;
+        link_track(&mut db, release_b, track_b)?;
         insert_cover(&mut db, release_a, "a")?;
         insert_cover(&mut db, release_b, "b")?;
 
@@ -2018,7 +2018,7 @@ mod tests {
         for (index, title) in ["A", "B", "C"].into_iter().enumerate() {
             let release = insert_release(db, title)?;
             let track = insert_track(db, title)?;
-            connect(db, release, track)?;
+            link_track(db, release, track)?;
             genres::link_to_release(db, genre_db_id, release)?;
             insert_cover(db, release, title)?;
             for _ in 0..plays[index] {

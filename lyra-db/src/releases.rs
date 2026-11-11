@@ -340,18 +340,27 @@ pub fn get_by_track(db: &impl super::DbAccess, track_db_id: DbId) -> anyhow::Res
 }
 
 fn releases_holding(db: &impl super::DbAccess, track_db_id: DbId) -> anyhow::Result<Vec<Release>> {
-    Ok(db
+    // Every listen of the track leads to it as well, and telling a release from a listen means
+    // reading the node. A release's edge is the owned one, and listens' edges hold nothing.
+    let holders = db
         .exec(
-            QueryBuilder::select()
-                .elements::<Release>()
-                .search()
+            QueryBuilder::search()
                 .to(track_db_id)
                 .where_()
-                .neighbor()
-                .end_where()
+                .distance(CountComparison::Equal(1))
+                .and()
+                .keys(["owned"])
                 .query(),
         )?
-        .try_into()?)
+        .elements
+        .into_iter()
+        .map(|edge| edge.from)
+        .collect::<Vec<_>>();
+    let mut releases = super::graph::bulk_fetch_typed::<Release>(db, holders.clone(), "Release")?;
+    Ok(holders
+        .into_iter()
+        .filter_map(|holder| releases.remove(&holder))
+        .collect())
 }
 
 /// The releases holding each track, keyed by every id given; ids that are not tracks map to none.
@@ -575,11 +584,11 @@ pub fn update_in_transaction(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fixtures::connect as link;
     use crate::fixtures::{
         insert_artist,
         insert_release,
         insert_track,
+        link_track as link,
     };
     use crate::test_db::{
         connect_artist as link_artist,
@@ -711,6 +720,29 @@ mod tests {
         let releases = get_by_track(&db, track_id)?;
         assert_eq!(releases.len(), 1);
         assert_eq!(releases[0].release_title, "My Release");
+        Ok(())
+    }
+
+    #[test]
+    fn get_by_track_returns_only_releases_of_a_listened_track() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release_id = insert_release(&mut db, "Played Release")?;
+        let track_id = insert_track(&mut db, "Played Track")?;
+        link(&mut db, release_id, track_id)?;
+        let user = crate::test_db::insert_user(&mut db, "listener")?;
+        crate::fixtures::insert_listen(&mut db, user, track_id, 1_000)?;
+        let owner = insert_artist(&mut db, "Not A Release")?;
+        crate::graph::ensure_owned_edge(&mut db, owner, track_id)?;
+
+        let releases = get_by_track(&db, track_id)?;
+
+        assert_eq!(
+            releases
+                .iter()
+                .map(|release| release.release_title.as_str())
+                .collect::<Vec<_>>(),
+            ["Played Release"]
+        );
         Ok(())
     }
 

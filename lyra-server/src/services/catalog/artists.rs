@@ -528,7 +528,7 @@ mod tests {
         let track = |db: &mut DbAny, title: &str, releases: &[DbId]| -> anyhow::Result<DbId> {
             let track = insert_track(db, title)?;
             for release in releases {
-                connect(db, *release, track)?;
+                lyra_db::fixtures::link_track(db, *release, track)?;
             }
             Ok(track)
         };
@@ -751,7 +751,7 @@ mod tests {
             let mut inserted = Vec::new();
             for index in 0..tracks {
                 let track = insert_track(db, &format!("{title} {index}"))?;
-                connect(db, release, track)?;
+                lyra_db::fixtures::link_track(db, release, track)?;
                 inserted.push(track);
             }
             Ok(inserted)

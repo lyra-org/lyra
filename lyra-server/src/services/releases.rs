@@ -321,13 +321,7 @@ mod tests {
         let qr = db.exec_mut(QueryBuilder::insert().element(&track).query())?;
         let track_id = *qr.ids().first().unwrap();
         roots::link(&mut db, Root::Tracks, track_id)?;
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from(release_id)
-                .to(track_id)
-                .query(),
-        )?;
+        lyra_db::fixtures::link_track(&mut db, release_id, track_id)?;
 
         let artist = Artist {
             db_id: None,
@@ -419,7 +413,7 @@ mod tests {
         let shared = insert_track(&mut db, "Shared")?;
         let second = insert_track(&mut db, "Second")?;
         for track in [shared, second] {
-            connect(&mut db, release_id, track)?;
+            lyra_db::fixtures::link_track(&mut db, release_id, track)?;
             connect(&mut db, shown, track)?;
             connect(&mut db, track, shown_file)?;
         }

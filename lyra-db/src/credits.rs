@@ -452,7 +452,7 @@ mod tests {
         let mut db = new_test_db()?;
         let release = insert_release(&mut db, "release")?;
         let track = insert_track(&mut db, "track")?;
-        connect(&mut db, release, track)?;
+        crate::fixtures::link_track(&mut db, release, track)?;
         let release_artist = insert_artist(&mut db, "Release Artist")?;
         let track_artist = insert_artist(&mut db, "Track Artist")?;
         connect_artist(&mut db, release, release_artist)?;
@@ -564,7 +564,7 @@ mod tests {
         let mut db = new_test_db()?;
         let release = insert_release(&mut db, "release")?;
         let track = insert_track(&mut db, "track")?;
-        connect(&mut db, release, track)?;
+        crate::fixtures::link_track(&mut db, release, track)?;
         let track_only = insert_artist(&mut db, "Track Only")?;
         let both = insert_artist(&mut db, "Both")?;
         connect_artist(&mut db, track, track_only)?;

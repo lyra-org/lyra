@@ -950,7 +950,7 @@ mod tests {
                 .id;
             let release = insert_test_release(&mut db, "Spanning")?;
             let track = insert_track(&mut db, "Shared")?;
-            connect(&mut db, release, track)?;
+            lyra_db::fixtures::link_track(&mut db, release, track)?;
             for library in [shown, hidden] {
                 connect(&mut db, library, release)?;
                 connect(&mut db, library, track)?;
@@ -1271,8 +1271,8 @@ mod tests {
             let five_star_release = insert_test_release(&mut db, "Five Star Release")?;
             let unrated_track = insert_track(&mut db, "Unrated Nested Track")?;
             let rated_track = insert_track(&mut db, "Rated Nested Track")?;
-            connect(&mut db, rated_release, unrated_track)?;
-            connect(&mut db, unrated_release, rated_track)?;
+            lyra_db::fixtures::link_track(&mut db, rated_release, unrated_track)?;
+            lyra_db::fixtures::link_track(&mut db, unrated_release, rated_track)?;
             lyra_db::ratings::upsert(
                 &mut *db,
                 user_db_id,

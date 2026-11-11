@@ -952,10 +952,10 @@ mod tests {
         connect(&mut db, shown, shown_release)?;
         connect(&mut db, hidden, hidden_release)?;
         let song = insert_track(&mut db, "Song")?;
-        connect(&mut db, shown_release, song)?;
-        connect(&mut db, hidden_release, song)?;
+        lyra_db::fixtures::link_track(&mut db, shown_release, song)?;
+        lyra_db::fixtures::link_track(&mut db, hidden_release, song)?;
         let hidden_only = insert_track(&mut db, "Lonely")?;
-        connect(&mut db, hidden_release, hidden_only)?;
+        lyra_db::fixtures::link_track(&mut db, hidden_release, hidden_only)?;
         let hidden_artist = insert_artist(&mut db, "Privateartist")?;
         connect_credit(
             &mut db,
@@ -1062,9 +1062,9 @@ mod tests {
     #[test]
     fn partial_own_name_matches_rank_above_related_matches() -> anyhow::Result<()> {
         use lyra_db::fixtures::{
-            connect,
             connect_credit,
             insert_artist,
+            link_track,
         };
         let mut db = new_test_db()?;
         let radiohead = insert_artist(&mut db, "Radiohead")?;
@@ -1079,7 +1079,7 @@ mod tests {
         )?;
         let mut titled = |title: &str| -> anyhow::Result<DbId> {
             let track = insert_track(&mut db, title)?;
-            connect(&mut db, computer, track)?;
+            link_track(&mut db, computer, track)?;
             Ok(track)
         };
         let airbag = titled("Airbag")?;
@@ -1159,9 +1159,9 @@ mod tests {
         use lyra_db::{
             CreditType,
             fixtures::{
-                connect,
                 connect_credit,
                 insert_artist,
+                link_track,
             },
         };
         let mut db = new_test_db()?;
@@ -1170,7 +1170,7 @@ mod tests {
         connect_credit(&mut db, release, bach, CreditType::Composer, None, 0)?;
         let mut performed = |title: &str, performer: &str| -> anyhow::Result<DbId> {
             let track = insert_track(&mut db, title)?;
-            connect(&mut db, release, track)?;
+            link_track(&mut db, release, track)?;
             let performer = insert_artist(&mut db, performer)?;
             connect_credit(
                 &mut db,
@@ -1186,7 +1186,7 @@ mod tests {
         let by_zed = performed("Allemande", "Zed")?;
         let by_ada = performed("Courante", "Ada")?;
         let unordered = insert_track(&mut db, "Gigue")?;
-        connect(&mut db, release, unordered)?;
+        link_track(&mut db, release, unordered)?;
         connect_credit(
             &mut db,
             unordered,

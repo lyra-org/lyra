@@ -950,8 +950,8 @@ mod tests {
         let track = crate::fixtures::insert_track(&mut db, "Song")?;
         let other = crate::fixtures::insert_track(&mut db, "Other")?;
         crate::fixtures::connect(&mut db, library, release)?;
-        crate::fixtures::connect(&mut db, release, track)?;
-        crate::fixtures::connect(&mut db, release, other)?;
+        crate::fixtures::link_track(&mut db, release, track)?;
+        crate::fixtures::link_track(&mut db, release, other)?;
         let user = crate::users::create(&mut db, &crate::fixtures::test_user("listener")?)?;
         crate::favorites::add(
             &mut db,
@@ -1047,7 +1047,7 @@ mod tests {
         let shared = crate::fixtures::insert_track(&mut db, "Shared track")?;
         let artist = crate::fixtures::insert_artist(&mut db, "Shared artist")?;
         crate::fixtures::connect(&mut db, deleted_id, release)?;
-        crate::fixtures::connect(&mut db, release, track)?;
+        crate::fixtures::link_track(&mut db, release, track)?;
         crate::fixtures::connect(&mut db, deleted_id, shared)?;
         crate::fixtures::connect(&mut db, kept_id, shared)?;
         crate::fixtures::connect(&mut db, track, artist)?;
@@ -1094,9 +1094,9 @@ mod tests {
         let kept_track = crate::fixtures::insert_track(&mut db, "Kept track")?;
         let layer_only_artist = crate::fixtures::insert_artist(&mut db, "Hidden")?;
         crate::fixtures::connect(&mut db, deleted_id, deleted_release)?;
-        crate::fixtures::connect(&mut db, deleted_release, deleted_track)?;
+        crate::fixtures::link_track(&mut db, deleted_release, deleted_track)?;
         crate::fixtures::connect(&mut db, kept_id, kept_release)?;
-        crate::fixtures::connect(&mut db, kept_release, kept_track)?;
+        crate::fixtures::link_track(&mut db, kept_release, kept_track)?;
         let jazz = crate::genres::resolve_by_name(&mut db, "Jazz")?;
         crate::genres::link_to_release(&mut db, jazz, deleted_release)?;
         for release in [deleted_release, kept_release] {

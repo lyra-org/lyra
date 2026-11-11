@@ -109,10 +109,10 @@ mod tests {
         },
     };
     use lyra_db::fixtures::{
-        connect,
         insert_artist,
         insert_release,
         insert_track,
+        link_track,
     };
     use lyra_db::test_db::new_test_db;
 
@@ -156,7 +156,7 @@ mod tests {
         let release_id = insert_release(&mut db, "Credit Release")?;
         let track_id = insert_track(&mut db, "Credit Track")?;
         let artist_id = insert_artist(&mut db, "Composer")?;
-        connect(&mut db, release_id, track_id)?;
+        link_track(&mut db, release_id, track_id)?;
         lyra_db::fixtures::connect_credit(
             &mut db,
             release_id,
@@ -191,7 +191,7 @@ mod tests {
         let release_id = insert_release(&mut db, "Batch Release")?;
         let track_id = insert_track(&mut db, "Batch Track")?;
         let artist_id = insert_artist(&mut db, "Batch Lyricist")?;
-        connect(&mut db, release_id, track_id)?;
+        link_track(&mut db, release_id, track_id)?;
         lyra_db::fixtures::connect_credit(
             &mut db,
             release_id,

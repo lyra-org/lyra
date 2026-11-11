@@ -465,7 +465,7 @@ mod tests {
                 .query(),
         )?;
 
-        lyra_db::fixtures::connect(&mut db, release_id, track_id)?;
+        lyra_db::fixtures::link_track(&mut db, release_id, track_id)?;
         lyra_db::fixtures::connect(&mut db, library, entry_id)?;
 
         let tracks = vec![Track {

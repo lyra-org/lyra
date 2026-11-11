@@ -721,7 +721,7 @@ mod tests {
         let release = insert_release(db, name)?;
         let track = insert_track(db, name)?;
         connect(db, library, release)?;
-        connect(db, release, track)?;
+        lyra_db::fixtures::link_track(db, release, track)?;
         let mut track_row = lyra_db::tracks::get_by_id(db, track)?
             .ok_or_else(|| anyhow::anyhow!("track missing"))?;
         track_row.duration_ms = Some(4_000);
@@ -1039,7 +1039,7 @@ mod tests {
             let release = insert_release(&mut db, "Lyrics Release")?;
             let track = insert_track(&mut db, "Lyrics Track")?;
             connect(&mut db, library, release)?;
-            connect(&mut db, release, track)?;
+            lyra_db::fixtures::link_track(&mut db, release, track)?;
             let mut track_row = lyra_db::tracks::get_by_id(&db, track)?
                 .ok_or_else(|| anyhow::anyhow!("track missing"))?;
             track_row.duration_ms = Some(4_000);

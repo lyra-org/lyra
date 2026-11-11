@@ -2283,7 +2283,7 @@ mod tests {
             (track, source),
             (source, entry),
         ] {
-            lyra_db::fixtures::connect(db, from, to)?;
+            lyra_db::fixtures::link_track(db, from, to)?;
         }
         Ok(track)
     }
@@ -2443,7 +2443,11 @@ mod tests {
         let split = SplitRelease::new().await?;
         std_fs::create_dir_all(split.root.path().join("Disc/B"))?;
         let resolved = split.resolve().await?;
-        lyra_db::fixtures::connect(&mut *split.db.write().await, split.other, split.set_a_track)?;
+        lyra_db::fixtures::link_track(
+            &mut *split.db.write().await,
+            split.other,
+            split.set_a_track,
+        )?;
         split.persist(resolved).await?;
         assert_eq!(split.local_path().await?, Some(split.wrong.clone()));
         Ok(())

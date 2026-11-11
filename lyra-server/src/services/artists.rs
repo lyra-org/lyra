@@ -249,7 +249,7 @@ mod tests {
         let track_id = insert_track(&mut db, "Acknowledgement")?;
 
         connect_artist(&mut db, release_id, artist_id)?;
-        connect(&mut db, release_id, track_id)?;
+        lyra_db::fixtures::link_track(&mut db, release_id, track_id)?;
         connect_artist(&mut db, track_id, artist_id)?;
 
         let includes = ArtistIncludes {
@@ -311,7 +311,7 @@ mod tests {
         let track_id = insert_track(&mut db, "Solo Dancer")?;
 
         connect_artist(&mut db, release_id, artist_id)?;
-        connect(&mut db, release_id, track_id)?;
+        lyra_db::fixtures::link_track(&mut db, release_id, track_id)?;
         connect_artist(&mut db, track_id, artist_id)?;
 
         let includes = ArtistIncludes {
@@ -580,7 +580,7 @@ mod tests {
         let mut db = new_test_db()?;
         let release_id = insert_release(&mut db, "Fallback Release")?;
         let track_id = insert_track(&mut db, "Fallback Track")?;
-        connect(&mut db, release_id, track_id)?;
+        lyra_db::fixtures::link_track(&mut db, release_id, track_id)?;
 
         let composer_id = insert_artist(&mut db, "Fallback Composer")?;
         set_artist_type(&mut db, composer_id, lyra_db::ArtistType::Person)?;
@@ -619,7 +619,7 @@ mod tests {
         let release_id = insert_release(&mut db, "Library Release")?;
         let track_id = insert_track(&mut db, "Library Track")?;
         connect(&mut db, library_id, release_id)?;
-        connect(&mut db, release_id, track_id)?;
+        lyra_db::fixtures::link_track(&mut db, release_id, track_id)?;
 
         let composer_id = insert_artist(&mut db, "Shared Composer")?;
         set_artist_type(&mut db, composer_id, lyra_db::ArtistType::Person)?;

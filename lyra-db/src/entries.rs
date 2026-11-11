@@ -1067,7 +1067,7 @@ mod tests {
         let track = crate::fixtures::insert_track(&mut db, "Shared")?;
         crate::graph::ensure_owned_edge(&mut db, own_id, release)?;
         crate::graph::ensure_owned_edge(&mut db, other_id, release)?;
-        crate::fixtures::connect(&mut db, release, track)?;
+        crate::fixtures::link_track(&mut db, release, track)?;
         crate::fixtures::connect(&mut db, track, file)?;
 
         let entries = load_existing(&db, own_id)?;

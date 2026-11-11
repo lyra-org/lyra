@@ -422,10 +422,10 @@ pub(crate) fn build_entity_provider_context(
 mod tests {
     use lyra_db::IdSource;
     use lyra_db::fixtures::{
-        connect,
         insert_artist,
         insert_release,
         insert_track,
+        link_track,
     };
     use lyra_db::metadata::custom_fields::ProviderCustomFields;
     use lyra_db::test_db::{
@@ -440,7 +440,7 @@ mod tests {
         let mut db = new_test_db()?;
         let release = insert_release(&mut db, "Release")?;
         let track = insert_track(&mut db, "Track")?;
-        connect(&mut db, release, track)?;
+        link_track(&mut db, release, track)?;
         for node in [release, track] {
             lyra_db::metadata::custom_fields::upsert(
                 &mut db,
@@ -473,7 +473,7 @@ mod tests {
         let artist = insert_artist(&mut db, "Artist")?;
         connect_artist(&mut db, release, artist)?;
         let track = insert_track(&mut db, "Track")?;
-        connect(&mut db, release, track)?;
+        link_track(&mut db, release, track)?;
         connect_artist(&mut db, track, artist)?;
         for (entity, provider_id, id_type, value, source) in [
             (

@@ -2846,7 +2846,7 @@ fn cover_artwork_bindings_serve_anonymous_public_routes() -> Result<()> {
     let release = lyra_db::fixtures::insert_release(&mut database, "Release")?;
     let track = lyra_db::fixtures::insert_track(&mut database, "Track")?;
     lyra_db::fixtures::connect(&mut database, library, release)?;
-    lyra_db::fixtures::connect(&mut database, release, track)?;
+    lyra_db::fixtures::link_track(&mut database, release, track)?;
     let image = tempfile::NamedTempFile::new()?;
     database.transaction_mut(|t| -> Result<()> {
         lyra_db::covers::upsert(
@@ -2950,7 +2950,7 @@ fn streamable_bindings_serve_anonymous_public_routes() -> Result<()> {
     let release = lyra_db::fixtures::insert_release(&mut database, "Release")?;
     let track = lyra_db::fixtures::insert_track(&mut database, "Track")?;
     lyra_db::fixtures::connect(&mut database, library, release)?;
-    lyra_db::fixtures::connect(&mut database, release, track)?;
+    lyra_db::fixtures::link_track(&mut database, release, track)?;
     let audio = tempfile::Builder::new()
         .suffix(".flac")
         .tempfile_in(directory.path())?;

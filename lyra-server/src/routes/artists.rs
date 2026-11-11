@@ -978,12 +978,12 @@ mod tests {
             let hidden_track = insert_track(&mut db, "Hidden Track")?;
 
             connect(&mut db, visible_library, visible_release)?;
-            connect(&mut db, visible_release, visible_track)?;
+            lyra_db::fixtures::link_track(&mut db, visible_release, visible_track)?;
             connect_artist(&mut db, visible_release, artist)?;
             connect_artist(&mut db, visible_track, artist)?;
 
             connect(&mut db, hidden_library, hidden_release)?;
-            connect(&mut db, hidden_release, hidden_track)?;
+            lyra_db::fixtures::link_track(&mut db, hidden_release, hidden_track)?;
             connect_artist(&mut db, hidden_release, artist)?;
             connect_artist(&mut db, hidden_track, artist)?;
             connect_artist(&mut db, hidden_release, hidden_relation)?;
@@ -1084,11 +1084,11 @@ mod tests {
             let hidden_artist = insert_artist(&mut db, "Hidden Artist")?;
 
             connect(&mut db, visible_library, visible_release)?;
-            connect(&mut db, visible_release, visible_track)?;
+            lyra_db::fixtures::link_track(&mut db, visible_release, visible_track)?;
             connect_artist(&mut db, visible_release, visible_release_artist)?;
             connect_artist(&mut db, visible_track, visible_track_artist)?;
             connect(&mut db, hidden_library, hidden_release)?;
-            connect(&mut db, hidden_release, hidden_track)?;
+            lyra_db::fixtures::link_track(&mut db, hidden_release, hidden_track)?;
             connect_artist(&mut db, hidden_release, hidden_artist)?;
 
             let visible_library_id = lyra_db::libraries::get_by_id(&db, visible_library)?
@@ -1329,10 +1329,10 @@ mod tests {
             let visible_artist = insert_artist(&mut db, "Featured Visible")?;
             let hidden_artist = insert_artist(&mut db, "Featured Hidden")?;
             connect(&mut db, visible_library, visible_release)?;
-            connect(&mut db, visible_release, visible_track)?;
+            lyra_db::fixtures::link_track(&mut db, visible_release, visible_track)?;
             connect_artist(&mut db, visible_track, visible_artist)?;
             connect(&mut db, hidden_library, hidden_release)?;
-            connect(&mut db, hidden_release, hidden_track)?;
+            lyra_db::fixtures::link_track(&mut db, hidden_release, hidden_track)?;
             connect_artist(&mut db, hidden_track, hidden_artist)?;
 
             let visible_library_id = lyra_db::libraries::get_by_id(&db, visible_library)?

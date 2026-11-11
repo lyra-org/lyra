@@ -323,7 +323,7 @@ mod tests {
         let artist_db_id = insert_artist(&mut db, "Artist")?;
 
         connect(&mut db, library_db_id, release_db_id)?;
-        connect(&mut db, release_db_id, track_db_id)?;
+        lyra_db::fixtures::link_track(&mut db, release_db_id, track_db_id)?;
         connect(&mut db, track_db_id, artist_db_id)?;
         connect(&mut db, release_db_id, artist_db_id)?;
 
@@ -386,8 +386,8 @@ mod tests {
 
         connect(&mut db, library_db_id, release_a)?;
         connect(&mut db, library_db_id, release_b)?;
-        connect(&mut db, release_a, track_a)?;
-        connect(&mut db, release_b, track_b)?;
+        lyra_db::fixtures::link_track(&mut db, release_a, track_a)?;
+        lyra_db::fixtures::link_track(&mut db, release_b, track_b)?;
 
         external_ids::upsert(
             &mut db,
@@ -605,7 +605,7 @@ mod tests {
             let mut chain = Vec::new();
             for part in ["Part I", "Part II"] {
                 let track = insert_track(&mut db, &format!("{title} {part}"))?;
-                connect(&mut db, release, track)?;
+                lyra_db::fixtures::link_track(&mut db, release, track)?;
                 chain.push(track);
             }
             lyra_db::chains::replace_for_release(&mut db, release, std::slice::from_ref(&chain))??;
@@ -865,9 +865,9 @@ mod tests {
 
         connect(&mut db, library_db_id, release_a)?;
         connect(&mut db, library_db_id, release_b)?;
-        connect(&mut db, release_a, track_a1)?;
-        connect(&mut db, release_a, track_a2)?;
-        connect(&mut db, release_b, track_b1)?;
+        lyra_db::fixtures::link_track(&mut db, release_a, track_a1)?;
+        lyra_db::fixtures::link_track(&mut db, release_a, track_a2)?;
+        lyra_db::fixtures::link_track(&mut db, release_b, track_b1)?;
 
         for release in [release_a, release_b] {
             external_ids::upsert(
@@ -933,8 +933,8 @@ mod tests {
 
         connect(&mut db, library_db_id, release_a)?;
         connect(&mut db, library_db_id, release_b)?;
-        connect(&mut db, release_a, track_a)?;
-        connect(&mut db, release_b, track_b)?;
+        lyra_db::fixtures::link_track(&mut db, release_a, track_a)?;
+        lyra_db::fixtures::link_track(&mut db, release_b, track_b)?;
 
         for release in [release_a, release_b] {
             external_ids::upsert(
@@ -1015,7 +1015,7 @@ mod tests {
             connect(db, library_db_id, release)?;
             for &recording in recordings {
                 let track = insert_track(db, recording)?;
-                connect(db, release, track)?;
+                lyra_db::fixtures::link_track(db, release, track)?;
                 external_ids::upsert(
                     db,
                     track,

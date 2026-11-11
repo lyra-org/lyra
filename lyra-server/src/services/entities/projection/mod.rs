@@ -951,8 +951,8 @@ mod tests {
         let track = insert_track(&mut db, "Shared")?;
         connect(&mut db, shown_library, shown)?;
         connect(&mut db, hidden_library, hidden)?;
-        connect(&mut db, shown, track)?;
-        connect(&mut db, hidden, track)?;
+        lyra_db::fixtures::link_track(&mut db, shown, track)?;
+        lyra_db::fixtures::link_track(&mut db, hidden, track)?;
         let shown_artist = insert_artist(&mut db, "Shown Artist")?;
         let hidden_artist = insert_artist(&mut db, "Hidden Artist")?;
         connect_artist(&mut db, shown, shown_artist)?;
@@ -1014,7 +1014,7 @@ mod tests {
         let release = insert_release(&mut db, "Shown")?;
         let track = insert_track(&mut db, "Only Hidden Files")?;
         connect(&mut db, shown_library, release)?;
-        connect(&mut db, release, track)?;
+        lyra_db::fixtures::link_track(&mut db, release, track)?;
         let file = insert_file_entry(
             &mut db,
             hidden_library,

@@ -120,7 +120,7 @@ async fn a_release_context_that_cant_be_built_settles_its_units_and_persists_the
         let release = insert_release(&mut db, "Unbuildable")?;
         connect(&mut db, library, release)?;
         let track = lyra_db::fixtures::insert_track(&mut db, "Malformed")?;
-        connect(&mut db, release, track)?;
+        lyra_db::fixtures::link_track(&mut db, release, track)?;
         db.exec_mut(
             agdb::QueryBuilder::remove()
                 .values("track_title")
@@ -704,7 +704,7 @@ async fn a_library_refresh_passes_its_track_only_artists() -> anyhow::Result<()>
         let release = insert_release(&mut db, "Release")?;
         connect(&mut db, library_id, release)?;
         let track = lyra_db::fixtures::insert_track(&mut db, "Track")?;
-        connect(&mut db, release, track)?;
+        lyra_db::fixtures::link_track(&mut db, release, track)?;
         let main = insert_artist(&mut db, "Main")?;
         let featured = insert_artist(&mut db, "Featured")?;
         lyra_db::test_db::connect_artist(&mut db, release, main)?;
