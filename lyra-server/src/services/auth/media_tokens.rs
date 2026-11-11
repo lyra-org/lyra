@@ -17,11 +17,10 @@ use crate::{
     services::playback_sources::SourceVersion,
 };
 
+#[cfg(test)]
+use super::AuthCredential;
 use super::{
-    AuthCredential,
-    Principal,
-    ResolvedAuth,
-    caller::Caller,
+    CredentialHolder,
     random_hex_secret,
 };
 
@@ -49,37 +48,6 @@ pub(crate) enum MediaTokenPurpose {
     Download,
 }
 
-/// Who a media token was issued to: the user and the credential they presented. The token only
-/// works while that credential still authenticates that user.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct MediaTokenHolder {
-    user_public_id: String,
-    credential: AuthCredential,
-}
-
-impl MediaTokenHolder {
-    pub(crate) fn new(auth: &ResolvedAuth) -> Self {
-        Self {
-            user_public_id: auth.principal.user_public_id.clone(),
-            credential: auth.credential.clone(),
-        }
-    }
-
-    /// Whom the token's use is charged to: its user, whichever credential obtained it.
-    pub(crate) fn caller(&self) -> Caller {
-        Caller::User(self.user_public_id.clone())
-    }
-
-    /// The holder's principal as it stands now, read under the caller's guard, or `None` when
-    /// the user is gone or the credential that obtained the token no longer authenticates them.
-    pub(crate) fn principal(
-        &self,
-        db: &impl lyra_db::DbAccess,
-    ) -> anyhow::Result<Option<Principal>> {
-        super::live_principal(db, &self.user_public_id, &self.credential)
-    }
-}
-
 /// The delivery a media token was issued for. A request with the token gets these, so it
 /// fetches exactly what was decided when the token was issued.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -99,7 +67,7 @@ pub(crate) struct DeliveryOptions {
 #[derive(Clone, Debug)]
 pub(crate) struct MediaTokenAccess {
     pub(crate) purpose: MediaTokenPurpose,
-    pub(crate) holder: MediaTokenHolder,
+    pub(crate) holder: CredentialHolder,
     pub(crate) source: SourceVersion,
     pub(crate) options: DeliveryOptions,
 }
@@ -180,7 +148,7 @@ fn evict_least_recently_used(
 
 fn enforce_media_token_caps(
     cache: &mut HashMap<String, MediaTokenGrant>,
-    holder: &MediaTokenHolder,
+    holder: &CredentialHolder,
 ) {
     evict_least_recently_used(cache, MAX_MEDIA_TOKENS_PER_HOLDER, |grant| {
         grant.access.holder == *holder
@@ -194,7 +162,7 @@ fn enforce_media_token_caps(
 pub(crate) fn issue_media_token(
     track_id: &str,
     purpose: MediaTokenPurpose,
-    holder: MediaTokenHolder,
+    holder: CredentialHolder,
     source: SourceVersion,
     options: DeliveryOptions,
 ) -> IssuedMediaToken {
@@ -264,7 +232,7 @@ pub(crate) fn token_identity(
     token: &str,
     purpose: MediaTokenPurpose,
     track_id: &str,
-) -> Option<super::caller::Identity> {
+) -> Option<CredentialHolder> {
     let now = Instant::now();
     let now_secs = now_secs();
     let generation = STATE.generation();
@@ -273,10 +241,7 @@ pub(crate) fn token_identity(
     let usable = !token_is_expired(grant, now, now_secs)
         && grant.access.purpose == purpose
         && grant.track_id == track_id;
-    usable.then(|| super::caller::Identity {
-        user: grant.access.holder.user_public_id.clone(),
-        credential: grant.access.holder.credential.clone(),
-    })
+    usable.then(|| grant.access.holder.clone())
 }
 
 /// A token for `track_id` held by a placeholder user over a placeholder source, for tests that
@@ -289,7 +254,7 @@ pub(crate) fn issue_unbound_media_token(
     issue_media_token(
         track_id,
         purpose,
-        MediaTokenHolder {
+        CredentialHolder {
             user_public_id: "placeholder-user".to_string(),
             credential: AuthCredential::Default,
         },
@@ -336,7 +301,7 @@ mod tests {
     fn a_credential_only_evicts_its_own_tokens_up_to_its_users_ceiling() {
         let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
         crate::services::testing::init_default_test_state().expect("init test state");
-        let holder = |user: &str, session: &str| MediaTokenHolder {
+        let holder = |user: &str, session: &str| CredentialHolder {
             user_public_id: user.to_string(),
             credential: AuthCredential::Session {
                 public_id: session.to_string(),

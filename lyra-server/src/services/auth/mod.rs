@@ -266,23 +266,55 @@ impl AuthCredential {
     }
 }
 
-/// The principal of `user_public_id` as `credential` authenticates them now, read under the
-/// caller's guard, or `None` when the user is gone or the credential no longer authenticates them.
-/// No credential authenticates the default user while authentication is enabled.
-pub(crate) fn live_principal(
-    db: &impl lyra_db::DbAccess,
-    user_public_id: &str,
-    credential: &AuthCredential,
-) -> anyhow::Result<Option<Principal>> {
-    let Some(user_db_id) = lyra_db::users::find_db_id_by_public_id(db, user_public_id)? else {
-        return Ok(None);
-    };
-    if !credential.is_live(db, user_db_id)? {
-        return Ok(None);
+/// A user and the credential that authenticated them. Whatever outlives the request that
+/// authenticated them keeps this and not their principal, so it only works while that credential
+/// still authenticates that user.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct CredentialHolder {
+    user_public_id: String,
+    credential: AuthCredential,
+}
+
+impl CredentialHolder {
+    pub(crate) fn new(user_public_id: String, credential: AuthCredential) -> Self {
+        Self {
+            user_public_id,
+            credential,
+        }
     }
-    let principal = Principal::load(db, user_db_id)?;
-    Ok(principal
-        .filter(|principal| !STATE.config().auth.enabled || principal.username != DEFAULT_USERNAME))
+
+    pub(crate) fn user_public_id(&self) -> &str {
+        &self.user_public_id
+    }
+
+    pub(crate) fn credential(&self) -> &AuthCredential {
+        &self.credential
+    }
+
+    /// Whom the holder's use is charged to: the user, whichever credential authenticated them.
+    pub(crate) fn caller(&self) -> caller::Caller {
+        caller::Caller::User(self.user_public_id.clone())
+    }
+
+    /// The holder's principal as it stands now, read under the caller's guard, or `None` when
+    /// the user is gone or the credential no longer authenticates them. No credential
+    /// authenticates the default user while authentication is enabled.
+    pub(crate) fn principal(
+        &self,
+        db: &impl lyra_db::DbAccess,
+    ) -> anyhow::Result<Option<Principal>> {
+        let Some(user_db_id) = lyra_db::users::find_db_id_by_public_id(db, &self.user_public_id)?
+        else {
+            return Ok(None);
+        };
+        if !self.credential.is_live(db, user_db_id)? {
+            return Ok(None);
+        }
+        let principal = Principal::load(db, user_db_id)?;
+        Ok(principal.filter(|principal| {
+            !STATE.config().auth.enabled || principal.username != DEFAULT_USERNAME
+        }))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -293,6 +325,13 @@ pub(crate) struct ResolvedAuth {
 }
 
 impl ResolvedAuth {
+    pub(crate) fn holder(&self) -> CredentialHolder {
+        CredentialHolder::new(
+            self.principal.user_public_id.clone(),
+            self.credential.clone(),
+        )
+    }
+
     pub(crate) fn into_principal(self) -> Principal {
         self.principal
     }
@@ -1232,19 +1271,15 @@ mod tests {
         let session =
             crate::services::testing::create_session(default_db_id, Default::default()).await?;
         let api_key = api_keys::create_api_key(&default_principal, "left behind").await?;
-        let mut credentials = Vec::new();
+        let mut holders = Vec::new();
         for bearer in [&session.token, &api_key.key] {
             let auth = resolve_auth_from_bearer(Some(bearer))
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("default credential should resolve"))?;
             assert_ne!(auth.credential, AuthCredential::Default);
-            let live = live_principal(
-                &*STATE.db.read().await,
-                &default_principal.user_public_id,
-                &auth.credential,
-            )?;
-            assert!(live.is_some());
-            credentials.push(auth.credential);
+            let holder = auth.holder();
+            assert!(holder.principal(&*STATE.db.read().await)?.is_some());
+            holders.push(holder);
         }
 
         let password = "known-default-password";
@@ -1265,13 +1300,8 @@ mod tests {
                 Err(AuthError::InvalidBearerCredential)
             ));
         }
-        for credential in &credentials {
-            let live = live_principal(
-                &*STATE.db.read().await,
-                &default_principal.user_public_id,
-                credential,
-            )?;
-            assert!(live.is_none());
+        for holder in &holders {
+            assert!(holder.principal(&*STATE.db.read().await)?.is_none());
         }
         let login = login_with_password(
             DEFAULT_USERNAME,

@@ -59,7 +59,6 @@ use crate::{
             media_tokens::{
                 DeliveryOptions,
                 MEDIA_TOKEN_IDLE_TTL_SECONDS,
-                MediaTokenHolder,
                 MediaTokenPurpose,
                 issue_media_token,
             },
@@ -618,7 +617,7 @@ async fn create_track_playback_url(
 ) -> Result<Json<PlaybackUrlResponse>, AppError> {
     validate_playback_url_query(&query)?;
     let auth = require_auth(bearer_credential(&headers)).await?;
-    let holder = MediaTokenHolder::new(&auth);
+    let holder = auth.holder();
     let principal = auth.into_principal();
 
     let source = delivery::validate_and_get_track_source(

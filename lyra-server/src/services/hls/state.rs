@@ -75,7 +75,7 @@ pub(crate) struct HlsSession {
 #[derive(Clone, Debug)]
 pub(crate) enum HlsSessionHolder {
     Principal(crate::services::auth::Principal),
-    MediaToken(crate::services::auth::media_tokens::MediaTokenHolder),
+    MediaToken(crate::services::auth::CredentialHolder),
     /// A public plugin route, which serves anyone.
     Public,
 }

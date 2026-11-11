@@ -48,10 +48,10 @@ use super::request::{
 };
 use crate::services::{
     auth::{
+        CredentialHolder,
         caller::{
             self,
             ClientAddress,
-            Identity,
         },
         media_tokens::{
             self,
@@ -207,7 +207,7 @@ impl RateLimiter {
         bearer_hash: Option<String>,
         uri: &Uri,
         client: ClientAddress,
-    ) -> Result<Option<Identity>, Duration> {
+    ) -> Result<Option<CredentialHolder>, Duration> {
         if !crate::services::STATE.config().auth.enabled {
             return Ok(None);
         }
@@ -276,7 +276,7 @@ impl RateLimiter {
         &self,
         route: Route,
         client: ClientAddress,
-        identity: Option<&Identity>,
+        identity: Option<&CredentialHolder>,
     ) -> Vec<Check> {
         let Some(identity) = identity else {
             return self
@@ -298,7 +298,7 @@ impl RateLimiter {
         }
         if let Some(policy) = self.config.user {
             checks.push(Check {
-                key: BucketKey::User(identity.user.clone()),
+                key: BucketKey::User(identity.user_public_id().to_string()),
                 policy,
             });
         }
@@ -344,7 +344,7 @@ fn peer_addr(request: &Request) -> Option<SocketAddr> {
 /// The identity of the media token a download request carries, when it was issued to download
 /// that track. Only downloads take a media token among the limited routes; elsewhere one is
 /// ignored, so a token leaked with a stream URL cannot spend its user's budget.
-fn download_token_identity(uri: &Uri) -> Option<Identity> {
+fn download_token_identity(uri: &Uri) -> Option<CredentialHolder> {
     let track_id = uri.path().strip_prefix("/api/download/")?;
     let (_, token) = url::form_urlencoded::parse(uri.query()?.as_bytes())
         .find(|(key, _)| key == "media_token")?;
@@ -429,13 +429,13 @@ mod tests {
         request
     }
 
-    fn identity(user: &str, session: &str) -> Identity {
-        Identity {
-            user: user.to_string(),
-            credential: crate::services::auth::AuthCredential::Session {
+    fn identity(user: &str, session: &str) -> CredentialHolder {
+        CredentialHolder::new(
+            user.to_string(),
+            crate::services::auth::AuthCredential::Session {
                 public_id: session.to_string(),
             },
-        }
+        )
     }
 
     #[test]
@@ -449,7 +449,7 @@ mod tests {
         let client = address("203.0.113.20");
         let laptop = identity("amy", "laptop");
 
-        let keys = |route, identity: Option<&Identity>| {
+        let keys = |route, identity: Option<&CredentialHolder>| {
             limiter
                 .checks(route, client, identity)
                 .into_iter()
@@ -485,7 +485,7 @@ mod tests {
         rate_limit.global_burst = 1;
         let limiter = RateLimiter::new(&rate_limit);
         let client = address("203.0.113.20");
-        let charge = |identity: &Identity| {
+        let charge = |identity: &CredentialHolder| {
             limiter.charge(limiter.checks(Route::Media, client, Some(identity)))
         };
 
@@ -762,7 +762,7 @@ mod tests {
         let media_token = media_tokens::issue_media_token(
             "track-1",
             media_tokens::MediaTokenPurpose::Download,
-            media_tokens::MediaTokenHolder::new(&auth),
+            auth.holder(),
             SourceVersion::fixed("source"),
             media_tokens::DeliveryOptions::default(),
         )

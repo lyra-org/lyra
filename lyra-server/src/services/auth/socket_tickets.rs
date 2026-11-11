@@ -18,8 +18,8 @@ use std::{
 use crate::services::STATE;
 
 use super::{
-    AuthCredential,
     AuthResult,
+    CredentialHolder,
     ResolvedAuth,
     random_hex_secret,
 };
@@ -37,8 +37,7 @@ pub(crate) struct SocketTicketStore(Mutex<HashMap<String, SocketTicketGrant>>);
 
 #[derive(Clone, Debug)]
 struct SocketTicketGrant {
-    user_public_id: String,
-    credential: AuthCredential,
+    holder: CredentialHolder,
     client_name: Option<String>,
     issued_at: Instant,
 }
@@ -90,7 +89,7 @@ fn evict_oldest(
 pub(crate) fn issue(auth: &ResolvedAuth) -> IssuedSocketTicket {
     let now = Instant::now();
     let ticket = random_hex_secret::<SOCKET_TICKET_BYTES>();
-    let user_public_id = auth.principal.user_public_id.clone();
+    let holder = auth.holder();
 
     let generation = STATE.generation();
     let mut cache = tickets(&generation);
@@ -98,14 +97,13 @@ pub(crate) fn issue(auth: &ResolvedAuth) -> IssuedSocketTicket {
     cache.insert(
         ticket.clone(),
         SocketTicketGrant {
-            user_public_id: user_public_id.clone(),
-            credential: auth.credential.clone(),
+            holder: holder.clone(),
             client_name: auth.client_name.clone(),
             issued_at: now,
         },
     );
     evict_oldest(&mut cache, MAX_SOCKET_TICKETS_PER_USER, |grant| {
-        grant.user_public_id == user_public_id
+        grant.holder.user_public_id() == holder.user_public_id()
     });
     evict_oldest(&mut cache, MAX_SOCKET_TICKETS, |_| true);
 
@@ -126,13 +124,12 @@ pub(crate) async fn redeem(ticket: &str) -> AuthResult<Option<ResolvedAuth>> {
     };
 
     let db = STATE.db.read().await;
-    let Some(principal) = super::live_principal(&*db, &grant.user_public_id, &grant.credential)?
-    else {
+    let Some(principal) = grant.holder.principal(&*db)? else {
         return Ok(None);
     };
     Ok(Some(ResolvedAuth {
         principal,
-        credential: grant.credential,
+        credential: grant.holder.credential().clone(),
         client_name: grant.client_name,
     }))
 }
@@ -140,6 +137,7 @@ pub(crate) async fn redeem(ticket: &str) -> AuthResult<Option<ResolvedAuth>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::auth::AuthCredential;
 
     async fn session_auth(name: &str) -> anyhow::Result<ResolvedAuth> {
         let user_db_id = {

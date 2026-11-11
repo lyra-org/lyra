@@ -22,7 +22,10 @@ use std::{
     },
 };
 
-use super::AuthCredential;
+use super::{
+    AuthCredential,
+    CredentialHolder,
+};
 use crate::services::STATE;
 
 pub(crate) use address::ClientAddress;
@@ -55,20 +58,13 @@ impl Caller {
     }
 }
 
-/// A user as one of their credentials identifies them.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct Identity {
-    pub(crate) user: String,
-    pub(crate) credential: AuthCredential,
-}
-
 /// How long a credential's identity is remembered, found or not. A revoked or expired credential
 /// may go on being counted against its user for this long; it only ever affects accounting,
 /// never authorization.
 const IDENTITY_TTL: Duration = Duration::from_secs(10);
 const MAX_CACHED_IDENTITIES: usize = 4_096;
 
-type IdentityCache = HashMap<String, (Option<Identity>, Instant)>;
+type IdentityCache = HashMap<String, (Option<CredentialHolder>, Instant)>;
 
 static IDENTITIES: LazyLock<Mutex<IdentityCache>> = LazyLock::new(Default::default);
 
@@ -79,7 +75,7 @@ pub(crate) fn bearer_hash(bearer: &str) -> String {
 
 /// The identity a bearer credential was recently found to have: `Some(None)` when it identified
 /// no one, `None` when it has not been looked up lately.
-pub(crate) fn remembered_identity(bearer_hash: &str) -> Option<Option<Identity>> {
+pub(crate) fn remembered_identity(bearer_hash: &str) -> Option<Option<CredentialHolder>> {
     let identities = IDENTITIES.lock().expect("identity cache poisoned");
     let (identity, found_at) = identities.get(bearer_hash)?;
     (found_at.elapsed() < IDENTITY_TTL).then(|| identity.clone())
@@ -88,7 +84,7 @@ pub(crate) fn remembered_identity(bearer_hash: &str) -> Option<Option<Identity>>
 /// Looks up whom a bearer credential identifies, as cheaply as the database allows: it neither
 /// authorizes the request nor records the credential's use. A lookup that fails identifies no
 /// one, so the request is counted against its address.
-pub(crate) async fn look_up_identity(bearer_hash: &str) -> Option<Identity> {
+pub(crate) async fn look_up_identity(bearer_hash: &str) -> Option<CredentialHolder> {
     let identity = match bearer_identity(bearer_hash).await {
         Ok(identity) => identity,
         Err(error) => {
@@ -107,15 +103,17 @@ pub(crate) async fn look_up_identity(bearer_hash: &str) -> Option<Identity> {
     identity
 }
 
-async fn bearer_identity(hash: &str) -> anyhow::Result<Option<Identity>> {
+async fn bearer_identity(hash: &str) -> anyhow::Result<Option<CredentialHolder>> {
     let db = STATE.db.read().await;
     if let Some((user, session, _)) = lyra_db::users::find_by_session_token_hash(&*db, hash)? {
         let expired = super::sessions::is_expired(&session);
-        return Ok((!expired).then_some(Identity {
-            user: user.id,
-            credential: AuthCredential::Session {
-                public_id: session.id,
-            },
+        return Ok((!expired).then(|| {
+            CredentialHolder::new(
+                user.id,
+                AuthCredential::Session {
+                    public_id: session.id,
+                },
+            )
         }));
     }
     let Some(key) = lyra_db::api_keys::find_by_key_hash(&*db, hash)? else {
@@ -127,13 +125,13 @@ async fn bearer_identity(hash: &str) -> anyhow::Result<Option<Identity>> {
     let Some(owner) = lyra_db::api_keys::get_owner_id(&*db, key_id.into())? else {
         return Ok(None);
     };
-    Ok(
-        lyra_db::users::get_by_id(&*db, owner)?.map(|user| Identity {
-            user: user.id,
-            credential: AuthCredential::ApiKey {
+    Ok(lyra_db::users::get_by_id(&*db, owner)?.map(|user| {
+        CredentialHolder::new(
+            user.id,
+            AuthCredential::ApiKey {
                 public_id: key.id,
                 name: key.name,
             },
-        }),
-    )
+        )
+    }))
 }

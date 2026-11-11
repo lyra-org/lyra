@@ -59,7 +59,7 @@ async fn ws_upgrade(
         .ok_or_else(|| AppError::unauthorized("invalid or expired ticket"))?;
 
     let client_name = resolved.client_name.clone();
-    let credential = resolved.credential.clone();
+    let holder = resolved.holder();
     let principal = resolved.into_principal();
 
     let user_public_id = principal.user_public_id.clone();
@@ -131,7 +131,7 @@ async fn ws_upgrade(
                 result.public_id,
                 principal,
                 close_rx,
-                credential,
+                holder,
                 result.command_rx,
             )
             .await;

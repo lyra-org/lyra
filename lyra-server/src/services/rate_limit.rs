@@ -21,9 +21,9 @@ use std::{
     },
 };
 
-use crate::services::auth::caller::{
-    ClientAddress,
-    Identity,
+use crate::services::auth::{
+    CredentialHolder,
+    caller::ClientAddress,
 };
 
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
@@ -130,9 +130,9 @@ impl LimiterState {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum BucketKey {
     Client(ClientAddress),
-    Credential(Identity),
+    Credential(CredentialHolder),
     User(String),
-    Authenticated(Identity),
+    Authenticated(CredentialHolder),
     Lookup(ClientAddress),
     Login(ClientAddress),
     /// A hash of the account name a password was submitted for.

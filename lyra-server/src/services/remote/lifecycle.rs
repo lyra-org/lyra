@@ -30,17 +30,14 @@ pub(crate) enum AuthStatus {
     Error,
 }
 
-pub(crate) async fn check_auth(
-    credential: &auth::AuthCredential,
-    user_public_id: &str,
-) -> AuthStatus {
+pub(crate) async fn check_auth(holder: &auth::CredentialHolder) -> AuthStatus {
     let principal = {
         let db = STATE.db.read().await;
-        auth::live_principal(&*db, user_public_id, credential)
+        holder.principal(&*db)
     };
     match principal {
         Ok(Some(principal)) => {
-            if let auth::AuthCredential::Session { public_id } = credential {
+            if let auth::AuthCredential::Session { public_id } = holder.credential() {
                 auth::sessions::touch_last_seen(public_id).await;
             }
             AuthStatus::Valid(principal.accessible_library_ids)
@@ -170,20 +167,17 @@ mod tests {
         let _guard = crate::services::testing::runtime_test_lock().await;
         crate::services::testing::init_library_test_state(std::path::PathBuf::from(".")).await?;
 
-        let (user_db_id, user_public_id) = {
+        let user_db_id = {
             let mut db = STATE.db.write().await;
-            let user = lyra_db::fixtures::test_user("ws-access")?;
-            let user_public_id = user.id.clone();
-            let user_db_id = lyra_db::users::create(&mut db, &user)?;
-            (user_db_id, user_public_id)
+            lyra_db::users::create(&mut db, &lyra_db::fixtures::test_user("ws-access")?)?
         };
         let token = crate::services::testing::create_session(user_db_id, Default::default())
             .await?
             .token;
-        let credential = auth::require_auth(Some(&token)).await?.credential;
+        let holder = auth::require_auth(Some(&token)).await?.holder();
 
         assert!(matches!(
-            check_auth(&credential, &user_public_id).await,
+            check_auth(&holder).await,
             AuthStatus::Valid(ref ids) if ids.is_empty()
         ));
 
@@ -205,7 +199,7 @@ mod tests {
             })?
         };
 
-        let AuthStatus::Valid(refreshed) = check_auth(&credential, &user_public_id).await else {
+        let AuthStatus::Valid(refreshed) = check_auth(&holder).await else {
             anyhow::bail!("session should still be valid");
         };
         assert!(refreshed.contains(&library_id));
