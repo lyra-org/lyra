@@ -1,7 +1,4 @@
-use std::time::{
-    Duration,
-    Instant,
-};
+use std::time::Duration;
 
 use anyhow::{
     Result,
@@ -46,64 +43,82 @@ pub fn drive_thread(
     thread: &luau::Thread,
     options: ThreadDriveOptions,
 ) -> Result<Vec<luau::Value>> {
+    if let Err(error) = scheduler.ensure_can_wait() {
+        abandon_thread(scheduler, thread);
+        return Err(error);
+    }
     // A timeout too long to add to now has no deadline to reach.
-    let deadline = Instant::now().checked_add(options.timeout);
+    let deadline = scheduler.now().checked_add(options.timeout);
     loop {
         if options
             .cancellation
             .as_ref()
             .is_some_and(Cancellation::is_cancelled)
         {
-            let task_id = scheduler
-                .luau_thread_handle(thread)
-                .map(|handle| handle.id());
-            scheduler.cancel_luau_thread(thread);
-            if let Some(task_id) = task_id {
-                scheduler.remove(task_id);
-            }
+            abandon_thread(scheduler, thread);
             bail!(
                 "Luau thread {}:{} was cancelled",
                 thread.vm_id(),
                 thread.state_id()
             );
         }
-        {
-            let _guard = tokio_runtime.enter();
-            scheduler.poll_ready();
+        if let Some(values) = poll_thread(tokio_runtime, scheduler, thread)? {
+            return Ok(values);
         }
-        let Some(handle) = scheduler.luau_thread_handle(thread) else {
-            return Ok(Vec::new());
-        };
-        if let Some(snapshot) = scheduler.snapshot(handle.id()) {
-            match snapshot.state {
-                TaskState::Completed => {
-                    let output = scheduler
-                        .take_luau_thread_output(thread)
-                        .unwrap_or_default();
-                    scheduler.remove(handle.id());
-                    return Ok(output);
-                }
-                TaskState::Failed => {
-                    let error = snapshot.error.as_deref().unwrap_or("unknown error");
-                    scheduler.remove(handle.id());
-                    bail!("Luau task {} failed: {error}", snapshot.id.0);
-                }
-                TaskState::Cancelled => {
-                    scheduler.remove(handle.id());
-                    bail!("Luau task {} was cancelled", snapshot.id.0);
-                }
-                TaskState::Pending => {}
-            }
-        } else {
-            return Ok(Vec::new());
-        }
-
-        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+        if deadline.is_some_and(|deadline| scheduler.now() >= deadline) {
             break;
         }
         scheduler.wait_for_work(deadline);
     }
 
+    abandon_thread(scheduler, thread);
+    bail!(
+        "Luau thread {}:{} did not complete",
+        thread.vm_id(),
+        thread.state_id()
+    );
+}
+
+/// Runs one round of the scheduler. Returns what `thread` returned once it has ended, and
+/// forgets its task.
+pub(crate) fn poll_thread(
+    tokio_runtime: &TokioRuntimeContext,
+    scheduler: &LocalScheduler,
+    thread: &luau::Thread,
+) -> Result<Option<Vec<luau::Value>>> {
+    {
+        let _guard = tokio_runtime.enter();
+        scheduler.poll_ready();
+    }
+    let Some(handle) = scheduler.luau_thread_handle(thread) else {
+        return Ok(Some(Vec::new()));
+    };
+    let Some(snapshot) = scheduler.snapshot(handle.id()) else {
+        return Ok(Some(Vec::new()));
+    };
+    match snapshot.state {
+        TaskState::Completed => {
+            let output = scheduler
+                .take_luau_thread_output(thread)
+                .unwrap_or_default();
+            scheduler.remove(handle.id());
+            Ok(Some(output))
+        }
+        TaskState::Failed => {
+            let error = snapshot.error.as_deref().unwrap_or("unknown error");
+            scheduler.remove(handle.id());
+            bail!("Luau task {} failed: {error}", snapshot.id.0);
+        }
+        TaskState::Cancelled => {
+            scheduler.remove(handle.id());
+            bail!("Luau task {} was cancelled", snapshot.id.0);
+        }
+        TaskState::Pending => Ok(None),
+    }
+}
+
+/// Cancels `thread` and forgets its task.
+pub(crate) fn abandon_thread(scheduler: &LocalScheduler, thread: &luau::Thread) {
     let task_id = scheduler
         .luau_thread_handle(thread)
         .map(|handle| handle.id());
@@ -111,11 +126,6 @@ pub fn drive_thread(
     if let Some(task_id) = task_id {
         scheduler.remove(task_id);
     }
-    bail!(
-        "Luau thread {}:{} did not complete",
-        thread.vm_id(),
-        thread.state_id()
-    );
 }
 
 #[cfg(test)]
@@ -323,6 +333,39 @@ mod tests {
         )?;
 
         assert_eq!(values, vec![luau::Value::Number(7.0)]);
+        Ok(())
+    }
+
+    #[test]
+    fn a_thread_on_a_manual_clock_is_refused_before_it_runs() -> Result<()> {
+        let tokio_runtime = runtime()?;
+        let vm = luau::Vm::new()?;
+        let scheduler = LocalScheduler::with_manual_clock(crate::testing::ManualClock::new());
+        let function = vm.load_chunk(&luau::Chunk::new(
+            Arc::<[u8]>::from(&b"return 42"[..]),
+            luau::ChunkOrigin::default(),
+        ))?;
+        let thread = vm.create_thread(&function)?;
+        scheduler.spawn_luau_thread(
+            CallContext::default(),
+            vm.clone(),
+            thread.clone(),
+            Vec::new(),
+        );
+
+        let error = drive_thread(&tokio_runtime, &scheduler, &thread, options(Duration::MAX))
+            .expect_err("a manual clock can't be waited on");
+        assert!(error.to_string().contains("manual clock"), "{error:#}");
+        assert!(!thread.is_started(), "the refused thread ran");
+        assert!(
+            !scheduler.has_pending(),
+            "the refused thread is still scheduled"
+        );
+
+        let thread = vm.create_thread(&function)?;
+        scheduler.spawn_luau_thread(CallContext::default(), vm, thread.clone(), Vec::new());
+        let values = crate::testing::drive_thread_while_ready(&tokio_runtime, &scheduler, &thread)?;
+        assert!(matches!(values.as_slice(), [luau::Value::Number(42.0)]));
         Ok(())
     }
 }

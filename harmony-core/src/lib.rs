@@ -9,6 +9,8 @@ mod modules;
 pub mod plugin;
 mod scheduler;
 pub mod scopes;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 mod tokio_runtime;
 mod userdata;
 

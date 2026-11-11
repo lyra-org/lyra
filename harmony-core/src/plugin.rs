@@ -1525,6 +1525,7 @@ pub struct RuntimeBuilder<L> {
     global_specs: Vec<GlobalSpec>,
     memory_limit: usize,
     luau_resume_budget: Option<Duration>,
+    clock: crate::scheduler::Clock,
     configure_vm: Vec<VmConfigurator>,
     run_end_hooks: Vec<RunEndHook>,
 }
@@ -1542,6 +1543,7 @@ where
             global_specs: Vec::new(),
             memory_limit: 256 * 1024 * 1024,
             luau_resume_budget: Some(Duration::from_secs(300)),
+            clock: crate::scheduler::Clock::default(),
             configure_vm: Vec::new(),
             run_end_hooks: Vec::new(),
         }
@@ -1572,6 +1574,15 @@ where
         self
     }
 
+    /// Runs the runtime's scheduler by `clock`, for a test that polls it; see
+    /// [`LocalScheduler::with_manual_clock`]. What runs a plugin's code to its end on the calling
+    /// thread, such as [`Runtime::exec_all`], fails on such a runtime.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn manual_clock(mut self, clock: crate::testing::ManualClock) -> Self {
+        self.clock = crate::scheduler::Clock::Manual(clock);
+        self
+    }
+
     pub fn configure_vm<F>(mut self, configure: F) -> Self
     where
         F: FnOnce(&luau::Vm) -> anyhow::Result<()> + 'static,
@@ -1595,7 +1606,7 @@ where
             luau::Vm::with_options(luau::VmOptions::default().memory_limit(self.memory_limit))?;
         vm.open_standard_libraries(luau::StandardLibraries::all_supported())?;
 
-        let scheduler = LocalScheduler::new();
+        let scheduler = LocalScheduler::with_clock(self.clock);
         scheduler.set_luau_resume_budget(self.luau_resume_budget);
         let scheduler_wake = scheduler.wake_handle();
         vm.data().insert(scheduler)?;
@@ -1731,6 +1742,10 @@ pub struct Runtime {
 }
 
 impl Runtime {
+    fn scheduler(&self) -> anyhow::Result<Rc<LocalScheduler>> {
+        Ok(self.vm.data().get::<LocalScheduler>()?)
+    }
+
     pub fn plugin_manifests(&self) -> Vec<PluginManifest> {
         let mut manifests = self
             .plugins
@@ -1786,6 +1801,7 @@ impl Runtime {
     /// its entrypoint from the files on disk. Other plugins that already
     /// required its modules keep the exports they have until they restart.
     pub fn restart_plugin(&self, plugin_id: &str) -> anyhow::Result<()> {
+        self.scheduler()?.ensure_can_wait()?;
         match self.start_restart_entrypoint(plugin_id)? {
             Some(entrypoint) => self.drive_entrypoint(entrypoint),
             None => Ok(()),
@@ -1889,7 +1905,7 @@ impl Runtime {
                 load,
                 thread,
                 completion,
-                deadline: Instant::now() + timeout,
+                deadline: scheduler.now() + timeout,
             })),
             Err(error) => {
                 let failed = require.finish_source_load(load, Err(error));
@@ -1953,12 +1969,22 @@ impl Runtime {
     /// required. A failed entrypoint ends the run, so the tasks it spawned
     /// before failing stop with it.
     fn exec_loaded_plugin(&self, plugin: &LoadedPlugin) -> anyhow::Result<()> {
-        let scheduler = self.vm.data().get::<LocalScheduler>()?;
+        self.scheduler()?.ensure_can_wait()?;
+        match self.start_entrypoint(plugin)? {
+            Some(entrypoint) => self.drive_entrypoint(entrypoint),
+            None => Ok(()),
+        }
+    }
+
+    /// Starts the plugin's run and schedules its entrypoint. `None` when there is nothing to
+    /// run. A failure to start leaves the run ended.
+    fn start_entrypoint(&self, plugin: &LoadedPlugin) -> anyhow::Result<Option<RunningEntrypoint>> {
+        let scheduler = self.scheduler()?;
         let require = self.vm.data().get::<RequireRuntime>()?;
         require.plugin_group(&scheduler, &plugin.manifest.id);
         match self.schedule_entrypoint(plugin, &require, &scheduler) {
-            Ok(ScheduledEntrypoint::Running(entrypoint)) => self.drive_entrypoint(entrypoint),
-            Ok(ScheduledEntrypoint::NoEntrypoint | ScheduledEntrypoint::Cached) => Ok(()),
+            Ok(ScheduledEntrypoint::Running(entrypoint)) => Ok(Some(entrypoint)),
+            Ok(ScheduledEntrypoint::NoEntrypoint | ScheduledEntrypoint::Cached) => Ok(None),
             Err(error) => {
                 self.stop_plugin(&plugin.manifest.id)?;
                 Err(error)
@@ -2006,9 +2032,10 @@ impl Runtime {
         context: CallContext,
         args: Vec<luau::Value>,
     ) -> anyhow::Result<Vec<luau::Value>> {
+        let scheduler = self.scheduler()?;
+        scheduler.ensure_can_wait()?;
         let mut context = context;
         let thread = self.load_source_thread(source, &mut context)?;
-        let scheduler = self.vm.data().get::<LocalScheduler>()?;
         scheduler.spawn_luau_thread(context, self.vm.clone(), thread.clone(), args);
         drive_thread(
             &self.tokio_runtime,

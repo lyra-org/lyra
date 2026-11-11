@@ -4,6 +4,10 @@ version = "0.0.1-dev"
 edition = "2024"
 license-file = "../LICENSE"
 
+[features]
+# Exposes `testing`, with the manual clock for tests of scheduled work.
+testing = []
+
 [dependencies]
 anyhow = { workspace = true }
 harmony-luau = { workspace = true }

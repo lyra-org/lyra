@@ -72,6 +72,38 @@ pub struct TaskHandle {
     id: TaskId,
 }
 
+/// The time a scheduler runs by: every deadline it is given and every time it reports is read
+/// against this, so a test that installs a manual clock decides when each comes due.
+#[derive(Clone, Default)]
+pub(crate) enum Clock {
+    #[default]
+    Real,
+    #[cfg(any(test, feature = "testing"))]
+    Manual(crate::testing::ManualClock),
+}
+
+impl Clock {
+    fn now(&self) -> Instant {
+        match self {
+            Self::Real => Instant::now(),
+            #[cfg(any(test, feature = "testing"))]
+            Self::Manual(clock) => clock.now(),
+        }
+    }
+
+    /// Fails for a manual clock: a thread blocked on it would wait for time only it can move.
+    fn ensure_can_wait(&self) -> Result<()> {
+        match self {
+            Self::Real => Ok(()),
+            #[cfg(any(test, feature = "testing"))]
+            Self::Manual(_) => anyhow::bail!(
+                "a scheduler on a manual clock can't block until work is due: advance the clock \
+                 and call `poll_ready` instead of waiting or of driving a thread to its end"
+            ),
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct LocalLuauTaskCompletion {
     result: RefCell<Option<std::result::Result<Vec<luau::Value>, luau::RaisedError>>>,
@@ -80,9 +112,13 @@ pub struct LocalLuauTaskCompletion {
 }
 
 impl LocalLuauTaskCompletion {
-    fn complete(&self, result: std::result::Result<Vec<luau::Value>, luau::RaisedError>) {
+    fn complete(
+        &self,
+        result: std::result::Result<Vec<luau::Value>, luau::RaisedError>,
+        ended_at: Instant,
+    ) {
         *self.result.borrow_mut() = Some(result);
-        self.ended_at.set(Some(Instant::now()));
+        self.ended_at.set(Some(ended_at));
         if let Some(waker) = self.waker.borrow_mut().take() {
             waker.wake();
         }
@@ -109,7 +145,8 @@ impl LocalLuauTaskCompletion {
         Poll::Pending
     }
 
-    /// When the task ended or was cancelled, however much later its result is read.
+    /// When the task ended or was cancelled, by its scheduler's clock, however much later its
+    /// result is read.
     pub fn ended_at(&self) -> Option<Instant> {
         self.ended_at.get()
     }
@@ -124,6 +161,7 @@ impl LocalLuauTaskCompletion {
 /// the scheduler is borrowed for polling.
 #[derive(Default)]
 struct Timers {
+    clock: Clock,
     last_id: Cell<u64>,
     waiting: RefCell<Vec<Timer>>,
 }
@@ -169,7 +207,7 @@ impl Future for Sleep {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        if Instant::now() >= self.deadline {
+        if self.timers.clock.now() >= self.deadline {
             return Poll::Ready(());
         }
         let mut waiting = self.timers.waiting.borrow_mut();
@@ -199,7 +237,8 @@ impl Drop for Sleep {
 pub enum ResumeLimit {
     /// Each resume may run this long.
     Budget(Duration),
-    /// Each resume may run until `deadline`, or until `signal` is raised.
+    /// Each resume may run until `deadline`, by the scheduler's clock, or until `signal` is
+    /// raised. What is left until the deadline when a resume starts is then counted in real time.
     Until {
         deadline: Instant,
         signal: luau::InterruptSignal,
@@ -207,11 +246,11 @@ pub enum ResumeLimit {
 }
 
 impl ResumeLimit {
-    fn guard(&self, vm: &luau::Vm) -> luau::InterruptBudgetGuard {
+    fn guard(&self, vm: &luau::Vm, clock: &Clock) -> luau::InterruptBudgetGuard {
         match self {
             Self::Budget(budget) => vm.interrupt_after(*budget),
             Self::Until { deadline, signal } => vm.interrupt_after_or_on(
-                deadline.saturating_duration_since(Instant::now()),
+                deadline.saturating_duration_since(clock.now()),
                 Some(signal),
             ),
         }
@@ -273,13 +312,27 @@ impl Default for Scheduler {
 
 impl Scheduler {
     pub fn new() -> Self {
+        Self::with_clock(Clock::Real)
+    }
+
+    /// A scheduler whose time is `clock`'s, for a test that polls it: it never blocks, so
+    /// [`Self::wait_for_wake`] panics.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn with_manual_clock(clock: crate::testing::ManualClock) -> Self {
+        Self::with_clock(Clock::Manual(clock))
+    }
+
+    fn with_clock(clock: Clock) -> Self {
         Self {
             next_task_id: 1,
             last_group_id: Rc::default(),
             ready: VecDeque::new(),
             ready_watchers: VecDeque::new(),
             sleeping: Vec::new(),
-            timers: Rc::default(),
+            timers: Rc::new(Timers {
+                clock,
+                ..Timers::default()
+            }),
             luau_resume_budget: None,
             wake_queue: Arc::new(WakeQueue::default()),
             tasks: HashMap::new(),
@@ -288,6 +341,17 @@ impl Scheduler {
             cancelling: Rc::default(),
             detached: None,
         }
+    }
+
+    /// The time by the scheduler's clock, which every deadline given to it is read against.
+    pub fn now(&self) -> Instant {
+        self.timers.clock.now()
+    }
+
+    /// `delay` from now, or now when that is past the last instant.
+    fn wake_after(&self, delay: Duration) -> Instant {
+        let now = self.now();
+        now.checked_add(delay).unwrap_or(now)
     }
 
     pub fn set_luau_resume_budget(&mut self, budget: Option<Duration>) {
@@ -347,9 +411,7 @@ impl Scheduler {
         delay: Duration,
         future: TaskFuture,
     ) -> TaskHandle {
-        let wake_at = Instant::now()
-            .checked_add(delay)
-            .unwrap_or_else(Instant::now);
+        let wake_at = self.wake_after(delay);
         self.insert_task(context, future, Some(wake_at))
     }
 
@@ -411,9 +473,7 @@ impl Scheduler {
         thread: luau::Thread,
         args: Vec<luau::Value>,
     ) -> TaskHandle {
-        let wake_at = Instant::now()
-            .checked_add(delay)
-            .unwrap_or_else(Instant::now);
+        let wake_at = self.wake_after(delay);
         let pending_start = !thread.is_started();
         self.insert_work(
             context,
@@ -595,7 +655,10 @@ impl Scheduler {
         task.state = TaskState::Cancelled;
         task.wake_at = None;
         if let Some(completion) = task.completion.as_ref() {
-            completion.complete(Err(format!("Luau task {} was cancelled", id.0).into()));
+            completion.complete(
+                Err(format!("Luau task {} was cancelled", id.0).into()),
+                self.timers.clock.now(),
+            );
         }
         true
     }
@@ -620,11 +683,7 @@ impl Scheduler {
     }
 
     pub fn poll_ready(&mut self) -> usize {
-        self.poll_ready_at(Instant::now())
-    }
-
-    fn poll_ready_at(&mut self, now: Instant) -> usize {
-        self.wake(now);
+        self.wake(self.now());
         self.poll_queue(true) + self.poll_queue(false)
     }
 
@@ -672,10 +731,18 @@ impl Scheduler {
                 queue: self.wake_queue.clone(),
             }));
             let mut cx = Context::from_waker(&waker);
-            match poll_work(&task.context, work, &mut cx, task.resume_limit.as_ref()) {
+            let clock = &self.timers.clock;
+            let polled = poll_work(
+                &task.context,
+                work,
+                &mut cx,
+                task.resume_limit.as_ref(),
+                clock,
+            );
+            match polled {
                 WorkPoll::Completed { output } => {
                     if let Some(completion) = task.completion.as_ref() {
-                        completion.complete(Ok(output.unwrap_or_default()));
+                        completion.complete(Ok(output.unwrap_or_default()), clock.now());
                         task.output = None;
                     } else {
                         task.output = output;
@@ -694,8 +761,10 @@ impl Scheduler {
                 }
                 WorkPoll::Cancelled => {
                     if let Some(completion) = task.completion.as_ref() {
-                        completion
-                            .complete(Err(format!("Luau task {} was cancelled", id.0).into()));
+                        completion.complete(
+                            Err(format!("Luau task {} was cancelled", id.0).into()),
+                            clock.now(),
+                        );
                     }
                     detach(&self.detached, &task.context, task.work.take());
                     task.state = TaskState::Cancelled;
@@ -704,10 +773,13 @@ impl Scheduler {
                 }
                 WorkPoll::Failed(error) => {
                     if let Some(completion) = task.completion.as_ref() {
-                        completion.complete(Err(luau::RaisedError {
-                            kind: error.kind,
-                            message: format!("Luau task {} failed: {}", id.0, error.message),
-                        }));
+                        completion.complete(
+                            Err(luau::RaisedError {
+                                kind: error.kind,
+                                message: format!("Luau task {} failed: {}", id.0, error.message),
+                            }),
+                            clock.now(),
+                        );
                     }
                     detach(&self.detached, &task.context, task.work.take());
                     task.state = TaskState::Failed;
@@ -754,11 +826,9 @@ impl Scheduler {
         self.sleeping = pending;
     }
 
+    /// How long, by the scheduler's clock, until it has a task to poll. `None` when no task is
+    /// ready or due.
     pub fn next_wake_delay(&self) -> Option<Duration> {
-        self.next_wake_delay_at(Instant::now())
-    }
-
-    fn next_wake_delay_at(&self, now: Instant) -> Option<Duration> {
         if !self.ready.is_empty()
             || !self.ready_watchers.is_empty()
             || self.wake_queue.has_pending_wake()
@@ -766,6 +836,7 @@ impl Scheduler {
             return Some(Duration::ZERO);
         }
 
+        let now = self.now();
         self.sleeping
             .iter()
             .map(|(wake_at, _)| wake_at.saturating_duration_since(now))
@@ -775,7 +846,14 @@ impl Scheduler {
 
     /// Waits until a task is woken, [`SchedulerWake::wake`] is called, or `timeout` passes.
     /// Returns at once when either happened since the last wait.
+    ///
+    /// # Panics
+    ///
+    /// On a manual clock, whose time no wait would see pass.
     pub fn wait_for_wake(&self, timeout: Option<Duration>) {
+        if let Err(error) = self.timers.clock.ensure_can_wait() {
+            panic!("{error}");
+        }
         self.wake_queue.wait(timeout);
     }
 
@@ -927,6 +1005,13 @@ impl SchedulerWake {
     pub fn waker(&self) -> Waker {
         Waker::from(self.waker.clone())
     }
+
+    /// Whether the scheduler's owner is blocked in a wait right now, for a test of what ends
+    /// one: a wake sent once this holds reaches a thread that is asleep, not one about to sleep.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn owner_is_waiting(&self) -> bool {
+        self.waker.queue.state().waiting
+    }
 }
 
 /// Wakes the scheduler's owner, where a [`TaskWaker`] wakes one of its tasks.
@@ -1005,6 +1090,9 @@ struct WakeState {
     ids: VecDeque<TaskId>,
     /// A [`SchedulerWake`] fired since the last wait.
     roused: bool,
+    /// The owner is blocked in [`WakeQueue::wait`].
+    #[cfg(any(test, feature = "testing"))]
+    waiting: bool,
 }
 
 impl WakeQueue {
@@ -1032,7 +1120,13 @@ impl WakeQueue {
 
     fn wait(&self, timeout: Option<Duration>) {
         let mut state = self.state();
-        if state.ids.is_empty() && !state.roused {
+        // No time to wait is no wait, which also keeps `waiting` to an owner that is asleep.
+        if state.ids.is_empty() && !state.roused && timeout != Some(Duration::ZERO) {
+            // Set under the lock the wait releases, so whoever reads it set finds the owner asleep.
+            #[cfg(any(test, feature = "testing"))]
+            {
+                state.waiting = true;
+            }
             state = match timeout {
                 Some(timeout) => {
                     self.signal
@@ -1045,6 +1139,10 @@ impl WakeQueue {
                     .wait(state)
                     .expect("scheduler wake queue poisoned"),
             };
+            #[cfg(any(test, feature = "testing"))]
+            {
+                state.waiting = false;
+            }
         }
         state.roused = false;
     }
@@ -1089,7 +1187,25 @@ pub struct LocalScheduler {
 
 impl Default for LocalScheduler {
     fn default() -> Self {
-        let mut scheduler = Scheduler::new();
+        Self::with_clock(Clock::Real)
+    }
+}
+
+impl LocalScheduler {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// A scheduler whose time is `clock`'s, for a test that polls it. It never blocks:
+    /// [`Self::wait_for_work`] and [`Self::wait_for_wake`] panic, and what drives a thread to its
+    /// end on the calling thread, such as [`crate::luau::drive_thread`], fails before running it.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn with_manual_clock(clock: crate::testing::ManualClock) -> Self {
+        Self::with_clock(Clock::Manual(clock))
+    }
+
+    pub(crate) fn with_clock(clock: Clock) -> Self {
+        let mut scheduler = Scheduler::with_clock(clock);
         let detached = Rc::<RefCell<Vec<Detached>>>::default();
         scheduler.detached = Some(detached.clone());
         Self {
@@ -1111,11 +1227,16 @@ impl Default for LocalScheduler {
             polling: Cell::default(),
         }
     }
-}
 
-impl LocalScheduler {
-    pub fn new() -> Self {
-        Self::default()
+    /// The time by the scheduler's clock, which every deadline given to it is read against.
+    /// Usable while the scheduler polls, as from a task.
+    pub fn now(&self) -> Instant {
+        self.timers.clock.now()
+    }
+
+    /// Fails on a manual clock, for a caller about to block on this scheduler.
+    pub(crate) fn ensure_can_wait(&self) -> Result<()> {
+        self.timers.clock.ensure_can_wait()
     }
 
     pub fn create_group(&self) -> TaskGroupId {
@@ -1181,8 +1302,9 @@ impl LocalScheduler {
         self.drop_detached();
     }
 
-    /// A future that completes at `deadline`, for a task of this scheduler to wait on: the
-    /// deadline ends [`Self::wait_for_work`], and the poll that follows wakes the task.
+    /// A future that completes once the scheduler's clock reaches `deadline`, for a task of this
+    /// scheduler to wait on: the deadline ends [`Self::wait_for_work`], and the poll that follows
+    /// wakes the task.
     pub fn sleep_until(&self, deadline: Instant) -> Sleep {
         let id = self.timers.last_id.get().wrapping_add(1);
         self.timers.last_id.set(id);
@@ -1329,11 +1451,7 @@ impl LocalScheduler {
     ) -> TaskHandle {
         let key = luau_thread_key(&thread);
         let wake_at = match &start {
-            LuauThreadStart::Delayed(delay) => Some(
-                Instant::now()
-                    .checked_add(*delay)
-                    .unwrap_or_else(Instant::now),
-            ),
+            LuauThreadStart::Delayed(delay) => self.delay_until(Some(*delay)),
             LuauThreadStart::Immediate
             | LuauThreadStart::Limited { .. }
             | LuauThreadStart::WithCompletion(_) => None,
@@ -1453,7 +1571,7 @@ impl LocalScheduler {
 
         self.spawn_untracked_luau_future(
             context.task_group,
-            delay_until(delay),
+            self.delay_until(delay),
             vm,
             thread,
             future,
@@ -1613,7 +1731,7 @@ impl LocalScheduler {
         let watchers = {
             let _polling = Polling::begin(&self.polling);
             let mut scheduler = self.scheduler.borrow_mut();
-            scheduler.wake(Instant::now());
+            scheduler.wake(self.now());
             scheduler.poll_queue(true)
         };
         self.end_poll();
@@ -1682,21 +1800,22 @@ impl LocalScheduler {
     /// Sleeps until there is something to poll: a task is woken or due, a [`Sleep`] is due, a
     /// [`SchedulerWake`] fires, or `deadline`, the earliest among the work the caller polls
     /// itself, passes.
+    ///
+    /// # Panics
+    ///
+    /// On a manual clock, whose time no wait would see pass.
     pub fn wait_for_work(&self, deadline: Option<Instant>) {
         let scheduler = self.scheduler.borrow();
-        let now = Instant::now();
+        let now = self.now();
         let due = if scheduler.has_pending() {
-            scheduler.next_wake_delay_at(now)
+            scheduler.next_wake_delay()
         } else {
             scheduler.timers.next_delay(now)
         };
-        let timeout = match (due, deadline) {
-            (Some(due), Some(deadline)) => {
-                Some(due.min(deadline.saturating_duration_since(Instant::now())))
-            }
-            (due, deadline) => {
-                due.or(deadline.map(|deadline| deadline.saturating_duration_since(Instant::now())))
-            }
+        let until_deadline = deadline.map(|deadline| deadline.saturating_duration_since(now));
+        let timeout = match (due, until_deadline) {
+            (Some(due), Some(until_deadline)) => Some(due.min(until_deadline)),
+            (due, until_deadline) => due.or(until_deadline),
         };
         scheduler.wait_for_wake(timeout);
     }
@@ -1784,7 +1903,7 @@ impl LocalScheduler {
                     thread,
                     future,
                 } => {
-                    let wake_at = delay_until(delay);
+                    let wake_at = self.delay_until(delay);
                     // A task that is not parked, such as a finished one that
                     // borrowed a coroutine, no longer carries the thread.
                     let target =
@@ -1852,14 +1971,14 @@ impl LocalScheduler {
             let _ = vm.clear_thread_call_context(&thread);
         }
     }
-}
 
-fn delay_until(delay: Option<Duration>) -> Option<Instant> {
-    delay.map(|delay| {
-        Instant::now()
-            .checked_add(delay)
-            .unwrap_or_else(Instant::now)
-    })
+    /// `delay` from now, or now when that is past the last instant.
+    fn delay_until(&self, delay: Option<Duration>) -> Option<Instant> {
+        delay.map(|delay| {
+            let now = self.now();
+            now.checked_add(delay).unwrap_or(now)
+        })
+    }
 }
 
 /// Marks a [`LocalScheduler`] as polling until dropped, so that a poll that unwinds doesn't leave
@@ -1959,6 +2078,7 @@ fn poll_work(
     work: &mut TaskWork,
     cx: &mut Context<'_>,
     resume_limit: Option<&ResumeLimit>,
+    clock: &Clock,
 ) -> WorkPoll {
     match work {
         TaskWork::Future(future) => match catch_host_panic(context, || future.as_mut().poll(cx)) {
@@ -1983,7 +2103,7 @@ fn poll_work(
                 Ok(previous) => previous,
                 Err(error) => return WorkPoll::Failed(error.to_string().into()),
             };
-            let result = resume_luau_thread(vm, thread, args, resume_limit);
+            let result = resume_luau_thread(vm, thread, args, resume_limit, clock);
             args.clear();
             poll_luau_resume(vm, thread, result, previous)
         }
@@ -2012,7 +2132,7 @@ fn poll_work(
                 Ok(previous) => previous,
                 Err(error) => return WorkPoll::Failed(error.to_string().into()),
             };
-            let _guard = resume_limit.map(|limit| limit.guard(&vm));
+            let _guard = resume_limit.map(|limit| limit.guard(&vm, clock));
             let result = match output {
                 Ok(values) => thread.resume(&vm, values.as_slice()),
                 Err(error) => thread.resume_error(&vm, &error),
@@ -2087,8 +2207,9 @@ fn resume_luau_thread(
     thread: &luau::Thread,
     args: &[luau::Value],
     limit: Option<&ResumeLimit>,
+    clock: &Clock,
 ) -> luau::runtime::Result<luau::ThreadStatus> {
-    let _guard = limit.map(|limit| limit.guard(vm));
+    let _guard = limit.map(|limit| limit.guard(vm, clock));
     thread.resume(vm, args)
 }
 
@@ -2122,7 +2243,7 @@ fn poll_luau_resume(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::{
         future::{
             pending,
@@ -2139,6 +2260,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::testing::ManualClock;
     use harmony_luau::{
         CapabilityId,
         ModuleId,
@@ -2504,10 +2626,7 @@ mod tests {
                 .state,
             TaskState::Pending
         );
-        assert_eq!(
-            scheduler.next_wake_delay_at(Instant::now()),
-            Some(Duration::ZERO)
-        );
+        assert_eq!(scheduler.next_wake_delay(), Some(Duration::ZERO));
 
         assert_eq!(scheduler.poll_ready(), 1);
         assert_eq!(
@@ -2522,31 +2641,31 @@ mod tests {
 
     #[test]
     fn delayed_task_waits_until_wake_time() {
-        let mut scheduler = Scheduler::new();
-        let start = Instant::now();
+        let clock = ManualClock::new();
+        let mut scheduler = Scheduler::with_manual_clock(clock.clone());
         let handle = scheduler.spawn_boxed_after(
             CallContext::default(),
             Duration::from_secs(5),
             Box::pin(async { Ok(()) }),
         );
-
-        assert_eq!(scheduler.poll_ready_at(start), 0);
-        assert_eq!(
+        let state = |scheduler: &Scheduler| {
             scheduler
                 .snapshot(handle.id())
                 .expect("task snapshot")
-                .state,
-            TaskState::Pending
-        );
+                .state
+        };
 
-        assert_eq!(scheduler.poll_ready_at(start + Duration::from_secs(6)), 1);
-        assert_eq!(
-            scheduler
-                .snapshot(handle.id())
-                .expect("task snapshot")
-                .state,
-            TaskState::Completed
-        );
+        assert_eq!(scheduler.poll_ready(), 0);
+        assert_eq!(scheduler.next_wake_delay(), Some(Duration::from_secs(5)));
+
+        clock.advance(Duration::from_secs(5) - Duration::from_nanos(1));
+        assert_eq!(scheduler.poll_ready(), 0);
+        assert_eq!(state(&scheduler), TaskState::Pending);
+        assert_eq!(scheduler.next_wake_delay(), Some(Duration::from_nanos(1)));
+
+        clock.advance(Duration::from_nanos(1));
+        assert_eq!(scheduler.poll_ready(), 1);
+        assert_eq!(state(&scheduler), TaskState::Completed);
     }
 
     #[test]
@@ -2753,57 +2872,117 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn a_wake_handle_ends_a_wait_from_another_thread() {
-        let scheduler = Scheduler::new();
-        let wake = scheduler.wake_handle();
-        let waker = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(20));
-            wake.wake();
+    /// Runs `test` on a thread of its own and fails if it is still running after a long while,
+    /// as one whose wait missed its wake would be for good.
+    pub(crate) fn ending_without_a_missed_wake(test: impl FnOnce() + Send + 'static) {
+        let (done, ended) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            test();
+            let _ = done.send(());
         });
-
-        let started = Instant::now();
-        scheduler.wait_for_wake(Some(Duration::from_secs(30)));
-        assert!(started.elapsed() < Duration::from_secs(10));
-        waker.join().expect("waker thread");
-    }
-
-    #[test]
-    fn a_wake_before_the_wait_is_kept_for_it() {
-        let scheduler = Scheduler::new();
-        scheduler.wake_handle().waker().wake();
-
-        let started = Instant::now();
-        scheduler.wait_for_wake(Some(Duration::from_secs(30)));
-        assert!(started.elapsed() < Duration::from_secs(10));
-    }
-
-    #[test]
-    fn a_cancellation_ends_a_wait_for_work_without_a_deadline() {
-        let scheduler = LocalScheduler::new();
-        let cancellation = Cancellation::new(scheduler.wake_handle());
-        let cancel = std::thread::spawn({
-            let cancellation = cancellation.clone();
-            move || cancellation.cancel()
-        });
-
-        while !cancellation.is_cancelled() {
-            scheduler.wait_for_work(None);
+        match ended.recv_timeout(Duration::from_secs(60)) {
+            Ok(()) => thread.join().expect("test thread"),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                panic!("nothing ended the scheduler's wait")
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                std::panic::resume_unwind(thread.join().expect_err("the test panicked"))
+            }
         }
-        cancel.join().expect("cancelling thread");
     }
 
-    /// Runs rounds that sleep in between, as a host does, until `done` or a wake goes missing.
+    /// Returns once the scheduler's owner is asleep in a wait.
+    fn once_waiting(wake: &SchedulerWake) {
+        while !wake.owner_is_waiting() {
+            std::thread::yield_now();
+        }
+    }
+
+    /// Runs rounds that sleep in between, as a host does, until `done`. Only a wake or a due
+    /// task ends each sleep.
     fn run_until(scheduler: &LocalScheduler, done: impl Fn() -> bool) {
-        let give_up = Instant::now() + Duration::from_secs(10);
         loop {
             scheduler.poll_ready();
             if done() {
                 return;
             }
-            assert!(Instant::now() < give_up, "nothing woke the scheduler");
-            scheduler.wait_for_work(Some(give_up));
+            scheduler.wait_for_work(None);
         }
+    }
+
+    #[test]
+    fn a_wake_handle_ends_a_wait_from_another_thread() {
+        ending_without_a_missed_wake(|| {
+            let scheduler = Scheduler::new();
+            let wake = scheduler.wake_handle();
+            let waker = std::thread::spawn(move || {
+                once_waiting(&wake);
+                wake.wake();
+            });
+
+            scheduler.wait_for_wake(None);
+            waker.join().expect("waker thread");
+        });
+    }
+
+    /// The task's own waker, called from another thread while the owner sleeps with nothing due,
+    /// is all that ends the wait.
+    #[test]
+    fn a_task_s_waker_ends_a_wait_from_another_thread() {
+        ending_without_a_missed_wake(|| {
+            let scheduler = LocalScheduler::new();
+            let (ready, readied) = tokio::sync::oneshot::channel::<()>();
+            let seen = Rc::new(Cell::new(false));
+            scheduler.schedule_future(CallContext::default(), {
+                let seen = seen.clone();
+                async move {
+                    let _ = readied.await;
+                    seen.set(true);
+                    Ok(())
+                }
+            });
+            scheduler.poll_ready();
+            assert!(!seen.get());
+
+            let waker = std::thread::spawn({
+                let wake = scheduler.wake_handle();
+                move || {
+                    once_waiting(&wake);
+                    let _ = ready.send(());
+                }
+            });
+            run_until(&scheduler, || seen.get());
+            waker.join().expect("waking thread");
+        });
+    }
+
+    #[test]
+    fn a_wake_before_the_wait_is_kept_for_it() {
+        ending_without_a_missed_wake(|| {
+            let scheduler = Scheduler::new();
+            scheduler.wake_handle().waker().wake();
+
+            scheduler.wait_for_wake(None);
+        });
+    }
+
+    #[test]
+    fn a_cancellation_ends_a_wait_for_work_without_a_deadline() {
+        ending_without_a_missed_wake(|| {
+            let scheduler = LocalScheduler::new();
+            let cancellation = Cancellation::new(scheduler.wake_handle());
+            let cancel = std::thread::spawn({
+                let (cancellation, wake) = (cancellation.clone(), scheduler.wake_handle());
+                move || {
+                    once_waiting(&wake);
+                    cancellation.cancel();
+                }
+            });
+
+            scheduler.wait_for_work(None);
+            assert!(cancellation.is_cancelled());
+            cancel.join().expect("cancelling thread");
+        });
     }
 
     #[test]
@@ -2829,61 +3008,281 @@ mod tests {
         assert!(ran.get());
     }
 
+    /// On the real clock and the real wait: nothing but the sleep's deadline ends the wait.
     #[test]
     fn a_sleep_ends_the_wait_and_wakes_its_task_at_the_deadline() {
-        let scheduler = LocalScheduler::new();
-        let woke = Rc::new(Cell::new(None));
-        let deadline = Instant::now() + Duration::from_millis(50);
+        ending_without_a_missed_wake(|| {
+            let scheduler = LocalScheduler::new();
+            let woke = Rc::new(Cell::new(None));
+            let deadline = Instant::now() + Duration::from_millis(50);
+            let sleep = scheduler.sleep_until(deadline);
+            scheduler.schedule_future(CallContext::default(), {
+                let woke = woke.clone();
+                async move {
+                    sleep.await;
+                    woke.set(Some(Instant::now()));
+                    Ok(())
+                }
+            });
+
+            run_until(&scheduler, || woke.get().is_some());
+            let woke = woke.get().expect("the task woke");
+            assert!(woke >= deadline, "woken {:?} early", deadline - woke);
+        });
+    }
+
+    /// A task waiting on a sleep, and whether it has woken.
+    fn sleeper(scheduler: &LocalScheduler, deadline: Instant) -> Rc<Cell<bool>> {
+        let woke = Rc::new(Cell::new(false));
         let sleep = scheduler.sleep_until(deadline);
         scheduler.schedule_future(CallContext::default(), {
             let woke = woke.clone();
             async move {
                 sleep.await;
-                woke.set(Some(Instant::now()));
+                woke.set(true);
                 Ok(())
             }
         });
+        woke
+    }
 
-        run_until(&scheduler, || woke.get().is_some());
-        let woke = woke.get().expect("the task woke");
-        assert!(woke >= deadline, "woken {:?} early", deadline - woke);
-        assert!(woke < deadline + Duration::from_secs(5));
+    /// A deadline is the first instant that is too late: a sleep is over at it, not after it.
+    #[test]
+    fn a_sleep_is_over_at_its_deadline_and_not_before() {
+        let clock = ManualClock::new();
+        let scheduler = LocalScheduler::with_manual_clock(clock.clone());
+        let woke = sleeper(&scheduler, clock.now() + Duration::from_secs(5));
+
+        scheduler.poll_ready();
+        assert!(!woke.get());
+        assert_eq!(scheduler.next_wake_delay(), Some(Duration::from_secs(5)));
+
+        clock.advance(Duration::from_secs(5) - Duration::from_nanos(1));
+        scheduler.poll_ready();
+        scheduler.poll_ready();
+        assert!(!woke.get(), "woken before the deadline");
+        assert_eq!(scheduler.next_wake_delay(), Some(Duration::from_nanos(1)));
+
+        clock.advance(Duration::from_nanos(1));
+        assert!(!woke.get(), "advancing the clock ran the task");
+        scheduler.poll_ready();
+        assert!(woke.get(), "still asleep at the deadline");
+        assert_eq!(scheduler.next_wake_delay(), None);
+
+        let late = sleeper(&scheduler, clock.now() - Duration::from_secs(1));
+        scheduler.poll_ready();
+        assert!(late.get(), "a sleep past its deadline waits");
     }
 
     #[test]
     fn a_dropped_sleep_leaves_nothing_to_wait_for() {
-        let scheduler = LocalScheduler::new();
-        let mut sleep = scheduler.sleep_until(Instant::now() + Duration::from_secs(3600));
+        let clock = ManualClock::new();
+        let scheduler = LocalScheduler::with_manual_clock(clock.clone());
+        let mut sleep = scheduler.sleep_until(clock.now() + Duration::from_secs(3600));
         let mut cx = Context::from_waker(Waker::noop());
         assert!(Pin::new(&mut sleep).poll(&mut cx).is_pending());
-        assert!(scheduler.next_wake_delay().is_some());
+        assert_eq!(scheduler.next_wake_delay(), Some(Duration::from_secs(3600)));
 
         drop(sleep);
         assert_eq!(scheduler.next_wake_delay(), None);
     }
 
     #[test]
-    fn a_cancellation_wakes_the_task_waiting_on_it() {
-        let scheduler = LocalScheduler::new();
-        let cancellation = Cancellation::new(scheduler.wake_handle());
-        let seen = Rc::new(Cell::new(false));
-        scheduler.schedule_future(CallContext::default(), {
-            let (cancellation, seen) = (cancellation.clone(), seen.clone());
-            async move {
-                cancellation.cancelled().await;
-                seen.set(true);
-                Ok(())
-            }
-        });
-        scheduler.poll_ready();
-        assert!(!seen.get());
+    #[should_panic(expected = "manual clock can't block")]
+    fn a_scheduler_on_a_manual_clock_refuses_to_wait_for_work() {
+        let clock = ManualClock::new();
+        let scheduler = LocalScheduler::with_manual_clock(clock.clone());
+        // Even with work due at once, which a real wait would return for.
+        scheduler.schedule_future(CallContext::default(), async { Ok(()) });
+        scheduler.wait_for_work(Some(clock.now()));
+    }
 
-        let cancel = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(20));
-            cancellation.cancel();
+    #[test]
+    #[should_panic(expected = "manual clock can't block")]
+    fn a_scheduler_on_a_manual_clock_refuses_to_wait_for_a_wake() {
+        let scheduler = Scheduler::with_manual_clock(ManualClock::new());
+        scheduler.wake_handle().wake();
+        scheduler.wait_for_wake(Some(Duration::ZERO));
+    }
+
+    fn chunk_thread(vm: &luau::Vm, source: &'static str) -> luau::runtime::Result<luau::Thread> {
+        vm.create_thread(&vm.load_chunk(&luau::Chunk::new(
+            Arc::<[u8]>::from(source.as_bytes()),
+            luau::ChunkOrigin::default(),
+        ))?)
+    }
+
+    /// Schedules a thread that returns at once, and a task that moves the clock on by a second,
+    /// in the order given, and runs them in one round. Returns when the thread ended, as its
+    /// completion has it, counted from the round's start.
+    fn ended_after(advance_first: bool) -> luau::runtime::Result<Duration> {
+        let vm = luau::Vm::new()?;
+        let clock = ManualClock::new();
+        let scheduler = LocalScheduler::with_manual_clock(clock.clone());
+        let completion = Rc::new(LocalLuauTaskCompletion::default());
+        let advance = |scheduler: &LocalScheduler| {
+            let clock = clock.clone();
+            scheduler.schedule_future(CallContext::default(), async move {
+                clock.advance(Duration::from_secs(1));
+                Ok(())
+            });
+        };
+        if advance_first {
+            advance(&scheduler);
+        }
+        scheduler.schedule_luau_thread_with_completion(
+            CallContext::default(),
+            vm.clone(),
+            chunk_thread(&vm, "return 42")?,
+            Vec::new(),
+            completion.clone(),
+        );
+        if !advance_first {
+            advance(&scheduler);
+        }
+
+        let start = clock.now();
+        assert!(completion.ended_at().is_none());
+        scheduler.poll_ready();
+        assert_eq!(clock.now(), start + Duration::from_secs(1));
+        Ok(completion.ended_at().expect("the thread ended") - start)
+    }
+
+    /// The end is timed when it happens, not when its round began or ended.
+    #[test]
+    fn a_completion_records_the_time_its_thread_ended() -> luau::runtime::Result<()> {
+        assert_eq!(ended_after(false)?, Duration::ZERO);
+        assert_eq!(ended_after(true)?, Duration::from_secs(1));
+        Ok(())
+    }
+
+    #[test]
+    fn a_completion_records_the_time_its_thread_was_cancelled() -> luau::runtime::Result<()> {
+        let vm = luau::Vm::new()?;
+        vm.open_standard_libraries(luau::StandardLibraries::all_supported())?;
+        let clock = ManualClock::new();
+        let scheduler = LocalScheduler::with_manual_clock(clock.clone());
+        let start = clock.now();
+        let completion = Rc::new(LocalLuauTaskCompletion::default());
+        let thread = chunk_thread(&vm, "coroutine.yield()")?;
+        scheduler.schedule_luau_thread_with_completion(
+            CallContext::default(),
+            vm.clone(),
+            thread.clone(),
+            Vec::new(),
+            completion.clone(),
+        );
+        scheduler.poll_ready();
+        assert!(completion.ended_at().is_none(), "a yield ended the thread");
+
+        clock.advance(Duration::from_secs(3));
+        assert!(completion.ended_at().is_none());
+        clock.advance(Duration::from_secs(4));
+        assert!(scheduler.cancel_luau_thread(&thread));
+        clock.advance(Duration::from_secs(5));
+
+        assert_eq!(completion.ended_at(), Some(start + Duration::from_secs(7)));
+        let ended = completion_message(&completion).expect("the thread is cancelled");
+        assert!(ended.is_err_and(|error| error.contains("cancelled")));
+        Ok(())
+    }
+
+    /// The deadline is read by the scheduler's clock, and what is left until it is enforced in
+    /// real time: a clock that stands still doesn't let a resume run for good.
+    #[test]
+    fn a_frozen_clock_still_interrupts_a_resume_at_its_limit() -> luau::runtime::Result<()> {
+        let vm = luau::Vm::new()?;
+        let clock = ManualClock::new();
+        let scheduler = LocalScheduler::with_manual_clock(clock.clone());
+        let limits = [
+            ResumeLimit::Budget(Duration::from_millis(20)),
+            ResumeLimit::Until {
+                deadline: clock.now() + Duration::from_millis(20),
+                signal: luau::InterruptSignal::new(),
+            },
+        ];
+        let completions = limits.map(|limit| -> luau::runtime::Result<_> {
+            let completion = Rc::new(LocalLuauTaskCompletion::default());
+            scheduler.schedule_luau_thread_with_limit_and_completion(
+                CallContext::default(),
+                vm.clone(),
+                chunk_thread(&vm, "while true do end")?,
+                Vec::new(),
+                limit,
+                completion.clone(),
+            );
+            Ok(completion)
         });
-        run_until(&scheduler, || seen.get());
-        cancel.join().expect("cancelling thread");
+
+        let start = clock.now();
+        assert_eq!(scheduler.poll_ready(), 2);
+        assert_eq!(clock.now(), start);
+        for completion in completions {
+            let completion = completion?;
+            let ended = completion_message(&completion).expect("the thread ended");
+            assert!(
+                ended.is_err_and(|error| error.contains(luau::INTERRUPTED_ERROR)),
+                "the resume wasn't interrupted"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_resume_limited_until_a_deadline_already_passed_by_the_clock_is_interrupted_at_once()
+    -> luau::runtime::Result<()> {
+        let vm = luau::Vm::new()?;
+        let clock = ManualClock::new();
+        let scheduler = LocalScheduler::with_manual_clock(clock.clone());
+        // An hour away in real time, and passed once the clock says so.
+        let deadline = clock.now() + Duration::from_secs(3600);
+        clock.advance(Duration::from_secs(3600));
+        let completion = Rc::new(LocalLuauTaskCompletion::default());
+        scheduler.schedule_luau_thread_with_limit_and_completion(
+            CallContext::default(),
+            vm.clone(),
+            chunk_thread(&vm, "while true do end")?,
+            Vec::new(),
+            ResumeLimit::Until {
+                deadline,
+                signal: luau::InterruptSignal::new(),
+            },
+            completion.clone(),
+        );
+
+        assert_eq!(scheduler.poll_ready(), 1);
+        let ended = completion_message(&completion).expect("the thread ended");
+        assert!(ended.is_err_and(|error| error.contains(luau::INTERRUPTED_ERROR)));
+        Ok(())
+    }
+
+    #[test]
+    fn a_cancellation_wakes_the_task_waiting_on_it() {
+        ending_without_a_missed_wake(|| {
+            let scheduler = LocalScheduler::new();
+            let cancellation = Cancellation::new(scheduler.wake_handle());
+            let seen = Rc::new(Cell::new(false));
+            scheduler.schedule_future(CallContext::default(), {
+                let (cancellation, seen) = (cancellation.clone(), seen.clone());
+                async move {
+                    cancellation.cancelled().await;
+                    seen.set(true);
+                    Ok(())
+                }
+            });
+            scheduler.poll_ready();
+            assert!(!seen.get());
+
+            let cancel = std::thread::spawn({
+                let wake = scheduler.wake_handle();
+                move || {
+                    once_waiting(&wake);
+                    cancellation.cancel();
+                }
+            });
+            run_until(&scheduler, || seen.get());
+            cancel.join().expect("cancelling thread");
+        });
     }
 
     /// A thread that waits forever on a host call, whose future raises `dropped` when dropped.

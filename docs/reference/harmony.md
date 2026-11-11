@@ -99,6 +99,36 @@ status. `clippy.toml` disallows those functions everywhere else.
   must not hold the scheduler's `Rc` across an await, which would keep the scheduler alive
   through itself.
 
+## Time
+
+- A scheduler reads time from one clock, `LocalScheduler::now`: delayed tasks and futures,
+  `Sleep`, `ResumeLimit::Until`, the deadlines of entrypoints and of `drive_thread`, and
+  `LocalLuauTaskCompletion::ended_at`, which is read as the thread ends or is cancelled. A host
+  makes the deadlines it hands the scheduler from `now`, not from `Instant::now()`.
+- A deadline is the first instant that is too late: a `Sleep` is over once the clock reaches it,
+  and work is in time only if it ended before it.
+- The clock isn't Tokio's, since the drivers poll outside a Tokio context and `wait_for_work`
+  blocks the thread. A `tokio::time` wait doesn't follow it and stays real on any clock, so a
+  host that must wait in Tokio for a deadline made from `now` waits for what is left until it,
+  the deadline less `now`, from Tokio's own time.
+- The `testing` feature adds `testing::ManualClock`, which `LocalScheduler::with_manual_clock`,
+  `Scheduler::with_manual_clock` and `RuntimeBuilder::manual_clock` install for the scheduler's
+  whole life. It starts at the real time and only moves forward, by `advance`, which runs nothing:
+  the next `poll_ready` wakes what came due.
+- A scheduler on a manual clock never blocks. `wait_for_work` and `wait_for_wake` panic, and what
+  runs code to its end on the calling thread fails before running any: `drive_thread`, and a
+  runtime's `exec_all`, `exec_plugin`, `restart_plugin`, `run_plugin_source` and `eval_source_*`.
+  A test polls instead, with `poll_ready`, `Runtime::start_plugin_restart` and
+  `testing::drive_thread_while_ready`.
+- Resume budgets stay real on any clock. `ResumeLimit::Budget` is real time, and
+  `ResumeLimit::Until` takes what is left until its deadline from the clock as each resume starts,
+  then counts it in real time, so a clock that stands still doesn't let `while true do end` run on.
+- A manually polled test can't see a missed wake. Tests of what ends a wait run on the real clock
+  and `wait_for_work`, and send the wake once `SchedulerWake::owner_is_waiting`, also under
+  `testing`, says the owner is asleep. Keep the watchdog off the thread that polls, or fail on
+  it before polling again: a round run because the watchdog ended the wait finds what the
+  missing wake left ready.
+
 ## Writing Bindings
 
 Bindings live in the crate that owns the exposed module, and for Lyra's types in the plugin layer.
