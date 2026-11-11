@@ -51,6 +51,7 @@ pub use scheduler::{
     ResumeLimit,
     Scheduler,
     SchedulerWake,
+    Sleep,
     TaskFuture,
     TaskHandle,
     TaskId,

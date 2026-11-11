@@ -83,6 +83,21 @@ status. `clippy.toml` disallows those functions everywhere else.
   no deadline is not looked at again.
 - `Cancellation` is a flag that fires such a wake when set. `drive_thread` and a runtime's
   entrypoints take theirs from the scheduler they run on.
+- Host work that watches a Luau thread belongs in a task of its own rather than in the host's
+  loop, so that the scheduler wakes it: `LocalScheduler::schedule_watcher` runs a future, which
+  need not be `Send`. There, `LocalLuauTaskCompletion::wait` waits for the thread's end,
+  `LocalScheduler::sleep_until` for a deadline and `Cancellation::cancelled` for a cancellation.
+  Every poll runs the woken watchers first and drops what they cancelled before any other task
+  runs, so a thread whose watcher cancels it, for a caller gone or a deadline passed before the
+  poll began, isn't resumed again, and neither are the threads its work was waiting on.
+  `LocalLuauTaskCompletion::ended_at` tells a thread that ended in time from one read late.
+- The scheduler is borrowed while it polls. What a task asks of it then happens once it is free,
+  after the watchers and again after the other tasks: a scheduled thread or future starts, and a
+  cancelled thread or group is dropped. Neither runs further in that poll, and
+  `cancel_luau_thread_and_settle` returns a future for the moment the thread is gone. Cancelling
+  a thread doesn't close it: Luau code holding the coroutine can still resume it. A task's future
+  must not hold the scheduler's `Rc` across an await, which would keep the scheduler alive
+  through itself.
 
 ## Writing Bindings
 
