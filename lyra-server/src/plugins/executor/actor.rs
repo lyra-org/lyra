@@ -641,17 +641,16 @@ fn serve_plugin_executor_commands(
     rx: &mpsc::Receiver<QueuedPluginExecutorCommand>,
 ) -> Option<tokio::sync::oneshot::Sender<Result<()>>> {
     loop {
-        let deadline = runtime.poll_background_tasks();
+        runtime.poll_background_tasks();
         match rx.try_recv() {
             Ok(QueuedPluginExecutorCommand {
                 command: PluginExecutorCommand::Shutdown(reply),
                 ..
             }) => break Some(reply),
             Ok(QueuedPluginExecutorCommand { command, _permit }) => {
-                runtime.poll_own_work();
                 handle_plugin_executor_command(runtime, command, _permit)
             }
-            Err(mpsc::TryRecvError::Empty) => runtime.wait_for_work(deadline),
+            Err(mpsc::TryRecvError::Empty) => runtime.wait_for_work(),
             Err(mpsc::TryRecvError::Disconnected) => break None,
         }
     }

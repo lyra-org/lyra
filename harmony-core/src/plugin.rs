@@ -1623,7 +1623,7 @@ where
             vm,
             plugins: Arc::from(execution_order(self.plugins.iter().cloned())?),
             tokio_runtime: TokioRuntimeContext::new()?,
-            run_end_hooks: self.run_end_hooks,
+            run_end_hooks: Rc::from(self.run_end_hooks),
             entrypoints_cancelled: crate::Cancellation::new(scheduler_wake),
         })
     }
@@ -1637,23 +1637,88 @@ enum ScheduledEntrypoint {
     Running(RunningEntrypoint),
 }
 
-/// A plugin's entrypoint running on the scheduler, for the runtime's owner to poll.
-pub struct RunningEntrypoint {
+/// A plugin's entrypoint running on the scheduler.
+struct RunningEntrypoint {
+    vm: luau::Vm,
     plugin_id: Arc<str>,
     entrypoint: Arc<str>,
     load: crate::modules::SourceLoad,
     thread: luau::Thread,
     completion: Rc<crate::LocalLuauTaskCompletion>,
     deadline: Instant,
+    cancelled: crate::Cancellation,
+    run_end_hooks: Rc<[RunEndHook]>,
 }
 
-/// How a [`RunningEntrypoint`] stands.
-pub enum EntrypointPoll {
-    /// Still running, and given up on at `deadline`.
-    Running {
-        deadline: Instant,
-    },
-    Ended(anyhow::Result<Vec<luau::Value>>),
+impl RunningEntrypoint {
+    /// Waits for the entrypoint to end, at its deadline at the latest, and records how it did: a
+    /// failed entrypoint ends the run.
+    async fn finish(self) -> anyhow::Result<()> {
+        let result = self.ended().await;
+        let finished = self
+            .vm
+            .data()
+            .get::<RequireRuntime>()?
+            .finish_source_load(self.load, result)
+            .map_err(anyhow::Error::new)
+            .with_context(|| {
+                format!(
+                    "run plugin '{}' entrypoint '{}'",
+                    self.plugin_id, self.entrypoint
+                )
+            });
+        if finished.is_err() {
+            end_plugin_run(&self.vm, &self.run_end_hooks, &self.plugin_id)?;
+        }
+        finished.map(|_| ())
+    }
+
+    /// Cancellation wins over a completion that landed; a completion wins over the deadline,
+    /// which only keeps an entrypoint from holding up its runtime for good: nobody was promised
+    /// an answer by then, so a plugin that loaded isn't unloaded for having loaded late. An
+    /// entrypoint that didn't complete is cancelled.
+    async fn ended(&self) -> anyhow::Result<Vec<luau::Value>> {
+        let mut expired = self
+            .vm
+            .data()
+            .get::<LocalScheduler>()?
+            .sleep_until(self.deadline);
+        let mut cancelled = std::pin::pin!(self.cancelled.cancelled());
+        let failure = std::future::poll_fn(|cx| {
+            if cancelled.as_mut().poll(cx).is_ready() {
+                return std::task::Poll::Ready(Err("entrypoint was cancelled"));
+            }
+            if let std::task::Poll::Ready(result) = self.completion.poll(cx) {
+                return std::task::Poll::Ready(Ok(result));
+            }
+            std::pin::Pin::new(&mut expired)
+                .poll(cx)
+                .map(|()| Err("entrypoint did not complete"))
+        })
+        .await;
+        match failure {
+            Ok(result) => result.map_err(|error| anyhow::Error::msg(error.message)),
+            Err(failure) => {
+                self.vm
+                    .data()
+                    .get::<LocalScheduler>()?
+                    .cancel_luau_thread(&self.thread);
+                Err(anyhow::anyhow!(failure))
+            }
+        }
+    }
+}
+
+/// Cancels every task of the plugin's current run, if it has one, then runs the run-end hooks.
+fn end_plugin_run(vm: &luau::Vm, hooks: &[RunEndHook], plugin_id: &str) -> anyhow::Result<()> {
+    let Some(group) = vm.data().get::<RequireRuntime>()?.end_plugin_run(plugin_id) else {
+        return Ok(());
+    };
+    vm.data().get::<LocalScheduler>()?.cancel_group(group);
+    for hook in hooks {
+        hook(vm, plugin_id);
+    }
+    Ok(())
 }
 
 pub struct Runtime {
@@ -1661,7 +1726,7 @@ pub struct Runtime {
     /// In execution order, dependencies first.
     pub plugins: Arc<[LoadedPlugin]>,
     pub tokio_runtime: TokioRuntimeContext,
-    run_end_hooks: Vec<RunEndHook>,
+    run_end_hooks: Rc<[RunEndHook]>,
     entrypoints_cancelled: crate::Cancellation,
 }
 
@@ -1721,16 +1786,26 @@ impl Runtime {
     /// its entrypoint from the files on disk. Other plugins that already
     /// required its modules keep the exports they have until they restart.
     pub fn restart_plugin(&self, plugin_id: &str) -> anyhow::Result<()> {
-        match self.start_plugin_restart(plugin_id)? {
+        match self.start_restart_entrypoint(plugin_id)? {
             Some(entrypoint) => self.drive_entrypoint(entrypoint),
             None => Ok(()),
         }
     }
 
-    /// [`Self::restart_plugin`] without waiting for the new entrypoint: its thread is scheduled and
-    /// the caller polls it with [`Self::poll_entrypoint`] between its other work. `None` when
-    /// there was nothing to run. A failure to start leaves the run ended.
+    /// [`Self::restart_plugin`] without waiting for the new entrypoint: its thread is scheduled,
+    /// and the returned future, for a watcher of the runtime's scheduler to await, completes with
+    /// how the restart went once the entrypoint has run. `None` when there was nothing to run.
+    /// A failure to start leaves the run ended.
     pub fn start_plugin_restart(
+        &self,
+        plugin_id: &str,
+    ) -> anyhow::Result<Option<impl Future<Output = anyhow::Result<()>> + use<>>> {
+        Ok(self
+            .start_restart_entrypoint(plugin_id)?
+            .map(RunningEntrypoint::finish))
+    }
+
+    fn start_restart_entrypoint(
         &self,
         plugin_id: &str,
     ) -> anyhow::Result<Option<RunningEntrypoint>> {
@@ -1806,6 +1881,9 @@ impl Runtime {
         })();
         match thread {
             Ok(thread) => Ok(ScheduledEntrypoint::Running(RunningEntrypoint {
+                vm: self.vm.clone(),
+                cancelled: self.entrypoints_cancelled.clone(),
+                run_end_hooks: self.run_end_hooks.clone(),
                 plugin_id: Arc::from(plugin_id),
                 entrypoint: Arc::from(entrypoint),
                 load,
@@ -1823,87 +1901,28 @@ impl Runtime {
         }
     }
 
-    /// How `entrypoint` stands. While it runs, `cx` is woken when it completes; its cancellation
-    /// and its deadline are the caller's to wake for. Cancellation wins over a completion that
-    /// landed; a completion wins over the timeout an entrypoint has.
-    pub fn poll_entrypoint(
-        &self,
-        entrypoint: &RunningEntrypoint,
-        cx: &mut std::task::Context<'_>,
-    ) -> EntrypointPoll {
-        let cancelled = self.entrypoints_cancelled.is_cancelled();
-        if !cancelled {
-            if let std::task::Poll::Ready(result) = entrypoint.completion.poll(cx) {
-                return EntrypointPoll::Ended(
-                    result.map_err(|error| anyhow::Error::msg(error.message)),
-                );
-            }
-            if Instant::now() < entrypoint.deadline {
-                return EntrypointPoll::Running {
-                    deadline: entrypoint.deadline,
-                };
-            }
-        }
-        if let Ok(scheduler) = self.vm.data().get::<LocalScheduler>() {
-            let task = scheduler
-                .luau_thread_handle(&entrypoint.thread)
-                .map(|handle| handle.id());
-            scheduler.cancel_luau_thread(&entrypoint.thread);
-            if let Some(task) = task {
-                scheduler.remove(task);
-            }
-        }
-        EntrypointPoll::Ended(Err(anyhow::anyhow!(if cancelled {
-            "entrypoint was cancelled"
-        } else {
-            "entrypoint did not complete"
-        })))
-    }
-
-    /// Polls `entrypoint` to its end on this thread, driving the scheduler meanwhile.
+    /// Runs `entrypoint` to its end on this thread, driving the scheduler meanwhile.
     fn drive_entrypoint(&self, entrypoint: RunningEntrypoint) -> anyhow::Result<()> {
         let scheduler = self.vm.data().get::<LocalScheduler>()?;
+        let task = scheduler.luau_thread_handle(&entrypoint.thread);
         let waker = scheduler.wake_handle().waker();
         let mut cx = std::task::Context::from_waker(&waker);
+        let mut finish = std::pin::pin!(entrypoint.finish());
         let result = loop {
             // Before resuming anything: a cancelled entrypoint must not run further.
-            let deadline = match self.poll_entrypoint(&entrypoint, &mut cx) {
-                EntrypointPoll::Ended(result) => break result,
-                EntrypointPoll::Running { deadline } => deadline,
-            };
+            if let std::task::Poll::Ready(result) = finish.as_mut().poll(&mut cx) {
+                break result;
+            }
             {
                 let _guard = self.tokio_runtime.enter();
                 scheduler.poll_ready();
             }
-            scheduler.wait_for_work(Some(deadline));
+            scheduler.wait_for_work(None);
         };
-        self.finish_entrypoint(entrypoint, result)
-    }
-
-    /// Records how `entrypoint` ended, as [`Self::restart_plugin`] does once its entrypoint
-    /// returns: a failed entrypoint ends the run.
-    pub fn finish_entrypoint(
-        &self,
-        entrypoint: RunningEntrypoint,
-        result: anyhow::Result<Vec<luau::Value>>,
-    ) -> anyhow::Result<()> {
-        let RunningEntrypoint {
-            plugin_id,
-            entrypoint,
-            load,
-            ..
-        } = entrypoint;
-        let finished = self
-            .vm
-            .data()
-            .get::<RequireRuntime>()?
-            .finish_source_load(load, result)
-            .map_err(anyhow::Error::new)
-            .with_context(|| format!("run plugin '{plugin_id}' entrypoint '{entrypoint}'"));
-        if finished.is_err() {
-            self.stop_plugin(&plugin_id)?;
+        if let Some(task) = task {
+            scheduler.remove(task.id());
         }
-        finished.map(|_| ())
+        result
     }
 
     /// Cancels every task of the plugin's current run, including handler
@@ -1911,15 +1930,7 @@ impl Runtime {
     /// run-end hooks.
     pub fn stop_plugin(&self, plugin_id: &str) -> anyhow::Result<()> {
         self.loaded_plugin(plugin_id)?;
-        let require = self.vm.data().get::<RequireRuntime>()?;
-        let Some(group) = require.end_plugin_run(plugin_id) else {
-            return Ok(());
-        };
-        self.vm.data().get::<LocalScheduler>()?.cancel_group(group);
-        for hook in &self.run_end_hooks {
-            hook(&self.vm, plugin_id);
-        }
-        Ok(())
+        end_plugin_run(&self.vm, &self.run_end_hooks, plugin_id)
     }
 
     /// Runs every plugin's entrypoint, dependencies first, and returns the
@@ -2835,7 +2846,7 @@ mod tests {
         recorded.lock().expect("recorded").clear();
 
         let entrypoint = runtime
-            .start_plugin_restart("demo")?
+            .start_restart_entrypoint("demo")?
             .ok_or_else(|| anyhow::anyhow!("the plugin has an entrypoint"))?;
         runtime.entrypoint_cancellation().cancel();
         let error = runtime
@@ -2855,7 +2866,7 @@ mod tests {
         recorded.lock().expect("recorded").clear();
 
         let entrypoint = runtime
-            .start_plugin_restart("demo")?
+            .start_restart_entrypoint("demo")?
             .ok_or_else(|| anyhow::anyhow!("the plugin has an entrypoint"))?;
         while recorded.lock().expect("recorded").is_empty() {
             runtime.poll_background_tasks();
@@ -2863,38 +2874,84 @@ mod tests {
         }
         runtime.entrypoint_cancellation().cancel();
 
-        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
-        let super::EntrypointPoll::Ended(outcome) = runtime.poll_entrypoint(&entrypoint, &mut cx)
-        else {
-            anyhow::bail!("a cancelled entrypoint has ended");
-        };
-        assert!(outcome.is_err(), "cancellation takes precedence");
+        let error = runtime
+            .drive_entrypoint(entrypoint)
+            .expect_err("cancellation takes precedence");
+        assert!(format!("{error:#}").contains("cancelled"), "{error:#}");
+        Ok(())
+    }
+
+    /// Runs a started restart as the runtime's owner does: as a task, between rounds that sleep.
+    fn run_restart(
+        runtime: &super::Runtime,
+        restart: impl Future<Output = anyhow::Result<()>> + 'static,
+    ) -> anyhow::Result<()> {
+        let scheduler = runtime.vm.data().get::<crate::LocalScheduler>()?;
+        let outcome = std::rc::Rc::new(std::cell::RefCell::new(None));
+        scheduler.schedule_watcher(CallContext::default(), {
+            let outcome = outcome.clone();
+            async move {
+                *outcome.borrow_mut() = Some(restart.await);
+                Ok(())
+            }
+        });
+        let give_up = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            runtime.poll_background_tasks();
+            if let Some(outcome) = outcome.borrow_mut().take() {
+                return outcome;
+            }
+            anyhow::ensure!(
+                std::time::Instant::now() < give_up,
+                "nothing woke the scheduler for the restart"
+            );
+            scheduler.wait_for_work(Some(give_up));
+        }
+    }
+
+    #[test]
+    fn a_started_restart_runs_as_a_task_and_ends_like_a_restart() -> anyhow::Result<()> {
+        let recorded = Arc::new(Mutex::new(Vec::new()));
+        let runtime = recording_entrypoint(recorded.clone())?;
+        assert!(runtime.exec_all().is_empty());
+        recorded.lock().expect("recorded").clear();
+
+        let restart = runtime
+            .start_plugin_restart("demo")?
+            .ok_or_else(|| anyhow::anyhow!("the plugin has an entrypoint"))?;
+        run_restart(&runtime, restart)?;
+        assert_eq!(*recorded.lock().expect("recorded"), ["ran"]);
         Ok(())
     }
 
     #[test]
-    fn a_started_restart_runs_while_its_owner_polls_and_ends_like_a_restart() -> anyhow::Result<()>
-    {
+    fn a_restart_whose_entrypoint_fails_ends_the_run_from_its_task() -> anyhow::Result<()> {
         let recorded = Arc::new(Mutex::new(Vec::new()));
-        let runtime = task_test_runtime(recorded.clone())?;
+        let runtime = task_test_runtime_with(
+            recorded.clone(),
+            &[(
+                "demo",
+                &[],
+                r#"
+                    local tasks = require('@test/tasks')
+                    local run = tasks.run()
+                    tasks.later(0.05, function() tasks.record('late:' .. run) end)
+                    if run > 1 then error('boom') end
+                "#,
+            )],
+            &[],
+        )?;
         assert!(runtime.exec_all().is_empty());
 
-        let entrypoint = runtime
+        let restart = runtime
             .start_plugin_restart("demo")?
             .ok_or_else(|| anyhow::anyhow!("the plugin has an entrypoint"))?;
-        let scheduler = runtime.vm.data().get::<crate::LocalScheduler>()?;
-        let waker = scheduler.wake_handle().waker();
-        let mut cx = std::task::Context::from_waker(&waker);
-        let result = loop {
-            runtime.poll_background_tasks();
-            match runtime.poll_entrypoint(&entrypoint, &mut cx) {
-                super::EntrypointPoll::Ended(result) => break result,
-                super::EntrypointPoll::Running { deadline } => {
-                    scheduler.wait_for_work(Some(deadline))
-                }
-            }
-        };
-        runtime.finish_entrypoint(entrypoint, result)?;
+        let error = run_restart(&runtime, restart).expect_err("the entrypoint fails");
+        assert!(format!("{error:#}").contains("boom"), "{error:#}");
+        assert!(
+            recorded_after(&runtime, &recorded).is_empty(),
+            "neither run's task outlives it"
+        );
         Ok(())
     }
 

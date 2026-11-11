@@ -160,7 +160,8 @@ impl TestPlugin {
         let deadline = std::time::Instant::now() + CALL_BUDGET;
         let vm = vm.clone();
         Ok(luau::ScheduledFuture::new(async move {
-            let values = std::future::poll_fn(|cx| completion.poll(cx))
+            let values = completion
+                .wait()
                 .await
                 .map_err(|error| luau::Error::Runtime(error.message))?;
             if let Some((response, produce)) = values.first().and_then(stream_response) {

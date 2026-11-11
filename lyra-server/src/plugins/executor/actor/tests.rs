@@ -61,6 +61,22 @@ struct TestExecutor {
     rounds: Arc<std::sync::atomic::AtomicU64>,
 }
 
+/// What the test plugin's `@test/gate` reports, and what holds its `wait` back.
+struct Gate {
+    started: async_mpsc::UnboundedSender<()>,
+    dropped: async_mpsc::UnboundedSender<()>,
+    /// The slow handler went on after its wait.
+    resumed: async_mpsc::UnboundedSender<()>,
+    release: Arc<Notify>,
+    cancel_gate: Arc<CancelGate>,
+}
+
+struct DispatchHandlers {
+    slow: PluginCallbackHandle,
+    fast: PluginCallbackHandle,
+    api: PluginCallbackHandle,
+}
+
 fn manifest(id: &str, scopes: &[&str]) -> PluginManifest {
     PluginManifest {
         schema_version: 1,
@@ -77,6 +93,95 @@ fn manifest(id: &str, scopes: &[&str]) -> PluginManifest {
     }
 }
 
+/// An executor on the calling thread running the test plugin, whose slow handlers wait at `gate`.
+fn dispatch_runtime(gate: Gate) -> Result<(PluginExecutor, DispatchHandlers)> {
+    let Gate {
+        started,
+        dropped,
+        resumed,
+        release,
+        cancel_gate,
+    } = gate;
+    let runtime = PluginExecutor::with_manifests(Arc::from(vec![manifest(
+        "dispatch-test",
+        &[
+            "lyra.metadata",
+            "lyra.api",
+            "lyra.listens",
+            "lyra.listens.all",
+            "harmony.task",
+            "test.gate",
+        ],
+    )]))?;
+    runtime
+        .vm
+        .data()
+        .get::<RequireRuntime>()?
+        .register(harmony_core::GatedModule::new(
+            "test.gate",
+            ModuleSpec::new("test/gate")
+                .function(FunctionSpec::new("wait").call_async(Arc::new(move |_| {
+                    let _ = started.send(());
+                    let guard = PendingCall(dropped.clone(), cancel_gate.clone());
+                    let release = release.clone();
+                    Ok(harmony_luau::ScheduledFuture::new(async move {
+                        let _guard = guard;
+                        release.notified().await;
+                        Ok(true)
+                    }))
+                })))
+                .function(FunctionSpec::new("mark").call(move |_| {
+                    let _ = resumed.send(());
+                    Ok(())
+                }))
+                .install(|_| Ok(ModuleExport::new(()))),
+        ))?;
+    runtime.eval_plugin_source(
+        "dispatch-test",
+        "init.luau",
+        &br#"
+        local metadata = require("@lyra/metadata")
+        local gate = require("@test/gate")
+        metadata.Provider.new("dispatch-slow"):refresh(metadata.EntityType.Release, function(ctx)
+            gate.wait()
+            gate.mark()
+            return ctx.value
+        end)
+        metadata.Provider.new("dispatch-fast"):refresh(metadata.EntityType.Release, function(ctx)
+            return ctx.value
+        end)
+        local listens = require("@lyra/listens")
+        local task = require("@harmony/task")
+        listens.on_update(function(update)
+            if update.event == "hold" then
+                task.wait(1)
+            end
+        end)
+        local api = require("@lyra/api")
+        api.get("/dispatch-wait", function(_ctx)
+            gate.wait()
+            return api.response.json(200, { value = 42 })
+        end, { auth = "public" })
+    "#[..],
+    )?;
+    let registry =
+        futures::executor::block_on(crate::services::providers::provider_registry().read_owned());
+    let slow = registry
+        .get_refresh_callback("dispatch-slow", crate::services::EntityType::Release)
+        .copied()
+        .context("slow callback")?;
+    let fast = registry
+        .get_refresh_callback("dispatch-fast", crate::services::EntityType::Release)
+        .copied()
+        .context("fast callback")?;
+    let api = futures::executor::block_on(crate::plugins::api::tests::registered_handler(
+        "GET",
+        "/dispatch-wait",
+    ))
+    .context("API callback")?;
+    Ok((runtime, DispatchHandlers { slow, fast, api }))
+}
+
 fn test_executor() -> Result<TestExecutor> {
     futures::executor::block_on(crate::plugins::api::initialize_registry(
         std::collections::HashSet::new(),
@@ -86,87 +191,23 @@ fn test_executor() -> Result<TestExecutor> {
     let (crashed, exit) = exit_channel();
     let (started_tx, started) = async_mpsc::unbounded_channel();
     let (dropped_tx, dropped) = async_mpsc::unbounded_channel();
+    let (resumed_tx, _resumed) = async_mpsc::unbounded_channel();
     let release = Arc::new(Notify::new());
-    let release_for_thread = release.clone();
     let cancel_gate = Arc::new(CancelGate::default());
-    let cancel_gate_for_thread = cancel_gate.clone();
+    let gate = Gate {
+        started: started_tx,
+        dropped: dropped_tx,
+        resumed: resumed_tx,
+        release: release.clone(),
+        cancel_gate: cancel_gate.clone(),
+    };
     thread::spawn(move || {
-        let setup = (|| -> Result<_> {
-            let runtime = PluginExecutor::with_manifests(Arc::from(vec![manifest(
-                "dispatch-test",
-                &[
-                    "lyra.metadata",
-                    "lyra.api",
-                    "lyra.listens",
-                    "lyra.listens.all",
-                    "harmony.task",
-                    "test.gate",
-                ],
-            )]))?;
-            runtime
-                .vm
-                .data()
-                .get::<RequireRuntime>()?
-                .register(harmony_core::GatedModule::new(
-                    "test.gate",
-                    ModuleSpec::new("test/gate")
-                        .function(FunctionSpec::new("wait").call_async(Arc::new(move |_| {
-                            let _ = started_tx.send(());
-                            let guard =
-                                PendingCall(dropped_tx.clone(), cancel_gate_for_thread.clone());
-                            let release = release_for_thread.clone();
-                            Ok(harmony_luau::ScheduledFuture::new(async move {
-                                let _guard = guard;
-                                release.notified().await;
-                                Ok(true)
-                            }))
-                        })))
-                        .install(|_| Ok(ModuleExport::new(()))),
-                ))?;
-            runtime.eval_plugin_source("dispatch-test", "init.luau", &br#"
-                local metadata = require("@lyra/metadata")
-                local gate = require("@test/gate")
-                metadata.Provider.new("dispatch-slow"):refresh(metadata.EntityType.Release, function(ctx)
-                    gate.wait()
-                    return ctx.value
-                end)
-                metadata.Provider.new("dispatch-fast"):refresh(metadata.EntityType.Release, function(ctx)
-                    return ctx.value
-                end)
-                local listens = require("@lyra/listens")
-                local task = require("@harmony/task")
-                listens.on_update(function(update)
-                    if update.event == "hold" then
-                        task.wait(1)
-                    end
-                end)
-                local api = require("@lyra/api")
-                api.get("/dispatch-wait", function(_ctx)
-                    gate.wait()
-                    return api.response.json(200, { value = 42 })
-                end, { auth = "public" })
-            "#[..])?;
-            let registry = futures::executor::block_on(
-                crate::services::providers::provider_registry().read_owned(),
-            );
-            let slow = registry
-                .get_refresh_callback("dispatch-slow", crate::services::EntityType::Release)
-                .copied()
-                .context("slow callback")?;
-            let fast = registry
-                .get_refresh_callback("dispatch-fast", crate::services::EntityType::Release)
-                .copied()
-                .context("fast callback")?;
-            let api = futures::executor::block_on(crate::plugins::api::tests::registered_handler(
-                "GET",
-                "/dispatch-wait",
-            ))
-            .context("API callback")?;
+        let setup = dispatch_runtime(gate).map(|(runtime, handlers)| {
             let (tx, rx) = plugin_executor_channel(4, runtime.wake_handle());
             let entrypoints = runtime.entrypoint_cancellation();
             let rounds = runtime.rounds.clone();
-            Ok((runtime, rx, (tx, entrypoints, rounds, slow, fast, api)))
-        })();
+            (runtime, rx, (tx, entrypoints, rounds, handlers))
+        });
         match setup {
             Ok((runtime, rx, ready)) => {
                 if ready_tx.send(Ok(ready)).is_ok() {
@@ -178,7 +219,7 @@ fn test_executor() -> Result<TestExecutor> {
             }
         }
     });
-    let (tx, entrypoints, rounds, slow, fast, api) = ready_rx.recv()??;
+    let (tx, entrypoints, rounds, DispatchHandlers { slow, fast, api }) = ready_rx.recv()??;
     Ok(TestExecutor {
         handle: PluginExecutorHandle {
             tx,
@@ -197,6 +238,145 @@ fn test_executor() -> Result<TestExecutor> {
         release,
         rounds,
     })
+}
+
+/// The test plugin on the calling thread, where a test decides when each round runs, with what
+/// its gate reports.
+struct StagedExecutor {
+    runtime: PluginExecutor,
+    slow: PluginCallbackHandle,
+    started: async_mpsc::UnboundedReceiver<()>,
+    dropped: async_mpsc::UnboundedReceiver<()>,
+    resumed: async_mpsc::UnboundedReceiver<()>,
+    release: Arc<Notify>,
+}
+
+type RefreshAnswer = tokio::sync::oneshot::Receiver<Result<MetadataRefreshResult>>;
+
+impl StagedExecutor {
+    fn new() -> Result<Self> {
+        futures::executor::block_on(crate::plugins::api::initialize_registry(
+            std::collections::HashSet::new(),
+            None,
+        ));
+        let (started_tx, started) = async_mpsc::unbounded_channel();
+        let (dropped_tx, dropped) = async_mpsc::unbounded_channel();
+        let (resumed_tx, resumed) = async_mpsc::unbounded_channel();
+        let release = Arc::new(Notify::new());
+        let (runtime, handlers) = dispatch_runtime(Gate {
+            started: started_tx,
+            dropped: dropped_tx,
+            resumed: resumed_tx,
+            release: release.clone(),
+            cancel_gate: Arc::default(),
+        })?;
+        Ok(Self {
+            runtime,
+            slow: handlers.slow,
+            started,
+            dropped,
+            resumed,
+            release,
+        })
+    }
+
+    /// Starts the slow handler as its command does, running no round.
+    fn start_slow(&self, timeout: Duration) -> Result<RefreshAnswer> {
+        let (reply, answer) = tokio::sync::oneshot::channel();
+        let permit = Arc::new(tokio::sync::Semaphore::new(1)).try_acquire_owned()?;
+        self.runtime
+            .start_metadata_refresh(request(self.slow, timeout), reply, permit);
+        Ok(answer)
+    }
+
+    /// Starts the slow handler and runs rounds until it waits at the gate.
+    fn start_slow_waiting(&mut self, timeout: Duration) -> Result<RefreshAnswer> {
+        let answer = self.start_slow(timeout)?;
+        self.runtime.poll_background_tasks();
+        self.started.try_recv().context("the handler waits")?;
+        self.runtime.poll_background_tasks();
+        Ok(answer)
+    }
+
+    fn run_rounds(&self) {
+        for _ in 0..4 {
+            self.runtime.poll_background_tasks();
+        }
+    }
+}
+
+fn deadline_expired(mut answer: RefreshAnswer) -> Result<()> {
+    let error = answer
+        .try_recv()
+        .context("the handler is answered for")?
+        .expect_err("a handler past its deadline fails");
+    assert!(error.to_string().contains("deadline expired"), "{error:#}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_handler_whose_caller_left_before_its_first_round_never_starts() -> Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
+    let mut executor = StagedExecutor::new()?;
+
+    drop(executor.start_slow(Duration::from_secs(30))?);
+    executor.run_rounds();
+
+    assert!(executor.started.try_recv().is_err(), "the handler ran");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_handler_whose_deadline_passed_before_its_first_round_never_starts() -> Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
+    let mut executor = StagedExecutor::new()?;
+
+    let mut answer = executor.start_slow(Duration::from_millis(300))?;
+    assert!(
+        answer.try_recv().is_err(),
+        "the handler was refused, not scheduled"
+    );
+    thread::sleep(Duration::from_millis(400));
+    executor.run_rounds();
+
+    assert!(executor.started.try_recv().is_err(), "the handler ran");
+    deadline_expired(answer)
+}
+
+/// The handler's call is ready, and its wake is queued ahead of the one its caller's leaving
+/// sends its watcher.
+#[tokio::test]
+async fn a_handler_ready_as_its_caller_leaves_is_not_resumed() -> Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
+    let mut executor = StagedExecutor::new()?;
+    let answer = executor.start_slow_waiting(Duration::from_secs(30))?;
+
+    executor.release.notify_one();
+    drop(answer);
+    executor.run_rounds();
+
+    assert!(executor.resumed.try_recv().is_err(), "the handler went on");
+    assert!(executor.dropped.try_recv().is_ok(), "its call is dropped");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_handler_ready_after_its_deadline_is_not_resumed() -> Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
+    let mut executor = StagedExecutor::new()?;
+    let answer = executor.start_slow_waiting(Duration::from_millis(300))?;
+
+    thread::sleep(Duration::from_millis(400));
+    executor.release.notify_one();
+    executor.run_rounds();
+
+    assert!(executor.resumed.try_recv().is_err(), "the handler went on");
+    assert!(executor.dropped.try_recv().is_ok(), "its call is dropped");
+    deadline_expired(answer)
 }
 
 fn request(handler: PluginCallbackHandle, timeout: Duration) -> MetadataRefreshRequest {
@@ -436,55 +616,172 @@ async fn a_finished_handler_is_answered_before_a_command_that_outlasts_its_deadl
     Ok(())
 }
 
-/// The producer waits on nothing, so only the deadline the last round returned ends the wait.
-#[test]
-fn a_stream_s_deadline_wakes_the_executor_to_end_it() -> Result<()> {
-    use futures::StreamExt;
-
+/// An executor running one plugin, `demo`, on the calling thread, and a producer `source` returns.
+fn stream_executor(
+    source: &'static str,
+) -> Result<(
+    PluginExecutor,
+    harmony_core::CallContext,
+    harmony_luau::Function,
+)> {
     let runtime = PluginExecutor::with_manifests(Arc::from(vec![manifest("demo", &[])]))?;
     let context = harmony_core::CallContext {
         origin: super::super::plugin_origin("demo", "init.luau"),
         ..Default::default()
     };
-    let values = runtime.eval_plugin_source_with_call_context(
-        &b"return function(_writer) coroutine.yield() end"[..],
-        context.clone(),
-    )?;
+    let values =
+        runtime.eval_plugin_source_with_call_context(source.as_bytes(), context.clone())?;
     let Some(harmony_luau::Value::Function(produce)) = values.into_iter().next() else {
         anyhow::bail!("the chunk returns the producer");
     };
-    let mut body = super::super::queue_stream(
-        &runtime.vm,
+    Ok((runtime, context, produce))
+}
+
+fn queue_demo_stream(
+    vm: &harmony_luau::Vm,
+    produce: harmony_luau::Function,
+    context: harmony_core::CallContext,
+    timeout: Duration,
+) -> Result<super::super::ApiResponseStream> {
+    Ok(super::super::queue_stream(
+        vm,
         produce,
         context,
-        Instant::now() + Duration::from_millis(100),
+        Instant::now() + timeout,
         super::super::StreamOrigin {
             plugin_id: "demo".to_string(),
             method: "GET".to_string(),
             path: "/stream".to_string(),
         },
-    )?;
+    )?)
+}
 
+/// Serves `runtime` with no command ever sent, until `read` returns on another thread: whatever
+/// `read` waits for, the executor has to wake for by itself. `None` if `read` ran out of time.
+fn serve_until<T: Send + 'static>(
+    runtime: &PluginExecutor,
+    read: impl Future<Output = T> + Send + 'static,
+) -> Option<T> {
     let (tx, rx) = plugin_executor_channel(4, runtime.wake_handle());
     let reader = thread::spawn(move || {
-        let end = tokio::runtime::Builder::new_current_thread()
+        let read = tokio::runtime::Builder::new_current_thread()
             .enable_time()
             .build()
             .expect("reader runtime")
-            .block_on(async { tokio::time::timeout(Duration::from_secs(10), body.next()).await });
+            .block_on(async { tokio::time::timeout(Duration::from_secs(10), read).await });
         // Ends the executor's loop, whatever it was waiting for.
         drop(tx);
-        end
+        read.ok()
     });
-    assert!(serve_plugin_executor_commands(&runtime, &rx).is_none());
+    assert!(serve_plugin_executor_commands(runtime, &rx).is_none());
+    reader.join().expect("reader thread")
+}
 
-    let error = reader
-        .join()
-        .expect("reader thread")
+/// The producer waits on nothing, so only its deadline ends the executor's wait.
+#[test]
+fn a_stream_s_deadline_wakes_the_executor_to_end_it() -> Result<()> {
+    use futures::StreamExt;
+
+    let (runtime, context, produce) =
+        stream_executor("return function(_writer) coroutine.yield() end")?;
+    let mut body = queue_demo_stream(&runtime.vm, produce, context, Duration::from_millis(100))?;
+
+    let error = serve_until(&runtime, async move { body.next().await })
         .context("nothing woke the executor at the stream's deadline")?
         .context("a stream past its deadline is aborted")?
         .expect_err("a stream past its deadline is aborted");
     assert!(error.to_string().contains("deadline expired"), "{error}");
+    Ok(())
+}
+
+/// Every place is taken by a producer that never ends, so the stream behind them never starts,
+/// and only its deadline ends the executor's wait.
+#[test]
+fn a_stream_waiting_for_a_place_ends_at_its_deadline() -> Result<()> {
+    use futures::StreamExt;
+
+    let (runtime, context, produce) = stream_executor(
+        "started = 0; return function(_writer) started += 1; coroutine.yield() end",
+    )?;
+    let started =
+        || runtime.eval_plugin_source_with_call_context(&b"return started"[..], context.clone());
+    let mut producing = Vec::new();
+    while producing.len() < 16 {
+        producing.push(queue_demo_stream(
+            &runtime.vm,
+            produce.clone(),
+            context.clone(),
+            Duration::from_secs(600),
+        )?);
+    }
+    for _ in 0..4 {
+        runtime.poll_background_tasks();
+    }
+    assert_eq!(started()?, [harmony_luau::Value::Number(16.0)]);
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut waiting = queue_demo_stream(
+        &runtime.vm,
+        produce.clone(),
+        context.clone(),
+        Duration::from_secs(2),
+    )?;
+    // Its first round finds no place and leaves it waiting for one, well before its deadline.
+    runtime.poll_background_tasks();
+    assert!(
+        Instant::now() < deadline,
+        "too slow to tell a wait from an expiry"
+    );
+    let error = serve_until(&runtime, async move {
+        let end = waiting.next().await;
+        // The producing streams' clients stay until the waiting one has ended.
+        drop(producing);
+        end
+    })
+    .context("nothing woke the executor at the waiting stream's deadline")?
+    .context("a stream past its deadline is aborted")?
+    .expect_err("a stream past its deadline is aborted");
+    assert!(error.to_string().contains("deadline expired"), "{error}");
+    assert_eq!(
+        started()?,
+        [harmony_luau::Value::Number(16.0)],
+        "the stream behind the full places still produced"
+    );
+    Ok(())
+}
+
+/// A task queues the stream while the scheduler polls, as a host call or a reply does, and nothing
+/// else reaches the executor: the stream has to start, produce and end on its own wakes.
+#[test]
+fn a_stream_queued_while_the_scheduler_polls_is_produced() -> Result<()> {
+    use futures::StreamExt;
+
+    let (runtime, context, produce) =
+        stream_executor("return function(writer) writer:write('chunk') end")?;
+    let (queued, body) = std::sync::mpsc::channel();
+    let vm = runtime.vm.clone();
+    vm.data()
+        .get::<harmony_core::LocalScheduler>()?
+        .schedule_future(harmony_core::CallContext::default(), async move {
+            let body = queue_demo_stream(&vm, produce, context, Duration::from_secs(60))?;
+            let _ = queued.send(body);
+            Ok(())
+        });
+
+    let chunks = serve_until(&runtime, async move {
+        let mut body = tokio::task::spawn_blocking(move || body.recv())
+            .await
+            .expect("the task queued the stream")
+            .expect("the task queued the stream");
+        let mut chunks = Vec::new();
+        while let Some(chunk) = body.next().await {
+            chunks.push(chunk);
+        }
+        chunks
+    })
+    .context("nothing woke the executor for the queued stream")?;
+    let chunks = chunks.into_iter().collect::<std::io::Result<Vec<_>>>()?;
+    assert_eq!(chunks, ["chunk"]);
     Ok(())
 }
 

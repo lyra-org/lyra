@@ -4,9 +4,13 @@
 // www.meshiplaw.com/lyra.
 
 use std::{
-    cell::RefCell,
+    cell::{
+        Cell,
+        RefCell,
+    },
     collections::HashMap,
     path::PathBuf,
+    rc::Rc,
     sync::Arc,
 };
 
@@ -17,7 +21,6 @@ use harmony_core::{
     ModuleSpec,
     SourceLoader,
     plugin::{
-        EntrypointPoll,
         LoadedPlugin,
         PluginDiscoveryError,
         PluginManager,
@@ -176,6 +179,7 @@ impl PluginExecutor {
                 install_callback_stores(vm)
             })
             .on_run_end(remove_plugin_callbacks)
+            .on_run_end(super::stream::stop_run_streams)
             .build()?;
         let wake = runtime
             .vm
@@ -191,8 +195,7 @@ impl PluginExecutor {
             scope,
             running,
             websocket_tasks: RefCell::new(HashMap::<TaskIdKey, Arc<WebSocketState>>::new()),
-            callback_tasks: RefCell::new(Vec::new()),
-            pending_restart: RefCell::new(None),
+            restarting: Rc::default(),
         })
     }
 
@@ -240,7 +243,7 @@ impl PluginExecutor {
         plugin_id: String,
         reply: tokio::sync::oneshot::Sender<Result<()>>,
     ) {
-        if self.pending_restart.borrow().is_some() {
+        if self.restarting.get() {
             let _ = reply.send(Err(anyhow::anyhow!("a plugin restart is already running")));
             return;
         }
@@ -249,38 +252,34 @@ impl PluginExecutor {
         if let Ok(stops) = super::stream::stream_stops(&self.vm) {
             stops.run_started(&plugin_id);
         }
-        match started {
-            Ok(Some(entrypoint)) => {
-                *self.pending_restart.borrow_mut() =
-                    Some(super::PendingRestart { entrypoint, reply });
-            }
+        let restart = match started {
+            Ok(Some(restart)) => restart,
             Ok(None) => {
                 let _ = reply.send(Ok(()));
+                return;
             }
             Err(error) => {
                 let _ = reply.send(Err(error));
-            }
-        }
-    }
-
-    /// Replies to a restart whose entrypoint ended; while it runs, returns when it is given up on.
-    pub(super) fn poll_pending_restart(&self) -> Option<std::time::Instant> {
-        let waker = self.wake.waker();
-        let mut context = std::task::Context::from_waker(&waker);
-        let outcome = {
-            let pending = self.pending_restart.borrow();
-            match self
-                .runtime
-                .poll_entrypoint(&pending.as_ref()?.entrypoint, &mut context)
-            {
-                EntrypointPoll::Running { deadline } => return Some(deadline),
-                EntrypointPoll::Ended(outcome) => outcome,
+                return;
             }
         };
-        let super::PendingRestart { entrypoint, reply } =
-            self.pending_restart.borrow_mut().take()?;
-        let _ = reply.send(self.runtime.finish_entrypoint(entrypoint, outcome));
-        None
+        let scheduler = match self.vm.data().get::<harmony_core::LocalScheduler>() {
+            Ok(scheduler) => scheduler,
+            Err(error) => {
+                let _ = reply.send(Err(error.into()));
+                return;
+            }
+        };
+        let restarting = Restarting::begin(self.restarting.clone());
+        scheduler.schedule_watcher(
+            super::watcher_context(Some(Arc::from(plugin_id))),
+            async move {
+                let outcome = restart.await;
+                drop(restarting);
+                let _ = reply.send(outcome);
+                Ok(())
+            },
+        );
     }
 
     /// The ids of the plugins whose entrypoint failed.
@@ -389,6 +388,22 @@ impl PluginExecutor {
         context: CallContext,
     ) -> Result<Vec<luau::Value>> {
         self.runtime.eval_source_with_context(source, context)
+    }
+}
+
+/// Marks a restart as running until dropped, however its task ends.
+struct Restarting(Rc<Cell<bool>>);
+
+impl Restarting {
+    fn begin(running: Rc<Cell<bool>>) -> Self {
+        running.set(true);
+        Self(running)
+    }
+}
+
+impl Drop for Restarting {
+    fn drop(&mut self) {
+        self.0.set(false);
     }
 }
 

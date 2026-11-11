@@ -2681,6 +2681,42 @@ async fn cancelling_entrypoints_ends_a_restart_whose_entrypoint_waits() -> Resul
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restart_is_refused_only_while_another_runs() -> Result<()> {
+    let plugin = temp_plugin("demo", &["harmony.task"], "return nil")?;
+    let (runtime, errors) = PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
+        plugin.plugins_dir(),
+        default_server_info(),
+        default_auth_capabilities(),
+        lyra_db::DbAsync::new(lyra_db::test_db::new_test_db()?),
+        Vec::new(),
+        None,
+    )?;
+    assert!(errors.is_empty(), "{errors:?}");
+    runtime.exec_all().await?;
+
+    plugin.write("init.luau", r#"require("@harmony/task").wait(0.5)"#)?;
+    let restart = tokio::spawn({
+        let runtime = runtime.clone();
+        async move { runtime.restart_plugin("demo").await }
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let error = runtime
+        .restart_plugin("demo")
+        .await
+        .expect_err("a restart is running");
+    assert!(
+        format!("{error:#}").contains("already running"),
+        "{error:#}"
+    );
+
+    // The entrypoint's wait ending is all that wakes the executor to answer.
+    tokio::time::timeout(Duration::from_secs(5), restart).await???;
+    plugin.write("init.luau", "return nil")?;
+    tokio::time::timeout(Duration::from_secs(5), runtime.restart_plugin("demo")).await??;
+    Ok(())
+}
+
 #[test]
 fn plugin_executor_handle_restart_runs_new_entrypoint_on_runtime_thread() -> Result<()> {
     let plugin = temp_plugin("demo", &[], "return nil")?;

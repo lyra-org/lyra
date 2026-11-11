@@ -36,6 +36,9 @@ use std::{
     },
 };
 
+const DISPATCH_CANCELLED: &str = "plugin handler dispatch was cancelled";
+pub(super) const DEADLINE_EXPIRED: &str = "plugin handler deadline expired";
+
 /// How many handlers each plugin has running on the executor thread, so a restart can wait for
 /// one plugin's without waiting on the others'.
 #[derive(Clone, Default)]
@@ -129,16 +132,6 @@ impl Drop for RunningHandler {
     }
 }
 
-pub(super) struct PendingCallbackTask {
-    completion: Rc<LocalLuauTaskCompletion>,
-    scheduler: Rc<LocalScheduler>,
-    thread: harmony_luau::Thread,
-    deadline: Instant,
-    reply: CallbackReply,
-    _permit: tokio::sync::OwnedSemaphorePermit,
-    _running: Option<RunningHandler>,
-}
-
 pub(super) enum CallbackReply {
     Refresh(tokio::sync::oneshot::Sender<Result<MetadataRefreshResult>>),
     Api {
@@ -170,18 +163,38 @@ pub(super) fn refresh_failure(error: harmony_luau::RaisedError) -> anyhow::Error
 }
 
 impl CallbackReply {
-    /// Whether the caller stopped waiting for the reply; if not, `cx` is woken once it does.
-    fn poll_cancelled(&mut self, cx: &mut std::task::Context<'_>) -> bool {
+    /// Whether the caller stopped waiting for the reply.
+    fn is_cancelled(&self) -> bool {
         match self {
-            Self::Refresh(reply) => reply.poll_closed(cx).is_ready(),
-            Self::Api { reply, .. } => reply.poll_closed(cx).is_ready(),
-            Self::Mix { reply, .. } => reply.poll_closed(cx).is_ready(),
-            Self::Source(reply) => reply.poll_closed(cx).is_ready(),
+            Self::Refresh(reply) => reply.is_closed(),
+            Self::Api { reply, .. } => reply.is_closed(),
+            Self::Mix { reply, .. } => reply.is_closed(),
+            Self::Source(reply) => reply.is_closed(),
             Self::Similar {
                 reply,
                 cancellation,
                 ..
-            } => reply.poll_closed(cx).is_ready() || cancellation.poll_cancelled(cx),
+            } => reply.is_closed() || cancellation.is_cancelled(),
+        }
+    }
+
+    /// Completes once the caller stops waiting for the reply.
+    async fn cancelled(&mut self) {
+        match self {
+            Self::Refresh(reply) => reply.closed().await,
+            Self::Api { reply, .. } => reply.closed().await,
+            Self::Mix { reply, .. } => reply.closed().await,
+            Self::Source(reply) => reply.closed().await,
+            Self::Similar {
+                reply,
+                cancellation,
+                ..
+            } => {
+                tokio::select! {
+                    () = reply.closed() => {}
+                    () = cancellation.cancelled() => {}
+                }
+            }
         }
     }
 
@@ -196,7 +209,7 @@ impl CallbackReply {
     /// Replies with `result`; a streamed response's producer starts writing before `deadline`.
     fn send(
         self,
-        executor: &PluginExecutor,
+        vm: &harmony_luau::Vm,
         deadline: Instant,
         result: Result<Vec<harmony_luau::Value>>,
     ) {
@@ -216,7 +229,7 @@ impl CallbackReply {
                         let body = if super::stream::has_body(&request.method, response.status) {
                             let request = *request;
                             super::queue_stream(
-                                &executor.vm,
+                                vm,
                                 produce,
                                 context,
                                 deadline,
@@ -294,6 +307,11 @@ impl PluginExecutor {
         }
     }
 
+    /// Schedules the handler `prepare` makes and a task that watches it: the task waits for the
+    /// handler to end, its caller to leave or `deadline` to pass, cancels a handler that hasn't
+    /// ended, and replies. Each round runs the task ahead of the handler, which isn't resumed
+    /// once its caller is gone or its deadline has passed. The handler holds `permit` until it is
+    /// gone.
     pub(super) fn start_callback(
         &self,
         deadline: Instant,
@@ -312,9 +330,8 @@ impl PluginExecutor {
                     crate::services::plugin_dispatch::DispatchNotStarted,
                 ));
             }
-            let waker = self.wake.waker();
-            if reply.poll_cancelled(&mut std::task::Context::from_waker(&waker)) {
-                bail!("plugin handler dispatch was cancelled");
+            if reply.is_cancelled() {
+                bail!("{DISPATCH_CANCELLED}");
             }
             let timeout = deadline
                 .checked_duration_since(Instant::now())
@@ -322,53 +339,37 @@ impl PluginExecutor {
                 .context("plugin handler deadline expired before execution")?;
             prepare(timeout, completion.clone())
         })();
-        match scheduled {
-            Ok((scheduler, thread)) => self.callback_tasks.borrow_mut().push(PendingCallbackTask {
-                completion,
-                scheduler,
-                thread,
-                deadline,
-                reply,
-                _permit: permit,
-                _running: self.running.enter(plugin),
-            }),
-            Err(error) => reply.send(self, deadline, Err(error)),
-        }
-    }
-
-    /// Replies for the handlers that ended, were cancelled or ran out of time, and returns the
-    /// earliest deadline of those still running. A running handler's end and its caller's leaving
-    /// wake the executor.
-    pub(super) fn poll_callback_tasks(&self) -> Option<Instant> {
-        let waker = self.wake.waker();
-        let mut context = std::task::Context::from_waker(&waker);
-        let mut tasks = self.callback_tasks.borrow_mut();
-        let mut index = 0;
-        while index < tasks.len() {
-            let task = &mut tasks[index];
-            let result = if task.reply.poll_cancelled(&mut context) {
-                Some(Err(anyhow::anyhow!(
-                    "plugin handler dispatch was cancelled"
-                )))
-            } else if Instant::now() >= task.deadline {
-                Some(Err(anyhow::anyhow!("plugin handler deadline expired")))
-            } else {
-                match task.completion.poll(&mut context) {
-                    std::task::Poll::Ready(result) => {
-                        Some(result.map_err(|error| task.reply.failure(error)))
-                    }
-                    std::task::Poll::Pending => None,
+        let (scheduler, thread) = match scheduled {
+            Ok(scheduled) => scheduled,
+            Err(error) => return reply.send(&self.vm, deadline, Err(error)),
+        };
+        let expired = scheduler.sleep_until(deadline);
+        let running = self.running.enter(plugin.clone());
+        let vm = self.vm.clone();
+        let handler = super::WatchedThread::new(&scheduler, thread);
+        scheduler.schedule_watcher(super::watcher_context(plugin), async move {
+            let ended = tokio::select! {
+                biased;
+                () = reply.cancelled() => Err(DISPATCH_CANCELLED),
+                result = completion.wait() => Ok(result),
+                () = expired => Err(DEADLINE_EXPIRED),
+            };
+            let result = match ended {
+                // A handler that ended in time is answered with what it returned, however late
+                // this task reads it. One that ended past its deadline is not.
+                Ok(_) if completion.ended_at().is_some_and(|ended| ended > deadline) => {
+                    Err(anyhow::anyhow!(DEADLINE_EXPIRED))
+                }
+                Ok(result) => result.map_err(|error| reply.failure(error)),
+                Err(reason) => {
+                    handler.cancel().await;
+                    Err(anyhow::anyhow!(reason))
                 }
             };
-            if let Some(result) = result {
-                let task = tasks.swap_remove(index);
-                task.scheduler.cancel_luau_thread(&task.thread);
-                task.reply.send(self, task.deadline, result);
-            } else {
-                index += 1;
-            }
-        }
-        tasks.iter().map(|task| task.deadline).min()
+            reply.send(&vm, deadline, result);
+            drop((handler, permit, running));
+            Ok(())
+        });
     }
 }
 

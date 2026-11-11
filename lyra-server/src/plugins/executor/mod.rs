@@ -62,14 +62,18 @@ use crate::services::plugin_dispatch::{
 };
 
 use std::{
-    cell::RefCell,
+    cell::{
+        Cell,
+        RefCell,
+    },
     collections::HashMap,
+    rc::Rc,
     sync::Arc,
-    time::Instant,
 };
 
 use harmony_core::ModuleId;
 use harmony_core::{
+    CallContext,
     ChunkOrigin,
     LocalScheduler,
     SchedulerWake,
@@ -77,25 +81,22 @@ use harmony_core::{
     plugin::Runtime,
 };
 
+/// The executor keeps no work of its own to poll: a handler, a stream and a restart each run as a
+/// Luau thread on the scheduler, watched by a task there that waits for the thread's end, its
+/// caller's leaving and its deadline, then cancels the thread and answers.
 pub(crate) struct PluginExecutor {
     runtime: Runtime,
     scope: crate::plugins::state::VmScope,
     running: callbacks::RunningHandlers,
     websocket_tasks: RefCell<HashMap<TaskIdKey, Arc<WebSocketState>>>,
-    callback_tasks: RefCell<Vec<callbacks::PendingCallbackTask>>,
-    pending_restart: RefCell<Option<PendingRestart>>,
-    /// Ends [`Self::wait_for_work`], for what the executor polls and the scheduler doesn't wake.
+    /// A restarted plugin's entrypoint is running.
+    restarting: Rc<Cell<bool>>,
+    /// Ends [`Self::wait_for_work`] for a command sent to the executor.
     wake: SchedulerWake,
     /// How many rounds the executor has run, for tests that tell a sleeping executor from one
     /// that polls.
     #[cfg(test)]
     rounds: Arc<std::sync::atomic::AtomicU64>,
-}
-
-/// A restarted plugin's entrypoint, polled between commands so the other plugins keep running.
-struct PendingRestart {
-    entrypoint: harmony_core::plugin::RunningEntrypoint,
-    reply: tokio::sync::oneshot::Sender<anyhow::Result<()>>,
 }
 
 impl std::ops::Deref for PluginExecutor {
@@ -107,19 +108,13 @@ impl std::ops::Deref for PluginExecutor {
 }
 
 impl PluginExecutor {
-    /// One round of the executor's work, returning the earliest deadline among what it polls.
-    ///
-    /// What the executor polls itself comes before the scheduler's tasks: a handler whose caller
-    /// left or whose deadline passed is cancelled without running further, and a stream queued by
-    /// a reply starts in the same round. All of it registers [`Self::wake`], so a task finishing
-    /// in this round's scheduler poll brings on the round that reads its result.
-    fn poll_background_tasks(&self) -> Option<Instant> {
+    /// One round of the executor's work: every task that is ready runs once.
+    fn poll_background_tasks(&self) {
         #[cfg(test)]
         self.rounds
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let deadline = self.poll_own_work();
         let Ok(scheduler) = self.vm.data().get::<LocalScheduler>() else {
-            return deadline;
+            return;
         };
         {
             let _guard = self.tokio_runtime.enter();
@@ -136,36 +131,68 @@ impl PluginExecutor {
             }
         }
         scheduler.remove_finished();
-        deadline
     }
 
-    /// Answers for what the executor polls itself and has ended, returning the earliest deadline of
-    /// the rest. Also run before a command, which may hold the thread past the deadline of a
-    /// result the last round's scheduler poll left ready.
-    fn poll_own_work(&self) -> Option<Instant> {
-        [
-            self.poll_pending_restart(),
-            self.poll_callback_tasks(),
-            stream::poll_streams(&self.vm),
-        ]
-        .into_iter()
-        .flatten()
-        .min()
-    }
-
-    /// Sleeps until a round has something to do: a task or [`Self::wake`] wakes the scheduler, a
-    /// sleeping task is due, or `deadline`, as the last round returned it, passes.
-    fn wait_for_work(&self, deadline: Option<Instant>) {
+    /// Sleeps until a round has something to do: a task or [`Self::wake`] wakes the scheduler, or
+    /// a sleeping task or a deadline is due.
+    fn wait_for_work(&self) {
         self.vm
             .data()
             .get::<LocalScheduler>()
             .expect("a runtime keeps its scheduler until it shuts down")
-            .wait_for_work(deadline);
+            .wait_for_work(None);
     }
 
     /// Ends [`Self::wait_for_work`] from any thread.
     pub(crate) fn wake_handle(&self) -> SchedulerWake {
         self.wake.clone()
+    }
+}
+
+/// A thread its watcher answers for. However the watcher goes, the thread doesn't outlive it.
+struct WatchedThread {
+    scheduler: std::rc::Weak<LocalScheduler>,
+    thread: harmony_luau::Thread,
+}
+
+impl WatchedThread {
+    fn new(scheduler: &Rc<LocalScheduler>, thread: harmony_luau::Thread) -> Self {
+        Self {
+            scheduler: Rc::downgrade(scheduler),
+            thread,
+        }
+    }
+
+    /// Cancels the thread, which runs no further, and completes once its work is dropped.
+    async fn cancel(&self) {
+        let settled = self
+            .scheduler
+            .upgrade()
+            .map(|scheduler| scheduler.cancel_luau_thread_and_settle(&self.thread));
+        if let Some(settled) = settled {
+            settled.await;
+        }
+    }
+}
+
+impl Drop for WatchedThread {
+    fn drop(&mut self) {
+        // Nothing for a thread that ended; a watcher that panicked leaves one that hasn't.
+        if let Some(scheduler) = self.scheduler.upgrade() {
+            scheduler.schedule_cancel_luau_thread(self.thread.clone());
+        }
+    }
+}
+
+/// The context of a task that watches one of `plugin`'s threads. It is in no run's group, so it
+/// outlives the run to answer for the thread.
+fn watcher_context(plugin: Option<Arc<str>>) -> CallContext {
+    CallContext {
+        origin: ChunkOrigin {
+            plugin,
+            ..ChunkOrigin::default()
+        },
+        ..CallContext::default()
     }
 }
 

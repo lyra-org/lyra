@@ -10,8 +10,6 @@
 //! drops it, aborts the body, so a client never takes a cut-off document for a whole one.
 
 use std::{
-    cell::RefCell,
-    collections::VecDeque,
     pin::Pin,
     rc::Rc,
     sync::{
@@ -40,10 +38,12 @@ use harmony_core::{
     LocalLuauTaskCompletion,
     LocalScheduler,
     ResumeLimit,
-    SchedulerWake,
+    Sleep,
     UserDataBinding,
 };
 use harmony_luau as luau;
+
+use super::callbacks::DEADLINE_EXPIRED;
 
 /// The largest chunk a producer writes at once, in bytes: what an encoder holds unflushed, so a
 /// flush always fits in one write.
@@ -60,7 +60,7 @@ enum StreamEnd {
     Failed(Arc<str>),
 }
 
-/// What the body, the writer and the executor share.
+/// What the body, the writer and the task that runs the stream share.
 struct StreamShared {
     /// Raised when the client goes away or the producer is stopped; it interrupts the producer.
     closed: luau::InterruptSignal,
@@ -71,8 +71,8 @@ struct StreamShared {
     end: Mutex<Option<StreamEnd>>,
     waker: AtomicWaker,
     bytes_sent: AtomicU64,
-    /// Has the executor look at a stream it runs again, once the stream must stop.
-    executor: Option<SchedulerWake>,
+    /// Wakes the task that runs the stream, once the stream must stop.
+    stopping: tokio::sync::Notify,
 }
 
 impl StreamShared {
@@ -101,12 +101,27 @@ impl StreamShared {
         self.stopped.store(true, Ordering::Release);
         self.closed.raise();
         self.waker.wake();
-        self.wake_executor();
+        self.stopping.notify_one();
     }
 
-    fn wake_executor(&self) {
-        if let Some(executor) = &self.executor {
-            executor.wake();
+    /// Why the stream must stop, if it was told to.
+    fn stop_reason(&self) -> Option<&'static str> {
+        if self.stopped.load(Ordering::Acquire) {
+            Some("the plugin's run ended")
+        } else if self.closed.is_raised() {
+            Some("the client went away")
+        } else {
+            None
+        }
+    }
+
+    /// Completes once the stream is told to stop, with why.
+    async fn told_to_stop(&self) -> &'static str {
+        loop {
+            if let Some(reason) = self.stop_reason() {
+                return reason;
+            }
+            self.stopping.notified().await;
         }
     }
 }
@@ -121,7 +136,7 @@ pub(crate) struct ApiResponseStream {
 impl ApiResponseStream {
     /// A body that ends at once, whole, for an answer that has none, such as one to a HEAD.
     pub(super) fn finished() -> Self {
-        let (_, body, end) = stream_channel(None);
+        let (_, body, end) = stream_channel();
         end.finish();
         body
     }
@@ -166,10 +181,7 @@ impl futures::Stream for ApiResponseStream {
 impl Drop for ApiResponseStream {
     fn drop(&mut self) {
         self.shared.closed.raise();
-        // An ended stream has left the executor's hands.
-        if self.shared.end().is_none() {
-            self.shared.wake_executor();
-        }
+        self.shared.stopping.notify_one();
     }
 }
 
@@ -267,9 +279,7 @@ impl ApiStreamWriter {
     }
 }
 
-fn stream_channel(
-    executor: Option<SchedulerWake>,
-) -> (ApiStreamWriter, ApiResponseStream, StreamEndGuard) {
+fn stream_channel() -> (ApiStreamWriter, ApiResponseStream, StreamEndGuard) {
     let (tx, rx) = tokio::sync::mpsc::channel(STREAM_CHANNEL_CAPACITY);
     let shared = Arc::new(StreamShared {
         closed: luau::InterruptSignal::new(),
@@ -278,7 +288,7 @@ fn stream_channel(
         end: Mutex::new(None),
         waker: AtomicWaker::new(),
         bytes_sent: AtomicU64::new(0),
-        executor,
+        stopping: tokio::sync::Notify::new(),
     });
     (
         ApiStreamWriter {
@@ -337,18 +347,38 @@ impl StreamStops {
             }
             None => stops.all_ending = true,
         }
-        for (owner, stream) in &stops.streams {
+        stops.stop_streams(plugin_id);
+    }
+
+    /// `plugin_id`'s run ended, with or without an ask.
+    fn run_ended(&self, plugin_id: &str) {
+        self.stops().stop_streams(Some(plugin_id));
+    }
+
+    /// `plugin_id` has a new run, whose streams start unstopped.
+    pub(super) fn run_started(&self, plugin_id: &str) {
+        self.stops().ending.remove(plugin_id);
+    }
+
+    /// Ends every stream as failed, as the runtime goes away.
+    fn fail_all(&self) {
+        for (_, stream) in &self.stops().streams {
+            if let Some(stream) = stream.upgrade() {
+                stream.set_end(StreamEnd::Failed(Arc::from("the plugin runtime shut down")));
+            }
+        }
+    }
+}
+
+impl Stops {
+    fn stop_streams(&self, plugin_id: Option<&str>) {
+        for (owner, stream) in &self.streams {
             if plugin_id.is_none_or(|plugin_id| plugin_id == owner)
                 && let Some(stream) = stream.upgrade()
             {
                 stream.stop();
             }
         }
-    }
-
-    /// `plugin_id` has a new run, whose streams start unstopped.
-    pub(super) fn run_started(&self, plugin_id: &str) {
-        self.stops().ending.remove(plugin_id);
     }
 }
 
@@ -361,8 +391,7 @@ pub(crate) struct StreamOrigin {
 
 struct Running {
     completion: Rc<LocalLuauTaskCompletion>,
-    scheduler: Rc<LocalScheduler>,
-    thread: luau::Thread,
+    producer: super::WatchedThread,
 }
 
 struct StreamTask {
@@ -408,23 +437,12 @@ impl StreamTask {
         self.end.fail(error);
     }
 
-    /// Why the stream must end before it gets to run or goes on, if it must.
-    fn stop_reason(&self, scheduler: &LocalScheduler) -> Option<&'static str> {
-        let shared = self.shared();
-        if shared.stopped.load(Ordering::Acquire) {
-            Some("the plugin's run ended")
-        } else if shared.closed.is_raised() {
-            Some("the client went away")
-        } else if Instant::now() >= self.deadline {
-            Some("plugin handler deadline expired")
-        } else if scheduler.is_group_cancelled(self.context.task_group) {
-            Some("the plugin's run ended")
-        } else {
-            None
-        }
-    }
-
-    fn start(&self, vm: &luau::Vm, scheduler: &Rc<LocalScheduler>) -> anyhow::Result<Running> {
+    fn start(&self, vm: &luau::Vm) -> anyhow::Result<Running> {
+        let scheduler = vm.data().get::<LocalScheduler>()?;
+        anyhow::ensure!(
+            !scheduler.is_group_cancelled(self.context.task_group),
+            "the plugin's run ended"
+        );
         let writer =
             ApiStreamWriter::class().create_value(vm, &self.context.origin, self.writer.clone())?;
         let thread = vm.create_thread(&self.produce)?;
@@ -442,18 +460,75 @@ impl StreamTask {
         );
         Ok(Running {
             completion,
-            scheduler: scheduler.clone(),
-            thread,
+            producer: super::WatchedThread::new(&scheduler, thread),
         })
+    }
+
+    /// Produces the body once one of `places` is free, until the producer ends, the stream is
+    /// told to stop or its deadline, `expired`, passes. A stream waiting for a place still ends
+    /// when it must.
+    async fn run(self, vm: luau::Vm, places: Arc<tokio::sync::Semaphore>, mut expired: Sleep) {
+        let _place = tokio::select! {
+            biased;
+            reason = self.shared().told_to_stop() => return self.fail(reason),
+            () = &mut expired => return self.fail(DEADLINE_EXPIRED),
+            place = places.acquire_owned() => place,
+        };
+        let producing = match self.start(&vm) {
+            Ok(producing) => producing,
+            Err(error) => return self.fail(&error.to_string()),
+        };
+        let ended = tokio::select! {
+            biased;
+            reason = self.shared().told_to_stop() => Err(reason),
+            result = producing.completion.wait() => Ok(result),
+            () = &mut expired => Err(DEADLINE_EXPIRED),
+        };
+        let outcome = match ended {
+            // A producer that ended in time ends the body as it did, however late this task
+            // reads it. One that ended past its deadline does not.
+            Ok(_)
+                if producing
+                    .completion
+                    .ended_at()
+                    .is_some_and(|ended| ended > self.deadline) =>
+            {
+                Err(DEADLINE_EXPIRED.to_string())
+            }
+            Ok(result) => result.map(|_| ()).map_err(|error| error.message),
+            Err(reason) => {
+                // The producer holds its place until it is gone.
+                producing.producer.cancel().await;
+                Err(reason.to_string())
+            }
+        };
+        match outcome {
+            // A producer that caught an interrupt or a failed write may still return.
+            Ok(()) if self.shared().closed.is_raised() => {
+                self.fail("the producer returned after it was stopped")
+            }
+            Ok(()) if self.shared().write_failed.load(Ordering::Acquire) => {
+                self.fail("the producer returned after a failed write")
+            }
+            Ok(()) => self.end.finish(),
+            Err(error) => self.fail(&error),
+        }
     }
 }
 
-/// The streams of a VM: those waiting for a place, and those producing.
-#[derive(Default)]
+/// The streams of a VM: the places for those producing, and what stops them.
 pub(crate) struct StreamTasks {
-    waiting: RefCell<VecDeque<StreamTask>>,
-    running: RefCell<Vec<(StreamTask, Running)>>,
+    places: Arc<tokio::sync::Semaphore>,
     stops: Arc<StreamStops>,
+}
+
+impl Default for StreamTasks {
+    fn default() -> Self {
+        Self {
+            places: Arc::new(tokio::sync::Semaphore::new(MAX_ACTIVE_STREAMS)),
+            stops: Arc::default(),
+        }
+    }
 }
 
 /// Whether a response with `status` to a request with `method` carries a body at all.
@@ -471,18 +546,26 @@ pub(crate) fn queue_stream(
     origin: StreamOrigin,
 ) -> luau::runtime::Result<ApiResponseStream> {
     let tasks = vm.data().get::<StreamTasks>()?;
-    let executor = vm.data().get::<LocalScheduler>()?.wake_handle();
-    // Whoever queues it, even a task the executor is polling, the executor comes round to start it.
-    executor.wake();
-    let (writer, body, end) = stream_channel(Some(executor));
+    let scheduler = vm.data().get::<LocalScheduler>()?;
+    let (writer, body, end) = stream_channel();
     tasks.stops.register(&origin.plugin_id, &end.0);
-    tasks.waiting.borrow_mut().push_back(StreamTask {
+    let watcher = super::watcher_context(context.origin.plugin.clone());
+    let task = StreamTask {
         produce,
         context,
         writer,
         end,
         deadline,
         origin,
+    };
+    let run = task.run(
+        vm.clone(),
+        tasks.places.clone(),
+        scheduler.sleep_until(deadline),
+    );
+    scheduler.schedule_watcher(watcher, async move {
+        run.await;
+        Ok(())
     });
     Ok(body)
 }
@@ -492,89 +575,17 @@ pub(super) fn stream_stops(vm: &luau::Vm) -> luau::runtime::Result<Arc<StreamSto
     Ok(vm.data().get::<StreamTasks>()?.stops.clone())
 }
 
-/// Ends the streams whose producers finished or must stop, then starts waiting ones into the
-/// places that are free. Returns the earliest deadline of those left; a stream stopped from another
-/// thread wakes the executor, as does a producer's end.
-pub(super) fn poll_streams(vm: &luau::Vm) -> Option<Instant> {
-    let (Ok(tasks), Ok(scheduler)) = (
-        vm.data().get::<StreamTasks>(),
-        vm.data().get::<LocalScheduler>(),
-    ) else {
-        return None;
-    };
-    let waker = scheduler.wake_handle().waker();
-    let mut cx = Context::from_waker(&waker);
-    let mut running = tasks.running.borrow_mut();
-    let mut index = 0;
-    while index < running.len() {
-        let (task, producing) = &running[index];
-        let outcome = if let Some(reason) = task.stop_reason(&scheduler) {
-            Some(Err(reason.to_string()))
-        } else {
-            match producing.completion.poll(&mut cx) {
-                Poll::Ready(result) => Some(result.map(|_| ()).map_err(|error| error.message)),
-                Poll::Pending => None,
-            }
-        };
-        let Some(outcome) = outcome else {
-            index += 1;
-            continue;
-        };
-        let (task, producing) = running.swap_remove(index);
-        producing.scheduler.cancel_luau_thread(&producing.thread);
-        match outcome {
-            // A producer that caught an interrupt or a failed write may still return.
-            Ok(()) if task.shared().closed.is_raised() => {
-                task.fail("the producer returned after it was stopped")
-            }
-            Ok(()) if task.shared().write_failed.load(Ordering::Acquire) => {
-                task.fail("the producer returned after a failed write")
-            }
-            Ok(()) => task.end.finish(),
-            Err(error) => task.fail(&error),
-        }
+/// Stops the streams of a run that ended, however it did.
+pub(super) fn stop_run_streams(vm: &luau::Vm, plugin_id: &str) {
+    if let Ok(tasks) = vm.data().get::<StreamTasks>() {
+        tasks.stops.run_ended(plugin_id);
     }
-
-    let mut waiting = tasks.waiting.borrow_mut();
-    let mut kept = VecDeque::with_capacity(waiting.len());
-    while let Some(task) = waiting.pop_front() {
-        if let Some(reason) = task.stop_reason(&scheduler) {
-            task.fail(reason);
-        } else if running.len() < MAX_ACTIVE_STREAMS {
-            match task.start(vm, &scheduler) {
-                Ok(producing) => {
-                    // It has yet to run; the poll has its end wake the executor.
-                    let _ = producing.completion.poll(&mut cx);
-                    running.push((task, producing));
-                }
-                Err(error) => task.fail(&error.to_string()),
-            }
-        } else {
-            // It still ends when it must, though it holds no place.
-            kept.push_back(task);
-        }
-    }
-    *waiting = kept;
-    waiting
-        .iter()
-        .chain(running.iter().map(|(task, _)| task))
-        .map(|task| task.deadline)
-        .min()
 }
 
 /// Ends every stream as failed, as the runtime goes away.
 pub(super) fn fail_streams(vm: &luau::Vm) {
-    let Ok(tasks) = vm.data().get::<StreamTasks>() else {
-        return;
-    };
-    let running = std::mem::take(&mut *tasks.running.borrow_mut());
-    for (task, producing) in running {
-        producing.scheduler.cancel_luau_thread(&producing.thread);
-        task.fail("the plugin runtime shut down");
-    }
-    let waiting = std::mem::take(&mut *tasks.waiting.borrow_mut());
-    for task in waiting {
-        task.fail("the plugin runtime shut down");
+    if let Ok(tasks) = vm.data().get::<StreamTasks>() {
+        tasks.stops.fail_all();
     }
 }
 
@@ -583,10 +594,6 @@ mod tests {
     use super::*;
 
     use futures::StreamExt;
-
-    fn stream_channel() -> (ApiStreamWriter, ApiResponseStream, StreamEndGuard) {
-        super::stream_channel(None)
-    }
 
     #[tokio::test]
     async fn only_a_finish_ends_the_body_whole() {

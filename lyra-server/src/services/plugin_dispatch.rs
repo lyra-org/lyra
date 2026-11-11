@@ -309,12 +309,21 @@ impl DispatchCancellation {
     }
 
     /// Whether the dispatch was cancelled; if not, `cx` is woken once it is.
-    pub(crate) fn poll_cancelled(&self, cx: &mut std::task::Context<'_>) -> bool {
+    fn poll_cancelled(&self, cx: &mut std::task::Context<'_>) -> bool {
         if self.is_cancelled() {
             return true;
         }
         self.inner.waker.register(cx.waker());
         self.is_cancelled()
+    }
+
+    /// Completes once the dispatch is cancelled, for the one task that waits on it.
+    pub(crate) async fn cancelled(&self) {
+        std::future::poll_fn(|cx| match self.poll_cancelled(cx) {
+            true => std::task::Poll::Ready(()),
+            false => std::task::Poll::Pending,
+        })
+        .await
     }
 }
 
