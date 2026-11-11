@@ -415,28 +415,6 @@ pub fn get_by_tracks(
         return Ok(related);
     }
 
-    fn append_related_id(
-        related_ids_by_track: &mut HashMap<DbId, Vec<DbId>>,
-        seen_related_ids: &mut HashSet<DbId>,
-        all_related_ids: &mut Vec<DbId>,
-        track_db_id: DbId,
-        related_id: DbId,
-    ) {
-        if related_id.0 <= 0 || related_id == track_db_id {
-            return;
-        }
-        let Some(track_related_ids) = related_ids_by_track.get_mut(&track_db_id) else {
-            return;
-        };
-        if track_related_ids.contains(&related_id) {
-            return;
-        }
-        track_related_ids.push(related_id);
-        if seen_related_ids.insert(related_id) {
-            all_related_ids.push(related_id);
-        }
-    }
-
     let mut related_ids_by_track: HashMap<DbId, Vec<DbId>> = unique_track_db_ids
         .iter()
         .copied()
@@ -444,87 +422,19 @@ pub fn get_by_tracks(
         .collect();
     let mut all_related_ids = Vec::new();
     let mut seen_related_ids = HashSet::new();
-    let track_db_id_set: HashSet<DbId> = unique_track_db_ids.iter().copied().collect();
 
-    // Fast path: collect release relation edges in one traversal from the releases root.
-    // This avoids one DB search per track for large batches.
-    if let Ok(edges) = roots::member_edges(db, Root::Releases) {
-        for edge in edges {
-            let (from, to) = (edge.from, edge.to);
-            if from.0 == 0 || to.0 == 0 {
-                continue;
-            }
-            if track_db_id_set.contains(&from) {
-                append_related_id(
-                    &mut related_ids_by_track,
-                    &mut seen_related_ids,
-                    &mut all_related_ids,
-                    from,
-                    to,
-                );
-            } else if track_db_id_set.contains(&to) {
-                append_related_id(
-                    &mut related_ids_by_track,
-                    &mut seen_related_ids,
-                    &mut all_related_ids,
-                    to,
-                    from,
-                );
-            }
-        }
-    }
-
-    // Fallback: resolve any unresolved tracks directly so mixed/alternate
-    // edge directions still work.
-    for track_db_id in &unique_track_db_ids {
-        if related_ids_by_track
-            .get(track_db_id)
-            .is_some_and(|track_related_ids| !track_related_ids.is_empty())
-        {
+    // One traversal from the releases root costs less than a search per track, whose inbound
+    // edges include every listen of it.
+    for edge in roots::member_edges(db, Root::Releases)? {
+        let Some(track_related_ids) = related_ids_by_track.get_mut(&edge.to) else {
+            continue;
+        };
+        if track_related_ids.contains(&edge.from) {
             continue;
         }
-
-        // Bounded one-hop fallback from the track in both directions to avoid
-        // whole-graph traversal while still handling mixed edge directions.
-        let forward_edges = db.exec(
-            QueryBuilder::search()
-                .from(*track_db_id)
-                .where_()
-                .not_beyond()
-                .distance(CountComparison::Equal(1))
-                .and()
-                .edge()
-                .query(),
-        )?;
-        let reverse_edges = db.exec(
-            QueryBuilder::search()
-                .to(*track_db_id)
-                .where_()
-                .not_beyond()
-                .distance(CountComparison::Equal(1))
-                .and()
-                .edge()
-                .query(),
-        )?;
-
-        for edges in [forward_edges, reverse_edges] {
-            for edge in edges.elements {
-                let related_id = match (edge.from, edge.to) {
-                    (from, to) if from.0 != 0 && to.0 != 0 && from == *track_db_id => Some(to),
-                    (from, to) if from.0 != 0 && to.0 != 0 && to == *track_db_id => Some(from),
-                    _ => None,
-                };
-                let Some(related_id) = related_id else {
-                    continue;
-                };
-                append_related_id(
-                    &mut related_ids_by_track,
-                    &mut seen_related_ids,
-                    &mut all_related_ids,
-                    *track_db_id,
-                    related_id,
-                );
-            }
+        track_related_ids.push(edge.from);
+        if seen_related_ids.insert(edge.from) {
+            all_related_ids.push(edge.from);
         }
     }
 
@@ -791,6 +701,46 @@ mod tests {
             let related = get_by_tracks(&db, &ids)?;
             assert_eq!(related.get(&artist_id).map(Vec::len), Some(0));
             assert_eq!(related.get(&track_ids[0]).map(Vec::len), Some(1));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn get_by_tracks_answers_small_and_large_batches_alike() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let first = insert_release(&mut db, "First")?;
+        let second = insert_release(&mut db, "Second")?;
+        let artist_id = insert_artist(&mut db, "Artist")?;
+        link_artist(&mut db, first, artist_id)?;
+        let loose = insert_track(&mut db, "Loose")?;
+        let shared = insert_track(&mut db, "Shared")?;
+        link(&mut db, first, shared)?;
+        link(&mut db, second, shared)?;
+        let mut linked = Vec::new();
+        for index in 0..40 {
+            let track_id = insert_track(&mut db, &format!("Track {index}"))?;
+            link(&mut db, first, track_id)?;
+            linked.push(track_id);
+        }
+
+        let titles = |related: &HashMap<DbId, Vec<Release>>, id: DbId| {
+            let mut titles = related[&id]
+                .iter()
+                .map(|release| release.release_title.clone())
+                .collect::<Vec<_>>();
+            titles.sort();
+            titles
+        };
+        for ids in [
+            vec![linked[0], shared, loose, artist_id, shared],
+            [linked.clone(), vec![shared, loose, artist_id, shared]].concat(),
+        ] {
+            let related = get_by_tracks(&db, &ids)?;
+            assert_eq!(related.len(), ids.len() - 1, "one key per distinct id");
+            assert_eq!(titles(&related, linked[0]), ["First"]);
+            assert_eq!(titles(&related, shared), ["First", "Second"]);
+            assert!(titles(&related, loose).is_empty());
+            assert!(titles(&related, artist_id).is_empty());
         }
         Ok(())
     }
