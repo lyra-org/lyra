@@ -85,6 +85,7 @@ rustix = { workspace = true }
 
 [dev-dependencies]
 flate2 = { workspace = true }
+harmony-core = { path = "../harmony-core", features = ["testing"] }
 lyra-db = { path = "../lyra-db", features = ["testing"] }
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
 tar = { workspace = true }

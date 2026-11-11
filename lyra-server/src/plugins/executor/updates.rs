@@ -120,6 +120,7 @@ impl PluginExecutor {
             context.caller.insert(CallChain::synchronous(
                 &options,
                 context.origin.plugin.clone(),
+                scheduler.now(),
             ));
             scheduler.spawn_luau_thread(
                 context,

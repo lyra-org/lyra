@@ -157,7 +157,7 @@ impl TestPlugin {
             CALL_BUDGET,
             completion.clone(),
         );
-        let deadline = std::time::Instant::now() + CALL_BUDGET;
+        let deadline = scheduler.now() + CALL_BUDGET;
         let vm = vm.clone();
         Ok(luau::ScheduledFuture::new(async move {
             let values = completion

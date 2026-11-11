@@ -308,10 +308,10 @@ impl PluginExecutor {
     }
 
     /// Schedules the handler `prepare` makes and a task that watches it: the task waits for the
-    /// handler to end, its caller to leave or `deadline` to pass, cancels a handler that hasn't
-    /// ended, and replies. Each round runs the task ahead of the handler, which isn't resumed
-    /// once its caller is gone or its deadline has passed. The handler holds `permit` until it is
-    /// gone.
+    /// handler to end, its caller to leave or `deadline`, by [`super::now`], to pass, cancels a
+    /// handler that hasn't ended, and replies. `prepare` gets what is left until the deadline.
+    /// Each round runs the task ahead of the handler, which isn't resumed once its caller is gone
+    /// or its deadline has passed. The handler holds `permit` until it is gone.
     pub(super) fn start_callback(
         &self,
         deadline: Instant,
@@ -334,7 +334,7 @@ impl PluginExecutor {
                 bail!("{DISPATCH_CANCELLED}");
             }
             let timeout = deadline
-                .checked_duration_since(Instant::now())
+                .checked_duration_since(self.now())
                 .filter(|timeout| !timeout.is_zero())
                 .context("plugin handler deadline expired before execution")?;
             prepare(timeout, completion.clone())
@@ -355,9 +355,9 @@ impl PluginExecutor {
                 () = expired => Err(DEADLINE_EXPIRED),
             };
             let result = match ended {
-                // A handler that ended in time is answered with what it returned, however late
-                // this task reads it. One that ended past its deadline is not.
-                Ok(_) if completion.ended_at().is_some_and(|ended| ended > deadline) => {
+                // A handler that ended before its deadline is answered with what it returned,
+                // however late this task reads it. One that ended at it or later is not.
+                Ok(_) if completion.ended_at().is_some_and(|ended| ended >= deadline) => {
                     Err(anyhow::anyhow!(DEADLINE_EXPIRED))
                 }
                 Ok(result) => result.map_err(|error| reply.failure(error)),

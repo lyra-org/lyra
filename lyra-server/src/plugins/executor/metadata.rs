@@ -5,7 +5,6 @@
 
 use std::{
     collections::HashSet,
-    future::poll_fn,
     rc::Rc,
     sync::Arc,
     time::{
@@ -95,7 +94,7 @@ impl PluginExecutor {
         self.start_metadata_task(
             handler,
             request.context,
-            Instant::now() + request.timeout,
+            self.now() + request.timeout,
             super::callbacks::CallbackReply::Similar {
                 reply,
                 cancellation: request.cancellation,
@@ -118,7 +117,7 @@ impl PluginExecutor {
             .ok()
             .and_then(|handler| handler.context.origin.plugin.clone());
         self.start_callback(deadline, reply, permit, plugin, |timeout, completion| {
-            schedule_metadata_handler(&self.vm, handler?, context, timeout, completion)
+            schedule_metadata_handler(&self.vm, handler?, context, deadline, timeout, completion)
         });
     }
 
@@ -143,40 +142,21 @@ fn schedule_metadata_handler(
     vm: &harmony_luau::Vm,
     handler: crate::plugins::metadata::MetadataCallback,
     request_context: serde_json::Value,
-    timeout: Duration,
-    completion: Rc<LocalLuauTaskCompletion>,
-) -> Result<(Rc<LocalScheduler>, harmony_luau::Thread)> {
-    let argument = harmony_serde::json_to_luau_owned(request_context, 0)?;
-    schedule_handler(
-        vm,
-        &handler,
-        MetadataDispatchContext,
-        vec![argument],
-        timeout,
-        completion,
-    )
-}
-
-/// Schedules `handler` on its own thread, marking the call with `marker`.
-fn schedule_handler<M: Send + Sync + 'static>(
-    vm: &harmony_luau::Vm,
-    handler: &crate::plugins::metadata::MetadataCallback,
-    marker: M,
-    args: Vec<harmony_luau::Value>,
+    deadline: Instant,
     resume_budget: Duration,
     completion: Rc<LocalLuauTaskCompletion>,
 ) -> Result<(Rc<LocalScheduler>, harmony_luau::Thread)> {
+    let argument = harmony_serde::json_to_luau_owned(request_context, 0)?;
     let mut context = handler.context.clone();
-    context.caller.insert(marker);
-    context.caller.insert(CallChain::root(
-        Instant::now() + resume_budget,
-        context.origin.plugin.clone(),
-    ));
+    context.caller.insert(MetadataDispatchContext);
+    context
+        .caller
+        .insert(CallChain::root(deadline, context.origin.plugin.clone()));
     schedule_function(
         vm,
         &handler.function,
         context,
-        args,
+        vec![argument],
         resume_budget,
         completion,
     )
@@ -203,7 +183,7 @@ fn schedule_function(
     Ok((scheduler, thread))
 }
 
-/// Runs `handler` to completion, or cancels it at `deadline` and returns `None`.
+/// [`run_function`] for `handler`, marking the call with `marker`.
 async fn run_handler<M: Send + Sync + 'static>(
     vm: &harmony_luau::Vm,
     chain: &CallChain,
@@ -240,8 +220,9 @@ fn raised_refresh_failure(error: anyhow::Error) -> anyhow::Error {
     }
 }
 
-/// Runs `function` to completion, or cancels it at `deadline` and returns `None`. Dropping the
-/// future cancels it too.
+/// Runs `function` and returns what it returned, or `None` unless it ended before `deadline`, by
+/// [`super::now`], as a handler the executor starts must: one still running then is cancelled.
+/// Dropping the future cancels it too.
 pub(super) async fn run_function(
     vm: &harmony_luau::Vm,
     chain: &CallChain,
@@ -271,17 +252,24 @@ pub(super) async fn run_function(
         resume_budget,
         completion.clone(),
     )?;
+    let expired = scheduler.sleep_until(deadline);
     let mut guard = ScheduledThreadGuard {
         scheduler,
         thread,
         armed: true,
     };
-    let completed =
-        tokio::time::timeout_at(deadline.into(), poll_fn(|cx| completion.poll(cx))).await;
-    let Ok(result) = completed else {
+    let completed = tokio::select! {
+        biased;
+        result = completion.wait() => Some(result),
+        () = expired => None,
+    };
+    let Some(result) = completed else {
         return Ok(None);
     };
     guard.armed = false;
+    if completion.ended_at().is_some_and(|ended| ended >= deadline) {
+        return Ok(None);
+    }
     result
         .map(Some)
         .map_err(|error| HandlerRaised(error).into())
@@ -304,8 +292,12 @@ impl VmCalls {
         vm: &harmony_luau::Vm,
         context: &harmony_luau::CallContext,
     ) -> harmony_luau::runtime::Result<Self> {
-        let chain = CallChain::of(context);
-        let wait = TransitionWait::Until(tokio::time::Instant::from_std(chain.wait_deadline()));
+        let now = super::now(vm)?;
+        let chain = CallChain::of(context, now);
+        // The wait is Tokio's, which keeps its own time: it gets what is left of the chain's.
+        let wait = TransitionWait::Until(
+            tokio::time::Instant::now() + chain.wait_deadline(now).saturating_duration_since(now),
+        );
         Ok(Self {
             vm: vm.clone(),
             scope: VmScope::of(vm)?,
@@ -365,7 +357,9 @@ impl RuntimeCalls for VmCalls {
             .get::<crate::plugins::metadata::MetadataCallbackRegistry>()?
             .get(request.handler)?;
         let argument = harmony_serde::json_to_luau_owned(request.context, 0)?;
-        let budget = request.deadline.saturating_duration_since(Instant::now());
+        let budget = request
+            .deadline
+            .saturating_duration_since(super::now(&self.vm)?);
         let values = run_handler(
             &self.vm,
             &self.chain,
@@ -414,7 +408,7 @@ async fn dispatch_similar_releases_in_vm(
         MetadataDispatchContext,
         vec![argument],
         request.timeout,
-        Instant::now() + request.timeout,
+        super::now(&vm)? + request.timeout,
     )
     .await?
     .context("similar releases handler did not complete within its timeout")?;
@@ -445,11 +439,11 @@ pub(crate) async fn dispatch_id_links_in_vm(
     let handlers = vm
         .data()
         .get::<crate::plugins::metadata::MetadataCallbackRegistry>()?;
-    let deadline = Instant::now() + ID_LINK_BATCH_TIMEOUT;
+    let deadline = super::now(&vm)? + ID_LINK_BATCH_TIMEOUT;
     let mut timed_out = HashSet::new();
     let mut results = Vec::with_capacity(calls.len());
     for call in &calls {
-        let budget = id_link_call_budget(deadline.saturating_duration_since(Instant::now()));
+        let budget = id_link_call_budget(deadline.saturating_duration_since(super::now(&vm)?));
         let result = match budget {
             Some(budget) if !timed_out.contains(&call.handler) => {
                 run_id_link(&vm, &chain, &handlers, &provider_id, call, budget, deadline).await
@@ -506,7 +500,7 @@ async fn run_id_link(
 
 /// Only a call that used up the full per-call budget counts as timed out.
 /// One cut short by the batch deadline, whether interrupted on a clamped
-/// budget or still waiting, is `NotRun`, so it doesn't suspend its generator.
+/// budget or not ended before it, is `NotRun`, so it doesn't suspend its generator.
 fn id_link_outcome(
     outcome: Result<Option<Vec<harmony_luau::Value>>>,
     budget: Duration,

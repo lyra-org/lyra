@@ -16,7 +16,7 @@ use crate::services::plugin_scope::PluginId;
 
 /// The handler call a nested call belongs to: how long it counts, how long what it calls may
 /// wait, and the plugins already running in it. Set where a handler starts and inherited through
-/// `CallContext.caller` by what it calls.
+/// `CallContext.caller` by what it calls. Its times are by the executor's clock, [`super::now`].
 #[derive(Clone)]
 pub(crate) struct CallChain {
     valid_until: Instant,
@@ -35,21 +35,24 @@ impl CallChain {
         }
     }
 
-    /// An update callback, driven to completion on the executor thread under `options`: nothing
-    /// it calls may wait, or it would hold up what it waits for.
-    pub(crate) fn synchronous(options: &ThreadDriveOptions, plugin: Option<Arc<str>>) -> Self {
+    /// An update callback, driven to completion on the executor thread under `options` from
+    /// `now`: nothing it calls may wait, or it would hold up what it waits for.
+    pub(crate) fn synchronous(
+        options: &ThreadDriveOptions,
+        plugin: Option<Arc<str>>,
+        now: Instant,
+    ) -> Self {
         Self {
-            valid_until: Instant::now() + options.timeout,
+            valid_until: now + options.timeout,
             wait_until: None,
             admitted: plugin.map(PluginId::validated).into_iter().collect(),
         }
     }
 
-    /// What `context` runs in. A chain counts only until `valid_until`, since a detached task
-    /// keeps the chain it was spawned from after that chain's handlers end. A Luau task with no
-    /// chain in force gets the interactive budget, and is admitted to its own plugin only.
-    pub(crate) fn of(context: &CallContext) -> Self {
-        let now = Instant::now();
+    /// What `context` runs in at `now`. A chain counts only until `valid_until`, since a detached
+    /// task keeps the chain it was spawned from after that chain's handlers end. A Luau task with
+    /// no chain in force gets the interactive budget, and is admitted to its own plugin only.
+    pub(crate) fn of(context: &CallContext, now: Instant) -> Self {
         let chain = context
             .caller
             .get::<Self>()
@@ -79,9 +82,9 @@ impl CallChain {
         }
     }
 
-    /// Until when a nested call may wait for a transition.
-    pub(crate) fn wait_deadline(&self) -> Instant {
-        self.wait_until.unwrap_or_else(Instant::now)
+    /// Until when a nested call made at `now` may wait for a transition.
+    pub(crate) fn wait_deadline(&self, now: Instant) -> Instant {
+        self.wait_until.unwrap_or(now)
     }
 
     pub(crate) fn admits(&self, plugin: &str) -> bool {

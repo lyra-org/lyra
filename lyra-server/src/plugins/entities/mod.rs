@@ -403,7 +403,8 @@ async fn project_with_links(
     // generators can only run on this one.
     let vm_scope = crate::plugins::state::VmScope::of(vm)?;
     let caller = link_caller(context)?;
-    let chain = crate::plugins::executor::CallChain::of(context);
+    let chain =
+        crate::plugins::executor::CallChain::of(context, crate::plugins::executor::now(vm)?);
     let (schemes, generators) = {
         let registry = vm_scope.provider_view(caller.as_ref()).await;
         let registry = registry.read().await;

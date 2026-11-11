@@ -485,13 +485,13 @@ impl StreamTask {
             () = &mut expired => Err(DEADLINE_EXPIRED),
         };
         let outcome = match ended {
-            // A producer that ended in time ends the body as it did, however late this task
-            // reads it. One that ended past its deadline does not.
+            // A producer that ended before its deadline ends the body as it did, however late
+            // this task reads it. One that ended at it or later does not.
             Ok(_)
                 if producing
                     .completion
                     .ended_at()
-                    .is_some_and(|ended| ended > self.deadline) =>
+                    .is_some_and(|ended| ended >= self.deadline) =>
             {
                 Err(DEADLINE_EXPIRED.to_string())
             }
@@ -536,8 +536,8 @@ pub(super) fn has_body(method: &str, status: u16) -> bool {
     !method.eq_ignore_ascii_case("HEAD") && !matches!(status, 100..=199 | 204 | 304)
 }
 
-/// Queues `produce` to write a body, which the returned stream reads, before `deadline`. It runs
-/// as `context`, once one of the places for producing streams is free.
+/// Queues `produce` to write a body, which the returned stream reads, before `deadline`, by
+/// [`super::now`]. It runs as `context`, once one of the places for producing streams is free.
 pub(crate) fn queue_stream(
     vm: &luau::Vm,
     produce: luau::Function,

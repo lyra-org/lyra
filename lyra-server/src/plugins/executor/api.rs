@@ -34,6 +34,7 @@ impl PluginExecutor {
         if let Some(auth) = request.auth.clone() {
             dispatch_auth.record(auth);
         }
+        let deadline = self.now() + API_HANDLER_BUDGET;
         let prepare = || {
             let routes = self.vm.data().get::<crate::plugins::api::ApiRouteStore>()?;
             let handler = routes.get(request.handler)?;
@@ -45,7 +46,7 @@ impl PluginExecutor {
                 .caller
                 .insert(crate::plugins::auth::DispatchClient(request.client));
             context.caller.insert(super::CallChain::root(
-                std::time::Instant::now() + API_HANDLER_BUDGET,
+                deadline,
                 context.origin.plugin.clone(),
             ));
             Ok::<_, anyhow::Error>((thread, context, ctx))
@@ -58,7 +59,7 @@ impl PluginExecutor {
             }
         };
         self.start_callback(
-            std::time::Instant::now() + API_HANDLER_BUDGET,
+            deadline,
             super::callbacks::CallbackReply::Api {
                 reply,
                 request: Box::new(request),

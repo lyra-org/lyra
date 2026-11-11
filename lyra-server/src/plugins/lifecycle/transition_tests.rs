@@ -230,9 +230,10 @@ fn mix_module() -> ModuleSpec {
             }))
         })))
         .function(FunctionSpec::new("chain_budget").call(|frame| {
-            let remaining = crate::plugins::executor::CallChain::of(&frame.context)
-                .wait_deadline()
-                .saturating_duration_since(Instant::now());
+            let now = crate::plugins::executor::now(frame.vm)?;
+            let remaining = crate::plugins::executor::CallChain::of(&frame.context, now)
+                .wait_deadline(now)
+                .saturating_duration_since(now);
             *CHAIN_BUDGET.lock().expect("chain budget") = Some(remaining);
             Ok(())
         }))

@@ -147,6 +147,19 @@ impl PluginExecutor {
     pub(crate) fn wake_handle(&self) -> SchedulerWake {
         self.wake.clone()
     }
+
+    /// [`now`] for this executor's VM.
+    fn now(&self) -> std::time::Instant {
+        now(&self.vm).expect("a runtime keeps its scheduler until it shuts down")
+    }
+}
+
+/// The time by `vm`'s scheduler. The executor makes every deadline it gives the scheduler from
+/// this and checks each against it, so a test that installs a manual clock decides when they
+/// pass. A deadline that arrives with a request is the caller's to make: by the real clock in
+/// production, which the scheduler's is there, and from the installed clock in such a test.
+pub(crate) fn now(vm: &harmony_luau::Vm) -> harmony_luau::runtime::Result<std::time::Instant> {
+    Ok(vm.data().get::<LocalScheduler>()?.now())
 }
 
 /// A thread its watcher answers for. However the watcher goes, the thread doesn't outlive it.

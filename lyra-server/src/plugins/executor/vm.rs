@@ -95,28 +95,16 @@ impl PluginExecutor {
         stores: PluginModuleStores,
         module_overrides: Vec<ModuleSpec>,
     ) -> Result<(Self, Vec<PluginDiscoveryError>)> {
-        let plugins_dir = plugins_dir.into();
-        let mut plugin_manager = PluginManager::new(plugins_dir.clone());
-        let errors = plugin_manager.discover_plugins(&crate::plugins::plugin_host())?;
-        let mut plugins = plugin_manager.list_plugins().cloned().collect::<Vec<_>>();
-        plugins.sort_by(|left, right| left.manifest.id.cmp(&right.manifest.id));
-        let plugins = Arc::<[LoadedPlugin]>::from(plugins);
-        let manifests = Arc::<[PluginManifest]>::from(
-            plugins
-                .iter()
-                .map(|plugin| plugin.manifest.clone())
-                .collect::<Vec<_>>(),
-        );
-        let runtime = Self::with_loader_and_plugins(
-            manifests,
+        let discovered = DiscoveredPlugins::in_dir(plugins_dir.into())?;
+        let runtime = Self::with_runtime(
+            discovered.builder,
+            discovered.manifests,
             server_info,
             auth_capabilities,
-            FilesystemSourceLoader::new("/", plugins_dir),
-            plugins,
             stores,
             module_overrides,
         )?;
-        Ok((runtime, errors))
+        Ok((runtime, discovered.errors))
     }
 
     pub(super) fn with_loader<L>(
@@ -129,23 +117,23 @@ impl PluginExecutor {
     where
         L: SourceLoader + 'static,
     {
-        Self::with_loader_and_plugins(
+        Self::with_runtime(
+            RuntimeBuilder::new(loader, manifests.clone()),
             manifests,
             server_info,
             auth_capabilities,
-            loader,
-            Arc::from(Vec::<LoadedPlugin>::new()),
             stores,
             Vec::new(),
         )
     }
 
-    fn with_loader_and_plugins<L>(
+    /// An executor on the runtime `builder` makes once it holds the executor's modules, stores
+    /// and hooks.
+    pub(super) fn with_runtime<L>(
+        builder: RuntimeBuilder<L>,
         manifests: Arc<[PluginManifest]>,
         server_info: crate::plugins::server::ServerInfo,
         auth_capabilities: crate::plugins::auth::AuthCapabilities,
-        loader: L,
-        plugins: Arc<[LoadedPlugin]>,
         stores: PluginModuleStores,
         module_overrides: Vec<ModuleSpec>,
     ) -> Result<Self>
@@ -155,8 +143,7 @@ impl PluginExecutor {
         let scope = stores.scope();
         let running = super::callbacks::RunningHandlers::default();
         let running_for_vm = running.clone();
-        let runtime = RuntimeBuilder::new(loader, manifests.clone())
-            .plugins(plugins)
+        let runtime = builder
             .modules(generic_modules(module_overrides)?)
             .global_specs(harmony_globals::plugin_log_global_specs())
             .configure_vm(move |vm| {
@@ -338,8 +325,9 @@ impl PluginExecutor {
         reply: tokio::sync::oneshot::Sender<Result<()>>,
         permit: tokio::sync::OwnedSemaphorePermit,
     ) {
+        let deadline = self.now() + PLUGIN_SOURCE_RUN_BUDGET;
         self.start_callback(
-            std::time::Instant::now() + PLUGIN_SOURCE_RUN_BUDGET,
+            deadline,
             super::callbacks::CallbackReply::Source(reply),
             permit,
             Some(Arc::from(run.plugin_id.as_str())),
@@ -352,7 +340,7 @@ impl PluginExecutor {
                 };
                 context.caller.insert(dispatch_auth);
                 context.caller.insert(super::CallChain::root(
-                    std::time::Instant::now() + timeout,
+                    deadline,
                     context.origin.plugin.clone(),
                 ));
                 let args = (run.args)(&self.vm, &context.origin)?;
@@ -388,6 +376,40 @@ impl PluginExecutor {
         context: CallContext,
     ) -> Result<Vec<luau::Value>> {
         self.runtime.eval_source_with_context(source, context)
+    }
+}
+
+/// The plugins found in a directory: a builder of their runtime, their manifests and what failed
+/// to load.
+pub(super) struct DiscoveredPlugins {
+    pub(super) builder: RuntimeBuilder<FilesystemSourceLoader>,
+    pub(super) manifests: Arc<[PluginManifest]>,
+    pub(super) errors: Vec<PluginDiscoveryError>,
+}
+
+impl DiscoveredPlugins {
+    pub(super) fn in_dir(plugins_dir: PathBuf) -> Result<Self> {
+        let mut plugin_manager = PluginManager::new(plugins_dir.clone());
+        let errors = plugin_manager.discover_plugins(&crate::plugins::plugin_host())?;
+        let mut plugins = plugin_manager.list_plugins().cloned().collect::<Vec<_>>();
+        plugins.sort_by(|left, right| left.manifest.id.cmp(&right.manifest.id));
+        let plugins = Arc::<[LoadedPlugin]>::from(plugins);
+        let manifests = Arc::<[PluginManifest]>::from(
+            plugins
+                .iter()
+                .map(|plugin| plugin.manifest.clone())
+                .collect::<Vec<_>>(),
+        );
+        let builder = RuntimeBuilder::new(
+            FilesystemSourceLoader::new("/", plugins_dir),
+            manifests.clone(),
+        )
+        .plugins(plugins);
+        Ok(Self {
+            builder,
+            manifests,
+            errors,
+        })
     }
 }
 

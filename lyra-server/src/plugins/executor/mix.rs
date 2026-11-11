@@ -48,8 +48,9 @@ impl PluginExecutor {
             .as_ref()
             .ok()
             .and_then(|(handler, _, _)| handler.context.origin.plugin.clone());
+        let deadline = self.now() + MIX_HANDLER_BUDGET;
         self.start_callback(
-            std::time::Instant::now() + MIX_HANDLER_BUDGET,
+            deadline,
             super::callbacks::CallbackReply::Mix { reply, mixer_id },
             permit,
             plugin,
@@ -58,7 +59,7 @@ impl PluginExecutor {
                 let scheduler = self.vm.data().get::<LocalScheduler>()?;
                 let mut context = handler.context.clone();
                 context.caller.insert(super::CallChain::root(
-                    std::time::Instant::now() + timeout,
+                    deadline,
                     context.origin.plugin.clone(),
                 ));
                 scheduler.schedule_luau_thread_with_budget_and_completion(
@@ -101,7 +102,7 @@ pub(super) async fn dispatch_mix_in_vm(
         handler.context.clone(),
         vec![argument],
         MIX_HANDLER_BUDGET,
-        std::time::Instant::now() + MIX_HANDLER_BUDGET,
+        super::now(vm)? + MIX_HANDLER_BUDGET,
     )
     .await?
     .context("mixer handler did not complete within its budget")?;
