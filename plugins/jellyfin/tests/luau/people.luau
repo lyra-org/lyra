@@ -78,6 +78,30 @@ check(people(ids.song), "Band:AlbumArtist,Singer:Artist,Comp:Composer", "a track
 check(people(ids.other), "Band:AlbumArtist,Prod:Producer", "a track without credits takes its release's, once")
 check(people(ids.album), "Band:AlbumArtist,Singer:Artist,Band:Artist", "an album's artists and its tracks'")
 
+-- An item's artists come from the same credits whether or not the request asks for People.
+local function artists(id: string, fields: string?): string
+	local item = listing.list_items(parse({ Ids = item_ids.encode(id), Fields = fields }))[1]
+	local album_artists = {}
+	for _, artist in item.AlbumArtists or {} do
+		table.insert(album_artists, `{artist.Name}:{artist.Id}`)
+	end
+	local artist_items = {}
+	for _, artist in item.ArtistItems or {} do
+		table.insert(artist_items, `{artist.Name}:{artist.Id}`)
+	end
+	return `{table.concat(item.Artists or {}, ",")}|{table.concat(artist_items, ",")}|{item.AlbumArtist or ""}|{table.concat(
+		album_artists,
+		","
+	)}`
+end
+local band_item, singer_item = `Band:{item_ids.encode(ids.band)}`, `Singer:{item_ids.encode(ids.singer)}`
+check(artists(ids.song), `Singer|{singer_item}|Band|{band_item}`, "a track's artists and its album's")
+check(artists(ids.other), `Band|{band_item}|Band|{band_item}`, "a track without artists takes its album's")
+check(artists(ids.album), `Band|{band_item}|Band|{band_item}`, "an album's artists")
+for _, id in { ids.song, ids.other, ids.album } do
+	check(artists(id, "People"), artists(id), "the artists a request for People gets")
+end
+
 -- `PersonIds` with `PersonTypes` reads the People a listing shows.
 local catalog = require("../../protocol/items/catalog")
 local tracks = require("@lyra/tracks")

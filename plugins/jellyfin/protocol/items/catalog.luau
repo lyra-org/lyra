@@ -55,7 +55,6 @@ end
 type JsonValue = api.JsonValue
 type JsonObject = { [string]: JsonValue }
 type EntityProjectionInfo = entities.EntityProjectionInfo
-type EntityQueryRequest = entities.EntityQueryRequest
 type EntityQueryManyRequest = entities.EntityQueryManyRequest
 type ReleaseProjectionInfo = entities.ReleaseProjectionInfo
 type TrackProjectionInfo = entities.TrackProjectionInfo
@@ -146,13 +145,10 @@ type ItemContext = {
 	track_releases_by_track_id: ReleaseRelationMap,
 	playback_source_by_track_id: PlaybackSourceMap,
 	lyrics_by_track_id: LyricsLookup,
-	track_release_lookup_complete: boolean?,
 	has_source_prefetch: boolean?,
 	has_lyrics_prefetch: boolean?,
 	has_track_artists_prefetch: boolean?,
-	has_track_releases_prefetch: boolean?,
 	has_release_artists_prefetch: boolean?,
-	has_release_tracks_prefetch: boolean?,
 	has_artist_relations_prefetch: boolean?,
 	genre_infos_by_release_id: { [string]: { genres.GenreInfo } }?,
 	tag_infos_by_item_id: TagInfoMap?,
@@ -168,7 +164,9 @@ type ItemContext = {
 }
 type RealizationSeedInfo = {
 	track_ids: { string },
+	-- The listed releases, then those of the listed tracks.
 	release_ids: { string },
+	listed_release_ids: { string },
 	artist_ids: { string },
 	playlist_ids: { string },
 	track_seen: { [string]: boolean },
@@ -649,24 +647,6 @@ function helpers.projection_credits(projection: EntityProjectionInfo?): { Credit
 	return nil
 end
 
-function helpers.query_credits(entity_id: string, entity_type: "release" | "track"): { CreditedArtistProjectionInfo }?
-	local request: EntityQueryRequest = {
-		id = entity_id,
-		include = "credits",
-	}
-	local ok, projection = pcall(entities.query, request)
-	if not ok or type(projection) ~= "table" then
-		return nil
-	end
-
-	local typed_projection = projection :: EntityProjectionInfo
-	if typed_projection.entity_type ~= entity_type then
-		return nil
-	end
-
-	return helpers.projection_credits(typed_projection)
-end
-
 function helpers.query_artist_relations(artist_id: string): { ArtistRelationInfo }?
 	local ok, relation_map = pcall(artists_module.relations, { artist_id })
 	if not ok or type(relation_map) ~= "table" then
@@ -835,13 +815,6 @@ function helpers.resolve_people_for_track(
 	end
 
 	local credits = helpers.lookup_by_id(context.credited_artists_by_owner_id, track_id)
-	if credits == nil then
-		credits = helpers.query_credits(track_id, "track")
-		if credits ~= nil then
-			context.credited_artists_by_owner_id[track_id] = credits
-		end
-	end
-
 	local people = helpers.artists_as_people(release_artists, "AlbumArtist")
 	local album_artist: { [string]: boolean } = {}
 	for _, person in people do
@@ -889,7 +862,7 @@ function helpers.resolve_people_for_release(
 	local tracks_of: { [string]: number } = {}
 	local position: { [string]: number } = {}
 	for _, track in helpers.in_album_order(release_tracks) do
-		local _, _, track_artists = helpers.collect_artist_projection(track.id, "track", context)
+		local _, _, track_artists = helpers.collect_artist_projection(track.id, context)
 		for _, artist in track_artists do
 			if tracks_of[artist.Id] == nil then
 				tracks_of[artist.Id] = 0
@@ -932,21 +905,14 @@ function helpers.resolve_people_for_artist(artist_id: string?, context: ItemCont
 	return helpers.people_from_artist_relations(relations)
 end
 
+-- The artists a release or track is credited to, from the credits `prefetch_credit_relations` read.
 function helpers.collect_artist_projection(
 	entity_id: string?,
-	entity_type: "release" | "track",
 	context: ItemContext?
 ): (string?, { string }, { ArtistProjectionItem })
 	local names: { string } = {}
 	local items: { ArtistProjectionItem } = {}
-	if entity_id == nil then
-		return nil, names, items
-	end
-
 	local credits = helpers.lookup_by_id(if context then context.credited_artists_by_owner_id else nil, entity_id)
-	if credits == nil then
-		credits = helpers.query_credits(entity_id, entity_type)
-	end
 	if credits == nil then
 		return nil, names, items
 	end
@@ -1234,12 +1200,11 @@ function helpers.to_release_item(
 	end
 
 	local include_images = helpers.should_include_images(context)
-	local release_artist, artist_names, artist_items = helpers.collect_artist_projection(release.id, "release", context)
-	local prefetched_release_tracks =
-		helpers.lookup_by_id(if context then context.release_tracks_by_release_id else nil, release.id)
-	local release_tracks: { Track } = if prefetched_release_tracks ~= nil
-		then prefetched_release_tracks
-		else lookups.tracks_of_release(release.id)
+	local release_artist, artist_names, artist_items = helpers.collect_artist_projection(release.id, context)
+	local release_tracks: { Track } = helpers.lookup_by_id(
+		if context then context.release_tracks_by_release_id else nil,
+		release.id
+	) or {}
 	local runtime_ticks = enrichment.sum_runtime_ticks(release_tracks)
 	-- Jellyfin exposes image tags by default, but honors EnableImages=false.
 	local cover_info = if include_images then helpers.resolve_cover_info(release.id, context) else nil
@@ -1290,30 +1255,19 @@ function helpers.to_release_item(
 	return item
 end
 
+-- The release a track shows as its album, among those `load_track_releases` read: every item of a
+-- listing reads one snapshot, so the release chosen here is one whose credits and cover were read.
 function helpers.resolve_release_for_track(
 	track: TrackLike?,
 	preferred_release_id: string?,
 	include_images: boolean?,
 	context: ItemContext?
 ): (Release?, CoverInfo?)
-	local track_id = if track then track.id else nil
-	local prefetched_releases =
-		helpers.lookup_by_id(if context then context.track_releases_by_track_id else nil, track_id)
-	local raw_releases: { Release } = if prefetched_releases ~= nil then prefetched_releases else {}
-	local has_complete_lookup = if context then context.track_release_lookup_complete == true else false
-
-	local should_fallback = prefetched_releases == nil
-	if not should_fallback and #raw_releases == 0 then
-		-- When images are requested, allow a targeted fallback so track items
-		-- still populate release-cover fields even if relation prefetch missed.
-		should_fallback = (not has_complete_lookup) or include_images == true
-	end
-
-	if should_fallback then
-		-- Fallback when bulk relation prefetch misses this track.
-		raw_releases = lookups.releases_of_track(track_id)
-	end
-	local candidates = lookups.releases_by_added(raw_releases)
+	local track_releases: { Release } = helpers.lookup_by_id(
+		if context then context.track_releases_by_track_id else nil,
+		if track then track.id else nil
+	) or {}
+	local candidates = lookups.releases_by_added(track_releases)
 	if #candidates == 0 then
 		return nil, nil
 	end
@@ -1362,14 +1316,14 @@ function helpers.to_track_item(
 	local include_images = helpers.should_include_images(context)
 	local release, release_cover_info =
 		helpers.resolve_release_for_track(track, preferred_release_id, include_images, context)
-	local artist_name, artist_names, artist_items = helpers.collect_artist_projection(track.id, "track", context)
+	local artist_name, artist_names, artist_items = helpers.collect_artist_projection(track.id, context)
 	local release_artist_name = artist_name
 	local release_artist_names = artist_names
 	local release_artist_items = artist_items
 	local album_artists: { ArtistProjectionItem } = {}
 	if release then
 		local resolved_release_artist_name, resolved_release_artist_names, resolved_release_artist_items =
-			helpers.collect_artist_projection(release.id, "release", context)
+			helpers.collect_artist_projection(release.id, context)
 		if resolved_release_artist_name then
 			release_artist_name = resolved_release_artist_name
 		end
@@ -1677,6 +1631,7 @@ function helpers.collect_realization_seed(stubs: { ItemInfo }, context: ItemCont
 	local seed: RealizationSeedInfo = {
 		track_ids = {},
 		release_ids = {},
+		listed_release_ids = {},
 		artist_ids = {},
 		playlist_ids = {},
 		track_seen = {},
@@ -1699,6 +1654,9 @@ function helpers.collect_realization_seed(stubs: { ItemInfo }, context: ItemCont
 			helpers.append_unique_id(id, seed.track_ids, seed.track_seen)
 		elseif stub._type == "release" then
 			seed.has_release_stubs = true
+			if id ~= nil and not seed.release_seen[id] then
+				table.insert(seed.listed_release_ids, id)
+			end
 			helpers.append_unique_id(id, seed.release_ids, seed.release_seen)
 		elseif stub._type == "artist" then
 			seed.has_artist_stubs = true
@@ -1716,8 +1674,9 @@ function helpers.prefetch_library_hex_ids(context: ItemContext, seed: Realizatio
 		return
 	end
 
+	-- Listed releases and artists show their library; a listed track's album doesn't.
 	local all_entity_ids: { string } = {}
-	for _, id in seed.release_ids do
+	for _, id in seed.listed_release_ids do
 		table.insert(all_entity_ids, id)
 	end
 	for _, id in seed.artist_ids do
@@ -1746,27 +1705,46 @@ function helpers.prefetch_track_artists(context: ItemContext, seed: RealizationS
 	end
 
 	helpers.ensure_relation_entries(context.related_artists_by_owner_id, seed.track_ids)
-	helpers.ensure_relation_entries(context.track_releases_by_track_id, seed.track_ids)
 
 	local track_artists_map = artists_module.by_track(seed.track_ids)
 	helpers.merge_relation_map(context.related_artists_by_owner_id, track_artists_map)
 	context.has_track_artists_prefetch = helpers.relation_map_has_entries(track_artists_map)
 end
 
-function helpers.prefetch_track_releases(context: ItemContext, seed: RealizationSeedInfo): ()
+-- The releases of the stubs' tracks, which join the seed: a track item shows one as its album.
+function helpers.load_track_releases(context: ItemContext, seed: RealizationSeedInfo): ()
 	if not seed.has_track_stubs or #seed.track_ids == 0 then
 		return
 	end
 
 	local track_releases_map = releases.by_track(seed.track_ids)
 	helpers.merge_relation_map(context.track_releases_by_track_id, track_releases_map)
-	context.has_track_releases_prefetch = helpers.relation_map_has_entries(track_releases_map)
 	for _, related_releases: { Release } in track_releases_map do
 		for _, release: Release in related_releases do
 			helpers.append_unique_id(release.id, seed.release_ids, seed.release_seen)
 		end
 	end
-	context.track_release_lookup_complete = true
+end
+
+-- The playable tracks of the stubs' releases.
+function helpers.load_release_tracks(context: ItemContext, seed: RealizationSeedInfo): ()
+	if not seed.has_release_stubs or #seed.release_ids == 0 then
+		return
+	end
+
+	local release_tracks_map = tracks.by_release(seed.release_ids)
+	for release_id, release_tracks in release_tracks_map do
+		release_tracks_map[release_id] = lookups.playable(release_tracks)
+	end
+	helpers.merge_relation_map(context.release_tracks_by_release_id, release_tracks_map)
+end
+
+-- Reads the relations that lead from the stubs to other items, and closes the seed over them. The
+-- prefetches that follow read the seed and these relations as they stand, and realizing reads
+-- nothing more, so what an item shows of another item was read for it.
+function helpers.collect_related_items(context: ItemContext, seed: RealizationSeedInfo): ()
+	helpers.load_track_releases(context, seed)
+	helpers.load_release_tracks(context, seed)
 end
 
 function helpers.prefetch_release_covers(context: ItemContext, seed: RealizationSeedInfo): ()
@@ -1829,7 +1807,7 @@ function helpers.prefetch_release_artists_and_genres(
 end
 
 function helpers.prefetch_credit_relations(context: ItemContext, seed: RealizationSeedInfo): ()
-	if context.include_people ~= true or (not seed.has_release_stubs and not seed.has_track_stubs) then
+	if not seed.has_release_stubs and not seed.has_track_stubs then
 		return
 	end
 
@@ -1842,9 +1820,11 @@ function helpers.prefetch_credit_relations(context: ItemContext, seed: Realizati
 		helpers.append_unique_id(track_id, ids, seen)
 	end
 	-- A release's People count its tracks' artists.
-	for _, release_tracks in context.release_tracks_by_release_id do
-		for _, track in release_tracks :: { Track } do
-			helpers.append_unique_id(track.id, ids, seen)
+	if context.include_people == true then
+		for _, release_tracks in context.release_tracks_by_release_id do
+			for _, track in release_tracks :: { Track } do
+				helpers.append_unique_id(track.id, ids, seen)
+			end
 		end
 	end
 	if #ids == 0 then
@@ -1875,19 +1855,6 @@ function helpers.prefetch_provider_ids(context: ItemContext, seed: RealizationSe
 		library_id
 	)
 	context.item_provider_ids = index
-end
-
-function helpers.prefetch_release_tracks(context: ItemContext, seed: RealizationSeedInfo): ()
-	if not seed.has_release_stubs or #seed.release_ids == 0 then
-		return
-	end
-
-	local release_tracks_map = tracks.by_release(seed.release_ids)
-	for release_id, release_tracks in release_tracks_map do
-		release_tracks_map[release_id] = lookups.playable(release_tracks)
-	end
-	helpers.merge_relation_map(context.release_tracks_by_release_id, release_tracks_map)
-	context.has_release_tracks_prefetch = helpers.relation_map_has_entries(release_tracks_map)
 end
 
 function helpers.prefetch_artist_people_relations(context: ItemContext, seed: RealizationSeedInfo): ()
@@ -2026,13 +1993,13 @@ function helpers.build_realization_context(stubs: { ItemInfo }, options: ItemsQu
 	local context = helpers.new_realization_context(options)
 	local seed = helpers.collect_realization_seed(stubs, context)
 
+	helpers.collect_related_items(context, seed)
+
 	helpers.prefetch_library_hex_ids(context, seed)
 	helpers.prefetch_track_artists(context, seed)
-	helpers.prefetch_track_releases(context, seed)
 	helpers.prefetch_release_covers(context, seed)
 	helpers.prefetch_artist_covers(context, seed)
 	helpers.prefetch_release_artists_and_genres(context, seed, options)
-	helpers.prefetch_release_tracks(context, seed)
 	helpers.prefetch_credit_relations(context, seed)
 	helpers.prefetch_provider_ids(context, seed)
 	helpers.prefetch_artist_people_relations(context, seed)
@@ -2106,10 +2073,9 @@ function module.people_of_stubs(stubs: { ItemInfo }, options: ItemsQueryOptions)
 	people_options.include_people = true
 	local context = helpers.new_realization_context(people_options)
 	local seed = helpers.collect_realization_seed(stubs, context)
+	helpers.collect_related_items(context, seed)
 	helpers.prefetch_track_artists(context, seed)
-	helpers.prefetch_track_releases(context, seed)
 	helpers.prefetch_release_covers(context, seed)
-	helpers.prefetch_release_tracks(context, seed)
 	helpers.prefetch_credit_relations(context, seed)
 
 	local parent_scope = lookups.scope(options.parent_id)
@@ -2127,12 +2093,12 @@ function module.people_of_stubs(stubs: { ItemInfo }, options: ItemsQueryOptions)
 			)
 			local album_artists: { ArtistProjectionItem } = {}
 			if album then
-				local _, _, projected = helpers.collect_artist_projection(album.id, "release", context)
+				local _, _, projected = helpers.collect_artist_projection(album.id, context)
 				album_artists = projected
 			end
 			people_by_id[track.id] = helpers.resolve_people_for_track(track.id, album_artists, context) or {}
 		elseif release then
-			local _, _, artist_items = helpers.collect_artist_projection(release.id, "release", context)
+			local _, _, artist_items = helpers.collect_artist_projection(release.id, context)
 			local release_tracks = context.release_tracks_by_release_id[release.id] or {}
 			people_by_id[release.id] = helpers.resolve_people_for_release(artist_items, release_tracks, context) or {}
 		end

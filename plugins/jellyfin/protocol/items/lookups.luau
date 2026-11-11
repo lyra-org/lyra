@@ -67,13 +67,6 @@ function module.playable(track_list: { Track }): { Track }
 	return kept
 end
 
-function module.tracks_of_release(release_id: string?): { Track }
-	if release_id == nil then
-		return {}
-	end
-	return module.playable(tracks.by_release({ release_id })[release_id] or {})
-end
-
 function module.releases_of_track(track_id: string?): { Release }
 	if track_id == nil then
 		return {}

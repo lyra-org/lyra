@@ -1,0 +1,16 @@
+run_as = "admin"
+
+# "Loose" belongs to no release.
+
+[[users]]
+key = "admin"
+admin = true
+
+[[artists]]
+key = "amy"
+name = "Amy"
+
+[[tracks]]
+key = "loose"
+title = "Loose"
+artists = ["amy"]
