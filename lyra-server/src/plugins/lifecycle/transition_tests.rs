@@ -568,7 +568,7 @@ async fn plugin_source_runs_follow_the_published_runtime() -> anyhow::Result<()>
             path: "chunk.luau".to_string(),
             source: Arc::from(&b""[..]),
             args: Box::new(|_, _| Ok(Vec::new())),
-            principal,
+            auth: crate::plugins::testing::acting_as(principal),
         })
         .await
         .expect_err("a replaced runtime runs nothing");

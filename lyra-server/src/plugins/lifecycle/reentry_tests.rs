@@ -88,7 +88,7 @@ pub(super) fn run_chunk(
                 path: "chunk.luau".to_string(),
                 source: Arc::from(source.as_bytes()),
                 args: Box::new(move |_, _| Ok(vec![harmony_luau::Value::String(arg.into_bytes())])),
-                principal,
+                auth: crate::plugins::testing::acting_as(principal),
             })
             .await
     })

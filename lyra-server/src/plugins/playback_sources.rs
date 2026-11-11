@@ -194,7 +194,7 @@ impl PlaybackSourcesModule {
             "decide options",
         )?;
         let (track_id, access) = delivery::stream_track_access(
-            caller.principal.as_ref(),
+            caller.auth.as_ref(),
             caller.client,
             &track_id,
             request.public,

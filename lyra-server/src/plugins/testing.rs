@@ -20,6 +20,17 @@ use crate::{
     },
 };
 
+/// `principal` acting through the default credential, for tests that give a dispatch a principal
+/// whose credential nothing checks.
+#[cfg(test)]
+pub(crate) fn acting_as(principal: services::auth::Principal) -> services::auth::ResolvedAuth {
+    services::auth::ResolvedAuth {
+        principal,
+        credential: services::auth::AuthCredential::Default,
+        client_name: None,
+    }
+}
+
 /// A `lyra` requirement for test manifests that matches the running server
 /// alone, including a pre-release, which `*` would not match.
 #[cfg(test)]

@@ -15,6 +15,7 @@ seen = 100
 [[sessions]]
 key = "amy_web"
 user = "amy"
+client_name = "Web"
 
 [[sessions]]
 key = "bob_tv"

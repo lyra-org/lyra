@@ -147,7 +147,7 @@ pub(crate) type PluginSourceArgs = dyn FnOnce(&harmony_luau::Vm, &harmony_luau::
     + Send
     + Sync;
 
-/// A chunk run as a plugin's code without its entrypoint, dispatching as `principal`, the way a
+/// A chunk run as a plugin's code without its entrypoint, dispatching as `auth`, the way a
 /// Luau test runs. It runs beside dispatched handlers, so it can reach handlers it registers.
 pub(crate) struct PluginSourceRun {
     pub(crate) plugin_id: String,
@@ -155,7 +155,7 @@ pub(crate) struct PluginSourceRun {
     pub(crate) source: Arc<[u8]>,
     /// Builds the chunk's `...` on the executor thread, where Luau values live.
     pub(crate) args: Box<PluginSourceArgs>,
-    pub(crate) principal: crate::services::auth::Principal,
+    pub(crate) auth: crate::services::auth::ResolvedAuth,
 }
 
 #[derive(Clone, Debug)]
@@ -271,9 +271,9 @@ pub(crate) struct ApiHandlerResponse {
     pub(crate) track_id: Option<String>,
     /// The options of a track response, read as it is served.
     pub(crate) options: Option<crate::plugins::api::options::TrackResponseOptions>,
-    /// Principal acting for the dispatch: seeded from boundary bearer auth
-    /// and overwritten by `auth.resolve_auth`.
-    pub(crate) principal: Option<crate::services::auth::Principal>,
+    /// Whom the dispatch acted for when it returned: seeded from boundary bearer auth and
+    /// overwritten by `auth.resolve_auth`.
+    pub(crate) auth: Option<crate::services::auth::ResolvedAuth>,
     /// The requesting client's address, from the dispatch's request.
     pub(crate) client: crate::services::auth::caller::ClientAddress,
     /// What to answer in place of Lyra's error when it can't serve the response.

@@ -86,6 +86,32 @@ pub(crate) fn publish_config(config: server_settings::Config) {
     }));
 }
 
+/// Signs the user in with a new session and returns them as that session authenticates them,
+/// whether or not authentication is enabled.
+pub(crate) async fn session_auth(
+    user_db_id: agdb::DbId,
+) -> anyhow::Result<crate::services::auth::ResolvedAuth> {
+    use crate::services::auth;
+
+    let principal = {
+        let db = STATE.db.read().await;
+        auth::Principal::load(&*db, user_db_id)?
+            .ok_or_else(|| anyhow::anyhow!("user {user_db_id:?} does not exist"))?
+    };
+    let created = auth::sessions::create_session_for_user(&principal, Default::default()).await?;
+    let db = STATE.db.read().await;
+    let (_, session, _) =
+        lyra_db::users::find_by_session_token_hash(&*db, &auth::hash_secret(&created.token))?
+            .ok_or_else(|| anyhow::anyhow!("the new session is stored"))?;
+    Ok(auth::ResolvedAuth {
+        principal,
+        credential: auth::AuthCredential::Session {
+            public_id: session.id,
+        },
+        client_name: session.client_name,
+    })
+}
+
 /// Merges `loser_id` into `winner_id` without a request's checks, recording it as a request
 /// would, for tests of what runs beside a merge.
 pub(crate) async fn merge_entities(winner_id: &str, loser_id: &str) -> anyhow::Result<()> {

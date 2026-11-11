@@ -409,7 +409,7 @@ const LUAU_TEST_USERNAME: &str = "luau-tester";
 /// the fixture is seeded, the plugin goes without the fixture's `without_scopes` and the test
 /// receives the seeded ids as its first `...`; its second is always the [`harness`]. The
 /// test dispatches as the fixture's `run_as` user, or otherwise as a fresh non-admin user named
-/// `LUAU_TEST_USERNAME`.
+/// `LUAU_TEST_USERNAME`, signed in with a session of their own.
 pub async fn run_luau_plugin_test_file(
     plugin: &PluginUnderTest,
     test_path: &Path,
@@ -446,7 +446,7 @@ pub async fn run_luau_plugin_test_file(
         services::testing::publish_config(config);
     }
 
-    let (principal, seeded) = {
+    let (run_as, seeded) = {
         let mut db = STATE.db.write().await;
         let (run_as, seeded) = match fixture {
             Some(fixture) => {
@@ -469,12 +469,9 @@ pub async fn run_luau_plugin_test_file(
                 lyra_db::users::create(&mut db, &user)?
             }
         };
-        let user = lyra_db::users::get_by_id(&db, user_db_id)?.context("test user exists")?;
-        (
-            services::auth::resolve_principal(&db, user_db_id, user),
-            seeded,
-        )
+        (user_db_id, seeded)
     };
+    let auth = services::testing::session_auth(run_as).await?;
 
     let isolated = TempPluginsDir::new(plugin)?;
     let server_info = crate::plugins::server::load_server_info().await?;
@@ -549,7 +546,7 @@ pub async fn run_luau_plugin_test_file(
                     path: "start.luau".to_string(),
                     source: Arc::from(&b""[..]),
                     args: Box::new(|_, _| Ok(Vec::new())),
-                    principal: principal.clone(),
+                    auth: auth.clone(),
                 })
                 .await?;
         }
@@ -565,7 +562,7 @@ pub async fn run_luau_plugin_test_file(
                         .unwrap_or(harmony_luau::Value::Nil);
                     Ok(vec![fixture, harness::value(vm, origin)?])
                 }),
-                principal,
+                auth,
             })
             .await
     }

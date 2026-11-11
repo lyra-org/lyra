@@ -10,7 +10,8 @@ for _, user in users.list() do
 end
 assert(listed[fixture.users.admin] and listed[fixture.users.default])
 
-assert(#auth.list_sessions({ all_users = true }) == 2)
+-- The fixture's two sessions and the one the test runs with.
+assert(#auth.list_sessions({ all_users = true }) == 3)
 local named = auth.list_sessions({ user_id = fixture.users.default })
 assert(#named == 1 and named[1].user_id == fixture.users.default)
 

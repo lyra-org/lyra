@@ -126,7 +126,7 @@ fn public_id(db: &impl lyra_db::DbAccess, db_id: agdb::DbId) -> Result<String> {
 
 fn seed_caller_principal(context: &mut CallContext, principal: crate::services::auth::Principal) {
     let dispatch_auth = crate::plugins::auth::DispatchAuth::default();
-    dispatch_auth.record(principal);
+    dispatch_auth.record(crate::plugins::testing::acting_as(principal));
     context.caller.insert(dispatch_auth);
 }
 
@@ -1616,17 +1616,24 @@ async fn plugin_executor_binds_host_resolved_principal_to_api_responses() -> Res
         .await
         .context("registered /whoami handler")?;
     let response = runtime.dispatch_api_handler(api_request(whoami_handler, "/whoami"))?;
-    let principal = response
-        .principal
-        .context("resolve_auth during dispatch should bind the principal to the response")?;
-    assert_eq!(principal.user_public_id, user.id);
+    let auth = response
+        .auth
+        .context("resolve_auth during dispatch should bind whom it resolved to the response")?;
+    assert_eq!(auth.principal.user_public_id, user.id);
+    assert!(
+        matches!(
+            auth.credential,
+            crate::services::auth::AuthCredential::Session { .. }
+        ),
+        "the principal comes with the credential that authenticated it"
+    );
 
     let anon_handler = crate::plugins::api::tests::registered_handler("GET", "/anon")
         .await
         .context("registered /anon handler")?;
     let response = runtime.dispatch_api_handler(api_request(anon_handler, "/anon"))?;
     assert!(
-        response.principal.is_none(),
+        response.auth.is_none(),
         "dispatches that never resolve auth must not carry a principal"
     );
 
@@ -1636,10 +1643,10 @@ async fn plugin_executor_binds_host_resolved_principal_to_api_responses() -> Res
     let mut seeded = api_request(anon_handler, "/anon");
     seeded.auth = Some(boundary_auth);
     let response = runtime.dispatch_api_handler(seeded)?;
-    let principal = response
-        .principal
-        .context("boundary auth should seed the dispatch principal")?;
-    assert_eq!(principal.user_public_id, user.id);
+    let auth = response
+        .auth
+        .context("boundary auth should seed the dispatch")?;
+    assert_eq!(auth.principal.user_public_id, user.id);
 
     let _ = std::fs::remove_dir_all(test_dir);
     Ok(())
@@ -1698,7 +1705,7 @@ async fn plugin_executor_treats_expired_session_as_unauthenticated() -> Result<(
     };
     let response = runtime.dispatch_api_handler(request())?;
     assert_eq!(response.status, 204);
-    assert!(response.principal.is_some());
+    assert!(response.auth.is_some());
 
     crate::services::STATE.db.write().await.exec_mut(
         agdb::QueryBuilder::insert()
@@ -1708,7 +1715,7 @@ async fn plugin_executor_treats_expired_session_as_unauthenticated() -> Result<(
     )?;
     let response = runtime.dispatch_api_handler(request())?;
     assert_eq!(response.status, 401);
-    assert!(response.principal.is_none());
+    assert!(response.auth.is_none());
     {
         let db = crate::services::STATE.db.read().await;
         assert!(
@@ -1905,12 +1912,9 @@ async fn websocket_spawned_work_acts_as_the_verified_socket_principal() -> Resul
         .await
         .context("registered websocket handler")?;
     let (mut request, inbound_tx, mut outbound_rx) = websocket_request(handler, "/socket");
-    request.auth = Some(crate::services::auth::ResolvedAuth {
-        principal: principal.clone(),
-        credential: crate::services::auth::AuthCredential::Default,
-        client_name: None,
-    });
-    request.dispatch_auth.record(principal);
+    let auth = crate::plugins::testing::acting_as(principal);
+    request.auth = Some(auth.clone());
+    request.dispatch_auth.record(auth);
     let state = request.state.clone();
     runtime.start_websocket(request)?;
 

@@ -14,20 +14,23 @@ local function by_client(sessions)
 	return found
 end
 
--- Without a query, the caller's own sessions, each with this plugin's data and never a token.
+-- Without a query, the caller's own sessions, each with this plugin's data and never a token:
+-- the fixture's two and the unnamed one the test runs with.
 local own = auth.list_sessions()
-assert(#own == 2)
+assert(#own == 3)
 local clients = by_client(own)
 local phone = clients.Phone
 assert(phone ~= nil and phone.user_id == amy and phone.username == "amy")
 assert(phone.last_seen_at_ms == 100 and phone.created_at_ms > 0)
 assert(type(phone.data) == "table" and (phone.data :: any).device == "phone")
-assert(clients.none ~= nil and clients.none.data == nil)
+local web = clients.Web
+assert(web ~= nil and web.data == nil)
+assert(clients.none ~= nil and clients.none.user_id == amy and clients.none.data == nil)
 for _, session in own do
 	assert((session :: any).token == nil and (session :: any).token_hash == nil)
 end
-assert(#auth.list_sessions({}) == 2)
-assert(#auth.list_sessions({ user_id = amy }) == 2)
+assert(#auth.list_sessions({}) == 3)
+assert(#auth.list_sessions({ user_id = amy }) == 3)
 
 -- Another user's or every user's sessions need manage_users.
 assert(not pcall(auth.list_sessions, { user_id = bob }))
@@ -45,10 +48,12 @@ assert(auth.resolve_auth(fixture.sessions.bob_tv) ~= nil)
 
 -- Revoking an own session ends it.
 assert(auth.resolve_auth(fixture.sessions.amy_web) ~= nil)
-assert(auth.revoke_session(clients.none.session_id) == true)
+assert(auth.revoke_session(web.session_id) == true)
 assert(auth.resolve_auth(fixture.sessions.amy_web) == nil)
 assert(auth.resolve_auth(fixture.sessions.amy_phone) ~= nil)
-assert(auth.revoke_session(clients.none.session_id) == false)
+assert(auth.revoke_session(web.session_id) == false)
 assert(auth.revoke_session("missing-session") == false)
-local remaining = auth.list_sessions()
-assert(#remaining == 1 and remaining[1].session_id == phone.session_id)
+local remaining = by_client(auth.list_sessions())
+assert(remaining.Web == nil)
+assert(remaining.Phone.session_id == phone.session_id)
+assert(remaining.none.session_id == clients.none.session_id)

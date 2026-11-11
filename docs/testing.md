@@ -48,7 +48,8 @@ writes what a passing scenario captured into its `expect` section.
 
 A `<test>.fixture.toml` beside a Luau test seeds a fresh database before the test runs. The test
 runs as the `run_as` user, or a fresh non-admin user without one, and receives the seeded ids as
-the first of its chunk's `...`. The plugin goes without the scopes in `without_scopes`, which it must declare;
+the first of its chunk's `...`. That user is signed in with a session of their own, with no client
+name, which a test that lists sessions sees beside the fixture's. The plugin goes without the scopes in `without_scopes`, which it must declare;
 a scope another kept one narrows can't go:
 
 ```toml

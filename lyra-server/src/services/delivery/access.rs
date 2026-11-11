@@ -8,6 +8,7 @@ use crate::services::{
     STATE,
     auth::{
         Principal,
+        ResolvedAuth,
         caller::{
             Caller,
             ClientAddress,
@@ -105,13 +106,14 @@ pub(crate) async fn require_session_access(
 /// Plugin responses skip the native route guards, so track serving must
 /// re-apply the same permission and library-access enforcement here.
 pub(crate) async fn require_plugin_track_access(
-    principal: Option<&Principal>,
+    auth: Option<&ResolvedAuth>,
     track_id: &str,
     purpose: MediaTokenPurpose,
 ) -> Result<(String, TrackAccess), DeliveryError> {
-    let Some(principal) = principal else {
+    let Some(auth) = auth else {
         return Err(DeliveryError::unauthorized("authentication required"));
     };
+    let principal = &auth.principal;
     let db = STATE.db.read().await;
     principal.require(&*db)?;
     authorize_track_purpose(principal, purpose)?;
@@ -133,7 +135,7 @@ pub(crate) async fn require_plugin_track_access(
 /// Its transcodes still count against someone: the caller, when the handler resolved one, or
 /// else the client's address.
 async fn public_plugin_track_access(
-    principal: Option<&Principal>,
+    auth: Option<&ResolvedAuth>,
     client: ClientAddress,
     track_id: &str,
 ) -> Result<(String, TrackAccess), DeliveryError> {
@@ -143,8 +145,8 @@ async fn public_plugin_track_access(
             "Track not found: {track_id}"
         )));
     }
-    let caller = match principal {
-        Some(principal) => Caller::User(principal.user_public_id.clone()),
+    let caller = match auth {
+        Some(auth) => Caller::User(auth.principal.user_public_id.clone()),
         None => Caller::Client(client),
     };
     Ok((track_id.to_string(), TrackAccess::PublicPluginRoute(caller)))
@@ -154,14 +156,14 @@ async fn public_plugin_track_access(
 /// under: the caller's, or none when the response is `public`, which still counts its
 /// transcodes against the caller or the client's address.
 pub(crate) async fn stream_track_access(
-    principal: Option<&Principal>,
+    auth: Option<&ResolvedAuth>,
     client: ClientAddress,
     track_id: &str,
     public: bool,
 ) -> Result<(String, TrackAccess), DeliveryError> {
     if public {
-        public_plugin_track_access(principal, client, track_id).await
+        public_plugin_track_access(auth, client, track_id).await
     } else {
-        require_plugin_track_access(principal, track_id, MediaTokenPurpose::Stream).await
+        require_plugin_track_access(auth, track_id, MediaTokenPurpose::Stream).await
     }
 }

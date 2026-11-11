@@ -481,7 +481,7 @@ impl AuthModule {
             Err(err) => return Err(crate::plugins::errors::auth_error(err)),
         }
         if let Some(dispatch_auth) = &dispatch_auth.0 {
-            dispatch_auth.record_auth(&resolved);
+            dispatch_auth.record(resolved.clone());
         }
         harmony_luau::serializable_to_luau_owned(to_plugin_auth(resolved))
     }
@@ -664,7 +664,7 @@ impl AuthModule {
     async fn approve_device_login(
         code: String,
         options: Option<ApproveDeviceLoginOptions>,
-        #[context] caller: CredentialedCaller,
+        #[context] caller: ServiceResolvedAuth,
     ) -> luau::runtime::Result<luau::Value> {
         let options = options.unwrap_or_default();
         if matches!(caller.credential, ServiceAuthCredential::ApiKey { .. }) {
@@ -760,35 +760,17 @@ impl AuthModule {
 #[derive(Clone)]
 pub(crate) struct DispatchClient(pub(crate) crate::services::auth::caller::ClientAddress);
 
-/// Per-dispatch slot holding the principal currently acting for the dispatch.
-/// Seeded from boundary bearer auth at dispatch start, overwritten whenever
-/// the host resolves a credential via `auth.resolve_auth`, read by
-/// principal-requiring host functions, and bound to the API response so
-/// request handling outside the VM can authorize against it.
+/// Per-dispatch slot holding whom the dispatch currently acts for: the principal and the
+/// credential that authenticated them. Seeded from boundary bearer auth at dispatch start,
+/// overwritten whenever the host resolves a credential via `auth.resolve_auth`, read by
+/// principal-requiring host functions, and bound to the API response so request handling
+/// outside the VM can authorize against it.
 #[derive(Clone, Default)]
-pub(crate) struct DispatchAuth(Arc<std::sync::Mutex<Option<DispatchCaller>>>);
-
-#[derive(Clone)]
-struct DispatchCaller {
-    principal: ServicePrincipal,
-    /// What the principal authenticated with; none for a principal recorded without one.
-    credential: Option<ServiceAuthCredential>,
-}
+pub(crate) struct DispatchAuth(Arc<std::sync::Mutex<Option<ServiceResolvedAuth>>>);
 
 impl DispatchAuth {
-    /// Acts for `principal` with no credential to show for it.
-    pub(crate) fn record(&self, principal: ServicePrincipal) {
-        *self.0.lock().expect("dispatch auth slot poisoned") = Some(DispatchCaller {
-            principal,
-            credential: None,
-        });
-    }
-
-    pub(crate) fn record_auth(&self, auth: &ServiceResolvedAuth) {
-        *self.0.lock().expect("dispatch auth slot poisoned") = Some(DispatchCaller {
-            principal: auth.principal.clone(),
-            credential: Some(auth.credential.clone()),
-        });
+    pub(crate) fn record(&self, auth: ServiceResolvedAuth) {
+        *self.0.lock().expect("dispatch auth slot poisoned") = Some(auth);
     }
 
     /// Replaces the principal only while the slot still acts for the same user,
@@ -810,57 +792,45 @@ impl DispatchAuth {
     }
 
     pub(crate) fn principal(&self) -> Option<ServicePrincipal> {
-        self.caller().map(|caller| caller.principal)
+        self.auth().map(|auth| auth.principal)
     }
 
-    fn caller(&self) -> Option<DispatchCaller> {
+    /// Whom the dispatch acts for, read in one piece so the principal is never paired with a
+    /// credential an earlier caller authenticated with.
+    pub(crate) fn auth(&self) -> Option<ServiceResolvedAuth> {
         self.0.lock().expect("dispatch auth slot poisoned").clone()
     }
 }
 
-/// The dispatch's principal and the credential it authenticated with, which a function that binds
-/// its effect to that credential takes from its call. Refused without either.
-struct CredentialedCaller {
-    principal: ServicePrincipal,
-    credential: ServiceAuthCredential,
-}
-
-impl luau::FromCallFrame for CredentialedCaller {
+/// A function that binds its effect to the credential the dispatch's principal authenticated
+/// with takes both from its call. Refused for a dispatch acting for no one.
+impl luau::FromCallFrame for ServiceResolvedAuth {
     fn from_call_frame(_vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
-        let caller = context
+        context
             .caller
             .get::<DispatchAuth>()
             .ok()
-            .and_then(|auth| auth.caller());
-        match caller {
-            Some(DispatchCaller {
-                principal,
-                credential: Some(credential),
-            }) => Ok(Self {
-                principal,
-                credential,
-            }),
-            _ => Err(no_dispatch_principal()),
-        }
+            .and_then(|auth| auth.auth())
+            .ok_or_else(no_dispatch_principal)
     }
 }
 
-/// Whom a response this dispatch returns is served for, as Lyra reads it when serving: the
-/// principal in the dispatch's slot, or none when the slot is empty or the dispatch is
-/// server-side, and the client's address, the default for a server-side dispatch.
+/// Whom a response this dispatch returns is served for, as Lyra reads it when serving: whom the
+/// dispatch acts for, or none when its slot is empty or the dispatch is server-side, and the
+/// client's address, the default for a server-side dispatch.
 pub(crate) struct ResponseCaller {
-    pub(crate) principal: Option<ServicePrincipal>,
+    pub(crate) auth: Option<ServiceResolvedAuth>,
     pub(crate) client: crate::services::auth::caller::ClientAddress,
 }
 
 impl luau::FromCallFrame for ResponseCaller {
     fn from_call_frame(_vm: &luau::Vm, context: &luau::CallContext) -> luau::runtime::Result<Self> {
         Ok(Self {
-            principal: context
+            auth: context
                 .caller
                 .get::<DispatchAuth>()
                 .ok()
-                .and_then(|auth| auth.principal()),
+                .and_then(|auth| auth.auth()),
             client: context
                 .caller
                 .get::<DispatchClient>()

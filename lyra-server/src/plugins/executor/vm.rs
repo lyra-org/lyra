@@ -321,7 +321,7 @@ impl PluginExecutor {
         self.runtime.run_plugin_source(plugin_id, path, source)
     }
 
-    /// Runs `source` with `args` as its `...`, as a dispatch acting for `principal`.
+    /// Runs `source` with `args` as its `...`, as a dispatch acting for its `auth`.
     pub(super) fn start_plugin_source(
         &self,
         run: super::PluginSourceRun,
@@ -335,7 +335,7 @@ impl PluginExecutor {
             Some(Arc::from(run.plugin_id.as_str())),
             |timeout, completion| {
                 let dispatch_auth = crate::plugins::auth::DispatchAuth::default();
-                dispatch_auth.record(run.principal);
+                dispatch_auth.record(run.auth);
                 let mut context = CallContext {
                     origin: super::plugin_origin(run.plugin_id, run.path),
                     ..CallContext::default()

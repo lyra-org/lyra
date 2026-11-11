@@ -74,7 +74,7 @@ fn socket_auth(
     let dispatch_auth = crate::plugins::auth::DispatchAuth::default();
     let reauth = match (auth_mode, auth) {
         (RouteAuthMode::Required, Some(auth)) => {
-            dispatch_auth.record_auth(auth);
+            dispatch_auth.record(auth.clone());
             Some(SocketReauth {
                 headers: headers.clone(),
                 user_public_id: auth.principal.user_public_id.clone(),
@@ -320,7 +320,7 @@ mod tests {
             .await?
             .ok_or_else(|| anyhow::anyhow!("credential should resolve"))?;
         let dispatch_auth = crate::plugins::auth::DispatchAuth::default();
-        dispatch_auth.record(auth.principal.clone());
+        dispatch_auth.record(auth.clone());
         Ok(SocketReauth {
             headers,
             user_public_id: auth.principal.user_public_id,
@@ -457,7 +457,9 @@ mod tests {
         let (other_db_id, _) = session_user("socket-plugin-resolved").await?;
         let mut reauth = socket_reauth(&token).await?;
         let other = crate::services::testing::user_principal(other_db_id).await?;
-        reauth.dispatch_auth.record(other.clone());
+        reauth
+            .dispatch_auth
+            .record(crate::plugins::testing::acting_as(other.clone()));
 
         assert!(reauth.check().await);
         let acting = reauth
@@ -572,7 +574,9 @@ mod tests {
         crate::plugins::testing::init_default_test_state()?;
         let (user_db_id, _) = session_user("socket-driver-disconnect").await?;
         let dispatch_auth = crate::plugins::auth::DispatchAuth::default();
-        dispatch_auth.record(crate::services::testing::user_principal(user_db_id).await?);
+        dispatch_auth.record(crate::plugins::testing::acting_as(
+            crate::services::testing::user_principal(user_db_id).await?,
+        ));
         let harness = spawn_driver(dispatch_auth.clone(), None);
 
         drop(harness.client_tx);

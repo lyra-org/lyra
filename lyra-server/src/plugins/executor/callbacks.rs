@@ -209,7 +209,7 @@ impl CallbackReply {
                 let result = result.and_then(|values| {
                     let parsed = super::api::parse_api_response(&request, values)?;
                     let mut response = parsed.response;
-                    response.principal = auth.principal();
+                    response.auth = auth.auth();
                     response.client = request.client;
                     if let Some(produce) = parsed.produce {
                         let body = if super::stream::has_body(&request.method, response.status) {

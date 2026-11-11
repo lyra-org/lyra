@@ -284,12 +284,11 @@ async fn serve_track(
     request_method: &Method,
     request_headers: &HeaderMap,
 ) -> Result<Response, AppError> {
-    let principal = response.principal.as_ref();
+    let auth = response.auth.as_ref();
     match options {
         TrackResponseOptions::Hls(options) => {
             let (track_id, access) =
-                require_plugin_track_access(principal, track_id, MediaTokenPurpose::HlsPlaylist)
-                    .await?;
+                require_plugin_track_access(auth, track_id, MediaTokenPurpose::HlsPlaylist).await?;
             serve_hls_playlist_for_track(request_method, &track_id, &access, options).await
         }
         TrackResponseOptions::Stream(TrackStreamRequest {
@@ -298,7 +297,7 @@ async fn serve_track(
             options,
         }) => {
             let (track_id, access) =
-                stream_track_access(principal, response.client, track_id, public).await?;
+                stream_track_access(auth, response.client, track_id, public).await?;
             track_response(
                 request_method,
                 request_headers,
@@ -312,8 +311,7 @@ async fn serve_track(
         }
         TrackResponseOptions::Download(options) => {
             let (track_id, access) =
-                require_plugin_track_access(principal, track_id, MediaTokenPurpose::Download)
-                    .await?;
+                require_plugin_track_access(auth, track_id, MediaTokenPurpose::Download).await?;
             track_response(
                 request_method,
                 request_headers,
@@ -384,7 +382,8 @@ mod tests {
         track_id: &str,
         purpose: MediaTokenPurpose,
     ) -> Result<(), StatusCode> {
-        require_plugin_track_access(principal, track_id, purpose)
+        let auth = principal.cloned().map(crate::plugins::testing::acting_as);
+        require_plugin_track_access(auth.as_ref(), track_id, purpose)
             .await
             .map(|_| ())
             .map_err(|error| AppError::from(error).into_response().status())
@@ -498,7 +497,7 @@ mod tests {
             cover: None,
             track_id: Some(track_id.to_string()),
             options: Some(stream_options(public)),
-            principal: None,
+            auth: None,
             client: ClientAddress::default(),
             fallback: None,
         }
@@ -534,14 +533,15 @@ mod tests {
         ));
         assert_eq!(access.caller(), Caller::Client(ClientAddress::default()));
 
-        let caller = crate::services::auth::Principal::from_parts(
-            agdb::DbId(1),
-            "caller-public-id".to_string(),
-            "caller".to_string(),
-            Vec::new(),
-            None,
-            HashSet::new(),
-        );
+        let caller =
+            crate::plugins::testing::acting_as(crate::services::auth::Principal::from_parts(
+                agdb::DbId(1),
+                "caller-public-id".to_string(),
+                "caller".to_string(),
+                Vec::new(),
+                None,
+                HashSet::new(),
+            ));
         let (_, access) = stream_track_access(Some(&caller), address("10.0.0.1"), &track_id, true)
             .await
             .map_err(|error| anyhow::anyhow!("public access failed: {error:?}"))?;
@@ -620,7 +620,7 @@ mod tests {
             }),
             track_id: None,
             options: None,
-            principal: None,
+            auth: None,
             client: ClientAddress::default(),
             fallback: None,
         }
@@ -893,7 +893,7 @@ mod tests {
         let track_id = prepare_streamable_track(&test_dir).await?;
         let downloader =
             create_user_with_permissions("plugin-downloader", vec![Permission::Download]).await?;
-        let downloader = crate::services::auth::require_authenticated(
+        let downloader = crate::services::auth::require_auth(
             crate::routes::request::bearer_credential(&downloader),
         )
         .await?;
@@ -913,7 +913,7 @@ mod tests {
         ] {
             let served = plugin_api_response_to_axum(
                 ApiHandlerResponse {
-                    principal: Some(downloader.clone()),
+                    auth: Some(downloader.clone()),
                     ..track_kind_response(kind, &track_id, 203, &plugin_headers, options)
                 },
                 &Method::GET,
@@ -1070,8 +1070,8 @@ mod tests {
         let test_dir = initialize_test_runtime().await?;
         let track_id = prepare_streamable_track(&test_dir).await?;
         let headers = axum::http::HeaderMap::new();
-        let download = |principal| ApiHandlerResponse {
-            principal,
+        let download = |auth: Option<crate::services::auth::ResolvedAuth>| ApiHandlerResponse {
+            auth,
             ..track_kind_response(
                 ApiResponseKind::DownloadTrack,
                 &track_id,
@@ -1081,10 +1081,8 @@ mod tests {
             )
         };
         let authenticate = |headers: HeaderMap| async move {
-            crate::services::auth::require_authenticated(crate::routes::request::bearer_credential(
-                &headers,
-            ))
-            .await
+            crate::services::auth::require_auth(crate::routes::request::bearer_credential(&headers))
+                .await
         };
 
         let listener =
@@ -1119,12 +1117,12 @@ mod tests {
         let test_dir = initialize_test_runtime().await?;
         let track_id = prepare_streamable_track(&test_dir).await?;
         let listener = create_user_with_permissions("plugin-hls-listener", Vec::new()).await?;
-        let listener = crate::services::auth::require_authenticated(
+        let listener = crate::services::auth::require_auth(
             crate::routes::request::bearer_credential(&listener),
         )
         .await?;
         let playlist = |options: HlsPlaylistOptions| ApiHandlerResponse {
-            principal: Some(listener.clone()),
+            auth: Some(listener.clone()),
             ..track_kind_response(
                 ApiResponseKind::HlsPlaylist,
                 &track_id,
@@ -1187,13 +1185,13 @@ mod tests {
         let test_dir = initialize_test_runtime().await?;
         let track_id = prepare_streamable_track(&test_dir).await?;
         let listener = create_user_with_permissions("plugin-fallback-listener", Vec::new()).await?;
-        let listener = crate::services::auth::require_authenticated(
+        let listener = crate::services::auth::require_auth(
             crate::routes::request::bearer_credential(&listener),
         )
         .await?;
         let plugin_headers = [("x-plugin", "kept")];
         let with_fallback = |kind, track_id: &str, options| ApiHandlerResponse {
-            principal: Some(listener.clone()),
+            auth: Some(listener.clone()),
             fallback: Some(text_fallback(
                 200,
                 &[("content-type", "text/xml"), ("retry-after", "99")],

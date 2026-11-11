@@ -31,8 +31,8 @@ impl PluginExecutor {
         permit: tokio::sync::OwnedSemaphorePermit,
     ) {
         let dispatch_auth = crate::plugins::auth::DispatchAuth::default();
-        if let Some(auth) = request.auth.as_ref() {
-            dispatch_auth.record_auth(auth);
+        if let Some(auth) = request.auth.clone() {
+            dispatch_auth.record(auth);
         }
         let prepare = || {
             let routes = self.vm.data().get::<crate::plugins::api::ApiRouteStore>()?;
@@ -241,7 +241,7 @@ pub(super) fn parse_api_response(
         cover,
         track_id,
         options,
-        principal: None,
+        auth: None,
         client: Default::default(),
         fallback,
     };

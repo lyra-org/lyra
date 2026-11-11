@@ -10,8 +10,12 @@ for _, user in users.list() do
 end
 assert(#listed == 1 and listed[1] == fixture.users.admin)
 
+-- The admin's sessions: the fixture's and the one the test runs with.
 local everyone = auth.list_sessions({ all_users = true })
-assert(#everyone == 1 and everyone[1].user_id == fixture.users.admin)
+assert(#everyone == 2)
+for _, session in everyone do
+	assert(session.user_id == fixture.users.admin)
+end
 assert(#auth.list_sessions({ user_id = fixture.users.default }) == 0)
 
 assert(playlists.query({ owner_id = fixture.users.default }).total == 0)
