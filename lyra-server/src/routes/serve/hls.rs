@@ -353,12 +353,10 @@ async fn get_hls_segment(
 ) -> Result<Response<Body>, AppError> {
     let segment = sanitize_segment_name(&segment)?;
     let (job_key, playlist_segment_count, holder) = {
-        let mut sessions = HLS_SESSIONS.write().await;
+        let sessions = HLS_SESSIONS.read().await;
         let session = sessions
-            .get_mut(&session_id)
+            .get(&session_id)
             .ok_or_else(|| AppError::not_found("HLS session not found"))?;
-
-        session.last_access = Instant::now();
         (
             session.job_key.clone(),
             session.playlist_segment_count,
@@ -366,6 +364,12 @@ async fn get_hls_segment(
         )
     };
     require_session_access(&holder, job_key.track_public_id()).await?;
+    HLS_SESSIONS
+        .write()
+        .await
+        .get_mut(&session_id)
+        .ok_or_else(|| AppError::not_found("HLS session not found"))?
+        .last_access = Instant::now();
 
     let segment_dir = {
         let jobs = HLS_JOBS.read().await;

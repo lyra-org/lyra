@@ -1193,6 +1193,37 @@ pub(crate) mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn a_refused_hls_segment_leaves_the_session_idle() -> anyhow::Result<()> {
+        use crate::services::hls::state::HLS_SESSIONS;
+
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        crate::services::hls::state::test_helpers::reset_hls_state_for_test().await;
+        let headers = create_user_with_permissions("hls-poller", vec![]).await?;
+        let segment = start_bearer_hls(&track_id, &headers).await?;
+        let last_access = || async {
+            let sessions = HLS_SESSIONS.read().await;
+            let mut sessions = sessions.values();
+            let session = sessions.next().expect("the session is still attached");
+            assert!(sessions.next().is_none());
+            session.last_access
+        };
+
+        assert!(crate::services::auth::logout_with_token(Some(&bearer_token(&headers))).await?);
+        let served_at = last_access().await;
+        assert_eq!(
+            hls_segment_status(&segment).await?,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(last_access().await, served_at);
+
+        crate::services::hls::state::test_helpers::reset_hls_state_for_test().await;
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn bearer_hls_segments_stop_once_the_api_key_is_revoked() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         let test_dir = initialize_test_runtime().await?;
