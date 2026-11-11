@@ -50,6 +50,9 @@ use crate::output::{
 
 static FFMPEG_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
+const AVERROR_INPUT_CHANGED: i32 = -0x636e6701;
+const AVERROR_OUTPUT_CHANGED: i32 = -0x636e6702;
+
 fn ensure_ffmpeg_initialized() {
     if !FFMPEG_INITIALIZED.swap(true, Ordering::SeqCst) {
         unsafe {
@@ -1069,14 +1072,56 @@ struct Resampler {
 }
 
 impl Resampler {
-    fn from_raw(ptr: *mut SwrContext) -> Result<Self> {
-        Ok(Self {
-            ptr: NonNull::new(ptr).ok_or_else(|| Error::AllocCodecContext("swr context".into()))?,
-        })
+    /// A resampler with `swr_opts` applied, configured from the first frame it converts. The options
+    /// outlive each reconfiguration, which resets only the formats and buffered samples.
+    unsafe fn new(swr_opts: &HashMap<String, String>) -> Result<Self> {
+        unsafe {
+            let resampler = Self {
+                ptr: NonNull::new(swr_alloc())
+                    .ok_or_else(|| Error::AllocCodecContext("swr context".into()))?,
+            };
+            for (key, value) in swr_opts {
+                let key_c = to_cstring(key.as_str(), "swr option key")?;
+                let value_c = to_cstring(value.as_str(), "swr option value")?;
+                let ret = av_opt_set(
+                    resampler.as_mut_ptr() as *mut _,
+                    key_c.as_ptr(),
+                    value_c.as_ptr(),
+                    0,
+                );
+                if ret < 0 {
+                    return Err(Error::AllocCodecContext(format!(
+                        "swr {}: {}",
+                        key,
+                        av_error_string(ret)
+                    )));
+                }
+            }
+            Ok(resampler)
+        }
     }
 
     fn as_mut_ptr(&self) -> *mut SwrContext {
         self.ptr.as_ptr()
+    }
+
+    fn is_configured(&self) -> bool {
+        unsafe { swr_is_initialized(self.as_mut_ptr()) != 0 }
+    }
+
+    /// Maps `input`'s format onto `output`'s, discarding any samples still buffered.
+    unsafe fn configure(&self, output: *const AVFrame, input: *const AVFrame) -> Result<()> {
+        unsafe {
+            let ret = swr_config_frame(self.as_mut_ptr(), output, input);
+            if ret < 0 {
+                return Err(ffmpeg_operation_error("configure resampler", ret));
+            }
+            let ret = swr_init(self.as_mut_ptr());
+            if ret < 0 {
+                return Err(ffmpeg_operation_error("initialize resampler", ret));
+            }
+            Ok(())
+        }
     }
 }
 
@@ -1713,8 +1758,7 @@ unsafe fn transcode_audio(
             )));
         }
 
-        let swr_ctx_owner = create_resampler(dec_ctx, enc_ctx, swr_opts)?;
-        let swr_ctx = swr_ctx_owner.as_mut_ptr();
+        let resampler = Resampler::new(swr_opts)?;
 
         let frame_size = if (*enc_ctx).frame_size > 0 {
             (*enc_ctx).frame_size
@@ -1810,51 +1854,7 @@ unsafe fn transcode_audio(
                     return Err(ffmpeg_operation_error("receive decoded frame", ret));
                 }
 
-                let dst_nb_samples = av_rescale_rnd(
-                    swr_get_delay(swr_ctx, (*dec_ctx).sample_rate as i64)
-                        + (*frame).nb_samples as i64,
-                    (*enc_ctx).sample_rate as i64,
-                    (*dec_ctx).sample_rate as i64,
-                    AVRounding::AV_ROUND_UP,
-                ) as i32;
-
-                av_frame_unref(resampled_frame);
-                (*resampled_frame).format = (*enc_ctx).sample_fmt as i32;
-                (*resampled_frame).ch_layout = (*enc_ctx).ch_layout;
-                (*resampled_frame).sample_rate = (*enc_ctx).sample_rate;
-                (*resampled_frame).nb_samples = dst_nb_samples;
-
-                let ret = av_frame_get_buffer(resampled_frame, 0);
-                if ret < 0 {
-                    av_frame_unref(frame);
-                    return Err(ffmpeg_operation_error("allocate resampled frame", ret));
-                }
-
-                let converted_samples = swr_convert(
-                    swr_ctx,
-                    (*resampled_frame).data.as_mut_ptr(),
-                    dst_nb_samples,
-                    (*frame).data.as_ptr() as *mut *const u8,
-                    (*frame).nb_samples,
-                );
-                if converted_samples < 0 {
-                    av_frame_unref(frame);
-                    av_frame_unref(resampled_frame);
-                    return Err(ffmpeg_operation_error("resample audio", converted_samples));
-                }
-
-                (*resampled_frame).nb_samples = converted_samples;
-
-                let ret = av_audio_fifo_write(
-                    fifo,
-                    (*resampled_frame).data.as_ptr() as *mut *mut std::ffi::c_void,
-                    converted_samples,
-                );
-                if ret < 0 {
-                    av_frame_unref(frame);
-                    av_frame_unref(resampled_frame);
-                    return Err(ffmpeg_operation_error("write audio fifo", ret));
-                }
+                resample_into_fifo(&resampler, frame, resampled_frame, enc_ctx, fifo)?;
 
                 while av_audio_fifo_size(fifo) >= frame_size {
                     let mut samples_to_read = frame_size;
@@ -1867,27 +1867,8 @@ unsafe fn transcode_audio(
                         samples_to_read = std::cmp::min(samples_to_read, remaining_samples as i32);
                     }
 
-                    av_frame_unref(output_frame);
-                    (*output_frame).format = (*enc_ctx).sample_fmt as i32;
-                    (*output_frame).ch_layout = (*enc_ctx).ch_layout;
-                    (*output_frame).sample_rate = (*enc_ctx).sample_rate;
-                    (*output_frame).nb_samples = samples_to_read;
-
-                    let ret = av_frame_get_buffer(output_frame, 0);
-                    if ret < 0 {
-                        return Err(ffmpeg_operation_error("allocate output frame", ret));
-                    }
-
-                    let read_samples = av_audio_fifo_read(
-                        fifo,
-                        (*output_frame).data.as_ptr() as *mut *mut std::ffi::c_void,
-                        samples_to_read,
-                    );
-                    if read_samples < 0 {
-                        return Err(ffmpeg_operation_error("read audio fifo", read_samples));
-                    }
-
-                    (*output_frame).nb_samples = read_samples;
+                    let read_samples =
+                        read_fifo_frame(fifo, output_frame, enc_ctx, samples_to_read)?;
                     (*output_frame).pts = pts;
                     pts += read_samples as i64;
                     produced_samples += read_samples as i64;
@@ -1953,27 +1934,7 @@ unsafe fn drain_fifo_and_encode(
                 samples_to_read = std::cmp::min(samples_to_read, remaining_samples as i32);
             }
 
-            av_frame_unref(output_frame);
-            (*output_frame).format = (*enc_ctx).sample_fmt as i32;
-            (*output_frame).ch_layout = (*enc_ctx).ch_layout;
-            (*output_frame).sample_rate = (*enc_ctx).sample_rate;
-            (*output_frame).nb_samples = samples_to_read;
-
-            let ret = av_frame_get_buffer(output_frame, 0);
-            if ret < 0 {
-                return Err(ffmpeg_operation_error("allocate output frame", ret));
-            }
-
-            let read_samples = av_audio_fifo_read(
-                fifo,
-                (*output_frame).data.as_ptr() as *mut *mut std::ffi::c_void,
-                samples_to_read,
-            );
-            if read_samples < 0 {
-                return Err(ffmpeg_operation_error("read audio fifo", read_samples));
-            }
-
-            (*output_frame).nb_samples = read_samples;
+            let read_samples = read_fifo_frame(fifo, output_frame, enc_ctx, samples_to_read)?;
             (*output_frame).pts = *pts;
             *pts += read_samples as i64;
             *produced_samples += read_samples as i64;
@@ -1990,110 +1951,107 @@ unsafe fn drain_fifo_and_encode(
     }
 }
 
-unsafe fn create_resampler(
-    dec_ctx: *mut AVCodecContext,
+/// Resamples `frame` onto the encoder's format into `fifo`. A frame whose format differs from the
+/// previous one first flushes what the resampler holds, then reconfigures it.
+unsafe fn resample_into_fifo(
+    resampler: &Resampler,
+    frame: *mut AVFrame,
+    resampled_frame: *mut AVFrame,
     enc_ctx: *mut AVCodecContext,
-    swr_opts: &HashMap<String, String>,
-) -> Result<Resampler> {
+    fifo: *mut AVAudioFifo,
+) -> Result<()> {
     unsafe {
-        let swr_ctx = swr_alloc();
-        if swr_ctx.is_null() {
-            return Err(Error::AllocCodecContext("swr context".into()));
+        specify_channel_layout(&mut (*frame).ch_layout);
+        prepare_resampled_frame(resampled_frame, enc_ctx)?;
+        if !resampler.is_configured() {
+            resampler.configure(resampled_frame, frame)?;
         }
 
-        if (*dec_ctx).sample_rate <= 0 || (*enc_ctx).sample_rate <= 0 {
-            swr_free(&mut { swr_ctx });
-            return Err(Error::AllocCodecContext(
-                "swr sample rates must be greater than zero".into(),
-            ));
-        }
-
-        let ret = av_opt_set_chlayout(
-            swr_ctx as *mut _,
-            c"in_chlayout".as_ptr(),
-            &(*dec_ctx).ch_layout,
-            0,
-        );
-        if ret < 0 {
-            swr_free(&mut { swr_ctx });
-            return Err(ffmpeg_operation_error("set swr input channel layout", ret));
-        }
-        let ret = av_opt_set_int(
-            swr_ctx as *mut _,
-            c"in_sample_rate".as_ptr(),
-            (*dec_ctx).sample_rate as i64,
-            0,
-        );
-        if ret < 0 {
-            swr_free(&mut { swr_ctx });
-            return Err(ffmpeg_operation_error("set swr input sample rate", ret));
-        }
-        let ret = av_opt_set_sample_fmt(
-            swr_ctx as *mut _,
-            c"in_sample_fmt".as_ptr(),
-            (*dec_ctx).sample_fmt,
-            0,
-        );
-        if ret < 0 {
-            swr_free(&mut { swr_ctx });
-            return Err(ffmpeg_operation_error("set swr input sample format", ret));
-        }
-
-        let ret = av_opt_set_chlayout(
-            swr_ctx as *mut _,
-            c"out_chlayout".as_ptr(),
-            &(*enc_ctx).ch_layout,
-            0,
-        );
-        if ret < 0 {
-            swr_free(&mut { swr_ctx });
-            return Err(ffmpeg_operation_error("set swr output channel layout", ret));
-        }
-        let ret = av_opt_set_int(
-            swr_ctx as *mut _,
-            c"out_sample_rate".as_ptr(),
-            (*enc_ctx).sample_rate as i64,
-            0,
-        );
-        if ret < 0 {
-            swr_free(&mut { swr_ctx });
-            return Err(ffmpeg_operation_error("set swr output sample rate", ret));
-        }
-        let ret = av_opt_set_sample_fmt(
-            swr_ctx as *mut _,
-            c"out_sample_fmt".as_ptr(),
-            (*enc_ctx).sample_fmt,
-            0,
-        );
-        if ret < 0 {
-            swr_free(&mut { swr_ctx });
-            return Err(ffmpeg_operation_error("set swr output sample format", ret));
-        }
-
-        for (key, value) in swr_opts {
-            let key_c = to_cstring(key.as_str(), "swr option key")?;
-            let value_c = to_cstring(value.as_str(), "swr option value")?;
-            let ret = av_opt_set(swr_ctx as *mut _, key_c.as_ptr(), value_c.as_ptr(), 0);
-            if ret < 0 {
-                swr_free(&mut { swr_ctx });
-                return Err(Error::AllocCodecContext(format!(
-                    "swr {}: {}",
-                    key,
-                    av_error_string(ret)
-                )));
+        let mut ret = swr_convert_frame(resampler.as_mut_ptr(), resampled_frame, frame);
+        if ret == AVERROR_INPUT_CHANGED || ret == AVERROR_OUTPUT_CHANGED {
+            let flushed = swr_convert_frame(resampler.as_mut_ptr(), resampled_frame, null());
+            if flushed < 0 {
+                return Err(ffmpeg_operation_error("flush resampler", flushed));
             }
-        }
+            write_fifo_frame(fifo, resampled_frame)?;
 
-        let ret = swr_init(swr_ctx);
+            prepare_resampled_frame(resampled_frame, enc_ctx)?;
+            resampler.configure(resampled_frame, frame)?;
+            ret = swr_convert_frame(resampler.as_mut_ptr(), resampled_frame, frame);
+        }
         if ret < 0 {
-            swr_free(&mut { swr_ctx });
-            return Err(Error::AllocCodecContext(format!(
-                "swr init: {}",
-                av_error_string(ret)
-            )));
+            return Err(ffmpeg_operation_error("resample audio", ret));
+        }
+        write_fifo_frame(fifo, resampled_frame)
+    }
+}
+
+/// An unspecified layout replaced by the default for its channel count, as the resampler stores it;
+/// left unspecified, the resampler would report every frame as a format change.
+fn specify_channel_layout(layout: &mut AVChannelLayout) {
+    if layout.order == AVChannelOrder::AV_CHANNEL_ORDER_UNSPEC {
+        unsafe { av_channel_layout_default(layout, layout.nb_channels) };
+    }
+}
+
+/// Empties `frame` and gives it the encoder's format, for the resampler to size and fill.
+unsafe fn prepare_resampled_frame(frame: *mut AVFrame, enc_ctx: *mut AVCodecContext) -> Result<()> {
+    unsafe {
+        set_encoder_format(frame, enc_ctx)?;
+        specify_channel_layout(&mut (*frame).ch_layout);
+        Ok(())
+    }
+}
+
+unsafe fn set_encoder_format(frame: *mut AVFrame, enc_ctx: *mut AVCodecContext) -> Result<()> {
+    unsafe {
+        av_frame_unref(frame);
+        (*frame).format = (*enc_ctx).sample_fmt as i32;
+        (*frame).sample_rate = (*enc_ctx).sample_rate;
+        let ret = av_channel_layout_copy(&mut (*frame).ch_layout, &(*enc_ctx).ch_layout);
+        if ret < 0 {
+            return Err(ffmpeg_operation_error("copy channel layout", ret));
+        }
+        Ok(())
+    }
+}
+
+unsafe fn write_fifo_frame(fifo: *mut AVAudioFifo, frame: *const AVFrame) -> Result<()> {
+    unsafe {
+        let ret = av_audio_fifo_write(
+            fifo,
+            (*frame).extended_data as *const *mut c_void,
+            (*frame).nb_samples,
+        );
+        if ret < 0 {
+            return Err(ffmpeg_operation_error("write audio fifo", ret));
+        }
+        Ok(())
+    }
+}
+
+/// Reads up to `samples` from `fifo` into `frame` in the encoder's format, returning how many it read.
+unsafe fn read_fifo_frame(
+    fifo: *mut AVAudioFifo,
+    frame: *mut AVFrame,
+    enc_ctx: *mut AVCodecContext,
+    samples: i32,
+) -> Result<i32> {
+    unsafe {
+        set_encoder_format(frame, enc_ctx)?;
+        (*frame).nb_samples = samples;
+        let ret = av_frame_get_buffer(frame, 0);
+        if ret < 0 {
+            return Err(ffmpeg_operation_error("allocate output frame", ret));
         }
 
-        Resampler::from_raw(swr_ctx)
+        let read_samples =
+            av_audio_fifo_read(fifo, (*frame).extended_data as *const *mut c_void, samples);
+        if read_samples < 0 {
+            return Err(ffmpeg_operation_error("read audio fifo", read_samples));
+        }
+        (*frame).nb_samples = read_samples;
+        Ok(read_samples)
     }
 }
 

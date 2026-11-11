@@ -205,16 +205,17 @@ mod tests {
         assert!(matches!(error, Error::OutputCallbackPanic));
     }
 
-    /// A half-second stereo 44.1 kHz WAV of `bits`-bit samples, written under the temp dir.
-    fn pcm_wav(name: &str, bits: u16) -> std::path::PathBuf {
-        let (channels, rate) = (2u16, 44_100u32);
+    /// A half-second WAV of `bits`-bit samples, written under the temp dir. Each channel carries a
+    /// sine of its own frequency, advancing `0.05 * (channel + 1)` radians a sample.
+    fn pcm_wav(name: &str, bits: u16, channels: u16, rate: u32) -> std::path::PathBuf {
         let bytes_per_sample = bits / 8;
         let block_align = channels * bytes_per_sample;
         let frames = rate / 2;
         let mut data = Vec::with_capacity(frames as usize * block_align as usize);
         for frame in 0..frames {
-            let sample = ((frame as f64 * 0.05).sin() * f64::from(1u32 << (bits - 2))) as i32;
-            for _ in 0..channels {
+            for channel in 0..channels {
+                let phase = frame as f64 * 0.05 * f64::from(channel + 1);
+                let sample = (phase.sin() * f64::from(1u32 << (bits - 2))) as i32;
                 data.extend_from_slice(&sample.to_le_bytes()[..bytes_per_sample as usize]);
             }
         }
@@ -273,7 +274,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
     fn flac_keeps_the_source_bit_depth_unless_capped() {
-        let source = pcm_wav("flac-depth", 24);
+        let source = pcm_wav("flac-depth", 24, 2, 44_100);
         for (bit_depth, expected) in [(None, 24), (Some(16), 16), (Some(24), 24)] {
             let target = source.with_extension(format!("{bit_depth:?}.flac"));
             let mut output = Output::new(&target)
@@ -296,7 +297,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
     fn alac_keeps_a_16_bit_source_at_16_bits() {
-        let wav = pcm_wav("alac-depth", 24);
+        let wav = pcm_wav("alac-depth", 24, 2, 44_100);
         let deep_flac = wav.with_extension("flac");
         encode(
             &wav,
@@ -370,5 +371,131 @@ mod tests {
             assert_eq!(mp3_sample_rate(&mp3), expected, "cap {cap:?}");
             let _ = std::fs::remove_file(target);
         }
+    }
+
+    const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/assets");
+
+    fn asset(name: &str) -> std::path::PathBuf {
+        std::path::Path::new(ASSETS).join(name)
+    }
+
+    fn transcode(input: &std::path::Path, output: Output, end_ms: Option<u64>) -> Result<()> {
+        FfmpegContext::builder()
+            .input(input.to_string_lossy())
+            .output(output)
+            .end_ms(end_ms)
+            .build()
+            .expect("the output builds")
+            .start()
+            .expect("the transcode starts")
+            .wait()
+    }
+
+    /// `input` decoded to 16-bit PCM at `rate` and `channels`, as fingerprinting reads it.
+    fn decode_pcm(input: &std::path::Path, rate: u32, channels: u32) -> Result<Vec<u8>> {
+        let written = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+        let sink = std::sync::Arc::clone(&written);
+        let output = Output::pcm_s16le_callback(
+            move |buf: &[u8]| {
+                sink.lock().expect("sink lock").extend_from_slice(buf);
+                buf.len()
+            },
+            rate,
+            channels,
+        );
+        transcode(input, output, None)?;
+        Ok(std::mem::take(&mut *written.lock().expect("sink lock")))
+    }
+
+    fn wav_channels(path: &std::path::Path) -> u16 {
+        let wav = std::fs::read(path).expect("the wav is read");
+        u16::from_le_bytes([wav[22], wav[23]])
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
+    fn transcodes_planar_audio_with_more_than_eight_channels() {
+        let wav = pcm_wav("ten-channels", 16, 10, 48_000);
+        let vorbis = wav.with_extension("ogg");
+        encode(
+            &wav,
+            Output::new(&vorbis)
+                .audio_format(AudioFormat::Ogg)
+                .codec(AudioCodec::Vorbis),
+        );
+        let pcm = decode_pcm(&vorbis, 48_000, 10).expect("the vorbis decodes");
+        let samples: Vec<i16> = pcm
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&sample| i16::from_le_bytes(sample))
+            .collect();
+        for channel in 0..10 {
+            let crossings = samples
+                .chunks_exact(10)
+                .map(|frame| frame[channel] >= 0)
+                .collect::<Vec<_>>()
+                .windows(2)
+                .filter(|pair| pair[0] != pair[1])
+                .count() as f64;
+            let expected = 24_000.0 * 0.05 * (channel + 1) as f64 / std::f64::consts::PI;
+            assert!(
+                (crossings / expected - 1.0).abs() < 0.03,
+                "channel {channel} crossed zero {crossings} times, not about {expected}"
+            );
+        }
+
+        let malformed = wav.with_extension("malformed.wav");
+        let result = transcode(
+            &asset("35-channels.aac"),
+            Output::new(&malformed).audio_format(AudioFormat::Wav),
+            None,
+        );
+        assert!(
+            matches!(result, Err(Error::FfmpegOperation { .. })),
+            "a corrupt 35-channel stream fails after its first frame: {result:?}"
+        );
+
+        for path in [wav, vorbis, malformed] {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
+    fn follows_channel_layout_and_sample_rate_changes_mid_stream() {
+        let parts = [("joined-stereo", 2, 48_000), ("joined-mono", 1, 22_050)];
+        let mut joined = Vec::new();
+        for (name, channels, rate) in parts {
+            let wav = pcm_wav(name, 16, channels, rate);
+            let mp3 = wav.with_extension("mp3");
+            encode(
+                &wav,
+                Output::new(&mp3)
+                    .audio_format(AudioFormat::Mp3)
+                    .codec(AudioCodec::Mp3)
+                    .channels(u32::from(channels))
+                    .audio_bitrate_kbps(32)
+                    .set_raw_format_opt("id3v2_version", "0")
+                    .set_raw_format_opt("write_xing", "0"),
+            );
+            joined.extend(std::fs::read(&mp3).expect("the mp3 is read"));
+            let _ = std::fs::remove_file(wav);
+            let _ = std::fs::remove_file(mp3);
+        }
+        let path =
+            std::env::temp_dir().join(format!("lyra-ffmpeg-joined-{}.mp3", std::process::id()));
+        std::fs::write(&path, joined).expect("the joined mp3 is written");
+
+        let pcm = decode_pcm(&path, 44_100, 2).expect("the joined mp3 decodes");
+        let _ = std::fs::remove_file(path);
+        let seconds = pcm.len() as f64 / 4.0 / 44_100.0;
+        assert!(
+            (0.95..1.15).contains(&seconds),
+            "two half-second parts decoded to {seconds} s"
+        );
+
+        decode_pcm(&asset("layout-change.aac"), 11_025, 1)
+            .expect("a stream changing its channel count decodes");
     }
 }
