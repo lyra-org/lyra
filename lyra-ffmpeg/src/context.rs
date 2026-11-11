@@ -973,6 +973,7 @@ impl Drop for OutputContext {
         unsafe {
             if !(*self.as_mut_ptr()).pb.is_null() {
                 if self.io_ctx.is_some() {
+                    av_freep(&mut (*(*self.as_mut_ptr()).pb).buffer as *mut *mut u8 as *mut c_void);
                     avio_context_free(&mut (*self.as_mut_ptr()).pb);
                 } else if self.file_io_open {
                     avio_closep(&mut (*self.as_mut_ptr()).pb);
