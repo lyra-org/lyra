@@ -1374,6 +1374,7 @@ unsafe fn setup_encoder(
             if (*enc_ctx_ptr).ch_layout.nb_channels <= 0 {
                 av_channel_layout_default(&mut (*enc_ctx_ptr).ch_layout, 2);
             }
+            specify_channel_layout(&mut (*enc_ctx_ptr).ch_layout);
         }
         (*enc_ctx_ptr).time_base = AVRational {
             num: 1,
@@ -1997,8 +1998,9 @@ unsafe fn resample_into_fifo(
     }
 }
 
-/// An unspecified layout replaced by the default for its channel count, as the resampler stores it;
-/// left unspecified, the resampler would report every frame as a format change.
+/// An unspecified layout replaced by the default for its channel count. Encoders that list their
+/// layouts reject an unspecified one, and the resampler stores it as the default, so left unspecified
+/// it would report every frame as a format change.
 fn specify_channel_layout(layout: &mut AVChannelLayout) {
     if layout.order == AVChannelOrder::AV_CHANNEL_ORDER_UNSPEC {
         unsafe { av_channel_layout_default(layout, layout.nb_channels) };

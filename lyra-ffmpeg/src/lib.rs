@@ -474,7 +474,6 @@ mod tests {
                 Output::new(&mp3)
                     .audio_format(AudioFormat::Mp3)
                     .codec(AudioCodec::Mp3)
-                    .channels(u32::from(channels))
                     .audio_bitrate_kbps(32)
                     .set_raw_format_opt("id3v2_version", "0")
                     .set_raw_format_opt("write_xing", "0"),
@@ -512,6 +511,23 @@ mod tests {
         );
         assert_eq!(wav_channels(&target), 2);
         let _ = std::fs::remove_file(target);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
+    fn encodes_a_wav_without_a_channel_layout_to_mp3() {
+        let wav = pcm_wav("unspecified-layout", 16, 2, 44_100);
+        let mp3 = wav.with_extension("mp3");
+        encode(
+            &wav,
+            Output::new(&mp3)
+                .audio_format(AudioFormat::Mp3)
+                .codec(AudioCodec::Mp3),
+        );
+        let decoded = decode_pcm(&mp3, 44_100, 2).expect("the mp3 decodes");
+        assert!(!decoded.is_empty());
+        let _ = std::fs::remove_file(wav);
+        let _ = std::fs::remove_file(mp3);
     }
 
     #[test]
