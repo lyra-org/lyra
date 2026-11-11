@@ -30,3 +30,4 @@ unicode-properties = { version = "0.1", default-features = false, features = ["g
 
 [dev-dependencies]
 tempfile = { workspace = true }
+tracing-subscriber = { workspace = true }
