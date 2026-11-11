@@ -17,7 +17,7 @@ anyhow = { workspace = true }
 blake3 = { workspace = true }
 lofty = "0.25.5"
 lyra-metadata = { path = "../lyra-metadata" }
-rand = "0.9"
+rand = "0.10"
 schemars = { version = "1.2.1", features = ["derive"], optional = true }
 semver = { workspace = true }
 serde = { workspace = true }
