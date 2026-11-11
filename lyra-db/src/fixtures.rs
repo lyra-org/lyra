@@ -84,7 +84,8 @@ pub fn insert_artist(db: &mut DbAny, name: &str) -> anyhow::Result<DbId> {
     Ok(artist_id)
 }
 
-/// A whole-track listen of the track by the user, started at `started_at_ms`.
+/// A whole-track listen of the track by the user, started at `started_at_ms`, counted towards
+/// genre display covers as recording one does.
 pub fn insert_listen(
     db: &mut DbAny,
     user_db_id: DbId,
@@ -99,7 +100,11 @@ pub fn insert_listen(
         played_ms: Some(180_000),
         created_at_ms: started_at_ms,
     };
-    db.transaction_mut(|t| super::listens::insert(t, &listen, track_db_id, user_db_id))
+    db.transaction_mut(|t| {
+        let listen_db_id = super::listens::insert(t, &listen, track_db_id, user_db_id)?;
+        super::covers::display::record_genre_listen(t, track_db_id, user_db_id, started_at_ms)?;
+        Ok(listen_db_id)
+    })
 }
 
 /// A valid argon2 hash that no test password matches.

@@ -45,7 +45,7 @@ pub struct ListenTotal {
 }
 
 /// Inserts the user's listen of the track and counts it in the user's totals; the caller owns
-/// the transaction.
+/// the transaction, and whatever else a listen updates.
 pub fn insert(
     db: &mut impl DbAccess,
     listen: &Listen,
@@ -64,7 +64,6 @@ pub fn insert(
             .query(),
     )?;
     count(db, user_db_id, track_db_id, listen.started_at_ms)?;
-    super::covers::display::record_genre_listen(db, track_db_id, user_db_id, listen.started_at_ms)?;
 
     Ok(listen_id)
 }
@@ -495,6 +494,42 @@ mod tests {
             2,
             "no root holds a listen"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn inserting_a_listen_leaves_genre_display_covers_alone() -> anyhow::Result<()> {
+        use crate::covers::display::{
+            DisplayCoverScope,
+            DisplayCoverTargetKind,
+            get_profile,
+        };
+
+        let mut db = new_test_db()?;
+        let user = insert_user(&mut db, "listener")?;
+        let track = insert_track(&mut db, "Track")?;
+        let release = crate::fixtures::insert_release(&mut db, "Release")?;
+        crate::fixtures::link_track(&mut db, release, track)?;
+        let genre_db_id = crate::genres::resolve_by_name(&mut db, "Rock")?;
+        crate::genres::link_to_release(&mut db, genre_db_id, release)?;
+        let genre = crate::genres::get_by_id(&db, genre_db_id)?.expect("genre exists");
+        let instance_profile = |db: &DbAny| {
+            get_profile(
+                db,
+                DisplayCoverScope::Instance,
+                DisplayCoverTargetKind::Genre,
+                None,
+                &genre.id,
+            )
+        };
+
+        insert_play(&mut db, user, track, "play-stored-00001", 1_000)?;
+        assert_eq!(total(&db, user, track)?, Some(of(1, 1_000)));
+        assert!(instance_profile(&db)?.is_none());
+
+        insert_listen(&mut db, user, track, 2_000)?;
+        let (_, profile) = instance_profile(&db)?.expect("the fixture counts its listen");
+        assert_eq!(profile.instance_total_listens, 1);
         Ok(())
     }
 

@@ -1098,12 +1098,27 @@ pub(crate) fn resync_playlist_covers_for_release(
     Ok(())
 }
 
-pub(crate) fn record_genre_listen(
+/// Counts the user's listen of the track towards the display covers of its releases' genres. The
+/// caller records it in the transaction that stores the listen, for a `track_db_id` it loaded.
+pub fn record_genre_listen(
     db: &mut impl DbAccess,
     track_db_id: DbId,
     user_db_id: DbId,
     listened_at_ms: u64,
 ) -> anyhow::Result<()> {
+    let mut held = Vec::new();
+    for release in releases::holding_track(db, track_db_id)? {
+        let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
+            continue;
+        };
+        let genres = genres::get_for_release(db, release_db_id)?;
+        if !genres.is_empty() {
+            held.push((release_db_id, release.id, genres));
+        }
+    }
+    if held.is_empty() {
+        return Ok(());
+    }
     let Some(user) = users::get_by_id(db, user_db_id)? else {
         return Ok(());
     };
@@ -1111,16 +1126,11 @@ pub(crate) fn record_genre_listen(
         db_id: user_db_id,
         public_id: &user.id,
     };
-    let releases = releases::get_by_track(db, track_db_id)?;
     let mut seen_release_genres = HashSet::new();
     let mut incremented_genres = HashSet::new();
-    for release in releases {
-        let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
-            continue;
-        };
-        let release_public_id = release.id;
+    for (release_db_id, release_public_id, genres) in held {
         let has_cover = super::get(db, release_db_id)?.is_some();
-        for genre in genres::get_for_release(db, release_db_id)? {
+        for genre in genres {
             let Some(genre_db_id) = genre.db_id.clone().map(DbId::from) else {
                 continue;
             };

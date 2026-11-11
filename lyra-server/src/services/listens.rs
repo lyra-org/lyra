@@ -228,6 +228,12 @@ fn record_for_track(
         created_at_ms: now_ms,
     };
     let db_id = lyra_db::listens::insert(db, &listen, play.track_db_id, user_db_id)?;
+    lyra_db::covers::display::record_genre_listen(
+        db,
+        play.track_db_id,
+        user_db_id,
+        listen.started_at_ms,
+    )?;
     Ok(RecordOutcome::Recorded(RecordedListen {
         listen: Listen {
             db_id: Some(db_id),
@@ -918,6 +924,70 @@ mod tests {
         );
         Ok(())
     }
+    /// The listens the user's and the instance's display-cover statistics count for the genre.
+    fn genre_listens(db: &DbAny, user: DbId, genre: DbId) -> anyhow::Result<(u64, u64)> {
+        use lyra_db::covers::display::{
+            DisplayCoverScope,
+            DisplayCoverTargetKind,
+            get_profile,
+        };
+
+        let user = lyra_db::users::get_by_id(db, user)?.expect("user exists");
+        let genre = lyra_db::genres::get_by_id(db, genre)?.expect("genre exists");
+        let kind = DisplayCoverTargetKind::Genre;
+        let personal = get_profile(db, DisplayCoverScope::User, kind, Some(&user.id), &genre.id)?
+            .map_or(0, |(_, profile)| profile.user_total_listens);
+        let instance = get_profile(db, DisplayCoverScope::Instance, kind, None, &genre.id)?
+            .map_or(0, |(_, profile)| profile.instance_total_listens);
+        Ok((personal, instance))
+    }
+
+    #[test]
+    fn a_recorded_listen_counts_towards_its_genres_with_its_transaction() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user = lyra_db::test_db::insert_user(&mut db, "listener")?;
+        let track = insert_track(&mut db, None)?;
+        let release = lyra_db::fixtures::insert_release(&mut db, "Release")?;
+        lyra_db::fixtures::link_track(&mut db, release, track)?;
+        lyra_db::genres::sync_release_genres(&mut db, release, &["Rock".to_string()])?;
+        let genre = lyra_db::genres::resolve_by_name(&mut db, "Rock")?;
+
+        let too_short = record_in_transaction(&mut db, user, play("play-genre-00001", track, 1))?;
+        assert_eq!(too_short, RecordOutcome::NotListened);
+        assert_eq!(genre_listens(&db, user, genre)?, (0, 0));
+
+        let live = record_in_transaction(&mut db, user, play("play-genre-00001", track, 30_000))?;
+        assert!(matches!(live, RecordOutcome::Recorded(_)));
+        assert_eq!(genre_listens(&db, user, genre)?, (1, 1));
+
+        let again = record_in_transaction(&mut db, user, play("play-genre-00001", track, 60_000))?;
+        assert_eq!(again, RecordOutcome::Duplicate);
+        assert_eq!(genre_listens(&db, user, genre)?, (1, 1));
+
+        let submitted = submit_declared(
+            &mut db,
+            user,
+            track,
+            "play-genre-00002",
+            NOW_MS - 600_000,
+            None,
+        )?;
+        assert!(matches!(
+            submitted,
+            SubmissionOutcome::Judged(RecordOutcome::Recorded(_))
+        ));
+        assert_eq!(genre_listens(&db, user, genre)?, (2, 2));
+
+        let result = db.transaction_mut(|t| -> anyhow::Result<()> {
+            let outcome = record(t, user, play("play-genre-00003", track, 30_000), NOW_MS)?;
+            anyhow::ensure!(matches!(outcome, RecordOutcome::Recorded(_)));
+            anyhow::bail!("caller fails after recording")
+        });
+        assert!(result.is_err());
+        assert_eq!(genre_listens(&db, user, genre)?, (2, 2));
+        Ok(())
+    }
+
     fn stored_listen(db: &DbAny, user: DbId, play_id: &str) -> anyhow::Result<Listen> {
         lyra_db::listens::get_by_play_id(db, user, play_id)?
             .ok_or_else(|| anyhow::anyhow!("no listen for {play_id}"))

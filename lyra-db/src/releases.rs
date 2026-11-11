@@ -336,10 +336,14 @@ pub fn get_by_track(db: &impl super::DbAccess, track_db_id: DbId) -> anyhow::Res
     if !super::graph::is_kind(db, track_db_id, "Track")? {
         return Ok(Vec::new());
     }
-    releases_holding(db, track_db_id)
+    holding_track(db, track_db_id)
 }
 
-fn releases_holding(db: &impl super::DbAccess, track_db_id: DbId) -> anyhow::Result<Vec<Release>> {
+/// [`get_by_track`] for an id known to be a track's.
+pub(crate) fn holding_track(
+    db: &impl super::DbAccess,
+    track_db_id: DbId,
+) -> anyhow::Result<Vec<Release>> {
     // Every listen of the track leads to it as well, and telling a release from a listen means
     // reading the node. A release's edge is the owned one, and listens' edges hold nothing.
     let holders = db
@@ -393,7 +397,7 @@ pub fn get_by_tracks(
 
     if unique_track_db_ids.len() <= SMALL_TRACK_BATCH_THRESHOLD {
         for track_db_id in unique_track_db_ids {
-            let track_releases = releases_holding(db, track_db_id)?;
+            let track_releases = holding_track(db, track_db_id)?;
             let Some(owner_related) = related.get_mut(&track_db_id) else {
                 continue;
             };
