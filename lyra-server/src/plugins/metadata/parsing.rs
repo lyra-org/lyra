@@ -20,10 +20,10 @@ use crate::services::{
     metadata::lyrics::providers::DEFAULT_HANDLER_TIMEOUT,
     providers::{
         DEFAULT_SIMILAR_RELEASES_HANDLER_TIMEOUT,
+        IdLinkTemplate,
         MAX_SIMILAR_RELEASES_HANDLER_TIMEOUT,
         ProviderIdSpec,
         ProviderRequireSpec,
-        validate_id_link_template,
         validate_id_scheme,
     },
 };
@@ -241,14 +241,11 @@ fn parse_require_paths(
     }
 }
 
-pub(super) fn parse_id_url_template(bytes: Vec<u8>) -> luau::runtime::Result<String> {
+pub(super) fn parse_id_url_template(bytes: Vec<u8>) -> luau::runtime::Result<IdLinkTemplate> {
     let template = String::from_utf8(bytes)
-        .map_err(|_| crate::plugins::runtime_error("provider:id URL template must be utf-8"))?
-        .trim()
-        .to_string();
-    validate_id_link_template(&template)
-        .map_err(|err| crate::plugins::runtime_error(format!("provider:id {err}")))?;
-    Ok(template)
+        .map_err(|_| crate::plugins::runtime_error("provider:id URL template must be utf-8"))?;
+    IdLinkTemplate::parse(template.trim())
+        .map_err(|err| crate::plugins::runtime_error(format!("provider:id {err}")))
 }
 
 fn required_string(table: &luau::Table, key: &str) -> luau::runtime::Result<String> {

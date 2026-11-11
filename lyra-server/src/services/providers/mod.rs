@@ -117,8 +117,8 @@ pub(crate) use links::{
     IdLinkGenerators,
     IdLinkLocale,
     IdLinkTarget,
+    IdLinkTemplate,
     resolve_id_links,
-    validate_id_link_template,
 };
 pub(crate) use refresh::{
     LibraryRefreshOptions,

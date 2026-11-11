@@ -796,7 +796,7 @@ fn provider_class() -> ClassDescriptor {
     class.methods.extend([
         MethodDescriptor {
             description: Some(
-                "Registers an ID type. `generator` builds its web link for the `links` include: an absolute http(s) URL template whose `{id}`, placed after the host, is replaced by the percent-encoded id, or a function returning an absolute http(s) URL, or nil for no link. Link functions run when links are read, with a small CPU budget and a short batch deadline; their results are cached per id and `IdLinkContext` until the plugin reloads, and using up the CPU budget pauses that function for a while.",
+                "Registers an ID type. `generator` builds its web link for the `links` include: an absolute http(s) URL template whose `{id}`, placed in its path, query or fragment, is replaced by the percent-encoded id, or a function returning an absolute http(s) URL, or nil for no link. Link functions run when links are read, with a small CPU budget and a short batch deadline; their results are cached per id and `IdLinkContext` until the plugin reloads, and using up the CPU budget pauses that function for a while.",
             ),
             ..method(
                 "id",

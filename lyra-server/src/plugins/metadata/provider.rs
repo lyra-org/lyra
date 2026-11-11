@@ -21,6 +21,7 @@ use crate::services::{
         lyrics::providers as lyrics_dispatcher,
     },
     providers::{
+        IdLinkTemplate,
         ProviderCoverSpec,
         ProviderIdUrlGenerator,
         ProviderLyricsSpec,
@@ -252,7 +253,7 @@ fn provider_id_callback(
 }
 
 enum IdGenerator {
-    Template(String),
+    Template(IdLinkTemplate),
     Function(luau::Function),
 }
 

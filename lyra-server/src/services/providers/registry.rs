@@ -28,6 +28,7 @@ use super::links::{
     IdLinkCache,
     IdLinkGenerator,
     IdLinkGenerators,
+    IdLinkTemplate,
 };
 use super::schemes::IdSchemes;
 use crate::services::EntityType;
@@ -332,8 +333,7 @@ pub(crate) struct ProviderIdSpec {
 
 #[derive(Clone, Debug)]
 pub(crate) enum ProviderIdUrlGenerator {
-    /// Absolute http(s) URL with a single `{id}` placeholder.
-    Template(String),
+    Template(IdLinkTemplate),
     /// Plugin function called as `(id, ctx)` on the VM that registered it.
     Function(PluginCallbackHandle),
 }
@@ -847,7 +847,7 @@ pub(crate) mod tests {
     ) -> Option<String> {
         let provider = registry.state(provider_id)?;
         match provider.id_generators.get(&(entity, id_type.to_string()))? {
-            ProviderIdUrlGenerator::Template(template) => Some(template.clone()),
+            ProviderIdUrlGenerator::Template(template) => Some(template.to_string()),
             ProviderIdUrlGenerator::Function { .. } => None,
         }
     }
@@ -919,8 +919,8 @@ pub(crate) mod tests {
     }
 
     fn template(url: &str) -> impl FnOnce() -> Option<ProviderIdUrlGenerator> {
-        let url = url.to_string();
-        move || Some(ProviderIdUrlGenerator::Template(url))
+        let template = IdLinkTemplate::parse(url).expect("valid template");
+        move || Some(ProviderIdUrlGenerator::Template(template))
     }
 
     #[test]

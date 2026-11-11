@@ -57,32 +57,84 @@ const ID_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'_')
     .remove(b'~');
 
-/// Checks that `template` is an absolute http(s) URL with exactly one `{id}`
-/// placeholder, placed after the host.
-pub(crate) fn validate_id_link_template(template: &str) -> Result<(), String> {
-    let Some((prefix, rest)) = template.split_once("{id}") else {
-        return Err("URL template must contain an {id} placeholder".to_string());
-    };
-    if rest.contains("{id}") {
-        return Err("URL template must contain exactly one {id} placeholder".to_string());
-    }
-    let after_host = prefix
-        .split_once("://")
-        .is_some_and(|(_, authority)| authority.contains(['/', '?', '#']));
-    if !after_host || parse_link_url(&template.replace("{id}", "id")).is_none() {
-        return Err(
-            "URL template must be an absolute http(s) URL with {id} after the host".to_string(),
-        );
-    }
-    Ok(())
+/// Two distinct stand-ins for `{id}` while a template is parsed. Both must
+/// split the parsed URL in the same place, so a split can't land on template
+/// text that only normalization made look like the stand-in.
+const ID_MARKERS: [&str; 2] = ["lyraidmarkera", "lyraidmarkerb"];
+
+/// An absolute http(s) URL template with one `{id}` in its path, query or
+/// fragment, kept as the parser's serialization on either side of the id.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct IdLinkTemplate {
+    prefix: String,
+    suffix: String,
 }
 
-/// `None` for `.` and `..`, which stay dot segments even when encoded.
-fn render_template(template: &str, id: &str) -> Option<String> {
-    if matches!(id, "." | "..") {
-        return None;
+impl IdLinkTemplate {
+    pub(crate) fn parse(template: &str) -> Result<Self, String> {
+        let Some((prefix, suffix)) = template.split_once("{id}") else {
+            return Err("URL template must contain an {id} placeholder".to_string());
+        };
+        if suffix.contains("{id}") {
+            return Err("URL template must contain exactly one {id} placeholder".to_string());
+        }
+        if !has_complete_escapes(prefix) || !has_complete_escapes(suffix) {
+            return Err("URL template must use complete %XX escapes".to_string());
+        }
+        let [first, second] = ID_MARKERS.map(|marker| split_at_marker(prefix, marker, suffix));
+        match (first, second) {
+            (Some(first), Some(second)) if first == second => Ok(first),
+            _ => Err(
+                "URL template must be an absolute http(s) URL with {id} after the host".to_string(),
+            ),
+        }
     }
-    Some(template.replace("{id}", &utf8_percent_encode(id, ID_ENCODE_SET).to_string()))
+
+    /// `None` for blank ids, and for any id the parser would reinterpret
+    /// rather than keep verbatim, such as one forming a dot segment.
+    pub(crate) fn render(&self, id: &str) -> Option<String> {
+        if id.trim().is_empty() {
+            return None;
+        }
+        let id = utf8_percent_encode(id, ID_ENCODE_SET);
+        let url = format!("{}{id}{}", self.prefix, self.suffix);
+        parse_link_url(&url)
+            .is_some_and(|parsed| parsed.as_str() == url)
+            .then_some(url)
+    }
+}
+
+impl std::fmt::Display for IdLinkTemplate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}{{id}}{}", self.prefix, self.suffix)
+    }
+}
+
+/// Parses the template with `marker` for `{id}` and splits the serialization
+/// around the one `marker` at or after the path.
+fn split_at_marker(prefix: &str, marker: &str, suffix: &str) -> Option<IdLinkTemplate> {
+    let url = parse_link_url(&format!("{prefix}{marker}{suffix}"))?;
+    let serialized = url.as_str();
+    let path_start = url[..url::Position::BeforePath].len();
+    let mut found = serialized[path_start..].match_indices(marker);
+    let (Some((at, _)), None) = (found.next(), found.next()) else {
+        return None;
+    };
+    let at = path_start + at;
+    Some(IdLinkTemplate {
+        prefix: serialized[..at].to_string(),
+        suffix: serialized[at + marker.len()..].to_string(),
+    })
+}
+
+/// Whether every `%` starts a `%XX` escape, so none can join the id's text.
+fn has_complete_escapes(text: &str) -> bool {
+    text.split('%').skip(1).all(|after| {
+        after
+            .as_bytes()
+            .get(..2)
+            .is_some_and(|hex| hex.iter().all(u8::is_ascii_hexdigit))
+    })
 }
 
 fn parse_link_url(url: &str) -> Option<url::Url> {
@@ -369,7 +421,7 @@ where
                 };
                 let generator_id = match &generator.generator {
                     ProviderIdUrlGenerator::Template(template) => {
-                        if let Some(url) = render_template(template, &id) {
+                        if let Some(url) = template.render(&id) {
                             link.url = url;
                             slots.push((target.entity_db_id, LinkSlot::Ready(link)));
                         }
@@ -526,7 +578,9 @@ mod tests {
         IdLinkGenerator {
             scheme: Some("example:thing".to_string()),
             label: "Alpha".to_string(),
-            generator: ProviderIdUrlGenerator::Template(url.to_string()),
+            generator: ProviderIdUrlGenerator::Template(
+                IdLinkTemplate::parse(url).expect("valid template"),
+            ),
         }
     }
 
@@ -582,12 +636,31 @@ mod tests {
 
     #[test]
     fn templates_must_be_absolute_http_urls_with_the_id_after_the_host() {
-        for template in [
-            "https://example.test/release/{id}",
-            "http://example.test/?id={id}",
-            "https://example.test#{id}",
+        for (template, normalized) in [
+            (
+                "https://example.test/release/{id}",
+                "https://example.test/release/{id}",
+            ),
+            (
+                "http://example.test/?id={id}",
+                "http://example.test/?id={id}",
+            ),
+            ("https://example.test#{id}", "https://example.test/#{id}"),
+            (
+                "https://LYRAIDMARKERA.example/{id}",
+                "https://lyraidmarkera.example/{id}",
+            ),
+            (
+                "HTTPS://Example.Test:443/a/./b/%7e{id}%2F",
+                "https://example.test/a/b/%7e{id}%2F",
+            ),
         ] {
-            assert!(validate_id_link_template(template).is_ok(), "{template}");
+            let parsed = IdLinkTemplate::parse(template);
+            assert_eq!(
+                parsed.map(|parsed| parsed.to_string()).as_deref(),
+                Ok(normalized),
+                "{template}"
+            );
         }
         for template in [
             "{id}",
@@ -600,9 +673,54 @@ mod tests {
             "https://user:{id}@example.test/",
             "https://example.test/{id}/{id}",
             "https://example.test/release",
+            "https:///{id}/x",
+            "https://\t/{id}",
+            "https://\\/{id}",
+            "https://example.test/lyraidmarkera/{id}/../x",
+            "https://example.test/{id}/../?x=lyra\tidmarkera",
+            "https://example.test/{id}/../?x=lyraidmarkera&y=lyraidmarkerb",
+            "https://example.test/{id}/../x",
+            "https://example.test/a/%{id}/x",
+            "https://example.test/a/%2{id}/x",
+            "https://example.test/a/%{id}%2e",
+            "https://example.test/a/{id}%zz",
         ] {
-            assert!(validate_id_link_template(template).is_err(), "{template}");
+            assert!(IdLinkTemplate::parse(template).is_err(), "{template:?}");
         }
+    }
+
+    #[test]
+    fn templates_render_the_encoded_id_or_nothing() {
+        let path = IdLinkTemplate::parse("https://example.test/a/{id}/x").unwrap();
+        let query = IdLinkTemplate::parse("https://example.test/?id={id}&b=1").unwrap();
+        assert_eq!(
+            path.render("évil.example").as_deref(),
+            Some("https://example.test/a/%C3%A9vil.example/x")
+        );
+        assert_eq!(
+            path.render("a/b?c#d&e").as_deref(),
+            Some("https://example.test/a/a%2Fb%3Fc%23d%26e/x")
+        );
+        assert_eq!(
+            query.render("1&b=2#f").as_deref(),
+            Some("https://example.test/?id=1%26b%3D2%23f&b=1")
+        );
+        for id in ["", "  ", ".", ".."] {
+            assert_eq!(path.render(id), None, "{id:?}");
+        }
+        assert_eq!(
+            query.render("..").as_deref(),
+            Some("https://example.test/?id=..&b=1")
+        );
+        for template in [
+            "https://example.test/a/.{id}/x",
+            "https://example.test/a/%2e{id}/x",
+        ] {
+            let template = IdLinkTemplate::parse(template).unwrap();
+            assert_eq!(template.render("."), None, "{template}");
+            assert!(template.render("b").is_some(), "{template}");
+        }
+        assert_eq!(path.render(&"a".repeat(MAX_ID_LINK_URL_BYTES)), None);
     }
 
     #[tokio::test]
