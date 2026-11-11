@@ -56,10 +56,10 @@ use crate::{
     services::{
         auth::{
             Principal,
+            access::TrackPurpose,
             media_tokens::{
                 DeliveryOptions,
                 MEDIA_TOKEN_IDLE_TTL_SECONDS,
-                MediaTokenPurpose,
                 issue_media_token,
             },
             require_auth,
@@ -623,7 +623,7 @@ async fn create_track_playback_url(
         &id,
         &delivery::TrackAccess::Credential {
             holder: holder.clone(),
-            purpose: MediaTokenPurpose::Stream,
+            purpose: TrackPurpose::Stream,
         },
     )
     .await?;
@@ -635,13 +635,13 @@ async fn create_track_playback_url(
 
     // HLS always survives, which is what keeps `expires_at` total and the response
     // non-empty; tokens for the other transports are only minted when they are usable.
-    let hls_token = issue(MediaTokenPurpose::HlsPlaylist, hls_delivery_options(&query));
+    let hls_token = issue(TrackPurpose::HlsPlaylist, hls_delivery_options(&query));
     let mut expires_at = hls_token.expires_at;
     let hls_url = build_hls_url(&id, &hls_token.token, &query);
 
     let (stream_url, stream_delivery) = match transports.stream {
         Some(delivery) => {
-            let stream_token = issue(MediaTokenPurpose::Stream, file_delivery_options(&query));
+            let stream_token = issue(TrackPurpose::Stream, file_delivery_options(&query));
             expires_at = expires_at.min(stream_token.expires_at);
             (
                 Some(build_stream_url(&id, &stream_token.token, &query)),
@@ -651,21 +651,17 @@ async fn create_track_playback_url(
         None => (None, None),
     };
 
-    let (download_url, download_delivery) = if delivery::authorize_track_purpose(
-        &auth.principal,
-        MediaTokenPurpose::Download,
-    )
-    .is_ok()
-    {
-        let download_token = issue(MediaTokenPurpose::Download, file_delivery_options(&query));
-        expires_at = expires_at.min(download_token.expires_at);
-        (
-            Some(build_download_url(&id, &download_token.token, &query)),
-            Some(transports.download),
-        )
-    } else {
-        (None, None)
-    };
+    let (download_url, download_delivery) =
+        if delivery::authorize_track_purpose(&auth.principal, TrackPurpose::Download).is_ok() {
+            let download_token = issue(TrackPurpose::Download, file_delivery_options(&query));
+            expires_at = expires_at.min(download_token.expires_at);
+            (
+                Some(build_download_url(&id, &download_token.token, &query)),
+                Some(transports.download),
+            )
+        } else {
+            (None, None)
+        };
 
     Ok(Json(PlaybackUrlResponse {
         stream_url,

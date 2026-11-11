@@ -3,7 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use crate::services::auth::media_tokens::MediaTokenPurpose;
+use crate::services::auth::access::TrackPurpose;
 #[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
@@ -251,7 +251,7 @@ async fn get_hls_playlist(
     let access = super::require_track_access(
         &headers,
         query.media_token.as_deref(),
-        MediaTokenPurpose::HlsPlaylist,
+        TrackPurpose::HlsPlaylist,
         &track_id,
     )
     .await?;

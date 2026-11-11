@@ -21,6 +21,7 @@ use crate::{
 use super::AuthCredential;
 use super::{
     CredentialHolder,
+    access::TrackPurpose,
     random_hex_secret,
 };
 
@@ -41,13 +42,6 @@ const MAX_MEDIA_TOKENS_PER_USER: usize = 4 * MAX_MEDIA_TOKENS_PER_HOLDER;
 #[derive(Default)]
 pub(crate) struct MediaTokenStore(Mutex<HashMap<String, MediaTokenGrant>>);
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum MediaTokenPurpose {
-    Stream,
-    HlsPlaylist,
-    Download,
-}
-
 /// The delivery a media token was issued for. A request with the token gets these, so it
 /// fetches exactly what was decided when the token was issued.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -66,7 +60,7 @@ pub(crate) struct DeliveryOptions {
 /// issued against, and the delivery it was issued for.
 #[derive(Clone, Debug)]
 pub(crate) struct MediaTokenAccess {
-    pub(crate) purpose: MediaTokenPurpose,
+    pub(crate) purpose: TrackPurpose,
     pub(crate) holder: CredentialHolder,
     pub(crate) source: SourceVersion,
     pub(crate) options: DeliveryOptions,
@@ -161,7 +155,7 @@ fn enforce_media_token_caps(
 
 pub(crate) fn issue_media_token(
     track_id: &str,
-    purpose: MediaTokenPurpose,
+    purpose: TrackPurpose,
     holder: CredentialHolder,
     source: SourceVersion,
     options: DeliveryOptions,
@@ -196,7 +190,7 @@ pub(crate) fn issue_media_token(
 /// checked where the track's source is resolved, under the database guard.
 pub(crate) fn validate_media_token(
     token: &str,
-    purpose: MediaTokenPurpose,
+    purpose: TrackPurpose,
     track_id: &str,
 ) -> Result<MediaTokenAccess, MediaTokenError> {
     let token = token.trim();
@@ -230,7 +224,7 @@ pub(crate) fn validate_media_token(
 /// Whom an unexpired token for `purpose` and `track_id` was issued to, without using it.
 pub(crate) fn token_identity(
     token: &str,
-    purpose: MediaTokenPurpose,
+    purpose: TrackPurpose,
     track_id: &str,
 ) -> Option<CredentialHolder> {
     let now = Instant::now();
@@ -247,10 +241,7 @@ pub(crate) fn token_identity(
 /// A token for `track_id` held by a placeholder user over a placeholder source, for tests that
 /// only exercise purpose and track matching.
 #[cfg(test)]
-pub(crate) fn issue_unbound_media_token(
-    track_id: &str,
-    purpose: MediaTokenPurpose,
-) -> IssuedMediaToken {
+pub(crate) fn issue_unbound_media_token(track_id: &str, purpose: TrackPurpose) -> IssuedMediaToken {
     issue_media_token(
         track_id,
         purpose,
@@ -267,7 +258,7 @@ pub(crate) fn issue_unbound_media_token(
 mod tests {
     use super::*;
 
-    fn issue(track_id: &str, purpose: MediaTokenPurpose) -> IssuedMediaToken {
+    fn issue(track_id: &str, purpose: TrackPurpose) -> IssuedMediaToken {
         issue_unbound_media_token(track_id, purpose)
     }
 
@@ -275,9 +266,9 @@ mod tests {
     fn media_token_validates_for_matching_track_and_purpose() {
         let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
         crate::services::testing::init_default_test_state().expect("init test state");
-        let issued = issue("track-42", MediaTokenPurpose::Stream);
+        let issued = issue("track-42", TrackPurpose::Stream);
 
-        validate_media_token(&issued.token, MediaTokenPurpose::Stream, "track-42")
+        validate_media_token(&issued.token, TrackPurpose::Stream, "track-42")
             .expect("matching media token should validate");
     }
 
@@ -285,14 +276,14 @@ mod tests {
     fn media_token_rejects_wrong_track_or_purpose() {
         let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
         crate::services::testing::init_default_test_state().expect("init test state");
-        let issued = issue("track-42", MediaTokenPurpose::Stream);
+        let issued = issue("track-42", TrackPurpose::Stream);
 
         assert!(matches!(
-            validate_media_token(&issued.token, MediaTokenPurpose::Stream, "track-43"),
+            validate_media_token(&issued.token, TrackPurpose::Stream, "track-43"),
             Err(MediaTokenError::Invalid)
         ));
         assert!(matches!(
-            validate_media_token(&issued.token, MediaTokenPurpose::HlsPlaylist, "track-42"),
+            validate_media_token(&issued.token, TrackPurpose::HlsPlaylist, "track-42"),
             Err(MediaTokenError::Invalid)
         ));
     }
@@ -310,7 +301,7 @@ mod tests {
         let issue_for = |user: &str, session: &str| {
             issue_media_token(
                 "track-42",
-                MediaTokenPurpose::Stream,
+                TrackPurpose::Stream,
                 holder(user, session),
                 SourceVersion::fixed("source"),
                 DeliveryOptions::default(),
@@ -318,7 +309,7 @@ mod tests {
         };
 
         let valid = |issued: &IssuedMediaToken| {
-            validate_media_token(&issued.token, MediaTokenPurpose::Stream, "track-42").is_ok()
+            validate_media_token(&issued.token, TrackPurpose::Stream, "track-42").is_ok()
         };
 
         let bystander = issue_for("bystander", "bystander-laptop");

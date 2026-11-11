@@ -96,27 +96,23 @@ struct SourceLookup {
     roots: MediaRoots,
 }
 
-/// Reads the track's sources, checking `access` under the same guard.
+/// Reads the track's sources, checking `access` under the same guard. The caller and their purpose
+/// are checked before the track is looked up, so a refusal says nothing about whether it exists.
 async fn read_source_lookup(
     track_id: &str,
     access: &TrackAccess,
 ) -> Result<SourceLookup, DeliveryError> {
     let db = &*STATE.db.read().await;
+    let principal = match access.held() {
+        Some((holder, purpose)) => {
+            let principal = require_live_principal(db, holder)?;
+            authorize_track_purpose(&principal, purpose)?;
+            Some(principal)
+        }
+        None => None,
+    };
     let not_found = || DeliveryError::not_found(format!("Track not found: {track_id}"));
     let track_db_id = lyra_db::lookup::find_node_id_by_id(db, track_id)?.ok_or_else(not_found)?;
-    let principal = match access {
-        TrackAccess::Credential { holder, purpose } => {
-            let principal = require_live_principal(db, holder)?;
-            authorize_track_purpose(&principal, *purpose)?;
-            Some(principal)
-        }
-        TrackAccess::MediaToken(token) => {
-            let principal = require_live_principal(db, &token.holder)?;
-            authorize_track_purpose(&principal, token.purpose)?;
-            Some(principal)
-        }
-        TrackAccess::PublicPluginRoute(_) => None,
-    };
     if let Some(principal) = &principal {
         crate::services::auth::access::require_entity_accessible(
             db,

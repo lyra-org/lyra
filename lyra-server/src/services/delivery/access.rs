@@ -10,14 +10,12 @@ use crate::services::{
         CredentialHolder,
         Principal,
         ResolvedAuth,
+        access::TrackPurpose,
         caller::{
             Caller,
             ClientAddress,
         },
-        media_tokens::{
-            MediaTokenAccess,
-            MediaTokenPurpose,
-        },
+        media_tokens::MediaTokenAccess,
         require_permission,
     },
     hls::state::HlsSessionHolder,
@@ -26,11 +24,11 @@ use crate::services::{
 /// Checks that `principal` may be served a track for `purpose`.
 pub(crate) fn authorize_track_purpose(
     principal: &Principal,
-    purpose: MediaTokenPurpose,
+    purpose: TrackPurpose,
 ) -> Result<(), DeliveryError> {
     match purpose {
-        MediaTokenPurpose::Stream | MediaTokenPurpose::HlsPlaylist => Ok(()),
-        MediaTokenPurpose::Download => {
+        TrackPurpose::Stream | TrackPurpose::HlsPlaylist => Ok(()),
+        TrackPurpose::Download => {
             require_permission(principal, lyra_db::Permission::Download).map_err(Into::into)
         }
     }
@@ -46,20 +44,28 @@ pub(crate) fn authorize_track_purpose(
 pub(crate) enum TrackAccess {
     Credential {
         holder: CredentialHolder,
-        purpose: MediaTokenPurpose,
+        purpose: TrackPurpose,
     },
     MediaToken(MediaTokenAccess),
     PublicPluginRoute(Caller),
 }
 
 impl TrackAccess {
+    /// Whose credential the access is checked against and for what; none for a public plugin
+    /// route.
+    pub(super) fn held(&self) -> Option<(&CredentialHolder, TrackPurpose)> {
+        match self {
+            Self::Credential { holder, purpose } => Some((holder, *purpose)),
+            Self::MediaToken(token) => Some((&token.holder, token.purpose)),
+            Self::PublicPluginRoute(_) => None,
+        }
+    }
+
     /// Who an HLS session created through this access serves.
     pub(crate) fn session_holder(&self) -> HlsSessionHolder {
-        match self {
-            Self::Credential { holder, .. } => HlsSessionHolder::Credential(holder.clone()),
-            Self::MediaToken(token) => HlsSessionHolder::Credential(token.holder.clone()),
-            Self::PublicPluginRoute(_) => HlsSessionHolder::Public,
-        }
+        self.held().map_or(HlsSessionHolder::Public, |(holder, _)| {
+            HlsSessionHolder::Credential(holder.clone())
+        })
     }
 
     /// Whom a transcode for this request is charged to: the credential's or media token's holder,
@@ -107,70 +113,33 @@ pub(crate) async fn require_session_access(
     Ok(())
 }
 
-/// Plugin responses skip the native route guards, so track serving must
-/// re-apply the same permission and library-access enforcement here.
-pub(crate) async fn require_plugin_track_access(
+/// The access a plugin response serves a track under: its caller's credential, checked where the
+/// track's source is resolved, since plugin responses skip the native route guards.
+pub(crate) fn require_plugin_track_access(
     auth: Option<&ResolvedAuth>,
-    track_id: &str,
-    purpose: MediaTokenPurpose,
-) -> Result<(String, TrackAccess), DeliveryError> {
-    let Some(auth) = auth else {
-        return Err(DeliveryError::unauthorized("authentication required"));
-    };
-    let principal = &auth.principal;
-    let db = STATE.db.read().await;
-    principal.require(&*db)?;
-    authorize_track_purpose(principal, purpose)?;
-    let not_found = || DeliveryError::not_found(format!("Track not found: {track_id}"));
-    let track_db_id = lyra_db::lookup::find_node_id_by_id(&*db, track_id)?.ok_or_else(not_found)?;
-    crate::services::auth::access::require_entity_accessible(
-        &*db,
-        principal,
-        track_db_id,
-        not_found,
-    )?;
-    Ok((
-        track_id.to_string(),
-        TrackAccess::Credential {
-            holder: auth.holder(),
-            purpose,
-        },
-    ))
+    purpose: TrackPurpose,
+) -> Result<TrackAccess, DeliveryError> {
+    let auth = auth.ok_or_else(|| DeliveryError::unauthorized("authentication required"))?;
+    Ok(TrackAccess::Credential {
+        holder: auth.holder(),
+        purpose,
+    })
 }
 
-/// A plugin route its protocol makes public streams any track, without the caller's access check.
-/// Its transcodes still count against someone: the caller, when the handler resolved one, or
-/// else the client's address.
-async fn public_plugin_track_access(
+/// The access a `stream_track` response serves under: the caller's, or none when the response is
+/// `public`, which serves any track as its protocol does and still counts its transcodes against
+/// the caller or else the client's address.
+pub(crate) fn stream_track_access(
     auth: Option<&ResolvedAuth>,
     client: ClientAddress,
-    track_id: &str,
-) -> Result<(String, TrackAccess), DeliveryError> {
-    let db = STATE.db.read().await;
-    if lyra_db::lookup::find_node_id_by_id(&*db, track_id)?.is_none() {
-        return Err(DeliveryError::not_found(format!(
-            "Track not found: {track_id}"
-        )));
+    public: bool,
+) -> Result<TrackAccess, DeliveryError> {
+    if !public {
+        return require_plugin_track_access(auth, TrackPurpose::Stream);
     }
     let caller = match auth {
-        Some(auth) => Caller::User(auth.principal.user_public_id.clone()),
+        Some(auth) => auth.holder().caller(),
         None => Caller::Client(client),
     };
-    Ok((track_id.to_string(), TrackAccess::PublicPluginRoute(caller)))
-}
-
-/// The track a `stream_track` response for `track_id` serves and the access it is served
-/// under: the caller's, or none when the response is `public`, which still counts its
-/// transcodes against the caller or the client's address.
-pub(crate) async fn stream_track_access(
-    auth: Option<&ResolvedAuth>,
-    client: ClientAddress,
-    track_id: &str,
-    public: bool,
-) -> Result<(String, TrackAccess), DeliveryError> {
-    if public {
-        public_plugin_track_access(auth, client, track_id).await
-    } else {
-        require_plugin_track_access(auth, track_id, MediaTokenPurpose::Stream).await
-    }
+    Ok(TrackAccess::PublicPluginRoute(caller))
 }

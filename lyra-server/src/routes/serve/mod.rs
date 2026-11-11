@@ -45,11 +45,10 @@ use crate::{
     routes::AppError,
     services::{
         auth::{
-            CredentialHolder,
+            access::TrackPurpose,
             media_tokens::{
                 MediaTokenAccess,
                 MediaTokenError,
-                MediaTokenPurpose,
                 validate_media_token,
             },
             require_auth,
@@ -60,7 +59,6 @@ use crate::{
             TrackAccess,
             ValidatedTrackSource,
             activity,
-            authorize_track_purpose,
             resolve_track_delivery,
         },
         playback_sources::SourceVersion,
@@ -76,7 +74,7 @@ fn media_token_error_to_app_error(err: MediaTokenError) -> AppError {
 
 fn validate_track_media_token(
     media_token: Option<&str>,
-    purpose: MediaTokenPurpose,
+    purpose: TrackPurpose,
     track_id: &str,
 ) -> Result<MediaTokenAccess, MediaTokenError> {
     let Some(media_token) = media_token.map(str::trim).filter(|token| !token.is_empty()) else {
@@ -85,34 +83,31 @@ fn validate_track_media_token(
     validate_media_token(media_token, purpose, track_id)
 }
 
-/// Whom a request to serve a track for `purpose` authenticates, without a media token.
-async fn authorize_track_request(
-    headers: &HeaderMap,
-    purpose: MediaTokenPurpose,
-) -> Result<CredentialHolder, AppError> {
-    let auth = require_auth(bearer_credential(headers)).await?;
-    authorize_track_purpose(&auth.principal, purpose)?;
-    Ok(auth.holder())
-}
-
 /// Grants access to a track for `purpose` through a media token bound to it, or else the
-/// request's credential. A failed media token reports its own error over the credential's.
+/// request's credential. A failed media token reports its own error when the request has no
+/// credential that authenticates. What the purpose requires is checked where the track's source
+/// is resolved.
 pub(crate) async fn require_track_access(
     headers: &HeaderMap,
     media_token: Option<&str>,
-    purpose: MediaTokenPurpose,
+    purpose: TrackPurpose,
     track_id: &str,
 ) -> Result<TrackAccess, AppError> {
-    match validate_track_media_token(media_token, purpose, track_id) {
-        Ok(access) => Ok(TrackAccess::MediaToken(access)),
-        Err(token_error) if media_token.is_some() => authorize_track_request(headers, purpose)
+    let token_error = match validate_track_media_token(media_token, purpose, track_id) {
+        Ok(access) => return Ok(TrackAccess::MediaToken(access)),
+        Err(error) => error,
+    };
+    let auth =
+        require_auth(bearer_credential(headers))
             .await
-            .map(|holder| TrackAccess::Credential { holder, purpose })
-            .map_err(|_| media_token_error_to_app_error(token_error)),
-        Err(_) => authorize_track_request(headers, purpose)
-            .await
-            .map(|holder| TrackAccess::Credential { holder, purpose }),
-    }
+            .map_err(|error| match media_token {
+                Some(_) => media_token_error_to_app_error(token_error),
+                None => error.into(),
+            })?;
+    Ok(TrackAccess::Credential {
+        holder: auth.holder(),
+        purpose,
+    })
 }
 
 /// Serves a track to `target` as `GET` would. A `HEAD` request gets the same decision and
@@ -318,9 +313,9 @@ pub(crate) mod tests {
     use crate::{
         plugins::testing::init_library_test_state,
         services::STATE,
-        services::auth::media_tokens::{
-            MediaTokenPurpose,
-            issue_unbound_media_token,
+        services::auth::{
+            access::TrackPurpose,
+            media_tokens::issue_unbound_media_token,
         },
         services::testing::runtime_test_lock,
         testing::LibraryFixtureConfig,
@@ -403,41 +398,51 @@ pub(crate) mod tests {
         Ok(headers)
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn download_access_rejects_user_without_download_permission() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
         let headers = create_user_with_permissions("listener", vec![]).await?;
 
-        let status = require_track_access(&headers, None, MediaTokenPurpose::Download, "unused")
+        let access = require_track_access(&headers, None, TrackPurpose::Download, &track_id)
             .await
-            .expect_err("user without permission should be rejected")
+            .map_err(|_| anyhow::anyhow!("a signed-in caller is granted access to check"))?;
+        for (requested, case) in [
+            (track_id.as_str(), "an existing track"),
+            (
+                "missing-track-id",
+                "a missing track, so a refusal does not reveal which exist",
+            ),
+        ] {
+            let status = AppError::from(
+                crate::services::delivery::validate_and_get_track_source(requested, &access)
+                    .await
+                    .expect_err("user without permission should be rejected"),
+            )
             .into_response()
             .status();
-        assert_eq!(status, StatusCode::FORBIDDEN);
+            assert_eq!(status, StatusCode::FORBIDDEN, "{case}");
+        }
 
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn download_access_allows_user_with_download_permission() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
         let headers =
             create_user_with_permissions("downloader", vec![Permission::Download]).await?;
 
-        let access = require_track_access(&headers, None, MediaTokenPurpose::Download, "unused")
+        let access = require_track_access(&headers, None, TrackPurpose::Download, &track_id)
             .await
             .expect("user with download permission should be allowed");
-
-        let crate::services::delivery::TrackAccess::Credential { holder, .. } = access else {
-            panic!("bearer access should be held by its credential");
-        };
-        let principal = holder
-            .principal(&*STATE.db.read().await)?
-            .ok_or_else(|| anyhow::anyhow!("the holder is signed in"))?;
-        assert_eq!(principal.username, "downloader");
+        crate::services::delivery::validate_and_get_track_source(&track_id, &access)
+            .await
+            .map_err(|error| anyhow::anyhow!("a downloader resolves the source: {error:?}"))?;
 
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())
@@ -539,7 +544,7 @@ pub(crate) mod tests {
                 &track_id,
                 &crate::services::delivery::TrackAccess::Credential {
                     holder: auth.holder(),
-                    purpose: MediaTokenPurpose::Stream,
+                    purpose: TrackPurpose::Stream,
                 },
             )
             .await
@@ -560,11 +565,11 @@ pub(crate) mod tests {
         let test_dir = initialize_test_runtime().await?;
 
         let track_id = "track-123";
-        let token = issue_unbound_media_token(track_id, MediaTokenPurpose::Stream);
+        let token = issue_unbound_media_token(track_id, TrackPurpose::Stream);
         require_track_access(
             &HeaderMap::new(),
             Some(&token.token),
-            MediaTokenPurpose::Stream,
+            TrackPurpose::Stream,
             track_id,
         )
         .await
@@ -580,11 +585,11 @@ pub(crate) mod tests {
         let test_dir = initialize_test_runtime().await?;
 
         let track_id = "track-123";
-        let token = issue_unbound_media_token(track_id, MediaTokenPurpose::Stream);
+        let token = issue_unbound_media_token(track_id, TrackPurpose::Stream);
         let status = require_track_access(
             &HeaderMap::new(),
             Some(&token.token),
-            MediaTokenPurpose::HlsPlaylist,
+            TrackPurpose::HlsPlaylist,
             track_id,
         )
         .await
@@ -732,7 +737,7 @@ pub(crate) mod tests {
             &track_id,
             &crate::services::delivery::TrackAccess::Credential {
                 holder: auth.holder(),
-                purpose: MediaTokenPurpose::Download,
+                purpose: TrackPurpose::Download,
             },
             ServeTrackOptions::default(),
             crate::services::delivery::DeliveryTarget::Download,
@@ -1313,7 +1318,7 @@ pub(crate) mod tests {
         let auth = crate::services::auth::require_auth(bearer_credential(&headers)).await?;
         let access = crate::services::delivery::TrackAccess::Credential {
             holder: auth.holder(),
-            purpose: MediaTokenPurpose::Stream,
+            purpose: TrackPurpose::Stream,
         };
         crate::services::delivery::validate_and_get_track_source(&track_id, &access)
             .await
@@ -1341,7 +1346,7 @@ pub(crate) mod tests {
         let track_id = prepare_streamable_track(&test_dir).await?;
         let headers =
             create_user_with_permissions("demoted-mid-request", vec![Permission::Download]).await?;
-        let access = require_track_access(&headers, None, MediaTokenPurpose::Download, &track_id)
+        let access = require_track_access(&headers, None, TrackPurpose::Download, &track_id)
             .await
             .map_err(|_| anyhow::anyhow!("a caller who may download is granted access"))?;
 

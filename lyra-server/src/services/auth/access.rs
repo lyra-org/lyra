@@ -25,6 +25,14 @@ pub(crate) enum AccessError {
     Internal(#[from] anyhow::Error),
 }
 
+/// What a request for a track is for, which decides what its caller must be allowed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TrackPurpose {
+    Stream,
+    HlsPlaylist,
+    Download,
+}
+
 fn principal_can_access_library(principal: &Principal, library: &Library) -> bool {
     principal.accessible_library_ids.contains(&library.id)
 }

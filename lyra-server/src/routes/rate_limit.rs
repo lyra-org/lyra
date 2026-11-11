@@ -49,14 +49,12 @@ use super::request::{
 use crate::services::{
     auth::{
         CredentialHolder,
+        access::TrackPurpose,
         caller::{
             self,
             ClientAddress,
         },
-        media_tokens::{
-            self,
-            MediaTokenPurpose,
-        },
+        media_tokens,
     },
     rate_limit::{
         Bucket,
@@ -348,7 +346,7 @@ fn download_token_identity(uri: &Uri) -> Option<CredentialHolder> {
     let track_id = uri.path().strip_prefix("/api/download/")?;
     let (_, token) = url::form_urlencoded::parse(uri.query()?.as_bytes())
         .find(|(key, _)| key == "media_token")?;
-    media_tokens::token_identity(&token, MediaTokenPurpose::Download, track_id)
+    media_tokens::token_identity(&token, TrackPurpose::Download, track_id)
 }
 
 #[cfg(test)]
@@ -761,7 +759,7 @@ mod tests {
             .expect("session resolves");
         let media_token = media_tokens::issue_media_token(
             "track-1",
-            media_tokens::MediaTokenPurpose::Download,
+            TrackPurpose::Download,
             auth.holder(),
             SourceVersion::fixed("source"),
             media_tokens::DeliveryOptions::default(),

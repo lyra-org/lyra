@@ -28,7 +28,7 @@ use crate::routes::AppError;
 use crate::routes::covers::serve_cover;
 use crate::routes::settle_if_range;
 use crate::routes::streamed_body::streamed_body;
-use crate::services::auth::media_tokens::MediaTokenPurpose;
+use crate::services::auth::access::TrackPurpose;
 use crate::services::delivery::{
     DeliveryTarget,
     require_plugin_track_access,
@@ -287,21 +287,19 @@ async fn serve_track(
     let auth = response.auth.as_ref();
     match options {
         TrackResponseOptions::Hls(options) => {
-            let (track_id, access) =
-                require_plugin_track_access(auth, track_id, MediaTokenPurpose::HlsPlaylist).await?;
-            serve_hls_playlist_for_track(request_method, &track_id, &access, options).await
+            let access = require_plugin_track_access(auth, TrackPurpose::HlsPlaylist)?;
+            serve_hls_playlist_for_track(request_method, track_id, &access, options).await
         }
         TrackResponseOptions::Stream(TrackStreamRequest {
             public,
             wait_for_transcode,
             options,
         }) => {
-            let (track_id, access) =
-                stream_track_access(auth, response.client, track_id, public).await?;
+            let access = stream_track_access(auth, response.client, public)?;
             track_response(
                 request_method,
                 request_headers,
-                &track_id,
+                track_id,
                 &access,
                 options,
                 DeliveryTarget::Stream,
@@ -310,12 +308,11 @@ async fn serve_track(
             .await
         }
         TrackResponseOptions::Download(options) => {
-            let (track_id, access) =
-                require_plugin_track_access(auth, track_id, MediaTokenPurpose::Download).await?;
+            let access = require_plugin_track_access(auth, TrackPurpose::Download)?;
             track_response(
                 request_method,
                 request_headers,
-                &track_id,
+                track_id,
                 &access,
                 options,
                 DeliveryTarget::Download,
@@ -370,23 +367,39 @@ mod tests {
         plugins::testing::init_library_test_state,
         services::STATE,
         services::auth::{
-            Principal,
-            media_tokens::MediaTokenPurpose,
+            ResolvedAuth,
+            access::TrackPurpose,
         },
         services::testing::runtime_test_lock,
     };
     use lyra_db::Permission;
 
     async fn status_of(
-        principal: Option<&Principal>,
+        auth: Option<&ResolvedAuth>,
         track_id: &str,
-        purpose: MediaTokenPurpose,
+        purpose: TrackPurpose,
     ) -> Result<(), StatusCode> {
-        let auth = principal.cloned().map(crate::plugins::testing::acting_as);
-        require_plugin_track_access(auth.as_ref(), track_id, purpose)
+        let status = |error| AppError::from(error).into_response().status();
+        let access = require_plugin_track_access(auth, purpose).map_err(status)?;
+        crate::services::delivery::validate_and_get_track_source(track_id, &access)
             .await
             .map(|_| ())
-            .map_err(|error| AppError::from(error).into_response().status())
+            .map_err(status)
+    }
+
+    async fn signed_in(
+        username: &str,
+        permissions: Vec<Permission>,
+    ) -> anyhow::Result<ResolvedAuth> {
+        let headers =
+            crate::routes::serve::tests::create_user_with_permissions(username, permissions)
+                .await?;
+        Ok(
+            crate::services::auth::require_auth(crate::routes::request::bearer_credential(
+                &headers,
+            ))
+            .await?,
+        )
     }
 
     fn address(raw: &str) -> ClientAddress {
@@ -401,78 +414,56 @@ mod tests {
         )))
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn plugin_track_access_enforces_library_access_and_permissions() -> anyhow::Result<()> {
+        use crate::routes::serve::tests::{
+            initialize_test_runtime,
+            prepare_streamable_track,
+        };
+
         let _guard = runtime_test_lock().await;
-        let test_dir = unique_test_dir("lyra-plugin-bridge-auth-test")?;
-        std::fs::create_dir_all(&test_dir)?;
-        init_library_test_state(test_dir.clone()).await?;
-
-        let (user_db_id, user_public_id, library_public_id, track_id) = {
-            let mut db = STATE.db.write().await;
-            let user = lyra_db::fixtures::test_user("plugin-bridge-user")?;
-            let user_public_id = user.id.clone();
-            let user_db_id = lyra_db::users::create(&mut db, &user)?;
-            let library_db_id = lyra_db::test_db::insert_library(
-                &mut db,
-                "Plugin Bridge Lib",
-                "/tmp/plugin-bridge",
-            )?;
-            let library_public_id = lyra_db::lookup::find_id_by_db_id(&*db, library_db_id)?
-                .context("inserted library has public id")?;
-            let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Plugin Bridge Track")?;
-            lyra_db::fixtures::connect(&mut db, library_db_id, track_db_id)?;
-            let track_id = lyra_db::lookup::find_id_by_db_id(&*db, track_db_id)?
-                .context("inserted track has public id")?;
-            (user_db_id, user_public_id, library_public_id, track_id)
-        };
-
-        let principal = |permissions: Vec<Permission>, library_ids: HashSet<String>| {
-            Principal::from_parts(
-                user_db_id,
-                user_public_id.clone(),
-                "plugin-bridge-user".to_string(),
-                permissions,
-                None,
-                library_ids,
-            )
-        };
-        let accessible_libraries = HashSet::from([library_public_id.clone()]);
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
 
         assert_eq!(
-            status_of(None, &track_id, MediaTokenPurpose::Stream).await,
+            status_of(None, &track_id, TrackPurpose::Stream).await,
             Err(StatusCode::UNAUTHORIZED),
-            "responses without a resolved principal must not serve tracks"
+            "responses without a resolved caller must not serve tracks"
         );
 
-        let no_library_access = principal(Vec::new(), HashSet::new());
+        let shut_out = signed_in("plugin-bridge-shut-out", Vec::new()).await?;
+        {
+            let mut db = STATE.db.write().await;
+            let user_db_id = shut_out.principal.require(&*db)?;
+            let library_ids = lyra_db::libraries::get(&*db)?
+                .into_iter()
+                .filter_map(|library| library.db_id)
+                .collect::<Vec<_>>();
+            for library_db_id in library_ids {
+                lyra_db::libraries::revoke_access(&mut db, user_db_id, library_db_id)?;
+            }
+        }
         assert_eq!(
-            status_of(
-                Some(&no_library_access),
-                &track_id,
-                MediaTokenPurpose::Stream
-            )
-            .await,
+            status_of(Some(&shut_out), &track_id, TrackPurpose::Stream).await,
             Err(StatusCode::NOT_FOUND),
             "tracks outside the caller's libraries must read as not found"
         );
 
-        let with_access = principal(Vec::new(), accessible_libraries.clone());
+        let listener = signed_in("plugin-bridge-listener", Vec::new()).await?;
         assert_eq!(
-            status_of(Some(&with_access), &track_id, MediaTokenPurpose::Stream).await,
+            status_of(Some(&listener), &track_id, TrackPurpose::Stream).await,
             Ok(()),
             "library access must allow streaming"
         );
-
         assert_eq!(
-            status_of(Some(&with_access), &track_id, MediaTokenPurpose::Download).await,
+            status_of(Some(&listener), &track_id, TrackPurpose::Download).await,
             Err(StatusCode::FORBIDDEN),
             "downloads require the download permission even with library access"
         );
 
-        let downloader = principal(vec![Permission::Download], accessible_libraries.clone());
+        let downloader = signed_in("plugin-bridge-downloader", vec![Permission::Download]).await?;
         assert_eq!(
-            status_of(Some(&downloader), &track_id, MediaTokenPurpose::Download).await,
+            status_of(Some(&downloader), &track_id, TrackPurpose::Download).await,
             Ok(()),
             "download permission plus library access must allow downloads"
         );
@@ -522,11 +513,8 @@ mod tests {
             (track_id, release_id)
         };
 
-        let (served_id, access) =
-            stream_track_access(None, ClientAddress::default(), &track_id, true)
-                .await
-                .map_err(|error| anyhow::anyhow!("public access failed: {error:?}"))?;
-        assert_eq!(served_id, track_id);
+        let access = stream_track_access(None, ClientAddress::default(), true)
+            .map_err(|error| anyhow::anyhow!("public access failed: {error:?}"))?;
         assert!(matches!(
             access,
             crate::services::delivery::TrackAccess::PublicPluginRoute(_)
@@ -542,19 +530,16 @@ mod tests {
                 None,
                 HashSet::new(),
             ));
-        let (_, access) = stream_track_access(Some(&caller), address("10.0.0.1"), &track_id, true)
-            .await
+        let access = stream_track_access(Some(&caller), address("10.0.0.1"), true)
             .map_err(|error| anyhow::anyhow!("public access failed: {error:?}"))?;
         assert_eq!(
             access.caller(),
             Caller::User("caller-public-id".to_string()),
             "an authenticated caller's transcodes count against them on a public route"
         );
-        let (_, first) = stream_track_access(None, address("10.0.0.1"), &track_id, true)
-            .await
+        let first = stream_track_access(None, address("10.0.0.1"), true)
             .map_err(|error| anyhow::anyhow!("public access failed: {error:?}"))?;
-        let (_, second) = stream_track_access(None, address("10.0.0.2"), &track_id, true)
-            .await
+        let second = stream_track_access(None, address("10.0.0.2"), true)
             .map_err(|error| anyhow::anyhow!("public access failed: {error:?}"))?;
         assert_eq!(first.caller(), Caller::Client(address("10.0.0.1")));
         assert_eq!(
@@ -563,13 +548,15 @@ mod tests {
             "anonymous clients each get their own allowance"
         );
 
-        let unknown = stream_track_access(None, ClientAddress::default(), "missing-track-id", true)
-            .await
-            .map(|_| ())
-            .map_err(|error| AppError::from(error).into_response().status());
-        assert_eq!(unknown, Err(StatusCode::NOT_FOUND));
-
         let headers = axum::http::HeaderMap::new();
+        let unknown = plugin_api_response_to_axum(
+            stream_response("missing-track-id", true),
+            &Method::GET,
+            &headers,
+        )
+        .await?;
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+
         let private =
             plugin_api_response_to_axum(stream_response(&track_id, false), &Method::GET, &headers)
                 .await?;

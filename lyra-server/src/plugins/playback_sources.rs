@@ -193,14 +193,9 @@ impl PlaybackSourcesModule {
             &options.unwrap_or(luau::Value::Nil),
             "decide options",
         )?;
-        let (track_id, access) = delivery::stream_track_access(
-            caller.auth.as_ref(),
-            caller.client,
-            &track_id,
-            request.public,
-        )
-        .await
-        .map_err(delivery_runtime_error)?;
+        let access =
+            delivery::stream_track_access(caller.auth.as_ref(), caller.client, request.public)
+                .map_err(delivery_runtime_error)?;
         let description = delivery::describe_stream(&track_id, &access, request.options)
             .await
             .map_err(delivery_runtime_error)?;
