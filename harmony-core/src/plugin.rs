@@ -2118,6 +2118,10 @@ mod tests {
         ModuleExport,
         ModuleSpec,
     };
+    use crate::{
+        scheduler::tests::ending_without_a_missed_wake,
+        testing::ManualClock,
+    };
     use harmony_luau as luau;
     use semver::{
         Version,
@@ -2697,8 +2701,14 @@ mod tests {
             .install(|_| Ok(ModuleExport::new(())))
     }
 
-    fn task_test_runtime(recorded: Arc<Mutex<Vec<String>>>) -> anyhow::Result<super::Runtime> {
-        let source = r#"
+    /// How long `later` in the tests' sources and the module's `soon` and `eventually` wait.
+    const LATER: std::time::Duration = std::time::Duration::from_millis(50);
+    const SOON: std::time::Duration = std::time::Duration::from_millis(10);
+
+    /// The entrypoint of a plugin that numbers its run, records it later and registers a handler
+    /// that never ends.
+    fn numbered_run_source(plugin: &str) -> String {
+        r#"
             local tasks = require('@test/tasks')
             local run = tasks.run()
             tasks.later(0.05, function()
@@ -2707,15 +2717,8 @@ mod tests {
             tasks.register(function()
                 tasks.forever()
             end)
-        "#;
-        task_test_runtime_with(
-            recorded,
-            &[
-                ("demo", &[], &source.replace("{PLUGIN}", "demo")),
-                ("other", &[], &source.replace("{PLUGIN}", "other")),
-            ],
-            &[],
-        )
+        "#
+        .replace("{PLUGIN}", plugin)
     }
 
     /// Plugins as `(id, dependencies, entrypoint source)` and extra plugin
@@ -2725,6 +2728,14 @@ mod tests {
         sources: &[(&str, &[&str], &str)],
         modules: &[(&str, &str)],
     ) -> anyhow::Result<super::Runtime> {
+        let (loader, plugins) = task_test_plugins(sources, modules);
+        task_test_runtime_from(recorded, loader, plugins)
+    }
+
+    fn task_test_plugins(
+        sources: &[(&str, &[&str], &str)],
+        modules: &[(&str, &str)],
+    ) -> (MemorySourceLoader, Vec<LoadedPlugin>) {
         let mut loader = MemorySourceLoader::new();
         for (key, source) in modules {
             loader.insert(key.to_string(), source.as_bytes());
@@ -2744,7 +2755,7 @@ mod tests {
                 .collect();
             plugins.push(loaded(plugin_manifest));
         }
-        task_test_runtime_from(recorded, loader, plugins)
+        (loader, plugins)
     }
 
     fn task_test_runtime_from(
@@ -2752,6 +2763,14 @@ mod tests {
         loader: MemorySourceLoader,
         plugins: Vec<LoadedPlugin>,
     ) -> anyhow::Result<super::Runtime> {
+        task_test_builder(recorded, loader, plugins).build()
+    }
+
+    fn task_test_builder(
+        recorded: Arc<Mutex<Vec<String>>>,
+        loader: MemorySourceLoader,
+        plugins: Vec<LoadedPlugin>,
+    ) -> RuntimeBuilder<MemorySourceLoader> {
         RuntimeBuilder::new(
             loader,
             manifest_arc(
@@ -2770,7 +2789,152 @@ mod tests {
             vm.data().insert(TestHandlers::default())?;
             Ok(())
         })
-        .build()
+    }
+
+    /// A task test runtime on a manual clock: the delays its plugins wait out pass when the test
+    /// advances it, and nothing here waits for them. Its methods stand in for the runtime's own
+    /// that would.
+    struct StagedRuntime {
+        runtime: super::Runtime,
+        clock: ManualClock,
+        recorded: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl std::ops::Deref for StagedRuntime {
+        type Target = super::Runtime;
+
+        fn deref(&self) -> &super::Runtime {
+            &self.runtime
+        }
+    }
+
+    impl StagedRuntime {
+        fn new(
+            sources: &[(&str, &[&str], &str)],
+            modules: &[(&str, &str)],
+        ) -> anyhow::Result<Self> {
+            let clock = ManualClock::new();
+            let recorded = Arc::<Mutex<Vec<String>>>::default();
+            let (loader, plugins) = task_test_plugins(sources, modules);
+            let runtime = task_test_builder(recorded.clone(), loader, plugins)
+                .manual_clock(clock.clone())
+                .build()?;
+            Ok(Self {
+                runtime,
+                clock,
+                recorded,
+            })
+        }
+
+        /// Two plugins, `demo` and `other`, of [`numbered_run_source`].
+        fn numbered_runs() -> anyhow::Result<Self> {
+            Self::new(
+                &[
+                    ("demo", &[], &numbered_run_source("demo")),
+                    ("other", &[], &numbered_run_source("other")),
+                ],
+                &[],
+            )
+        }
+
+        fn scheduler(&self) -> std::rc::Rc<crate::LocalScheduler> {
+            self.runtime.scheduler().expect("the runtime's scheduler")
+        }
+
+        /// Runs `entrypoint` to its end, which it must reach without waiting.
+        fn drive(&self, entrypoint: Option<super::RunningEntrypoint>) -> anyhow::Result<()> {
+            let Some(entrypoint) = entrypoint else {
+                return Ok(());
+            };
+            let scheduler = self.scheduler();
+            let task = scheduler.luau_thread_handle(&entrypoint.thread);
+            let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+            let mut finish = std::pin::pin!(entrypoint.finish());
+            let result = loop {
+                {
+                    let _guard = self.runtime.tokio_runtime.enter();
+                    scheduler.poll_ready();
+                }
+                if let std::task::Poll::Ready(result) = finish.as_mut().poll(&mut cx) {
+                    break result;
+                }
+                anyhow::ensure!(
+                    scheduler.next_wake_delay() == Some(std::time::Duration::ZERO),
+                    "the entrypoint waits"
+                );
+            };
+            if let Some(task) = task {
+                scheduler.remove(task.id());
+            }
+            result
+        }
+
+        /// As [`super::Runtime::exec_all`].
+        fn exec_all(&self) -> Vec<String> {
+            self.runtime
+                .plugins
+                .iter()
+                .filter(|plugin| {
+                    self.runtime
+                        .start_entrypoint(plugin)
+                        .and_then(|entrypoint| self.drive(entrypoint))
+                        .is_err()
+                })
+                .map(|plugin| plugin.manifest.id.clone())
+                .collect()
+        }
+
+        /// As [`super::Runtime::restart_plugin`].
+        fn restart_plugin(&self, plugin_id: &str) -> anyhow::Result<()> {
+            self.drive(self.runtime.start_restart_entrypoint(plugin_id)?)
+        }
+
+        /// As [`eval_as`], for a chunk that ends without waiting.
+        fn eval_as(&self, plugin: &str, source: &'static [u8]) -> anyhow::Result<Vec<luau::Value>> {
+            let mut context = CallContext {
+                origin: plugin_origin(plugin, "check.luau"),
+                ..CallContext::default()
+            };
+            let thread = self
+                .runtime
+                .load_source_thread(Arc::<[u8]>::from(source), &mut context)?;
+            let scheduler = self.scheduler();
+            scheduler.spawn_luau_thread(context, self.vm.clone(), thread.clone(), Vec::new());
+            crate::testing::drive_thread_while_ready(
+                &self.runtime.tokio_runtime,
+                &scheduler,
+                &thread,
+            )
+        }
+
+        /// Runs rounds until no task is ready.
+        fn run_ready(&self) {
+            let scheduler = self.scheduler();
+            loop {
+                self.runtime.poll_background_tasks();
+                if scheduler.next_wake_delay() != Some(std::time::Duration::ZERO) {
+                    return;
+                }
+            }
+        }
+
+        /// Lets `duration` pass, then runs what came due and what that made ready.
+        fn advance(&self, duration: std::time::Duration) {
+            self.clock.advance(duration);
+            self.run_ready();
+        }
+
+        /// How long until the next delayed task is due.
+        fn next_delay(&self) -> Option<std::time::Duration> {
+            self.scheduler().next_wake_delay()
+        }
+
+        fn recorded(&self) -> Vec<String> {
+            self.recorded
+                .lock()
+                .expect("recorded mutex poisoned")
+                .clone()
+        }
     }
 
     /// An entrypoint exporting these `@test/tasks` functions.
@@ -2781,19 +2945,6 @@ mod tests {
             .collect::<Vec<_>>()
             .join(", ");
         format!("local tasks = require('@test/tasks')\nreturn {{ {exports} }}")
-    }
-
-    fn poll_for(runtime: &super::Runtime, duration: std::time::Duration) {
-        let deadline = std::time::Instant::now() + duration;
-        while std::time::Instant::now() < deadline {
-            runtime.poll_background_tasks();
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-    }
-
-    fn recorded_after(runtime: &super::Runtime, recorded: &Arc<Mutex<Vec<String>>>) -> Vec<String> {
-        poll_for(runtime, std::time::Duration::from_millis(200));
-        recorded.lock().expect("recorded mutex poisoned").clone()
     }
 
     fn leftover_tasks(runtime: &super::Runtime) -> anyhow::Result<Vec<crate::TaskSnapshot>> {
@@ -2895,10 +3046,9 @@ mod tests {
         let entrypoint = runtime
             .start_restart_entrypoint("demo")?
             .ok_or_else(|| anyhow::anyhow!("the plugin has an entrypoint"))?;
-        while recorded.lock().expect("recorded").is_empty() {
-            runtime.poll_background_tasks();
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
+        // The entrypoint is ready, so one round lands its completion.
+        runtime.poll_background_tasks();
+        assert_eq!(*recorded.lock().expect("recorded"), ["ran"]);
         runtime.entrypoint_cancellation().cancel();
 
         let error = runtime
@@ -2908,54 +3058,44 @@ mod tests {
         Ok(())
     }
 
-    /// Runs a started restart as the runtime's owner does: as a task, between rounds that sleep.
-    fn run_restart(
-        runtime: &super::Runtime,
-        restart: impl Future<Output = anyhow::Result<()>> + 'static,
-    ) -> anyhow::Result<()> {
-        let scheduler = runtime.vm.data().get::<crate::LocalScheduler>()?;
-        let outcome = std::rc::Rc::new(std::cell::RefCell::new(None));
-        scheduler.schedule_watcher(CallContext::default(), {
-            let outcome = outcome.clone();
-            async move {
-                *outcome.borrow_mut() = Some(restart.await);
-                Ok(())
-            }
-        });
-        let give_up = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        loop {
-            runtime.poll_background_tasks();
-            if let Some(outcome) = outcome.borrow_mut().take() {
-                return outcome;
-            }
-            anyhow::ensure!(
-                std::time::Instant::now() < give_up,
-                "nothing woke the scheduler for the restart"
-            );
-            scheduler.wait_for_work(Some(give_up));
-        }
-    }
-
+    /// On the real clock and the real wait, as the runtime's owner runs a started restart: as a
+    /// task, between rounds that sleep until something wakes the scheduler.
     #[test]
-    fn a_started_restart_runs_as_a_task_and_ends_like_a_restart() -> anyhow::Result<()> {
-        let recorded = Arc::new(Mutex::new(Vec::new()));
-        let runtime = recording_entrypoint(recorded.clone())?;
-        assert!(runtime.exec_all().is_empty());
-        recorded.lock().expect("recorded").clear();
+    fn a_started_restart_runs_as_a_task_and_ends_like_a_restart() {
+        ending_without_a_missed_wake(|| {
+            let recorded = Arc::new(Mutex::new(Vec::new()));
+            let runtime = recording_entrypoint(recorded.clone()).expect("runtime");
+            assert!(runtime.exec_all().is_empty());
+            recorded.lock().expect("recorded").clear();
 
-        let restart = runtime
-            .start_plugin_restart("demo")?
-            .ok_or_else(|| anyhow::anyhow!("the plugin has an entrypoint"))?;
-        run_restart(&runtime, restart)?;
-        assert_eq!(*recorded.lock().expect("recorded"), ["ran"]);
-        Ok(())
+            let restart = runtime
+                .start_plugin_restart("demo")
+                .expect("the restart starts")
+                .expect("the plugin has an entrypoint");
+            let scheduler = runtime.scheduler().expect("scheduler");
+            let outcome = std::rc::Rc::new(std::cell::RefCell::new(None));
+            scheduler.schedule_watcher(CallContext::default(), {
+                let outcome = outcome.clone();
+                async move {
+                    *outcome.borrow_mut() = Some(restart.await);
+                    Ok(())
+                }
+            });
+            let outcome = loop {
+                runtime.poll_background_tasks();
+                if let Some(outcome) = outcome.borrow_mut().take() {
+                    break outcome;
+                }
+                scheduler.wait_for_work(None);
+            };
+            outcome.expect("the restart succeeds");
+            assert_eq!(*recorded.lock().expect("recorded"), ["ran"]);
+        });
     }
 
     #[test]
     fn a_restart_whose_entrypoint_fails_ends_the_run_from_its_task() -> anyhow::Result<()> {
-        let recorded = Arc::new(Mutex::new(Vec::new()));
-        let runtime = task_test_runtime_with(
-            recorded.clone(),
+        let runtime = StagedRuntime::new(
             &[(
                 "demo",
                 &[],
@@ -2969,14 +3109,36 @@ mod tests {
             &[],
         )?;
         assert!(runtime.exec_all().is_empty());
+        assert_eq!(runtime.next_delay(), Some(LATER), "the first run waits");
 
         let restart = runtime
             .start_plugin_restart("demo")?
             .ok_or_else(|| anyhow::anyhow!("the plugin has an entrypoint"))?;
-        let error = run_restart(&runtime, restart).expect_err("the entrypoint fails");
+        let outcome = std::rc::Rc::new(std::cell::RefCell::new(None));
+        runtime
+            .scheduler()
+            .schedule_watcher(CallContext::default(), {
+                let outcome = outcome.clone();
+                async move {
+                    *outcome.borrow_mut() = Some(restart.await);
+                    Ok(())
+                }
+            });
+        runtime.run_ready();
+        let error = outcome
+            .borrow_mut()
+            .take()
+            .expect("the restart ended")
+            .expect_err("the entrypoint fails");
         assert!(format!("{error:#}").contains("boom"), "{error:#}");
+
         assert!(
-            recorded_after(&runtime, &recorded).is_empty(),
+            leftover_tasks(&runtime)?.is_empty(),
+            "a run's task is left waiting"
+        );
+        runtime.advance(LATER);
+        assert!(
+            runtime.recorded().is_empty(),
             "neither run's task outlives it"
         );
         Ok(())
@@ -3017,23 +3179,29 @@ mod tests {
 
     #[test]
     fn restart_plugin_cancels_tasks_of_the_previous_run_only() -> anyhow::Result<()> {
-        let recorded = Arc::new(Mutex::new(Vec::new()));
-        let runtime = task_test_runtime(recorded.clone())?;
+        let runtime = StagedRuntime::numbered_runs()?;
         assert!(runtime.exec_all().is_empty());
+        assert_eq!(leftover_tasks(&runtime)?.len(), 2, "each run waits");
 
         runtime.restart_plugin("demo")?;
+        assert_eq!(
+            leftover_tasks(&runtime)?.len(),
+            2,
+            "the restarted plugin's first run still waits"
+        );
+        assert!(runtime.recorded().is_empty());
 
-        let mut recorded = recorded_after(&runtime, &recorded);
+        runtime.advance(LATER);
+        let mut recorded = runtime.recorded();
         recorded.sort();
         assert_eq!(recorded, ["demo:3", "other:2"]);
+        assert!(leftover_tasks(&runtime)?.is_empty());
         Ok(())
     }
 
     #[test]
     fn restart_plugin_cancels_tasks_spawned_inside_coroutines() -> anyhow::Result<()> {
-        let recorded = Arc::new(Mutex::new(Vec::new()));
-        let runtime = task_test_runtime_with(
-            recorded.clone(),
+        let runtime = StagedRuntime::new(
             &[(
                 "demo",
                 &[],
@@ -3050,18 +3218,19 @@ mod tests {
             &[],
         )?;
         assert!(runtime.exec_all().is_empty());
+        assert_eq!(leftover_tasks(&runtime)?.len(), 1, "the first run waits");
 
         runtime.restart_plugin("demo")?;
+        assert_eq!(leftover_tasks(&runtime)?.len(), 1);
 
-        assert_eq!(recorded_after(&runtime, &recorded), ["coroutine:2"]);
+        runtime.advance(LATER);
+        assert_eq!(runtime.recorded(), ["coroutine:2"]);
         Ok(())
     }
 
     #[test]
     fn exec_all_runs_dependencies_before_their_dependents() -> anyhow::Result<()> {
-        let recorded = Arc::new(Mutex::new(Vec::new()));
-        let runtime = task_test_runtime_with(
-            recorded.clone(),
+        let runtime = StagedRuntime::new(
             &[
                 (
                     "app",
@@ -3087,55 +3256,108 @@ mod tests {
             &[],
         )?;
         assert!(runtime.exec_all().is_empty());
-        assert_eq!(
-            *recorded.lock().expect("recorded mutex poisoned"),
-            ["lib", "app"]
-        );
+        assert_eq!(runtime.recorded(), ["lib", "app"]);
+        assert_eq!(runtime.next_delay(), Some(LATER), "lib's task waits");
 
         runtime.stop_plugin("lib")?;
+        assert!(leftover_tasks(&runtime)?.is_empty());
 
+        runtime.advance(LATER);
         assert_eq!(
-            recorded_after(&runtime, &recorded),
+            runtime.recorded(),
             ["lib", "app"],
             "stopping lib cancels the task its entrypoint spawned"
         );
         Ok(())
     }
 
+    /// On the real clock and the real wait: the entrypoint waits for good, so only the
+    /// cancellation's wake ends the wait its driver sleeps in.
     #[test]
-    fn cancelled_entrypoints_end_the_running_one_and_skip_the_rest() -> anyhow::Result<()> {
-        let recorded = Arc::new(Mutex::new(Vec::new()));
-        let runtime = task_test_runtime_with(
-            recorded.clone(),
-            &[
-                (
-                    "a",
-                    &[],
-                    r#"
-                        local tasks = require('@test/tasks')
-                        tasks.record("a")
-                        tasks.forever()
-                    "#,
-                ),
-                ("b", &["a"], "require('@test/tasks').record('b')"),
-            ],
+    fn cancelled_entrypoints_end_the_running_one_and_skip_the_rest() {
+        ending_without_a_missed_wake(|| {
+            let recorded = Arc::new(Mutex::new(Vec::new()));
+            let runtime = task_test_runtime_with(
+                recorded.clone(),
+                &[
+                    (
+                        "a",
+                        &[],
+                        r#"
+                            local tasks = require('@test/tasks')
+                            tasks.record("a")
+                            tasks.forever()
+                        "#,
+                    ),
+                    ("b", &["a"], "require('@test/tasks').record('b')"),
+                ],
+                &[],
+            )
+            .expect("runtime");
+            let cancellation = runtime.entrypoint_cancellation();
+            let reached = recorded.clone();
+            // Cancels once `a` has started, whether or not it has yielded yet.
+            let cancel = std::thread::spawn(move || {
+                while reached.lock().expect("recorded mutex poisoned").is_empty() {
+                    std::thread::yield_now();
+                }
+                cancellation.cancel();
+            });
+
+            assert_eq!(runtime.exec_all(), ["a", "b"]);
+            assert_eq!(*recorded.lock().expect("recorded mutex poisoned"), ["a"]);
+            cancel.join().expect("cancelling thread");
+        });
+    }
+
+    /// The entrypoint's driver is asleep, with nothing due, when the cancellation comes.
+    #[test]
+    fn a_cancellation_wakes_the_driver_of_an_entrypoint_that_waits() {
+        ending_without_a_missed_wake(|| {
+            let runtime = task_test_runtime_with(
+                Arc::default(),
+                &[("demo", &[], "require('@test/tasks').forever()")],
+                &[],
+            )
+            .expect("runtime");
+            let cancellation = runtime.entrypoint_cancellation();
+            let wake = runtime.scheduler().expect("scheduler").wake_handle();
+            let cancel = std::thread::spawn(move || {
+                while !wake.owner_is_waiting() {
+                    std::thread::yield_now();
+                }
+                cancellation.cancel();
+            });
+
+            assert_eq!(runtime.exec_all(), ["demo"]);
+            cancel.join().expect("cancelling thread");
+        });
+    }
+
+    #[test]
+    fn a_runtime_on_a_manual_clock_runs_no_code_to_its_end_on_the_calling_thread()
+    -> anyhow::Result<()> {
+        let runtime = StagedRuntime::new(
+            &[("demo", &[], "require('@test/tasks').record('ran')")],
             &[],
         )?;
-        let cancellation = runtime.entrypoint_cancellation();
-        let reached = recorded.clone();
-        // Cancels once `a` has started, whether or not it has yielded yet.
-        let cancel = std::thread::spawn(move || {
-            while reached.lock().expect("recorded mutex poisoned").is_empty() {
-                std::thread::yield_now();
-            }
-            cancellation.cancel();
-        });
+        let refused = |error: anyhow::Error| {
+            assert!(
+                format!("{error:#}").contains("manual clock can't block"),
+                "{error:#}"
+            );
+        };
 
-        let started = std::time::Instant::now();
-        assert_eq!(runtime.exec_all(), ["a", "b"]);
-        assert!(started.elapsed() < std::time::Duration::from_secs(10));
-        assert_eq!(*recorded.lock().expect("recorded mutex poisoned"), ["a"]);
-        cancel.join().expect("cancelling thread");
+        assert_eq!(runtime.runtime.exec_all(), ["demo"]);
+        refused(runtime.exec_plugin("demo").expect_err("refused"));
+        refused(runtime.runtime.restart_plugin("demo").expect_err("refused"));
+        refused(
+            eval_as(&runtime, "demo", b"require('@test/tasks').record('ran')")
+                .expect_err("refused"),
+        );
+        runtime.run_ready();
+        assert!(runtime.recorded().is_empty(), "refused code still ran");
+        assert!(leftover_tasks(&runtime)?.is_empty());
         Ok(())
     }
 
@@ -3230,9 +3452,7 @@ mod tests {
 
     #[test]
     fn tasks_a_live_export_spawns_stop_when_its_plugin_restarts() -> anyhow::Result<()> {
-        let recorded = Arc::new(Mutex::new(Vec::new()));
-        let runtime = task_test_runtime_with(
-            recorded.clone(),
+        let runtime = StagedRuntime::new(
             &[
                 ("lib", &[], &lib_exporting(&["later"])),
                 (
@@ -3252,10 +3472,13 @@ mod tests {
             &[],
         )?;
         assert!(runtime.exec_all().is_empty());
+        assert_eq!(leftover_tasks(&runtime)?.len(), 2, "both tasks wait");
 
         runtime.restart_plugin("lib")?;
+        assert_eq!(leftover_tasks(&runtime)?.len(), 1);
 
-        assert_eq!(recorded_after(&runtime, &recorded), ["app"]);
+        runtime.advance(LATER);
+        assert_eq!(runtime.recorded(), ["app"]);
         Ok(())
     }
 
@@ -3263,7 +3486,6 @@ mod tests {
     fn ending_either_plugin_cancels_an_async_call_between_them() -> anyhow::Result<()> {
         // Stopping the callee, and restarting the caller while it awaits.
         for (callee, ended) in [("forever", "lib"), ("soon", "app")] {
-            let recorded = Arc::new(Mutex::new(Vec::new()));
             let app = format!(
                 r#"
                     local tasks = require('@test/tasks')
@@ -3274,8 +3496,7 @@ mod tests {
                     end)
                 "#
             );
-            let runtime = task_test_runtime_with(
-                recorded.clone(),
+            let runtime = StagedRuntime::new(
                 &[
                     ("lib", &[], &lib_exporting(&[callee])),
                     ("app", &["lib"], &app),
@@ -3284,8 +3505,13 @@ mod tests {
             )?;
             assert!(runtime.exec_all().is_empty());
             let call = call_handler(&runtime, 0)?;
-            runtime.poll_background_tasks();
+            runtime.run_ready();
             assert!(completion_result(&call).is_none(), "{ended}");
+            assert_eq!(
+                leftover_tasks(&runtime)?.len(),
+                1,
+                "{ended}: the call waits"
+            );
 
             if ended == "lib" {
                 runtime.stop_plugin("lib")?;
@@ -3297,16 +3523,16 @@ mod tests {
                 .unwrap_or_else(|| panic!("the call must finish when {ended} ends"))
                 .expect_err("the call must fail");
             assert!(error.contains("cancelled"), "{ended}: {error}");
-            assert!(recorded_after(&runtime, &recorded).is_empty(), "{ended}");
+            assert!(leftover_tasks(&runtime)?.is_empty(), "{ended}");
+            runtime.advance(SOON);
+            assert!(runtime.recorded().is_empty(), "{ended}");
         }
         Ok(())
     }
 
     #[test]
     fn a_kept_wrapper_cannot_require_for_a_restarted_plugin() -> anyhow::Result<()> {
-        let recorded = Arc::new(Mutex::new(Vec::new()));
-        let runtime = task_test_runtime_with(
-            recorded.clone(),
+        let runtime = StagedRuntime::new(
             &[
                 (
                     "lib",
@@ -3341,28 +3567,33 @@ mod tests {
         assert!(runtime.exec_all().is_empty());
 
         runtime.restart_plugin("lib")?;
-        let error = eval_as(&runtime, "app", b"return kept_lazy()")
+        let error = runtime
+            .eval_as("app", b"return kept_lazy()")
             .expect_err("a wrapper from lib's ended run must not load lib's modules");
         assert!(
             error.to_string().contains("run that has ended"),
             "{error:#}"
         );
+        assert!(
+            leftover_tasks(&runtime)?.is_empty(),
+            "the refused wrapper loaded the module"
+        );
 
         assert_eq!(
-            eval_as(&runtime, "app", b"return require('@lib').lazy().check")?,
+            runtime.eval_as("app", b"return require('@lib').lazy().check")?,
             vec![luau::Value::Nil],
             "the current run's wrapper loads modules that act for that run"
         );
-        assert_eq!(recorded_after(&runtime, &recorded), ["late"]);
+        assert!(runtime.recorded().is_empty());
+        runtime.advance(LATER);
+        assert_eq!(runtime.recorded(), ["late"]);
         Ok(())
     }
 
     #[test]
     fn app_code_run_on_another_plugin_s_thread_has_no_require_of_that_plugin() -> anyhow::Result<()>
     {
-        let recorded = Arc::new(Mutex::new(Vec::new()));
-        let runtime = task_test_runtime_with(
-            recorded.clone(),
+        let runtime = StagedRuntime::new(
             &[
                 (
                     "lib",
@@ -3397,19 +3628,15 @@ mod tests {
         assert!(runtime.exec_all().is_empty());
 
         let call = call_handler(&runtime, 0)?;
-        assert_eq!(
-            recorded_after(&runtime, &recorded),
-            ["getfenv:nil", "capability:false"]
-        );
+        runtime.run_ready();
+        assert_eq!(runtime.recorded(), ["getfenv:nil", "capability:false"]);
         assert!(matches!(completion_result(&call), Some(Ok(_))));
         Ok(())
     }
 
     #[test]
     fn a_stale_async_export_fails_its_caller_at_once() -> anyhow::Result<()> {
-        let recorded = Arc::new(Mutex::new(Vec::new()));
-        let runtime = task_test_runtime_with(
-            recorded.clone(),
+        let runtime = StagedRuntime::new(
             &[
                 ("lib", &[], &lib_exporting(&["soon"])),
                 (
@@ -3431,21 +3658,22 @@ mod tests {
         runtime.restart_plugin("lib")?;
 
         let call = call_handler(&runtime, 0)?;
-        poll_for(&runtime, std::time::Duration::from_millis(20));
+        // With no time passing, so not once the export's wait would have ended.
+        runtime.run_ready();
         let error = completion_result(&call)
             .expect("a call through a stale async export must finish")
             .expect_err("a call through a stale async export must fail");
         assert!(error.contains("run that has ended"), "{error}");
-        assert!(recorded_after(&runtime, &recorded).is_empty());
+        assert!(leftover_tasks(&runtime)?.is_empty());
+        runtime.advance(SOON);
+        assert!(runtime.recorded().is_empty());
         Ok(())
     }
 
     #[test]
     fn async_calls_where_luau_cannot_yield_fail_and_schedule_nothing() -> anyhow::Result<()> {
         // A `table.sort` comparator, and a module's top level during `require`.
-        let recorded = Arc::new(Mutex::new(Vec::new()));
-        let runtime = task_test_runtime_with(
-            recorded.clone(),
+        let runtime = StagedRuntime::new(
             &[
                 ("lib", &[], &lib_exporting(&["eventually"])),
                 (
@@ -3479,24 +3707,22 @@ mod tests {
         )?;
         assert!(runtime.exec_all().is_empty());
         let call = call_handler(&runtime, 0)?;
+        runtime.run_ready();
 
-        assert_eq!(
-            recorded_after(&runtime, &recorded),
-            ["require:false", "sort:false"]
-        );
         assert_eq!(
             completion_result(&call).expect("the call finishes"),
             Ok(vec![luau::Value::String(b"done".to_vec())])
         );
         assert!(leftover_tasks(&runtime)?.is_empty());
+        assert_eq!(runtime.next_delay(), None, "a refused call still waits");
+        runtime.advance(SOON);
+        assert_eq!(runtime.recorded(), ["require:false", "sort:false"]);
         Ok(())
     }
 
     #[test]
     fn a_coroutine_keeps_its_context_across_scheduler_resumes() -> anyhow::Result<()> {
-        let recorded = Arc::new(Mutex::new(Vec::new()));
-        let runtime = task_test_runtime_with(
-            recorded.clone(),
+        let runtime = StagedRuntime::new(
             &[
                 ("lib", &[], &lib_exporting(&["soon"])),
                 (
@@ -3528,27 +3754,36 @@ mod tests {
             &[("plugin:lib/secret", r#"return "lib secret""#)],
         )?;
         assert!(runtime.exec_all().is_empty());
-        poll_for(&runtime, std::time::Duration::from_millis(50));
+        assert_eq!(runtime.recorded(), ["before:app"]);
+        assert_eq!(runtime.next_delay(), Some(SOON), "the coroutine waits");
+
+        runtime.advance(SOON);
+        assert_eq!(
+            runtime.recorded()[1..],
+            [
+                "resumed:app",
+                "getfenv:nil",
+                "private:false",
+                "capability:false"
+            ]
+        );
         assert!(
             leftover_tasks(&runtime)?.is_empty(),
             "a plain yield hands the coroutine back to the code that resumes it"
         );
-        let call = call_handler(&runtime, 0)?;
 
+        let call = call_handler(&runtime, 0)?;
+        runtime.run_ready();
+        assert_eq!(runtime.recorded()[5..], ["handler:suspended", "manual:app"]);
         assert_eq!(
-            recorded_after(&runtime, &recorded),
-            [
-                "before:app",
-                "resumed:app",
-                "getfenv:nil",
-                "private:false",
-                "capability:false",
-                "handler:suspended",
-                "manual:app",
-                "again:app"
-            ]
+            runtime.next_delay(),
+            Some(SOON),
+            "the coroutine waits again"
         );
         assert!(matches!(completion_result(&call), Some(Ok(_))));
+
+        runtime.advance(SOON);
+        assert_eq!(runtime.recorded()[7..], ["again:app"]);
         assert!(leftover_tasks(&runtime)?.is_empty());
         Ok(())
     }
@@ -3578,9 +3813,7 @@ mod tests {
 
     #[test]
     fn failed_entrypoint_ends_its_run() -> anyhow::Result<()> {
-        let recorded = Arc::new(Mutex::new(Vec::new()));
-        let runtime = task_test_runtime_with(
-            recorded.clone(),
+        let runtime = StagedRuntime::new(
             &[(
                 "demo",
                 &[],
@@ -3596,15 +3829,18 @@ mod tests {
         )?;
 
         assert_eq!(runtime.exec_all(), ["demo"]);
-        assert!(recorded_after(&runtime, &recorded).is_empty());
+        assert!(
+            leftover_tasks(&runtime)?.is_empty(),
+            "the failed run's task is left waiting"
+        );
+        runtime.advance(LATER);
+        assert!(runtime.recorded().is_empty());
         Ok(())
     }
 
     #[test]
     fn a_require_cannot_start_a_plugin_run() -> anyhow::Result<()> {
-        let recorded = Arc::new(Mutex::new(Vec::new()));
-        let runtime = task_test_runtime_with(
-            recorded.clone(),
+        let runtime = StagedRuntime::new(
             &[
                 (
                     "lib",
@@ -3629,17 +3865,22 @@ mod tests {
         };
 
         assert_not_running(
-            eval_as(&runtime, "app", b"require('@lib')")
+            runtime
+                .eval_as("app", b"require('@lib')")
                 .expect_err("lib has no run until the host starts one"),
         );
-        assert!(recorded_after(&runtime, &recorded).is_empty());
+        runtime.run_ready();
+        assert!(runtime.recorded().is_empty());
+        assert!(leftover_tasks(&runtime)?.is_empty());
 
         assert_eq!(runtime.exec_all(), ["lib", "app"]);
         assert_not_running(
-            eval_as(&runtime, "app", b"require('@lib/extra')")
+            runtime
+                .eval_as("app", b"require('@lib/extra')")
                 .expect_err("lib's run ended, so requiring its code fails"),
         );
-        assert_eq!(recorded_after(&runtime, &recorded), ["lib"]);
+        runtime.run_ready();
+        assert_eq!(runtime.recorded(), ["lib"]);
         Ok(())
     }
 
@@ -3697,11 +3938,11 @@ mod tests {
 
     #[test]
     fn restart_plugin_cancels_handler_calls_of_the_previous_run() -> anyhow::Result<()> {
-        let runtime = task_test_runtime(Arc::new(Mutex::new(Vec::new())))?;
+        let runtime = StagedRuntime::numbered_runs()?;
         assert!(runtime.exec_all().is_empty());
         let demo_call = call_handler(&runtime, 0)?;
         let other_call = call_handler(&runtime, 1)?;
-        poll_for(&runtime, std::time::Duration::from_millis(20));
+        runtime.run_ready();
         assert!(completion_result(&demo_call).is_none());
 
         runtime.restart_plugin("demo")?;
@@ -3711,7 +3952,7 @@ mod tests {
             .expect_err("in-flight call must fail");
         assert!(error.contains("cancelled"), "{error}");
         let late_call = call_handler(&runtime, 0)?;
-        poll_for(&runtime, std::time::Duration::from_millis(20));
+        runtime.run_ready();
         let error = completion_result(&late_call)
             .expect("a call into the previous run must finish")
             .expect_err("a call into the previous run must fail");
