@@ -1569,6 +1569,47 @@ fn plugin_executor_dispatches_registered_api_handler() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn plugin_executor_passes_request_keys_holding_nul_bytes() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+    init_api_test_state()?;
+    let runtime = runtime_with_scopes(&["lyra.api"])?;
+    runtime.run_plugin_source(
+        "demo",
+        "init.luau",
+        &br#"
+            local api = require("@lyra/api")
+
+            api.post("/demo/nul", function(ctx)
+                return api.response.json(200, {
+                    query = ctx.request.query["a\0b"][1],
+                    body = ctx.request.json["c\0d"],
+                })
+            end, { auth = "public" })
+        "#[..],
+    )?;
+
+    let handler = futures::executor::block_on(crate::plugins::api::tests::registered_handler(
+        "POST",
+        "/demo/nul",
+    ))
+    .context("registered API handler")?;
+    let result = runtime.dispatch_api_handler(ApiHandlerRequest {
+        method: "POST".to_string(),
+        headers: vec![("content-type".to_string(), "application/json".to_string())],
+        query: HashMap::from([("a\0b".to_string(), vec!["from query".to_string()])]),
+        body: br#"{"c\u0000d":"from body"}"#.to_vec(),
+        ..api_request(handler, "/demo/nul")
+    })?;
+
+    let Some(ApiResponseBody::Json(body)) = result.body else {
+        anyhow::bail!("expected JSON response body");
+    };
+    assert_eq!(body["query"], "from query");
+    assert_eq!(body["body"], "from body");
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn plugin_executor_binds_host_resolved_principal_to_api_responses() -> Result<()> {
     let _guard = crate::services::testing::runtime_test_lock().await;

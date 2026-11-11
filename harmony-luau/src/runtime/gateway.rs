@@ -71,14 +71,29 @@ unsafe extern "C-unwind" {
     fn harmony_luau_gateway_pushthread(L: *mut lua_State) -> c_int;
     fn harmony_luau_gateway_pushvalue(L: *mut lua_State, idx: c_int) -> c_int;
     fn harmony_luau_gateway_rawgeti(L: *mut lua_State, idx: c_int, n: c_int) -> c_int;
-    fn harmony_luau_gateway_rawgetfield(L: *mut lua_State, idx: c_int, k: *const c_char) -> c_int;
+    fn harmony_luau_gateway_rawgetfield(
+        L: *mut lua_State,
+        idx: c_int,
+        k: *const c_char,
+        len: usize,
+    ) -> c_int;
     fn harmony_luau_gateway_getmetatable(L: *mut lua_State, idx: c_int, found: *mut c_int)
     -> c_int;
     fn harmony_luau_gateway_ref(L: *mut lua_State, idx: c_int, reference: *mut c_int) -> c_int;
-    fn harmony_luau_gateway_rawsetfield(L: *mut lua_State, idx: c_int, k: *const c_char) -> c_int;
+    fn harmony_luau_gateway_rawsetfield(
+        L: *mut lua_State,
+        idx: c_int,
+        k: *const c_char,
+        len: usize,
+    ) -> c_int;
     fn harmony_luau_gateway_rawseti(L: *mut lua_State, idx: c_int, n: c_int) -> c_int;
     fn harmony_luau_gateway_rawset(L: *mut lua_State, idx: c_int) -> c_int;
-    fn harmony_luau_gateway_setfield(L: *mut lua_State, idx: c_int, k: *const c_char) -> c_int;
+    fn harmony_luau_gateway_setfield(
+        L: *mut lua_State,
+        idx: c_int,
+        k: *const c_char,
+        len: usize,
+    ) -> c_int;
     fn harmony_luau_gateway_setmetatable(L: *mut lua_State, idx: c_int) -> c_int;
     fn harmony_luau_gateway_setreadonly(L: *mut lua_State, idx: c_int, enabled: c_int) -> c_int;
     fn harmony_luau_gateway_next(L: *mut lua_State, idx: c_int, more: *mut c_int) -> c_int;
@@ -285,11 +300,11 @@ pub(super) unsafe fn get_ref(state: *mut lua_State, reference: c_int) -> Result<
     unsafe { raw_get_index(state, sys::LUA_REGISTRYINDEX, reference) }
 }
 
-pub(super) unsafe fn raw_get_field(state: *mut lua_State, index: c_int, key: &CStr) -> Result<()> {
+pub(super) unsafe fn raw_get_field(state: *mut lua_State, index: c_int, key: &[u8]) -> Result<()> {
     unsafe {
         check(
             state,
-            harmony_luau_gateway_rawgetfield(state, index, key.as_ptr()),
+            harmony_luau_gateway_rawgetfield(state, index, key.as_ptr().cast(), key.len()),
         )
     }
 }
@@ -318,11 +333,11 @@ pub(super) unsafe fn reference(state: *mut lua_State, index: c_int) -> Result<c_
     Ok(reference)
 }
 
-pub(super) unsafe fn raw_set_field(state: *mut lua_State, index: c_int, key: &CStr) -> Result<()> {
+pub(super) unsafe fn raw_set_field(state: *mut lua_State, index: c_int, key: &[u8]) -> Result<()> {
     unsafe {
         check(
             state,
-            harmony_luau_gateway_rawsetfield(state, index, key.as_ptr()),
+            harmony_luau_gateway_rawsetfield(state, index, key.as_ptr().cast(), key.len()),
         )
     }
 }
@@ -335,11 +350,16 @@ pub(super) unsafe fn raw_set(state: *mut lua_State, index: c_int) -> Result<()> 
     unsafe { check(state, harmony_luau_gateway_rawset(state, index)) }
 }
 
-pub(super) unsafe fn set_global(state: *mut lua_State, name: &CStr) -> Result<()> {
+pub(super) unsafe fn set_global(state: *mut lua_State, name: &[u8]) -> Result<()> {
     unsafe {
         check(
             state,
-            harmony_luau_gateway_setfield(state, sys::LUA_GLOBALSINDEX, name.as_ptr()),
+            harmony_luau_gateway_setfield(
+                state,
+                sys::LUA_GLOBALSINDEX,
+                name.as_ptr().cast(),
+                name.len(),
+            ),
         )
     }
 }

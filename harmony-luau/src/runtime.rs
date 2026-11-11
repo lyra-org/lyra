@@ -63,8 +63,6 @@ static LUAU_FLAGS: Once = Once::new();
 pub enum Error {
     #[error("failed to create Luau VM")]
     VmCreate,
-    #[error("string contains an interior nul byte")]
-    Nul(#[from] std::ffi::NulError),
     #[error("Luau compile failed")]
     Compile,
     #[error("Luau load failed: {0}")]
@@ -369,7 +367,7 @@ impl Vm {
         unsafe {
             gateway::create_table(state, 0, 1)?;
             gateway::push_cclosure(state, Some(host_error_tostring), c"__tostring", 0)?;
-            gateway::raw_set_field(state, -2, c"__tostring")?;
+            gateway::raw_set_field(state, -2, b"__tostring")?;
             gateway::set_readonly(state, -1, true)?;
             sys::lua_setuserdatametatable(state, HOST_ERROR_TAG.0);
         }
@@ -487,7 +485,7 @@ impl Vm {
             let _guard = self.stack_guard();
             // Environment access would reach any function's globals,
             // including the `require` a host gives a chunk.
-            for name in [c"getfenv", c"setfenv"] {
+            for name in [b"getfenv", b"setfenv"] {
                 unsafe {
                     gateway::push_nil(self.inner.state.as_ptr())?;
                     gateway::set_global(self.inner.state.as_ptr(), name)?;
@@ -541,7 +539,7 @@ impl Vm {
             gateway::create_table(state, 0, 0)?;
             gateway::create_table(state, 0, 1)?;
             gateway::push_value(state, sys::LUA_GLOBALSINDEX)?;
-            gateway::raw_set_field(state, -2, c"__index")?;
+            gateway::raw_set_field(state, -2, b"__index")?;
             gateway::set_readonly(state, -1, true)?;
             gateway::set_metatable(state, -2)?;
         }
@@ -561,22 +559,18 @@ impl Vm {
         scope: &Table,
     ) -> Result<Function> {
         let bytecode = compile(&chunk.source.0, chunk.compile)?;
-        let names = globals
-            .iter()
-            .map(|(name, _)| CString::new(*name))
-            .collect::<std::result::Result<Vec<_>, _>>()?;
         let guard = self.stack_guard();
         let main = self.inner.state;
         // Luau gives a loaded chunk the environment of the state loading it.
         let loader =
             NonNull::new(unsafe { gateway::new_thread(main.as_ptr())? }).ok_or(Error::VmCreate)?;
         unsafe { gateway::create_table(loader.as_ptr(), 0, globals.len() as c_int)? };
-        for ((_, value), name) in globals.iter().zip(&names) {
+        for (name, value) in globals {
             self.push_value_to(loader, value)?;
-            unsafe { gateway::raw_set_field(loader.as_ptr(), -2, name)? };
+            unsafe { gateway::raw_set_field(loader.as_ptr(), -2, name.as_bytes())? };
         }
         unsafe { gateway::create_table(loader.as_ptr(), 0, 2)? };
-        for field in [c"__index", c"__newindex"] {
+        for field in [b"__index".as_slice(), b"__newindex"] {
             self.push_registry_to(loader, &scope.reference)?;
             unsafe { gateway::raw_set_field(loader.as_ptr(), -2, field)? };
         }
@@ -762,17 +756,15 @@ impl Vm {
     }
 
     pub fn set_global_table(&self, name: &str, table: &Table) -> Result<()> {
-        let name = CString::new(name)?;
         let _guard = self.stack_guard();
         self.push_registry(&table.reference)?;
-        unsafe { gateway::set_global(self.inner.state.as_ptr(), &name) }
+        unsafe { gateway::set_global(self.inner.state.as_ptr(), name.as_bytes()) }
     }
 
     pub fn set_global_function(&self, name: &str, function: &Function) -> Result<()> {
-        let name = CString::new(name)?;
         let _guard = self.stack_guard();
         self.push_registry(&function.reference)?;
-        unsafe { gateway::set_global(self.inner.state.as_ptr(), &name) }
+        unsafe { gateway::set_global(self.inner.state.as_ptr(), name.as_bytes()) }
     }
 
     fn top(&self) -> i32 {
@@ -1608,12 +1600,11 @@ impl Table {
     }
 
     pub fn set(&self, key: &str, value: impl Into<Value>) -> Result<()> {
-        let key = CString::new(key)?;
         let vm = self.vm();
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
         vm.push_value(&value.into())?;
-        unsafe { gateway::raw_set_field(self.state(), -2, &key) }
+        unsafe { gateway::raw_set_field(self.state(), -2, key.as_bytes()) }
     }
 
     pub fn set_integer(&self, key: i32, value: impl Into<Value>) -> Result<()> {
@@ -1634,11 +1625,10 @@ impl Table {
     }
 
     pub fn get(&self, key: &str) -> Result<Value> {
-        let key = CString::new(key)?;
         let vm = self.vm();
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
-        unsafe { gateway::raw_get_field(self.state(), -1, &key)? };
+        unsafe { gateway::raw_get_field(self.state(), -1, key.as_bytes())? };
         vm.read_value(StackIndex::TOP)
     }
 
@@ -2066,9 +2056,8 @@ impl OwnedTable {
             unsafe { gateway::raw_set_index(state_ptr, -2, index as i32 + 1)? };
         }
         for (key, value) in &self.fields {
-            let key = CString::new(key.as_str())?;
             vm.push_value_to(state, value)?;
-            unsafe { gateway::raw_set_field(state_ptr, -2, &key)? };
+            unsafe { gateway::raw_set_field(state_ptr, -2, key.as_bytes())? };
         }
         for (key, value) in &self.entries {
             vm.push_value_to(state, key)?;
@@ -4741,6 +4730,43 @@ mod tests {
             vec![
                 Value::String(b"answer".to_vec()),
                 Value::String(b"value".to_vec())
+            ]
+        );
+        assert_eq!(stack_top(&vm), 0);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn string_keys_may_hold_nul_bytes() -> Result<()> {
+        let vm = Vm::new()?;
+        vm.open_standard_libraries(StandardLibraries::all_supported())?;
+        let table = vm.create_table()?;
+        table.set("a\0b", Value::Integer(1))?;
+        table.set("a", Value::Integer(2))?;
+        assert_eq!(table.get("a\0b")?, Value::Integer(1));
+        assert_eq!(table.get("a")?, Value::Integer(2));
+        vm.set_global_table("g\0lobal", &table)?;
+
+        let mut owned = OwnedTable::new();
+        owned.set_field("x\0y", Value::Integer(3));
+        owned.set_field("x", Value::Integer(4));
+
+        let function = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(
+                &br#"local owned = ...
+                local table = _G["g\0lobal"]
+                return table["a\0b"], table.a, owned["x\0y"], owned.x"#[..],
+            ),
+            ChunkOrigin::default(),
+        ))?;
+        assert_eq!(
+            function.call(&vm, &[Value::TableData(owned)])?,
+            vec![
+                Value::Integer(1),
+                Value::Integer(2),
+                Value::Integer(3),
+                Value::Integer(4)
             ]
         );
         assert_eq!(stack_top(&vm), 0);

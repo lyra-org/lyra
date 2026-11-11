@@ -452,11 +452,8 @@ struct LuauMapSerializer {
 impl LuauMapSerializer {
     fn insert(&mut self, key: LuauMapKey, value: Value) {
         match key {
-            LuauMapKey::Field(key) if !key.as_bytes().contains(&0) => {
-                self.table.set_field(key, value);
-            }
             LuauMapKey::Field(key) => {
-                self.table.set_key(Value::String(key.into_bytes()), value);
+                self.table.set_field(key, value);
             }
             LuauMapKey::Value(key) => {
                 self.table.set_key(key, value);

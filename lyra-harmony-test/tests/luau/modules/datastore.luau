@@ -29,6 +29,11 @@ assert(batch[1] == true)
 assert((batch[2] :: { number })[2] == 2)
 assert(batch[3] == nil)
 
+-- A table key holding a NUL byte reads back.
+store:set("nul_key", { ["a\0b"] = 1 })
+assert((store:get("nul_key") :: { [string]: number })["a\0b"] == 1)
+assert(store:remove("nul_key"))
+
 -- Short-lived entries expire and read as absent.
 store:set("short", "soon", { ttl_ms = 1 })
 store:set_many({ batch_short = { value = "soon", ttl_ms = 1 } })

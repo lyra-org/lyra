@@ -117,9 +117,17 @@ int harmony_luau_gateway_rawgeti(lua_State* L, int idx, int n)
     return protect(L, [&](lua_State* L) { lua_rawgeti(L, idx, n); });
 }
 
-int harmony_luau_gateway_rawgetfield(lua_State* L, int idx, const char* k)
+int harmony_luau_gateway_rawgetfield(lua_State* L, int idx, const char* k, size_t len)
 {
-    return protect(L, [&](lua_State* L) { lua_rawgetfield(L, idx, k); });
+    return protect(
+        L,
+        [&](lua_State* L)
+        {
+            int table = lua_absindex(L, idx);
+            lua_pushlstring(L, k, len);
+            lua_rawget(L, table);
+        }
+    );
 }
 
 int harmony_luau_gateway_getmetatable(lua_State* L, int idx, int* found)
@@ -132,9 +140,18 @@ int harmony_luau_gateway_ref(lua_State* L, int idx, int* ref)
     return protect(L, [&](lua_State* L) { *ref = lua_ref(L, idx); });
 }
 
-int harmony_luau_gateway_rawsetfield(lua_State* L, int idx, const char* k)
+int harmony_luau_gateway_rawsetfield(lua_State* L, int idx, const char* k, size_t len)
 {
-    return protect(L, [&](lua_State* L) { lua_rawsetfield(L, idx, k); });
+    return protect(
+        L,
+        [&](lua_State* L)
+        {
+            int table = lua_absindex(L, idx);
+            lua_pushlstring(L, k, len);
+            lua_insert(L, -2);
+            lua_rawset(L, table);
+        }
+    );
 }
 
 int harmony_luau_gateway_rawseti(lua_State* L, int idx, int n)
@@ -147,9 +164,18 @@ int harmony_luau_gateway_rawset(lua_State* L, int idx)
     return protect(L, [&](lua_State* L) { lua_rawset(L, idx); });
 }
 
-int harmony_luau_gateway_setfield(lua_State* L, int idx, const char* k)
+int harmony_luau_gateway_setfield(lua_State* L, int idx, const char* k, size_t len)
 {
-    return protect(L, [&](lua_State* L) { lua_setfield(L, idx, k); });
+    return protect(
+        L,
+        [&](lua_State* L)
+        {
+            int table = lua_absindex(L, idx);
+            lua_pushlstring(L, k, len);
+            lua_insert(L, -2);
+            lua_settable(L, table);
+        }
+    );
 }
 
 int harmony_luau_gateway_setmetatable(lua_State* L, int idx)
