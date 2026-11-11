@@ -57,7 +57,7 @@ futures = { version = "0.3", default-features = false, features = ["std", "async
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["trace", "fs", "cors", "timeout"] }
 tracing = { workspace = true }
-tracing-subscriber = { version = "0.3", default-features = false, features = ["ansi", "env-filter", "fmt", "registry", "std"] }
+tracing-subscriber = { workspace = true, features = ["ansi", "env-filter", "registry"] }
 tracing-appender = { version = "0.2", default-features = false }
 thiserror = { workspace = true }
 time = { version = "0.3", features = ["formatting"] }
