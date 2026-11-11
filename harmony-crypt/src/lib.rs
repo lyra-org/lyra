@@ -86,10 +86,10 @@ impl CryptModule {
 fn hash_bytes(algorithm: HashAlgorithm, bytes: &[u8]) -> String {
     match algorithm {
         HashAlgorithm::Md5 => hex_bytes(&md5::digest(bytes)),
-        HashAlgorithm::Sha1 => format!("{:x}", sha1::Sha1::digest(bytes)),
-        HashAlgorithm::Sha256 => format!("{:x}", Sha256::digest(bytes)),
-        HashAlgorithm::Sha384 => format!("{:x}", Sha384::digest(bytes)),
-        HashAlgorithm::Sha512 => format!("{:x}", Sha512::digest(bytes)),
+        HashAlgorithm::Sha1 => hex_bytes(&sha1::Sha1::digest(bytes)),
+        HashAlgorithm::Sha256 => hex_bytes(&Sha256::digest(bytes)),
+        HashAlgorithm::Sha384 => hex_bytes(&Sha384::digest(bytes)),
+        HashAlgorithm::Sha512 => hex_bytes(&Sha512::digest(bytes)),
         HashAlgorithm::Xxh3_64 => format!("{:016x}", xxh3::hash64_with_seed(bytes, 0)),
         HashAlgorithm::Xxh3_128 => format!("{:032x}", xxh3::hash128_with_seed(bytes, 0)),
     }
