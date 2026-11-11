@@ -38,7 +38,11 @@ use super::{
             ArtistKey,
             Artists,
         },
-        pipeline::Catalog,
+        pipeline::{
+            Catalog,
+            Context,
+            numbers_in,
+        },
         releases::{
             ReleaseKey,
             Releases,
@@ -433,24 +437,19 @@ pub(crate) fn stats(
             None => {}
         }
     }
+    // One context, so the kinds share one read of the viewer's totals.
+    let cx = Context::with(catalog::index::snapshot(db)?, db, viewer);
     let mut stats = match unique_track_id_pairs {
-        Some(pairs) => merged_track_stats(db, viewer, tracks, pairs)?,
-        None => stats_of::<Tracks>(
-            db,
-            viewer,
-            tracks,
-            [TrackKey::ListenCount, TrackKey::LastPlayedAt],
-        )?,
+        Some(pairs) => merged_track_stats(&cx, tracks, pairs)?,
+        None => stats_of::<Tracks>(&cx, tracks, [TrackKey::ListenCount, TrackKey::LastPlayedAt])?,
     };
     stats.extend(stats_of::<Releases>(
-        db,
-        viewer,
+        &cx,
         releases,
         [ReleaseKey::ListenCount, ReleaseKey::LastPlayedAt],
     )?);
     stats.extend(stats_of::<Artists>(
-        db,
-        viewer,
+        &cx,
         artists,
         [ArtistKey::ListenCount, ArtistKey::LastPlayedAt],
     )?);
@@ -458,8 +457,7 @@ pub(crate) fn stats(
 }
 
 fn stats_of<C: Catalog>(
-    db: &DbAny,
-    viewer: &Viewer,
+    cx: &Context<'_>,
     ids: Vec<DbId>,
     keys: [C::Key; 2],
 ) -> Result<HashMap<DbId, ListenStats>, CatalogError> {
@@ -467,19 +465,19 @@ fn stats_of<C: Catalog>(
         return Ok(HashMap::new());
     }
     let filter = C::id_filter(ids.clone());
-    Ok(catalog::numbers::<C>(db, viewer, &filter, ids, &keys)?
+    Ok(numbers_in::<C>(cx, &filter, ids, &keys)?
         .into_iter()
         .filter_map(listened)
         .collect())
 }
 
 fn merged_track_stats(
-    db: &DbAny,
-    viewer: &Viewer,
+    cx: &Context<'_>,
     tracks: Vec<DbId>,
     unique_track_id_pairs: &HashSet<(String, String)>,
 ) -> Result<HashMap<DbId, ListenStats>, CatalogError> {
-    let user_db_id = viewer.user_db_id("listen stats")?;
+    let (db, viewer) = (cx.db, cx.viewer);
+    let totals = cx.listen_totals("listen stats")?;
     let mut merged_by_track = Vec::with_capacity(tracks.len());
     for track in tracks {
         let mut merged = Vec::new();
@@ -494,7 +492,6 @@ fn merged_track_stats(
         }
         merged_by_track.push((track, merged));
     }
-    let totals = lyra_db::listens::totals(db, user_db_id)?;
     Ok(merged_by_track
         .into_iter()
         .filter_map(|(track, merged)| {

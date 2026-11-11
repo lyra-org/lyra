@@ -388,10 +388,10 @@ impl Catalog for Tracks {
                 linked(&|| least_over_releases(&|release| artist_name(links.release_lead(release))))
             }
             TrackKey::ListenCount | TrackKey::LastPlayedAt => {
-                let user = cx.viewer.user_db_id("listen sort keys")?;
-                let listens = lyra_db::listens::totals(cx.db, user)?
-                    .into_iter()
-                    .filter_map(|(track, total)| Some((tracks.slot(track)?, total)))
+                let listens = cx
+                    .listen_totals("listen sort keys")?
+                    .iter()
+                    .filter_map(|(track, total)| Some((tracks.slot(*track)?, *total)))
                     .collect::<HashMap<_, _>>();
                 Column::computed(tracks.len(), slots, |slot| match key {
                     TrackKey::ListenCount => {

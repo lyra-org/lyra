@@ -47,16 +47,18 @@ use self::{
         Context,
     },
 };
-#[cfg(test)]
-pub(crate) use pipeline::order;
 pub(crate) use pipeline::{
     NameRange,
     PersonalData,
     PersonalFilter,
     Query,
     counts,
-    numbers,
     page,
+};
+#[cfg(test)]
+pub(crate) use pipeline::{
+    numbers,
+    order,
 };
 
 /// An entity as the catalog lists it, with whether it can play as the index snapshot has it.
@@ -484,10 +486,9 @@ pub(crate) fn track_totals(
 ) -> Result<std::collections::HashMap<u32, TrackTotals>, CatalogError> {
     let index = &cx.index;
     let listens = if listens {
-        let user = cx.viewer.user_db_id("listen sort keys")?;
-        lyra_db::listens::totals(cx.db, user)?
-            .into_iter()
-            .filter_map(|(track, total)| Some((index.tracks.slot(track)?, total)))
+        cx.listen_totals("listen sort keys")?
+            .iter()
+            .filter_map(|(track, total)| Some((index.tracks.slot(*track)?, *total)))
             .collect()
     } else {
         std::collections::HashMap::new()

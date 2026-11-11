@@ -13,7 +13,10 @@ use std::{
         HashMap,
         HashSet,
     },
-    sync::Arc,
+    sync::{
+        Arc,
+        OnceLock,
+    },
 };
 
 use agdb::{
@@ -23,6 +26,7 @@ use agdb::{
 
 use lyra_db::{
     favorites::FavoriteKind,
+    listens::ListenTotal,
     ratings::{
         RatingBounds,
         RatingFilter,
@@ -199,9 +203,23 @@ pub(crate) struct Context<'a> {
     pub(crate) db: &'a DbAny,
     pub(crate) viewer: &'a Viewer,
     pub(crate) scope: Arc<Scope>,
+    listen_totals: OnceLock<HashMap<DbId, ListenTotal>>,
 }
 
 impl<'a> Context<'a> {
+    /// The viewer's listens by track, read once however many keys and kinds count them.
+    pub(crate) fn listen_totals(
+        &self,
+        needed_by: &str,
+    ) -> Result<&HashMap<DbId, ListenTotal>, CatalogError> {
+        if let Some(totals) = self.listen_totals.get() {
+            return Ok(totals);
+        }
+        let user = self.viewer.user_db_id(needed_by)?;
+        let totals = lyra_db::listens::totals(self.db, user)?;
+        Ok(self.listen_totals.get_or_init(|| totals))
+    }
+
     /// The links between kinds, as far as the viewer can see them.
     pub(crate) fn links(&self) -> Scoped<'_> {
         Scoped::new(&self.index, &self.scope)
@@ -278,6 +296,7 @@ impl<'a> Context<'a> {
             db,
             viewer,
             scope,
+            listen_totals: OnceLock::new(),
         }
     }
 }
