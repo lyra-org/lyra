@@ -501,6 +501,21 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
+    fn transcodes_a_source_with_a_custom_channel_order() {
+        let target = std::env::temp_dir().join(format!(
+            "lyra-ffmpeg-custom-order-{}.wav",
+            std::process::id()
+        ));
+        encode(
+            &asset("custom-channel-order.mov"),
+            Output::new(&target).audio_format(AudioFormat::Wav),
+        );
+        assert_eq!(wav_channels(&target), 2);
+        let _ = std::fs::remove_file(target);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
     fn refuses_input_below_the_minimum_sample_rate() {
         let target =
             std::env::temp_dir().join(format!("lyra-ffmpeg-1hz-{}.flac", std::process::id()));

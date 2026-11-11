@@ -1366,7 +1366,11 @@ unsafe fn setup_encoder(
         if let Some(channels) = output.audio_channels.filter(|&c| c > 0) {
             av_channel_layout_default(&mut (*enc_ctx_ptr).ch_layout, channels);
         } else {
-            (*enc_ctx_ptr).ch_layout = (*in_codecpar).ch_layout;
+            let ret =
+                av_channel_layout_copy(&mut (*enc_ctx_ptr).ch_layout, &(*in_codecpar).ch_layout);
+            if ret < 0 {
+                return Err(ffmpeg_operation_error("copy source channel layout", ret));
+            }
             if (*enc_ctx_ptr).ch_layout.nb_channels <= 0 {
                 av_channel_layout_default(&mut (*enc_ctx_ptr).ch_layout, 2);
             }
