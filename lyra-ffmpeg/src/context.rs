@@ -560,6 +560,17 @@ mod tests {
     }
 
     #[test]
+    fn sample_limit_caps_a_frame_without_overflowing() {
+        assert_eq!(samples_within_limit(1024, 0, None), 1024);
+        assert_eq!(samples_within_limit(1024, 1_000, Some(1_500)), 500);
+        assert_eq!(samples_within_limit(1024, 1_500, Some(1_500)), 0);
+        assert_eq!(
+            samples_within_limit(1024, 0, Some(i64::from(i32::MAX) + 1)),
+            1024
+        );
+    }
+
+    #[test]
     fn integer_sample_format_selection_matches_the_bit_depth() {
         let flac = [
             AVSampleFormat::AV_SAMPLE_FMT_S16,
@@ -1869,14 +1880,11 @@ unsafe fn transcode_audio(
                 resample_into_fifo(&resampler, frame, resampled_frame, enc_ctx, fifo)?;
 
                 while av_audio_fifo_size(fifo) >= frame_size {
-                    let mut samples_to_read = frame_size;
-                    if let Some(max_output_samples) = max_output_samples {
-                        let remaining_samples = max_output_samples.saturating_sub(produced_samples);
-                        if remaining_samples <= 0 {
-                            stop_after_decode = true;
-                            break;
-                        }
-                        samples_to_read = std::cmp::min(samples_to_read, remaining_samples as i32);
+                    let samples_to_read =
+                        samples_within_limit(frame_size, produced_samples, max_output_samples);
+                    if samples_to_read == 0 {
+                        stop_after_decode = true;
+                        break;
                     }
 
                     let read_samples =
@@ -1923,6 +1931,16 @@ unsafe fn transcode_audio(
     }
 }
 
+/// Up to `available` samples, fewer when `limit` leaves less after the `produced` ones.
+fn samples_within_limit(available: i32, produced: i64, limit: Option<i64>) -> i32 {
+    match limit {
+        Some(limit) => limit
+            .saturating_sub(produced)
+            .clamp(0, i64::from(available)) as i32,
+        None => available,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 unsafe fn drain_fifo_and_encode(
     fifo: *mut AVAudioFifo,
@@ -1937,13 +1955,13 @@ unsafe fn drain_fifo_and_encode(
 ) -> Result<()> {
     unsafe {
         while av_audio_fifo_size(fifo) > 0 {
-            let mut samples_to_read = std::cmp::min(av_audio_fifo_size(fifo), frame_size);
-            if let Some(max_output_samples) = max_output_samples {
-                let remaining_samples = max_output_samples.saturating_sub(*produced_samples);
-                if remaining_samples <= 0 {
-                    break;
-                }
-                samples_to_read = std::cmp::min(samples_to_read, remaining_samples as i32);
+            let samples_to_read = samples_within_limit(
+                std::cmp::min(av_audio_fifo_size(fifo), frame_size),
+                *produced_samples,
+                max_output_samples,
+            );
+            if samples_to_read == 0 {
+                break;
             }
 
             let read_samples = read_fifo_frame(fifo, output_frame, enc_ctx, samples_to_read)?;
