@@ -45,14 +45,14 @@ use crate::{
     routes::AppError,
     services::{
         auth::{
-            Principal,
+            CredentialHolder,
             media_tokens::{
                 MediaTokenAccess,
                 MediaTokenError,
                 MediaTokenPurpose,
                 validate_media_token,
             },
-            require_authenticated,
+            require_auth,
         },
         delivery::{
             DeliveryTarget,
@@ -85,14 +85,14 @@ fn validate_track_media_token(
     validate_media_token(media_token, purpose, track_id)
 }
 
-/// The principal a request to serve a track for `purpose` must be, without a media token.
+/// Whom a request to serve a track for `purpose` authenticates, without a media token.
 async fn authorize_track_request(
     headers: &HeaderMap,
     purpose: MediaTokenPurpose,
-) -> Result<Principal, AppError> {
-    let principal = require_authenticated(bearer_credential(headers)).await?;
-    authorize_track_purpose(&principal, purpose)?;
-    Ok(principal)
+) -> Result<CredentialHolder, AppError> {
+    let auth = require_auth(bearer_credential(headers)).await?;
+    authorize_track_purpose(&auth.principal, purpose)?;
+    Ok(auth.holder())
 }
 
 /// Grants access to a track for `purpose` through a media token bound to it, or else the
@@ -107,11 +107,11 @@ pub(crate) async fn require_track_access(
         Ok(access) => Ok(TrackAccess::MediaToken(access)),
         Err(token_error) if media_token.is_some() => authorize_track_request(headers, purpose)
             .await
-            .map(TrackAccess::Principal)
+            .map(|holder| TrackAccess::Credential { holder, purpose })
             .map_err(|_| media_token_error_to_app_error(token_error)),
         Err(_) => authorize_track_request(headers, purpose)
             .await
-            .map(TrackAccess::Principal),
+            .map(|holder| TrackAccess::Credential { holder, purpose }),
     }
 }
 
@@ -431,9 +431,12 @@ pub(crate) mod tests {
             .await
             .expect("user with download permission should be allowed");
 
-        let crate::services::delivery::TrackAccess::Principal(principal) = access else {
-            panic!("bearer access should resolve a principal");
+        let crate::services::delivery::TrackAccess::Credential { holder, .. } = access else {
+            panic!("bearer access should be held by its credential");
         };
+        let principal = holder
+            .principal(&*STATE.db.read().await)?
+            .ok_or_else(|| anyhow::anyhow!("the holder is signed in"))?;
         assert_eq!(principal.username, "downloader");
 
         let _ = std::fs::remove_dir_all(test_dir);
@@ -524,18 +527,20 @@ pub(crate) mod tests {
         let test_dir = initialize_test_runtime().await?;
         let track_id = prepare_streamable_track(&test_dir).await?;
         let headers = create_user_with_permissions("departed", vec![]).await?;
-        let principal =
-            crate::services::auth::require_authenticated(bearer_credential(&headers)).await?;
+        let auth = crate::services::auth::require_auth(bearer_credential(&headers)).await?;
         {
             let mut db = STATE.db.write().await;
-            let user_db_id = principal.require(&*db)?;
+            let user_db_id = auth.principal.require(&*db)?;
             db.transaction_mut(|t| lyra_db::users::delete_user(t, user_db_id))?;
         }
 
         let status = AppError::from(
             crate::services::delivery::validate_and_get_track_source(
                 &track_id,
-                &crate::services::delivery::TrackAccess::Principal(principal),
+                &crate::services::delivery::TrackAccess::Credential {
+                    holder: auth.holder(),
+                    purpose: MediaTokenPurpose::Stream,
+                },
             )
             .await
             .expect_err("a deleted principal must not resolve a track source"),
@@ -719,14 +724,16 @@ pub(crate) mod tests {
         let track_id = prepare_streamable_track(&test_dir).await?;
         let headers =
             create_user_with_permissions("plugin-downloader", vec![Permission::Download]).await?;
-        let principal =
-            crate::services::auth::require_authenticated(bearer_credential(&headers)).await?;
+        let auth = crate::services::auth::require_auth(bearer_credential(&headers)).await?;
 
         let response = super::track_response(
             &Method::GET,
             &HeaderMap::new(),
             &track_id,
-            &crate::services::delivery::TrackAccess::Principal(principal),
+            &crate::services::delivery::TrackAccess::Credential {
+                holder: auth.holder(),
+                purpose: MediaTokenPurpose::Download,
+            },
             ServeTrackOptions::default(),
             crate::services::delivery::DeliveryTarget::Download,
             false,
@@ -1109,11 +1116,7 @@ pub(crate) mod tests {
         let (status, _, playlist) =
             send(Method::GET, format!("/{track_id}/hls.m3u8?{query}")).await?;
         assert_eq!(status, StatusCode::OK);
-        let segment = std::str::from_utf8(&playlist)?
-            .lines()
-            .find_map(|line| line.strip_prefix("/api/stream"))
-            .ok_or_else(|| anyhow::anyhow!("playlist has no segment"))?
-            .to_string();
+        let segment = first_hls_segment(&playlist)?;
         let (status, _, _) = send(Method::GET, segment.clone()).await?;
         assert_eq!(status, StatusCode::OK);
 
@@ -1122,6 +1125,210 @@ pub(crate) mod tests {
         assert_eq!(status, StatusCode::UNAUTHORIZED);
 
         crate::services::hls::state::test_helpers::reset_hls_state_for_test().await;
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    /// The path, under the stream routes, of the first segment `playlist` lists.
+    pub(crate) fn first_hls_segment(playlist: &[u8]) -> anyhow::Result<String> {
+        Ok(std::str::from_utf8(playlist)?
+            .lines()
+            .find_map(|line| line.strip_prefix("/api/stream"))
+            .ok_or_else(|| anyhow::anyhow!("playlist has no segment"))?
+            .to_string())
+    }
+
+    pub(crate) async fn hls_segment_status(segment: &str) -> anyhow::Result<StatusCode> {
+        Ok(send(Method::GET, segment.to_string()).await?.0)
+    }
+
+    /// Starts an HLS session with the request's own credential, and returns the path of its
+    /// first segment once that has been served.
+    async fn start_bearer_hls(track_id: &str, headers: &HeaderMap) -> anyhow::Result<String> {
+        use tower::ServiceExt;
+
+        let response = super::stream_routes()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(format!("/{track_id}/hls.m3u8"))
+                    .header(AUTHORIZATION, headers[AUTHORIZATION].clone())
+                    .body(axum::body::Body::empty())?,
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        let playlist = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let segment = first_hls_segment(&playlist)?;
+        assert_eq!(hls_segment_status(&segment).await?, StatusCode::OK);
+        Ok(segment)
+    }
+
+    fn bearer_headers(bearer: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            format!("Bearer {bearer}")
+                .parse()
+                .expect("valid auth header"),
+        );
+        headers
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn bearer_hls_segments_stop_once_the_session_holder_signs_out() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let headers = create_user_with_permissions("bearer-hls-leaver", vec![]).await?;
+        let segment = start_bearer_hls(&track_id, &headers).await?;
+
+        assert!(crate::services::auth::logout_with_token(Some(&bearer_token(&headers))).await?);
+        assert_eq!(
+            hls_segment_status(&segment).await?,
+            StatusCode::UNAUTHORIZED
+        );
+
+        crate::services::hls::state::test_helpers::reset_hls_state_for_test().await;
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn bearer_hls_segments_stop_once_the_api_key_is_revoked() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let session = create_user_with_permissions("hls-key-owner", vec![]).await?;
+        let principal =
+            crate::services::auth::require_authenticated(bearer_credential(&session)).await?;
+        let key = crate::services::auth::api_keys::create_api_key(&principal, "player").await?;
+        let segment = start_bearer_hls(&track_id, &bearer_headers(&key.key)).await?;
+
+        assert!(
+            crate::services::auth::api_keys::revoke_api_key_for_user(&principal, &key.id).await?
+        );
+        assert_eq!(
+            hls_segment_status(&segment).await?,
+            StatusCode::UNAUTHORIZED
+        );
+
+        crate::services::hls::state::test_helpers::reset_hls_state_for_test().await;
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn bearer_hls_segments_stop_once_library_access_is_removed() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let headers = create_user_with_permissions("hls-shut-out", vec![]).await?;
+        let principal =
+            crate::services::auth::require_authenticated(bearer_credential(&headers)).await?;
+        let segment = start_bearer_hls(&track_id, &headers).await?;
+
+        {
+            let mut db = STATE.db.write().await;
+            let user_db_id = principal.require(&*db)?;
+            let library_ids = lyra_db::libraries::get(&*db)?
+                .into_iter()
+                .filter_map(|library| library.db_id)
+                .collect::<Vec<_>>();
+            for library_db_id in library_ids {
+                lyra_db::libraries::revoke_access(&mut db, user_db_id, library_db_id)?;
+            }
+        }
+        assert_eq!(hls_segment_status(&segment).await?, StatusCode::NOT_FOUND);
+
+        crate::services::hls::state::test_helpers::reset_hls_state_for_test().await;
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn default_user_hls_segments_stop_once_auth_is_enabled() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let mut config = STATE.config().as_ref().clone();
+        config.auth.enabled = false;
+        crate::services::testing::publish_config(config);
+        crate::services::auth::ensure_default_user(&STATE.config()).await?;
+        let default_db_id = crate::services::auth::require_authenticated(None)
+            .await?
+            .require(&*STATE.db.read().await)?;
+        let session =
+            crate::services::testing::create_session(default_db_id, Default::default()).await?;
+        let segment = start_bearer_hls(&track_id, &bearer_headers(&session.token)).await?;
+
+        let mut config = STATE.config().as_ref().clone();
+        config.auth.enabled = true;
+        crate::services::testing::publish_config(config);
+        assert_eq!(
+            hls_segment_status(&segment).await?,
+            StatusCode::UNAUTHORIZED
+        );
+
+        crate::services::hls::state::test_helpers::reset_hls_state_for_test().await;
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn track_source_rejects_a_signed_out_credential() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let headers = create_user_with_permissions("signed-out", vec![]).await?;
+        let auth = crate::services::auth::require_auth(bearer_credential(&headers)).await?;
+        let access = crate::services::delivery::TrackAccess::Credential {
+            holder: auth.holder(),
+            purpose: MediaTokenPurpose::Stream,
+        };
+        crate::services::delivery::validate_and_get_track_source(&track_id, &access)
+            .await
+            .map_err(|_| anyhow::anyhow!("a signed-in credential resolves the track's source"))?;
+
+        assert!(crate::services::auth::logout_with_token(Some(&bearer_token(&headers))).await?);
+        let status = AppError::from(
+            crate::services::delivery::validate_and_get_track_source(&track_id, &access)
+                .await
+                .expect_err("a signed-out credential must not resolve a track source"),
+        )
+        .into_response()
+        .status();
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn track_source_rejects_a_download_once_download_permission_is_removed()
+    -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let headers =
+            create_user_with_permissions("demoted-mid-request", vec![Permission::Download]).await?;
+        let access = require_track_access(&headers, None, MediaTokenPurpose::Download, &track_id)
+            .await
+            .map_err(|_| anyhow::anyhow!("a caller who may download is granted access"))?;
+
+        let user = user_db_id(&headers).await?;
+        lyra_db::roles::ensure_user_has_role(
+            &mut *STATE.db.write().await,
+            user,
+            lyra_db::roles::BUILTIN_USER_ROLE,
+        )?;
+        let status = AppError::from(
+            crate::services::delivery::validate_and_get_track_source(&track_id, &access)
+                .await
+                .expect_err("a demoted caller must not resolve a track source to download"),
+        )
+        .into_response()
+        .status();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())
     }

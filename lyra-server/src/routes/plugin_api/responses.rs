@@ -1156,6 +1156,54 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn hls_playlist_segments_stop_once_the_caller_signs_out() -> anyhow::Result<()> {
+        use crate::routes::serve::tests::{
+            create_user_with_permissions,
+            first_hls_segment,
+            hls_segment_status,
+            initialize_test_runtime,
+            prepare_streamable_track,
+        };
+
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let headers = create_user_with_permissions("plugin-hls-leaver", Vec::new()).await?;
+        let bearer = crate::routes::request::bearer_credential(&headers);
+        let listener = crate::services::auth::require_auth(bearer).await?;
+
+        let served = plugin_api_response_to_axum(
+            ApiHandlerResponse {
+                auth: Some(listener.clone()),
+                ..track_kind_response(
+                    ApiResponseKind::HlsPlaylist,
+                    &track_id,
+                    200,
+                    &[],
+                    TrackResponseOptions::Hls(HlsPlaylistOptions::default()),
+                )
+            },
+            &Method::GET,
+            &axum::http::HeaderMap::new(),
+        )
+        .await?;
+        assert_eq!(served.status(), StatusCode::OK);
+        let playlist = axum::body::to_bytes(served.into_body(), usize::MAX).await?;
+        let segment = first_hls_segment(&playlist)?;
+        assert_eq!(hls_segment_status(&segment).await?, StatusCode::OK);
+
+        assert!(crate::services::auth::logout_with_token(bearer).await?);
+        assert_eq!(
+            hls_segment_status(&segment).await?,
+            StatusCode::UNAUTHORIZED
+        );
+
+        crate::services::hls::state::test_helpers::reset_hls_state_for_test().await;
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
     fn text_fallback(status: u16, headers: &[(&str, &str)]) -> ApiFallbackResponse {
         ApiFallbackResponse {
             kind: ApiResponseKind::Text,

@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use super::{
     DeliveryError,
     TrackAccess,
+    access::require_live_principal,
     authorize_track_purpose,
 };
 use crate::services::{
@@ -104,31 +105,26 @@ async fn read_source_lookup(
     let not_found = || DeliveryError::not_found(format!("Track not found: {track_id}"));
     let track_db_id = lyra_db::lookup::find_node_id_by_id(db, track_id)?.ok_or_else(not_found)?;
     let principal = match access {
-        TrackAccess::Principal(principal) => {
-            principal.require(db)?;
-            crate::services::auth::access::require_entity_accessible(
-                db,
-                principal,
-                track_db_id,
-                not_found,
-            )?;
-            Some(principal.clone())
+        TrackAccess::Credential { holder, purpose } => {
+            let principal = require_live_principal(db, holder)?;
+            authorize_track_purpose(&principal, *purpose)?;
+            Some(principal)
         }
         TrackAccess::MediaToken(token) => {
-            let principal = token.holder.principal(db)?.ok_or_else(|| {
-                DeliveryError::unauthorized("media token holder is no longer signed in")
-            })?;
+            let principal = require_live_principal(db, &token.holder)?;
             authorize_track_purpose(&principal, token.purpose)?;
-            crate::services::auth::access::require_entity_accessible(
-                db,
-                &principal,
-                track_db_id,
-                not_found,
-            )?;
             Some(principal)
         }
         TrackAccess::PublicPluginRoute(_) => None,
     };
+    if let Some(principal) = &principal {
+        crate::services::auth::access::require_entity_accessible(
+            db,
+            principal,
+            track_db_id,
+            not_found,
+        )?;
+    }
     let track = lyra_db::tracks::get_by_id(db, track_db_id)?.ok_or_else(not_found)?;
 
     Ok(SourceLookup {

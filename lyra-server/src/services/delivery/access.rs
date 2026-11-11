@@ -7,6 +7,7 @@ use super::DeliveryError;
 use crate::services::{
     STATE,
     auth::{
+        CredentialHolder,
         Principal,
         ResolvedAuth,
         caller::{
@@ -35,14 +36,18 @@ pub(crate) fn authorize_track_purpose(
     }
 }
 
-/// How a request reached a track. A principal's library access is checked under the guard that
-/// resolves the track's source. A media token was bound to the track's public id when it was
-/// issued; its holder is checked like a principal under that guard, and it only serves the source
-/// file it was issued against. A public plugin route serves any track, as its protocol does; it
-/// carries whom its transcodes are accounted to, and nothing else.
+/// How a request reached a track. A credential's holder is read as they stand under the guard
+/// that resolves the track's source, where their library access and what the request's purpose
+/// requires are checked. A media token was bound to the track's public id when it was issued; its
+/// holder is checked like a credential's under that guard, and it only serves the source file it
+/// was issued against. A public plugin route serves any track, as its protocol does; it carries
+/// whom its transcodes are accounted to, and nothing else.
 #[derive(Debug)]
 pub(crate) enum TrackAccess {
-    Principal(Principal),
+    Credential {
+        holder: CredentialHolder,
+        purpose: MediaTokenPurpose,
+    },
     MediaToken(MediaTokenAccess),
     PublicPluginRoute(Caller),
 }
@@ -51,47 +56,46 @@ impl TrackAccess {
     /// Who an HLS session created through this access serves.
     pub(crate) fn session_holder(&self) -> HlsSessionHolder {
         match self {
-            Self::Principal(principal) => HlsSessionHolder::Principal(principal.clone()),
-            Self::MediaToken(token) => HlsSessionHolder::MediaToken(token.holder.clone()),
+            Self::Credential { holder, .. } => HlsSessionHolder::Credential(holder.clone()),
+            Self::MediaToken(token) => HlsSessionHolder::Credential(token.holder.clone()),
             Self::PublicPluginRoute(_) => HlsSessionHolder::Public,
         }
     }
 
-    /// Whom a transcode for this request is charged to: the principal, the media token's holder,
+    /// Whom a transcode for this request is charged to: the credential's or media token's holder,
     /// or for a public plugin route the caller its handler resolved or else the client.
     pub(crate) fn caller(&self) -> Caller {
         match self {
-            Self::Principal(principal) => Caller::User(principal.user_public_id.clone()),
+            Self::Credential { holder, .. } => holder.caller(),
             Self::MediaToken(token) => token.holder.caller(),
             Self::PublicPluginRoute(caller) => caller.clone(),
         }
     }
 }
 
-/// Checks, for each HLS segment, that the session's holder may still be served the track: the
-/// user still exists, a media token's credential still authenticates them, and they can still
-/// see the track.
+/// The holder's principal as it stands now, read under the caller's guard. Refused once the user
+/// is gone or the credential no longer authenticates them.
+pub(super) fn require_live_principal(
+    db: &impl lyra_db::DbAccess,
+    holder: &CredentialHolder,
+) -> Result<Principal, DeliveryError> {
+    holder
+        .principal(db)?
+        .ok_or_else(|| DeliveryError::unauthorized("the credential is no longer valid"))
+}
+
+/// Checks, for each HLS segment, that the session's holder may still be served the track: their
+/// credential still authenticates them, and they can still see the track.
 pub(crate) async fn require_session_access(
     holder: &HlsSessionHolder,
     track_public_id: &str,
 ) -> Result<(), DeliveryError> {
-    if matches!(holder, HlsSessionHolder::Public) {
+    let HlsSessionHolder::Credential(holder) = holder else {
         return Ok(());
-    }
+    };
     let db = &*STATE.db.read().await;
     let not_found = || DeliveryError::not_found("HLS session not found");
-    let principal = match holder {
-        HlsSessionHolder::Public => return Ok(()),
-        HlsSessionHolder::Principal(principal) => {
-            principal.require(db)?;
-            std::borrow::Cow::Borrowed(principal)
-        }
-        HlsSessionHolder::MediaToken(holder) => {
-            std::borrow::Cow::Owned(holder.principal(db)?.ok_or_else(|| {
-                DeliveryError::unauthorized("media token holder is no longer signed in")
-            })?)
-        }
-    };
+    let principal = require_live_principal(db, holder)?;
     let track_db_id =
         lyra_db::lookup::find_node_id_by_id(db, track_public_id)?.ok_or_else(not_found)?;
     crate::services::auth::access::require_entity_accessible(
@@ -127,7 +131,10 @@ pub(crate) async fn require_plugin_track_access(
     )?;
     Ok((
         track_id.to_string(),
-        TrackAccess::Principal(principal.clone()),
+        TrackAccess::Credential {
+            holder: auth.holder(),
+            purpose,
+        },
     ))
 }
 

@@ -618,11 +618,13 @@ async fn create_track_playback_url(
     validate_playback_url_query(&query)?;
     let auth = require_auth(bearer_credential(&headers)).await?;
     let holder = auth.holder();
-    let principal = auth.into_principal();
 
     let source = delivery::validate_and_get_track_source(
         &id,
-        &delivery::TrackAccess::Principal(principal.clone()),
+        &delivery::TrackAccess::Credential {
+            holder: holder.clone(),
+            purpose: MediaTokenPurpose::Stream,
+        },
     )
     .await?;
     let version = source.version.clone();
@@ -649,17 +651,21 @@ async fn create_track_playback_url(
         None => (None, None),
     };
 
-    let (download_url, download_delivery) =
-        if delivery::authorize_track_purpose(&principal, MediaTokenPurpose::Download).is_ok() {
-            let download_token = issue(MediaTokenPurpose::Download, file_delivery_options(&query));
-            expires_at = expires_at.min(download_token.expires_at);
-            (
-                Some(build_download_url(&id, &download_token.token, &query)),
-                Some(transports.download),
-            )
-        } else {
-            (None, None)
-        };
+    let (download_url, download_delivery) = if delivery::authorize_track_purpose(
+        &auth.principal,
+        MediaTokenPurpose::Download,
+    )
+    .is_ok()
+    {
+        let download_token = issue(MediaTokenPurpose::Download, file_delivery_options(&query));
+        expires_at = expires_at.min(download_token.expires_at);
+        (
+            Some(build_download_url(&id, &download_token.token, &query)),
+            Some(transports.download),
+        )
+    } else {
+        (None, None)
+    };
 
     Ok(Json(PlaybackUrlResponse {
         stream_url,

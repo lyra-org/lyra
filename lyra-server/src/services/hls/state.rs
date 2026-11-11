@@ -74,8 +74,7 @@ pub(crate) struct HlsSession {
 /// Who an HLS session was created for. Segments are only served while they still may be.
 #[derive(Clone, Debug)]
 pub(crate) enum HlsSessionHolder {
-    Principal(crate::services::auth::Principal),
-    MediaToken(crate::services::auth::CredentialHolder),
+    Credential(crate::services::auth::CredentialHolder),
     /// A public plugin route, which serves anyone.
     Public,
 }
