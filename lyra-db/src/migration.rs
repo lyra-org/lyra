@@ -218,20 +218,50 @@ pub(crate) fn back_up(config: &DbConfig, version: &str, steps: Option<u64>) -> a
             attempt => format!("{label}.{attempt}"),
         };
         let targets = sources.clone().map(|source| backup_path(&source, &suffix));
-        if targets.iter().all(|target| !target.exists()) {
-            for (source, target) in sources.iter().zip(&targets) {
-                if source.is_file() {
-                    copy(source, target)?;
-                }
-            }
-            return sync_directory(&config.path);
+        let staged = targets
+            .clone()
+            .map(|target| backup_path(&target, STAGED_SUFFIX));
+        for staged in &staged {
+            let _ = std::fs::remove_file(staged);
         }
-        if same_backup(&sources, &targets)? {
+        let Some(missing) = missing_from_backup(&sources, &targets)? else {
+            attempt += 1;
+            continue;
+        };
+        if missing.is_empty() {
             tracing::info!(path = %targets[0].display(), "db already backed up");
             return Ok(());
         }
-        attempt += 1;
+        let copies = missing
+            .into_iter()
+            .map(|file| Copy {
+                source: &sources[file],
+                staged: &staged[file],
+                target: &targets[file],
+            })
+            .collect::<Vec<_>>();
+        let copied = copy_all(&copies);
+        if copied.is_err() {
+            for copy in &copies {
+                let _ = std::fs::remove_file(copy.staged);
+                let _ = std::fs::remove_file(copy.target);
+            }
+        }
+        copied?;
+        sync_directory(&config.path);
+        return Ok(());
     }
+}
+
+/// A copy is written under this suffix and renamed once complete, so a file
+/// named as a backup is always a whole one. A copy cut short leaves the staged
+/// file behind; the next attempt removes it.
+const STAGED_SUFFIX: &str = "tmp";
+
+struct Copy<'a> {
+    source: &'a Path,
+    staged: &'a Path,
+    target: &'a Path,
 }
 
 fn backup_path(source: &Path, suffix: &str) -> PathBuf {
@@ -241,39 +271,57 @@ fn backup_path(source: &Path, suffix: &str) -> PathBuf {
     source.with_file_name(name)
 }
 
-fn copy(source: &Path, target: &Path) -> anyhow::Result<()> {
-    tracing::info!(
-        from = %source.display(),
-        to = %target.display(),
-        "backing up db before migration"
-    );
-    copy_durably(source, target).map_err(|error| {
+/// Names no copy as a backup until every one is complete.
+fn copy_all(copies: &[Copy<'_>]) -> anyhow::Result<()> {
+    let failed = |copy: &Copy<'_>, error: std::io::Error| {
         anyhow::anyhow!(
             "failed to back up '{}' to '{}': {error}",
-            source.display(),
-            target.display()
+            copy.source.display(),
+            copy.target.display()
         )
-    })
+    };
+    for copy in copies {
+        tracing::info!(
+            from = %copy.source.display(),
+            to = %copy.target.display(),
+            "backing up db before migration"
+        );
+        copy_durably(copy.source, copy.staged).map_err(|error| failed(copy, error))?;
+    }
+    for copy in copies {
+        std::fs::rename(copy.staged, copy.target).map_err(|error| failed(copy, error))?;
+    }
+    Ok(())
 }
 
-fn same_backup(sources: &[PathBuf; 2], targets: &[PathBuf; 2]) -> anyhow::Result<bool> {
-    for (source, target) in sources.iter().zip(targets) {
-        let same = match (source.is_file(), target.exists()) {
-            (false, false) => true,
-            (true, true) => same_contents(source, target).map_err(|error| {
-                anyhow::anyhow!(
-                    "failed to compare '{}' with '{}': {error}",
-                    source.display(),
-                    target.display()
-                )
-            })?,
-            _ => false,
-        };
-        if !same {
-            return Ok(false);
+/// The sources `targets` still lack to be their backup, none when it is
+/// complete. `None` when the targets hold something other than the sources. A
+/// backup lacks a file when its process died between renaming the copies.
+fn missing_from_backup(
+    sources: &[PathBuf; 2],
+    targets: &[PathBuf; 2],
+) -> anyhow::Result<Option<Vec<usize>>> {
+    let mut missing = Vec::new();
+    for (file, (source, target)) in sources.iter().zip(targets).enumerate() {
+        match (source.is_file(), target.exists()) {
+            (false, false) => {}
+            (true, false) => missing.push(file),
+            (true, true) => {
+                let same = same_contents(source, target).map_err(|error| {
+                    anyhow::anyhow!(
+                        "failed to compare '{}' with '{}': {error}",
+                        source.display(),
+                        target.display()
+                    )
+                })?;
+                if !same {
+                    return Ok(None);
+                }
+            }
+            (false, true) => return Ok(None),
         }
     }
-    Ok(true)
+    Ok(Some(missing))
 }
 
 fn same_contents(a: &Path, b: &Path) -> std::io::Result<bool> {
@@ -296,31 +344,44 @@ fn same_contents(a: &Path, b: &Path) -> std::io::Result<bool> {
 }
 
 fn copy_durably(source: &Path, target: &Path) -> std::io::Result<()> {
-    std::fs::copy(source, target)?;
-    // Windows flushes only handles opened for writing.
-    OpenOptions::new().write(true).open(target)?.sync_all()
+    let mut input = File::open(source)?;
+    let mut output = OpenOptions::new();
+    output.write(true).create_new(true);
+    // The copy gets the source's mode as it is created: some mounts let the
+    // server write files it may not change the mode of afterwards.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{
+            OpenOptionsExt,
+            PermissionsExt,
+        };
+        output.mode(input.metadata()?.permissions().mode() & 0o7777);
+    }
+    let mut output = output.open(target)?;
+    std::io::copy(&mut input, &mut output)?;
+    output.sync_all()
 }
 
+/// Makes the backups' names durable where the filesystem can. The copies are
+/// already complete and synced, so a filesystem that cannot is no reason to
+/// refuse the migration.
 #[cfg(unix)]
-fn sync_directory(path: &Path) -> anyhow::Result<()> {
+fn sync_directory(path: &Path) {
     let directory = match path.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
         _ => Path::new("."),
     };
-    File::open(directory)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|error| {
-            anyhow::anyhow!(
-                "failed to sync db backups in '{}': {error}",
-                directory.display()
-            )
-        })
+    if let Err(error) = File::open(directory).and_then(|directory| directory.sync_all()) {
+        tracing::warn!(
+            path = %directory.display(),
+            %error,
+            "failed to sync db backups to disk"
+        );
+    }
 }
 
 #[cfg(not(unix))]
-fn sync_directory(_path: &Path) -> anyhow::Result<()> {
-    Ok(())
-}
+fn sync_directory(_path: &Path) {}
 
 fn read_stamp(db: &DbAny) -> anyhow::Result<Found> {
     if db.exec(QueryBuilder::select().node_count().query())?.result == 0 {
@@ -880,6 +941,135 @@ mod tests {
         assert!(bootstrap::create_with(&config, &build(CURRENT, FAILING)).is_err());
         assert_eq!(std::fs::read(backup(""))?, first);
         assert_eq!(std::fs::read(backup(".2"))?, used_again);
+        Ok(())
+    }
+
+    #[test]
+    fn failed_backup_names_nothing_as_one() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let config = file_config(dir.path(), DbKind::File);
+        drop(bootstrap::create_with(&config, &build(PREVIOUS, NONE))?);
+        let original = std::fs::read(&config.path)?;
+        assert!(write_ahead_log(&config.path).is_file());
+
+        // The database copies; its write-ahead log, second, cannot.
+        let blocker = dir.path().join(".lyra.db.from-0.0.2.steps-0.tmp");
+        std::fs::create_dir(&blocker)?;
+        let error = bootstrap::create_with(&config, &build(CURRENT, A))
+            .err()
+            .expect("the backup should fail");
+        assert!(
+            error.to_string().starts_with("failed to back up "),
+            "{error}"
+        );
+        assert_eq!(backups(dir.path())?, [".lyra.db.from-0.0.2.steps-0.tmp"]);
+        assert_eq!(std::fs::read(&config.path)?, original);
+
+        std::fs::remove_dir(&blocker)?;
+        drop(bootstrap::create_with(&config, &build(CURRENT, A))?);
+        assert_eq!(
+            backups(dir.path())?,
+            [".lyra.db.from-0.0.2.steps-0", "lyra.db.from-0.0.2.steps-0"]
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("lyra.db.from-0.0.2.steps-0"))?,
+            original
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn backup_replaces_a_copy_cut_short() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let config = file_config(dir.path(), DbKind::File);
+        drop(bootstrap::create_with(&config, &build(PREVIOUS, NONE))?);
+        let original = std::fs::read(&config.path)?;
+        std::fs::write(dir.path().join("lyra.db.from-0.0.2.steps-0.tmp"), "partial")?;
+
+        drop(bootstrap::create_with(&config, &build(CURRENT, A))?);
+        let names = backups(dir.path())?;
+        assert!(
+            names.iter().all(|name| !name.ends_with(".tmp")),
+            "{names:?}"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("lyra.db.from-0.0.2.steps-0"))?,
+            original
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn backup_is_as_private_as_the_database() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir()?;
+        let config = file_config(dir.path(), DbKind::File);
+        drop(bootstrap::create_with(&config, &build(PREVIOUS, NONE))?);
+        std::fs::set_permissions(&config.path, std::fs::Permissions::from_mode(0o600))?;
+        let cut_short = dir.path().join("lyra.db.from-0.0.2.steps-0.tmp");
+        std::fs::write(&cut_short, "partial")?;
+        std::fs::set_permissions(&cut_short, std::fs::Permissions::from_mode(0o644))?;
+
+        drop(bootstrap::create_with(&config, &build(CURRENT, A))?);
+        let backup = dir.path().join("lyra.db.from-0.0.2.steps-0");
+        assert_eq!(backup.metadata()?.permissions().mode() & 0o777, 0o600);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn backup_does_not_write_through_a_link() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let config = file_config(dir.path(), DbKind::File);
+        drop(bootstrap::create_with(&config, &build(PREVIOUS, NONE))?);
+        let original = std::fs::read(&config.path)?;
+        let bystander = dir.path().join("bystander");
+        std::fs::write(&bystander, "kept")?;
+        std::os::unix::fs::symlink(
+            &bystander,
+            dir.path().join("lyra.db.from-0.0.2.steps-0.tmp"),
+        )?;
+        std::fs::hard_link(
+            &bystander,
+            dir.path().join(".lyra.db.from-0.0.2.steps-0.tmp"),
+        )?;
+
+        drop(bootstrap::create_with(&config, &build(CURRENT, A))?);
+        assert_eq!(std::fs::read_to_string(&bystander)?, "kept");
+        let backup = dir.path().join("lyra.db.from-0.0.2.steps-0");
+        assert!(!backup.is_symlink());
+        assert_eq!(std::fs::read(&backup)?, original);
+        Ok(())
+    }
+
+    #[test]
+    fn backup_cut_short_between_its_files_is_completed() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let config = file_config(dir.path(), DbKind::File);
+        drop(bootstrap::create_with(&config, &build(PREVIOUS, NONE))?);
+        let original = std::fs::read(&config.path)?;
+        let log = std::fs::read(write_ahead_log(&config.path))?;
+        std::fs::write(dir.path().join("lyra.db.from-0.0.2.steps-0"), &original)?;
+        std::fs::write(
+            dir.path().join(".lyra.db.from-0.0.2.steps-0.tmp"),
+            "partial",
+        )?;
+
+        drop(bootstrap::create_with(&config, &build(CURRENT, A))?);
+        assert_eq!(
+            backups(dir.path())?,
+            [".lyra.db.from-0.0.2.steps-0", "lyra.db.from-0.0.2.steps-0"]
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("lyra.db.from-0.0.2.steps-0"))?,
+            original
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join(".lyra.db.from-0.0.2.steps-0"))?,
+            log
+        );
         Ok(())
     }
 

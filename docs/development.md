@@ -135,7 +135,8 @@ after the stamp they hold: `lyra.db` from `0.0.3-dev.0` with one step run is cop
 `lyra.db.from-0.0.3-dev.0.steps-1` and `.lyra.db.from-0.0.3-dev.0.steps-1`, and a previous release
 without a step count to `lyra.db.from-0.0.2`. Backups are never overwritten: one of the same name
 with the same contents is kept as it is, and one with other contents gets a numbered sibling such
-as `lyra.db.from-0.0.2.1`.
+as `lyra.db.from-0.0.2.1`. A copy is written under a `.tmp` name and renamed once complete, so a
+file named as a backup is never a partial one.
 
 Any change to stored data, such as a renamed key, a new required value or a moved edge, needs a
 step appended to `STEPS` that rewrites the shape before it into the one after. While
