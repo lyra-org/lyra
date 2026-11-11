@@ -15,7 +15,7 @@ testing = []
 agdb = { version = "0.16.2", features = ["serde"] }
 anyhow = { workspace = true }
 blake3 = { workspace = true }
-lofty = "=0.25.4"
+lofty = "0.25.5"
 lyra-metadata = { path = "../lyra-metadata" }
 rand = "0.9"
 schemars = { version = "1.2.1", features = ["derive"], optional = true }
