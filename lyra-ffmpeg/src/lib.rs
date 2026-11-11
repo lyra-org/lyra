@@ -392,7 +392,12 @@ mod tests {
     }
 
     /// `input` decoded to 16-bit PCM at `rate` and `channels`, as fingerprinting reads it.
-    fn decode_pcm(input: &std::path::Path, rate: u32, channels: u32) -> Result<Vec<u8>> {
+    fn decode_pcm(
+        input: &std::path::Path,
+        rate: u32,
+        channels: u32,
+        end_ms: Option<u64>,
+    ) -> Result<Vec<u8>> {
         let written = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
         let sink = std::sync::Arc::clone(&written);
         let output = Output::pcm_s16le_callback(
@@ -403,7 +408,7 @@ mod tests {
             rate,
             channels,
         );
-        transcode(input, output, None)?;
+        transcode(input, output, end_ms)?;
         Ok(std::mem::take(&mut *written.lock().expect("sink lock")))
     }
 
@@ -423,7 +428,7 @@ mod tests {
                 .audio_format(AudioFormat::Ogg)
                 .codec(AudioCodec::Vorbis),
         );
-        let pcm = decode_pcm(&vorbis, 48_000, 10).expect("the vorbis decodes");
+        let pcm = decode_pcm(&vorbis, 48_000, 10, None).expect("the vorbis decodes");
         let samples: Vec<i16> = pcm
             .as_chunks::<2>()
             .0
@@ -486,7 +491,7 @@ mod tests {
             std::env::temp_dir().join(format!("lyra-ffmpeg-joined-{}.mp3", std::process::id()));
         std::fs::write(&path, joined).expect("the joined mp3 is written");
 
-        let pcm = decode_pcm(&path, 44_100, 2).expect("the joined mp3 decodes");
+        let pcm = decode_pcm(&path, 44_100, 2, None).expect("the joined mp3 decodes");
         let _ = std::fs::remove_file(path);
         let seconds = pcm.len() as f64 / 4.0 / 44_100.0;
         assert!(
@@ -494,7 +499,7 @@ mod tests {
             "two half-second parts decoded to {seconds} s"
         );
 
-        decode_pcm(&asset("layout-change.aac"), 11_025, 1)
+        decode_pcm(&asset("layout-change.aac"), 11_025, 1, None)
             .expect("a stream changing its channel count decodes");
     }
 
@@ -524,10 +529,21 @@ mod tests {
                 .audio_format(AudioFormat::Mp3)
                 .codec(AudioCodec::Mp3),
         );
-        let decoded = decode_pcm(&mp3, 44_100, 2).expect("the mp3 decodes");
+        let decoded = decode_pcm(&mp3, 44_100, 2, None).expect("the mp3 decodes");
         assert!(!decoded.is_empty());
         let _ = std::fs::remove_file(wav);
         let _ = std::fs::remove_file(mp3);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
+    fn keeps_the_resampler_tail_at_the_end_of_the_input() {
+        let wav = pcm_wav("resampled-tail", 16, 2, 48_000);
+        let whole = decode_pcm(&wav, 44_100, 2, None).expect("the wav decodes");
+        let cut = decode_pcm(&wav, 44_100, 2, Some(250)).expect("the wav decodes");
+        let _ = std::fs::remove_file(wav);
+        assert_eq!(whole.len() / 4, 22_050);
+        assert_eq!(cut.len() / 4, 11_025);
     }
 
     #[test]

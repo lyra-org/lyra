@@ -1781,64 +1781,41 @@ unsafe fn transcode_audio(
             )));
         }
 
-        let resampler = Resampler::new(swr_opts)?;
-
-        let frame_size = if (*enc_ctx).frame_size > 0 {
-            (*enc_ctx).frame_size
-        } else {
-            1024
-        };
-
-        let fifo_owner = AudioFifo::new(
-            (*enc_ctx).sample_fmt,
-            (*enc_ctx).ch_layout.nb_channels,
-            frame_size,
-        )?;
-        let fifo = fifo_owner.as_mut_ptr();
-
-        let frame_owner = Frame::new("decode frame")?;
-        let resampled_frame_owner = Frame::new("resampled frame")?;
-        let output_frame_owner = Frame::new("output frame")?;
-        let frame = frame_owner.as_mut_ptr();
-        let resampled_frame = resampled_frame_owner.as_mut_ptr();
-        let output_frame = output_frame_owner.as_mut_ptr();
-
         let mut pkt = Packet::new();
-        let mut pts: i64 = 0;
         let start_ts = seek_to_audio_start(in_fmt_ctx, audio_idx, in_stream, start_ms)?;
-        let max_output_samples =
-            bounded_output_sample_limit(start_ms, end_ms, (*enc_ctx).sample_rate);
-        let mut produced_samples: i64 = 0;
+        let mut encoder = FrameEncoder::new(
+            enc_ctx,
+            out_fmt_ctx,
+            out_stream,
+            swr_opts,
+            bounded_output_sample_limit(start_ms, end_ms, (*enc_ctx).sample_rate),
+        )?;
+        let frame_owner = Frame::new("decode frame")?;
+        let frame = frame_owner.as_mut_ptr();
 
         loop {
             if abort_flag.load(Ordering::SeqCst) {
                 break;
             }
 
-            if let Some(max_output_samples) = max_output_samples
-                && produced_samples >= max_output_samples
-            {
+            if encoder.limit_reached() {
                 break;
             }
 
             let ret = av_read_frame(in_fmt_ctx, &mut *pkt);
-            if ret < 0 {
-                if ret != AVERROR_EOF {
-                    return Err(ffmpeg_operation_error("read frame", ret));
+            if ret == AVERROR_EOF {
+                let ret = avcodec_send_packet(dec_ctx, null());
+                if ret < 0 {
+                    return Err(ffmpeg_operation_error("flush decoder", ret));
                 }
-                drain_fifo_and_encode(
-                    fifo,
-                    enc_ctx,
-                    output_frame,
-                    out_fmt_ctx,
-                    out_stream,
-                    frame_size,
-                    &mut pts,
-                    max_output_samples,
-                    &mut produced_samples,
-                )?;
-                flush_encoder(enc_ctx, out_fmt_ctx, out_stream)?;
+                if !encoder.receive_frames(dec_ctx, frame)? {
+                    encoder.flush_resampler()?;
+                }
+                encoder.finish()?;
                 break;
+            }
+            if ret < 0 {
+                return Err(ffmpeg_operation_error("read frame", ret));
             }
 
             if pkt.stream_index as usize != audio_idx {
@@ -1867,67 +1844,186 @@ unsafe fn transcode_audio(
                 return Err(ffmpeg_operation_error("send packet to decoder", ret));
             }
 
-            let mut stop_after_decode = false;
-            loop {
-                let ret = avcodec_receive_frame(dec_ctx, frame);
-                if ret == AVERROR(EAGAIN) || ret == AVERROR_EOF {
-                    break;
-                }
-                if ret < 0 {
-                    return Err(ffmpeg_operation_error("receive decoded frame", ret));
-                }
-
-                resample_into_fifo(&resampler, frame, resampled_frame, enc_ctx, fifo)?;
-
-                while av_audio_fifo_size(fifo) >= frame_size {
-                    let samples_to_read =
-                        samples_within_limit(frame_size, produced_samples, max_output_samples);
-                    if samples_to_read == 0 {
-                        stop_after_decode = true;
-                        break;
-                    }
-
-                    let read_samples =
-                        read_fifo_frame(fifo, output_frame, enc_ctx, samples_to_read)?;
-                    (*output_frame).pts = pts;
-                    pts += read_samples as i64;
-                    produced_samples += read_samples as i64;
-
-                    encode_frame(enc_ctx, output_frame, out_fmt_ctx, out_stream)?;
-
-                    if let Some(max_output_samples) = max_output_samples
-                        && produced_samples >= max_output_samples
-                    {
-                        stop_after_decode = true;
-                        break;
-                    }
-                }
-
-                av_frame_unref(frame);
-                av_frame_unref(resampled_frame);
-                if stop_after_decode {
-                    break;
-                }
-            }
-
-            if stop_after_decode {
-                drain_fifo_and_encode(
-                    fifo,
-                    enc_ctx,
-                    output_frame,
-                    out_fmt_ctx,
-                    out_stream,
-                    frame_size,
-                    &mut pts,
-                    max_output_samples,
-                    &mut produced_samples,
-                )?;
-                flush_encoder(enc_ctx, out_fmt_ctx, out_stream)?;
+            if encoder.receive_frames(dec_ctx, frame)? {
+                encoder.finish()?;
                 break;
             }
         }
 
         Ok(())
+    }
+}
+
+/// Resamples decoded frames onto the encoder's format, buffers them into encoder-sized frames, and
+/// encodes those into the output, up to an optional number of output samples.
+struct FrameEncoder {
+    enc_ctx: *mut AVCodecContext,
+    out_fmt_ctx: *mut AVFormatContext,
+    out_stream: *mut AVStream,
+    resampler: Resampler,
+    fifo: AudioFifo,
+    resampled_frame: Frame,
+    output_frame: Frame,
+    frame_size: i32,
+    pts: i64,
+    produced_samples: i64,
+    max_output_samples: Option<i64>,
+}
+
+impl FrameEncoder {
+    unsafe fn new(
+        enc_ctx: *mut AVCodecContext,
+        out_fmt_ctx: *mut AVFormatContext,
+        out_stream: *mut AVStream,
+        swr_opts: &HashMap<String, String>,
+        max_output_samples: Option<i64>,
+    ) -> Result<Self> {
+        unsafe {
+            let frame_size = if (*enc_ctx).frame_size > 0 {
+                (*enc_ctx).frame_size
+            } else {
+                1024
+            };
+            Ok(Self {
+                enc_ctx,
+                out_fmt_ctx,
+                out_stream,
+                resampler: Resampler::new(swr_opts)?,
+                fifo: AudioFifo::new(
+                    (*enc_ctx).sample_fmt,
+                    (*enc_ctx).ch_layout.nb_channels,
+                    frame_size,
+                )?,
+                resampled_frame: Frame::new("resampled frame")?,
+                output_frame: Frame::new("output frame")?,
+                frame_size,
+                pts: 0,
+                produced_samples: 0,
+                max_output_samples,
+            })
+        }
+    }
+
+    fn limit_reached(&self) -> bool {
+        self.max_output_samples
+            .is_some_and(|max| self.produced_samples >= max)
+    }
+
+    /// Encodes every frame `dec_ctx` has ready, returning whether the output limit stopped it.
+    unsafe fn receive_frames(
+        &mut self,
+        dec_ctx: *mut AVCodecContext,
+        frame: *mut AVFrame,
+    ) -> Result<bool> {
+        unsafe {
+            loop {
+                let ret = avcodec_receive_frame(dec_ctx, frame);
+                if ret == AVERROR(EAGAIN) || ret == AVERROR_EOF {
+                    return Ok(false);
+                }
+                if ret < 0 {
+                    return Err(ffmpeg_operation_error("receive decoded frame", ret));
+                }
+
+                let resampled = self.resample(frame);
+                av_frame_unref(frame);
+                resampled?;
+                if self.encode_fifo(self.frame_size)? {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+
+    /// Resamples `frame` into the FIFO. A frame whose format differs from the previous one first
+    /// flushes what the resampler holds, then reconfigures it.
+    unsafe fn resample(&mut self, frame: *mut AVFrame) -> Result<()> {
+        unsafe {
+            let resampled_frame = self.resampled_frame.as_mut_ptr();
+            specify_channel_layout(&mut (*frame).ch_layout);
+            prepare_resampled_frame(resampled_frame, self.enc_ctx)?;
+            if !self.resampler.is_configured() {
+                self.resampler.configure(resampled_frame, frame)?;
+            }
+
+            let mut ret = swr_convert_frame(self.resampler.as_mut_ptr(), resampled_frame, frame);
+            if ret == AVERROR_INPUT_CHANGED || ret == AVERROR_OUTPUT_CHANGED {
+                self.flush_resampler()?;
+                prepare_resampled_frame(resampled_frame, self.enc_ctx)?;
+                self.resampler.configure(resampled_frame, frame)?;
+                ret = swr_convert_frame(self.resampler.as_mut_ptr(), resampled_frame, frame);
+            }
+            if ret < 0 {
+                return Err(ffmpeg_operation_error("resample audio", ret));
+            }
+            write_fifo_frame(self.fifo.as_mut_ptr(), resampled_frame)
+        }
+    }
+
+    /// Moves the samples the resampler still holds into the FIFO.
+    unsafe fn flush_resampler(&mut self) -> Result<()> {
+        unsafe {
+            if !self.resampler.is_configured() {
+                return Ok(());
+            }
+            let resampled_frame = self.resampled_frame.as_mut_ptr();
+            loop {
+                prepare_resampled_frame(resampled_frame, self.enc_ctx)?;
+                let ret = swr_convert_frame(self.resampler.as_mut_ptr(), resampled_frame, null());
+                if ret < 0 {
+                    return Err(ffmpeg_operation_error("flush resampler", ret));
+                }
+                if (*resampled_frame).nb_samples == 0 {
+                    return Ok(());
+                }
+                write_fifo_frame(self.fifo.as_mut_ptr(), resampled_frame)?;
+            }
+        }
+    }
+
+    /// Encodes frames from the FIFO while it holds at least `min_samples`, returning whether the
+    /// output limit stopped it.
+    unsafe fn encode_fifo(&mut self, min_samples: i32) -> Result<bool> {
+        unsafe {
+            let fifo = self.fifo.as_mut_ptr();
+            let output_frame = self.output_frame.as_mut_ptr();
+            while av_audio_fifo_size(fifo) >= min_samples {
+                let samples_to_read = samples_within_limit(
+                    std::cmp::min(av_audio_fifo_size(fifo), self.frame_size),
+                    self.produced_samples,
+                    self.max_output_samples,
+                );
+                if samples_to_read == 0 {
+                    return Ok(true);
+                }
+
+                let read_samples =
+                    read_fifo_frame(fifo, output_frame, self.enc_ctx, samples_to_read)?;
+                (*output_frame).pts = self.pts;
+                self.pts += i64::from(read_samples);
+                self.produced_samples += i64::from(read_samples);
+
+                encode_frame(
+                    self.enc_ctx,
+                    output_frame,
+                    self.out_fmt_ctx,
+                    self.out_stream,
+                )?;
+
+                if self.limit_reached() {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+    }
+
+    /// Encodes what the FIFO still holds, then flushes the encoder.
+    unsafe fn finish(&mut self) -> Result<()> {
+        unsafe {
+            self.encode_fifo(1)?;
+            flush_encoder(self.enc_ctx, self.out_fmt_ctx, self.out_stream)
+        }
     }
 }
 
@@ -1938,81 +2034,6 @@ fn samples_within_limit(available: i32, produced: i64, limit: Option<i64>) -> i3
             .saturating_sub(produced)
             .clamp(0, i64::from(available)) as i32,
         None => available,
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-unsafe fn drain_fifo_and_encode(
-    fifo: *mut AVAudioFifo,
-    enc_ctx: *mut AVCodecContext,
-    output_frame: *mut AVFrame,
-    out_fmt_ctx: *mut AVFormatContext,
-    out_stream: *mut AVStream,
-    frame_size: i32,
-    pts: &mut i64,
-    max_output_samples: Option<i64>,
-    produced_samples: &mut i64,
-) -> Result<()> {
-    unsafe {
-        while av_audio_fifo_size(fifo) > 0 {
-            let samples_to_read = samples_within_limit(
-                std::cmp::min(av_audio_fifo_size(fifo), frame_size),
-                *produced_samples,
-                max_output_samples,
-            );
-            if samples_to_read == 0 {
-                break;
-            }
-
-            let read_samples = read_fifo_frame(fifo, output_frame, enc_ctx, samples_to_read)?;
-            (*output_frame).pts = *pts;
-            *pts += read_samples as i64;
-            *produced_samples += read_samples as i64;
-
-            encode_frame(enc_ctx, output_frame, out_fmt_ctx, out_stream)?;
-
-            if let Some(max_output_samples) = max_output_samples
-                && *produced_samples >= max_output_samples
-            {
-                break;
-            }
-        }
-        Ok(())
-    }
-}
-
-/// Resamples `frame` onto the encoder's format into `fifo`. A frame whose format differs from the
-/// previous one first flushes what the resampler holds, then reconfigures it.
-unsafe fn resample_into_fifo(
-    resampler: &Resampler,
-    frame: *mut AVFrame,
-    resampled_frame: *mut AVFrame,
-    enc_ctx: *mut AVCodecContext,
-    fifo: *mut AVAudioFifo,
-) -> Result<()> {
-    unsafe {
-        specify_channel_layout(&mut (*frame).ch_layout);
-        prepare_resampled_frame(resampled_frame, enc_ctx)?;
-        if !resampler.is_configured() {
-            resampler.configure(resampled_frame, frame)?;
-        }
-
-        let mut ret = swr_convert_frame(resampler.as_mut_ptr(), resampled_frame, frame);
-        if ret == AVERROR_INPUT_CHANGED || ret == AVERROR_OUTPUT_CHANGED {
-            let flushed = swr_convert_frame(resampler.as_mut_ptr(), resampled_frame, null());
-            if flushed < 0 {
-                return Err(ffmpeg_operation_error("flush resampler", flushed));
-            }
-            write_fifo_frame(fifo, resampled_frame)?;
-
-            prepare_resampled_frame(resampled_frame, enc_ctx)?;
-            resampler.configure(resampled_frame, frame)?;
-            ret = swr_convert_frame(resampler.as_mut_ptr(), resampled_frame, frame);
-        }
-        if ret < 0 {
-            return Err(ffmpeg_operation_error("resample audio", ret));
-        }
-        write_fifo_frame(fifo, resampled_frame)
     }
 }
 
