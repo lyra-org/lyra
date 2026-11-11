@@ -22,21 +22,14 @@ use serde::{
     Deserialize,
     Serialize,
 };
-use std::{
-    cmp::Ordering,
-    collections::{
-        BTreeMap,
-        HashMap,
-        HashSet,
-    },
+use std::collections::{
+    BTreeMap,
+    HashMap,
+    HashSet,
 };
 
 use crate::routes::request::bearer_credential;
-use crate::services::catalog::{
-    self,
-    Direction,
-    tracks::Tracks,
-};
+use crate::services::catalog::Direction;
 use crate::{
     routes::{
         self,
@@ -57,6 +50,11 @@ use crate::{
             RecordOutcome,
             SubmissionOutcome,
             SubmittedPlay,
+            summaries::{
+                self,
+                SortKey,
+                Summary,
+            },
         },
         playback_sessions as playback_service,
         providers::provider_registry,
@@ -80,7 +78,7 @@ pub(super) struct MeListenQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Comma-separated or repeated values: listen_count, count, last_played_at, last_played, track_id, id."
+            description = "Comma-separated or repeated values: listen_count, count, last_played_at, last_played."
         )
     )]
     #[serde(default, deserialize_with = "routes::deserialize_inc")]
@@ -117,7 +115,7 @@ struct ListenQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Comma-separated or repeated values: listen_count, count, last_played_at, last_played, user_id, track_id, id."
+            description = "Comma-separated or repeated values: listen_count, count, last_played_at, last_played, user_id."
         )
     )]
     #[serde(default, deserialize_with = "routes::deserialize_inc")]
@@ -181,45 +179,14 @@ struct ListenResponse {
     last_played_at: Option<String>,
 }
 
-#[derive(Clone)]
-struct ListenRow {
-    user_id: String,
-    track_id: String,
-    listen_count: u64,
-    last_played_ms: Option<u64>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ListenSortKey {
-    ListenCount,
-    LastPlayedAt,
-    UserId,
-    TrackId,
-}
-
-fn parse_sort_order(
-    sort_order: Option<String>,
-    default_direction: Direction,
-) -> Result<Direction, AppError> {
-    Ok(sort_order
-        .as_deref()
-        .map(Direction::parse)
-        .transpose()?
-        .unwrap_or(default_direction))
-}
-
-fn supported_sort_values(include_user_id: bool) -> &'static str {
-    if include_user_id {
-        "listen_count, count, last_played_at, last_played, user_id, track_id, id"
-    } else {
-        "listen_count, count, last_played_at, last_played, track_id, id"
-    }
+fn parse_sort_order(sort_order: Option<String>) -> Result<Option<Direction>, AppError> {
+    Ok(sort_order.as_deref().map(Direction::parse).transpose()?)
 }
 
 fn parse_sort_keys(
     sort_by: Option<Vec<String>>,
     include_user_id: bool,
-) -> Result<Vec<ListenSortKey>, AppError> {
+) -> Result<Vec<SortKey>, AppError> {
     let Some(values) = sort_by else {
         return Ok(Vec::new());
     };
@@ -235,10 +202,9 @@ fn parse_sort_keys(
 
             let token = entry.to_ascii_lowercase();
             let key = match token.as_str() {
-                "listen_count" | "count" => ListenSortKey::ListenCount,
-                "last_played_at" | "last_played" => ListenSortKey::LastPlayedAt,
-                "user_id" if include_user_id => ListenSortKey::UserId,
-                "track_id" | "id" => ListenSortKey::TrackId,
+                "listen_count" | "count" => SortKey::ListenCount,
+                "last_played_at" | "last_played" => SortKey::LastPlayedAt,
+                "user_id" if include_user_id => SortKey::UserId,
                 _ => {
                     unknown.push(entry.to_string());
                     continue;
@@ -254,92 +220,15 @@ fn parse_sort_keys(
         return Err(AppError::bad_request(format!(
             "Unsupported sort_by value(s): {}. Supported values: {}",
             unknown.join(", "),
-            supported_sort_values(include_user_id),
+            if include_user_id {
+                "listen_count, count, last_played_at, last_played, user_id"
+            } else {
+                "listen_count, count, last_played_at, last_played"
+            },
         )));
     }
 
     Ok(keys)
-}
-
-fn compare_optional_ms(a: Option<u64>, b: Option<u64>, direction: Direction) -> Ordering {
-    match (a, b) {
-        (Some(a), Some(b)) => direction.apply(a.cmp(&b)),
-        (Some(_), None) => Ordering::Less,
-        (None, Some(_)) => Ordering::Greater,
-        (None, None) => Ordering::Equal,
-    }
-}
-
-fn compare_listen_rows(
-    a: &ListenRow,
-    b: &ListenRow,
-    keys: &[ListenSortKey],
-    direction: Direction,
-) -> Ordering {
-    for key in keys {
-        let ord = match key {
-            ListenSortKey::ListenCount => direction.apply(a.listen_count.cmp(&b.listen_count)),
-            ListenSortKey::LastPlayedAt => {
-                compare_optional_ms(a.last_played_ms, b.last_played_ms, direction)
-            }
-            ListenSortKey::UserId => direction.apply(a.user_id.cmp(&b.user_id)),
-            ListenSortKey::TrackId => direction.apply(a.track_id.cmp(&b.track_id)),
-        };
-        if ord != Ordering::Equal {
-            return ord;
-        }
-    }
-
-    Ordering::Equal
-}
-
-fn sort_listen_rows(
-    rows: &mut [ListenRow],
-    sort_by: Option<Vec<String>>,
-    sort_order: Option<String>,
-    include_user_id: bool,
-) -> Result<(), AppError> {
-    let keys = parse_sort_keys(sort_by, include_user_id)?;
-    if keys.is_empty() {
-        let direction = parse_sort_order(sort_order, Direction::Descending)?;
-        rows.sort_by(|a, b| {
-            direction
-                .apply(a.listen_count.cmp(&b.listen_count))
-                .then_with(|| compare_optional_ms(a.last_played_ms, b.last_played_ms, direction))
-                .then_with(|| a.user_id.cmp(&b.user_id))
-                .then_with(|| a.track_id.cmp(&b.track_id))
-        });
-        return Ok(());
-    }
-
-    let direction = parse_sort_order(sort_order, Direction::Ascending)?;
-    rows.sort_by(|a, b| {
-        compare_listen_rows(a, b, &keys, direction)
-            .then_with(|| a.user_id.cmp(&b.user_id))
-            .then_with(|| a.track_id.cmp(&b.track_id))
-    });
-    Ok(())
-}
-
-fn listen_row_to_me_response(row: ListenRow) -> MeListenResponse {
-    MeListenResponse {
-        track_id: row.track_id,
-        listen_count: row.listen_count,
-        last_played_at: row
-            .last_played_ms
-            .map(crate::services::timestamps::unix_ms_to_rfc3339_u64),
-    }
-}
-
-fn listen_row_to_response(row: ListenRow) -> ListenResponse {
-    ListenResponse {
-        user_id: row.user_id,
-        track_id: row.track_id,
-        listen_count: row.listen_count,
-        last_played_at: row
-            .last_played_ms
-            .map(crate::services::timestamps::unix_ms_to_rfc3339_u64),
-    }
 }
 
 fn validate_merge_usage(
@@ -369,210 +258,114 @@ async fn merge_track_id_pairs(
     )
 }
 
-/// The tracks whose listens count for `track_id`, resolved under the guard that reads listens
-/// with them.
-fn resolve_accessible_track_filter(
-    db: &agdb::DbAny,
+/// The track a list is narrowed to and the tracks whose listens count as its own, resolved
+/// under the guard that reads listens with them.
+fn track_filter(
+    db: &DbAny,
     principal: &Principal,
     track_id: &str,
     merge_pairs: Option<&HashSet<(String, String)>>,
-) -> Result<Vec<DbId>, AppError> {
+) -> Result<(DbId, Vec<DbId>), AppError> {
     let track_db_id = lyra_db::lookup::find_node_id_by_id(db, track_id)?
         .ok_or_else(|| AppError::not_found(format!("Track not found: {}", track_id)))?;
     crate::services::auth::access::require_entity_accessible(db, principal, track_db_id, || {
         AppError::not_found(format!("Track not found: {}", track_id))
     })?;
-
-    let stat_track_ids = match merge_pairs {
-        Some(pairs) => {
-            playback_service::resolve_merged_track_ids_for_play_count(db, track_db_id, pairs)?
-        }
-        None => vec![track_db_id],
-    };
-
-    let mut accessible_track_ids = Vec::with_capacity(stat_track_ids.len());
-    for id in stat_track_ids {
-        if crate::services::auth::access::entity_accessible(db, principal, id)? {
-            accessible_track_ids.push(id);
-        }
-    }
-
-    Ok(accessible_track_ids)
+    let counted = summaries::counted_tracks(db, principal, track_db_id, merge_pairs)?;
+    Ok((track_db_id, counted))
 }
 
-/// One user's listens to each track they listened to.
-struct UserTotals {
-    user_id: String,
-    totals: HashMap<DbId, lyra_db::listens::ListenTotal>,
-}
-
-impl UserTotals {
-    fn read(db: &DbAny, user_db_id: DbId, user_id: String) -> Result<Self, AppError> {
-        Ok(Self {
-            user_id,
-            totals: lyra_db::listens::totals(db, user_db_id)?,
-        })
-    }
-}
-
-/// A row for each of the users' totals of a track `principal` can see, as the catalog lists
-/// tracks for it, whether or not they can play.
-fn total_rows(
-    db: &DbAny,
-    principal: &Principal,
-    users: Vec<UserTotals>,
-) -> Result<Vec<ListenRow>, AppError> {
-    let mut tracks = users
-        .iter()
-        .flat_map(|user| user.totals.keys().copied())
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    let viewer = catalog::Viewer::user(db, principal.clone())?;
-    if !viewer.sees_everything() {
-        let visible = catalog::lookups::visible::<Tracks>(db, &viewer, &tracks)?;
-        tracks.retain(|track| visible.contains(track));
-    }
-    let track_ids = lyra_db::lookup::find_ids_by_db_ids(db, &tracks)?;
-    Ok(users
-        .into_iter()
-        .flat_map(|user| {
-            let track_ids = &track_ids;
-            user.totals.into_iter().filter_map(move |(track, total)| {
-                Some(ListenRow {
-                    user_id: user.user_id.clone(),
-                    track_id: track_ids.get(&track)?.clone(),
-                    listen_count: total.count,
-                    last_played_ms: Some(total.last_played_at_ms),
-                })
-            })
-        })
-        .collect())
-}
-
-/// Whose listens a per-user listing reads, resolved under the guard that reads them.
-enum ListenOwner<'a> {
-    Principal,
-    Public(&'a str),
-}
-
-impl ListenOwner<'_> {
-    fn resolve(&self, db: &agdb::DbAny, principal: &Principal) -> Result<(DbId, String), AppError> {
-        match self {
-            Self::Principal => Ok((principal.require(db)?, principal.user_public_id.clone())),
-            Self::Public(user_id) => {
-                let user = accounts::get_by_public_id(db, user_id)?
-                    .ok_or_else(|| AppError::not_found(format!("User not found: {user_id}")))?;
-                let user_db_id = user
-                    .db_id
-                    .ok_or_else(|| anyhow::anyhow!("user missing db_id"))?;
-                Ok((user_db_id, user.id))
-            }
-        }
-    }
-}
-
-async fn rows_for_user(
-    principal: &Principal,
-    owner: ListenOwner<'_>,
-    track_id: Option<String>,
-    merge_unique_external_ids: bool,
-) -> Result<Vec<ListenRow>, AppError> {
-    if let Some(track_id) = track_id {
-        let merge_pairs = merge_track_id_pairs(merge_unique_external_ids).await;
-        let db = STATE.db.read().await;
-        let track_filter =
-            resolve_accessible_track_filter(&db, principal, &track_id, merge_pairs.as_ref())?;
-        let (user_db_id, user_public_id) = owner.resolve(&db, principal)?;
-        let mut totals = Vec::with_capacity(track_filter.len());
-        for track in track_filter {
-            totals.extend(lyra_db::listens::total(&*db, user_db_id, track)?);
-        }
-        let stats = listen_service::ListenStats::over(totals);
-        return Ok(vec![ListenRow {
-            user_id: user_public_id,
-            track_id,
-            listen_count: stats.count,
-            last_played_ms: stats.last_played_at_ms,
-        }]);
-    }
-
-    let db = STATE.db.read().await;
-    let (user_db_id, user_id) = owner.resolve(&db, principal)?;
-    summary_rows(&db, principal, user_db_id, user_id)
-}
-
-/// A row for each track `user_db_id` has listened to that `principal` can see.
-fn summary_rows(
+/// The summaries of one user's listens that `principal` may list.
+fn user_summaries(
     db: &DbAny,
     principal: &Principal,
     user_db_id: DbId,
-    user_id: String,
-) -> Result<Vec<ListenRow>, AppError> {
-    total_rows(
+    track_id: Option<&str>,
+    merge_pairs: Option<&HashSet<(String, String)>>,
+) -> Result<Vec<Summary>, AppError> {
+    let Some(track_id) = track_id else {
+        return Ok(summaries::of_users(db, principal, &[user_db_id])?);
+    };
+    let (track_db_id, counted) = track_filter(db, principal, track_id, merge_pairs)?;
+    Ok(vec![summaries::of_track(
         db,
-        principal,
-        vec![UserTotals::read(db, user_db_id, user_id)?],
-    )
+        user_db_id,
+        track_db_id,
+        &counted,
+    )?])
 }
 
-async fn rows_for_managed_listens(
+/// The summaries the all-users list holds for `query`, with the public id of each user in them.
+fn managed_summaries(
+    db: &DbAny,
     principal: &Principal,
     query: &ListenQuery,
-) -> Result<Vec<ListenRow>, AppError> {
-    let merge_unique_external_ids = query.merge_unique_external_ids.unwrap_or(false);
-    validate_merge_usage(query.track_id.as_deref(), merge_unique_external_ids)?;
-
+    merge_pairs: Option<&HashSet<(String, String)>>,
+) -> Result<(Vec<Summary>, HashMap<DbId, String>), AppError> {
+    let track_id = query.track_id.as_deref();
     if let Some(user_id) = query.user_id.as_deref() {
-        return rows_for_user(
-            principal,
-            ListenOwner::Public(user_id),
-            query.track_id.clone(),
-            merge_unique_external_ids,
-        )
-        .await;
-    }
-
-    let merge_pairs = merge_track_id_pairs(merge_unique_external_ids).await;
-    let db = STATE.db.read().await;
-    let track_filter = query
-        .track_id
-        .as_deref()
-        .map(|track_id| {
-            resolve_accessible_track_filter(&db, principal, track_id, merge_pairs.as_ref())
-        })
-        .transpose()?;
-    let mut users = Vec::new();
-    for user in accounts::list(&*db)? {
-        let Some(user_db_id) = user.db_id else {
-            continue;
+        // The track is resolved first, as the caller's own list resolves it.
+        let track = track_id
+            .map(|track_id| track_filter(db, principal, track_id, merge_pairs))
+            .transpose()?;
+        let user = accounts::get_by_public_id(db, user_id)?
+            .ok_or_else(|| AppError::not_found(format!("User not found: {user_id}")))?;
+        let user_db_id = user
+            .db_id
+            .ok_or_else(|| anyhow::anyhow!("user missing db_id"))?;
+        let summaries = match track {
+            Some((track_db_id, counted)) => {
+                vec![summaries::of_track(db, user_db_id, track_db_id, &counted)?]
+            }
+            None => summaries::of_users(db, principal, &[user_db_id])?,
         };
-        let mut user = UserTotals::read(&db, user_db_id, user.id)?;
-        if let Some(tracks) = &track_filter {
-            user.totals.retain(|track, _| tracks.contains(track));
-        }
-        users.push(user);
-    }
-    let rows = total_rows(&db, principal, users)?;
-
-    if let Some(track_id) = query.track_id.as_deref() {
-        let mut rows_by_user: HashMap<String, ListenRow> = HashMap::new();
-        for row in rows {
-            let entry = rows_by_user
-                .entry(row.user_id.clone())
-                .or_insert_with(|| ListenRow {
-                    user_id: row.user_id,
-                    track_id: track_id.to_string(),
-                    listen_count: 0,
-                    last_played_ms: None,
-                });
-            entry.listen_count = entry.listen_count.saturating_add(row.listen_count);
-            entry.last_played_ms = entry.last_played_ms.max(row.last_played_ms);
-        }
-        return Ok(rows_by_user.into_values().collect());
+        return Ok((summaries, HashMap::from([(user_db_id, user.id)])));
     }
 
-    Ok(rows)
+    let user_ids = accounts::list(db)?
+        .into_iter()
+        .filter_map(|user| Some((user.db_id?, user.id)))
+        .collect::<HashMap<_, _>>();
+    let users = user_ids.keys().copied().collect::<Vec<_>>();
+    let summaries = match track_id {
+        Some(track_id) => {
+            let (track_db_id, counted) = track_filter(db, principal, track_id, merge_pairs)?;
+            summaries::of_track_by_users(db, principal, &users, track_db_id, &counted)?
+        }
+        None => summaries::of_users(db, principal, &users)?,
+    };
+    Ok((summaries, user_ids))
+}
+
+/// The page's summaries, each with the public id of its track.
+fn with_track_ids(
+    db: &DbAny,
+    page: PageResponse<Summary>,
+) -> Result<PageResponse<(Summary, String)>, AppError> {
+    page.try_map_items(|summaries| {
+        let tracks = summaries
+            .iter()
+            .map(|summary| summary.track_db_id)
+            .collect::<Vec<_>>();
+        let track_ids = lyra_db::lookup::find_ids_by_db_ids(db, &tracks)?;
+        summaries
+            .into_iter()
+            .map(|summary| {
+                let track_id = track_ids
+                    .get(&summary.track_db_id)
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("listened track has no public id"))?;
+                Ok((summary, track_id))
+            })
+            .collect::<Result<Vec<_>, AppError>>()
+    })
+}
+
+fn last_played_at(summary: &Summary) -> Option<String> {
+    summary
+        .stats
+        .last_played_at_ms
+        .map(crate::services::timestamps::unix_ms_to_rfc3339_u64)
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -716,18 +509,26 @@ pub(super) async fn get_me_listens(
     let page_request = query.page.resolve();
     let merge_unique_external_ids = query.merge_unique_external_ids.unwrap_or(false);
     validate_merge_usage(query.track_id.as_deref(), merge_unique_external_ids)?;
+    let keys = parse_sort_keys(query.sort_by, false)?;
+    let direction = parse_sort_order(query.sort_order)?;
+    let merge_pairs = merge_track_id_pairs(merge_unique_external_ids).await;
 
-    let mut rows = rows_for_user(
+    let db = STATE.db.read().await;
+    let user_db_id = principal.require(&db)?;
+    let mut summaries = user_summaries(
+        &db,
         &principal,
-        ListenOwner::Principal,
-        query.track_id,
-        merge_unique_external_ids,
-    )
-    .await?;
-    sort_listen_rows(&mut rows, query.sort_by, query.sort_order, false)?;
-    Ok(Json(
-        page_request.slice(rows).map(listen_row_to_me_response),
-    ))
+        user_db_id,
+        query.track_id.as_deref(),
+        merge_pairs.as_ref(),
+    )?;
+    summaries::sort(&mut summaries, &keys, direction, &HashMap::new());
+    let page = with_track_ids(&db, page_request.slice(summaries))?;
+    Ok(Json(page.map(|(summary, track_id)| MeListenResponse {
+        track_id,
+        listen_count: summary.stats.count,
+        last_played_at: last_played_at(&summary),
+    })))
 }
 
 async fn get_listens(
@@ -737,16 +538,40 @@ async fn get_listens(
     let principal = require_principal(bearer_credential(&headers)).await?;
     require_permission(&principal, Permission::ManageLibraries)?;
     let page_request = query.page.clone().resolve();
+    let merge_unique_external_ids = query.merge_unique_external_ids.unwrap_or(false);
+    validate_merge_usage(query.track_id.as_deref(), merge_unique_external_ids)?;
+    let keys = parse_sort_keys(query.sort_by.clone(), true)?;
+    let direction = parse_sort_order(query.sort_order.clone())?;
+    let merge_pairs = merge_track_id_pairs(merge_unique_external_ids).await;
 
-    let mut rows = rows_for_managed_listens(&principal, &query).await?;
-    sort_listen_rows(&mut rows, query.sort_by, query.sort_order, true)?;
-    Ok(Json(page_request.slice(rows).map(listen_row_to_response)))
+    let db = STATE.db.read().await;
+    let (mut summaries, user_ids) =
+        managed_summaries(&db, &principal, &query, merge_pairs.as_ref())?;
+    summaries::sort(&mut summaries, &keys, direction, &user_ids);
+    let page = with_track_ids(&db, page_request.slice(summaries))?;
+    page.try_map_items(|items| {
+        items
+            .into_iter()
+            .map(|(summary, track_id)| {
+                Ok(ListenResponse {
+                    user_id: user_ids
+                        .get(&summary.user_db_id)
+                        .cloned()
+                        .ok_or_else(|| anyhow::anyhow!("listener has no public id"))?,
+                    track_id,
+                    listen_count: summary.stats.count,
+                    last_played_at: last_played_at(&summary),
+                })
+            })
+            .collect::<Result<Vec<_>, AppError>>()
+    })
+    .map(Json)
 }
 
 #[cfg(feature = "docgen")]
 pub(super) fn get_me_listens_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List my listen summaries").description(
-        "Returns authenticated user-scoped per-track listen summaries as `{ items, total, offset }`. Defaults to listen_count descending, then last_played_at descending. `offset` and `limit` page through the summaries as they are at each request; `limit` defaults to 100 and is capped at 500.",
+        "Returns authenticated user-scoped per-track listen summaries as `{ items, total, offset }`. `sort_by` takes `listen_count` and `last_played_at`, ascending unless `sort_order` says otherwise; without it, the summaries come by `listen_count` then `last_played_at`, descending unless `sort_order` says otherwise. Summaries equal on those keys come by the track's internal id, a stable order unrelated to its public id. `offset` and `limit` page through the summaries as they are at each request; `limit` defaults to 100 and is capped at 500.",
     )
 }
 
@@ -760,7 +585,7 @@ pub(super) fn submit_me_listens_docs(op: TransformOperation) -> TransformOperati
 #[cfg(feature = "docgen")]
 fn get_listens_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List listen summaries").description(
-        "Requires ManageLibraries or Admin. Returns per-user per-track listen summaries for visible library content as `{ items, total, offset }`. The default user's listens are left out, and `user_id` naming it finds no user, while authentication is enabled. `offset` and `limit` page through the summaries as they are at each request; `limit` defaults to 100 and is capped at 500.",
+        "Requires ManageLibraries or Admin. Returns per-user per-track listen summaries for visible library content as `{ items, total, offset }`. The default user's listens are left out, and `user_id` naming it finds no user, while authentication is enabled. `sort_by` takes `listen_count`, `last_played_at` and `user_id`, ascending unless `sort_order` says otherwise; without it, the summaries come by `listen_count` then `last_played_at`, descending unless `sort_order` says otherwise. Summaries equal on those keys come by the user's internal id, then the track's, a stable order unrelated to the public ids. `offset` and `limit` page through the summaries as they are at each request; `limit` defaults to 100 and is capped at 500.",
     )
 }
 
@@ -779,97 +604,6 @@ pub(crate) fn listen_openapi_routes() -> aide::axum::ApiRouter {
 mod tests {
     use super::*;
 
-    fn row(
-        user_id: &str,
-        track_id: &str,
-        listen_count: u64,
-        last_played_ms: Option<u64>,
-    ) -> ListenRow {
-        ListenRow {
-            user_id: user_id.to_string(),
-            track_id: track_id.to_string(),
-            listen_count,
-            last_played_ms,
-        }
-    }
-
-    #[test]
-    fn sort_listen_rows_defaults_to_top_order() {
-        let mut rows = vec![
-            row("user", "b", 2, Some(2_000)),
-            row("user", "c", 1, Some(9_000)),
-            row("user", "a", 2, Some(3_000)),
-        ];
-
-        sort_listen_rows(&mut rows, None, None, false).expect("sort should succeed");
-
-        let ids = rows.into_iter().map(|row| row.track_id).collect::<Vec<_>>();
-        assert_eq!(ids, vec!["a", "b", "c"]);
-    }
-
-    #[test]
-    fn sort_listen_rows_accepts_explicit_sort_key() {
-        let mut rows = vec![
-            row("user", "b", 2, Some(2_000)),
-            row("user", "a", 1, Some(3_000)),
-            row("user", "c", 3, None),
-        ];
-
-        sort_listen_rows(
-            &mut rows,
-            Some(vec!["track_id".to_string()]),
-            Some("ascending".to_string()),
-            false,
-        )
-        .expect("sort should succeed");
-
-        let ids = rows.into_iter().map(|row| row.track_id).collect::<Vec<_>>();
-        assert_eq!(ids, vec!["a", "b", "c"]);
-    }
-
-    #[test]
-    fn sort_listen_rows_keeps_never_played_last_in_both_directions() {
-        for (direction, expected) in [
-            ("ascending", ["a", "b", "c"]),
-            ("descending", ["b", "a", "c"]),
-        ] {
-            let mut rows = vec![
-                row("user", "c", 1, None),
-                row("user", "b", 1, Some(2_000)),
-                row("user", "a", 1, Some(1_000)),
-            ];
-
-            sort_listen_rows(
-                &mut rows,
-                Some(vec!["last_played_at".to_string()]),
-                Some(direction.to_string()),
-                false,
-            )
-            .expect("sort should succeed");
-
-            let ids = rows.into_iter().map(|row| row.track_id).collect::<Vec<_>>();
-            assert_eq!(ids, expected, "{direction}");
-        }
-    }
-
-    #[test]
-    fn sort_listen_rows_allows_user_id_for_managed_endpoint() {
-        let mut rows = vec![
-            row("user-b", "track", 1, Some(2_000)),
-            row("user-a", "track", 1, Some(3_000)),
-        ];
-
-        sort_listen_rows(
-            &mut rows,
-            Some(vec!["user_id".to_string()]),
-            Some("ascending".to_string()),
-            true,
-        )
-        .expect("sort should succeed");
-
-        let ids = rows.into_iter().map(|row| row.user_id).collect::<Vec<_>>();
-        assert_eq!(ids, vec!["user-a", "user-b"]);
-    }
     /// A release holding one track, in `library`, with one listen of the track by `user`.
     fn listened_track(
         db: &mut DbAny,
@@ -886,57 +620,18 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("track has no public id"))
     }
 
-    fn track_ids(rows: Vec<ListenRow>) -> HashSet<String> {
-        rows.into_iter().map(|row| row.track_id).collect()
-    }
-
     #[test]
-    fn summary_rows_hold_only_tracks_the_catalog_shows_the_viewer() -> anyhow::Result<()> {
-        use axum::response::IntoResponse;
-
-        let mut db = lyra_db::test_db::new_test_db()?;
-        let user = lyra_db::test_db::insert_user(&mut db, "limited-listener")?;
-        let shown = lyra_db::test_db::insert_library(&mut db, "Shown", "/listens/shown")?;
-        let hidden = lyra_db::test_db::insert_library(&mut db, "Hidden", "/listens/hidden")?;
-        let seen = listened_track(&mut db, user, shown, "Seen")?;
-        let unseen = listened_track(&mut db, user, hidden, "Unseen")?;
-        let orphan = lyra_db::fixtures::insert_track(&mut db, "Orphan")?;
-        lyra_db::fixtures::insert_listen(&mut db, user, orphan, 1_700_000_000_000)?;
-        let orphan = lyra_db::lookup::find_id_by_db_id(&db, orphan)?.expect("track exists");
-
-        let shown_id = lyra_db::libraries::get_by_id(&db, shown)?
-            .expect("library exists")
-            .id;
-        let listed = |db: &DbAny, permissions, libraries| {
-            let principal = Principal::for_user(db, user, permissions, libraries);
-            summary_rows(db, &principal, user, String::new()).map(track_ids)
-        };
-        let ok = |listed: Result<HashSet<String>, AppError>| {
-            listed.map_err(|error| anyhow::anyhow!("{error:?}"))
-        };
-
+    fn the_track_id_sort_key_is_gone() {
+        for include_user_id in [false, true] {
+            for key in ["track_id", "id"] {
+                assert!(parse_sort_keys(Some(vec![key.to_string()]), include_user_id).is_err());
+            }
+        }
+        assert!(parse_sort_keys(Some(vec!["user_id".to_string()]), false).is_err());
         assert_eq!(
-            ok(listed(&db, Vec::new(), HashSet::from([shown_id.clone()])))?,
-            HashSet::from([seen.clone()])
+            parse_sort_keys(Some(vec!["count,user_id".to_string()]), true).ok(),
+            Some(vec![SortKey::ListenCount, SortKey::UserId])
         );
-        assert!(ok(listed(&db, Vec::new(), HashSet::new()))?.is_empty());
-        assert_eq!(
-            ok(listed(&db, vec![Permission::Admin], HashSet::new()))?,
-            HashSet::from([seen, unseen, orphan])
-        );
-
-        // A caller who no longer exists is refused, as the catalog lists refuse it.
-        let caller = lyra_db::test_db::insert_user(&mut db, "deleted-caller")?;
-        let principal = Principal::for_user(&db, caller, vec![Permission::Admin], HashSet::new());
-        lyra_db::test_db::recycle_user(&mut db, caller, "replacement")?;
-        let Err(error) = summary_rows(&db, &principal, user, String::new()) else {
-            anyhow::bail!("a deleted caller listed listens");
-        };
-        assert_eq!(
-            error.into_response().status(),
-            axum::http::StatusCode::UNAUTHORIZED
-        );
-        Ok(())
     }
 
     #[tokio::test]
@@ -975,9 +670,17 @@ mod tests {
                 sort_order: None,
                 merge_unique_external_ids: None,
             };
-            rows_for_managed_listens(principal, &query)
-                .await
-                .map(track_ids)
+            let db = STATE.db.read().await;
+            let (summaries, _) = managed_summaries(&db, principal, &query, None)?;
+            let tracks = summaries
+                .iter()
+                .map(|summary| summary.track_db_id)
+                .collect::<Vec<_>>();
+            Ok::<_, AppError>(
+                lyra_db::lookup::find_ids_by_db_ids(&*db, &tracks)?
+                    .into_values()
+                    .collect::<HashSet<_>>(),
+            )
         };
         let both = HashSet::from([seen.clone(), unseen.clone()]);
 
@@ -996,6 +699,178 @@ mod tests {
             Some(HashSet::from([unseen]))
         );
         Ok(())
+    }
+
+    mod paging {
+        use axum::http::header::AUTHORIZATION;
+
+        use super::*;
+
+        struct Fixture {
+            headers: HeaderMap,
+            admin: (DbId, String),
+            other: (DbId, String),
+            /// Each track's internal and public id, by internal id.
+            tracks: Vec<(DbId, String)>,
+        }
+
+        /// An admin with two listens of the last of five tracks and one of each other, all
+        /// last played at the same time, and another user with one of the first two.
+        async fn setup() -> anyhow::Result<Fixture> {
+            crate::plugins::testing::init_library_test_state(std::path::PathBuf::from(".")).await?;
+            let mut db = STATE.db.write().await;
+            lyra_db::roles::ensure_builtin_roles(&mut db)?;
+            let mut user = |name: &str| -> anyhow::Result<(DbId, String)> {
+                let user = lyra_db::fixtures::test_user(name)?;
+                Ok((lyra_db::users::create(&mut db, &user)?, user.id))
+            };
+            let admin = user("paging-admin")?;
+            let other = user("paging-other")?;
+            lyra_db::roles::ensure_user_has_role(
+                &mut db,
+                admin.0,
+                lyra_db::roles::BUILTIN_ADMIN_ROLE,
+            )?;
+            let mut tracks = Vec::new();
+            for title in ["A", "B", "C", "D", "E"] {
+                let track = lyra_db::fixtures::insert_track(&mut db, title)?;
+                let id = lyra_db::lookup::find_id_by_db_id(&*db, track)?.expect("public id");
+                tracks.push((track, id));
+            }
+            tracks.sort();
+            // Listened to in another order than the ids', so neither order passes for the other.
+            for index in [3, 0, 4, 2, 1, 4] {
+                lyra_db::fixtures::insert_listen(&mut db, admin.0, tracks[index].0, 5_000)?;
+            }
+            for index in [1, 0] {
+                lyra_db::fixtures::insert_listen(&mut db, other.0, tracks[index].0, 5_000)?;
+            }
+            drop(db);
+            let session =
+                crate::services::testing::create_session(admin.0, Default::default()).await?;
+            let mut headers = HeaderMap::new();
+            headers.insert(AUTHORIZATION, format!("Bearer {}", session.token).parse()?);
+            Ok(Fixture {
+                headers,
+                admin,
+                other,
+                tracks,
+            })
+        }
+
+        #[tokio::test]
+        async fn my_listens_page_in_one_order_with_ties_by_internal_track_id() -> anyhow::Result<()>
+        {
+            let _guard = crate::services::testing::runtime_test_lock().await;
+            let fixture = setup().await?;
+            let mut listed = Vec::new();
+            for offset in [0, 2, 4] {
+                let Json(page) = get_me_listens(
+                    fixture.headers.clone(),
+                    Query(MeListenQuery {
+                        track_id: None,
+                        page: routes::PageQuery {
+                            limit: Some(2),
+                            offset: Some(offset),
+                        },
+                        sort_by: None,
+                        sort_order: None,
+                        merge_unique_external_ids: None,
+                    }),
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+                assert_eq!((page.total, page.offset), (5, offset));
+                assert!(page.items.len() <= 2);
+                listed.extend(
+                    page.items
+                        .into_iter()
+                        .map(|item| (item.track_id, item.listen_count)),
+                );
+            }
+
+            let id = |index: usize| fixture.tracks[index].1.clone();
+            assert_eq!(
+                listed,
+                vec![(id(4), 2), (id(0), 1), (id(1), 1), (id(2), 1), (id(3), 1)]
+            );
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn everyones_listens_tie_by_internal_user_then_track_id() -> anyhow::Result<()> {
+            let _guard = crate::services::testing::runtime_test_lock().await;
+            let fixture = setup().await?;
+            let listed = async |sort_by: Option<&str>, sort_order: Option<&str>| {
+                let mut listed = Vec::new();
+                for offset in [0, 3, 6] {
+                    let Json(page) = get_listens(
+                        fixture.headers.clone(),
+                        Query(ListenQuery {
+                            user_id: None,
+                            track_id: None,
+                            page: routes::PageQuery {
+                                limit: Some(3),
+                                offset: Some(offset),
+                            },
+                            sort_by: sort_by.map(|key| vec![key.to_string()]),
+                            sort_order: sort_order.map(str::to_string),
+                            merge_unique_external_ids: None,
+                        }),
+                    )
+                    .await
+                    .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+                    assert_eq!(page.total, 7);
+                    listed.extend(
+                        page.items
+                            .into_iter()
+                            .map(|item| (item.user_id, item.track_id)),
+                    );
+                }
+                anyhow::Ok(listed)
+            };
+            let row = |user: &(DbId, String), track: usize| {
+                (user.1.clone(), fixture.tracks[track].1.clone())
+            };
+            let (first, second) = if fixture.admin.0 < fixture.other.0 {
+                (&fixture.admin, &fixture.other)
+            } else {
+                (&fixture.other, &fixture.admin)
+            };
+            let of = |user: &(DbId, String)| {
+                let tracks = if user.0 == fixture.admin.0 {
+                    0..5
+                } else {
+                    0..2
+                };
+                tracks.map(|track| row(user, track)).collect::<Vec<_>>()
+            };
+
+            // By count, the admin's twice-played track leads; the rest tie.
+            let mut by_count = vec![row(&fixture.admin, 4)];
+            by_count.extend(
+                [of(first), of(second)]
+                    .concat()
+                    .into_iter()
+                    .filter(|listed| *listed != row(&fixture.admin, 4)),
+            );
+            assert_eq!(listed(None, None).await?, by_count);
+
+            let (low, high) = if fixture.admin.1 < fixture.other.1 {
+                (&fixture.admin, &fixture.other)
+            } else {
+                (&fixture.other, &fixture.admin)
+            };
+            assert_eq!(
+                listed(Some("user_id"), None).await?,
+                [of(low), of(high)].concat()
+            );
+            assert_eq!(
+                listed(Some("user_id"), Some("descending")).await?,
+                [of(high), of(low)].concat()
+            );
+            Ok(())
+        }
     }
 
     mod default_user {
@@ -1589,16 +1464,15 @@ mod benches {
         let db = STATE.db.read().await;
 
         let page = |offset: u64| {
-            let mut rows = summary_rows(&db, &principal, user_db_id, String::new())
-                .ok()
-                .unwrap();
-            sort_listen_rows(&mut rows, None, None, false).unwrap();
+            let mut summaries = summaries::of_users(&db, &principal, &[user_db_id]).unwrap();
+            summaries::sort(&mut summaries, &[], None, &HashMap::new());
             let page = routes::PageQuery {
                 limit: Some(LIMIT),
                 offset: Some(offset),
             }
             .resolve()
-            .slice(rows);
+            .slice(summaries);
+            let page = with_track_ids(&db, page).ok().unwrap();
             (page.items.len() as u64, page.total)
         };
         println!(
@@ -1616,8 +1490,7 @@ mod benches {
         println!(
             "    reading the totals and keeping the visible ones: {}",
             ms(median(9, || {
-                summary_rows(&db, &principal, user_db_id, String::new())
-                    .ok()
+                summaries::of_users(&db, &principal, &[user_db_id])
                     .unwrap()
                     .len() as u64
             }))

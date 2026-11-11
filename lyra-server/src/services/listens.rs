@@ -50,6 +50,8 @@ use super::{
     },
 };
 
+pub(crate) mod summaries;
+
 const MIN_PLAYED_MS: u64 = 30_000;
 const SHORT_TRACK_MS: u64 = 180_000;
 const SHORT_TRACK_PLAYED_PERCENT: u64 = 20;
