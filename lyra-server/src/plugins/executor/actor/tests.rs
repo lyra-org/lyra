@@ -58,6 +58,22 @@ struct TestExecutor {
     started: async_mpsc::UnboundedReceiver<()>,
     dropped: async_mpsc::UnboundedReceiver<()>,
     release: Arc<Notify>,
+    rounds: Arc<std::sync::atomic::AtomicU64>,
+}
+
+fn manifest(id: &str, scopes: &[&str]) -> PluginManifest {
+    PluginManifest {
+        schema_version: 1,
+        id: id.into(),
+        name: id.into(),
+        version: semver::Version::new(1, 0, 0),
+        host_requirement: semver::VersionReq::STAR,
+        description: String::new(),
+        entrypoint: Some("init.luau".into()),
+        scopes: scopes.iter().map(|scope| scope.to_string()).collect(),
+        scope_reasons: Default::default(),
+        dependencies: Default::default(),
+    }
 }
 
 fn test_executor() -> Result<TestExecutor> {
@@ -65,7 +81,6 @@ fn test_executor() -> Result<TestExecutor> {
         std::collections::HashSet::new(),
         None,
     ));
-    let (tx, rx) = plugin_executor_channel(4);
     let (ready_tx, ready_rx) = mpsc::sync_channel(1);
     let (crashed, exit) = exit_channel();
     let (started_tx, started) = async_mpsc::unbounded_channel();
@@ -76,22 +91,17 @@ fn test_executor() -> Result<TestExecutor> {
     let cancel_gate_for_thread = cancel_gate.clone();
     thread::spawn(move || {
         let setup = (|| -> Result<_> {
-            let runtime = PluginExecutor::with_manifests(Arc::from(vec![PluginManifest {
-                schema_version: 1,
-                id: "dispatch-test".into(),
-                name: "Dispatch test".into(),
-                version: semver::Version::new(1, 0, 0),
-                host_requirement: semver::VersionReq::STAR,
-                description: String::new(),
-                entrypoint: Some("init.luau".into()),
-                scopes: vec![
-                    "lyra.metadata".into(),
-                    "lyra.api".into(),
-                    "test.gate".into(),
+            let runtime = PluginExecutor::with_manifests(Arc::from(vec![manifest(
+                "dispatch-test",
+                &[
+                    "lyra.metadata",
+                    "lyra.api",
+                    "lyra.listens",
+                    "lyra.listens.all",
+                    "harmony.task",
+                    "test.gate",
                 ],
-                scope_reasons: Default::default(),
-                dependencies: Default::default(),
-            }]))?;
+            )]))?;
             runtime
                 .vm
                 .data()
@@ -122,6 +132,13 @@ fn test_executor() -> Result<TestExecutor> {
                 metadata.Provider.new("dispatch-fast"):refresh(metadata.EntityType.Release, function(ctx)
                     return ctx.value
                 end)
+                local listens = require("@lyra/listens")
+                local task = require("@harmony/task")
+                listens.on_update(function(update)
+                    if update.event == "hold" then
+                        task.wait(1)
+                    end
+                end)
                 local api = require("@lyra/api")
                 api.get("/dispatch-wait", function(_ctx)
                     gate.wait()
@@ -144,11 +161,14 @@ fn test_executor() -> Result<TestExecutor> {
                 "/dispatch-wait",
             ))
             .context("API callback")?;
-            Ok((runtime, slow, fast, api))
+            let (tx, rx) = plugin_executor_channel(4, runtime.wake_handle());
+            let entrypoints = runtime.entrypoint_cancellation();
+            let rounds = runtime.rounds.clone();
+            Ok((runtime, rx, (tx, entrypoints, rounds, slow, fast, api)))
         })();
         match setup {
-            Ok((runtime, slow, fast, api)) => {
-                if ready_tx.send(Ok((slow, fast, api))).is_ok() {
+            Ok((runtime, rx, ready)) => {
+                if ready_tx.send(Ok(ready)).is_ok() {
                     run_plugin_executor_thread(runtime, rx, crashed);
                 }
             }
@@ -157,12 +177,12 @@ fn test_executor() -> Result<TestExecutor> {
             }
         }
     });
-    let (slow, fast, api) = ready_rx.recv()??;
+    let (tx, entrypoints, rounds, slow, fast, api) = ready_rx.recv()??;
     Ok(TestExecutor {
         handle: PluginExecutorHandle {
             tx,
             streams: Default::default(),
-            entrypoints: Default::default(),
+            entrypoints,
             exit,
             scope: Default::default(),
             running: Default::default(),
@@ -174,6 +194,7 @@ fn test_executor() -> Result<TestExecutor> {
         dropped,
         cancel_gate,
         release,
+        rounds,
     })
 }
 
@@ -347,6 +368,122 @@ async fn waiting_api_callback_does_not_delay_metadata_deadlines() -> Result<()> 
     let response = tokio::time::timeout(Duration::from_secs(2), api).await???;
     assert_eq!(response.status, 200);
     signal(&mut executor.dropped).await?;
+    Ok(())
+}
+
+/// The rounds the executor has run, once it has gone a while without running one: it sleeps, and
+/// only a wake or a deadline will bring on the next.
+async fn rounds_once_asleep(executor: &TestExecutor) -> Result<u64> {
+    use std::sync::atomic::Ordering;
+
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let rounds = executor.rounds.load(Ordering::Relaxed);
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if executor.rounds.load(Ordering::Relaxed) == rounds {
+                return rounds;
+            }
+        }
+    })
+    .await
+    .context("the executor kept polling with nothing to do")
+}
+
+/// A handler parked on a host call runs on because the call's readiness wakes the executor, which
+/// polls nothing while the call is pending.
+#[tokio::test]
+async fn a_parked_handler_resumes_on_the_wake_of_its_host_call() -> Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
+    let mut executor = test_executor()?;
+    let running = hold_slot(&mut executor).await?;
+    let asleep = rounds_once_asleep(&executor).await?;
+
+    executor.release.notify_one();
+    let result = tokio::time::timeout(Duration::from_secs(10), running).await???;
+    assert_eq!(result.values, vec![serde_json::json!(42)]);
+    assert!(executor.rounds.load(std::sync::atomic::Ordering::Relaxed) > asleep);
+    Ok(())
+}
+
+/// A handler that ended is answered before the next command, which holds the thread past the
+/// handler's deadline.
+#[tokio::test]
+async fn a_finished_handler_is_answered_before_a_command_that_outlasts_its_deadline() -> Result<()>
+{
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
+    let executor = test_executor()?;
+    let hold = || crate::services::listens::ListenUpdatePayload {
+        event: "hold".to_string(),
+        user_id: "user-public".to_string(),
+        listens: Vec::new(),
+    };
+
+    // While the first update holds the thread, the handler and a second update queue behind it.
+    executor.handle.dispatch_listen_update(hold())?;
+    let fast = tokio::spawn({
+        let handle = executor.handle.clone();
+        let request = request(executor.fast, Duration::from_millis(1500));
+        async move { handle.dispatch_metadata_refresh(request).await }
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    executor.handle.dispatch_listen_update(hold())?;
+
+    let result = tokio::time::timeout(Duration::from_secs(10), fast).await???;
+    assert_eq!(result.values, vec![serde_json::json!(42)]);
+    Ok(())
+}
+
+/// The producer waits on nothing, so only the deadline the last round returned ends the wait.
+#[test]
+fn a_stream_s_deadline_wakes_the_executor_to_end_it() -> Result<()> {
+    use futures::StreamExt;
+
+    let runtime = PluginExecutor::with_manifests(Arc::from(vec![manifest("demo", &[])]))?;
+    let context = harmony_core::CallContext {
+        origin: super::super::plugin_origin("demo", "init.luau"),
+        ..Default::default()
+    };
+    let values = runtime.eval_plugin_source_with_call_context(
+        &b"return function(_writer) coroutine.yield() end"[..],
+        context.clone(),
+    )?;
+    let Some(harmony_luau::Value::Function(produce)) = values.into_iter().next() else {
+        anyhow::bail!("the chunk returns the producer");
+    };
+    let mut body = super::super::queue_stream(
+        &runtime.vm,
+        produce,
+        context,
+        Instant::now() + Duration::from_millis(100),
+        super::super::StreamOrigin {
+            plugin_id: "demo".to_string(),
+            method: "GET".to_string(),
+            path: "/stream".to_string(),
+        },
+    )?;
+
+    let (tx, rx) = plugin_executor_channel(4, runtime.wake_handle());
+    let reader = thread::spawn(move || {
+        let end = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("reader runtime")
+            .block_on(async { tokio::time::timeout(Duration::from_secs(10), body.next()).await });
+        // Ends the executor's loop, whatever it was waiting for.
+        drop(tx);
+        end
+    });
+    assert!(serve_plugin_executor_commands(&runtime, &rx).is_none());
+
+    let error = reader
+        .join()
+        .expect("reader thread")
+        .context("nothing woke the executor at the stream's deadline")?
+        .context("a stream past its deadline is aborted")?
+        .expect_err("a stream past its deadline is aborted");
+    assert!(error.to_string().contains("deadline expired"), "{error}");
     Ok(())
 }
 

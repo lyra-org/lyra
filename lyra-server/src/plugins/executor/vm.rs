@@ -17,6 +17,7 @@ use harmony_core::{
     ModuleSpec,
     SourceLoader,
     plugin::{
+        EntrypointPoll,
         LoadedPlugin,
         PluginDiscoveryError,
         PluginManager,
@@ -176,8 +177,16 @@ impl PluginExecutor {
             })
             .on_run_end(remove_plugin_callbacks)
             .build()?;
+        let wake = runtime
+            .vm
+            .data()
+            .get::<harmony_core::LocalScheduler>()?
+            .wake_handle();
 
         Ok(Self {
+            wake,
+            #[cfg(test)]
+            rounds: Arc::default(),
             runtime,
             scope,
             running,
@@ -254,22 +263,24 @@ impl PluginExecutor {
         }
     }
 
-    pub(super) fn poll_pending_restart(&self) {
+    /// Replies to a restart whose entrypoint ended; while it runs, returns when it is given up on.
+    pub(super) fn poll_pending_restart(&self) -> Option<std::time::Instant> {
+        let waker = self.wake.waker();
+        let mut context = std::task::Context::from_waker(&waker);
         let outcome = {
             let pending = self.pending_restart.borrow();
-            let Some(pending) = pending.as_ref() else {
-                return;
-            };
-            self.runtime.poll_entrypoint(&pending.entrypoint)
+            match self
+                .runtime
+                .poll_entrypoint(&pending.as_ref()?.entrypoint, &mut context)
+            {
+                EntrypointPoll::Running { deadline } => return Some(deadline),
+                EntrypointPoll::Ended(outcome) => outcome,
+            }
         };
-        let Some(outcome) = outcome else {
-            return;
-        };
-        let Some(pending) = self.pending_restart.borrow_mut().take() else {
-            return;
-        };
-        let super::PendingRestart { entrypoint, reply } = pending;
+        let super::PendingRestart { entrypoint, reply } =
+            self.pending_restart.borrow_mut().take()?;
         let _ = reply.send(self.runtime.finish_entrypoint(entrypoint, outcome));
+        None
     }
 
     /// The ids of the plugins whose entrypoint failed.

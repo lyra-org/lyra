@@ -15,6 +15,10 @@ use std::{
         Arc,
         Condvar,
         Mutex,
+        atomic::{
+            AtomicBool,
+            Ordering,
+        },
     },
     task::{
         Context,
@@ -604,8 +608,18 @@ impl Scheduler {
             .min()
     }
 
+    /// Waits until a task is woken, [`SchedulerWake::wake`] is called, or `timeout` passes.
+    /// Returns at once when either happened since the last wait.
     pub fn wait_for_wake(&self, timeout: Option<Duration>) {
         self.wake_queue.wait(timeout);
+    }
+
+    pub fn wake_handle(&self) -> SchedulerWake {
+        SchedulerWake {
+            waker: Arc::new(OwnerWaker {
+                queue: self.wake_queue.clone(),
+            }),
+        }
     }
 
     fn borrows_thread(&self, id: TaskId) -> bool {
@@ -730,51 +744,126 @@ impl Scheduler {
     }
 }
 
+/// Ends a scheduler's wait from any thread, for work its owner polls that the scheduler doesn't
+/// track. A wake between two waits is kept for the next one.
+#[derive(Clone)]
+pub struct SchedulerWake {
+    waker: Arc<OwnerWaker>,
+}
+
+impl SchedulerWake {
+    pub fn wake(&self) {
+        self.waker.queue.rouse();
+    }
+
+    /// A waker that calls [`Self::wake`]. Every one of a handle's wakers wakes the same task.
+    pub fn waker(&self) -> Waker {
+        Waker::from(self.waker.clone())
+    }
+}
+
+/// Wakes the scheduler's owner, where a [`TaskWaker`] wakes one of its tasks.
+struct OwnerWaker {
+    queue: Arc<WakeQueue>,
+}
+
+impl Wake for OwnerWaker {
+    fn wake(self: Arc<Self>) {
+        self.queue.rouse();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.queue.rouse();
+    }
+}
+
+/// A one-way flag its holders set from any thread, for what the scheduler's owner checks between
+/// waits: setting it ends the wait.
+#[derive(Clone)]
+pub struct Cancellation {
+    cancelled: Arc<AtomicBool>,
+    wake: SchedulerWake,
+}
+
+impl Cancellation {
+    pub fn new(wake: SchedulerWake) -> Self {
+        Self {
+            cancelled: Arc::default(),
+            wake,
+        }
+    }
+
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+        self.wake.wake();
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+}
+
+impl std::fmt::Debug for Cancellation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Cancellation")
+            .field("cancelled", &self.is_cancelled())
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Default)]
 struct WakeQueue {
-    ids: Mutex<VecDeque<TaskId>>,
+    state: Mutex<WakeState>,
     signal: Condvar,
 }
 
+#[derive(Default)]
+struct WakeState {
+    ids: VecDeque<TaskId>,
+    /// A [`SchedulerWake`] fired since the last wait.
+    roused: bool,
+}
+
 impl WakeQueue {
-    fn wake(&self, id: TaskId) {
-        self.ids
-            .lock()
-            .expect("scheduler wake queue poisoned")
-            .push_back(id);
+    fn state(&self) -> std::sync::MutexGuard<'_, WakeState> {
+        self.state.lock().expect("scheduler wake queue poisoned")
+    }
+
+    fn wake_task(&self, id: TaskId) {
+        self.state().ids.push_back(id);
+        self.signal.notify_one();
+    }
+
+    fn rouse(&self) {
+        self.state().roused = true;
         self.signal.notify_one();
     }
 
     fn drain(&self) -> Vec<TaskId> {
-        self.ids
-            .lock()
-            .expect("scheduler wake queue poisoned")
-            .drain(..)
-            .collect()
+        self.state().ids.drain(..).collect()
     }
 
     fn has_pending_wake(&self) -> bool {
-        !self
-            .ids
-            .lock()
-            .expect("scheduler wake queue poisoned")
-            .is_empty()
+        !self.state().ids.is_empty()
     }
 
     fn wait(&self, timeout: Option<Duration>) {
-        let guard = self.ids.lock().expect("scheduler wake queue poisoned");
-        if !guard.is_empty() {
-            return;
+        let mut state = self.state();
+        if state.ids.is_empty() && !state.roused {
+            state = match timeout {
+                Some(timeout) => {
+                    self.signal
+                        .wait_timeout(state, timeout)
+                        .expect("scheduler wake queue poisoned")
+                        .0
+                }
+                None => self
+                    .signal
+                    .wait(state)
+                    .expect("scheduler wake queue poisoned"),
+            };
         }
-
-        match timeout {
-            Some(timeout) => {
-                drop(self.signal.wait_timeout(guard, timeout));
-            }
-            None => {
-                drop(self.signal.wait(guard));
-            }
-        }
+        state.roused = false;
     }
 }
 
@@ -785,11 +874,11 @@ struct TaskWaker {
 
 impl Wake for TaskWaker {
     fn wake(self: Arc<Self>) {
-        self.queue.wake(self.id);
+        self.queue.wake_task(self.id);
     }
 
     fn wake_by_ref(self: &Arc<Self>) {
-        self.queue.wake(self.id);
+        self.queue.wake_task(self.id);
     }
 }
 
@@ -803,6 +892,8 @@ pub struct LocalScheduler {
     pending_luau_cancellations: RefCell<Vec<luau::Thread>>,
     polling: Cell<bool>,
     last_group_id: Rc<Cell<u64>>,
+    /// Kept apart from the scheduler, which is borrowed while it polls.
+    wake: SchedulerWake,
 }
 
 impl Default for LocalScheduler {
@@ -811,6 +902,7 @@ impl Default for LocalScheduler {
         Self {
             cancelled_groups: scheduler.cancelled_groups.clone(),
             last_group_id: scheduler.last_group_id.clone(),
+            wake: scheduler.wake_handle(),
             scheduler: RefCell::new(scheduler),
             thread_tasks: RefCell::default(),
             task_threads: RefCell::default(),
@@ -1252,6 +1344,31 @@ impl LocalScheduler {
 
     pub fn wait_for_wake(&self, timeout: Option<Duration>) {
         self.scheduler.borrow().wait_for_wake(timeout);
+    }
+
+    /// Usable while the scheduler polls, as from a host call.
+    pub fn wake_handle(&self) -> SchedulerWake {
+        self.wake.clone()
+    }
+
+    /// Sleeps until there is something to poll: a task is woken or due, a [`SchedulerWake`]
+    /// fires, or `deadline`, the earliest among the work the caller polls itself, passes.
+    pub fn wait_for_work(&self, deadline: Option<Instant>) {
+        let scheduler = self.scheduler.borrow();
+        let due = if scheduler.has_pending() {
+            scheduler.next_wake_delay()
+        } else {
+            None
+        };
+        let timeout = match (due, deadline) {
+            (Some(due), Some(deadline)) => {
+                Some(due.min(deadline.saturating_duration_since(Instant::now())))
+            }
+            (due, deadline) => {
+                due.or(deadline.map(|deadline| deadline.saturating_duration_since(Instant::now())))
+            }
+        };
+        scheduler.wait_for_wake(timeout);
     }
 
     pub fn remove_finished(&self) -> usize {
@@ -2240,5 +2357,45 @@ mod tests {
         };
         assert!(matches!(values.as_slice(), [luau::Value::Number(42.0)]));
         Ok(())
+    }
+
+    #[test]
+    fn a_wake_handle_ends_a_wait_from_another_thread() {
+        let scheduler = Scheduler::new();
+        let wake = scheduler.wake_handle();
+        let waker = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            wake.wake();
+        });
+
+        let started = Instant::now();
+        scheduler.wait_for_wake(Some(Duration::from_secs(30)));
+        assert!(started.elapsed() < Duration::from_secs(10));
+        waker.join().expect("waker thread");
+    }
+
+    #[test]
+    fn a_wake_before_the_wait_is_kept_for_it() {
+        let scheduler = Scheduler::new();
+        scheduler.wake_handle().waker().wake();
+
+        let started = Instant::now();
+        scheduler.wait_for_wake(Some(Duration::from_secs(30)));
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn a_cancellation_ends_a_wait_for_work_without_a_deadline() {
+        let scheduler = LocalScheduler::new();
+        let cancellation = Cancellation::new(scheduler.wake_handle());
+        let cancel = std::thread::spawn({
+            let cancellation = cancellation.clone();
+            move || cancellation.cancel()
+        });
+
+        while !cancellation.is_cancelled() {
+            scheduler.wait_for_work(None);
+        }
+        cancel.join().expect("cancelling thread");
     }
 }

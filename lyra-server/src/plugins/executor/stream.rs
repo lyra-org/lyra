@@ -40,6 +40,7 @@ use harmony_core::{
     LocalLuauTaskCompletion,
     LocalScheduler,
     ResumeLimit,
+    SchedulerWake,
     UserDataBinding,
 };
 use harmony_luau as luau;
@@ -70,6 +71,8 @@ struct StreamShared {
     end: Mutex<Option<StreamEnd>>,
     waker: AtomicWaker,
     bytes_sent: AtomicU64,
+    /// Has the executor look at a stream it runs again, once the stream must stop.
+    executor: Option<SchedulerWake>,
 }
 
 impl StreamShared {
@@ -98,6 +101,13 @@ impl StreamShared {
         self.stopped.store(true, Ordering::Release);
         self.closed.raise();
         self.waker.wake();
+        self.wake_executor();
+    }
+
+    fn wake_executor(&self) {
+        if let Some(executor) = &self.executor {
+            executor.wake();
+        }
     }
 }
 
@@ -111,7 +121,7 @@ pub(crate) struct ApiResponseStream {
 impl ApiResponseStream {
     /// A body that ends at once, whole, for an answer that has none, such as one to a HEAD.
     pub(super) fn finished() -> Self {
-        let (_, body, end) = stream_channel();
+        let (_, body, end) = stream_channel(None);
         end.finish();
         body
     }
@@ -156,6 +166,10 @@ impl futures::Stream for ApiResponseStream {
 impl Drop for ApiResponseStream {
     fn drop(&mut self) {
         self.shared.closed.raise();
+        // An ended stream has left the executor's hands.
+        if self.shared.end().is_none() {
+            self.shared.wake_executor();
+        }
     }
 }
 
@@ -253,7 +267,9 @@ impl ApiStreamWriter {
     }
 }
 
-fn stream_channel() -> (ApiStreamWriter, ApiResponseStream, StreamEndGuard) {
+fn stream_channel(
+    executor: Option<SchedulerWake>,
+) -> (ApiStreamWriter, ApiResponseStream, StreamEndGuard) {
     let (tx, rx) = tokio::sync::mpsc::channel(STREAM_CHANNEL_CAPACITY);
     let shared = Arc::new(StreamShared {
         closed: luau::InterruptSignal::new(),
@@ -262,6 +278,7 @@ fn stream_channel() -> (ApiStreamWriter, ApiResponseStream, StreamEndGuard) {
         end: Mutex::new(None),
         waker: AtomicWaker::new(),
         bytes_sent: AtomicU64::new(0),
+        executor,
     });
     (
         ApiStreamWriter {
@@ -454,7 +471,10 @@ pub(crate) fn queue_stream(
     origin: StreamOrigin,
 ) -> luau::runtime::Result<ApiResponseStream> {
     let tasks = vm.data().get::<StreamTasks>()?;
-    let (writer, body, end) = stream_channel();
+    let executor = vm.data().get::<LocalScheduler>()?.wake_handle();
+    // Whoever queues it, even a task the executor is polling, the executor comes round to start it.
+    executor.wake();
+    let (writer, body, end) = stream_channel(Some(executor));
     tasks.stops.register(&origin.plugin_id, &end.0);
     tasks.waiting.borrow_mut().push_back(StreamTask {
         produce,
@@ -473,14 +493,17 @@ pub(super) fn stream_stops(vm: &luau::Vm) -> luau::runtime::Result<Arc<StreamSto
 }
 
 /// Ends the streams whose producers finished or must stop, then starts waiting ones into the
-/// places that are free.
-pub(super) fn poll_streams(vm: &luau::Vm) {
+/// places that are free. Returns the earliest deadline of those left; a stream stopped from another
+/// thread wakes the executor, as does a producer's end.
+pub(super) fn poll_streams(vm: &luau::Vm) -> Option<Instant> {
     let (Ok(tasks), Ok(scheduler)) = (
         vm.data().get::<StreamTasks>(),
         vm.data().get::<LocalScheduler>(),
     ) else {
-        return;
+        return None;
     };
+    let waker = scheduler.wake_handle().waker();
+    let mut cx = Context::from_waker(&waker);
     let mut running = tasks.running.borrow_mut();
     let mut index = 0;
     while index < running.len() {
@@ -488,7 +511,6 @@ pub(super) fn poll_streams(vm: &luau::Vm) {
         let outcome = if let Some(reason) = task.stop_reason(&scheduler) {
             Some(Err(reason.to_string()))
         } else {
-            let mut cx = Context::from_waker(std::task::Waker::noop());
             match producing.completion.poll(&mut cx) {
                 Poll::Ready(result) => Some(result.map(|_| ()).map_err(|error| error.message)),
                 Poll::Pending => None,
@@ -520,7 +542,11 @@ pub(super) fn poll_streams(vm: &luau::Vm) {
             task.fail(reason);
         } else if running.len() < MAX_ACTIVE_STREAMS {
             match task.start(vm, &scheduler) {
-                Ok(producing) => running.push((task, producing)),
+                Ok(producing) => {
+                    // It has yet to run; the poll has its end wake the executor.
+                    let _ = producing.completion.poll(&mut cx);
+                    running.push((task, producing));
+                }
                 Err(error) => task.fail(&error.to_string()),
             }
         } else {
@@ -529,6 +555,11 @@ pub(super) fn poll_streams(vm: &luau::Vm) {
         }
     }
     *waiting = kept;
+    waiting
+        .iter()
+        .chain(running.iter().map(|(task, _)| task))
+        .map(|task| task.deadline)
+        .min()
 }
 
 /// Ends every stream as failed, as the runtime goes away.
@@ -552,6 +583,10 @@ mod tests {
     use super::*;
 
     use futures::StreamExt;
+
+    fn stream_channel() -> (ApiStreamWriter, ApiResponseStream, StreamEndGuard) {
+        super::stream_channel(None)
+    }
 
     #[tokio::test]
     async fn only_a_finish_ends_the_body_whole() {

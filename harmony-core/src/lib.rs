@@ -45,10 +45,12 @@ pub use modules::{
     ensure_current_plugin_run,
 };
 pub use scheduler::{
+    Cancellation,
     LocalLuauTaskCompletion,
     LocalScheduler,
     ResumeLimit,
     Scheduler,
+    SchedulerWake,
     TaskFuture,
     TaskHandle,
     TaskId,

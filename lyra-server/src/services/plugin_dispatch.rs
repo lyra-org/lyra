@@ -286,18 +286,35 @@ pub(crate) struct MixHandlerTrack {
     pub(crate) score: Option<f64>,
 }
 
+/// Set by a caller that gives up on a dispatch, and read by whoever runs it.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct DispatchCancellation {
-    cancelled: Arc<AtomicBool>,
+    inner: Arc<DispatchCancellationInner>,
+}
+
+#[derive(Debug, Default)]
+struct DispatchCancellationInner {
+    cancelled: AtomicBool,
+    waker: futures::task::AtomicWaker,
 }
 
 impl DispatchCancellation {
     pub(crate) fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Release);
+        self.inner.cancelled.store(true, Ordering::Release);
+        self.inner.waker.wake();
     }
 
     pub(crate) fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Acquire)
+        self.inner.cancelled.load(Ordering::Acquire)
+    }
+
+    /// Whether the dispatch was cancelled; if not, `cx` is woken once it is.
+    pub(crate) fn poll_cancelled(&self, cx: &mut std::task::Context<'_>) -> bool {
+        if self.is_cancelled() {
+            return true;
+        }
+        self.inner.waker.register(cx.waker());
+        self.is_cancelled()
     }
 }
 
@@ -351,4 +368,33 @@ pub(crate) struct SimilarReleasesDispatchRequest {
 #[derive(Clone, Debug)]
 pub(crate) struct SimilarReleasesDispatchResult {
     pub(crate) candidates: Vec<SimilarReleaseCandidate>,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::AtomicUsize;
+
+    use super::*;
+
+    struct CountingWaker(AtomicUsize);
+
+    impl std::task::Wake for CountingWaker {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn cancelling_a_dispatch_wakes_whoever_polled_it() {
+        let cancellation = DispatchCancellation::default();
+        let woken = Arc::new(CountingWaker(AtomicUsize::new(0)));
+        let waker = std::task::Waker::from(woken.clone());
+        let mut cx = std::task::Context::from_waker(&waker);
+
+        assert!(!cancellation.poll_cancelled(&mut cx));
+        assert_eq!(woken.0.load(Ordering::Relaxed), 0);
+        cancellation.clone().cancel();
+        assert_eq!(woken.0.load(Ordering::Relaxed), 1);
+        assert!(cancellation.poll_cancelled(&mut cx));
+    }
 }

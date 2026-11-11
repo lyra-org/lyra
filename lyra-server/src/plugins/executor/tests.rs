@@ -15,6 +15,7 @@ use harmony_core::{
     },
 };
 use harmony_luau as luau;
+use std::time::Duration;
 
 fn default_server_info() -> crate::plugins::server::ServerInfo {
     crate::plugins::server::ServerInfo {
@@ -2604,6 +2605,37 @@ fn plugin_executor_handle_shutdown_stops_lua_and_the_executor_thread() -> Result
     let error = futures::executor::block_on(stale.has_plugin("demo"))
         .expect_err("a stopped executor must not serve requests");
     assert!(format!("{error:#}").contains("unavailable"), "{error:#}");
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cancelling_entrypoints_ends_a_restart_whose_entrypoint_waits() -> Result<()> {
+    let plugin = temp_plugin("demo", &["harmony.task"], "return nil")?;
+    let (runtime, errors) = PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
+        plugin.plugins_dir(),
+        default_server_info(),
+        default_auth_capabilities(),
+        lyra_db::DbAsync::new(lyra_db::test_db::new_test_db()?),
+        Vec::new(),
+        None,
+    )?;
+    assert!(errors.is_empty(), "{errors:?}");
+    runtime.exec_all().await?;
+
+    plugin.write("init.luau", r#"require("@harmony/task").wait(3600)"#)?;
+    let restart = tokio::spawn({
+        let runtime = runtime.clone();
+        async move { runtime.restart_plugin("demo").await }
+    });
+    // The entrypoint is waiting, and the executor sleeps until its wait ends.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(!restart.is_finished());
+
+    runtime.cancel_entrypoints();
+    let error = tokio::time::timeout(Duration::from_secs(5), restart)
+        .await??
+        .expect_err("a cancelled entrypoint fails its restart");
+    assert!(format!("{error:#}").contains("cancelled"), "{error:#}");
     Ok(())
 }
 

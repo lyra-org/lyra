@@ -170,17 +170,18 @@ pub(super) fn refresh_failure(error: harmony_luau::RaisedError) -> anyhow::Error
 }
 
 impl CallbackReply {
-    fn is_cancelled(&self) -> bool {
+    /// Whether the caller stopped waiting for the reply; if not, `cx` is woken once it does.
+    fn poll_cancelled(&mut self, cx: &mut std::task::Context<'_>) -> bool {
         match self {
-            Self::Refresh(reply) => reply.is_closed(),
-            Self::Api { reply, .. } => reply.is_closed(),
-            Self::Mix { reply, .. } => reply.is_closed(),
-            Self::Source(reply) => reply.is_closed(),
+            Self::Refresh(reply) => reply.poll_closed(cx).is_ready(),
+            Self::Api { reply, .. } => reply.poll_closed(cx).is_ready(),
+            Self::Mix { reply, .. } => reply.poll_closed(cx).is_ready(),
+            Self::Source(reply) => reply.poll_closed(cx).is_ready(),
             Self::Similar {
                 reply,
                 cancellation,
                 ..
-            } => reply.is_closed() || cancellation.is_cancelled(),
+            } => reply.poll_closed(cx).is_ready() || cancellation.poll_cancelled(cx),
         }
     }
 
@@ -296,7 +297,7 @@ impl PluginExecutor {
     pub(super) fn start_callback(
         &self,
         deadline: Instant,
-        reply: CallbackReply,
+        mut reply: CallbackReply,
         permit: tokio::sync::OwnedSemaphorePermit,
         plugin: Option<Arc<str>>,
         prepare: impl FnOnce(
@@ -311,7 +312,8 @@ impl PluginExecutor {
                     crate::services::plugin_dispatch::DispatchNotStarted,
                 ));
             }
-            if reply.is_cancelled() {
+            let waker = self.wake.waker();
+            if reply.poll_cancelled(&mut std::task::Context::from_waker(&waker)) {
                 bail!("plugin handler dispatch was cancelled");
             }
             let timeout = deadline
@@ -334,19 +336,23 @@ impl PluginExecutor {
         }
     }
 
-    pub(super) fn poll_callback_tasks(&self) {
+    /// Replies for the handlers that ended, were cancelled or ran out of time, and returns the
+    /// earliest deadline of those still running. A running handler's end and its caller's leaving
+    /// wake the executor.
+    pub(super) fn poll_callback_tasks(&self) -> Option<Instant> {
+        let waker = self.wake.waker();
+        let mut context = std::task::Context::from_waker(&waker);
         let mut tasks = self.callback_tasks.borrow_mut();
         let mut index = 0;
         while index < tasks.len() {
-            let task = &tasks[index];
-            let result = if task.reply.is_cancelled() {
+            let task = &mut tasks[index];
+            let result = if task.reply.poll_cancelled(&mut context) {
                 Some(Err(anyhow::anyhow!(
                     "plugin handler dispatch was cancelled"
                 )))
             } else if Instant::now() >= task.deadline {
                 Some(Err(anyhow::anyhow!("plugin handler deadline expired")))
             } else {
-                let mut context = std::task::Context::from_waker(std::task::Waker::noop());
                 match task.completion.poll(&mut context) {
                     std::task::Poll::Ready(result) => {
                         Some(result.map_err(|error| task.reply.failure(error)))
@@ -362,6 +368,7 @@ impl PluginExecutor {
                 index += 1;
             }
         }
+        tasks.iter().map(|task| task.deadline).min()
     }
 }
 

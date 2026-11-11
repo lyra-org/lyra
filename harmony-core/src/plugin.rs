@@ -29,13 +29,7 @@ use std::path::{
     PathBuf,
 };
 use std::rc::Rc;
-use std::sync::{
-    Arc,
-    atomic::{
-        AtomicBool,
-        Ordering,
-    },
-};
+use std::sync::Arc;
 use std::time::{
     Duration,
     Instant,
@@ -1488,6 +1482,7 @@ where
 
         let scheduler = LocalScheduler::new();
         scheduler.set_luau_resume_budget(self.luau_resume_budget);
+        let scheduler_wake = scheduler.wake_handle();
         vm.data().insert(scheduler)?;
 
         for configure in self.configure_vm {
@@ -1514,7 +1509,7 @@ where
             plugins: Arc::from(execution_order(self.plugins.iter().cloned())?),
             tokio_runtime: TokioRuntimeContext::new()?,
             run_end_hooks: self.run_end_hooks,
-            entrypoints_cancelled: Arc::default(),
+            entrypoints_cancelled: crate::Cancellation::new(scheduler_wake),
         })
     }
 }
@@ -1537,13 +1532,22 @@ pub struct RunningEntrypoint {
     deadline: Instant,
 }
 
+/// How a [`RunningEntrypoint`] stands.
+pub enum EntrypointPoll {
+    /// Still running, and given up on at `deadline`.
+    Running {
+        deadline: Instant,
+    },
+    Ended(anyhow::Result<Vec<luau::Value>>),
+}
+
 pub struct Runtime {
     pub vm: luau::Vm,
     /// In execution order, dependencies first.
     pub plugins: Arc<[LoadedPlugin]>,
     pub tokio_runtime: TokioRuntimeContext,
     run_end_hooks: Vec<RunEndHook>,
-    entrypoints_cancelled: Arc<AtomicBool>,
+    entrypoints_cancelled: crate::Cancellation,
 }
 
 impl Runtime {
@@ -1648,7 +1652,7 @@ impl Runtime {
         };
         let plugin_id = plugin.manifest.id.as_str();
         anyhow::ensure!(
-            !self.entrypoints_cancelled.load(Ordering::Acquire),
+            !self.entrypoints_cancelled.is_cancelled(),
             "plugin '{plugin_id}' entrypoint was cancelled"
         );
         let context = || format!("run plugin '{plugin_id}' entrypoint '{entrypoint}'");
@@ -1704,20 +1708,25 @@ impl Runtime {
         }
     }
 
-    /// The outcome of `entrypoint` once it has ended, `None` while it runs. Cancellation wins
-    /// over a completion that landed; a completion wins over the timeout an entrypoint has.
+    /// How `entrypoint` stands. While it runs, `cx` is woken when it completes; its cancellation
+    /// and its deadline are the caller's to wake for. Cancellation wins over a completion that
+    /// landed; a completion wins over the timeout an entrypoint has.
     pub fn poll_entrypoint(
         &self,
         entrypoint: &RunningEntrypoint,
-    ) -> Option<anyhow::Result<Vec<luau::Value>>> {
-        let cancelled = self.entrypoints_cancelled.load(Ordering::Acquire);
+        cx: &mut std::task::Context<'_>,
+    ) -> EntrypointPoll {
+        let cancelled = self.entrypoints_cancelled.is_cancelled();
         if !cancelled {
-            let mut context = std::task::Context::from_waker(std::task::Waker::noop());
-            if let std::task::Poll::Ready(result) = entrypoint.completion.poll(&mut context) {
-                return Some(result.map_err(|error| anyhow::Error::msg(error.message)));
+            if let std::task::Poll::Ready(result) = entrypoint.completion.poll(cx) {
+                return EntrypointPoll::Ended(
+                    result.map_err(|error| anyhow::Error::msg(error.message)),
+                );
             }
             if Instant::now() < entrypoint.deadline {
-                return None;
+                return EntrypointPoll::Running {
+                    deadline: entrypoint.deadline,
+                };
             }
         }
         if let Ok(scheduler) = self.vm.data().get::<LocalScheduler>() {
@@ -1729,7 +1738,7 @@ impl Runtime {
                 scheduler.remove(task);
             }
         }
-        Some(Err(anyhow::anyhow!(if cancelled {
+        EntrypointPoll::Ended(Err(anyhow::anyhow!(if cancelled {
             "entrypoint was cancelled"
         } else {
             "entrypoint did not complete"
@@ -1739,21 +1748,19 @@ impl Runtime {
     /// Polls `entrypoint` to its end on this thread, driving the scheduler meanwhile.
     fn drive_entrypoint(&self, entrypoint: RunningEntrypoint) -> anyhow::Result<()> {
         let scheduler = self.vm.data().get::<LocalScheduler>()?;
-        let options = ThreadDriveOptions::default();
+        let waker = scheduler.wake_handle().waker();
+        let mut cx = std::task::Context::from_waker(&waker);
         let result = loop {
             // Before resuming anything: a cancelled entrypoint must not run further.
-            if let Some(result) = self.poll_entrypoint(&entrypoint) {
-                break result;
-            }
+            let deadline = match self.poll_entrypoint(&entrypoint, &mut cx) {
+                EntrypointPoll::Ended(result) => break result,
+                EntrypointPoll::Running { deadline } => deadline,
+            };
             {
                 let _guard = self.tokio_runtime.enter();
                 scheduler.poll_ready();
             }
-            let wait = scheduler
-                .next_wake_delay()
-                .unwrap_or(options.idle_wait)
-                .min(options.max_wait);
-            scheduler.wait_for_wake(Some(wait));
+            scheduler.wait_for_work(Some(deadline));
         };
         self.finish_entrypoint(entrypoint, result)
     }
@@ -1833,11 +1840,11 @@ impl Runtime {
         }
     }
 
-    /// Once set, from any thread, every entrypoint run fails as cancelled:
-    /// the running one at its next yield and later ones before they start.
-    /// One-way, for a runtime about to shut down, so a long entrypoint can't
-    /// hold up its shutdown.
-    pub fn entrypoint_cancellation(&self) -> Arc<AtomicBool> {
+    /// Once cancelled, from any thread, every entrypoint run fails as
+    /// cancelled: the running one at its next yield and later ones before
+    /// they start. One-way, for a runtime about to shut down, so a long
+    /// entrypoint can't hold up its shutdown.
+    pub fn entrypoint_cancellation(&self) -> crate::Cancellation {
         self.entrypoints_cancelled.clone()
     }
 
@@ -1919,14 +1926,6 @@ impl Runtime {
             scheduler.poll_ready();
         }
         scheduler.remove_finished()
-    }
-
-    pub fn next_scheduler_delay(&self) -> Option<Duration> {
-        let scheduler = self.vm.data().get::<LocalScheduler>().ok()?;
-        if !scheduler.has_pending() {
-            return None;
-        }
-        scheduler.next_wake_delay()
     }
 }
 
@@ -2436,6 +2435,15 @@ mod tests {
             ..CallContext::default()
         };
         ModuleSpec::new("test/tasks")
+            .function(FunctionSpec::new("wake").call(|frame| {
+                frame
+                    .vm
+                    .data()
+                    .get::<crate::LocalScheduler>()?
+                    .wake_handle()
+                    .wake();
+                Ok(())
+            }))
             .function(FunctionSpec::new("later").call(move |mut frame| {
                 let seconds: f64 = frame.args.read()?;
                 let function = read_function(&mut frame)?;
@@ -2693,6 +2701,17 @@ mod tests {
     }
 
     #[test]
+    fn a_host_call_takes_the_wake_handle_while_the_scheduler_polls() -> anyhow::Result<()> {
+        let runtime = task_test_runtime_with(
+            Arc::default(),
+            &[("demo", &[], "require('@test/tasks').wake()")],
+            &[],
+        )?;
+        assert!(runtime.exec_all().is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn a_cancelled_entrypoint_is_not_resumed_by_the_driver() -> anyhow::Result<()> {
         let recorded = Arc::new(Mutex::new(Vec::new()));
         let runtime = recording_entrypoint(recorded.clone())?;
@@ -2702,9 +2721,7 @@ mod tests {
         let entrypoint = runtime
             .start_plugin_restart("demo")?
             .ok_or_else(|| anyhow::anyhow!("the plugin has an entrypoint"))?;
-        runtime
-            .entrypoint_cancellation()
-            .store(true, std::sync::atomic::Ordering::Release);
+        runtime.entrypoint_cancellation().cancel();
         let error = runtime
             .drive_entrypoint(entrypoint)
             .expect_err("a cancelled entrypoint fails");
@@ -2728,13 +2745,13 @@ mod tests {
             runtime.poll_background_tasks();
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        runtime
-            .entrypoint_cancellation()
-            .store(true, std::sync::atomic::Ordering::Release);
+        runtime.entrypoint_cancellation().cancel();
 
-        let outcome = runtime
-            .poll_entrypoint(&entrypoint)
-            .ok_or_else(|| anyhow::anyhow!("a cancelled entrypoint has ended"))?;
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        let super::EntrypointPoll::Ended(outcome) = runtime.poll_entrypoint(&entrypoint, &mut cx)
+        else {
+            anyhow::bail!("a cancelled entrypoint has ended");
+        };
         assert!(outcome.is_err(), "cancellation takes precedence");
         Ok(())
     }
@@ -2749,12 +2766,17 @@ mod tests {
         let entrypoint = runtime
             .start_plugin_restart("demo")?
             .ok_or_else(|| anyhow::anyhow!("the plugin has an entrypoint"))?;
+        let scheduler = runtime.vm.data().get::<crate::LocalScheduler>()?;
+        let waker = scheduler.wake_handle().waker();
+        let mut cx = std::task::Context::from_waker(&waker);
         let result = loop {
             runtime.poll_background_tasks();
-            if let Some(result) = runtime.poll_entrypoint(&entrypoint) {
-                break result;
+            match runtime.poll_entrypoint(&entrypoint, &mut cx) {
+                super::EntrypointPoll::Ended(result) => break result,
+                super::EntrypointPoll::Running { deadline } => {
+                    scheduler.wait_for_work(Some(deadline))
+                }
             }
-            std::thread::sleep(std::time::Duration::from_millis(1));
         };
         runtime.finish_entrypoint(entrypoint, result)?;
         Ok(())
@@ -2906,7 +2928,7 @@ mod tests {
             while reached.lock().expect("recorded mutex poisoned").is_empty() {
                 std::thread::yield_now();
             }
-            cancellation.store(true, std::sync::atomic::Ordering::Release);
+            cancellation.cancel();
         });
 
         let started = std::time::Instant::now();

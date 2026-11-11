@@ -24,6 +24,7 @@ use anyhow::{
 };
 use harmony_core::{
     ModuleSpec,
+    SchedulerWake,
     plugin::{
         PluginDiscoveryError,
         PluginManifest,
@@ -64,7 +65,7 @@ mod dispatch_tests;
 
 #[derive(Clone)]
 struct PluginExecutorSender {
-    tx: mpsc::SyncSender<QueuedPluginExecutorCommand>,
+    queue: Arc<CommandQueue>,
     slots: Arc<tokio::sync::Semaphore>,
     capacity: u32,
     draining: Arc<AtomicBool>,
@@ -109,12 +110,33 @@ impl PluginExecutorSender {
         command: PluginExecutorCommand,
         permit: tokio::sync::OwnedSemaphorePermit,
     ) -> Result<()> {
-        self.tx
+        self.queue
+            .tx
+            .as_ref()
+            .ok_or(DispatchNotStarted)?
             .try_send(QueuedPluginExecutorCommand {
                 command,
                 _permit: permit,
             })
-            .map_err(|_| DispatchNotStarted.into())
+            .map_err(|_| DispatchNotStarted)?;
+        self.queue.wake.wake();
+        Ok(())
+    }
+}
+
+/// The executor thread sleeps on its scheduler, not on the channel, so a sent command wakes it,
+/// as does the last sender going away.
+struct CommandQueue {
+    /// Present until the queue drops.
+    tx: Option<mpsc::SyncSender<QueuedPluginExecutorCommand>>,
+    wake: SchedulerWake,
+}
+
+impl Drop for CommandQueue {
+    fn drop(&mut self) {
+        // Disconnects first, so the executor wakes to a channel it reads as closed.
+        drop(self.tx.take());
+        self.wake.wake();
     }
 }
 
@@ -209,7 +231,7 @@ pub(crate) struct PluginExecutorHandle {
     /// Interrupts the streams of a run that is asked to end, before the executor reads the ask.
     streams: Arc<super::stream::StreamStops>,
     /// Ends the entrypoint runs of a runtime asked to shut down, which hold its thread.
-    entrypoints: Arc<std::sync::atomic::AtomicBool>,
+    entrypoints: harmony_core::Cancellation,
     exit: ExecutorExit,
     scope: crate::plugins::state::VmScope,
     running: super::callbacks::RunningHandlers,
@@ -242,7 +264,6 @@ impl PluginExecutorHandle {
     pub(crate) fn spawn(
         build: impl FnOnce() -> Result<(PluginExecutor, Vec<PluginDiscoveryError>)> + Send + 'static,
     ) -> Result<(Self, Vec<PluginDiscoveryError>)> {
-        let (tx, rx) = plugin_executor_channel(EXECUTOR_QUEUE_CAPACITY);
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let (crashed, exit) = exit_channel();
 
@@ -254,13 +275,16 @@ impl PluginExecutorHandle {
                     let entrypoints = runtime.entrypoint_cancellation();
                     let scope = runtime.scope.clone();
                     let running = runtime.running.clone();
-                    Ok((runtime, errors, streams, entrypoints, scope, running))
+                    let (tx, rx) =
+                        plugin_executor_channel(EXECUTOR_QUEUE_CAPACITY, runtime.wake_handle());
+                    Ok((
+                        runtime,
+                        rx,
+                        (errors, tx, streams, entrypoints, scope, running),
+                    ))
                 }) {
-                    Ok((runtime, errors, streams, entrypoints, scope, running)) => {
-                        if ready_tx
-                            .send(Ok((errors, streams, entrypoints, scope, running)))
-                            .is_err()
-                        {
+                    Ok((runtime, rx, ready)) => {
+                        if ready_tx.send(Ok(ready)).is_err() {
                             return;
                         }
                         run_plugin_executor_thread(runtime, rx, crashed);
@@ -272,7 +296,7 @@ impl PluginExecutorHandle {
             })
             .context("spawn plugin executor thread")?;
 
-        let (errors, streams, entrypoints, scope, running) = ready_rx
+        let (errors, tx, streams, entrypoints, scope, running) = ready_rx
             .recv()
             .context("plugin executor thread exited during startup")??;
         Ok((
@@ -431,8 +455,7 @@ impl PluginExecutorHandle {
     /// Fails the entrypoints running and yet to run, and stops every stream,
     /// so a runtime that is to shut down soon frees its thread for the ask.
     pub(crate) fn cancel_entrypoints(&self) {
-        self.entrypoints
-            .store(true, std::sync::atomic::Ordering::Release);
+        self.entrypoints.cancel();
         self.streams.stop(None);
     }
 
@@ -548,6 +571,7 @@ impl PluginDispatch for PluginExecutorHandle {
 
 fn plugin_executor_channel(
     capacity: usize,
+    wake: SchedulerWake,
 ) -> (
     PluginExecutorSender,
     mpsc::Receiver<QueuedPluginExecutorCommand>,
@@ -555,7 +579,7 @@ fn plugin_executor_channel(
     let (tx, rx) = mpsc::sync_channel(capacity + EXECUTOR_CONTROL_CAPACITY);
     (
         PluginExecutorSender {
-            tx,
+            queue: Arc::new(CommandQueue { tx: Some(tx), wake }),
             slots: Arc::new(tokio::sync::Semaphore::new(capacity)),
             capacity: capacity as u32,
             draining: Arc::default(),
@@ -608,26 +632,27 @@ fn panic_message(panic: &(dyn std::any::Any + Send)) -> &str {
 }
 
 /// The reply to the shutdown that ended the loop, if one did.
+///
+/// The thread sleeps in one place, [`PluginExecutor::wait_for_work`], which a sent command ends as
+/// a woken task does. A wake that lands after the round or the empty read ends the wait that
+/// follows.
 fn serve_plugin_executor_commands(
     runtime: &PluginExecutor,
     rx: &mpsc::Receiver<QueuedPluginExecutorCommand>,
 ) -> Option<tokio::sync::oneshot::Sender<Result<()>>> {
     loop {
-        runtime.poll_background_tasks();
-        let wait = runtime
-            .next_scheduler_delay()
-            .unwrap_or_else(|| Duration::from_millis(100))
-            .min(Duration::from_millis(25));
-        match rx.recv_timeout(wait) {
+        let deadline = runtime.poll_background_tasks();
+        match rx.try_recv() {
             Ok(QueuedPluginExecutorCommand {
                 command: PluginExecutorCommand::Shutdown(reply),
                 ..
             }) => break Some(reply),
             Ok(QueuedPluginExecutorCommand { command, _permit }) => {
+                runtime.poll_own_work();
                 handle_plugin_executor_command(runtime, command, _permit)
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => break None,
+            Err(mpsc::TryRecvError::Empty) => runtime.wait_for_work(deadline),
+            Err(mpsc::TryRecvError::Disconnected) => break None,
         }
     }
 }
@@ -756,12 +781,14 @@ mod tests {
         PluginExecutorHandle,
         mpsc::Receiver<QueuedPluginExecutorCommand>,
     ) {
-        let (tx, rx) = plugin_executor_channel(capacity);
+        // No executor runs here, so the wakes go nowhere.
+        let wake = harmony_core::LocalScheduler::new().wake_handle();
+        let (tx, rx) = plugin_executor_channel(capacity, wake.clone());
         (
             PluginExecutorHandle {
                 tx,
                 streams: Default::default(),
-                entrypoints: Default::default(),
+                entrypoints: harmony_core::Cancellation::new(wake),
                 exit: exit_channel().1,
                 scope: Default::default(),
                 running: Default::default(),

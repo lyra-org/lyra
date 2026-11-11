@@ -1,15 +1,6 @@
-use std::{
-    sync::{
-        Arc,
-        atomic::{
-            AtomicBool,
-            Ordering,
-        },
-    },
-    time::{
-        Duration,
-        Instant,
-    },
+use std::time::{
+    Duration,
+    Instant,
 };
 
 use anyhow::{
@@ -19,6 +10,7 @@ use anyhow::{
 use harmony_luau as luau;
 
 use crate::{
+    Cancellation,
     LocalScheduler,
     TaskState,
     TokioRuntimeContext,
@@ -34,17 +26,15 @@ pub use crate::modules::{
 #[derive(Clone, Debug)]
 pub struct ThreadDriveOptions {
     pub timeout: Duration,
-    pub max_wait: Duration,
-    pub idle_wait: Duration,
-    pub cancellation: Option<Arc<AtomicBool>>,
+    /// Ends the drive once cancelled; made from the driven scheduler's wake handle, so that
+    /// cancelling also ends the drive's wait.
+    pub cancellation: Option<Cancellation>,
 }
 
 impl Default for ThreadDriveOptions {
     fn default() -> Self {
         Self {
             timeout: Duration::from_secs(300),
-            max_wait: Duration::from_millis(25),
-            idle_wait: Duration::from_millis(1),
             cancellation: None,
         }
     }
@@ -62,7 +52,7 @@ pub fn drive_thread(
         if options
             .cancellation
             .as_ref()
-            .is_some_and(|cancelled| cancelled.load(Ordering::Acquire))
+            .is_some_and(Cancellation::is_cancelled)
         {
             let task_id = scheduler
                 .luau_thread_handle(thread)
@@ -108,18 +98,10 @@ pub fn drive_thread(
             return Ok(Vec::new());
         }
 
-        let remaining = deadline.map_or(Duration::MAX, |deadline| {
-            deadline.saturating_duration_since(Instant::now())
-        });
-        if remaining.is_zero() {
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
             break;
         }
-        let wait = scheduler
-            .next_wake_delay()
-            .unwrap_or(options.idle_wait)
-            .min(options.max_wait)
-            .min(remaining);
-        scheduler.wait_for_wake(Some(wait));
+        scheduler.wait_for_work(deadline);
     }
 
     let task_id = scheduler
@@ -139,10 +121,7 @@ pub fn drive_thread(
 #[cfg(test)]
 mod tests {
     use std::{
-        sync::{
-            Arc,
-            atomic::AtomicBool,
-        },
+        sync::Arc,
         time::Duration,
     };
 
@@ -156,8 +135,6 @@ mod tests {
     fn options(timeout: Duration) -> ThreadDriveOptions {
         ThreadDriveOptions {
             timeout,
-            max_wait: Duration::from_millis(5),
-            idle_wait: Duration::from_millis(1),
             cancellation: None,
         }
     }
@@ -280,7 +257,8 @@ mod tests {
         let thread = vm.create_thread(&function)?;
         let handle =
             scheduler.spawn_luau_thread(CallContext::default(), vm, thread.clone(), Vec::new());
-        let cancellation = Arc::new(AtomicBool::new(true));
+        let cancellation = Cancellation::new(scheduler.wake_handle());
+        cancellation.cancel();
         let mut options = options(Duration::from_secs(1));
         options.cancellation = Some(cancellation);
 

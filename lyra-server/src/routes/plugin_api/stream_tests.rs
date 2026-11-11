@@ -77,6 +77,18 @@ api.get("/stream/endless", function()
 	end)
 end, { auth = "public" })
 
+api.get("/stream/empty", function()
+	return api.response.stream(200, function() end)
+end, { auth = "public" })
+
+api.get("/stream/idle", function()
+	return api.response.stream(200, function(writer)
+		started += 1
+		writer:write("x")
+		require("@harmony/task").wait(3600)
+	end)
+end, { auth = "public" })
+
 api.get("/stream/spin", function()
 	return api.response.stream(200, function(writer)
 		started += 1
@@ -126,7 +138,7 @@ async fn serve() -> Result<Server> {
             "lyra": crate::plugins::testing::HOST_REQUIREMENT,
             "description": "",
             "entrypoint": "init.luau",
-            "scopes": ["lyra.api"],
+            "scopes": ["lyra.api", "harmony.task"],
         })
         .to_string(),
     )?;
@@ -146,7 +158,9 @@ async fn serve() -> Result<Server> {
         "/base-url",
         "/stream/ok",
         "/stream/fail",
+        "/stream/empty",
         "/stream/endless",
+        "/stream/idle",
         "/stream/spin",
     ] {
         crate::plugins::api::tests::registered_handler("GET", path)
@@ -421,6 +435,41 @@ async fn streams_wait_for_a_place_and_free_it_when_the_client_leaves() -> Result
             break;
         }
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_producer_that_returns_at_once_ends_its_body() -> Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    let server = serve().await?;
+    // It never waits, so its return alone has to bring the executor round to end the body.
+    let response = server.get("/stream/empty").await?;
+    assert!(response.ends_with(TERMINATING_CHUNK), "{response}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_client_leaving_frees_the_place_of_a_producer_waiting_on_something_else() -> Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    let server = serve().await?;
+
+    let mut idle = Vec::new();
+    for _ in 0..16 {
+        let mut stream = server
+            .connect("GET /stream/idle HTTP/1.1\r\nhost: test\r\n\r\n")
+            .await?;
+        read_until(&mut stream, "x").await?;
+        idle.push(stream);
+    }
+    let mut waiting = server
+        .connect("GET /stream/ok HTTP/1.1\r\nhost: test\r\nconnection: close\r\n\r\n")
+        .await?;
+    // Nothing else reaches the executor from here on: no write fails, no command arrives.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    drop(idle.pop());
+    let rest = read_until(&mut waiting, TERMINATING_CHUNK).await?;
+    assert!(rest.contains("chunk 3\n"), "{rest}");
     Ok(())
 }
 

@@ -76,6 +76,13 @@ status. `clippy.toml` disallows those functions everywhere else.
   must wait there fails with "attempt to yield from a non-yieldable Harmony callback".
 - A scheduler with a resume limit runs each resume under an interrupt budget. Past it, the thread
   raises `INTERRUPTED_ERROR`.
+- A host that polls a scheduler sleeps between polls in `LocalScheduler::wait_for_work`, which a
+  woken or due task ends, as does the deadline it is given. For anything else the host polls
+  there, it takes a `SchedulerWake` and fires it from any thread, directly or as a `Waker`; a
+  wake that arrives between two waits ends the next one. Nothing ticks, so work with no wake and
+  no deadline is not looked at again.
+- `Cancellation` is a flag that fires such a wake when set. `drive_thread` and a runtime's
+  entrypoints take theirs from the scheduler they run on.
 
 ## Writing Bindings
 

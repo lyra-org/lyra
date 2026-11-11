@@ -65,13 +65,14 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     sync::Arc,
-    time::Duration,
+    time::Instant,
 };
 
 use harmony_core::ModuleId;
 use harmony_core::{
     ChunkOrigin,
     LocalScheduler,
+    SchedulerWake,
     TaskState,
     plugin::Runtime,
 };
@@ -83,6 +84,12 @@ pub(crate) struct PluginExecutor {
     websocket_tasks: RefCell<HashMap<TaskIdKey, Arc<WebSocketState>>>,
     callback_tasks: RefCell<Vec<callbacks::PendingCallbackTask>>,
     pending_restart: RefCell<Option<PendingRestart>>,
+    /// Ends [`Self::wait_for_work`], for what the executor polls and the scheduler doesn't wake.
+    wake: SchedulerWake,
+    /// How many rounds the executor has run, for tests that tell a sleeping executor from one
+    /// that polls.
+    #[cfg(test)]
+    rounds: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// A restarted plugin's entrypoint, polled between commands so the other plugins keep running.
@@ -100,45 +107,65 @@ impl std::ops::Deref for PluginExecutor {
 }
 
 impl PluginExecutor {
-    fn poll_background_tasks(&self) {
-        self.poll_pending_restart();
-        self.poll_callback_tasks();
-        stream::poll_streams(&self.vm);
+    /// One round of the executor's work, returning the earliest deadline among what it polls.
+    ///
+    /// What the executor polls itself comes before the scheduler's tasks: a handler whose caller
+    /// left or whose deadline passed is cancelled without running further, and a stream queued by
+    /// a reply starts in the same round. All of it registers [`Self::wake`], so a task finishing
+    /// in this round's scheduler poll brings on the round that reads its result.
+    fn poll_background_tasks(&self) -> Option<Instant> {
+        #[cfg(test)]
+        self.rounds
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let deadline = self.poll_own_work();
         let Ok(scheduler) = self.vm.data().get::<LocalScheduler>() else {
-            return;
+            return deadline;
         };
         {
             let _guard = self.tokio_runtime.enter();
             scheduler.poll_ready();
         }
-        let snapshots = scheduler.snapshots();
-        let mut completed_websockets = Vec::new();
-        for snapshot in snapshots {
-            if snapshot.state != TaskState::Pending {
-                let key = TaskIdKey(snapshot.id.0);
-                if let Some(state) = self.websocket_tasks.borrow().get(&key) {
+        let mut websockets = self.websocket_tasks.borrow_mut();
+        if !websockets.is_empty() {
+            for snapshot in scheduler.snapshots() {
+                if snapshot.state != TaskState::Pending
+                    && let Some(state) = websockets.remove(&TaskIdKey(snapshot.id.0))
+                {
                     state.request_close();
-                    completed_websockets.push(key);
                 }
             }
         }
-        self.poll_callback_tasks();
-        stream::poll_streams(&self.vm);
         scheduler.remove_finished();
-        if !completed_websockets.is_empty() {
-            let mut tasks = self.websocket_tasks.borrow_mut();
-            for key in completed_websockets {
-                tasks.remove(&key);
-            }
-        }
+        deadline
     }
 
-    fn next_scheduler_delay(&self) -> Option<Duration> {
-        let scheduler = self.vm.data().get::<LocalScheduler>().ok()?;
-        if !scheduler.has_pending() {
-            return None;
-        }
-        scheduler.next_wake_delay()
+    /// Answers for what the executor polls itself and has ended, returning the earliest deadline of
+    /// the rest. Also run before a command, which may hold the thread past the deadline of a
+    /// result the last round's scheduler poll left ready.
+    fn poll_own_work(&self) -> Option<Instant> {
+        [
+            self.poll_pending_restart(),
+            self.poll_callback_tasks(),
+            stream::poll_streams(&self.vm),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+    }
+
+    /// Sleeps until a round has something to do: a task or [`Self::wake`] wakes the scheduler, a
+    /// sleeping task is due, or `deadline`, as the last round returned it, passes.
+    fn wait_for_work(&self, deadline: Option<Instant>) {
+        self.vm
+            .data()
+            .get::<LocalScheduler>()
+            .expect("a runtime keeps its scheduler until it shuts down")
+            .wait_for_work(deadline);
+    }
+
+    /// Ends [`Self::wait_for_work`] from any thread.
+    pub(crate) fn wake_handle(&self) -> SchedulerWake {
+        self.wake.clone()
     }
 }
 
