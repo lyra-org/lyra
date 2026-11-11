@@ -239,13 +239,27 @@ pub(crate) struct TarGzBuilder {
 
 impl TarGzBuilder {
     pub(crate) fn file(&mut self, path: &str, content: &str) {
+        self.file_with_mode(path, content, 0o644);
+    }
+
+    pub(crate) fn file_with_mode(&mut self, path: &str, content: &str, mode: u32) {
         let mut header = Header::new_gnu();
         header.set_entry_type(EntryType::Regular);
-        header.set_mode(0o644);
+        header.set_mode(mode);
         header.set_size(content.len() as u64);
         self.builder
             .append_data(&mut header, path, content.as_bytes())
             .expect("append tar entry");
+    }
+
+    pub(crate) fn directory_with_mode(&mut self, path: &str, mode: u32) {
+        let mut header = Header::new_gnu();
+        header.set_entry_type(EntryType::Directory);
+        header.set_mode(mode);
+        header.set_size(0);
+        self.builder
+            .append_data(&mut header, path, std::io::empty())
+            .expect("append tar directory");
     }
 
     /// Writes the path straight into the header, bypassing the builder's

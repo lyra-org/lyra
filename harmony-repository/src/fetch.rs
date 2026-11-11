@@ -3,8 +3,13 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::io::Cursor;
+use std::fs::File;
+use std::io::{
+    Cursor,
+    Read,
+};
 use std::path::{
+    Component,
     Path,
     PathBuf,
 };
@@ -614,7 +619,9 @@ async fn download(
 
 /// Extracts `bytes` into `dest`, taking what the files hold from
 /// `reservation`. On failure the caller drops the partial extraction, then
-/// the reservation.
+/// the reservation. Entries get default permissions whatever their headers
+/// say: modes, owners and mtimes mean nothing to the files' readers, and a
+/// directory mode such as 0555 would keep the tree from being removed.
 fn extract_archive(
     bytes: &[u8],
     dest: &Path,
@@ -651,14 +658,61 @@ fn extract_archive(
         }
         reservation.take_bytes(entry.size())?;
 
-        if !entry.unpack_in(dest).map_err(|e| invalid(e.to_string()))? {
+        let relative = entry.path().map_err(|e| invalid(e.to_string()))?;
+        let Some(relative) = relative_entry_path(&relative) else {
             return Err(FetchError::UnsafeArchiveEntry {
                 path,
                 reason: "path escapes the extraction directory".into(),
             });
-        }
+        };
+        let target = dest.join(relative);
+        let written = if entry.header().entry_type() == EntryType::Directory {
+            std::fs::create_dir_all(&target)
+        } else if target == dest {
+            return Err(FetchError::UnsafeArchiveEntry {
+                path,
+                reason: "file entry has an empty path".into(),
+            });
+        } else {
+            write_entry_file(&mut entry, &target)
+        };
+        written.map_err(|e| invalid(format!("failed to unpack `{path}`: {e}")))?;
     }
 
+    Ok(())
+}
+
+/// The path `path` names below the extraction directory, or `None` when it
+/// is absolute, climbs out with `..`, or holds a component that pushing
+/// would reparse, such as `C:file` on Windows. With no symlinks ever
+/// created, joining such a path cannot leave the directory.
+fn relative_entry_path(path: &Path) -> Option<PathBuf> {
+    let mut relative = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => {
+                let mut reparsed = Path::new(part).components();
+                if !matches!(
+                    (reparsed.next(), reparsed.next()),
+                    (Some(Component::Normal(_)), None)
+                ) {
+                    return None;
+                }
+                relative.push(part);
+            }
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    Some(relative)
+}
+
+fn write_entry_file(entry: &mut impl Read, target: &Path) -> std::io::Result<()> {
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut file = File::create(target)?;
+    std::io::copy(entry, &mut file)?;
     Ok(())
 }
 
@@ -782,6 +836,52 @@ mod tests {
                 .unwrap()
                 .is_symlink()
         );
+    }
+
+    #[test]
+    fn ignores_entry_modes() {
+        let mut entries = targz_entries();
+        entries.directory_with_mode("repo/locked", 0o000);
+        entries.file("repo/locked/file", "locked");
+        entries.directory_with_mode("repo/read-only", 0o555);
+        entries.file("repo/read-only/file", "read-only");
+        entries.file_with_mode("repo/unreadable", "unreadable", 0o000);
+        let dest = TempDir::new().unwrap();
+        let path = dest.path().to_path_buf();
+
+        extract_within(&entries.finish(), &path, &UnpackBudget::new()).unwrap();
+
+        for (file, content) in [
+            ("repo/locked/file", "locked"),
+            ("repo/read-only/file", "read-only"),
+            ("repo/unreadable", "unreadable"),
+        ] {
+            assert_eq!(std::fs::read_to_string(path.join(file)).unwrap(), content);
+        }
+        dest.close().unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn rejects_absolute_entry_paths() {
+        let mut entries = targz_entries();
+        entries.file_with_raw_path("/evil.txt", "x");
+        let err = extract_within(
+            &entries.finish(),
+            TempDir::new().unwrap().path(),
+            &UnpackBudget::new(),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, FetchError::UnsafeArchiveEntry { .. }),
+            "{err}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rejects_drive_relative_components() {
+        assert_eq!(relative_entry_path(Path::new("repo/C:sentinel.txt")), None);
     }
 
     #[test]
