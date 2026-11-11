@@ -8,10 +8,12 @@ use harmony_core::{
     ModuleExport,
     luau::RequireRuntime,
     plugin::PluginManifest,
+    testing::ManualClock,
 };
 use tokio::sync::{
     Notify,
     mpsc as async_mpsc,
+    oneshot::error::TryRecvError,
 };
 
 /// Held across a handler's wait; its drop is the handler's cancellation. While `gate` is closed
@@ -58,7 +60,7 @@ struct TestExecutor {
     started: async_mpsc::UnboundedReceiver<()>,
     dropped: async_mpsc::UnboundedReceiver<()>,
     release: Arc<Notify>,
-    rounds: Arc<std::sync::atomic::AtomicU64>,
+    wake: SchedulerWake,
 }
 
 /// What the test plugin's `@test/gate` reports, and what holds its `wait` back.
@@ -71,10 +73,55 @@ struct Gate {
     cancel_gate: Arc<CancelGate>,
 }
 
+/// How long the slow handler takes, by its executor's manual clock, to go on after its wait: it
+/// moves the clock as it runs, once, after the watchers of that round.
+struct AfterWait {
+    clock: ManualClock,
+    takes: std::cell::Cell<Duration>,
+}
+
 struct DispatchHandlers {
     slow: PluginCallbackHandle,
     fast: PluginCallbackHandle,
+    /// Waits on a call it makes to the slow handler.
+    outer: PluginCallbackHandle,
     api: PluginCallbackHandle,
+}
+
+/// Calls `provider`'s release refresh from the VM a handler runs on, as a host function reaches a
+/// provider, giving it until `deadline`.
+async fn nested_refresh(
+    calls: &super::super::VmCalls,
+    provider: &str,
+    deadline: Instant,
+) -> Result<(), crate::services::providers::ProviderCallError> {
+    use crate::services::plugin_dispatch::RuntimeCalls;
+    use crate::services::providers::{
+        ProviderCallStage,
+        ProviderLookup,
+        with_provider_call_on,
+    };
+
+    with_provider_call_on(
+        calls,
+        provider,
+        ProviderCallStage::MetadataRefresh,
+        |registry| {
+            registry
+                .get_refresh_callback(provider, crate::services::EntityType::Release)
+                .copied()
+                .map(ProviderLookup::Call)
+        },
+        |handler: PluginCallbackHandle, calls| async move {
+            let request = MetadataRefreshRequest {
+                handler,
+                context: serde_json::json!({ "value": 42 }),
+                deadline,
+            };
+            calls.metadata_refresh(request).await.map(|_| ())
+        },
+    )
+    .await
 }
 
 fn manifest(id: &str, scopes: &[&str]) -> PluginManifest {
@@ -94,7 +141,11 @@ fn manifest(id: &str, scopes: &[&str]) -> PluginManifest {
 }
 
 /// An executor on the calling thread running the test plugin, whose slow handlers wait at `gate`.
-fn dispatch_runtime(gate: Gate) -> Result<(PluginExecutor, DispatchHandlers)> {
+/// With a `clock`, its scheduler runs by it.
+fn dispatch_runtime(
+    gate: Gate,
+    clock: Option<ManualClock>,
+) -> Result<(PluginExecutor, DispatchHandlers)> {
     let Gate {
         started,
         dropped,
@@ -102,17 +153,21 @@ fn dispatch_runtime(gate: Gate) -> Result<(PluginExecutor, DispatchHandlers)> {
         release,
         cancel_gate,
     } = gate;
-    let runtime = PluginExecutor::with_manifests(Arc::from(vec![manifest(
+    let manifests = Arc::from(vec![manifest(
         "dispatch-test",
-        &[
-            "lyra.metadata",
-            "lyra.api",
-            "lyra.listens",
-            "lyra.listens.all",
-            "harmony.task",
-            "test.gate",
-        ],
-    )]))?;
+        &["lyra.metadata", "lyra.api", "test.gate"],
+    )]);
+    let runtime = match clock {
+        Some(clock) => {
+            let runtime = PluginExecutor::with_manual_clock(manifests, clock.clone())?;
+            runtime.vm.data().insert(AfterWait {
+                clock,
+                takes: Default::default(),
+            })?;
+            runtime
+        }
+        None => PluginExecutor::with_manifests(manifests)?,
+    };
     runtime
         .vm
         .data()
@@ -130,15 +185,29 @@ fn dispatch_runtime(gate: Gate) -> Result<(PluginExecutor, DispatchHandlers)> {
                         Ok(true)
                     }))
                 })))
-                .function(FunctionSpec::new("mark").call(move |_| {
+                .function(FunctionSpec::new("mark").call(move |frame| {
+                    if let Ok(after_wait) = frame.vm.data().get::<AfterWait>() {
+                        after_wait.clock.advance(after_wait.takes.take());
+                    }
                     let _ = resumed.send(());
                     Ok(())
                 }))
+                .function(
+                    FunctionSpec::new("refresh").call_async(Arc::new(|mut frame| {
+                        let provider: String = frame.args.read_named("provider")?;
+                        let calls = super::super::VmCalls::of(frame.vm, &frame.context)?;
+                        let deadline = super::super::now(frame.vm)? + NESTED_TIMEOUT;
+                        Ok(harmony_luau::ScheduledFuture::new(async move {
+                            nested_refresh(&calls, &provider, deadline)
+                                .await
+                                .map_err(crate::plugins::runtime_error)?;
+                            Ok(true)
+                        }))
+                    })),
+                )
                 .install(|_| Ok(ModuleExport::new(()))),
         ))?;
-    runtime.eval_plugin_source(
-        "dispatch-test",
-        "init.luau",
+    runtime.eval_source_while_ready(
         &br#"
         local metadata = require("@lyra/metadata")
         local gate = require("@test/gate")
@@ -150,12 +219,9 @@ fn dispatch_runtime(gate: Gate) -> Result<(PluginExecutor, DispatchHandlers)> {
         metadata.Provider.new("dispatch-fast"):refresh(metadata.EntityType.Release, function(ctx)
             return ctx.value
         end)
-        local listens = require("@lyra/listens")
-        local task = require("@harmony/task")
-        listens.on_update(function(update)
-            if update.event == "hold" then
-                task.wait(1)
-            end
+        metadata.Provider.new("dispatch-outer"):refresh(metadata.EntityType.Release, function(ctx)
+            gate.refresh("dispatch-slow")
+            return ctx.value
         end)
         local api = require("@lyra/api")
         api.get("/dispatch-wait", function(_ctx)
@@ -163,6 +229,10 @@ fn dispatch_runtime(gate: Gate) -> Result<(PluginExecutor, DispatchHandlers)> {
             return api.response.json(200, { value = 42 })
         end, { auth = "public" })
     "#[..],
+        harmony_core::CallContext {
+            origin: super::super::plugin_origin("dispatch-test", "init.luau"),
+            ..Default::default()
+        },
     )?;
     let registry =
         futures::executor::block_on(crate::services::providers::provider_registry().read_owned());
@@ -174,12 +244,24 @@ fn dispatch_runtime(gate: Gate) -> Result<(PluginExecutor, DispatchHandlers)> {
         .get_refresh_callback("dispatch-fast", crate::services::EntityType::Release)
         .copied()
         .context("fast callback")?;
+    let outer = registry
+        .get_refresh_callback("dispatch-outer", crate::services::EntityType::Release)
+        .copied()
+        .context("outer callback")?;
     let api = futures::executor::block_on(crate::plugins::api::tests::registered_handler(
         "GET",
         "/dispatch-wait",
     ))
     .context("API callback")?;
-    Ok((runtime, DispatchHandlers { slow, fast, api }))
+    Ok((
+        runtime,
+        DispatchHandlers {
+            slow,
+            fast,
+            outer,
+            api,
+        },
+    ))
 }
 
 fn test_executor() -> Result<TestExecutor> {
@@ -202,11 +284,11 @@ fn test_executor() -> Result<TestExecutor> {
         cancel_gate: cancel_gate.clone(),
     };
     thread::spawn(move || {
-        let setup = dispatch_runtime(gate).map(|(runtime, handlers)| {
-            let (tx, rx) = plugin_executor_channel(4, runtime.wake_handle());
+        let setup = dispatch_runtime(gate, None).map(|(runtime, handlers)| {
+            let wake = runtime.wake_handle();
+            let (tx, rx) = plugin_executor_channel(4, wake.clone());
             let entrypoints = runtime.entrypoint_cancellation();
-            let rounds = runtime.rounds.clone();
-            (runtime, rx, (tx, entrypoints, rounds, handlers))
+            (runtime, rx, (tx, entrypoints, wake, handlers))
         });
         match setup {
             Ok((runtime, rx, ready)) => {
@@ -219,7 +301,14 @@ fn test_executor() -> Result<TestExecutor> {
             }
         }
     });
-    let (tx, entrypoints, rounds, DispatchHandlers { slow, fast, api }) = ready_rx.recv()??;
+    let (
+        tx,
+        entrypoints,
+        wake,
+        DispatchHandlers {
+            slow, fast, api, ..
+        },
+    ) = ready_rx.recv()??;
     Ok(TestExecutor {
         handle: PluginExecutorHandle {
             tx,
@@ -236,15 +325,18 @@ fn test_executor() -> Result<TestExecutor> {
         dropped,
         cancel_gate,
         release,
-        rounds,
+        wake,
     })
 }
 
-/// The test plugin on the calling thread, where a test decides when each round runs, with what
-/// its gate reports.
+/// The test plugin on the calling thread and a manual clock, where a test decides when each round
+/// runs and when time passes, with what its gate reports.
 struct StagedExecutor {
     runtime: PluginExecutor,
+    clock: ManualClock,
     slow: PluginCallbackHandle,
+    fast: PluginCallbackHandle,
+    outer: PluginCallbackHandle,
     started: async_mpsc::UnboundedReceiver<()>,
     dropped: async_mpsc::UnboundedReceiver<()>,
     resumed: async_mpsc::UnboundedReceiver<()>,
@@ -252,6 +344,12 @@ struct StagedExecutor {
 }
 
 type RefreshAnswer = tokio::sync::oneshot::Receiver<Result<MetadataRefreshResult>>;
+
+/// How long the staged handlers have. Nothing waits it out.
+const STAGED_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a call the test plugin makes to a provider has: longer than the handler making it, so
+/// that only what ends that handler ends the call.
+const NESTED_TIMEOUT: Duration = Duration::from_secs(120);
 
 impl StagedExecutor {
     fn new() -> Result<Self> {
@@ -263,16 +361,23 @@ impl StagedExecutor {
         let (dropped_tx, dropped) = async_mpsc::unbounded_channel();
         let (resumed_tx, resumed) = async_mpsc::unbounded_channel();
         let release = Arc::new(Notify::new());
-        let (runtime, handlers) = dispatch_runtime(Gate {
-            started: started_tx,
-            dropped: dropped_tx,
-            resumed: resumed_tx,
-            release: release.clone(),
-            cancel_gate: Arc::default(),
-        })?;
+        let clock = ManualClock::new();
+        let (runtime, handlers) = dispatch_runtime(
+            Gate {
+                started: started_tx,
+                dropped: dropped_tx,
+                resumed: resumed_tx,
+                release: release.clone(),
+                cancel_gate: Arc::default(),
+            },
+            Some(clock.clone()),
+        )?;
         Ok(Self {
             runtime,
+            clock,
             slow: handlers.slow,
+            fast: handlers.fast,
+            outer: handlers.outer,
             started,
             dropped,
             resumed,
@@ -280,36 +385,74 @@ impl StagedExecutor {
         })
     }
 
-    /// Starts the slow handler as its command does, running no round.
-    fn start_slow(&self, timeout: Duration) -> Result<RefreshAnswer> {
+    /// Starts `handler` as its command does, with [`STAGED_TIMEOUT`] by the clock, running no
+    /// round.
+    fn start(&self, handler: PluginCallbackHandle) -> Result<RefreshAnswer> {
         let (reply, answer) = tokio::sync::oneshot::channel();
         let permit = Arc::new(tokio::sync::Semaphore::new(1)).try_acquire_owned()?;
-        self.runtime
-            .start_metadata_refresh(request(self.slow, timeout), reply, permit);
+        let request = MetadataRefreshRequest {
+            handler,
+            context: serde_json::json!({ "value": 42 }),
+            deadline: self.clock.now() + STAGED_TIMEOUT,
+        };
+        self.runtime.start_metadata_refresh(request, reply, permit);
         Ok(answer)
     }
 
-    /// Starts the slow handler and runs rounds until it waits at the gate.
-    fn start_slow_waiting(&mut self, timeout: Duration) -> Result<RefreshAnswer> {
-        let answer = self.start_slow(timeout)?;
-        self.runtime.poll_background_tasks();
+    /// Starts the slow handler and runs it until it waits at the gate.
+    fn start_slow_waiting(&mut self) -> Result<RefreshAnswer> {
+        let answer = self.start(self.slow)?;
+        self.runtime.run_until_idle()?;
         self.started.try_recv().context("the handler waits")?;
-        self.runtime.poll_background_tasks();
         Ok(answer)
     }
 
-    fn run_rounds(&self) {
-        for _ in 0..4 {
-            self.runtime.poll_background_tasks();
-        }
+    /// Starts the outer handler and runs it until the slow handler it calls waits at the gate.
+    fn start_outer_waiting(&mut self) -> Result<RefreshAnswer> {
+        let answer = self.start(self.outer)?;
+        self.runtime.run_until_idle()?;
+        self.started
+            .try_recv()
+            .context("the nested handler waits")?;
+        Ok(answer)
+    }
+
+    /// Has the slow handler take `duration`, by the clock, to go on after its wait.
+    fn slow_handler_takes(&self, duration: Duration) -> Result<()> {
+        self.runtime
+            .vm
+            .data()
+            .get::<AfterWait>()?
+            .takes
+            .set(duration);
+        Ok(())
+    }
+
+    fn scheduler(&self) -> Result<std::rc::Rc<harmony_core::LocalScheduler>> {
+        Ok(self.runtime.vm.data().get()?)
+    }
+
+    /// How many tasks the scheduler holds that haven't ended.
+    fn pending_tasks(&self) -> Result<usize> {
+        Ok(self
+            .scheduler()?
+            .snapshots()
+            .iter()
+            .filter(|task| task.state == harmony_core::TaskState::Pending)
+            .count())
     }
 }
 
-fn deadline_expired(mut answer: RefreshAnswer) -> Result<()> {
-    let error = answer
-        .try_recv()
-        .context("the handler is answered for")?
-        .expect_err("a handler past its deadline fails");
+fn unanswered(answer: &mut RefreshAnswer) -> bool {
+    matches!(answer.try_recv(), Err(TryRecvError::Empty))
+}
+
+fn answered(mut answer: RefreshAnswer) -> Result<MetadataRefreshResult> {
+    answer.try_recv().context("the handler is answered for")?
+}
+
+fn deadline_expired(answer: RefreshAnswer) -> Result<()> {
+    let error = answered(answer).expect_err("a handler past its deadline fails");
     assert!(error.to_string().contains("deadline expired"), "{error:#}");
     Ok(())
 }
@@ -320,10 +463,16 @@ async fn a_handler_whose_caller_left_before_its_first_round_never_starts() -> Re
     crate::plugins::testing::init_default_test_state()?;
     let mut executor = StagedExecutor::new()?;
 
-    drop(executor.start_slow(Duration::from_secs(30))?);
-    executor.run_rounds();
+    drop(executor.start(executor.slow)?);
+    assert_eq!(
+        executor.pending_tasks()?,
+        2,
+        "the handler and its watcher are scheduled"
+    );
+    executor.runtime.run_until_idle()?;
 
     assert!(executor.started.try_recv().is_err(), "the handler ran");
+    assert_eq!(executor.pending_tasks()?, 0);
     Ok(())
 }
 
@@ -333,15 +482,22 @@ async fn a_handler_whose_deadline_passed_before_its_first_round_never_starts() -
     crate::plugins::testing::init_default_test_state()?;
     let mut executor = StagedExecutor::new()?;
 
-    let mut answer = executor.start_slow(Duration::from_millis(300))?;
+    let mut answer = executor.start(executor.slow)?;
     assert!(
-        answer.try_recv().is_err(),
+        unanswered(&mut answer),
         "the handler was refused, not scheduled"
     );
-    thread::sleep(Duration::from_millis(400));
-    executor.run_rounds();
+    assert_eq!(
+        executor.pending_tasks()?,
+        2,
+        "the handler and its watcher are scheduled"
+    );
+    // To the deadline exactly, which is the first instant that is too late.
+    executor.clock.advance(STAGED_TIMEOUT);
+    executor.runtime.run_until_idle()?;
 
     assert!(executor.started.try_recv().is_err(), "the handler ran");
+    assert_eq!(executor.pending_tasks()?, 0);
     deadline_expired(answer)
 }
 
@@ -352,11 +508,11 @@ async fn a_handler_ready_as_its_caller_leaves_is_not_resumed() -> Result<()> {
     let _guard = crate::services::testing::runtime_test_lock().await;
     crate::plugins::testing::init_default_test_state()?;
     let mut executor = StagedExecutor::new()?;
-    let answer = executor.start_slow_waiting(Duration::from_secs(30))?;
+    let answer = executor.start_slow_waiting()?;
 
     executor.release.notify_one();
     drop(answer);
-    executor.run_rounds();
+    executor.runtime.run_until_idle()?;
 
     assert!(executor.resumed.try_recv().is_err(), "the handler went on");
     assert!(executor.dropped.try_recv().is_ok(), "its call is dropped");
@@ -368,15 +524,184 @@ async fn a_handler_ready_after_its_deadline_is_not_resumed() -> Result<()> {
     let _guard = crate::services::testing::runtime_test_lock().await;
     crate::plugins::testing::init_default_test_state()?;
     let mut executor = StagedExecutor::new()?;
-    let answer = executor.start_slow_waiting(Duration::from_millis(300))?;
+    let mut answer = executor.start_slow_waiting()?;
 
-    thread::sleep(Duration::from_millis(400));
+    executor
+        .clock
+        .advance(STAGED_TIMEOUT - Duration::from_nanos(1));
+    executor.runtime.run_until_idle()?;
+    assert!(unanswered(&mut answer), "expired before its deadline");
+    assert!(executor.dropped.try_recv().is_err());
+
+    executor.clock.advance(Duration::from_nanos(1));
     executor.release.notify_one();
-    executor.run_rounds();
+    executor.runtime.run_until_idle()?;
 
     assert!(executor.resumed.try_recv().is_err(), "the handler went on");
     assert!(executor.dropped.try_recv().is_ok(), "its call is dropped");
     deadline_expired(answer)
+}
+
+/// The outer handler waits on its call to the slow one, which is ready to go on in the round that
+/// finds the outer's caller gone.
+#[tokio::test]
+async fn a_nested_handler_ready_as_its_caller_s_caller_leaves_is_not_resumed() -> Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
+    let mut executor = StagedExecutor::new()?;
+    let answer = executor.start_outer_waiting()?;
+
+    executor.release.notify_one();
+    drop(answer);
+    executor.runtime.poll_background_tasks();
+
+    assert!(
+        executor.resumed.try_recv().is_err(),
+        "the nested handler went on"
+    );
+    assert!(executor.dropped.try_recv().is_ok(), "its call is dropped");
+    executor.runtime.run_until_idle()?;
+    assert!(executor.resumed.try_recv().is_err());
+    assert_eq!(executor.pending_tasks()?, 0);
+    Ok(())
+}
+
+/// As above, in the round that finds the outer handler's deadline passed, well before the nested
+/// call's own.
+#[tokio::test]
+async fn a_nested_handler_ready_after_its_caller_s_deadline_is_not_resumed() -> Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
+    let mut executor = StagedExecutor::new()?;
+    let mut answer = executor.start_outer_waiting()?;
+
+    executor
+        .clock
+        .advance(STAGED_TIMEOUT - Duration::from_nanos(1));
+    executor.runtime.run_until_idle()?;
+    assert!(unanswered(&mut answer), "expired before its deadline");
+    assert!(executor.dropped.try_recv().is_err());
+
+    executor.clock.advance(Duration::from_nanos(1));
+    executor.release.notify_one();
+    executor.runtime.poll_background_tasks();
+
+    assert!(
+        executor.resumed.try_recv().is_err(),
+        "the nested handler went on"
+    );
+    assert!(executor.dropped.try_recv().is_ok(), "its call is dropped");
+    executor.runtime.run_until_idle()?;
+    assert!(executor.resumed.try_recv().is_err());
+    assert_eq!(executor.pending_tasks()?, 0);
+    deadline_expired(answer)
+}
+
+/// The handler ends in a round, and the round in which its watcher reads that comes only after
+/// its deadline, as when a command holds the thread in between.
+#[tokio::test]
+async fn a_finished_handler_is_answered_before_a_command_that_outlasts_its_deadline() -> Result<()>
+{
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
+    let executor = StagedExecutor::new()?;
+    let mut answer = executor.start(executor.fast)?;
+
+    executor.runtime.poll_background_tasks();
+    assert!(unanswered(&mut answer), "its watcher has yet to read it");
+    executor.clock.advance(STAGED_TIMEOUT * 2);
+    executor.runtime.run_until_idle()?;
+
+    assert_eq!(answered(answer)?.values, vec![serde_json::json!(42)]);
+    Ok(())
+}
+
+/// Starts the slow handler and lets it go on and end `after` into its time, in a round whose
+/// watchers ran before then, so that its own saw neither an end nor a deadline. Returns how it
+/// was answered.
+fn answer_for_a_handler_ending(
+    executor: &mut StagedExecutor,
+    after: Duration,
+) -> Result<Result<MetadataRefreshResult>> {
+    let mut answer = executor.start_slow_waiting()?;
+
+    executor.slow_handler_takes(after)?;
+    executor.release.notify_one();
+    executor.runtime.poll_background_tasks();
+    assert!(executor.resumed.try_recv().is_ok(), "the handler went on");
+    assert!(unanswered(&mut answer), "its watcher has yet to read it");
+    executor.runtime.run_until_idle()?;
+    answer.try_recv().context("the handler is answered for")
+}
+
+/// A handler has to end before its deadline: one that ends at it is as late as the timer that
+/// fires at it says, though its watcher never cancelled it.
+#[tokio::test]
+async fn a_handler_is_answered_by_when_it_ended_against_its_deadline() -> Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
+    let mut executor = StagedExecutor::new()?;
+
+    let in_time =
+        answer_for_a_handler_ending(&mut executor, STAGED_TIMEOUT - Duration::from_nanos(1))??;
+    assert_eq!(in_time.values, vec![serde_json::json!(42)]);
+
+    for late in [STAGED_TIMEOUT, STAGED_TIMEOUT * 2] {
+        let error = answer_for_a_handler_ending(&mut executor, late)?
+            .expect_err("a handler that ended at or past its deadline fails");
+        assert!(error.to_string().contains("deadline expired"), "{error:#}");
+    }
+    Ok(())
+}
+
+/// Calls the slow handler as a host function does, with [`NESTED_TIMEOUT`], and lets the handler
+/// go on and end `after` into that. Returns how the call was answered.
+fn answer_for_a_nested_call_ending(
+    executor: &mut StagedExecutor,
+    after: Duration,
+) -> Result<Result<(), crate::services::providers::ProviderCallError>> {
+    use futures::FutureExt;
+
+    let calls = super::super::VmCalls::of(&executor.runtime.vm, &Default::default())?;
+    let deadline = executor.clock.now() + NESTED_TIMEOUT;
+    let mut call = std::pin::pin!(nested_refresh(&calls, "dispatch-slow", deadline));
+    assert!(
+        call.as_mut().now_or_never().is_none(),
+        "the call ended before its handler ran"
+    );
+    executor.runtime.run_until_idle()?;
+    executor.started.try_recv().context("the handler waits")?;
+
+    executor.slow_handler_takes(after)?;
+    executor.release.notify_one();
+    executor.runtime.run_until_idle()?;
+    assert!(executor.resumed.try_recv().is_ok(), "the handler went on");
+    call.as_mut()
+        .now_or_never()
+        .context("the call still waits after its handler ended")
+}
+
+/// A nested call's handler has to end before the call's deadline, as one the executor starts has
+/// to end before its own, though nothing cancelled it.
+#[tokio::test]
+async fn a_nested_call_is_answered_by_when_its_handler_ended_against_its_deadline() -> Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
+    let mut executor = StagedExecutor::new()?;
+
+    answer_for_a_nested_call_ending(&mut executor, NESTED_TIMEOUT - Duration::from_nanos(1))??;
+
+    for late in [NESTED_TIMEOUT, NESTED_TIMEOUT * 2] {
+        let error = answer_for_a_nested_call_ending(&mut executor, late)?
+            .expect_err("a handler that ended at or past the call's deadline fails it");
+        assert!(
+            error
+                .to_string()
+                .contains("did not complete within its timeout"),
+            "{error:#}"
+        );
+    }
+    Ok(())
 }
 
 fn request(handler: PluginCallbackHandle, timeout: Duration) -> MetadataRefreshRequest {
@@ -387,8 +712,13 @@ fn request(handler: PluginCallbackHandle, timeout: Duration) -> MetadataRefreshR
     }
 }
 
+/// How long a test waits for what should come at once before it takes it as never coming.
+const WATCHDOG: Duration = Duration::from_secs(60);
+/// A deadline no test here reaches.
+const AMPLE: Duration = Duration::from_secs(30);
+
 async fn signal(receiver: &mut async_mpsc::UnboundedReceiver<()>) -> Result<()> {
-    tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+    tokio::time::timeout(WATCHDOG, receiver.recv())
         .await?
         .context("signal channel closed")
 }
@@ -401,15 +731,15 @@ async fn slow_metadata_does_not_block_other_callbacks_and_dropped_call_is_cancel
     let mut executor = test_executor()?;
     let slow = tokio::spawn({
         let handle = executor.handle.clone();
-        let request = request(executor.slow, Duration::from_secs(10));
+        let request = request(executor.slow, AMPLE);
         async move { handle.dispatch_metadata_refresh(request).await }
     });
     signal(&mut executor.started).await?;
     let fast = tokio::time::timeout(
-        Duration::from_secs(2),
+        WATCHDOG,
         executor
             .handle
-            .dispatch_metadata_refresh(request(executor.fast, Duration::from_secs(2))),
+            .dispatch_metadata_refresh(request(executor.fast, AMPLE)),
     )
     .await??;
     assert_eq!(fast.values, vec![serde_json::json!(42)]);
@@ -419,7 +749,7 @@ async fn slow_metadata_does_not_block_other_callbacks_and_dropped_call_is_cancel
     signal(&mut executor.dropped).await?;
     let fast = executor
         .handle
-        .dispatch_metadata_refresh(request(executor.fast, Duration::from_secs(2)))
+        .dispatch_metadata_refresh(request(executor.fast, AMPLE))
         .await?;
     assert_eq!(fast.values, vec![serde_json::json!(42)]);
     Ok(())
@@ -431,7 +761,7 @@ async fn metadata_deadline_cancels_waiting_host_future() -> Result<()> {
     crate::plugins::testing::init_default_test_state()?;
     let mut executor = test_executor()?;
     let result = tokio::time::timeout(
-        Duration::from_secs(2),
+        WATCHDOG,
         executor
             .handle
             .dispatch_metadata_refresh(request(executor.slow, Duration::from_millis(100))),
@@ -460,12 +790,12 @@ async fn expired_metadata_never_starts_and_completed_callback_returns_its_values
     assert!(executor.started.try_recv().is_err());
     let slow = tokio::spawn({
         let handle = executor.handle.clone();
-        let request = request(executor.slow, Duration::from_secs(2));
+        let request = request(executor.slow, AMPLE);
         async move { handle.dispatch_metadata_refresh(request).await }
     });
     signal(&mut executor.started).await?;
     executor.release.notify_one();
-    let result = tokio::time::timeout(Duration::from_secs(2), slow).await???;
+    let result = tokio::time::timeout(WATCHDOG, slow).await???;
     assert_eq!(result.values, vec![serde_json::json!(42)]);
     signal(&mut executor.dropped).await?;
     Ok(())
@@ -479,20 +809,20 @@ async fn active_callbacks_retain_capacity_until_cancelled() -> Result<()> {
     let mut calls = Vec::new();
     for _ in 0..4 {
         let handle = executor.handle.clone();
-        let request = request(executor.slow, Duration::from_secs(10));
+        let request = request(executor.slow, AMPLE);
         calls.push(tokio::spawn(async move {
             handle.dispatch_metadata_refresh(request).await
         }));
         signal(&mut executor.started).await?;
     }
     let handle = executor.handle.clone();
-    let request = request(executor.slow, Duration::from_secs(10));
+    let request = request(executor.slow, AMPLE);
     let waiting = tokio::spawn(async move { handle.dispatch_metadata_refresh(request).await });
-    assert!(
-        tokio::time::timeout(Duration::from_millis(50), executor.started.recv())
-            .await
-            .is_err()
-    );
+    // Runs the call as far as it gets: to its wait for a slot, as every slot is still held.
+    tokio::task::yield_now().await;
+    assert_eq!(executor.handle.slots_in_use(), 4);
+    assert!(!waiting.is_finished());
+    assert!(executor.started.try_recv().is_err());
     let cancelled = calls.pop().unwrap();
     cancelled.abort();
     assert!(cancelled.await.unwrap_err().is_cancelled());
@@ -535,7 +865,7 @@ async fn waiting_api_callback_does_not_delay_metadata_deadlines() -> Result<()> 
     });
     signal(&mut executor.started).await?;
     let result = tokio::time::timeout(
-        Duration::from_secs(2),
+        WATCHDOG,
         executor
             .handle
             .dispatch_metadata_refresh(request(executor.slow, Duration::from_millis(100))),
@@ -546,24 +876,18 @@ async fn waiting_api_callback_does_not_delay_metadata_deadlines() -> Result<()> 
     signal(&mut executor.dropped).await?;
     assert!(!api.is_finished());
     executor.release.notify_one();
-    let response = tokio::time::timeout(Duration::from_secs(2), api).await???;
+    let response = tokio::time::timeout(WATCHDOG, api).await???;
     assert_eq!(response.status, 200);
     signal(&mut executor.dropped).await?;
     Ok(())
 }
 
-/// The rounds the executor has run, once it has gone a while without running one: it sleeps, and
-/// only a wake or a deadline will bring on the next.
-async fn rounds_once_asleep(executor: &TestExecutor) -> Result<u64> {
-    use std::sync::atomic::Ordering;
-
-    tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            let rounds = executor.rounds.load(Ordering::Relaxed);
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            if executor.rounds.load(Ordering::Relaxed) == rounds {
-                return rounds;
-            }
+/// Returns once the executor thread is asleep in its wait, where only a wake or a deadline brings
+/// on its next round.
+async fn asleep(executor: &TestExecutor) -> Result<()> {
+    tokio::time::timeout(WATCHDOG, async {
+        while !executor.wake.owner_is_waiting() {
+            tokio::task::yield_now().await;
         }
     })
     .await
@@ -571,72 +895,48 @@ async fn rounds_once_asleep(executor: &TestExecutor) -> Result<u64> {
 }
 
 /// A handler parked on a host call runs on because the call's readiness wakes the executor, which
-/// polls nothing while the call is pending.
+/// is asleep while the call is pending. On the real clock and the real wait.
 #[tokio::test]
 async fn a_parked_handler_resumes_on_the_wake_of_its_host_call() -> Result<()> {
     let _guard = crate::services::testing::runtime_test_lock().await;
     crate::plugins::testing::init_default_test_state()?;
     let mut executor = test_executor()?;
     let running = hold_slot(&mut executor).await?;
-    let asleep = rounds_once_asleep(&executor).await?;
+    asleep(&executor).await?;
 
     executor.release.notify_one();
-    let result = tokio::time::timeout(Duration::from_secs(10), running).await???;
-    assert_eq!(result.values, vec![serde_json::json!(42)]);
-    assert!(executor.rounds.load(std::sync::atomic::Ordering::Relaxed) > asleep);
-    Ok(())
-}
-
-/// A handler that ended is answered before the next command, which holds the thread past the
-/// handler's deadline.
-#[tokio::test]
-async fn a_finished_handler_is_answered_before_a_command_that_outlasts_its_deadline() -> Result<()>
-{
-    let _guard = crate::services::testing::runtime_test_lock().await;
-    crate::plugins::testing::init_default_test_state()?;
-    let executor = test_executor()?;
-    let hold = || crate::services::listens::ListenUpdatePayload {
-        event: "hold".to_string(),
-        user_id: "user-public".to_string(),
-        listens: Vec::new(),
-    };
-
-    // While the first update holds the thread, the handler and a second update queue behind it.
-    executor.handle.dispatch_listen_update(hold())?;
-    let fast = tokio::spawn({
-        let handle = executor.handle.clone();
-        let request = request(executor.fast, Duration::from_millis(1500));
-        async move { handle.dispatch_metadata_refresh(request).await }
-    });
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    executor.handle.dispatch_listen_update(hold())?;
-
-    let result = tokio::time::timeout(Duration::from_secs(10), fast).await???;
+    let result = tokio::time::timeout(WATCHDOG, running).await???;
     assert_eq!(result.values, vec![serde_json::json!(42)]);
     Ok(())
 }
 
 /// An executor running one plugin, `demo`, on the calling thread, and a producer `source` returns.
+/// With a `clock`, its scheduler runs by it.
 fn stream_executor(
     source: &'static str,
+    clock: Option<ManualClock>,
 ) -> Result<(
     PluginExecutor,
     harmony_core::CallContext,
     harmony_luau::Function,
 )> {
-    let runtime = PluginExecutor::with_manifests(Arc::from(vec![manifest("demo", &[])]))?;
+    let manifests = Arc::from(vec![manifest("demo", &[])]);
+    let runtime = match clock {
+        Some(clock) => PluginExecutor::with_manual_clock(manifests, clock)?,
+        None => PluginExecutor::with_manifests(manifests)?,
+    };
     let context = harmony_core::CallContext {
         origin: super::super::plugin_origin("demo", "init.luau"),
         ..Default::default()
     };
-    let values =
-        runtime.eval_plugin_source_with_call_context(source.as_bytes(), context.clone())?;
+    let values = runtime.eval_source_while_ready(source.as_bytes(), context.clone())?;
     let Some(harmony_luau::Value::Function(produce)) = values.into_iter().next() else {
         anyhow::bail!("the chunk returns the producer");
     };
     Ok((runtime, context, produce))
 }
 
+/// Queues a stream that has `timeout` by the executor's clock.
 fn queue_demo_stream(
     vm: &harmony_luau::Vm,
     produce: harmony_luau::Function,
@@ -647,13 +947,34 @@ fn queue_demo_stream(
         vm,
         produce,
         context,
-        Instant::now() + timeout,
+        super::super::now(vm)? + timeout,
         super::super::StreamOrigin {
             plugin_id: "demo".to_string(),
             method: "GET".to_string(),
             path: "/stream".to_string(),
         },
     )?)
+}
+
+/// As many streams as there are places for, each produced by `produce`, which must not end, so
+/// that the next stream queued waits for a place.
+fn fill_the_places(
+    runtime: &PluginExecutor,
+    produce: &harmony_luau::Function,
+    context: &harmony_core::CallContext,
+) -> Result<Vec<super::super::ApiResponseStream>> {
+    let producing = (0..16)
+        .map(|_| {
+            queue_demo_stream(
+                &runtime.vm,
+                produce.clone(),
+                context.clone(),
+                Duration::from_secs(600),
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    runtime.run_until_idle()?;
+    Ok(producing)
 }
 
 /// Serves `runtime` with no command ever sent, until `read` returns on another thread: whatever
@@ -668,7 +989,7 @@ fn serve_until<T: Send + 'static>(
             .enable_time()
             .build()
             .expect("reader runtime")
-            .block_on(async { tokio::time::timeout(Duration::from_secs(10), read).await });
+            .block_on(async { tokio::time::timeout(WATCHDOG, read).await });
         // Ends the executor's loop, whatever it was waiting for.
         drop(tx);
         read.ok()
@@ -677,13 +998,14 @@ fn serve_until<T: Send + 'static>(
     reader.join().expect("reader thread")
 }
 
-/// The producer waits on nothing, so only its deadline ends the executor's wait.
+/// The producer waits on nothing, so only its deadline ends the executor's wait. On the real
+/// clock and the real wait.
 #[test]
 fn a_stream_s_deadline_wakes_the_executor_to_end_it() -> Result<()> {
     use futures::StreamExt;
 
     let (runtime, context, produce) =
-        stream_executor("return function(_writer) coroutine.yield() end")?;
+        stream_executor("return function(_writer) coroutine.yield() end", None)?;
     let mut body = queue_demo_stream(&runtime.vm, produce, context, Duration::from_millis(100))?;
 
     let error = serve_until(&runtime, async move { body.next().await })
@@ -694,44 +1016,75 @@ fn a_stream_s_deadline_wakes_the_executor_to_end_it() -> Result<()> {
     Ok(())
 }
 
+const COUNTING_PRODUCER: &str =
+    "started = 0; return function(_writer) started += 1; coroutine.yield() end";
+
 /// Every place is taken by a producer that never ends, so the stream behind them never starts,
-/// and only its deadline ends the executor's wait.
+/// and ends at its deadline.
 #[test]
 fn a_stream_waiting_for_a_place_ends_at_its_deadline() -> Result<()> {
-    use futures::StreamExt;
+    use futures::{
+        FutureExt,
+        StreamExt,
+    };
 
-    let (runtime, context, produce) = stream_executor(
-        "started = 0; return function(_writer) started += 1; coroutine.yield() end",
-    )?;
-    let started =
-        || runtime.eval_plugin_source_with_call_context(&b"return started"[..], context.clone());
-    let mut producing = Vec::new();
-    while producing.len() < 16 {
-        producing.push(queue_demo_stream(
-            &runtime.vm,
-            produce.clone(),
-            context.clone(),
-            Duration::from_secs(600),
-        )?);
-    }
-    for _ in 0..4 {
-        runtime.poll_background_tasks();
-    }
+    let clock = ManualClock::new();
+    let (runtime, context, produce) = stream_executor(COUNTING_PRODUCER, Some(clock.clone()))?;
+    let scheduler = runtime.vm.data().get::<harmony_core::LocalScheduler>()?;
+    let started = || runtime.eval_source_while_ready(&b"return started"[..], context.clone());
+    let _producing = fill_the_places(&runtime, &produce, &context)?;
     assert_eq!(started()?, [harmony_luau::Value::Number(16.0)]);
 
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let timeout = Duration::from_secs(2);
+    let mut waiting = queue_demo_stream(&runtime.vm, produce.clone(), context.clone(), timeout)?;
+    runtime.run_until_idle()?;
+    assert!(waiting.next().now_or_never().is_none(), "the stream ended");
+    assert_eq!(started()?, [harmony_luau::Value::Number(16.0)]);
+    assert_eq!(
+        scheduler.next_wake_delay(),
+        Some(timeout),
+        "nothing ends the executor's wait at the stream's deadline"
+    );
+
+    clock.advance(timeout - Duration::from_nanos(1));
+    runtime.run_until_idle()?;
+    assert!(
+        waiting.next().now_or_never().is_none(),
+        "ended before its deadline"
+    );
+
+    clock.advance(Duration::from_nanos(1));
+    runtime.run_until_idle()?;
+    let error = waiting
+        .next()
+        .now_or_never()
+        .context("the stream is still waiting at its deadline")?
+        .context("a stream past its deadline is aborted")?
+        .expect_err("a stream past its deadline is aborted");
+    assert!(error.to_string().contains("deadline expired"), "{error}");
+    assert_eq!(
+        started()?,
+        [harmony_luau::Value::Number(16.0)],
+        "the stream behind the full places still produced"
+    );
+    Ok(())
+}
+
+/// The stream waits for a place, on nothing that would wake the executor, so only the deadline
+/// it registered while waiting ends the executor's wait. On the real clock and the real wait.
+#[test]
+fn the_deadline_of_a_stream_waiting_for_a_place_wakes_the_executor() -> Result<()> {
+    use futures::StreamExt;
+
+    let (runtime, context, produce) = stream_executor(COUNTING_PRODUCER, None)?;
+    let producing = fill_the_places(&runtime, &produce, &context)?;
     let mut waiting = queue_demo_stream(
         &runtime.vm,
         produce.clone(),
         context.clone(),
-        Duration::from_secs(2),
+        Duration::from_millis(200),
     )?;
-    // Its first round finds no place and leaves it waiting for one, well before its deadline.
-    runtime.poll_background_tasks();
-    assert!(
-        Instant::now() < deadline,
-        "too slow to tell a wait from an expiry"
-    );
+
     let error = serve_until(&runtime, async move {
         let end = waiting.next().await;
         // The producing streams' clients stay until the waiting one has ended.
@@ -742,11 +1095,54 @@ fn a_stream_waiting_for_a_place_ends_at_its_deadline() -> Result<()> {
     .context("a stream past its deadline is aborted")?
     .expect_err("a stream past its deadline is aborted");
     assert!(error.to_string().contains("deadline expired"), "{error}");
-    assert_eq!(
-        started()?,
-        [harmony_luau::Value::Number(16.0)],
-        "the stream behind the full places still produced"
+    Ok(())
+}
+
+/// A producer has to end before its stream's deadline, like a handler before its own.
+#[test]
+fn a_stream_ends_by_when_its_producer_ended_against_its_deadline() -> Result<()> {
+    use futures::{
+        FutureExt,
+        StreamExt,
+    };
+
+    let timeout = Duration::from_secs(30);
+    // The clock moves in the stream's first round, after the stream took its place and before
+    // the producer it started then runs.
+    let end_of_a_producer_ending = |after: Duration| -> Result<Option<std::io::Result<_>>> {
+        let clock = ManualClock::new();
+        let (runtime, context, produce) =
+            stream_executor("return function(_writer) end", Some(clock.clone()))?;
+        let mut body = queue_demo_stream(&runtime.vm, produce, context, timeout)?;
+        runtime
+            .vm
+            .data()
+            .get::<harmony_core::LocalScheduler>()?
+            .schedule_future(harmony_core::CallContext::default(), {
+                let clock = clock.clone();
+                async move {
+                    clock.advance(after);
+                    Ok(())
+                }
+            });
+        runtime.run_until_idle()?;
+        body.next()
+            .now_or_never()
+            .context("the stream is still open after its producer ended")
+    };
+
+    // Short of the deadline by what the producer's resume, limited to what is left until it in
+    // real time, needs to run.
+    assert!(
+        end_of_a_producer_ending(timeout - Duration::from_secs(10))?.is_none(),
+        "a producer that ended before its deadline ends the body whole"
     );
+    for late in [timeout, timeout * 2] {
+        let error = end_of_a_producer_ending(late)?
+            .context("a producer that ended at or past its deadline aborts the body")?
+            .expect_err("a producer that ended at or past its deadline aborts the body");
+        assert!(error.to_string().contains("deadline expired"), "{error}");
+    }
     Ok(())
 }
 
@@ -757,7 +1153,7 @@ fn a_stream_queued_while_the_scheduler_polls_is_produced() -> Result<()> {
     use futures::StreamExt;
 
     let (runtime, context, produce) =
-        stream_executor("return function(writer) writer:write('chunk') end")?;
+        stream_executor("return function(writer) writer:write('chunk') end", None)?;
     let (queued, body) = std::sync::mpsc::channel();
     let vm = runtime.vm.clone();
     vm.data()
@@ -831,7 +1227,7 @@ async fn hold_slot(
 ) -> Result<tokio::task::JoinHandle<Result<MetadataRefreshResult>>> {
     let running = tokio::spawn({
         let handle = executor.handle.clone();
-        let request = request(executor.slow, Duration::from_secs(30));
+        let request = request(executor.slow, AMPLE);
         async move { handle.dispatch_metadata_refresh(request).await }
     });
     signal(&mut executor.started).await?;
@@ -847,7 +1243,7 @@ async fn start_drain(
         let handle = handle.clone();
         async move { handle.drain(limit, &CancellationToken::new()).await }
     });
-    tokio::time::timeout(Duration::from_secs(2), async {
+    tokio::time::timeout(WATCHDOG, async {
         while handle.tx.slots.available_permits() > 0 {
             tokio::task::yield_now().await;
         }
@@ -875,7 +1271,7 @@ async fn a_drain_waits_for_the_running_call_and_fails_the_one_behind_it() -> Res
 
     let provider_call = tokio::spawn({
         let handle = executor.handle.clone();
-        let request = request(executor.fast, Duration::from_secs(30));
+        let request = request(executor.fast, AMPLE);
         async move {
             with_provider_call(
                 "dispatch-fast",
@@ -892,23 +1288,25 @@ async fn a_drain_waits_for_the_running_call_and_fails_the_one_behind_it() -> Res
     });
     let direct_call = tokio::spawn({
         let handle = executor.handle.clone();
-        let request = request(executor.fast, Duration::from_secs(30));
+        let request = request(executor.fast, AMPLE);
         async move { handle.dispatch_metadata_refresh(request).await }
     });
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // Runs each call as far as it gets: to its wait behind the drain.
+    tokio::task::yield_now().await;
     assert!(!provider_call.is_finished());
+    assert!(!direct_call.is_finished());
     assert!(!drain.is_finished());
 
     executor.release.notify_one();
-    let result = tokio::time::timeout(Duration::from_secs(2), running).await???;
+    let result = tokio::time::timeout(WATCHDOG, running).await???;
     assert_eq!(result.values, vec![serde_json::json!(42)]);
     assert_eq!(
-        tokio::time::timeout(Duration::from_secs(2), drain).await??,
+        tokio::time::timeout(WATCHDOG, drain).await??,
         DrainOutcome::Drained
     );
 
     assert!(matches!(
-        tokio::time::timeout(Duration::from_secs(2), provider_call).await??,
+        tokio::time::timeout(WATCHDOG, provider_call).await??,
         Err(ProviderCallError::NotRegistered)
     ));
     let error = direct_call.await?.expect_err("the call never started");
@@ -929,8 +1327,9 @@ async fn a_dropped_caller_does_not_let_a_drain_finish_while_its_handler_runs() -
     assert!(running.await.unwrap_err().is_cancelled());
     signal(&mut executor.dropped).await?;
 
-    // The handler's cancellation has begun and can't finish, so its slot is still held.
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // The handler's cancellation has begun and can't finish before the gate opens, so its slot
+    // is still held.
+    tokio::task::yield_now().await;
     assert!(
         !drain.is_finished(),
         "a drain must wait for the cancelled handler"
@@ -938,7 +1337,7 @@ async fn a_dropped_caller_does_not_let_a_drain_finish_while_its_handler_runs() -
 
     executor.cancel_gate.open();
     assert_eq!(
-        tokio::time::timeout(Duration::from_secs(5), drain).await??,
+        tokio::time::timeout(WATCHDOG, drain).await??,
         DrainOutcome::Drained
     );
     Ok(())
@@ -952,7 +1351,7 @@ async fn a_handler_outlasting_the_limit_does_not_hold_up_the_shutdown() -> Resul
     let running = hold_slot(&mut executor).await?;
 
     let outcome = tokio::time::timeout(
-        Duration::from_secs(2),
+        WATCHDOG,
         executor
             .handle
             .drain(Duration::from_millis(50), &CancellationToken::new()),
@@ -962,13 +1361,13 @@ async fn a_handler_outlasting_the_limit_does_not_hold_up_the_shutdown() -> Resul
 
     let error = executor
         .handle
-        .dispatch_metadata_refresh(request(executor.fast, Duration::from_secs(2)))
+        .dispatch_metadata_refresh(request(executor.fast, AMPLE))
         .await
         .expect_err("a drained runtime admits nothing");
     assert!(DispatchNotStarted::caused(&error), "{error:#}");
 
-    tokio::time::timeout(Duration::from_secs(2), executor.handle.shutdown()).await??;
-    let error = tokio::time::timeout(Duration::from_secs(2), running)
+    tokio::time::timeout(WATCHDOG, executor.handle.shutdown()).await??;
+    let error = tokio::time::timeout(WATCHDOG, running)
         .await??
         .expect_err("shutdown cancels the running handler");
     assert!(!DispatchNotStarted::caused(&error), "{error:#}");
@@ -986,7 +1385,7 @@ async fn a_nested_call_queued_behind_the_drain_ends_it_at_its_limit() -> Result<
     // The running handler can't finish until the call it made does.
     let nested = tokio::spawn({
         let handle = executor.handle.clone();
-        let request = request(executor.fast, Duration::from_secs(30));
+        let request = request(executor.fast, AMPLE);
         let release = executor.release.clone();
         async move {
             let result = handle.dispatch_metadata_refresh(request).await;
@@ -996,14 +1395,14 @@ async fn a_nested_call_queued_behind_the_drain_ends_it_at_its_limit() -> Result<
     });
 
     assert_eq!(
-        tokio::time::timeout(Duration::from_secs(2), drain).await??,
+        tokio::time::timeout(WATCHDOG, drain).await??,
         DrainOutcome::TimedOut
     );
-    let error = tokio::time::timeout(Duration::from_secs(2), nested)
+    let error = tokio::time::timeout(WATCHDOG, nested)
         .await??
         .expect_err("the nested call never started");
     assert!(DispatchNotStarted::caused(&error), "{error:#}");
-    tokio::time::timeout(Duration::from_secs(2), running).await???;
+    tokio::time::timeout(WATCHDOG, running).await???;
     Ok(())
 }
 
@@ -1015,7 +1414,7 @@ async fn a_crash_ends_a_drain_at_once() -> Result<()> {
     let crashed = empty_executor()?;
     crashed.inject_panic().await.expect_err("it crashed");
     let outcome = tokio::time::timeout(
-        Duration::from_secs(2),
+        WATCHDOG,
         crashed.drain(LONG_LIMIT, &CancellationToken::new()),
     )
     .await?;
@@ -1029,7 +1428,7 @@ async fn a_crash_ends_a_drain_at_once() -> Result<()> {
         .inject_panic()
         .await
         .expect_err("it crashed");
-    let outcome = tokio::time::timeout(Duration::from_secs(2), drain).await??;
+    let outcome = tokio::time::timeout(WATCHDOG, drain).await??;
     assert_ne!(outcome, DrainOutcome::TimedOut);
     running.await?.expect_err("the crash ended the handler");
     Ok(())
@@ -1044,11 +1443,8 @@ async fn cancelling_ends_a_drain_and_closes_the_slots() -> Result<()> {
     let cancelled = CancellationToken::new();
     cancelled.cancel();
 
-    let outcome = tokio::time::timeout(
-        Duration::from_secs(2),
-        executor.handle.drain(LONG_LIMIT, &cancelled),
-    )
-    .await?;
+    let outcome =
+        tokio::time::timeout(WATCHDOG, executor.handle.drain(LONG_LIMIT, &cancelled)).await?;
     assert_eq!(outcome, DrainOutcome::Cancelled);
     assert!(executor.handle.tx.slots.is_closed());
     running.abort();
@@ -1075,7 +1471,7 @@ async fn lossy_updates_report_never_started_while_draining() -> Result<()> {
     assert!(DispatchNotStarted::caused(&error), "{error:#}");
 
     executor.release.notify_one();
-    tokio::time::timeout(Duration::from_secs(2), running).await???;
+    tokio::time::timeout(WATCHDOG, running).await???;
     drain.await?;
     let error = executor
         .handle

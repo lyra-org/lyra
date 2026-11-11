@@ -176,8 +176,6 @@ impl PluginExecutor {
 
         Ok(Self {
             wake,
-            #[cfg(test)]
-            rounds: Arc::default(),
             runtime,
             scope,
             running,

@@ -452,6 +452,13 @@ impl PluginExecutorHandle {
         self.tx.capacity as usize - self.tx.slots.available_permits()
     }
 
+    /// Whether the executor thread is asleep in its wait, where only a wake or a deadline brings
+    /// on its next round.
+    #[cfg(test)]
+    pub(crate) fn is_asleep(&self) -> bool {
+        self.tx.queue.wake.owner_is_waiting()
+    }
+
     /// Fails the entrypoints running and yet to run, and stops every stream,
     /// so a runtime that is to shut down soon frees its thread for the ask.
     pub(crate) fn cancel_entrypoints(&self) {

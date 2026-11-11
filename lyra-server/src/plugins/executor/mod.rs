@@ -93,10 +93,6 @@ pub(crate) struct PluginExecutor {
     restarting: Rc<Cell<bool>>,
     /// Ends [`Self::wait_for_work`] for a command sent to the executor.
     wake: SchedulerWake,
-    /// How many rounds the executor has run, for tests that tell a sleeping executor from one
-    /// that polls.
-    #[cfg(test)]
-    rounds: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl std::ops::Deref for PluginExecutor {
@@ -110,9 +106,6 @@ impl std::ops::Deref for PluginExecutor {
 impl PluginExecutor {
     /// One round of the executor's work: every task that is ready runs once.
     fn poll_background_tasks(&self) {
-        #[cfg(test)]
-        self.rounds
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let Ok(scheduler) = self.vm.data().get::<LocalScheduler>() else {
             return;
         };

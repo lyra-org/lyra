@@ -675,6 +675,37 @@ fn bounded_luau_string(value: harmony_luau::Value, field: &str) -> Result<String
 mod tests {
     use super::*;
 
+    /// A chain's deadline is by the executor's clock and the wait by Tokio's: on a manual clock
+    /// an hour ahead of it, the wait is still for what the chain has left.
+    #[test]
+    fn a_nested_call_waits_for_a_transition_as_long_as_its_chain_has_left() -> Result<()> {
+        const LEFT: Duration = Duration::from_secs(7);
+
+        let _guard = futures::executor::block_on(crate::services::testing::runtime_test_lock());
+        crate::plugins::testing::init_default_test_state()?;
+        let clock = harmony_core::testing::ManualClock::new();
+        let runtime = PluginExecutor::with_manual_clock(Arc::from(Vec::new()), clock.clone())?;
+        clock.advance(Duration::from_secs(3600));
+        let mut context = harmony_core::CallContext::default();
+        context
+            .caller
+            .insert(CallChain::root(clock.now() + LEFT, None));
+
+        let before = tokio::time::Instant::now();
+        let calls = VmCalls::of(&runtime.vm, &context)?;
+        let after = tokio::time::Instant::now();
+
+        let TransitionWait::Until(until) = calls.wait else {
+            bail!("a nested call's wait has an end");
+        };
+        assert!(
+            before + LEFT <= until && until <= after + LEFT,
+            "the wait ends {:?} from now",
+            until - before
+        );
+        Ok(())
+    }
+
     #[test]
     fn only_not_found_from_a_refresh_on_the_calling_vm_says_its_target_is_gone() {
         use crate::services::plugin_dispatch::RefreshTargetGone;

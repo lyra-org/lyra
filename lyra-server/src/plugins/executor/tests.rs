@@ -58,6 +58,94 @@ impl PluginExecutor {
         )
     }
 
+    /// An executor whose scheduler runs by `clock`, for a test that runs its rounds itself: it
+    /// has no thread, and what blocks on a real clock fails here.
+    pub(crate) fn with_manual_clock(
+        manifests: Arc<[PluginManifest]>,
+        clock: harmony_core::testing::ManualClock,
+    ) -> Result<Self> {
+        Self::with_runtime(
+            harmony_core::plugin::RuntimeBuilder::new(MemorySourceLoader::new(), manifests.clone())
+                .manual_clock(clock),
+            manifests,
+            default_server_info(),
+            default_auth_capabilities(),
+            stores::PluginModuleStores::empty(),
+            Vec::new(),
+        )
+    }
+
+    pub(super) fn drive_callback<T>(
+        &self,
+        start: impl FnOnce(tokio::sync::oneshot::Sender<Result<T>>, tokio::sync::OwnedSemaphorePermit),
+    ) -> Result<T> {
+        let (reply, mut result) = tokio::sync::oneshot::channel();
+        let permit = std::sync::Arc::new(tokio::sync::Semaphore::new(1)).try_acquire_owned()?;
+        start(reply, permit);
+        self.run_until("the callback is answered", || match result.try_recv() {
+            Ok(result) => Some(result),
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                Some(Err(anyhow::anyhow!("callback dropped response")))
+            }
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => None,
+        })?
+    }
+
+    /// Serves as the executor thread does, in rounds with a sleep in between that only a wake or
+    /// something due ends, until `done` returns a value. Fails if that takes a wake that never
+    /// comes: a sleep that lasts to the watchdog is the failure, and no round follows it to find
+    /// what the missing wake left ready.
+    pub(super) fn run_until<T>(&self, what: &str, done: impl FnMut() -> Option<T>) -> Result<T> {
+        self.run_until_within(Duration::from_secs(60), what, done)
+    }
+
+    /// [`Self::run_until`] with `watchdog` as the longest sleep that isn't yet a failure.
+    pub(super) fn run_until_within<T>(
+        &self,
+        watchdog: Duration,
+        what: &str,
+        mut done: impl FnMut() -> Option<T>,
+    ) -> Result<T> {
+        let scheduler = self.vm.data().get::<LocalScheduler>()?;
+        let give_up = std::time::Instant::now() + watchdog;
+        loop {
+            self.poll_background_tasks();
+            if let Some(value) = done() {
+                return Ok(value);
+            }
+            scheduler.wait_for_work(Some(give_up));
+            if std::time::Instant::now() >= give_up {
+                anyhow::bail!("nothing woke the executor before {what}");
+            }
+        }
+    }
+
+    /// Runs rounds for as long as one has something to do, which on a manual clock is until the
+    /// test moves the clock or wakes a task. Fails on work that never settles.
+    pub(super) fn run_until_idle(&self) -> Result<()> {
+        let scheduler = self.vm.data().get::<LocalScheduler>()?;
+        for _ in 0..1000 {
+            if scheduler.next_wake_delay() != Some(Duration::ZERO) {
+                return Ok(());
+            }
+            self.poll_background_tasks();
+        }
+        anyhow::bail!("the executor still had a round to run after 1000")
+    }
+
+    /// As [`Self::eval_plugin_source_with_call_context`] on a manual clock, for a chunk that
+    /// ends without waiting.
+    pub(crate) fn eval_source_while_ready(
+        &self,
+        source: impl Into<Arc<[u8]>>,
+        mut context: CallContext,
+    ) -> Result<Vec<luau::Value>> {
+        let thread = self.runtime.load_source_thread(source, &mut context)?;
+        let scheduler = self.vm.data().get::<LocalScheduler>()?;
+        scheduler.spawn_luau_thread(context, self.vm.clone(), thread.clone(), Vec::new());
+        harmony_core::testing::drive_thread_while_ready(&self.tokio_runtime, &scheduler, &thread)
+    }
+
     pub(crate) fn with_database(
         manifests: Arc<[PluginManifest]>,
         server_info: crate::plugins::server::ServerInfo,
@@ -1063,11 +1151,10 @@ fn awaited_background_similar_provider_result_survives_executor_polling() -> Res
         admin_call_context("init.luau")?,
     )?;
 
-    for _ in 0..50 {
-        runtime.poll_background_tasks();
-        runtime.poll_background_tasks();
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
+    let scheduler = runtime.vm.data().get::<LocalScheduler>()?;
+    runtime.run_until("the background task ends", || {
+        (!scheduler.has_pending()).then_some(())
+    })?;
     let values = runtime.eval_plugin_source(
         "demo",
         "check.luau",
@@ -1804,31 +1891,13 @@ fn plugin_executor_dispatches_registered_websocket_handler() -> Result<()> {
 
     runtime.start_websocket(request)?;
 
-    let mut outbound = None;
-    for _ in 0..100 {
-        runtime.poll_background_tasks();
-        match outbound_rx.try_recv() {
-            Ok(text) => {
-                outbound = Some(text);
-                break;
-            }
-            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            Err(error) => return Err(error).context("raw websocket outbound channel closed"),
-        }
-    }
-    assert_eq!(outbound.as_deref(), Some("abc:hello"));
-
-    for _ in 0..100 {
-        runtime.poll_background_tasks();
-        if runtime.websocket_tasks.borrow().is_empty() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    assert!(runtime.websocket_tasks.borrow().is_empty());
-    Ok(())
+    assert_eq!(
+        next_websocket_frame(&runtime, &mut outbound_rx)?,
+        "abc:hello"
+    );
+    runtime.run_until("the websocket's task is cleaned up", || {
+        runtime.websocket_tasks.borrow().is_empty().then_some(())
+    })
 }
 
 #[test]
@@ -1873,32 +1942,21 @@ fn foreground_dispatch_does_not_hide_finished_websocket_cleanup() -> Result<()> 
     let response = runtime.dispatch_api_handler(api_request(api_handler, "/ping"))?;
     assert_eq!(response.kind, ApiResponseKind::Empty);
 
-    for _ in 0..100 {
-        runtime.poll_background_tasks();
-        if runtime.websocket_tasks.borrow().is_empty() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    assert!(runtime.websocket_tasks.borrow().is_empty());
-    Ok(())
+    runtime.run_until("the websocket's task is cleaned up", || {
+        runtime.websocket_tasks.borrow().is_empty().then_some(())
+    })
 }
 
-async fn next_websocket_frame(
+/// The next frame a websocket handler of `runtime` sends, serving the runtime until it does.
+fn next_websocket_frame(
     runtime: &PluginExecutor,
     outbound: &mut tokio::sync::mpsc::Receiver<String>,
 ) -> Result<String> {
-    for _ in 0..200 {
-        runtime.poll_background_tasks();
-        match outbound.try_recv() {
-            Ok(text) => return Ok(text),
-            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-            Err(error) => return Err(error).context("websocket outbound channel closed"),
-        }
-    }
-    anyhow::bail!("no websocket frame arrived")
+    runtime.run_until("a websocket frame arrives", || match outbound.try_recv() {
+        Ok(text) => Some(Ok(text)),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty) => None,
+        Err(error) => Some(Err(error).context("websocket outbound channel closed")),
+    })?
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -1962,13 +2020,13 @@ async fn websocket_spawned_work_acts_as_the_verified_socket_principal() -> Resul
     runtime.start_websocket(request)?;
 
     inbound_tx.send("probe".to_string()).await?;
-    let allowed = next_websocket_frame(&runtime, &mut outbound_rx).await;
+    let allowed = next_websocket_frame(&runtime, &mut outbound_rx);
     {
         let mut db = crate::services::STATE.db.write().await;
         lyra_db::users::delete_user(&mut db, user_db_id)?;
     }
     inbound_tx.send("probe".to_string()).await?;
-    let stale = next_websocket_frame(&runtime, &mut outbound_rx).await;
+    let stale = next_websocket_frame(&runtime, &mut outbound_rx);
     state.request_close();
     crate::services::remote::registry::unregister(connection.connection_id).await;
 
@@ -2282,8 +2340,20 @@ fn plugin_executor_handle_discovers_and_executes_on_runtime_thread() -> Result<(
     Ok(())
 }
 
+/// Restarts `plugin_id` as the executor's command does, on a manual clock: its entrypoint must end
+/// without waiting.
+fn restart_while_ready(runtime: &PluginExecutor, plugin_id: &str) -> Result<()> {
+    let (reply, mut answer) = tokio::sync::oneshot::channel();
+    runtime.start_plugin_restart(plugin_id.to_string(), reply);
+    runtime.run_until_idle()?;
+    answer
+        .try_recv()
+        .context("the restarted entrypoint waits")?
+}
+
 #[test]
 fn plugin_executor_restart_reloads_plugin_sources_from_disk() -> Result<()> {
+    const DELAY: Duration = Duration::from_millis(50);
     let init = r#"
         local task = require("@harmony/task")
         local answer = require('./lib').answer
@@ -2297,41 +2367,57 @@ fn plugin_executor_restart_reloads_plugin_sources_from_disk() -> Result<()> {
         |answer: &str| plugin.write("lib.luau", format!("return {{ answer = {answer} }}"));
     write_lib("1")?;
 
-    let (runtime, errors) =
-        PluginExecutor::discover_from_plugins_dir(plugin.plugins_dir(), default_server_info())?;
-    assert!(errors.is_empty(), "{errors:?}");
+    let clock = harmony_core::testing::ManualClock::new();
+    let discovered = vm::DiscoveredPlugins::in_dir(plugin.plugins_dir())?;
+    assert!(discovered.errors.is_empty(), "{:?}", discovered.errors);
+    let runtime = PluginExecutor::with_runtime(
+        discovered.builder.manual_clock(clock.clone()),
+        discovered.manifests,
+        default_server_info(),
+        default_auth_capabilities(),
+        stores::PluginModuleStores::empty(),
+        Vec::new(),
+    )?;
+    let scheduler = runtime.vm.data().get::<LocalScheduler>()?;
     let read = |global: &'static str| {
-        runtime.eval_plugin_source(
-            "demo",
-            "check.luau",
+        runtime.eval_source_while_ready(
             format!("return {global}").into_bytes(),
+            CallContext {
+                origin: plugin_origin("demo", "check.luau"),
+                ..CallContext::default()
+            },
         )
     };
 
-    runtime.exec_plugin("demo")?;
+    restart_while_ready(&runtime, "demo")?;
     assert_eq!(
         read("restart_reload_output")?,
         vec![luau::Value::Number(1.0)]
     );
+    assert_eq!(
+        scheduler.next_wake_delay(),
+        Some(DELAY),
+        "the first run's delayed task waits"
+    );
 
     write_lib("2")?;
     runtime.verify_plugin_manifest("demo")?;
-    runtime.restart_plugin("demo")?;
+    restart_while_ready(&runtime, "demo")?;
     assert_eq!(
         read("restart_reload_output")?,
         vec![luau::Value::Number(2.0)]
     );
+    assert_eq!(read("delayed_runs")?, vec![luau::Value::Nil]);
+    assert_eq!(scheduler.next_wake_delay(), Some(DELAY));
 
-    let deadline = std::time::Instant::now() + Duration::from_millis(200);
-    while std::time::Instant::now() < deadline {
-        runtime.poll_background_tasks();
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    clock.advance(DELAY);
+    runtime.run_until_idle()?;
     assert_eq!(
         read("delayed_runs")?,
         vec![luau::Value::String(b"2".to_vec())],
         "the previous run's delayed task never fires"
     );
+    assert_eq!(scheduler.next_wake_delay(), None);
     Ok(())
 }
 
@@ -2619,8 +2705,9 @@ fn plugin_executor_handle_shutdown_stops_lua_and_the_executor_thread() -> Result
     .context("registered websocket handler")?;
     let (request, _inbound_tx, mut outbound_rx) = websocket_request(handler, "/socket");
     futures::executor::block_on(runtime.start_websocket(request))?;
-    std::thread::sleep(Duration::from_millis(50));
-    assert!(ticks.load(std::sync::atomic::Ordering::SeqCst) > 0);
+    until("the plugin's task ticks", || {
+        ticks.load(std::sync::atomic::Ordering::SeqCst) > 0
+    })?;
     assert!(matches!(
         outbound_rx.try_recv(),
         Err(tokio::sync::mpsc::error::TryRecvError::Empty)
@@ -2628,9 +2715,7 @@ fn plugin_executor_handle_shutdown_stops_lua_and_the_executor_thread() -> Result
 
     let stale = runtime.clone();
     futures::executor::block_on(runtime.shutdown())?;
-    let stopped_at = ticks.load(std::sync::atomic::Ordering::SeqCst);
-    std::thread::sleep(Duration::from_millis(50));
-    assert_eq!(ticks.load(std::sync::atomic::Ordering::SeqCst), stopped_at);
+    // Nothing is left to tick: the counter's only other holder was the VM's native callback.
     assert_eq!(
         std::sync::Arc::strong_count(&ticks),
         1,
@@ -2650,31 +2735,90 @@ fn plugin_executor_handle_shutdown_stops_lua_and_the_executor_thread() -> Result
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn cancelling_entrypoints_ends_a_restart_whose_entrypoint_waits() -> Result<()> {
-    let plugin = temp_plugin("demo", &["harmony.task"], "return nil")?;
+/// Returns once `reached`, which another thread brings about. Nothing is timed by this: it only
+/// keeps a test from waiting for good on what never comes.
+fn until(what: &str, reached: impl Fn() -> bool) -> Result<()> {
+    let give_up = std::time::Instant::now() + Duration::from_secs(60);
+    while !reached() {
+        anyhow::ensure!(std::time::Instant::now() < give_up, "never saw {what}");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    Ok(())
+}
+
+/// What an entrypoint that calls `wait()` of [`entrypoint_gate`]'s module reports and waits for.
+struct EntrypointGate {
+    reached: Arc<std::sync::atomic::AtomicUsize>,
+    release: Arc<tokio::sync::Notify>,
+}
+
+impl EntrypointGate {
+    /// How many entrypoints have reached their wait.
+    fn reached(&self) -> usize {
+        self.reached.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+/// A module whose `wait()` waits until released. Overrides replace a module, so it stands in
+/// for `@harmony/crypt`, which these plugins do not otherwise use.
+fn entrypoint_gate() -> (ModuleSpec, EntrypointGate) {
+    let gate = EntrypointGate {
+        reached: Arc::default(),
+        release: Arc::default(),
+    };
+    let (reached, release) = (gate.reached.clone(), gate.release.clone());
+    let module = ModuleSpec::new("harmony/crypt")
+        .function(
+            harmony_core::FunctionSpec::new("wait").call_async(Arc::new(move |_frame| {
+                reached.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let release = release.clone();
+                Ok(luau::ScheduledFuture::new(async move {
+                    release.notified().await;
+                    Ok(())
+                }))
+            })),
+        )
+        .install(|_| Ok(harmony_core::ModuleExport::new(())));
+    (module, gate)
+}
+
+/// An executor on its own thread running `demo`, whose entrypoint returns at once until it is
+/// rewritten.
+fn gated_executor() -> Result<(TempPlugin, PluginExecutorHandle, EntrypointGate)> {
+    let plugin = temp_plugin("demo", &["harmony.crypt"], "return nil")?;
+    let (module, gate) = entrypoint_gate();
     let (runtime, errors) = PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
         plugin.plugins_dir(),
         default_server_info(),
         default_auth_capabilities(),
         lyra_db::DbAsync::new(lyra_db::test_db::new_test_db()?),
-        Vec::new(),
+        vec![module],
         None,
     )?;
     assert!(errors.is_empty(), "{errors:?}");
+    Ok((plugin, runtime, gate))
+}
+
+const WAITING_ENTRYPOINT: &str = r#"require("@harmony/crypt").wait()"#;
+
+/// On the real clock and the real wait: the entrypoint waits for good and the executor is asleep,
+/// so only the cancellation's wake ends the restart.
+#[tokio::test(flavor = "multi_thread")]
+async fn cancelling_entrypoints_ends_a_restart_whose_entrypoint_waits() -> Result<()> {
+    let (plugin, runtime, gate) = gated_executor()?;
     runtime.exec_all().await?;
 
-    plugin.write("init.luau", r#"require("@harmony/task").wait(3600)"#)?;
+    plugin.write("init.luau", WAITING_ENTRYPOINT)?;
     let restart = tokio::spawn({
         let runtime = runtime.clone();
         async move { runtime.restart_plugin("demo").await }
     });
-    // The entrypoint is waiting, and the executor sleeps until its wait ends.
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    until("the entrypoint wait", || gate.reached() == 1)?;
+    until("the executor sleep", || runtime.is_asleep())?;
     assert!(!restart.is_finished());
 
     runtime.cancel_entrypoints();
-    let error = tokio::time::timeout(Duration::from_secs(5), restart)
+    let error = tokio::time::timeout(Duration::from_secs(60), restart)
         .await??
         .expect_err("a cancelled entrypoint fails its restart");
     assert!(format!("{error:#}").contains("cancelled"), "{error:#}");
@@ -2683,24 +2827,15 @@ async fn cancelling_entrypoints_ends_a_restart_whose_entrypoint_waits() -> Resul
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_restart_is_refused_only_while_another_runs() -> Result<()> {
-    let plugin = temp_plugin("demo", &["harmony.task"], "return nil")?;
-    let (runtime, errors) = PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
-        plugin.plugins_dir(),
-        default_server_info(),
-        default_auth_capabilities(),
-        lyra_db::DbAsync::new(lyra_db::test_db::new_test_db()?),
-        Vec::new(),
-        None,
-    )?;
-    assert!(errors.is_empty(), "{errors:?}");
+    let (plugin, runtime, gate) = gated_executor()?;
     runtime.exec_all().await?;
 
-    plugin.write("init.luau", r#"require("@harmony/task").wait(0.5)"#)?;
+    plugin.write("init.luau", WAITING_ENTRYPOINT)?;
     let restart = tokio::spawn({
         let runtime = runtime.clone();
         async move { runtime.restart_plugin("demo").await }
     });
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    until("the entrypoint wait", || gate.reached() == 1)?;
     let error = runtime
         .restart_plugin("demo")
         .await
@@ -2709,11 +2844,14 @@ async fn a_restart_is_refused_only_while_another_runs() -> Result<()> {
         format!("{error:#}").contains("already running"),
         "{error:#}"
     );
+    assert_eq!(gate.reached(), 1, "the refused restart ran the entrypoint");
 
-    // The entrypoint's wait ending is all that wakes the executor to answer.
-    tokio::time::timeout(Duration::from_secs(5), restart).await???;
+    // The entrypoint's wait ending is all that wakes the sleeping executor to answer.
+    until("the executor sleep", || runtime.is_asleep())?;
+    gate.release.notify_one();
+    tokio::time::timeout(Duration::from_secs(60), restart).await???;
     plugin.write("init.luau", "return nil")?;
-    tokio::time::timeout(Duration::from_secs(5), runtime.restart_plugin("demo")).await??;
+    tokio::time::timeout(Duration::from_secs(60), runtime.restart_plugin("demo")).await??;
     Ok(())
 }
 
@@ -3382,6 +3520,23 @@ async fn nested_calls_wait_by_their_chains_deadline() -> Result<()> {
             .is_err(),
         "a task with no handler in its chain has the interactive budget"
     );
+    Ok(())
+}
+
+/// What is waited for comes about with nothing waking the executor, as when a wake goes missing:
+/// the sleep runs into the watchdog, and no round or check that would find it done may follow.
+#[test]
+fn a_missed_wake_fails_a_served_wait_at_its_watchdog() -> Result<()> {
+    let runtime = PluginExecutor::with_manifests(Arc::from(Vec::new()))?;
+    let mut asked = 0;
+
+    let error = runtime
+        .run_until_within(Duration::from_millis(50), "the second ask", || {
+            asked += 1;
+            (asked > 1).then_some(())
+        })
+        .expect_err("the watchdog's own round rescued the missed wake");
+    assert!(error.to_string().contains("nothing woke"), "{error:#}");
     Ok(())
 }
 

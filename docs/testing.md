@@ -44,6 +44,38 @@ Scenarios replay their stored traces offline. `--discover` runs them against the
 and stores any new trace, `--prune` removes traces and responses no scenario uses, and `--record`
 writes what a passing scenario captured into its `expect` section.
 
+## Timed work
+
+A Rust test of what the plugin scheduler times is one of three kinds, by what it asserts. See
+[the Harmony reference](reference/harmony.md#time) for the clock.
+
+| It asserts | It runs on |
+|---|---|
+| What happens before, at or after a deadline or a delay | A manual clock, with the test running each round |
+| That one thing happens before another | A gate or an acknowledgement, and no clock |
+| That something wakes a sleeping scheduler or executor | The real clock and the real wait, under a watchdog |
+
+- **Deadline policy.** Build the scheduler, runtime or executor on a
+  `harmony_core::testing::ManualClock` (`PluginExecutor::with_manual_clock` in the server's tests)
+  and make every deadline from that clock. Assert that the work is scheduled, advance the clock,
+  run rounds, then assert. Run them until none has anything left to do, while
+  `next_wake_delay` is zero (`run_until_idle` on the server's executor), not a guessed number
+  of times, and one at a time only to assert what a single round does. Nothing sleeps, and
+  nothing may block: run setup code with `drive_thread_while_ready`. A deadline is the first
+  instant that is too late, so test just before it and at it.
+- **Ordering.** Don't sleep until something has probably happened. Wait for a signal the code
+  under test sends, such as a channel or a counter a test module's function bumps, or run the
+  phase from the test.
+- **Wake coverage.** A test that polls by hand can't see a missed wake, so these keep the real
+  wait. Send the wake once `SchedulerWake::owner_is_waiting` holds
+  (`PluginExecutorHandle::is_asleep` for an executor thread): a signal sent just before the wait
+  proves order, not sleep. Bound the test with a watchdog of a minute or so, which a missed wake
+  runs into, and never with how fast it should be.
+
+Real time also stays for what waits in Tokio, which doesn't follow the manual clock, such as a
+nested call's wait for a transition or a drain's limit; for Luau's resume budgets and interrupts;
+and for `lyra-harmony-test`'s Luau tests.
+
 ## Luau fixtures
 
 A `<test>.fixture.toml` beside a Luau test seeds a fresh database before the test runs. The test

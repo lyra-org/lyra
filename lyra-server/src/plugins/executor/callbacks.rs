@@ -285,28 +285,6 @@ impl CallbackReply {
 }
 
 impl PluginExecutor {
-    #[cfg(test)]
-    pub(super) fn drive_callback<T>(
-        &self,
-        start: impl FnOnce(tokio::sync::oneshot::Sender<Result<T>>, tokio::sync::OwnedSemaphorePermit),
-    ) -> Result<T> {
-        let (reply, mut result) = tokio::sync::oneshot::channel();
-        let permit = std::sync::Arc::new(tokio::sync::Semaphore::new(1)).try_acquire_owned()?;
-        start(reply, permit);
-        loop {
-            self.poll_background_tasks();
-            match result.try_recv() {
-                Ok(result) => return result,
-                Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
-                    bail!("callback dropped response")
-                }
-                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {
-                    std::thread::sleep(Duration::from_millis(1));
-                }
-            }
-        }
-    }
-
     /// Schedules the handler `prepare` makes and a task that watches it: the task waits for the
     /// handler to end, its caller to leave or `deadline`, by [`super::now`], to pass, cancels a
     /// handler that hasn't ended, and replies. `prepare` gets what is left until the deadline.
