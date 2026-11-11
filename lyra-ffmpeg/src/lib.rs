@@ -498,4 +498,25 @@ mod tests {
         decode_pcm(&asset("layout-change.aac"), 11_025, 1)
             .expect("a stream changing its channel count decodes");
     }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
+    fn refuses_input_below_the_minimum_sample_rate() {
+        let target =
+            std::env::temp_dir().join(format!("lyra-ffmpeg-1hz-{}.flac", std::process::id()));
+        let error = transcode(
+            &asset("1hz.aac"),
+            Output::new(&target)
+                .audio_format(AudioFormat::Flac)
+                .codec(AudioCodec::Flac)
+                .sample_rate_hz(96_000),
+            None,
+        )
+        .expect_err("a 1 Hz input is refused");
+        let _ = std::fs::remove_file(target);
+        assert!(
+            matches!(error, Error::UnsupportedInputSampleRate(1)),
+            "{error}"
+        );
+    }
 }

@@ -50,6 +50,9 @@ use crate::output::{
 
 static FFMPEG_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
+/// Well below any real format's rate, the lowest in use being 5512 Hz. A lower declared rate lets a
+/// tiny input expand into gigabytes of resampled output.
+const MIN_INPUT_SAMPLE_RATE: i32 = 1_000;
 const AVERROR_INPUT_CHANGED: i32 = -0x636e6701;
 const AVERROR_OUTPUT_CHANGED: i32 = -0x636e6702;
 
@@ -1112,6 +1115,9 @@ impl Resampler {
     /// Maps `input`'s format onto `output`'s, discarding any samples still buffered.
     unsafe fn configure(&self, output: *const AVFrame, input: *const AVFrame) -> Result<()> {
         unsafe {
+            if (*input).sample_rate < MIN_INPUT_SAMPLE_RATE {
+                return Err(Error::UnsupportedInputSampleRate((*input).sample_rate));
+            }
             let ret = swr_config_frame(self.as_mut_ptr(), output, input);
             if ret < 0 {
                 return Err(ffmpeg_operation_error("configure resampler", ret));

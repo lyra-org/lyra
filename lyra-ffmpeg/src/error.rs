@@ -55,6 +55,8 @@ pub enum Error {
     SeekCallback(String),
     #[error("seek callback panicked")]
     SeekCallbackPanic,
+    #[error("unsupported input sample rate: {0} Hz")]
+    UnsupportedInputSampleRate(i32),
     #[error("no audio stream found")]
     NoAudioStream,
     #[error("no streams to process")]
