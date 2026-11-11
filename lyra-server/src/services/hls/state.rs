@@ -3,10 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use argon2::password_hash::rand_core::{
-    OsRng,
-    RngCore,
-};
 use base64::{
     Engine,
     alphabet,
@@ -18,6 +14,11 @@ use base64::{
 use lyra_ffmpeg::{
     FfmpegContext,
     FfmpegHandle,
+};
+use rand::{
+    Rng,
+    rand_core::UnwrapErr,
+    rngs::SysRng,
 };
 use std::{
     collections::{
@@ -124,7 +125,7 @@ async fn release_permit_when_stopped(
 
 pub(crate) fn generate_hls_session_id() -> String {
     let mut bytes = [0u8; 16];
-    OsRng.fill_bytes(&mut bytes);
+    UnwrapErr(SysRng).fill_bytes(&mut bytes);
 
     let base = GeneralPurpose::new(&alphabet::URL_SAFE, general_purpose::NO_PAD);
     base.encode(bytes)

@@ -9,9 +9,10 @@ use std::{
 };
 
 use agdb::DbId;
-use argon2::password_hash::rand_core::{
-    OsRng,
-    RngCore,
+use rand::{
+    Rng,
+    rand_core::UnwrapErr,
+    rngs::SysRng,
 };
 
 use crate::{
@@ -38,7 +39,7 @@ pub(crate) mod socket_tickets;
 
 pub(crate) fn random_hex_secret<const BYTES: usize>() -> String {
     let mut bytes = [0u8; BYTES];
-    OsRng.fill_bytes(&mut bytes);
+    UnwrapErr(SysRng).fill_bytes(&mut bytes);
 
     let mut secret = String::with_capacity(BYTES * 2);
     for byte in bytes {

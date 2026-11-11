@@ -5,9 +5,10 @@
 
 //! Codes a person reads off one screen and types into another.
 
-use argon2::password_hash::rand_core::{
-    OsRng,
-    RngCore,
+use rand::{
+    Rng,
+    rand_core::UnwrapErr,
+    rngs::SysRng,
 };
 
 /// A-Z without I, L and O, which read as digits or as each other.
@@ -26,7 +27,7 @@ fn sample_below(bound: u32, mut next: impl FnMut() -> u32) -> u32 {
 }
 
 fn random_below(bound: u32) -> u32 {
-    sample_below(bound, || OsRng.next_u32())
+    sample_below(bound, || UnwrapErr(SysRng).next_u32())
 }
 
 /// `length` of [`LETTERS`], each drawn evenly.

@@ -16,13 +16,11 @@ use argon2::{
     PasswordHash,
     PasswordHasher,
     PasswordVerifier,
-    password_hash::{
-        SaltString,
-        rand_core::{
-            OsRng,
-            RngCore,
-        },
-    },
+};
+use rand::{
+    Rng,
+    rand_core::UnwrapErr,
+    rngs::SysRng,
 };
 use tokio::sync::{
     OnceCell,
@@ -98,16 +96,15 @@ pub(crate) async fn match_nothing(password: &str) -> anyhow::Result<()> {
 pub(crate) async fn unusable() -> anyhow::Result<String> {
     run(|| {
         let mut secret = [0_u8; 32];
-        OsRng.fill_bytes(&mut secret);
+        UnwrapErr(SysRng).fill_bytes(&mut secret);
         hash_blocking(&secret)
     })
     .await
 }
 
 fn hash_blocking(password: &[u8]) -> anyhow::Result<String> {
-    let salt = SaltString::generate(&mut OsRng);
     Ok(Argon2::default()
-        .hash_password(password, &salt)
+        .hash_password(password)
         .map_err(|error| anyhow::anyhow!("password hashing failed: {error}"))?
         .to_string())
 }

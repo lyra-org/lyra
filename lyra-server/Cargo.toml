@@ -32,7 +32,7 @@ harmony-task = { path = "../harmony-task" }
 harmony-net = { path = "../harmony-net" }
 agdb = { version = "0.16.2", features = ["serde"] }
 anyhow = { workspace = true }
-argon2 = { version = "0.5", features = ["std", "password-hash"] }
+argon2 = "0.6"
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio", "macros", "tracing", "ws"] }
 hyper = { version = "1.8", default-features = false, features = ["http1", "server"] }
 hyper-util = { version = "0.1", default-features = false, features = ["service", "tokio"] }
