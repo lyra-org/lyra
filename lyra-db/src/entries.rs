@@ -715,7 +715,7 @@ pub fn is_protected(path: &Path, protected: &[PathBuf]) -> bool {
         .any(|protected| path.starts_with(protected) || protected.starts_with(path))
 }
 
-/// The album policy [`mark_missing`] defers to: given the entries a sync no longer finds where
+/// The album policy [`mark_missing`] and [`unsync_left_by_moves`] defer to: given the entries a sync no longer finds where
 /// they were and those it does find, picks the found ones that shared an album with the former,
 /// which lose their sync so the next one regroups them. The cue sheet rule needs no policy and
 /// stays in [`crate::cue::linked_entries`].
@@ -782,46 +782,28 @@ pub fn mark_missing(
         .chain(moved_from)
         .cloned()
         .collect::<Vec<_>>();
-    let mut unsynced = left_behind(&gone, &present)
-        .into_iter()
-        .collect::<HashSet<_>>();
-    let ids = |entries: &[Entry]| {
-        entries
-            .iter()
-            .map(|entry| {
-                entry
-                    .db_id
-                    .ok_or_else(|| anyhow::anyhow!("entry missing db_id"))
-            })
-            .collect::<anyhow::Result<Vec<_>>>()
-    };
-    let missing_ids = ids(&newly_missing)?
+    let left = left_behind(&gone, &present);
+    let missing_ids = entry_ids(&newly_missing)?
         .into_iter()
         .filter(|entry_id| !removed_dirs.contains(entry_id))
         .collect::<Vec<_>>();
-    let revived_ids = ids(&revived)?;
-    let moved_ids = ids(moved_from)?;
+    let revived_ids = entry_ids(&revived)?;
+    let moved_ids = entry_ids(moved_from)?;
     let now = super::users::now_ms().unsigned_abs();
 
     db.transaction_mut(|t| -> anyhow::Result<MarkResult> {
-        for &entry_id in missing_ids.iter().chain(&revived_ids).chain(&moved_ids) {
-            unsynced.extend(crate::cue::linked_entries(t, entry_id)?);
-        }
-        for entry_id in &missing_ids {
-            unsynced.remove(entry_id);
-        }
-        for entry_id in &removed_dirs {
-            unsynced.remove(entry_id);
-        }
-        if !unsynced.is_empty() {
-            let unsynced = unsynced.into_iter().collect::<Vec<_>>();
-            t.exec_mut(
-                QueryBuilder::remove()
-                    .values(["synced_at_ms"])
-                    .ids(&unsynced)
-                    .query(),
-            )?;
-        }
+        let changed = missing_ids
+            .iter()
+            .chain(&revived_ids)
+            .chain(&moved_ids)
+            .copied()
+            .collect::<Vec<_>>();
+        let kept = missing_ids
+            .iter()
+            .chain(&removed_dirs)
+            .copied()
+            .collect::<Vec<_>>();
+        unsync(t, left, &changed, &kept)?;
         set_missing(t, &missing_ids, now)?;
         clear_missing(t, &revived_ids)?;
         if !removed_dirs.is_empty() {
@@ -833,6 +815,68 @@ pub fn mark_missing(
             removed_dirs: removed_dirs.len(),
         })
     })
+}
+
+/// Unsyncs the present entries `left_behind` picks given `moved_from`, the entries a sync is about
+/// to move, at their old paths, and those sharing a cue sheet with one, before any of the moves is
+/// stored: once an entry is stored at its new path, no later sync sees it move. A sync that stops
+/// before storing some of them leaves those unsynced, which the next one, seeing the moves again,
+/// would do anyway.
+pub fn unsync_left_by_moves(
+    db: &mut DbAny,
+    library: &Library,
+    observed_paths: &HashSet<PathBuf>,
+    moved_from: &[Entry],
+    left_behind: impl LeftBehind,
+) -> anyhow::Result<()> {
+    let library_db_id = library
+        .db_id
+        .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
+    let present = load_existing(db, library_db_id)?
+        .into_iter()
+        .filter(|entry| observed_paths.contains(&entry.full_path))
+        .collect::<Vec<_>>();
+    let left = left_behind(moved_from, &present);
+    let moved_ids = entry_ids(moved_from)?;
+    db.transaction_mut(|t| unsync(t, left, &moved_ids, &[]))
+}
+
+fn entry_ids(entries: &[Entry]) -> anyhow::Result<Vec<DbId>> {
+    entries
+        .iter()
+        .map(|entry| {
+            entry
+                .db_id
+                .ok_or_else(|| anyhow::anyhow!("entry missing db_id"))
+        })
+        .collect()
+}
+
+/// Removes the sync of the `left` entries and of those sharing a cue sheet with a `changed` one,
+/// except the `kept` ones.
+fn unsync(
+    t: &mut impl super::DbAccess,
+    left: Vec<DbId>,
+    changed: &[DbId],
+    kept: &[DbId],
+) -> anyhow::Result<()> {
+    let mut unsynced = left.into_iter().collect::<HashSet<_>>();
+    for &entry_id in changed {
+        unsynced.extend(crate::cue::linked_entries(t, entry_id)?);
+    }
+    for entry_id in kept {
+        unsynced.remove(entry_id);
+    }
+    if !unsynced.is_empty() {
+        let unsynced = unsynced.into_iter().collect::<Vec<_>>();
+        t.exec_mut(
+            QueryBuilder::remove()
+                .values(["synced_at_ms"])
+                .ids(&unsynced)
+                .query(),
+        )?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
