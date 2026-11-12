@@ -1418,13 +1418,18 @@ pub fn async_luau_callback(callback: luau::NativeAsyncFn) -> luau::NativeFn {
         let thread = frame.thread.clone();
         let context = frame.context.clone();
         let scheduler = frame.vm.data().get::<crate::LocalScheduler>()?;
-        // Refused before the thread parks: nothing would resume it.
+        let mut returns = frame.returns.clone();
+        // Refused before the thread parks: nothing would resume it. A cancelled thread just
+        // yields, as it would to wait, and is closed there.
         if scheduler.is_group_cancelled(context.task_group) {
+            if thread.is_cancelled() && thread.is_yieldable() {
+                returns.request_yield();
+                return Ok(());
+            }
             return Err(luau::Error::Runtime(
                 "this call acts for a plugin run that has ended".to_string(),
             ));
         }
-        let mut returns = frame.returns.clone();
         let site = frame.site.clone();
         let mut future = callback(frame.into_async())?;
         if let Some(delay) = future.take_start_delay() {

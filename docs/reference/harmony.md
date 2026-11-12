@@ -106,10 +106,24 @@ status. `clippy.toml` disallows those functions everywhere else.
 - The scheduler is borrowed while it polls. What a task asks of it then happens once it is free,
   after the watchers and again after the other tasks: a scheduled thread or future starts, and a
   cancelled thread or group is dropped. Neither runs further in that poll, and
-  `cancel_luau_thread_and_settle` returns a future for the moment the thread is gone. Cancelling
-  a thread doesn't close it: Luau code holding the coroutine can still resume it. A task's future
-  must not hold the scheduler's `Rc` across an await, which would keep the scheduler alive
+  `cancel_luau_thread_and_settle` returns a future for the moment the thread is gone. A task's
+  future must not hold the scheduler's `Rc` across an await, which would keep the scheduler alive
   through itself.
+- Cancelling a thread, or a group, closes each thread as `coroutine.close` does, at once and
+  before its work is dropped, also while the scheduler polls. A thread that isn't running is
+  `dead` from then on: the Luau code holding it can't resume it, and neither does a wait that
+  cancelled the thread it was about to wake. That covers a thread that hasn't started, and a
+  coroutine cancelled in a host wait, which only Luau code resumed before. A thread that ended,
+  or yielded back to the Luau code that resumed it, isn't the scheduler's to close. Cancelling
+  reaches the thread's own task only: a coroutine it started that waits on a call of its own
+  goes on, until its group is cancelled.
+- A cancelled thread never suspends again. One that is suspended, or hasn't started, is closed
+  on the spot, as above. One that runs, or has resumed another, whether the scheduler or Luau
+  code resumed it, goes on to where it next yields and is closed there, as `Thread::cancel` has
+  it. A call that must wait there, or that the run of a cancelled group refuses, yields and
+  schedules nothing. The scheduler's own thread is closed before any other task runs, and its
+  task is cancelled. The threads a cancelled thread has resumed are not cancelled with it, and
+  yield and wait as before.
 
 ## Time
 

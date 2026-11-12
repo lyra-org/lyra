@@ -342,7 +342,7 @@ mod tests {
         let vm = luau::Vm::new()?;
         let scheduler = LocalScheduler::with_manual_clock(crate::testing::ManualClock::new());
         let function = vm.load_chunk(&luau::Chunk::new(
-            Arc::<[u8]>::from(&b"return 42"[..]),
+            Arc::<[u8]>::from(&b"runs = (runs or 0) + 1 return 42"[..]),
             luau::ChunkOrigin::default(),
         ))?;
         let thread = vm.create_thread(&function)?;
@@ -356,7 +356,11 @@ mod tests {
         let error = drive_thread(&tokio_runtime, &scheduler, &thread, options(Duration::MAX))
             .expect_err("a manual clock can't be waited on");
         assert!(error.to_string().contains("manual clock"), "{error:#}");
-        assert!(!thread.is_started(), "the refused thread ran");
+        let runs = vm.eval(
+            Arc::<[u8]>::from(&b"return runs"[..]),
+            luau::ChunkOrigin::default(),
+        )?;
+        assert_eq!(runs, vec![luau::Value::Nil], "the refused thread ran");
         assert!(
             !scheduler.has_pending(),
             "the refused thread is still scheduled"

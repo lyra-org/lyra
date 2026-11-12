@@ -68,7 +68,7 @@ impl TaskModule {
         ))
     }
 
-    #[harmony(description = "Cancels a scheduled thread.")]
+    #[harmony(description = "Cancels a scheduled thread and closes it, as `coroutine.close` does.")]
     fn cancel(vm: &luau::Vm, thread: luau::Thread) -> luau::runtime::Result<()> {
         let scheduler = vm.data().get::<harmony_core::LocalScheduler>()?;
         scheduler.cancel_luau_thread(&thread);
