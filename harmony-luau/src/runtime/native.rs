@@ -150,7 +150,7 @@ fn push_results(
             .push_value(value)
             .map_err(|error| error.to_string())?;
     }
-    let count = returns.values.len() as c_int;
+    let count = results.top() - results.base();
     if returns.yield_requested && !results.is_yieldable() {
         return Err("attempt to yield from a non-yieldable Harmony callback".into());
     }

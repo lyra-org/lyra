@@ -5,6 +5,10 @@
 
 #![deny(unsafe_code)]
 #![deny(unsafe_op_in_unsafe_fn)]
+#![deny(clippy::undocumented_unsafe_blocks)]
+#![deny(clippy::multiple_unsafe_ops_per_block)]
+#![deny(clippy::cast_possible_truncation)]
+#![deny(clippy::cast_ptr_alignment)]
 
 use std::collections::{
     BTreeMap,

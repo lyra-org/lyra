@@ -103,7 +103,12 @@ impl Table {
     }
 }
 
-fn number_to_i64(value: f64) -> Option<i64> {
+/// `value` as an `i64`, if it is a whole number in its range.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "a whole number in `i64`'s range converts exactly"
+)]
+pub(crate) fn number_to_i64(value: f64) -> Option<i64> {
     if value.is_finite()
         && value.fract() == 0.0
         && value >= i64::MIN as f64

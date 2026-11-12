@@ -8,7 +8,6 @@
 //! reads stays where it is while the stack is borrowed.
 
 #![allow(unsafe_code)]
-#![deny(clippy::undocumented_unsafe_blocks)]
 
 use std::{
     any::{
@@ -66,6 +65,11 @@ use super::{
     },
 };
 
+/// `len` as the size of a new table, which fails as Luau does for a table too large for it.
+fn table_size(len: usize) -> Result<c_int> {
+    c_int::try_from(len).map_err(|_| Error::Runtime("table overflow".to_string()))
+}
+
 /// Whether Luau aligns a userdata's data for `T`: to 8 bytes, and to 16 for 16 bytes or more
 /// (`Udata`).
 const fn fits_userdata<T>() -> bool {
@@ -89,11 +93,11 @@ impl StackIndex {
     }
 
     pub(super) fn argument(index: usize) -> Self {
-        debug_assert!(
-            index < c_int::MAX as usize,
-            "Luau argument index must fit in c_int"
-        );
-        Self::absolute(index as c_int + 1)
+        let index = c_int::try_from(index)
+            .ok()
+            .and_then(|index| index.checked_add(1))
+            .expect("Luau argument index must fit in c_int");
+        Self::absolute(index)
     }
 }
 
@@ -265,12 +269,12 @@ impl<'a> Stack<'a> {
 
     fn push_owned_table(&mut self, table: &OwnedTable) -> Result<()> {
         self.create_table(
-            table.array.len() as c_int,
-            (table.fields.len() + table.entries.len()) as c_int,
+            table_size(table.array.len())?,
+            table_size(table.fields.len() + table.entries.len())?,
         )?;
-        for (index, value) in table.array.iter().enumerate() {
+        for (value, key) in table.array.iter().zip(1..) {
             self.push_value(value)?;
-            self.raw_set_index(StackIndex::relative(-2), index as c_int + 1)?;
+            self.raw_set_index(StackIndex::relative(-2), key)?;
         }
         for (key, value) in &table.fields {
             self.push_value(value)?;
@@ -290,30 +294,31 @@ impl<'a> Stack<'a> {
         callback: NativeFn,
     ) -> Result<()> {
         const { assert!(fits_userdata::<CallbackSlot>()) };
-        // SAFETY: a live state. The userdata holds `size_of::<CallbackSlot>()` bytes, aligned for
-        // it, which are written before anything reads them, and `drop_callback_slot` drops them.
-        unsafe {
-            let slot = gateway::new_userdata_dtor(
+        // SAFETY: a live state. `drop_callback_slot` drops the `CallbackSlot` written below.
+        let slot_data = unsafe {
+            gateway::new_userdata_dtor(
                 self.raw(),
                 mem::size_of::<CallbackSlot>(),
                 Some(drop_callback_slot),
             )?
-            .cast::<CallbackSlot>();
-            ptr::write(
-                slot,
-                CallbackSlot {
-                    vm: Rc::downgrade(&self.vm.inner),
-                    callback,
-                    site: CallSite {
-                        origin: options.origin.clone(),
-                        function_name: options.function_name.clone(),
-                    },
-                    capability: options.capability.clone(),
-                    task_group: options.task_group,
-                    argument_names: options.argument_names.clone(),
-                    use_thread_context_origin: options.use_thread_context_origin,
-                },
-            );
+        };
+        let slot = CallbackSlot {
+            vm: Rc::downgrade(&self.vm.inner),
+            callback,
+            site: CallSite {
+                origin: options.origin.clone(),
+                function_name: options.function_name.clone(),
+            },
+            capability: options.capability.clone(),
+            task_group: options.task_group,
+            argument_names: options.argument_names.clone(),
+            use_thread_context_origin: options.use_thread_context_origin,
+        };
+        // SAFETY: the userdata's `size_of::<CallbackSlot>()` bytes, aligned for it, which nothing
+        // reads before this.
+        unsafe { ptr::write(slot_data.cast::<CallbackSlot>(), slot) };
+        // SAFETY: a live state, with the slot on top as the closure's upvalue.
+        unsafe {
             gateway::push_cclosure(
                 self.raw(),
                 Some(native_callback),
@@ -340,12 +345,11 @@ impl<'a> Stack<'a> {
     {
         const { assert!(fits_userdata::<T>()) };
         let tag = self.vm.assign_userdata_tag::<T>()?;
-        // SAFETY: a live state. The userdata holds `size_of::<T>()` bytes, which Luau aligns for
-        // `T`, and they are written before anything reads them; the tag's destructor drops a `T`.
-        unsafe {
-            let data = gateway::new_userdata_tagged(self.raw(), mem::size_of::<T>(), tag.0)?;
-            ptr::write(data.cast::<T>(), value);
-        }
+        // SAFETY: a live state. The tag's destructor drops the `T` written below.
+        let data = unsafe { gateway::new_userdata_tagged(self.raw(), mem::size_of::<T>(), tag.0)? };
+        // SAFETY: the userdata's `size_of::<T>()` bytes, which Luau aligns for `T` and nothing reads
+        // before this.
+        unsafe { ptr::write(data.cast::<T>(), value) };
         Ok(tag)
     }
 
@@ -428,7 +432,7 @@ impl<'a> Stack<'a> {
         // SAFETY: the loader is on this stack, which keeps it alive, until the loader's stack is
         // dropped at the end of this function.
         let mut loader = unsafe { Stack::from_raw(self.vm, loader) };
-        loader.create_table(0, globals.len() as c_int)?;
+        loader.create_table(0, table_size(globals.len())?)?;
         for (name, value) in globals {
             loader.push_value(value)?;
             loader.raw_set_field(StackIndex::relative(-2), name.as_bytes())?;
@@ -931,13 +935,10 @@ pub(super) unsafe fn host_error_at<'a>(
     state: *mut sys::lua_State,
     index: c_int,
 ) -> Option<&'a HostError> {
-    // SAFETY: a live state and a value at `index`, as the caller guarantees. A userdata with the
-    // tag holds a `HostError`.
-    unsafe {
-        sys::lua_touserdatatagged(state, index, HOST_ERROR_TAG.0)
-            .cast::<HostError>()
-            .as_ref()
-    }
+    // SAFETY: a live state and a value at `index`, as the caller guarantees.
+    let data = unsafe { sys::lua_touserdatatagged(state, index, HOST_ERROR_TAG.0) };
+    // SAFETY: null, or the data of a userdata with the tag, which holds a `HostError`.
+    unsafe { data.cast::<HostError>().as_ref() }
 }
 
 /// The `CallbackSlot` of the native function running on `state`, which has no [`Stack`] before
@@ -947,18 +948,17 @@ pub(super) unsafe fn host_error_at<'a>(
 ///
 /// `state` is a live thread running a closure [`Stack::push_native_function`] made.
 pub(super) unsafe fn callback_slot<'a>(state: NonNull<sys::lua_State>) -> Option<&'a CallbackSlot> {
-    // SAFETY: a running closure's upvalue, as the caller guarantees. Only `CallbackSlot`s are
-    // userdata with a destructor of their own, which Luau tags `LUA_UTAG_LIMIT`; the slot lives
-    // while the closure runs.
-    unsafe {
+    // SAFETY: a running closure's upvalue, as the caller guarantees.
+    let data = unsafe {
         sys::lua_touserdatatagged(
             state.as_ptr(),
             sys::lua_upvalueindex(1),
             sys::LUA_UTAG_LIMIT,
         )
-        .cast::<CallbackSlot>()
-        .as_ref()
-    }
+    };
+    // SAFETY: null, or the data of a userdata with a destructor of its own, which Luau tags
+    // `LUA_UTAG_LIMIT` and only `CallbackSlot`s are; the slot lives while the closure runs.
+    unsafe { data.cast::<CallbackSlot>().as_ref() }
 }
 
 /// A shared borrow of the `T` a userdata holds.

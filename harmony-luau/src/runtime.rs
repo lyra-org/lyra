@@ -420,7 +420,7 @@ impl Vm {
         signal: Option<&InterruptSignal>,
     ) -> InterruptBudgetGuard {
         let deadline_millis = current_unix_millis()
-            .saturating_add(budget.as_millis().min(u128::from(u64::MAX)) as u64);
+            .saturating_add(u64::try_from(budget.as_millis()).unwrap_or(u64::MAX));
         let token = {
             let mut budgets = self.interrupt_budgets();
             budgets.next_token += 1;
@@ -972,7 +972,12 @@ impl Function {
         for arg in args {
             stack.push_value(arg)?;
         }
-        stack.pcall(args.len() as c_int)?;
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "the arguments are on the Luau stack, which holds fewer than `c_int::MAX` values"
+        )]
+        let count = args.len() as c_int;
+        stack.pcall(count)?;
         (stack.base() + 1..=stack.top())
             .map(|index| stack.read_value(StackIndex::absolute(index)))
             .collect()
@@ -1085,7 +1090,12 @@ impl Thread {
             // unstarted.
             stack.push_value(arg)?;
         }
-        let resumed = stack.resume(args.len() as c_int);
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "the arguments are on the Luau stack, which holds fewer than `c_int::MAX` values"
+        )]
+        let count = args.len() as c_int;
+        let resumed = stack.resume(count);
         self.finish_resume(stack, resumed)
     }
 
@@ -1940,19 +1950,11 @@ fn stack_type_name(type_id: i32) -> &'static str {
 }
 
 fn checked_i64_arg(name: Arc<str>, value: f64) -> Result<i64> {
-    if value.is_finite()
-        && value.fract() == 0.0
-        && value >= i64::MIN as f64
-        && value < 9_223_372_036_854_775_808.0
-    {
-        Ok(value as i64)
-    } else {
-        Err(Error::ArgumentType {
-            name,
-            expected: "integer",
-            actual: "number",
-        })
-    }
+    crate::table::number_to_i64(value).ok_or(Error::ArgumentType {
+        name,
+        expected: "integer",
+        actual: "number",
+    })
 }
 
 #[derive(Clone)]
@@ -2873,7 +2875,7 @@ pub const INTERRUPTED_ERROR: &str = "Luau execution interrupted";
 fn current_unix_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
         .unwrap_or(0)
 }
 
@@ -4952,7 +4954,10 @@ mod tests {
             ),
             (
                 "Table::set_integer",
-                Box::new(|_, i| table.set_integer(i as i32 + 1, Value::Boolean(true))),
+                Box::new(|_, i| {
+                    let key = i32::try_from(i + 1).expect("attempts fit in i32");
+                    table.set_integer(key, Value::Boolean(true))
+                }),
             ),
             (
                 "Table::set_key",

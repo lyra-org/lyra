@@ -46,10 +46,9 @@ status. `clippy.toml` disallows those functions everywhere else.
   other workspace crates but `lyra-ffmpeg` forbid it:
   - `gateway.rs`, above.
   - `stack.rs` owns access to Luau stacks, the registry and userdata. Its `Stack` checks the
-    indexes and value types it is given, so the handles and argument reading hold no `unsafe`,
-    and Clippy requires a `SAFETY:` comment on every `unsafe` block in it. Stacks on one thread
-    drop innermost first, and one dropped out of turn panics rather than pop what a later one
-    reads. A `Thread` gets its state only from a `Stack` holding the thread.
+    indexes and value types it is given, so the handles and argument reading hold no `unsafe`.
+    Stacks on one thread drop innermost first, and one dropped out of turn panics rather than
+    pop what a later one reads. A `Thread` gets its state only from a `Stack` holding the thread.
   - `state.rs` opens and closes the Luau state, holds the allocator and the hooks Luau calls on
     it (`userthread`, `postresume` and the interrupt), and compiles source.
   - `native.rs` is Luau's entry into native functions, `HostError.__tostring` and userdata
@@ -57,7 +56,9 @@ status. `clippy.toml` disallows those functions everywhere else.
 
   What has no `Vm` to make a `Stack` with works on the raw state: the state, its hooks and
   destructors, a native function's entry until its slot gives it the VM and its exit by raising
-  or yielding, `HostError.__tostring`, and the gateway reading a raised error.
+  or yielding, `HostError.__tostring`, and the gateway reading a raised error. Clippy requires
+  each `unsafe` block to hold one unsafe operation and a `SAFETY:` comment; the gateway's
+  comments build on the contract in its module documentation.
 
 ## Values
 
