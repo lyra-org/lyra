@@ -637,6 +637,7 @@ impl Vm {
     where
         T: 'static,
     {
+        const { assert!(fits_userdata::<T>()) };
         let tag = self.assign_userdata_tag::<T>()?;
         let guard = self.stack_guard();
         unsafe {
@@ -3717,6 +3718,12 @@ impl Drop for CompiledBytecode {
 
 /// Luau keeps 16-byte-aligned data at the start of its blocks (`lua_Page::data`, `LG`).
 const LUAU_ALIGN: usize = 16;
+
+/// Whether Luau aligns a userdata's data for `T`: to 8 bytes, and to 16 for 16 bytes or more
+/// (`Udata`).
+const fn fits_userdata<T>() -> bool {
+    mem::align_of::<T>() <= 8 || (mem::align_of::<T>() <= 16 && mem::size_of::<T>() >= 16)
+}
 
 unsafe extern "C-unwind" fn alloc(
     ud: *mut c_void,

@@ -60,6 +60,8 @@ status. `clippy.toml` disallows those functions everywhere else.
 - Each Rust type's userdata gets a Luau tag of its own, and `UserData::borrow` reads a userdata
   only as the type it holds. A host can't choose tags, and Luau code can't make userdata with a
   host's tag: `newproxy` tags its userdata outside their range.
+- Luau aligns userdata to 8 bytes, or 16 for userdata of 16 bytes or more, so `create_userdata`
+  rejects a type that needs more when it compiles.
 - `UserData::borrow` gives shared access only, so state that changes needs interior mutability.
   Bound userdata is `Clone`, and methods receive a clone.
 - Luau runs the value's `Drop` when it collects the userdata. A panic there aborts the process.
