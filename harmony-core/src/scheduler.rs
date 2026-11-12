@@ -166,8 +166,9 @@ impl LocalLuauTaskCompletion {
     }
 }
 
-/// The deadlines [`Sleep`]s wait for. Shared with [`LocalScheduler`], which hands them out while
-/// the scheduler is borrowed for polling.
+/// Every deadline the scheduler wakes something at: its delayed tasks' and its [`Sleep`]s'.
+/// Shared with [`LocalScheduler`], which hands out [`Sleep`]s while the scheduler is borrowed for
+/// polling.
 #[derive(Default)]
 struct Timers {
     clock: Clock,
@@ -175,13 +176,39 @@ struct Timers {
     waiting: RefCell<Vec<Timer>>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TimerId {
+    Sleep(u64),
+    Task(TaskId),
+}
+
 struct Timer {
-    id: u64,
+    id: TimerId,
     deadline: Instant,
     waker: Waker,
 }
 
 impl Timers {
+    /// Wakes `waker` at `deadline`, in place of what timer `id` woke when, if anything.
+    fn set(&self, id: TimerId, deadline: Instant, waker: &Waker) {
+        let mut waiting = self.waiting.borrow_mut();
+        match waiting.iter_mut().find(|timer| timer.id == id) {
+            Some(timer) => {
+                timer.deadline = deadline;
+                timer.waker.clone_from(waker);
+            }
+            None => waiting.push(Timer {
+                id,
+                deadline,
+                waker: waker.clone(),
+            }),
+        }
+    }
+
+    fn remove(&self, id: TimerId) {
+        self.waiting.borrow_mut().retain(|timer| timer.id != id);
+    }
+
     fn wake_due(&self, now: Instant) {
         let due = {
             let mut waiting = self.waiting.borrow_mut();
@@ -219,25 +246,15 @@ impl Future for Sleep {
         if self.timers.clock.now() >= self.deadline {
             return Poll::Ready(());
         }
-        let mut waiting = self.timers.waiting.borrow_mut();
-        match waiting.iter_mut().find(|timer| timer.id == self.id) {
-            Some(timer) => timer.waker.clone_from(cx.waker()),
-            None => waiting.push(Timer {
-                id: self.id,
-                deadline: self.deadline,
-                waker: cx.waker().clone(),
-            }),
-        }
+        self.timers
+            .set(TimerId::Sleep(self.id), self.deadline, cx.waker());
         Poll::Pending
     }
 }
 
 impl Drop for Sleep {
     fn drop(&mut self) {
-        self.timers
-            .waiting
-            .borrow_mut()
-            .retain(|timer| timer.id != self.id);
+        self.timers.remove(TimerId::Sleep(self.id));
     }
 }
 
@@ -364,7 +381,6 @@ pub struct Scheduler {
     ready: VecDeque<TaskId>,
     /// The ready tasks that watch others, which a poll runs first.
     ready_watchers: VecDeque<TaskId>,
-    sleeping: Vec<(Instant, TaskId)>,
     timers: Rc<Timers>,
     luau_resume_budget: Option<Duration>,
     wake_queue: Arc<WakeQueue>,
@@ -411,7 +427,6 @@ impl Scheduler {
             last_group_id: Rc::default(),
             ready: VecDeque::new(),
             ready_watchers: VecDeque::new(),
-            sleeping: Vec::new(),
             timers: Rc::new(Timers {
                 clock,
                 ..Timers::default()
@@ -631,7 +646,7 @@ impl Scheduler {
         task.output = None;
         task.wake_at = wake_at;
         if let Some(wake_at) = wake_at {
-            self.sleeping.push((wake_at, id));
+            self.wake_task_at(id, wake_at);
         } else {
             self.ready.push_back(id);
         }
@@ -697,7 +712,7 @@ impl Scheduler {
         if self.is_cancelled(group) {
             self.cancel(id);
         } else if let Some(wake_at) = wake_at {
-            self.sleeping.push((wake_at, id));
+            self.wake_task_at(id, wake_at);
         } else if watcher {
             self.ready_watchers.push_back(id);
         } else {
@@ -741,6 +756,7 @@ impl Scheduler {
         detach(&self.detached, &task.context, task.work.take());
         // Not closed: the thread starts again as another task.
         settle(&self.threads, id, task, TaskState::Cancelled);
+        self.timers.remove(TimerId::Task(id));
         Some(args)
     }
 
@@ -765,6 +781,7 @@ impl Scheduler {
                 self.timers.clock.now(),
             );
         }
+        self.timers.remove(TimerId::Task(id));
         true
     }
 
@@ -799,7 +816,15 @@ impl Scheduler {
     fn wake(&mut self, now: Instant) {
         self.timers.wake_due(now);
         self.drain_wake_queue();
-        self.wake_due(now);
+    }
+
+    /// Makes task `id` ready once the clock reaches `wake_at`.
+    fn wake_task_at(&self, id: TaskId, wake_at: Instant) {
+        self.timers.set(
+            TimerId::Task(id),
+            wake_at,
+            &TaskWaker::of(id, &self.wake_queue),
+        );
     }
 
     /// Polls the ready watchers, or the other ready tasks, once each.
@@ -837,10 +862,7 @@ impl Scheduler {
                 continue;
             };
 
-            let waker = Waker::from(Arc::new(TaskWaker {
-                id,
-                queue: self.wake_queue.clone(),
-            }));
+            let waker = TaskWaker::of(id, &self.wake_queue);
             let mut cx = Context::from_waker(&waker);
             let clock = &self.timers.clock;
             let interrupted_by = Cell::new(None);
@@ -929,18 +951,6 @@ impl Scheduler {
         }
     }
 
-    fn wake_due(&mut self, now: Instant) {
-        let mut pending = Vec::new();
-        for (wake_at, id) in self.sleeping.drain(..) {
-            if wake_at <= now {
-                self.ready.push_back(id);
-            } else {
-                pending.push((wake_at, id));
-            }
-        }
-        self.sleeping = pending;
-    }
-
     /// How long, by the scheduler's clock, until it has a task to poll. `None` when no task is
     /// ready or due.
     pub fn next_wake_delay(&self) -> Option<Duration> {
@@ -951,12 +961,7 @@ impl Scheduler {
             return Some(Duration::ZERO);
         }
 
-        let now = self.now();
-        self.sleeping
-            .iter()
-            .map(|(wake_at, _)| wake_at.saturating_duration_since(now))
-            .chain(self.timers.next_delay(now))
-            .min()
+        self.timers.next_delay(self.now())
     }
 
     /// Waits until a task is woken, [`SchedulerWake::wake`] is called, or `timeout` passes.
@@ -1044,7 +1049,7 @@ impl Scheduler {
         }
         self.ready.retain(|ready_id| *ready_id != id);
         self.ready_watchers.retain(|ready_id| *ready_id != id);
-        self.sleeping.retain(|(_, sleeping_id)| *sleeping_id != id);
+        self.timers.remove(TimerId::Task(id));
         true
     }
 
@@ -1266,6 +1271,15 @@ impl WakeQueue {
 struct TaskWaker {
     id: TaskId,
     queue: Arc<WakeQueue>,
+}
+
+impl TaskWaker {
+    fn of(id: TaskId, queue: &Arc<WakeQueue>) -> Waker {
+        Waker::from(Arc::new(Self {
+            id,
+            queue: queue.clone(),
+        }))
+    }
 }
 
 impl Wake for TaskWaker {
@@ -2895,6 +2909,20 @@ pub(crate) mod tests {
         clock.advance(Duration::from_nanos(1));
         assert_eq!(scheduler.poll_ready(), 1);
         assert_eq!(state(&scheduler), TaskState::Completed);
+    }
+
+    #[test]
+    fn a_cancelled_delayed_task_leaves_nothing_to_wait_for() {
+        let mut scheduler = Scheduler::with_manual_clock(ManualClock::new());
+        let handle = scheduler.spawn_boxed_after(
+            CallContext::default(),
+            Duration::from_secs(5),
+            Box::pin(async { Ok(()) }),
+        );
+        assert_eq!(scheduler.next_wake_delay(), Some(Duration::from_secs(5)));
+
+        assert!(scheduler.cancel(handle.id()));
+        assert_eq!(scheduler.next_wake_delay(), None);
     }
 
     #[test]
