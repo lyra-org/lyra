@@ -1579,7 +1579,7 @@ fn status_and_resume(
         ),
         luau::ChunkOrigin::default(),
     ))?
-    .call(vm, &[luau::Value::Thread(thread.clone())])
+    .call(&[luau::Value::Thread(thread.clone())])
 }
 
 #[track_caller]
@@ -1648,7 +1648,7 @@ fn a_thread_that_ended_or_was_never_scheduled_is_not_closed() -> luau::runtime::
     for thread in [&unscheduled, &handed_back] {
         scheduler.cancel_luau_thread(thread);
         assert_eq!(
-            thread.resume(&vm, &[])?,
+            thread.resume(&[])?,
             luau::ThreadStatus::Completed(vec![luau::Value::Number(42.0)])
         );
     }
@@ -1685,7 +1685,7 @@ fn cancelling_a_group_closes_its_threads_and_no_others() -> luau::runtime::Resul
     let late = spawn_chunk(&vm, &scheduler, in_group(), "went_on = true")?;
     assert_closed(&vm, &late);
     assert_eq!(
-        other.resume(&vm, &[])?,
+        other.resume(&[])?,
         luau::ThreadStatus::Completed(vec![luau::Value::Number(42.0)])
     );
     Ok(())
@@ -1784,7 +1784,7 @@ fn a_thread_that_cancels_itself_runs_to_its_next_yield_and_is_closed() -> luau::
 fn a_thread_closed_where_it_yields_ends_its_task() -> luau::runtime::Result<()> {
     let (vm, scheduler) = vm_with_waits()?;
     let cancel_thread: luau::NativeFn = Arc::new(|frame| {
-        frame.thread.cancel(frame.vm)?;
+        frame.thread.cancel()?;
         Ok(())
     });
     let cancel_thread = vm.create_function_with_options(
@@ -2064,7 +2064,7 @@ fn cancelling_work_the_scheduler_has_not_taken_up_closes_its_thread() -> luau::r
     let (vm, scheduler) = vm_with_waits()?;
     let unstarted = chunk_thread(&vm, "went_on = true")?;
     let suspended = chunk_thread(&vm, "coroutine.yield() went_on = true")?;
-    suspended.resume(&vm, &[])?;
+    suspended.resume(&[])?;
     let dropped = Rc::new(Cell::new(false));
     {
         let _polling = Polling::begin(&scheduler.polling);
@@ -2075,10 +2075,10 @@ fn cancelling_work_the_scheduler_has_not_taken_up_closes_its_thread() -> luau::r
             Vec::new(),
         );
         let held = OnDrop({
-            let (vm, suspended, dropped) = (vm.clone(), suspended.clone(), dropped.clone());
+            let (suspended, dropped) = (suspended.clone(), dropped.clone());
             move || {
                 assert!(
-                    suspended.resume(&vm, &[]).is_err(),
+                    suspended.resume(&[]).is_err(),
                     "closed after its work dropped"
                 );
                 dropped.set(true);
@@ -2345,7 +2345,7 @@ fn set_group_global(vm: &luau::Vm, group: TaskGroupId) -> luau::runtime::Result<
         Arc::<[u8]>::from(&b"group = ..."[..]),
         luau::ChunkOrigin::default(),
     ))?
-    .call(vm, &[luau::Value::Number(group.0 as f64)])?;
+    .call(&[luau::Value::Number(group.0 as f64)])?;
     Ok(())
 }
 

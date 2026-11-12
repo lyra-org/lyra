@@ -214,7 +214,7 @@ fn provider_id_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(vm, context, &provider.plugin_id, &provider.provider_id)?;
 
-    let id_spec = parse_id_spec(vm, &spec)?;
+    let id_spec = parse_id_spec(&spec)?;
     let generator = match generator {
         Some(luau::Value::String(bytes)) => {
             Some(IdGenerator::Template(parse_id_url_template(bytes)?))
@@ -472,7 +472,7 @@ fn ensure_artist_callback(
         id_value: required_table_string(&request, "id_value", "provider:ensure_artist")?,
         artist_name: optional_table_string(&request, "artist_name", "provider:ensure_artist")?,
         sort_name: optional_table_string(&request, "sort_name", "provider:ensure_artist")?,
-        artist_type: optional_artist_type(vm, &request, "artist_type")?,
+        artist_type: optional_artist_type(&request, "artist_type")?,
         description: optional_table_string(&request, "description", "provider:ensure_artist")?,
     };
     let provider_id = provider.provider_id.clone();

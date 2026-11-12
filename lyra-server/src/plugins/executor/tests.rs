@@ -762,11 +762,8 @@ fn plugin_executor_declares_metadata_provider_ids_and_options() -> Result<()> {
     )?;
 
     assert_eq!(values.len(), 1);
-    let entity = crate::plugins::types::LuauEntityType::class().read_value(
-        &runtime.vm,
-        "entity",
-        values[0].clone(),
-    )?;
+    let entity =
+        crate::plugins::types::LuauEntityType::class().read_value("entity", values[0].clone())?;
     assert_eq!(
         crate::services::EntityType::from(entity),
         crate::services::EntityType::Release

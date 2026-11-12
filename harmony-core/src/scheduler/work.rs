@@ -30,8 +30,8 @@ use std::cell::{
 /// Closes a thread the scheduler gives up: it will not resume it again, and neither may the Luau
 /// code that holds it. One that is running, or has resumed another, is closed where it next
 /// yields.
-pub(super) fn close_cancelled_thread(vm: &luau::Vm, thread: &luau::Thread) {
-    if let Err(error) = thread.cancel(vm) {
+pub(super) fn close_cancelled_thread(thread: &luau::Thread) {
+    if let Err(error) = thread.cancel() {
         tracing::warn!(
             vm = thread.vm_id(),
             thread = thread.state_id(),
@@ -62,7 +62,7 @@ impl Resuming<'_> {
     ) -> luau::runtime::Result<luau::ThreadStatus> {
         let limited = match self.limit.map(|limit| (limit, limit.guard(vm, self.clock))) {
             Some((_, Err(reached))) => {
-                close_cancelled_thread(vm, thread);
+                close_cancelled_thread(thread);
                 self.interrupted_by.set(Some(reached));
                 return Err(luau::Error::Runtime(luau::INTERRUPTED_ERROR.to_string()));
             }
@@ -139,11 +139,11 @@ pub(super) fn poll_work(
                 }
                 *pending_start = false;
             }
-            let previous = match vm.set_thread_call_context(thread, context.clone()) {
+            let previous = match thread.set_call_context(context.clone()) {
                 Ok(previous) => previous,
                 Err(error) => return WorkPoll::Failed(error.to_string().into()),
             };
-            let result = resuming.resume(vm, thread, || thread.resume(vm, args));
+            let result = resuming.resume(vm, thread, || thread.resume(args));
             args.clear();
             poll_luau_resume(vm, thread, result, previous)
         }
@@ -172,13 +172,13 @@ pub(super) fn poll_work(
             if (resuming.cancel_asked)() {
                 return WorkPoll::Pending;
             }
-            let previous = match vm.set_thread_call_context(&thread, context.clone()) {
+            let previous = match thread.set_call_context(context.clone()) {
                 Ok(previous) => previous,
                 Err(error) => return WorkPoll::Failed(error.to_string().into()),
             };
             let result = resuming.resume(&vm, &thread, || match output {
-                Ok(values) => thread.resume(&vm, values.as_slice()),
-                Err(error) => thread.resume_error(&vm, &error),
+                Ok(values) => thread.resume(values.as_slice()),
+                Err(error) => thread.resume_error(&error),
             });
             poll_luau_resume(&vm, &thread, result, previous)
         }
@@ -254,8 +254,8 @@ fn poll_luau_resume(
     previous: Option<luau::CallContext>,
 ) -> WorkPoll {
     let _ = match previous {
-        Some(previous) => vm.set_thread_call_context(thread, previous).map(|_| ()),
-        None => vm.clear_thread_call_context(thread).map(|_| ()),
+        Some(previous) => thread.set_call_context(previous).map(|_| ()),
+        None => thread.clear_call_context().map(|_| ()),
     };
     match result {
         Ok(luau::ThreadStatus::Completed(values)) => WorkPoll::Completed {

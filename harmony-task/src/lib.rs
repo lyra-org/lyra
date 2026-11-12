@@ -131,12 +131,6 @@ fn schedule_task(
         TaskTarget::Function(function) => vm.create_thread(&function)?,
         TaskTarget::Thread(thread) => thread,
     };
-    if thread.vm_id() != vm.id() {
-        return Err(luau::Error::VmMismatch {
-            reference_vm: thread.vm_id(),
-            actual_vm: vm.id(),
-        });
-    }
 
     let context = context.clone();
     if let Some(delay) = delay {

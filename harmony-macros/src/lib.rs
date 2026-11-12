@@ -319,7 +319,7 @@ fn userdata_enum(ast: ItemEnum, options: UserDataOptions) -> syn::Result<TokenSt
         impl<'vm> ::harmony_luau::FromLuau<'vm> for #type_name {
             fn read(reader: &mut ::harmony_luau::ArgReader<'vm>) -> ::harmony_luau::runtime::Result<Self> {
                 let userdata = <::harmony_luau::UserData as ::harmony_luau::FromLuau<'vm>>::read(reader)?;
-                <Self as ::harmony_core::UserDataBinding>::class().read_userdata(reader.vm(), &userdata)
+                <Self as ::harmony_core::UserDataBinding>::class().read_userdata(&userdata)
             }
         }
 

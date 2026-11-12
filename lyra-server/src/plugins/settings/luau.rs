@@ -242,7 +242,7 @@ pub(crate) async fn declare_settings(
     let builder_value =
         SettingsBuilder::class().create_value(&vm, &context.origin, builder.clone())?;
 
-    callback.call_with_context(&vm, &[builder_value], context)?;
+    callback.call_with_context(&[builder_value], context)?;
 
     let groups = take_groups(&builder)?;
     let schema = Schema { groups };
@@ -271,7 +271,7 @@ pub(crate) async fn declare_user_settings(
     let builder_value =
         SettingsBuilder::class().create_value(&vm, &context.origin, builder.clone())?;
 
-    callback.call_with_context(&vm, &[builder_value], context.clone())?;
+    callback.call_with_context(&[builder_value], context.clone())?;
 
     let groups = take_groups(&builder)?;
     let schema = Schema { groups };

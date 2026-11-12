@@ -1346,11 +1346,10 @@ impl HttpModule {
         returns(HttpResponse)
     )]
     fn request(
-        vm: &luau::Vm,
         origin: &luau::ChunkOrigin,
         options: luau::Table,
     ) -> luau::runtime::Result<luau::ScheduledFuture> {
-        let options = request_options_from_luau(vm, &options)?;
+        let options = request_options_from_luau(&options)?;
         let plugin_id = origin.plugin.clone();
         Ok(luau::ScheduledFuture::new(async move {
             let response = execute_request(plugin_id.as_deref(), options).await;
@@ -1400,13 +1399,10 @@ impl HttpModule {
     }
 }
 
-fn request_options_from_luau(
-    vm: &luau::Vm,
-    table: &luau::Table,
-) -> luau::runtime::Result<HttpRequestOptions> {
+fn request_options_from_luau(table: &luau::Table) -> luau::runtime::Result<HttpRequestOptions> {
     Ok(HttpRequestOptions {
         url: table.required_string_field("url")?,
-        method: required_method_field(vm, table, "method")?,
+        method: required_method_field(table, "method")?,
         body: optional_binary_field(table, "body")?,
         headers: optional_header_map_field(table, "headers")?,
         cookies: optional_header_map_field(table, "cookies")?,
@@ -1543,7 +1539,6 @@ fn optional_u16_array_field(
 }
 
 fn required_method_field(
-    vm: &luau::Vm,
     table: &luau::Table,
     field: &'static str,
 ) -> luau::runtime::Result<HttpMethod> {
@@ -1551,7 +1546,7 @@ fn required_method_field(
     if matches!(value, luau::Value::Nil) {
         return Err(luau::Error::Runtime(format!("missing '{field}' field")));
     }
-    HttpMethod::class().read_value(vm, field, value)
+    HttpMethod::class().read_value(field, value)
 }
 
 fn header_map_from_luau(
@@ -2015,7 +2010,7 @@ mod tests {
         )?;
         assert_eq!(values.len(), 1);
         let stored_method =
-            super::HttpMethod::class().read_value(&vm, "stored_method", values.pop().unwrap())?;
+            super::HttpMethod::class().read_value("stored_method", values.pop().unwrap())?;
         assert_eq!(stored_method, super::HttpMethod::Post);
         Ok(())
     }
@@ -2813,7 +2808,7 @@ mod tests {
         let Some(harmony_luau::Value::Table(options)) = values.into_iter().next() else {
             panic!("the chunk returns a table");
         };
-        super::request_options_from_luau(&vm, &options)
+        super::request_options_from_luau(&options)
     }
 
     #[test]

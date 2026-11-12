@@ -15,7 +15,8 @@ shape of the modules plugins see, follow [the plugin API conventions](../plugin-
 - `NativeFn` closures must still be `Send + Sync`. Keep VM handles out of them; read what a call
   needs from its `CallFrame`.
 - `Function`, `Table`, `Thread` and `UserData` pin their value in the registry until the last clone
-  drops, and keep the `Vm` alive. Using one with another VM fails with `Error::VmMismatch`.
+  drops, and keep the `Vm` alive. Their methods act on that VM, and passing one to another VM
+  fails with `Error::VmMismatch`.
 - `Thread::resume` and `Thread::resume_error` resume only a suspended coroutine. They fail, and
   leave the thread alone, for the main thread, a dead one, and one that runs or has resumed
   another, such as the thread a native function's `CallFrame` names.
@@ -27,7 +28,7 @@ shape of the modules plugins see, follow [the plugin API conventions](../plugin-
 
 - `Runtime` opens the libraries, registers modules and installs globals, then calls `Vm::sandbox`
   last. Globals and libraries are read-only from then on, so install anything shared before it.
-- Every thread that runs plugin code needs `Vm::sandbox_thread`.
+- Every thread that runs plugin code needs `Thread::sandbox`.
 - `open_standard_libraries` removes `getfenv` and `setfenv`, which would reach any function's
   globals, including its `require`. `os` is a safe subset.
 

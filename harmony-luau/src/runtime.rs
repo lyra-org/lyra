@@ -399,7 +399,7 @@ impl Vm {
             Value::UserData(userdata)
                 if userdata.tag == HOST_ERROR_TAG && userdata.vm_id() == self.inner.id =>
             {
-                userdata.borrow(self).ok()
+                userdata.borrow().ok()
             }
             _ => None,
         }
@@ -519,16 +519,6 @@ impl Vm {
         unsafe { gateway::sandbox(self.inner.state.as_ptr()) }
     }
 
-    pub fn sandbox_thread(&self, thread: &Thread) -> Result<()> {
-        if thread.vm_id() != self.inner.id {
-            return Err(Error::VmMismatch {
-                reference_vm: thread.vm_id(),
-                actual_vm: self.inner.id,
-            });
-        }
-        unsafe { gateway::sandbox_thread(thread.state().as_ptr()) }
-    }
-
     pub fn load_chunk(&self, chunk: &Chunk) -> Result<Function> {
         let bytecode = compile(&chunk.source.0, chunk.compile)?;
         let guard = self.stack_guard();
@@ -609,7 +599,7 @@ impl Vm {
 
     pub fn eval(&self, source: impl Into<Arc<[u8]>>, origin: ChunkOrigin) -> Result<Vec<Value>> {
         let function = self.load_chunk(&Chunk::new(source, origin))?;
-        function.call(self, &[])
+        function.call(&[])
     }
 
     pub fn create_table(&self) -> Result<Table> {
@@ -680,47 +670,7 @@ impl Vm {
         self.push_registry(&function.reference)?;
         unsafe { gateway::xmove(self.inner.state.as_ptr(), state.as_ptr(), 1)? };
         drop(guard);
-        Ok(Thread::new(
-            Some(reference),
-            state,
-            self.inner.id,
-            function.origin.clone(),
-        ))
-    }
-
-    pub fn set_thread_call_context(
-        &self,
-        thread: &Thread,
-        context: CallContext,
-    ) -> Result<Option<CallContext>> {
-        if thread.vm_id() != self.inner.id {
-            return Err(Error::VmMismatch {
-                reference_vm: thread.vm_id(),
-                actual_vm: self.inner.id,
-            });
-        }
-        self.replace_state_context(thread.state(), Some(context))
-    }
-
-    pub fn clear_thread_call_context(&self, thread: &Thread) -> Result<Option<CallContext>> {
-        if thread.vm_id() != self.inner.id {
-            return Err(Error::VmMismatch {
-                reference_vm: thread.vm_id(),
-                actual_vm: self.inner.id,
-            });
-        }
-        self.replace_state_context(thread.state(), None)
-    }
-
-    /// The call context native calls on `thread` see.
-    pub fn thread_call_context(&self, thread: &Thread) -> Result<Option<CallContext>> {
-        if thread.vm_id() != self.inner.id {
-            return Err(Error::VmMismatch {
-                reference_vm: thread.vm_id(),
-                actual_vm: self.inner.id,
-            });
-        }
-        self.call_context_for_state(thread.state())
+        Ok(Thread::new(reference, state, function.origin.clone()))
     }
 
     /// Runs `source` as [`Vm::eval`] does, as a call made in `context`.
@@ -731,7 +681,7 @@ impl Vm {
         context: CallContext,
     ) -> Result<Vec<Value>> {
         let function = self.load_chunk(&Chunk::new(source, origin))?;
-        function.call_with_context(self, &[], context)
+        function.call_with_context(&[], context)
     }
 
     fn replace_state_context(
@@ -953,7 +903,7 @@ impl Vm {
                 }
                 Value::Table(value) => self.push_registry_to(state, &value.reference),
                 Value::Function(value) => self.push_registry_to(state, &value.reference),
-                Value::Thread(value) => self.push_thread_to(state, value),
+                Value::Thread(value) => self.push_registry_to(state, &value.inner.reference),
                 Value::UserData(value) => self.push_registry_to(state, &value.reference),
             }
         }
@@ -976,7 +926,6 @@ impl Vm {
                 slot,
                 CallbackSlot {
                     vm: Rc::downgrade(&self.inner),
-                    vm_id: self.inner.id,
                     callback,
                     site: CallSite {
                         origin: options.origin.clone(),
@@ -995,28 +944,6 @@ impl Vm {
                 1,
             )
         }
-    }
-
-    fn push_thread_to(&self, state: NonNull<sys::lua_State>, thread: &Thread) -> Result<()> {
-        if thread.vm_id() != self.inner.id {
-            return Err(Error::VmMismatch {
-                reference_vm: thread.vm_id(),
-                actual_vm: self.inner.id,
-            });
-        }
-
-        if let Some(reference) = thread.reference() {
-            self.push_registry_to(state, reference)?;
-            return Ok(());
-        }
-
-        if thread.state() == state {
-            return unsafe { gateway::push_thread(state.as_ptr()) };
-        }
-
-        Err(Error::Runtime(
-            "callback thread cannot be pushed to a different Luau stack".to_string(),
-        ))
     }
 
     fn read_value(&self, index: StackIndex) -> Result<Value> {
@@ -1075,12 +1002,7 @@ impl Vm {
                     let thread_state =
                         NonNull::new(thread_state).expect("thread value is non-null");
                     let reference = self.ref_value_from(state, index)?;
-                    ValueRef::Thread(Thread::new(
-                        Some(reference),
-                        thread_state,
-                        self.inner.id,
-                        ChunkOrigin::default(),
-                    ))
+                    ValueRef::Thread(Thread::new(reference, thread_state, ChunkOrigin::default()))
                 }
                 sys::LUA_TUSERDATA => ValueRef::UserData(UserData {
                     reference: self.ref_value_from(state, index)?,
@@ -1388,7 +1310,8 @@ impl Function {
         self.reference.vm().id()
     }
 
-    pub fn call(&self, vm: &Vm, args: &[Value]) -> Result<Vec<Value>> {
+    pub fn call(&self, args: &[Value]) -> Result<Vec<Value>> {
+        let vm = self.reference.vm();
         let guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
         for arg in args {
@@ -1406,14 +1329,10 @@ impl Function {
     /// Calls the function as [`Function::call`] does, with `context` as the
     /// call context of the native functions it reaches and the coroutines it
     /// creates.
-    pub fn call_with_context(
-        &self,
-        vm: &Vm,
-        args: &[Value],
-        context: CallContext,
-    ) -> Result<Vec<Value>> {
+    pub fn call_with_context(&self, args: &[Value], context: CallContext) -> Result<Vec<Value>> {
+        let vm = self.reference.vm();
         let previous = vm.replace_state_context(vm.inner.state, Some(context))?;
-        let result = self.call(vm, args);
+        let result = self.call(args);
         vm.replace_state_context(vm.inner.state, previous)?;
         result
     }
@@ -1434,9 +1353,8 @@ pub struct Thread {
 }
 
 struct ThreadInner {
-    _reference: Option<RegistryRef>,
+    reference: RegistryRef,
     state: NonNull<sys::lua_State>,
-    vm_id: u64,
     origin: ChunkOrigin,
     data: ThreadData,
 }
@@ -1453,17 +1371,11 @@ impl Thread {
         unsafe { gateway::is_cancelled(self.inner.state.as_ptr()) }
     }
 
-    fn new(
-        reference: Option<RegistryRef>,
-        state: NonNull<sys::lua_State>,
-        vm_id: u64,
-        origin: ChunkOrigin,
-    ) -> Self {
+    fn new(reference: RegistryRef, state: NonNull<sys::lua_State>, origin: ChunkOrigin) -> Self {
         Self {
             inner: Rc::new(ThreadInner {
-                _reference: reference,
+                reference,
                 state,
-                vm_id,
                 origin,
                 data: ThreadData::default(),
             }),
@@ -1471,7 +1383,11 @@ impl Thread {
     }
 
     pub fn vm_id(&self) -> u64 {
-        self.inner.vm_id
+        self.vm().id()
+    }
+
+    fn vm(&self) -> &Vm {
+        self.inner.reference.vm()
     }
 
     pub fn state_id(&self) -> usize {
@@ -1488,12 +1404,7 @@ impl Thread {
 
     /// Whether the thread has run, or was closed and never will.
     pub fn is_started(&self) -> bool {
-        let main = self
-            .reference()
-            .expect("a thread handle holds a reference to its thread")
-            .vm()
-            .inner
-            .state;
+        let main = self.vm().inner.state;
         let state = self.inner.state.as_ptr();
         let unstarted = unsafe { gateway::co_status(main.as_ptr(), state) }
             == gateway::CoStatus::Suspended
@@ -1501,16 +1412,29 @@ impl Thread {
         !unstarted
     }
 
-    fn reference(&self) -> Option<&RegistryRef> {
-        self.inner._reference.as_ref()
+    pub fn sandbox(&self) -> Result<()> {
+        unsafe { gateway::sandbox_thread(self.inner.state.as_ptr()) }
     }
 
-    fn state(&self) -> NonNull<sys::lua_State> {
-        self.inner.state
+    /// Makes `context` the call context native calls on the thread see, and returns the one it
+    /// replaces.
+    pub fn set_call_context(&self, context: CallContext) -> Result<Option<CallContext>> {
+        self.vm()
+            .replace_state_context(self.inner.state, Some(context))
     }
 
-    pub fn resume(&self, vm: &Vm, args: &[Value]) -> Result<ThreadStatus> {
-        let state = self.prepare_resume(vm)?;
+    pub fn clear_call_context(&self) -> Result<Option<CallContext>> {
+        self.vm().replace_state_context(self.inner.state, None)
+    }
+
+    /// The call context native calls on the thread see.
+    pub fn call_context(&self) -> Result<Option<CallContext>> {
+        self.vm().call_context_for_state(self.inner.state)
+    }
+
+    pub fn resume(&self, args: &[Value]) -> Result<ThreadStatus> {
+        let vm = self.vm();
+        let state = self.prepare_resume()?;
         let base = unsafe { sys::lua_gettop(state) };
         for arg in args {
             if let Err(error) = vm.push_value_to(self.inner.state, arg) {
@@ -1521,15 +1445,16 @@ impl Thread {
         }
 
         let resumed = unsafe { gateway::resume(vm.inner.state.as_ptr(), state, args.len() as i32) };
-        self.finish_resume(vm, resumed)
+        self.finish_resume(resumed)
     }
 
     /// Resumes the thread by raising `error` where it yielded, as if the call it yielded in had
     /// raised it: the nearest `pcall` in this thread catches it, and with none the thread fails.
-    pub fn resume_error(&self, vm: &Vm, error: &RaisedError) -> Result<ThreadStatus> {
-        let state = self.prepare_resume(vm)?;
-        let resumed = unsafe { gateway::resume_error(vm.inner.state.as_ptr(), state, error) };
-        self.finish_resume(vm, resumed)
+    pub fn resume_error(&self, error: &RaisedError) -> Result<ThreadStatus> {
+        let state = self.prepare_resume()?;
+        let resumed =
+            unsafe { gateway::resume_error(self.vm().inner.state.as_ptr(), state, error) };
+        self.finish_resume(resumed)
     }
 
     /// Closes the thread as `coroutine.close` does: Luau reports it as `dead` and nothing resumes
@@ -1540,8 +1465,8 @@ impl Thread {
     /// Closing frees the thread's stack, which allocates a smaller one, outside the VM's memory
     /// limit. If the allocator itself fails there, the process aborts: the thread is left
     /// suspended with no frame, and resuming it would run garbage.
-    pub fn close(&self, vm: &Vm) -> Result<()> {
-        if self.try_close(vm)? {
+    pub fn close(&self) -> Result<()> {
+        if self.try_close()? {
             return Ok(());
         }
         Err(Error::Runtime(
@@ -1554,8 +1479,8 @@ impl Thread {
     /// on, calls included. Nothing after that yield runs, and the resume returns no values, or
     /// [`ThreadStatus::Closed`] from [`Self::resume`]. One that returns or fails first ends as any
     /// other. The threads it has resumed are left as they are.
-    pub fn cancel(&self, vm: &Vm) -> Result<ThreadEnd> {
-        if self.try_close(vm)? {
+    pub fn cancel(&self) -> Result<ThreadEnd> {
+        if self.try_close()? {
             return Ok(ThreadEnd::Closed);
         }
         unsafe { gateway::cancel_thread(self.inner.state.as_ptr()) };
@@ -1563,13 +1488,8 @@ impl Thread {
     }
 
     /// Closes a thread that isn't live, and returns whether it is dead.
-    fn try_close(&self, vm: &Vm) -> Result<bool> {
-        if self.vm_id() != vm.inner.id {
-            return Err(Error::VmMismatch {
-                reference_vm: self.vm_id(),
-                actual_vm: vm.inner.id,
-            });
-        }
+    fn try_close(&self) -> Result<bool> {
+        let vm = self.vm();
         if self.inner.state == vm.inner.state {
             return Err(Error::Runtime("cannot close the main thread".to_string()));
         }
@@ -1579,17 +1499,11 @@ impl Thread {
         Ok(closed)
     }
 
-    /// Checks the thread can resume in `vm` and clears what its last resume left on its stack. A
-    /// thread that has not started holds just its function, which stays below what is pushed.
-    /// Only a suspended coroutine resumes: one that runs or has resumed another still uses its
-    /// stack.
-    fn prepare_resume(&self, vm: &Vm) -> Result<*mut sys::lua_State> {
-        if self.vm_id() != vm.inner.id {
-            return Err(Error::VmMismatch {
-                reference_vm: self.vm_id(),
-                actual_vm: vm.inner.id,
-            });
-        }
+    /// Checks the thread can resume and clears what its last resume left on its stack. A thread
+    /// that has not started holds just its function, which stays below what is pushed. Only a
+    /// suspended coroutine resumes: one that runs or has resumed another still uses its stack.
+    fn prepare_resume(&self) -> Result<*mut sys::lua_State> {
+        let vm = self.vm();
         let state = self.inner.state.as_ptr();
         if self.inner.state == vm.inner.state {
             return Err(Error::Runtime("cannot resume the main thread".to_string()));
@@ -1611,7 +1525,8 @@ impl Thread {
         Ok(state)
     }
 
-    fn finish_resume(&self, vm: &Vm, resumed: Result<bool>) -> Result<ThreadStatus> {
+    fn finish_resume(&self, resumed: Result<bool>) -> Result<ThreadStatus> {
+        let vm = self.vm();
         let state = self.inner.state.as_ptr();
         let result = resumed.and_then(|yielded| {
             // Cancelled as it ran, and closed as it yielded.
@@ -1879,7 +1794,8 @@ impl Buffer {
         self.reference.vm().id()
     }
 
-    pub fn to_vec(&self, vm: &Vm) -> Result<Vec<u8>> {
+    pub fn to_vec(&self) -> Result<Vec<u8>> {
+        let vm = self.reference.vm();
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
         match vm.read_value(StackIndex::TOP)? {
@@ -1921,13 +1837,14 @@ impl UserData {
     }
 
     /// The `T` the userdata holds; fails for userdata holding any other type.
-    pub fn borrow<T>(&self, vm: &Vm) -> Result<UserDataRef<'_, T>>
+    pub fn borrow<T>(&self) -> Result<UserDataRef<'_, T>>
     where
         T: 'static,
     {
         let mismatch = || Error::UserDataTypeMismatch {
             expected: type_name::<T>(),
         };
+        let vm = self.reference.vm();
         let tag = vm
             .userdata_tag::<T>()
             .filter(|tag| *tag == self.tag)
@@ -3201,7 +3118,6 @@ impl NativeFunctionOptions {
 
 struct CallbackSlot {
     vm: RcWeak<VmInner>,
-    vm_id: u64,
     callback: NativeFn,
     site: CallSite,
     capability: Option<CapabilityId>,
@@ -3418,7 +3334,7 @@ unsafe fn run_native_function(
         };
         let frame = CallFrame {
             vm: &vm,
-            thread: Thread::new(Some(thread_reference), state, slot.vm_id, origin.clone()),
+            thread: Thread::new(thread_reference, state, origin.clone()),
             context: CallContext {
                 origin,
                 capability: slot.capability.clone(),
@@ -3945,7 +3861,7 @@ mod tests {
             panic!("expected second return value to be a function");
         };
         assert_eq!(
-            function.call(&vm, &[Value::Number(8.0)])?,
+            function.call(&[Value::Number(8.0)])?,
             vec![Value::Number(50.0)]
         );
         assert_eq!(stack_top(&vm), 0);
@@ -4238,21 +4154,13 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "requires Luau C VM")]
-    fn buffer_handles_round_trip_bytes_and_fail_fast_across_vms() -> Result<()> {
-        let owner = Vm::new()?;
-        let other = Vm::new()?;
-        let buffer = owner.create_buffer(b"abc")?;
+    fn buffer_handles_round_trip_bytes() -> Result<()> {
+        let vm = Vm::new()?;
+        let buffer = vm.create_buffer(b"abc")?;
 
-        assert_eq!(buffer.vm_id(), owner.id());
-        assert_eq!(buffer.to_vec(&owner)?, b"abc".to_vec());
-        assert!(matches!(
-            buffer
-                .to_vec(&other)
-                .expect_err("cross-VM buffer access must fail"),
-            Error::VmMismatch { .. }
-        ));
-        assert_eq!(stack_top(&owner), 0);
-        assert_eq!(stack_top(&other), 0);
+        assert_eq!(buffer.vm_id(), vm.id());
+        assert_eq!(buffer.to_vec()?, b"abc".to_vec());
+        assert_eq!(stack_top(&vm), 0);
         Ok(())
     }
 
@@ -4269,11 +4177,11 @@ mod tests {
 
         assert_eq!(userdata.vm_id(), vm.id());
         assert!(userdata.is::<PluginObject>());
-        assert_eq!(userdata.borrow::<PluginObject>(&vm)?.value, 42);
+        assert_eq!(userdata.borrow::<PluginObject>()?.value, 42);
 
         let callback: NativeFn = Arc::new(move |mut frame| {
             let userdata: UserData = frame.args.read_named("object")?;
-            let object = userdata.borrow::<PluginObject>(frame.vm)?;
+            let object = userdata.borrow::<PluginObject>()?;
             frame.returns.write(object.value)?;
             Ok(())
         });
@@ -4285,7 +4193,7 @@ mod tests {
         )?;
 
         assert_eq!(
-            function.call(&vm, &[Value::UserData(userdata)])?,
+            function.call(&[Value::UserData(userdata)])?,
             vec![Value::Number(42.0)]
         );
         assert_eq!(stack_top(&vm), 0);
@@ -4300,7 +4208,7 @@ mod tests {
 
         assert!(!byte.is::<String>());
         let mismatch = byte
-            .borrow::<String>(&vm)
+            .borrow::<String>()
             .err()
             .expect("a u8 borrowed as a String");
         assert_eq!(
@@ -4310,15 +4218,15 @@ mod tests {
         assert_eq!(vm.userdata_tag::<String>(), None);
         let text = vm.create_userdata(String::from("text"))?;
         assert!(matches!(
-            byte.borrow::<String>(&vm),
+            byte.borrow::<String>(),
             Err(Error::UserDataTypeMismatch { .. })
         ));
         assert!(matches!(
-            text.borrow::<u8>(&vm),
+            text.borrow::<u8>(),
             Err(Error::UserDataTypeMismatch { .. })
         ));
-        assert_eq!(*byte.borrow::<u8>(&vm)?, 42);
-        assert_eq!(*text.borrow::<String>(&vm)?, "text");
+        assert_eq!(*byte.borrow::<u8>()?, 42);
+        assert_eq!(*text.borrow::<String>()?, "text");
         assert_eq!(stack_top(&vm), 0);
         Ok(())
     }
@@ -4343,7 +4251,7 @@ mod tests {
                 ChunkOrigin::default(),
             ))?;
             let Some(Value::Function(closure)) = function
-                .call(&vm, &[Value::UserData(userdata)])?
+                .call(&[Value::UserData(userdata)])?
                 .into_iter()
                 .next()
             else {
@@ -4377,11 +4285,11 @@ mod tests {
         let thread = vm.create_thread(&function)?;
 
         assert_eq!(
-            thread.resume(&vm, &[Value::Number(20.0), Value::Number(22.0)])?,
+            thread.resume(&[Value::Number(20.0), Value::Number(22.0)])?,
             ThreadStatus::Completed(vec![Value::Number(42.0)])
         );
         assert!(matches!(
-            thread.resume(&vm, &[]),
+            thread.resume(&[]),
             Err(Error::Runtime(message)) if message.contains("dead coroutine")
         ));
         assert_eq!(stack_top(&vm), 0);
@@ -4408,15 +4316,15 @@ mod tests {
         let thread = vm.create_thread(&function)?;
 
         assert_eq!(
-            thread.resume(&vm, &[])?,
+            thread.resume(&[])?,
             ThreadStatus::Yielded(vec![Value::String(b"waiting".to_vec())])
         );
         assert_eq!(
-            thread.resume_error(&vm, &"boom".into())?,
+            thread.resume_error(&"boom".into())?,
             ThreadStatus::Yielded(vec![Value::String(b"caught".to_vec())])
         );
         assert_eq!(
-            thread.resume(&vm, &[Value::Number(1.0)])?,
+            thread.resume(&[Value::Number(1.0)])?,
             ThreadStatus::Completed(vec![
                 Value::Boolean(false),
                 Value::String(b"boom".to_vec()),
@@ -4435,7 +4343,7 @@ mod tests {
             ),
             ChunkOrigin::default(),
         ))?
-        .call(vm, &[Value::Thread(thread.clone())])
+        .call(&[Value::Thread(thread.clone())])
     }
 
     fn dead() -> Vec<Value> {
@@ -4481,10 +4389,10 @@ mod tests {
             let Value::Thread(thread) = value else {
                 panic!("expected a thread");
             };
-            thread.close(&vm)?;
-            thread.close(&vm)?;
+            thread.close()?;
+            thread.close()?;
             assert_eq!(status_and_resume(&vm, thread)?, dead());
-            assert!(thread.resume(&vm, &[]).is_err());
+            assert!(thread.resume(&[]).is_err());
         }
         assert_eq!(
             vm.eval(
@@ -4504,7 +4412,7 @@ mod tests {
         vm.open_standard_libraries(StandardLibraries::all_supported())?;
         let close: NativeFn = Arc::new(|mut frame| {
             let thread: Thread = frame.args.read()?;
-            frame.returns.write(thread.close(frame.vm).is_err())?;
+            frame.returns.write(thread.close().is_err())?;
             Ok(())
         });
         let close = vm.create_function_with_options(
@@ -4547,16 +4455,16 @@ mod tests {
     fn vm_that_cancels() -> Result<Vm> {
         let vm = Vm::new()?;
         vm.open_standard_libraries(StandardLibraries::all_supported())?;
-        let cancel_live = |thread: &Thread, vm: &Vm| -> Result<()> {
-            assert_eq!(thread.cancel(vm)?, ThreadEnd::ClosedAtYield);
+        let cancel_live = |thread: &Thread| -> Result<()> {
+            assert_eq!(thread.cancel()?, ThreadEnd::ClosedAtYield);
             Ok(())
         };
         let cancel: NativeFn = Arc::new(move |mut frame| {
             let thread: Option<Thread> = frame.args.read()?;
-            cancel_live(thread.as_ref().unwrap_or(&frame.thread), frame.vm)
+            cancel_live(thread.as_ref().unwrap_or(&frame.thread))
         });
         let cancel_and_wait: NativeFn = Arc::new(move |mut frame| {
-            cancel_live(&frame.thread, frame.vm)?;
+            cancel_live(&frame.thread)?;
             frame.returns.request_yield();
             Ok(())
         });
@@ -4748,17 +4656,14 @@ mod tests {
             ))?)
         };
         let yields = thread("cancel() coroutine.yield(1) went_on = true")?;
-        assert_eq!(yields.resume(&vm, &[])?, ThreadStatus::Closed);
+        assert_eq!(yields.resume(&[])?, ThreadStatus::Closed);
         let caught = thread("pcall(coroutine.yield) cancel() wait() went_on = true")?;
-        assert_eq!(caught.resume(&vm, &[])?, ThreadStatus::Yielded(vec![]));
-        assert_eq!(
-            caught.resume_error(&vm, &"boom".into())?,
-            ThreadStatus::Closed
-        );
+        assert_eq!(caught.resume(&[])?, ThreadStatus::Yielded(vec![]));
+        assert_eq!(caught.resume_error(&"boom".into())?, ThreadStatus::Closed);
 
         for thread in [&yields, &caught] {
             assert_eq!(status_and_resume(&vm, thread)?, dead());
-            assert!(thread.resume(&vm, &[]).is_err());
+            assert!(thread.resume(&[]).is_err());
         }
         assert_eq!(eval_str(&vm, "return went_on")?, vec![Value::Nil]);
         assert_eq!(stack_top(&vm), 0);
@@ -4844,15 +4749,15 @@ mod tests {
         };
 
         assert_eq!(
-            reused.resume(&vm, &[])?,
+            reused.resume(&[])?,
             ThreadStatus::Yielded(vec![Value::Number(1.0)])
         );
         assert_eq!(
-            reused.resume(&vm, &[Value::Number(2.0)])?,
+            reused.resume(&[Value::Number(2.0)])?,
             ThreadStatus::Yielded(vec![])
         );
         assert_eq!(
-            reused.resume(&vm, &[])?,
+            reused.resume(&[])?,
             ThreadStatus::Completed(vec![Value::Number(2.0)])
         );
         Ok(())
@@ -4870,13 +4775,13 @@ mod tests {
         .pop() else {
             panic!("expected a thread");
         };
-        assert_eq!(suspended.cancel(&vm)?, ThreadEnd::Closed);
+        assert_eq!(suspended.cancel()?, ThreadEnd::Closed);
         assert_eq!(status_and_resume(&vm, &suspended)?, dead());
 
         let main: NativeFn = Arc::new(|frame| {
             for refusal in [
-                frame.thread.close(frame.vm).map(|()| ThreadEnd::Closed),
-                frame.thread.cancel(frame.vm),
+                frame.thread.close().map(|()| ThreadEnd::Closed),
+                frame.thread.cancel(),
             ] {
                 let refusal = refusal.expect_err("the main thread closed");
                 assert!(refusal.to_string().contains("main thread"), "{refusal}");
@@ -4887,7 +4792,7 @@ mod tests {
             NativeFunctionOptions::new(ChunkOrigin::default()).function_name("main"),
             main,
         )?;
-        main.call(&vm, &[])?;
+        main.call(&[])?;
         assert_eq!(eval_str(&vm, "return went_on")?, vec![Value::Nil]);
         Ok(())
     }
@@ -4937,7 +4842,7 @@ mod tests {
         let captured = vm.data().get::<Thread>()?;
         assert!(captured.is_started());
         assert_eq!(
-            captured.resume(&vm, &[])?,
+            captured.resume(&[])?,
             ThreadStatus::Completed(vec![string("done")])
         );
         vm.data().clear()?;
@@ -4956,7 +4861,7 @@ mod tests {
         let thread = vm.create_thread(&function)?;
         assert!(!thread.is_started());
 
-        thread.close(&vm)?;
+        thread.close()?;
 
         assert!(thread.is_started());
         // As does a handle made from the thread afterwards, which shares no flags with the first.
@@ -4965,13 +4870,13 @@ mod tests {
                 Arc::<[u8]>::from(&b"return ..."[..]),
                 ChunkOrigin::default(),
             ))?
-            .call(&vm, &[Value::Thread(thread)])?
+            .call(&[Value::Thread(thread)])?
             .pop()
         else {
             panic!("expected a thread");
         };
         assert!(read_back.is_started());
-        assert!(read_back.resume(&vm, &[]).is_err());
+        assert!(read_back.resume(&[]).is_err());
         Ok(())
     }
 
@@ -5002,7 +4907,7 @@ mod tests {
         let threads = (0..1000)
             .map(|_| {
                 let thread = vm.create_thread(&function)?;
-                assert_eq!(thread.resume(&vm, &[])?, ThreadStatus::Yielded(vec![]));
+                assert_eq!(thread.resume(&[])?, ThreadStatus::Yielded(vec![]));
                 Ok(thread)
             })
             .collect::<Result<Vec<_>>>()?;
@@ -5014,10 +4919,10 @@ mod tests {
 
         set_memory_limit(&vm, 1);
         for thread in closed {
-            thread.close(&vm)?;
+            thread.close()?;
         }
         for thread in closed_at_yield {
-            assert_eq!(thread.resume(&vm, &[])?, ThreadStatus::Closed);
+            assert_eq!(thread.resume(&[])?, ThreadStatus::Closed);
         }
 
         assert_eq!(vm.memory_limit(), Some(1));
@@ -5043,13 +4948,13 @@ mod tests {
             (gateway::MEMORY_ERROR, Error::OutOfMemory),
         ] {
             let thread = vm.create_thread(&function)?;
-            assert_eq!(thread.resume(&vm, &[])?, ThreadStatus::Yielded(vec![]));
-            let failed = thread.resume_error(&vm, &message.into());
+            assert_eq!(thread.resume(&[])?, ThreadStatus::Yielded(vec![]));
+            let failed = thread.resume_error(&message.into());
             assert_eq!(
                 failed.map_err(|error| error.to_string()),
                 Err(expected.to_string())
             );
-            assert!(thread.resume(&vm, &[]).is_err());
+            assert!(thread.resume(&[]).is_err());
         }
         assert_eq!(stack_top(&vm), 0);
         Ok(())
@@ -5078,7 +4983,7 @@ mod tests {
         inner_signal.raise();
         let error = vm
             .create_thread(&function)?
-            .resume(&vm, &[])
+            .resume(&[])
             .expect_err("the inner signal should stop the loop");
         assert!(matches!(error, Error::Runtime(message) if message.contains("interrupted")));
         drop(inner);
@@ -5108,7 +5013,7 @@ mod tests {
         let started = Instant::now();
         let guard = vm.interrupt_after_or_on(Duration::from_secs(60), Some(&signal));
         let error = thread
-            .resume(&vm, &[])
+            .resume(&[])
             .expect_err("the raised signal should stop the loop");
         drop(guard);
         raiser.join().expect("raiser thread");
@@ -5144,7 +5049,7 @@ mod tests {
         let on_signal = vm.interrupt_after_or_on(Duration::from_secs(600), Some(&signal));
         assert_eq!(on_signal.interrupted(), None, "nothing ran under it yet");
         vm.create_thread(&function)?
-            .resume(&vm, &[])
+            .resume(&[])
             .expect_err("the raised signal should stop the loop");
         assert_eq!(on_signal.interrupted(), Some(InterruptCause::Signal));
         drop(on_signal);
@@ -5156,14 +5061,14 @@ mod tests {
             NativeFunctionOptions::new(ChunkOrigin::default()).function_name("failing"),
             failing,
         )?
-        .call(&vm, &[])
+        .call(&[])
         .expect_err("the function fails");
         assert_eq!(outlasted.interrupted(), None);
         drop(outlasted);
 
         let guard = vm.interrupt_after(Duration::ZERO);
         let error = thread
-            .resume(&vm, &[])
+            .resume(&[])
             .expect_err("interrupt budget should stop the loop");
         assert_eq!(guard.interrupted(), Some(InterruptCause::Time));
         assert!(error.is_interruption());
@@ -5187,13 +5092,18 @@ mod tests {
             ChunkOrigin::default(),
         ))?;
         let thread = owner.create_thread(&function)?;
+        let foreign = other.create_table()?;
 
         assert!(matches!(
-            thread
-                .resume(&other, &[])
-                .expect_err("cross-VM thread access must fail"),
+            foreign
+                .set("thread", Value::Thread(thread.clone()))
+                .expect_err("a thread stored in another VM"),
             Error::VmMismatch { .. }
         ));
+        assert_eq!(
+            thread.resume(&[])?,
+            ThreadStatus::Completed(vec![Value::Number(1.0)])
+        );
         assert_eq!(stack_top(&owner), 0);
         assert_eq!(stack_top(&other), 0);
         Ok(())
@@ -5219,7 +5129,7 @@ mod tests {
         };
 
         assert_eq!(
-            thread.resume(&vm, &[Value::Number(41.0)])?,
+            thread.resume(&[Value::Number(41.0)])?,
             ThreadStatus::Completed(vec![Value::Number(42.0)])
         );
         assert_eq!(stack_top(&vm), 0);
@@ -5283,7 +5193,7 @@ mod tests {
             &scope,
         )?;
         assert_eq!(
-            function.call(&vm, &[Value::Number(1.0), Value::Number(2.0)])?,
+            function.call(&[Value::Number(1.0), Value::Number(2.0)])?,
             vec![
                 Value::Number(7.0),
                 Value::Number(2.0),
@@ -5300,7 +5210,7 @@ mod tests {
                 &[],
                 scope,
             )?
-            .call(&vm, &[])
+            .call(&[])
         };
         assert_eq!(read(&scope)?, vec![Value::Number(7.0), Value::Nil]);
         assert_eq!(
@@ -5347,13 +5257,13 @@ mod tests {
             ChunkOrigin::default(),
         ))?;
         let thread = vm.create_thread(&function)?;
-        vm.set_thread_call_context(&thread, context_in_group(7))?;
+        thread.set_call_context(context_in_group(7))?;
 
         assert_eq!(
-            thread.resume(&vm, &[])?,
+            thread.resume(&[])?,
             ThreadStatus::Completed(vec![Value::Number(7.0), Value::Number(7.0)])
         );
-        vm.clear_thread_call_context(&thread)?;
+        thread.clear_call_context()?;
         let values = vm.eval(
             Arc::<[u8]>::from(&b"local _, group = coroutine.resume(later); return group"[..]),
             ChunkOrigin::default(),
@@ -5379,9 +5289,9 @@ mod tests {
             ChunkOrigin::default(),
         ))?;
         let thread = vm.create_thread(&function)?;
-        vm.set_thread_call_context(&thread, context_in_group(3))?;
-        thread.resume(&vm, &[])?;
-        vm.clear_thread_call_context(&thread)?;
+        thread.set_call_context(context_in_group(3))?;
+        thread.resume(&[])?;
+        thread.clear_call_context()?;
         drop(thread);
         drop(function);
         unsafe {
@@ -5409,7 +5319,7 @@ mod tests {
         vm.data().insert(nested)?;
         let inner: NativeFn = Arc::new(|mut frame| {
             let nested = frame.vm.data().get::<Function>()?;
-            let values = nested.call_with_context(frame.vm, &[], context_in_group(5))?;
+            let values = nested.call_with_context(&[], context_in_group(5))?;
             for value in values {
                 frame.returns.write(value)?;
             }
@@ -5472,7 +5382,7 @@ mod tests {
         )?;
 
         assert_eq!(
-            function.call(&vm, &[Value::Number(20.0), Value::Number(22.0)])?,
+            function.call(&[Value::Number(20.0), Value::Number(22.0)])?,
             vec![Value::Number(42.0)]
         );
         assert_eq!(stack_top(&vm), 0);
@@ -5495,7 +5405,7 @@ mod tests {
             ChunkOrigin::default(),
         ))?;
         assert_eq!(
-            function.call(&vm, &[Value::TableData(table)])?,
+            function.call(&[Value::TableData(table)])?,
             vec![
                 Value::String(b"answer".to_vec()),
                 Value::String(b"value".to_vec())
@@ -5530,7 +5440,7 @@ mod tests {
             ChunkOrigin::default(),
         ))?;
         assert_eq!(
-            function.call(&vm, &[Value::TableData(owned)])?,
+            function.call(&[Value::TableData(owned)])?,
             vec![
                 Value::Integer(1),
                 Value::Integer(2),
@@ -5562,7 +5472,7 @@ mod tests {
         )?;
 
         let error = function
-            .call(&vm, &[Value::String(b"bad".to_vec())])
+            .call(&[Value::String(b"bad".to_vec())])
             .expect_err("native callback argument errors should cross pcall");
 
         assert!(matches!(
@@ -5607,12 +5517,12 @@ mod tests {
         )?;
 
         assert!(matches!(
-            utf8.call(&vm, &[Value::String(vec![0xff])]),
+            utf8.call(&[Value::String(vec![0xff])]),
             Err(Error::Runtime(message))
                 if message.contains("text") && message.contains("valid UTF-8")
         ));
         assert_eq!(
-            bytes.call(&vm, &[Value::String(vec![0xff, b'a'])])?,
+            bytes.call(&[Value::String(vec![0xff, b'a'])])?,
             vec![Value::String(vec![0xff, b'a'])]
         );
         assert_eq!(stack_top(&vm), 0);
@@ -5638,13 +5548,10 @@ mod tests {
         )?;
 
         assert_eq!(
-            function.call(
-                &vm,
-                &[
-                    Value::String(b"hello".to_vec()),
-                    Value::Buffer(vec![1, 2, 3, 4])
-                ],
-            )?,
+            function.call(&[
+                Value::String(b"hello".to_vec()),
+                Value::Buffer(vec![1, 2, 3, 4])
+            ],)?,
             vec![Value::Number(5.0), Value::Number(4.0)]
         );
         assert_eq!(stack_top(&vm), 0);
@@ -5666,7 +5573,7 @@ mod tests {
             callback,
         )?;
         let error = function
-            .call(&vm, &[Value::Number(1.5)])
+            .call(&[Value::Number(1.5)])
             .expect_err("fractional Luau number must not read as integer");
 
         assert!(error.to_string().contains("track_id"));
@@ -5775,7 +5682,7 @@ mod tests {
             ),
             (
                 "Function::call allocating in Luau",
-                Box::new(|vm, _| allocate.call(vm, &[Value::Number(64.0)]).map(drop)),
+                Box::new(|_, _| allocate.call(&[Value::Number(64.0)]).map(drop)),
             ),
             (
                 "set_global_table",
@@ -5795,18 +5702,18 @@ mod tests {
             ),
             (
                 "Function::call with a string",
-                Box::new(|vm, i| {
+                Box::new(|_, i| {
                     function
-                        .call(vm, &[Value::String(format!("argument{i}").into_bytes())])
+                        .call(&[Value::String(format!("argument{i}").into_bytes())])
                         .map(drop)
                 }),
             ),
             (
                 "Function::call with table data",
-                Box::new(|vm, i| {
+                Box::new(|_, i| {
                     let mut data = OwnedTable::new();
                     data.set_field(format!("field{i}"), Value::Integer(1));
-                    function.call(vm, &[Value::TableData(data)]).map(drop)
+                    function.call(&[Value::TableData(data)]).map(drop)
                 }),
             ),
         ];
@@ -5889,10 +5796,7 @@ mod tests {
             ChunkOrigin::default(),
         ))?;
 
-        let values = probe.call(
-            &vm,
-            &[Value::Function(allocate), Value::Function(oversized)],
-        )?;
+        let values = probe.call(&[Value::Function(allocate), Value::Function(oversized)])?;
         drop(probe);
         let [
             Value::Boolean(false),
@@ -5937,7 +5841,7 @@ mod tests {
             ChunkOrigin::default(),
         ))?;
 
-        let values = probe.call(&vm, &[Value::Function(failing)])?;
+        let values = probe.call(&[Value::Function(failing)])?;
         drop(probe);
         let [Value::Boolean(false), Value::String(message)] = values.as_slice() else {
             panic!("expected the callback to fail, got {values:?}");
@@ -5965,13 +5869,13 @@ mod tests {
             ChunkOrigin::default(),
         ))?;
 
-        let direct = allocate.call(&vm, &[]);
+        let direct = allocate.call(&[]);
         assert!(matches!(direct, Err(Error::OutOfMemory)), "{direct:?}");
-        let called = through_luau.call(&vm, &[Value::Function(allocate.clone())]);
+        let called = through_luau.call(&[Value::Function(allocate.clone())]);
         assert!(matches!(called, Err(Error::OutOfMemory)), "{called:?}");
 
         let thread = vm.create_thread(&through_luau)?;
-        let resumed = thread.resume(&vm, &[Value::Function(allocate)]);
+        let resumed = thread.resume(&[Value::Function(allocate)]);
         assert!(matches!(resumed, Err(Error::OutOfMemory)), "{resumed:?}");
         assert_eq!(stack_top(&vm), 0);
         Ok(())
@@ -6038,13 +5942,13 @@ mod tests {
         ))?;
         let thread = vm.create_thread(&function)?;
 
-        let failed = thread.resume(&vm, &[Value::Number(1.0), Value::Buffer(vec![0; 2 << 20])]);
+        let failed = thread.resume(&[Value::Number(1.0), Value::Buffer(vec![0; 2 << 20])]);
         assert!(matches!(failed, Err(Error::OutOfMemory)), "{failed:?}");
         assert!(!thread.is_started());
 
         set_memory_limit(&vm, 0);
         assert_eq!(
-            thread.resume(&vm, &[Value::Number(2.0), Value::Buffer(vec![0; 2 << 20])])?,
+            thread.resume(&[Value::Number(2.0), Value::Buffer(vec![0; 2 << 20])])?,
             ThreadStatus::Completed(vec![Value::Number(2.0), Value::String(b"buffer".to_vec())])
         );
         assert_eq!(stack_top(&vm), 0);
@@ -6060,7 +5964,7 @@ mod tests {
             let first = frame.args.read_str()?;
             let refusal = frame
                 .thread
-                .resume(frame.vm, &[])
+                .resume(&[])
                 .expect_err("a running thread resumed");
             assert!(refusal.to_string().contains("non-suspended"), "{refusal}");
             frame.vm.eval(
@@ -6087,7 +5991,7 @@ mod tests {
         ))?;
         let thread = vm.create_thread(&body)?;
 
-        let ThreadStatus::Completed(values) = thread.resume(&vm, &[])? else {
+        let ThreadStatus::Completed(values) = thread.resume(&[])? else {
             panic!("expected the thread to complete");
         };
         let [Value::String(joined)] = values.as_slice() else {
@@ -6111,14 +6015,14 @@ mod tests {
             NativeFunctionOptions::new(ChunkOrigin::default()).function_name("grab"),
             grab,
         )?;
-        grab.call(&vm, &[])?;
+        grab.call(&[])?;
         let main = vm.data().get::<Thread>()?;
 
         for _ in 0..2 {
-            let refusal = main.resume(&vm, &[]).expect_err("the main thread resumed");
+            let refusal = main.resume(&[]).expect_err("the main thread resumed");
             assert!(refusal.to_string().contains("main thread"), "{refusal}");
             let refusal = main
-                .resume_error(&vm, &RaisedError::from("stop"))
+                .resume_error(&RaisedError::from("stop"))
                 .expect_err("the main thread resumed");
             assert!(refusal.to_string().contains("main thread"), "{refusal}");
         }
@@ -6142,11 +6046,11 @@ mod tests {
         let resume: NativeFn = Arc::new(|mut frame| {
             let thread: Thread = frame.args.read()?;
             let refusal = thread
-                .resume(frame.vm, &[Value::from("again")])
+                .resume(&[Value::from("again")])
                 .expect_err("a thread that has resumed another resumed");
             assert!(refusal.to_string().contains("non-suspended"), "{refusal}");
             let refusal = thread
-                .resume_error(frame.vm, &RaisedError::from("stop"))
+                .resume_error(&RaisedError::from("stop"))
                 .expect_err("a thread that has resumed another resumed");
             assert!(refusal.to_string().contains("non-suspended"), "{refusal}");
             Ok(())
@@ -6154,7 +6058,7 @@ mod tests {
         let hold: NativeFn = Arc::new(|mut frame| {
             let inner: Thread = frame.args.read()?;
             let text = frame.args.read_str()?;
-            inner.resume(frame.vm, &[])?;
+            inner.resume(&[])?;
             let text = text.to_string();
             let tail: String = frame.args.read()?;
             frame.returns.write(text + &tail)?;
@@ -6183,7 +6087,7 @@ mod tests {
         let thread = vm.create_thread(&body)?;
 
         assert_eq!(
-            thread.resume(&vm, &[])?,
+            thread.resume(&[])?,
             ThreadStatus::Completed(vec![Value::String([[b'a'; 64].as_slice(), b"b"].concat())])
         );
         assert_eq!(stack_top(&vm), 0);
@@ -6229,7 +6133,7 @@ mod tests {
             ChunkOrigin::default(),
         ))?;
 
-        let values = probe.call(&vm, &[Value::Function(kinded_failure(&vm)?)])?;
+        let values = probe.call(&[Value::Function(kinded_failure(&vm)?)])?;
         let [
             Value::Boolean(false),
             error @ Value::UserData(_),
@@ -6274,12 +6178,12 @@ mod tests {
             message: message.to_string(),
         };
 
-        let direct = fail.call(&vm, &[]);
+        let direct = fail.call(&[]);
         assert_eq!(
             direct.map_err(|error| error.to_string()),
             Err(kinded(KINDED_FAILURE).to_string())
         );
-        let called = through_luau.call(&vm, &[Value::Function(fail.clone())]);
+        let called = through_luau.call(&[Value::Function(fail.clone())]);
         assert!(
             matches!(&called, Err(Error::Kinded { kind: "missing", message }) if message == KINDED_FAILURE),
             "{called:?}"
@@ -6291,7 +6195,7 @@ mod tests {
             Arc::new(|mut frame| {
                 let through_luau: Function = frame.args.read()?;
                 let fail: Value = frame.args.read()?;
-                through_luau.call(frame.vm, &[fail])?;
+                through_luau.call(&[fail])?;
                 Ok(())
             }),
         )?;
@@ -6299,14 +6203,11 @@ mod tests {
             Arc::<[u8]>::from(&b"local _, err = pcall(...) return err"[..]),
             ChunkOrigin::default(),
         ))?;
-        let relayed = probe.call(
-            &vm,
-            &[
-                Value::Function(relay),
-                Value::Function(through_luau),
-                Value::Function(fail),
-            ],
-        )?;
+        let relayed = probe.call(&[
+            Value::Function(relay),
+            Value::Function(through_luau),
+            Value::Function(fail),
+        ])?;
         assert_eq!(vm.error_kind(&relayed[0]), Some("missing"));
         assert!(
             vm.error_message(&relayed[0])
@@ -6340,8 +6241,8 @@ mod tests {
         };
 
         let thread = vm.create_thread(&caught)?;
-        thread.resume(&vm, &[])?;
-        let ThreadStatus::Completed(values) = thread.resume_error(&vm, &error)? else {
+        thread.resume(&[])?;
+        let ThreadStatus::Completed(values) = thread.resume_error(&error)? else {
             panic!("expected the thread to finish");
         };
         assert_eq!(values[0], Value::Boolean(false));
@@ -6349,8 +6250,8 @@ mod tests {
         assert_eq!(values[2], Value::String(b"gone".to_vec()));
 
         let thread = vm.create_thread(&uncaught)?;
-        thread.resume(&vm, &[])?;
-        let failed = thread.resume_error(&vm, &error);
+        thread.resume(&[])?;
+        let failed = thread.resume_error(&error);
         assert!(
             matches!(&failed, Err(Error::Kinded { kind: "missing", message }) if message == "gone"),
             "{failed:?}"
@@ -6382,7 +6283,7 @@ mod tests {
 
         // Nothing is freed, so each raise holds on to its error until one can't be made.
         set_gc_running(&vm, false);
-        let values = probe.call(&vm, &[Value::Function(fail)])?;
+        let values = probe.call(&[Value::Function(fail)])?;
         set_gc_running(&vm, true);
         let [Value::String(message)] = values.as_slice() else {
             panic!("expected a string error, got {values:?}");

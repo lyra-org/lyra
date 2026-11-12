@@ -189,17 +189,13 @@ impl TestPlugin {
     /// Reads the body of a `stream` response `call` returned as a client keeping up would, while
     /// the host produces it as it would for one: acting as the handler did, once a place is free.
     /// Returns the body, and raises what fails it, including a return after a write raised.
-    fn read_body(
-        &self,
-        vm: &luau::Vm,
-        response: luau::Table,
-    ) -> luau::runtime::Result<luau::ScheduledFuture> {
+    fn read_body(&self, response: luau::Table) -> luau::runtime::Result<luau::ScheduledFuture> {
         let luau::Value::UserData(body) = response.get("body")? else {
             return Err(luau::Error::Runtime(
                 "read_body takes a stream response that plugin:call returned".to_string(),
             ));
         };
-        let body = TestBody::class().read_userdata(vm, &body)?;
+        let body = TestBody::class().read_userdata(&body)?;
         let mut stream = body
             .0
             .lock()
@@ -249,12 +245,8 @@ impl TestSockets {
     }
 
     /// Closes the websocket as its client going away does, returning once the host is done with it.
-    fn close(
-        &self,
-        vm: &luau::Vm,
-        sender: luau::UserData,
-    ) -> luau::runtime::Result<luau::ScheduledFuture> {
-        let sender = ApiWebSocketSender::class().read_userdata(vm, &sender)?;
+    fn close(&self, sender: luau::UserData) -> luau::runtime::Result<luau::ScheduledFuture> {
+        let sender = ApiWebSocketSender::class().read_userdata(&sender)?;
         let released = sender.state().mark_closed();
         Ok(luau::ScheduledFuture::new(async move {
             crate::services::playbacks::pause_after_socket_close(released).await;

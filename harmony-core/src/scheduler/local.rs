@@ -189,8 +189,8 @@ impl LocalScheduler {
                     (vm.clone(), thread.clone())
                 }),
         );
-        for (vm, thread) in threads {
-            close_cancelled_thread(&vm, &thread);
+        for (_, thread) in threads {
+            close_cancelled_thread(&thread);
         }
     }
 
@@ -493,11 +493,7 @@ impl LocalScheduler {
         // Luau code, not the scheduler, resumed the thread that parked, so
         // no resume will take its park; the new task starts it fresh.
         self.take_parked_luau_thread(&thread);
-        let context = vm
-            .thread_call_context(&thread)
-            .ok()
-            .flatten()
-            .unwrap_or_default();
+        let context = thread.call_context().ok().flatten().unwrap_or_default();
         let handle = self.scheduler.borrow_mut().spawn_luau_future(
             context,
             awaiting,
@@ -553,21 +549,17 @@ impl LocalScheduler {
     fn close_scheduled(&self, thread: &luau::Thread) -> bool {
         let key = luau_thread_key(thread);
         let task = self.thread_tasks.borrow().get(&key).copied();
-        let vm = task
-            .and_then(|handle| self.threads.borrow().get(&handle.id()).cloned())
-            .map(|(vm, _)| vm)
-            .or_else(|| {
-                self.pending_luau_work
-                    .borrow()
-                    .iter()
-                    .map(PendingLuauWork::thread)
-                    .find(|(_, thread)| luau_thread_key(thread) == key)
-                    .map(|(vm, _)| vm.clone())
-            });
-        let Some(vm) = vm else {
+        let held = task.is_some_and(|handle| self.threads.borrow().contains_key(&handle.id()))
+            || self
+                .pending_luau_work
+                .borrow()
+                .iter()
+                .map(PendingLuauWork::thread)
+                .any(|(_, thread)| luau_thread_key(thread) == key);
+        if !held {
             return false;
-        };
-        close_cancelled_thread(&vm, thread);
+        }
+        close_cancelled_thread(thread);
         true
     }
 
@@ -794,8 +786,8 @@ impl LocalScheduler {
         *self.pending_luau_work.borrow_mut() = kept;
         // Closed before the work is dropped, as a task's is.
         for work in &cancelled {
-            let (vm, thread) = work.thread();
-            close_cancelled_thread(vm, thread);
+            let (_, thread) = work.thread();
+            close_cancelled_thread(thread);
         }
         let any = !cancelled.is_empty();
         let now = self.now();
@@ -955,14 +947,11 @@ impl PendingLuauWork {
         match self {
             Self::Thread { context, .. } => context.task_group == group,
             Self::Future {
-                context,
-                vm,
-                thread,
-                ..
+                context, thread, ..
             } => {
                 context.task_group == group
-                    || vm
-                        .thread_call_context(thread)
+                    || thread
+                        .call_context()
                         .ok()
                         .flatten()
                         .is_some_and(|own| own.task_group == group)

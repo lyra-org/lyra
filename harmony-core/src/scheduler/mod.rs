@@ -564,8 +564,8 @@ impl Scheduler {
         }
 
         // Before the work is dropped, whose destructors may run code that holds the thread.
-        if let Some((vm, thread)) = settle(&self.threads, id, task, TaskState::Cancelled) {
-            close_cancelled_thread(&vm, &thread);
+        if let Some((_, thread)) = settle(&self.threads, id, task, TaskState::Cancelled) {
+            close_cancelled_thread(&thread);
         }
         detach(&self.detached, &task.context, task.work.take());
         if let Some(completion) = task.completion.as_ref() {
@@ -918,10 +918,10 @@ fn settle(
     task.state = state;
     task.wake_at = None;
     let thread = threads.borrow_mut().remove(&id);
-    if let Some((vm, thread)) = &thread
+    if let Some((_, thread)) = &thread
         && !task.borrows_thread
     {
-        let _ = vm.clear_thread_call_context(thread);
+        let _ = thread.clear_call_context();
     }
     thread
 }

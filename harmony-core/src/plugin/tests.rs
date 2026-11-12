@@ -590,8 +590,8 @@ fn task_test_module(recorded: Arc<Mutex<Vec<String>>>) -> ModuleSpec {
         )
         .function(FunctionSpec::new("thread_plugin").call(|mut frame| {
             let plugin = frame
-                .vm
-                .thread_call_context(&frame.thread)?
+                .thread
+                .call_context()?
                 .and_then(|context| context.origin.plugin)
                 .map(|plugin| plugin.to_string());
             frame.returns.write(plugin)?;

@@ -152,7 +152,7 @@ mod tests {
             Arc::<[u8]>::from(&b"local _, err = pcall(...) return err"[..]),
             luau::ChunkOrigin::default(),
         ))?;
-        let error = caught.call(&vm, &[luau::Value::Function(fail)])?.remove(0);
+        let error = caught.call(&[luau::Value::Function(fail)])?.remove(0);
         let other = vm.create_userdata(1_u8)?;
 
         assert_eq!(

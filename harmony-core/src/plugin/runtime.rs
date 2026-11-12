@@ -457,7 +457,7 @@ impl Runtime {
                 load.task_group,
             )?;
             let thread = self.vm.create_thread(&function)?;
-            self.vm.sandbox_thread(&thread)?;
+            thread.sandbox()?;
             anyhow::Ok(scheduler.schedule_watched_luau_thread(
                 CallContext {
                     origin: load.source.origin.clone(),
@@ -643,7 +643,7 @@ impl Runtime {
         let function =
             load_chunk_with_require(&self.vm, source, &context.origin, context.task_group)?;
         let thread = self.vm.create_thread(&function)?;
-        self.vm.sandbox_thread(&thread)?;
+        thread.sandbox()?;
         Ok(thread)
     }
 

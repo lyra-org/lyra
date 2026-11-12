@@ -122,12 +122,9 @@ pub(super) fn ensure_provider_owner(
     )))
 }
 
-pub(super) fn parse_id_spec(
-    vm: &luau::Vm,
-    spec: &luau::Table,
-) -> luau::runtime::Result<ProviderIdSpec> {
+pub(super) fn parse_id_spec(spec: &luau::Table) -> luau::runtime::Result<ProviderIdSpec> {
     let id_type = required_string(spec, "id_type")?;
-    let entity = required_entity_type(vm, spec, "entity")?;
+    let entity = required_entity_type(spec, "entity")?;
     let unique = optional_bool(spec, "unique", "provider:id spec")?.unwrap_or(false);
     let scheme = required_string(spec, "scheme")?;
     validate_id_scheme(&scheme)
@@ -269,18 +266,16 @@ fn required_string(table: &luau::Table, key: &str) -> luau::runtime::Result<Stri
 }
 
 fn required_entity_type(
-    vm: &luau::Vm,
     table: &luau::Table,
     key: &'static str,
 ) -> luau::runtime::Result<EntityType> {
     let value = table.get(key)?;
     crate::plugins::types::LuauEntityType::class()
-        .read_value(vm, key, value)
+        .read_value(key, value)
         .map(Into::into)
 }
 
 pub(super) fn optional_artist_type(
-    vm: &luau::Vm,
     table: &luau::Table,
     key: &'static str,
 ) -> luau::runtime::Result<Option<lyra_db::ArtistType>> {
@@ -289,7 +284,7 @@ pub(super) fn optional_artist_type(
         return Ok(None);
     }
     crate::plugins::types::LuauArtistType::class()
-        .read_value(vm, key, value)
+        .read_value(key, value)
         .map(|value| Some(value.into()))
 }
 

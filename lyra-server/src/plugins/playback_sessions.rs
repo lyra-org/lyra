@@ -376,7 +376,6 @@ impl PlaybackSessionsModule {
         args(sender: WebSocketSenderType, session_key: String)
     )]
     fn hold_session(
-        vm: &luau::Vm,
         sender: luau::UserData,
         session_key: String,
         #[context] principal: Principal,
@@ -387,7 +386,7 @@ impl PlaybackSessionsModule {
                 "playback_sessions.hold_session must be called from plugin Luau code".into(),
             )
         })?;
-        let sender = ApiWebSocketSender::class().read_userdata(vm, &sender)?;
+        let sender = ApiWebSocketSender::class().read_userdata(&sender)?;
         let session_key = require_non_empty_string(session_key, "session_key")?;
         sender.state().claim_session(ClaimedSession {
             plugin_id: plugin_id.to_string(),

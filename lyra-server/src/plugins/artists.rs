@@ -73,7 +73,7 @@ struct ArtistQuery(catalog::PagedQuery<Artists>);
 impl<'vm> luau::FromLuau<'vm> for ArtistQuery {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let opts: luau::Table = reader.read()?;
-        let filter = read_filter(reader.vm(), &opts)?;
+        let filter = read_filter(&opts)?;
         catalog::read_query::<Artists>(&opts, filter).map(Self)
     }
 }
@@ -251,7 +251,7 @@ fn to_artist_relation_info(relation: ResolvedRelation) -> ArtistRelationInfo {
     }
 }
 
-fn read_filter(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<ArtistFilter> {
+fn read_filter(table: &luau::Table) -> luau::runtime::Result<ArtistFilter> {
     let role = |key| {
         table
             .optional_string_field(key)?
@@ -263,17 +263,16 @@ fn read_filter(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Arti
     Ok(ArtistFilter {
         credit_role: role("credit_role")?,
         exclude_credit_role: role("exclude_credit_role")?,
-        credit_types: parse_optional_credit_types(vm, table, "credit_types")?,
-        exclude_credit_types: parse_optional_credit_types(vm, table, "exclude_credit_types")?
+        credit_types: parse_optional_credit_types(table, "credit_types")?,
+        exclude_credit_types: parse_optional_credit_types(table, "exclude_credit_types")?
             .unwrap_or_default(),
-        artist_type: parse_optional_artist_type(vm, table, "artist_type")?,
+        artist_type: parse_optional_artist_type(table, "artist_type")?,
         personal: catalog::read_personal(table)?,
         ..ArtistFilter::default()
     })
 }
 
 fn parse_optional_artist_type(
-    vm: &luau::Vm,
     table: &luau::Table,
     key: &str,
 ) -> luau::runtime::Result<Option<ArtistType>> {
@@ -282,12 +281,11 @@ fn parse_optional_artist_type(
         return Ok(None);
     }
     crate::plugins::types::LuauArtistType::class()
-        .read_value(vm, key, value)
+        .read_value(key, value)
         .map(|value| Some(value.into()))
 }
 
 fn parse_optional_credit_types(
-    vm: &luau::Vm,
     table: &luau::Table,
     key: &str,
 ) -> luau::runtime::Result<Option<Vec<CreditType>>> {
@@ -297,7 +295,7 @@ fn parse_optional_credit_types(
             .into_iter()
             .map(|(_, value)| {
                 crate::plugins::types::LuauCreditType::class()
-                    .read_value(vm, key, value)
+                    .read_value(key, value)
                     .map(Into::into)
             })
             .collect::<luau::runtime::Result<Vec<_>>>()

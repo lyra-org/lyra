@@ -12,11 +12,8 @@ type AsyncMethod<T> = Arc<
         + Send
         + Sync,
 >;
-type EqMethod = Arc<
-    dyn Fn(&luau::Vm, &luau::UserData, &luau::UserData) -> luau::runtime::Result<bool>
-        + Send
-        + Sync,
->;
+type EqMethod =
+    Arc<dyn Fn(&luau::UserData, &luau::UserData) -> luau::runtime::Result<bool> + Send + Sync>;
 
 pub struct UserDataClass<T> {
     class_name: &'static str,
@@ -142,22 +139,17 @@ where
         self.create(vm, origin, value).map(luau::Value::UserData)
     }
 
-    pub fn read_userdata(
-        &self,
-        vm: &luau::Vm,
-        userdata: &luau::UserData,
-    ) -> luau::runtime::Result<T> {
-        userdata.borrow::<T>(vm).map(|value| value.clone())
+    pub fn read_userdata(&self, userdata: &luau::UserData) -> luau::runtime::Result<T> {
+        userdata.borrow::<T>().map(|value| value.clone())
     }
 
     pub fn read_value(
         &self,
-        vm: &luau::Vm,
         name: impl Into<Arc<str>>,
         value: luau::Value,
     ) -> luau::runtime::Result<T> {
         match value {
-            luau::Value::UserData(userdata) => self.read_userdata(vm, &userdata),
+            luau::Value::UserData(userdata) => self.read_userdata(&userdata),
             other => Err(luau::Error::ArgumentType {
                 name: name.into(),
                 expected: self.class_name,
@@ -237,7 +229,7 @@ where
                 vm.create_function_with_options(
                     options,
                     Arc::new(move |mut frame| {
-                        let this = read_self(&mut frame.args, frame.vm)?;
+                        let this = read_self(&mut frame.args)?;
                         callback(this, frame)
                     }),
                 )?
@@ -247,7 +239,7 @@ where
                 vm.create_function_with_options(
                     options,
                     crate::luau::async_callback(Arc::new(move |mut frame| {
-                        let this = read_self(&mut frame.args, frame.vm)?;
+                        let this = read_self(&mut frame.args)?;
                         callback(this, frame)
                     })),
                 )?
@@ -272,31 +264,27 @@ where
             Arc::new(move |mut frame| {
                 let lhs: luau::UserData = frame.args.read_named("lhs")?;
                 let rhs: luau::UserData = frame.args.read_named("rhs")?;
-                frame.returns.write(equality(frame.vm, &lhs, &rhs)?)
+                frame.returns.write(equality(&lhs, &rhs)?)
             }),
         )?;
         metatable.set("__eq", &function)
     }
 }
 
-fn read_self<T>(args: &mut luau::ArgReader<'_>, vm: &luau::Vm) -> luau::runtime::Result<T>
+fn read_self<T>(args: &mut luau::ArgReader<'_>) -> luau::runtime::Result<T>
 where
     T: Clone + 'static,
 {
     let userdata: luau::UserData = args.read_named("self")?;
-    userdata.borrow::<T>(vm).map(|value| value.clone())
+    userdata.borrow::<T>().map(|value| value.clone())
 }
 
-fn equals_userdata<T>(
-    vm: &luau::Vm,
-    lhs: &luau::UserData,
-    rhs: &luau::UserData,
-) -> luau::runtime::Result<bool>
+fn equals_userdata<T>(lhs: &luau::UserData, rhs: &luau::UserData) -> luau::runtime::Result<bool>
 where
     T: PartialEq + 'static,
 {
     if !lhs.is::<T>() || !rhs.is::<T>() {
         return Ok(false);
     }
-    Ok(*lhs.borrow::<T>(vm)? == *rhs.borrow::<T>(vm)?)
+    Ok(*lhs.borrow::<T>()? == *rhs.borrow::<T>()?)
 }

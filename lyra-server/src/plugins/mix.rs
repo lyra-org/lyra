@@ -220,7 +220,7 @@ impl Mixer {
         function: luau::Function,
     ) -> luau::runtime::Result<luau::ScheduledFuture> {
         self.ensure_owner(vm, context)?;
-        let (spec, timeout) = parse_handler_spec(vm, &spec, shape)?;
+        let (spec, timeout) = parse_handler_spec(&spec, shape)?;
         let mixer = self.clone();
         let context = context.clone();
         let vm = vm.clone();
@@ -416,7 +416,6 @@ fn optional_display_name(options: &luau::Table) -> luau::runtime::Result<Option<
 
 /// The spec a handler registers with, and its timeout.
 fn parse_handler_spec(
-    vm: &luau::Vm,
     spec: &luau::Table,
     shape: MixShape,
 ) -> luau::runtime::Result<(MixHandlerSpec, Duration)> {
@@ -444,9 +443,7 @@ fn parse_handler_spec(
         luau::Value::Nil => {}
         luau::Value::Table(seeds) => {
             for (_, value) in args::array_values(&seeds)? {
-                let seed_type = LuauMixSeedType::class()
-                    .read_value(vm, "seeds", value)?
-                    .into();
+                let seed_type = LuauMixSeedType::class().read_value("seeds", value)?.into();
                 if !seed_types.contains(&seed_type) {
                     seed_types.push(seed_type);
                 }

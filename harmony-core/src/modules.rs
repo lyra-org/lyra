@@ -1125,7 +1125,6 @@ impl LuauRequireRuntime {
                 load_chunk_with_require(vm, source.bytes.clone(), &source.origin, task_group)?;
             function
                 .call_with_context(
-                    vm,
                     &[],
                     luau::CallContext {
                         origin: source.origin.clone(),
