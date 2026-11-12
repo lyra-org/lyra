@@ -16,6 +16,9 @@ shape of the modules plugins see, follow [the plugin API conventions](../plugin-
   needs from its `CallFrame`.
 - `Function`, `Table`, `Thread` and `UserData` pin their value in the registry until the last clone
   drops, and keep the `Vm` alive. Using one with another VM fails with `Error::VmMismatch`.
+- `Thread::resume` and `Thread::resume_error` resume only a suspended coroutine. They fail, and
+  leave the thread alone, for the main thread, a dead one, and one that runs or has resumed
+  another, such as the thread a native function's `CallFrame` names.
 - `VmData` and `ThreadData` hold typed host state, one value per type.
 - `harmony-luau` keeps a thread's cancelled mark in Luau's per-thread data pointer, and closes a
   marked thread from Luau's `postresume` callback, so a host must set neither itself.

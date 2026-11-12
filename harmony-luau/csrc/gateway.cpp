@@ -222,6 +222,12 @@ int harmony_luau_gateway_resumeerror(lua_State* L, lua_State* co, int* status)
     return protect(L, [&](lua_State* L) { *status = lua_resumeerror(co, L); });
 }
 
+// Never raises; it needs no protected call.
+int harmony_luau_gateway_costatus(lua_State* L, lua_State* co)
+{
+    return lua_costatus(L, co);
+}
+
 // Resets a suspended `co` as coroutine.close does and reports its lua_CoStatus afterwards through
 // `costatus`: dead once reset, or as it was for one that is dead already, running, or has resumed
 // another thread. The reset shrinks the stack, which allocates; one that fails before it has

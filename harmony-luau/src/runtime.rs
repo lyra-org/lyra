@@ -1621,6 +1621,8 @@ impl Thread {
 
     /// Checks the thread can resume in `vm` and clears what its last resume left on its stack. A
     /// thread that has not started holds just its function, which stays below what is pushed.
+    /// Only a suspended coroutine resumes: one that runs or has resumed another still uses its
+    /// stack.
     fn prepare_resume(&self, vm: &Vm) -> Result<*mut sys::lua_State> {
         if self.vm_id() != vm.inner.id {
             return Err(Error::VmMismatch {
@@ -1632,6 +1634,20 @@ impl Thread {
             return Err(Error::Runtime("thread already completed".to_string()));
         }
         let state = self.inner.state.as_ptr();
+        if self.inner.state == vm.inner.state {
+            return Err(Error::Runtime("cannot resume the main thread".to_string()));
+        }
+        match unsafe { gateway::co_status(vm.inner.state.as_ptr(), state) } {
+            gateway::CoStatus::Suspended => {}
+            gateway::CoStatus::Dead => {
+                return Err(Error::Runtime("cannot resume dead coroutine".to_string()));
+            }
+            gateway::CoStatus::Running | gateway::CoStatus::Normal => {
+                return Err(Error::Runtime(
+                    "cannot resume non-suspended coroutine".to_string(),
+                ));
+            }
+        }
         if self.is_started() {
             unsafe { gateway::truncate(state, 0) };
         }
@@ -6012,6 +6028,145 @@ mod tests {
         assert_eq!(
             thread.resume(&vm, &[Value::Number(2.0), Value::Buffer(vec![0; 2 << 20])])?,
             ThreadStatus::Completed(vec![Value::Number(2.0), Value::String(b"buffer".to_vec())])
+        );
+        assert_eq!(stack_top(&vm), 0);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn a_thread_resuming_itself_fails_and_keeps_its_arguments() -> Result<()> {
+        let vm = Vm::new()?;
+        vm.open_standard_libraries(StandardLibraries::all_supported())?;
+        let resume_self: NativeFn = Arc::new(|mut frame| {
+            let first = frame.args.read_str()?;
+            let refusal = frame
+                .thread
+                .resume(frame.vm, &[])
+                .expect_err("a running thread resumed");
+            assert!(refusal.to_string().contains("non-suspended"), "{refusal}");
+            frame.vm.eval(
+                Arc::<[u8]>::from(
+                    &b"local t = {} for i = 1, 20000 do t[i % 100 + 1] = string.rep(tostring(i), 8) end"[..],
+                ),
+                ChunkOrigin::default(),
+            )?;
+            let first = first.to_string();
+            let second: String = frame.args.read()?;
+            frame.returns.write(first + &second)?;
+            Ok(())
+        });
+        let resume_self = vm.create_function_with_options(
+            NativeFunctionOptions::new(ChunkOrigin::default()).function_name("resume_self"),
+            resume_self,
+        )?;
+        vm.set_global_function("resume_self", &resume_self)?;
+        let body = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(
+                &b"return resume_self(string.rep('a', 64) .. tostring(math.random()), 'b')"[..],
+            ),
+            ChunkOrigin::default(),
+        ))?;
+        let thread = vm.create_thread(&body)?;
+
+        let ThreadStatus::Completed(values) = thread.resume(&vm, &[])? else {
+            panic!("expected the thread to complete");
+        };
+        let [Value::String(joined)] = values.as_slice() else {
+            panic!("expected one string, got {values:?}");
+        };
+        assert!(joined.starts_with(&[b'a'; 64]) && joined.ends_with(b"b"));
+        assert_eq!(stack_top(&vm), 0);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn resuming_the_main_thread_fails_and_leaves_the_vm_working() -> Result<()> {
+        let vm = Vm::new()?;
+        vm.open_standard_libraries(StandardLibraries::all_supported())?;
+        let grab: NativeFn = Arc::new(|frame| {
+            frame.vm.data().insert(frame.thread.clone())?;
+            Ok(())
+        });
+        let grab = vm.create_function_with_options(
+            NativeFunctionOptions::new(ChunkOrigin::default()).function_name("grab"),
+            grab,
+        )?;
+        grab.call(&vm, &[])?;
+        let main = vm.data().get::<Thread>()?;
+
+        for _ in 0..2 {
+            let refusal = main.resume(&vm, &[]).expect_err("the main thread resumed");
+            assert!(refusal.to_string().contains("main thread"), "{refusal}");
+            let refusal = main
+                .resume_error(&vm, &RaisedError::from("stop"))
+                .expect_err("the main thread resumed");
+            assert!(refusal.to_string().contains("main thread"), "{refusal}");
+        }
+        assert_eq!(
+            eval_str(
+                &vm,
+                "local co = coroutine.create(function() coroutine.yield(1) end) return coroutine.resume(co)"
+            )?,
+            vec![Value::Boolean(true), Value::Number(1.0)]
+        );
+        assert_eq!(stack_top(&vm), 0);
+        vm.data().clear()?;
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn a_thread_that_has_resumed_another_refuses_to_resume() -> Result<()> {
+        let vm = Vm::new()?;
+        vm.open_standard_libraries(StandardLibraries::all_supported())?;
+        let resume: NativeFn = Arc::new(|mut frame| {
+            let thread: Thread = frame.args.read()?;
+            let refusal = thread
+                .resume(frame.vm, &[Value::from("again")])
+                .expect_err("a thread that has resumed another resumed");
+            assert!(refusal.to_string().contains("non-suspended"), "{refusal}");
+            let refusal = thread
+                .resume_error(frame.vm, &RaisedError::from("stop"))
+                .expect_err("a thread that has resumed another resumed");
+            assert!(refusal.to_string().contains("non-suspended"), "{refusal}");
+            Ok(())
+        });
+        let hold: NativeFn = Arc::new(|mut frame| {
+            let inner: Thread = frame.args.read()?;
+            let text = frame.args.read_str()?;
+            inner.resume(frame.vm, &[])?;
+            let text = text.to_string();
+            let tail: String = frame.args.read()?;
+            frame.returns.write(text + &tail)?;
+            Ok(())
+        });
+        for (name, callback) in [("resume", resume), ("hold", hold)] {
+            let function = vm.create_function_with_options(
+                NativeFunctionOptions::new(ChunkOrigin::default()).function_name(name),
+                callback,
+            )?;
+            vm.set_global_function(name, &function)?;
+        }
+        let body = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(
+                &br#"
+                    local outer = coroutine.running()
+                    local inner = coroutine.create(function()
+                        assert(coroutine.status(outer) == "normal")
+                        resume(outer)
+                    end)
+                    return hold(inner, string.rep("a", 64), "b")
+                "#[..],
+            ),
+            ChunkOrigin::default(),
+        ))?;
+        let thread = vm.create_thread(&body)?;
+
+        assert_eq!(
+            thread.resume(&vm, &[])?,
+            ThreadStatus::Completed(vec![Value::String([[b'a'; 64].as_slice(), b"b"].concat())])
         );
         assert_eq!(stack_top(&vm), 0);
         Ok(())

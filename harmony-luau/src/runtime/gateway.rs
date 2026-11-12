@@ -128,6 +128,7 @@ unsafe extern "C-unwind" {
         co: *mut lua_State,
         costatus: *mut c_int,
     ) -> c_int;
+    fn harmony_luau_gateway_costatus(L: *mut lua_State, co: *mut lua_State) -> c_int;
     fn harmony_luau_gateway_closeyielded(co: *mut lua_State);
     fn harmony_luau_gateway_cancelthread(co: *mut lua_State);
     fn harmony_luau_gateway_iscancelled(L: *mut lua_State) -> c_int;
@@ -510,14 +511,24 @@ impl CoStatus {
     }
 }
 
+// Luau's `lua_CoStatus`, which `harmony_luau_sys` leaves out; the rest are dead.
+const LUA_CORUN: c_int = 0;
+const LUA_COSUS: c_int = 1;
+const LUA_CONOR: c_int = 2;
+
 /// Reads a value of Luau's `lua_CoStatus`.
 fn co_status_from(costatus: c_int) -> CoStatus {
     match costatus {
-        0 => CoStatus::Running,
-        1 => CoStatus::Suspended,
-        2 => CoStatus::Normal,
+        LUA_CORUN => CoStatus::Running,
+        LUA_COSUS => CoStatus::Suspended,
+        LUA_CONOR => CoStatus::Normal,
         _ => CoStatus::Dead,
     }
+}
+
+/// `thread`'s state as `coroutine.status` reports it from `from`; never raises.
+pub(super) unsafe fn co_status(from: *mut lua_State, thread: *mut lua_State) -> CoStatus {
+    co_status_from(unsafe { harmony_luau_gateway_costatus(from, thread) })
 }
 
 /// Resets a suspended `thread` as `coroutine.close` does, leaving it dead, and leaves a dead one
