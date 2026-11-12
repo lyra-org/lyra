@@ -42,6 +42,7 @@ use super::{
 /// What a write may have left unreferenced, of every kind collected in that write. Artists are
 /// not among them; theirs is [`Root::ArtistCandidates`].
 #[derive(Debug, Default)]
+#[must_use = "candidates nothing collects stay for ever"]
 pub struct Candidates {
     pub tracks: Vec<DbId>,
     pub releases: Vec<DbId>,

@@ -11,12 +11,14 @@ use std::collections::{
 use agdb::{
     DbAny,
     DbId,
-    QueryBuilder,
 };
 
 use super::super::TrackMetadata;
 use lyra_db::graph::remove_edges_between;
 
+/// Detaches the sources the entries no longer yield from their tracks, then collects what that
+/// leaves: the sources, their cue records, and the tracks left with no file, with their emptied
+/// releases.
 fn prune_stale_track_sources(db: &mut DbAny, metadata: &[TrackMetadata]) -> anyhow::Result<()> {
     let mut expected_by_entry: HashMap<DbId, HashSet<String>> = HashMap::new();
     for meta in metadata {
@@ -26,6 +28,7 @@ fn prune_stale_track_sources(db: &mut DbAny, metadata: &[TrackMetadata]) -> anyh
             .insert(meta.source_key.clone());
     }
 
+    let mut stale = Vec::new();
     for (entry_db_id, expected_source_keys) in expected_by_entry {
         let tracks = lyra_db::tracks::get_by_entry(db, entry_db_id)?;
         for track in tracks {
@@ -42,17 +45,24 @@ fn prune_stale_track_sources(db: &mut DbAny, metadata: &[TrackMetadata]) -> anyh
                 {
                     continue;
                 }
-
-                remove_edges_between(db, track_db_id, source_db_id)?;
-                let still_attached =
-                    lyra_db::track_sources::get_track_id_by_source_key(db, &source.source_key)?
-                        .is_some();
-                if !still_attached {
-                    db.exec_mut(QueryBuilder::remove().ids(source_db_id).query())?;
-                }
+                stale.push((track_db_id, source_db_id));
             }
         }
     }
+    if stale.is_empty() {
+        return Ok(());
+    }
+
+    db.transaction_mut(|t| -> anyhow::Result<_> {
+        let mut left = lyra_db::orphans::Candidates::default();
+        for &(track_db_id, source_db_id) in &stale {
+            remove_edges_between(t, track_db_id, source_db_id)?;
+            left.tracks.push(track_db_id);
+            left.track_sources.push(source_db_id);
+        }
+        lyra_db::orphans::collect(t, left)
+    })?;
+    crate::services::covers::discard_listed_cover_files(db);
 
     Ok(())
 }

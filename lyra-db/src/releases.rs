@@ -289,6 +289,7 @@ pub fn unlink_track(
 }
 
 #[derive(Debug, Default)]
+#[must_use = "the releases the track left may be empty, and are the caller's to collect"]
 pub struct TrackReleaseDelta {
     pub membership_changed: bool,
     /// The releases the track left, for the caller to collect once its write is done with them.

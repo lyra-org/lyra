@@ -100,7 +100,8 @@ pub(crate) fn merge_release_into_inside_tx(
             continue;
         };
         lyra_db::releases::link_track(db, winner, track_db_id)?;
-        lyra_db::releases::unlink_track(db, loser, track_db_id)?;
+        // The loser goes below, with or without tracks.
+        let _ = lyra_db::releases::unlink_track(db, loser, track_db_id)?;
     }
 
     lyra_db::external_ids::absorb_inside_tx(db, winner, loser)?;
@@ -293,7 +294,8 @@ mod tests {
     fn merge_release_into(db: &mut DbAny, winner: DbId, loser: DbId) -> anyhow::Result<()> {
         db.transaction_mut(|transaction| {
             merge_release_into_inside_tx(transaction, winner, loser).map(|_| ())
-        })
+        })?;
+        lyra_db::orphans::testing::assert_artists_tracked(db)
     }
 
     #[test]

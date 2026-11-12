@@ -1025,7 +1025,8 @@ impl Fixture {
             }
             if let Some(release) = &track.release {
                 let (release_db_id, _) = keys.entity(release)?;
-                lyra_db::releases::replace_track_release(db, release_db_id, track_db_id)?;
+                // A track just made has no release to leave.
+                let _ = lyra_db::releases::replace_track_release(db, release_db_id, track_db_id)?;
             }
             let mut layer = LocalLayer::default();
             layer.supply(MetadataField::TrackTitle, Some(track.title.as_str()));

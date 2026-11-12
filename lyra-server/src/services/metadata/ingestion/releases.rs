@@ -498,6 +498,7 @@ fn persist_release_inner(
         .max();
 
     let mut persisted_track_ids = Vec::new();
+    let mut left = lyra_db::orphans::Candidates::default();
     let mut changed_track_ids = Vec::new();
     let mut changed_track_id_set = HashSet::new();
 
@@ -677,6 +678,7 @@ fn persist_release_inner(
 
         let release_delta =
             lyra_db::releases::replace_track_release(db, release_db_id, track_db_id)?;
+        left.extend(release_delta.left);
         if release_delta.membership_changed && changed_track_id_set.insert(track_db_id) {
             changed_track_ids.push(track_db_id);
         }
@@ -713,6 +715,10 @@ fn persist_release_inner(
     let affected_playlist_ids =
         lyra_db::covers::display::playlist_ids_for_tracks(db, &changed_track_ids)?;
     lyra_db::covers::display::sync_playlist_covers(db, &affected_playlist_ids)?;
+
+    // A release the batch took the last track of goes with this write.
+    lyra_db::orphans::collect(db, left)?;
+    crate::services::covers::discard_listed_cover_files(db);
 
     Ok(ReleaseIngestResult {
         release_db_id,

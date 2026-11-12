@@ -5248,7 +5248,7 @@ FILE "album.flac" WAVE
                 .expect("track");
             for release in lyra_db::releases::get_by_track(&db, track)? {
                 let release = release.db_id.map(DbId::from).expect("release id");
-                lyra_db::releases::unlink_track(&mut db, release, track)?;
+                let _ = lyra_db::releases::unlink_track(&mut db, release, track)?;
             }
             assert!(lyra_db::entries::release_ids(&*db, stray_entry)?.is_empty());
         }

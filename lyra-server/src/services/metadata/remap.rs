@@ -131,10 +131,10 @@ fn take_over(
         retarget_inbound,
     };
 
-    // The file: the missing track's sources go, the target's become its own.
+    // The file: the missing track leaves its sources, the target's become its own.
     let lost = neighbor_ids(t, missing, "TrackSource")?;
-    if !lost.is_empty() {
-        t.exec_mut(agdb::QueryBuilder::remove().ids(&lost).query())?;
+    for &source in &lost {
+        remove_edges_between(t, missing, source)?;
     }
     for source in neighbor_ids(t, target, "TrackSource")? {
         remove_edges_between(t, target, source)?;
@@ -151,8 +151,12 @@ fn take_over(
     lyra_db::chains::hand_over(t, target, missing)?;
     let old_releases = inbound_neighbor_ids(t, missing, "Release")?;
     let new_releases = inbound_neighbor_ids(t, target, "Release")?;
+    let mut left = lyra_db::orphans::Candidates {
+        track_sources: lost,
+        ..Default::default()
+    };
     for &release in old_releases.iter().filter(|r| !new_releases.contains(r)) {
-        lyra_db::releases::unlink_track(t, release, missing)?;
+        left.extend(lyra_db::releases::unlink_track(t, release, missing)?);
     }
     for &release in &new_releases {
         lyra_db::releases::link_track(t, release, missing)?;
@@ -184,12 +188,7 @@ fn take_over(
 
     lyra_db::metadata::cascade_remove_entities_in_txn(t, &[target])?;
     super::merging::apply_merged_metadata_to_entity_inside_tx(t, missing)?;
-    for &release in old_releases.iter().filter(|r| !new_releases.contains(r)) {
-        if neighbor_ids(t, release, "Track")?.is_empty() {
-            lyra_db::metadata::cascade_remove_entities_in_txn(t, &[release])?;
-        }
-    }
-    Ok(())
+    lyra_db::orphans::collect(t, left)
 }
 
 #[cfg(test)]
@@ -244,6 +243,74 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn taking_over_collects_the_file_and_release_the_missing_track_left() -> anyhow::Result<()> {
+        use lyra_db::fixtures::{
+            insert_file_entry,
+            insert_release,
+            link_track,
+        };
+        use lyra_db::orphans::testing::{
+            assert_collected,
+            assert_drained,
+            drain_artists,
+        };
+
+        let mut db = new_test_db()?;
+        let library = lyra_db::test_db::insert_library(&mut db, "Music", "/music")?;
+        let placed = |db: &mut DbAny, name: &str| -> anyhow::Result<(DbId, DbId, DbId)> {
+            let release = insert_release(db, name)?;
+            let track = insert_track(db, name)?;
+            link_track(db, release, track)?;
+            let entry = insert_file_entry(db, library, name)?;
+            let source = db.transaction_mut(|t| {
+                lyra_db::track_sources::upsert(
+                    t,
+                    track,
+                    entry,
+                    lyra_db::track_sources::TrackSourceUpsert {
+                        source_kind: "embedded_tags".to_string(),
+                        source_key: name.to_string(),
+                        is_primary: true,
+                        start_ms: None,
+                        end_ms: None,
+                        format: Default::default(),
+                    },
+                    None,
+                )
+            })?;
+            Ok((release, track, source))
+        };
+        let (old_release, missing, lost_source) = placed(&mut db, "gone.flac")?;
+        let (new_release, target, kept_source) = placed(&mut db, "here.flac")?;
+        let artist = lyra_db::artists::create(&mut db, "Target Artist", None)?;
+        lyra_db::test_db::connect_artist(&mut db, target, artist)?;
+        drain_artists(&mut db)?;
+        let id = |db: &DbAny, track| {
+            lyra_db::lookup::find_id_by_db_id(db, track).map(|id| id.expect("public id"))
+        };
+        let (missing_id, target_id) = (id(&db, missing)?, id(&db, target)?);
+
+        db.transaction_mut(|t| take_over(t, missing, target, &missing_id, &target_id))?;
+
+        assert!(lyra_db::tracks::get_by_id(&db, target)?.is_none());
+        assert!(lyra_db::releases::get_by_id(&db, old_release)?.is_none());
+        assert!(lyra_db::track_sources::get_by_id(&db, lost_source)?.is_none());
+        assert_eq!(
+            lyra_db::graph::neighbor_ids(&db, missing, "TrackSource")?,
+            vec![kept_source]
+        );
+        assert_eq!(
+            lyra_db::graph::inbound_neighbor_ids(&db, missing, "Release")?,
+            vec![new_release]
+        );
+        assert!(lyra_db::artists::get_by_id(&db, artist)?.is_some());
+        assert_collected(&db)?;
+
+        assert_eq!(drain_artists(&mut db)?, 1);
+        assert_drained(&db)
     }
 
     #[test]
