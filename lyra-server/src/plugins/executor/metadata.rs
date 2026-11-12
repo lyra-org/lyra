@@ -21,6 +21,8 @@ use anyhow::{
 use harmony_core::{
     LocalLuauTaskCompletion,
     LocalScheduler,
+    ResumeBound,
+    ResumeLimit,
     UserDataBinding,
 };
 
@@ -116,8 +118,8 @@ impl PluginExecutor {
             .as_ref()
             .ok()
             .and_then(|handler| handler.context.origin.plugin.clone());
-        self.start_callback(deadline, reply, permit, plugin, |timeout, completion| {
-            schedule_metadata_handler(&self.vm, handler?, context, deadline, timeout, completion)
+        self.start_callback(deadline, reply, permit, plugin, |limit, completion| {
+            schedule_metadata_handler(&self.vm, handler?, context, deadline, limit, completion)
         });
     }
 
@@ -143,7 +145,7 @@ fn schedule_metadata_handler(
     handler: crate::plugins::metadata::MetadataCallback,
     request_context: serde_json::Value,
     deadline: Instant,
-    resume_budget: Duration,
+    limit: ResumeLimit,
     completion: Rc<LocalLuauTaskCompletion>,
 ) -> Result<(Rc<LocalScheduler>, harmony_luau::Thread)> {
     let argument = harmony_serde::json_to_luau_owned(request_context, 0)?;
@@ -157,7 +159,7 @@ fn schedule_metadata_handler(
         &handler.function,
         context,
         vec![argument],
-        resume_budget,
+        limit,
         completion,
     )
 }
@@ -167,17 +169,17 @@ fn schedule_function(
     function: &harmony_luau::Function,
     context: harmony_core::CallContext,
     args: Vec<harmony_luau::Value>,
-    resume_budget: Duration,
+    limit: ResumeLimit,
     completion: Rc<LocalLuauTaskCompletion>,
 ) -> Result<(Rc<LocalScheduler>, harmony_luau::Thread)> {
     let thread = vm.create_thread(function)?;
     let scheduler = vm.data().get::<LocalScheduler>()?;
-    scheduler.schedule_luau_thread_with_budget_and_completion(
+    scheduler.schedule_luau_thread_with_limit_and_completion(
         context,
         vm.clone(),
         thread.clone(),
         args,
-        resume_budget,
+        limit,
         completion,
     );
     Ok((scheduler, thread))
@@ -190,8 +192,8 @@ async fn run_handler<M: Send + Sync + 'static>(
     handler: &crate::plugins::metadata::MetadataCallback,
     marker: M,
     args: Vec<harmony_luau::Value>,
-    resume_budget: Duration,
     deadline: Instant,
+    resume_budget: Option<Duration>,
 ) -> Result<Option<Vec<harmony_luau::Value>>> {
     let mut context = handler.context.clone();
     context.caller.insert(marker);
@@ -201,36 +203,41 @@ async fn run_handler<M: Send + Sync + 'static>(
         &handler.function,
         context,
         args,
-        resume_budget,
         deadline,
+        resume_budget,
     )
     .await
 }
 
-/// A handler's raised error, whole, for a caller that reads its kind.
+/// A handler's raised error, whole, for a caller that reads its kind, with the bound of its limit
+/// that cut it short, if it failed as interrupted.
 #[derive(Debug, thiserror::Error)]
-#[error("{}", .0.message)]
-struct HandlerRaised(harmony_luau::RaisedError);
+#[error("{}", .raised.message)]
+struct HandlerRaised {
+    raised: harmony_luau::RaisedError,
+    interrupted_by: Option<ResumeBound>,
+}
 
 /// [`super::callbacks::refresh_failure`] for a handler run on the calling VM.
 fn raised_refresh_failure(error: anyhow::Error) -> anyhow::Error {
     match error.downcast::<HandlerRaised>() {
-        Ok(HandlerRaised(raised)) => super::callbacks::refresh_failure(raised),
+        Ok(HandlerRaised { raised, .. }) => super::callbacks::refresh_failure(raised),
         Err(error) => error,
     }
 }
 
 /// Runs `function` and returns what it returned, or `None` unless it ended before `deadline`, by
 /// [`super::now`], as a handler the executor starts must: one still running then is cancelled.
-/// Dropping the future cancels it too.
+/// Dropping the future cancels it too. No resume of it runs past the deadline, nor past that of
+/// the handler `chain` began with, nor for longer than `resume_budget`, if it has one.
 pub(super) async fn run_function(
     vm: &harmony_luau::Vm,
     chain: &CallChain,
     function: &harmony_luau::Function,
     context: harmony_core::CallContext,
     args: Vec<harmony_luau::Value>,
-    resume_budget: Duration,
     deadline: Instant,
+    resume_budget: Option<Duration>,
 ) -> Result<Option<Vec<harmony_luau::Value>>> {
     let running = vm.data().get::<super::callbacks::RunningHandlers>()?;
     let plugin = context.origin.plugin.clone();
@@ -244,12 +251,17 @@ pub(super) async fn run_function(
     context.caller.insert(chain.admitting(plugin.as_ref()));
     let _running = running.enter(plugin);
     let completion = Rc::new(LocalLuauTaskCompletion::default());
+    let limit = ResumeLimit::until(deadline);
+    let limit = match resume_budget {
+        Some(budget) => limit.with_budget(budget),
+        None => limit,
+    };
     let (scheduler, thread) = schedule_function(
         vm,
         function,
         context,
         args,
-        resume_budget,
+        chain.limit_resumes(limit),
         completion.clone(),
     )?;
     let expired = scheduler.sleep_until(deadline);
@@ -270,9 +282,13 @@ pub(super) async fn run_function(
     if completion.ended_at().is_some_and(|ended| ended >= deadline) {
         return Ok(None);
     }
-    result
-        .map(Some)
-        .map_err(|error| HandlerRaised(error).into())
+    result.map(Some).map_err(|raised| {
+        HandlerRaised {
+            raised,
+            interrupted_by: completion.interrupted_by(),
+        }
+        .into()
+    })
 }
 
 /// How a host function reaches plugin handlers: on the VM making the call, which the executor is
@@ -357,17 +373,14 @@ impl RuntimeCalls for VmCalls {
             .get::<crate::plugins::metadata::MetadataCallbackRegistry>()?
             .get(request.handler)?;
         let argument = harmony_serde::json_to_luau_owned(request.context, 0)?;
-        let budget = request
-            .deadline
-            .saturating_duration_since(super::now(&self.vm)?);
         let values = run_handler(
             &self.vm,
             &self.chain,
             &handler,
             MetadataDispatchContext,
             vec![argument],
-            budget,
             request.deadline,
+            None,
         )
         .await
         .map_err(raised_refresh_failure)?
@@ -401,14 +414,15 @@ async fn dispatch_similar_releases_in_vm(
     }
     let handler = similar_releases_handler(&vm, request.handler, &request.provider_id)?;
     let argument = harmony_serde::json_to_luau_owned(request.context, 0)?;
+    let deadline = super::now(&vm)? + request.timeout;
     let values = run_handler(
         &vm,
         chain,
         &handler,
         MetadataDispatchContext,
         vec![argument],
-        request.timeout,
-        super::now(&vm)? + request.timeout,
+        deadline,
+        None,
     )
     .await?
     .context("similar releases handler did not complete within its timeout")?;
@@ -419,9 +433,9 @@ async fn dispatch_similar_releases_in_vm(
     Ok(SimilarReleasesDispatchResult { candidates })
 }
 
-/// Runs the calls one at a time, each resume capped by the call budget and
-/// the batch deadline, so CPU-bound generators can't stall the VM past it.
-/// Once a generator times out, its remaining calls are skipped.
+/// Runs the calls one at a time, each resume capped by the call budget and by the batch deadline,
+/// so CPU-bound generators can't stall the VM past it. Once a generator times out, its remaining
+/// calls are skipped.
 pub(crate) async fn dispatch_id_links_in_vm(
     vm: harmony_luau::Vm,
     chain: CallChain,
@@ -439,16 +453,19 @@ pub(crate) async fn dispatch_id_links_in_vm(
     let handlers = vm
         .data()
         .get::<crate::plugins::metadata::MetadataCallbackRegistry>()?;
-    let deadline = super::now(&vm)? + ID_LINK_BATCH_TIMEOUT;
+    // The batch ends with the handler that asked for it, if that is sooner.
+    let batch_deadline = super::now(&vm)? + ID_LINK_BATCH_TIMEOUT;
+    let deadline = chain
+        .deadline()
+        .map_or(batch_deadline, |deadline| deadline.min(batch_deadline));
     let mut timed_out = HashSet::new();
     let mut results = Vec::with_capacity(calls.len());
     for call in &calls {
-        let budget = id_link_call_budget(deadline.saturating_duration_since(super::now(&vm)?));
-        let result = match budget {
-            Some(budget) if !timed_out.contains(&call.handler) => {
-                run_id_link(&vm, &chain, &handlers, &provider_id, call, budget, deadline).await
-            }
-            _ => Err(IdLinkCallError::NotRun),
+        let left = deadline.saturating_duration_since(super::now(&vm)?);
+        let result = if left >= MIN_ID_LINK_CALL_TIME && !timed_out.contains(&call.handler) {
+            run_id_link(&vm, &chain, &handlers, &provider_id, call, deadline).await
+        } else {
+            Err(IdLinkCallError::NotRun)
         };
         if result == Err(IdLinkCallError::TimedOut) {
             timed_out.insert(call.handler);
@@ -458,19 +475,12 @@ pub(crate) async fn dispatch_id_links_in_vm(
     Ok(results)
 }
 
-/// The full per-call budget, clamped to what's left of the batch; `None`
-/// when too little is left to start the call.
-fn id_link_call_budget(remaining: Duration) -> Option<Duration> {
-    (remaining >= MIN_ID_LINK_CALL_TIME).then(|| remaining.min(ID_LINK_CALL_BUDGET))
-}
-
 async fn run_id_link(
     vm: &harmony_luau::Vm,
     chain: &CallChain,
     handlers: &crate::plugins::metadata::MetadataCallbackRegistry,
     provider_id: &str,
     call: &IdLinkCall,
-    budget: Duration,
     deadline: Instant,
 ) -> IdLinkCallResult {
     let failed = |error: String| IdLinkCallError::Failed(error);
@@ -491,35 +501,33 @@ async fn run_id_link(
         &handler,
         IdLinkDispatchContext,
         vec![id, ctx],
-        budget,
         deadline,
+        Some(ID_LINK_CALL_BUDGET),
     )
     .await;
-    id_link_outcome(outcome, budget)
+    id_link_outcome(outcome)
 }
 
-/// Only a call that used up the full per-call budget counts as timed out.
-/// One cut short by the batch deadline, whether interrupted on a clamped
-/// budget or not ended before it, is `NotRun`, so it doesn't suspend its generator.
-fn id_link_outcome(
-    outcome: Result<Option<Vec<harmony_luau::Value>>>,
-    budget: Duration,
-) -> IdLinkCallResult {
-    match outcome {
-        Ok(Some(values)) => decode_id_link(values.into_iter().next()),
-        Ok(None) => Err(IdLinkCallError::NotRun),
-        // Task failures reach us as text; the busy-generator executor test
-        // fails if the interrupt message stops coming through.
-        Err(error) if DispatchNotStarted::caused(&error) => Err(IdLinkCallError::NotRun),
-        Err(error) if error.to_string().contains(harmony_luau::INTERRUPTED_ERROR) => {
-            if budget == ID_LINK_CALL_BUDGET {
-                Err(IdLinkCallError::TimedOut)
-            } else {
-                Err(IdLinkCallError::NotRun)
-            }
-        }
-        Err(error) => Err(IdLinkCallError::Failed(format!("{error:#}"))),
+/// Only a call whose resume used up the call budget counts as timed out. One cut short by the
+/// batch deadline, whether interrupted at it or not ended before it, is `NotRun`, so it doesn't
+/// suspend its generator.
+fn id_link_outcome(outcome: Result<Option<Vec<harmony_luau::Value>>>) -> IdLinkCallResult {
+    let error = match outcome {
+        Ok(Some(values)) => return decode_id_link(values.into_iter().next()),
+        Ok(None) => return Err(IdLinkCallError::NotRun),
+        Err(error) => error,
+    };
+    if DispatchNotStarted::caused(&error) {
+        return Err(IdLinkCallError::NotRun);
     }
+    let interrupted_by = error
+        .downcast_ref::<HandlerRaised>()
+        .and_then(|raised| raised.interrupted_by);
+    Err(match interrupted_by {
+        Some(ResumeBound::Budget) => IdLinkCallError::TimedOut,
+        Some(ResumeBound::Deadline | ResumeBound::Signal) => IdLinkCallError::NotRun,
+        None => IdLinkCallError::Failed(format!("{error:#}")),
+    })
 }
 
 /// Built only from `IdLinkCall`, whose fields all feed the link cache key,
@@ -711,10 +719,13 @@ mod tests {
         use crate::services::plugin_dispatch::RefreshTargetGone;
 
         let raised = |kind| {
-            anyhow::Error::new(HandlerRaised(harmony_luau::RaisedError {
-                kind,
-                message: "gone".to_string(),
-            }))
+            anyhow::Error::new(HandlerRaised {
+                raised: harmony_luau::RaisedError {
+                    kind,
+                    message: "gone".to_string(),
+                },
+                interrupted_by: None,
+            })
         };
         assert!(raised_refresh_failure(raised(Some("not_found"))).is::<RefreshTargetGone>());
         let failure = raised_refresh_failure(raised(None));
@@ -723,47 +734,36 @@ mod tests {
     }
 
     #[test]
-    fn calls_start_only_with_enough_time_left_and_get_at_most_the_call_budget() {
-        assert_eq!(id_link_call_budget(Duration::ZERO), None);
-        assert_eq!(id_link_call_budget(Duration::from_micros(500)), None);
-        assert_eq!(
-            id_link_call_budget(MIN_ID_LINK_CALL_TIME),
-            Some(MIN_ID_LINK_CALL_TIME)
-        );
-        assert_eq!(
-            id_link_call_budget(Duration::from_millis(50)),
-            Some(Duration::from_millis(50))
-        );
-        assert_eq!(
-            id_link_call_budget(ID_LINK_BATCH_TIMEOUT),
-            Some(ID_LINK_CALL_BUDGET)
-        );
-    }
-
-    #[test]
-    fn only_a_call_that_used_the_full_budget_times_out() {
-        let interrupted = || {
-            Err(anyhow::anyhow!(
-                "Luau task 3 failed: Luau runtime failed: {}",
-                harmony_luau::INTERRUPTED_ERROR
-            ))
+    fn only_a_call_interrupted_on_its_own_budget_times_out() {
+        let failed = |interrupted_by| {
+            Err(anyhow::Error::new(HandlerRaised {
+                raised: harmony_luau::INTERRUPTED_ERROR.into(),
+                interrupted_by,
+            }))
         };
         assert_eq!(
-            id_link_outcome(interrupted(), ID_LINK_CALL_BUDGET),
+            id_link_outcome(failed(Some(ResumeBound::Budget))),
             Err(IdLinkCallError::TimedOut)
         );
+        for batch_s in [ResumeBound::Deadline, ResumeBound::Signal] {
+            assert_eq!(
+                id_link_outcome(failed(Some(batch_s))),
+                Err(IdLinkCallError::NotRun),
+                "interrupted at the batch deadline"
+            );
+        }
         assert_eq!(
-            id_link_outcome(interrupted(), Duration::from_millis(20)),
+            id_link_outcome(Ok(None)),
             Err(IdLinkCallError::NotRun),
-            "interrupted on a budget clamped by the batch deadline"
+            "still waiting at the batch deadline"
         );
-        assert_eq!(
-            id_link_outcome(Ok(None), ID_LINK_CALL_BUDGET),
-            Err(IdLinkCallError::NotRun),
-            "still running at the batch deadline"
-        );
+        // The message alone doesn't make it an interruption.
         assert!(matches!(
-            id_link_outcome(Err(anyhow::anyhow!("boom")), ID_LINK_CALL_BUDGET),
+            id_link_outcome(failed(None)),
+            Err(IdLinkCallError::Failed(_))
+        ));
+        assert!(matches!(
+            id_link_outcome(Err(anyhow::anyhow!("boom"))),
             Err(IdLinkCallError::Failed(_))
         ));
     }

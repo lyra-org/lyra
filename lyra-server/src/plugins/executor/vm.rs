@@ -329,7 +329,7 @@ impl PluginExecutor {
             super::callbacks::CallbackReply::Source(reply),
             permit,
             Some(Arc::from(run.plugin_id.as_str())),
-            |timeout, completion| {
+            |limit, completion| {
                 let dispatch_auth = crate::plugins::auth::DispatchAuth::default();
                 dispatch_auth.record(run.auth);
                 let mut context = CallContext {
@@ -344,12 +344,12 @@ impl PluginExecutor {
                 let args = (run.args)(&self.vm, &context.origin)?;
                 let thread = self.runtime.load_source_thread(run.source, &mut context)?;
                 let scheduler = self.vm.data().get::<harmony_core::LocalScheduler>()?;
-                scheduler.schedule_luau_thread_with_budget_and_completion(
+                scheduler.schedule_luau_thread_with_limit_and_completion(
                     context,
                     self.vm.clone(),
                     thread.clone(),
                     args,
-                    timeout,
+                    limit,
                     completion,
                 );
                 Ok((scheduler, thread))

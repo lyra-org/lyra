@@ -85,6 +85,12 @@ struct DispatchHandlers {
     fast: PluginCallbackHandle,
     /// Waits on a call it makes to the slow handler.
     outer: PluginCallbackHandle,
+    /// Waits at the gate, then never yields again.
+    spinning: PluginCallbackHandle,
+    /// Waits on a call it makes to the spinning handler.
+    outer_spinning: PluginCallbackHandle,
+    /// Waits at the gate, as does a coroutine it started before.
+    with_coroutine: PluginCallbackHandle,
     api: PluginCallbackHandle,
 }
 
@@ -223,6 +229,22 @@ fn dispatch_runtime(
             gate.refresh("dispatch-slow")
             return ctx.value
         end)
+        metadata.Provider.new("dispatch-spinning"):refresh(metadata.EntityType.Release, function()
+            gate.wait()
+            while true do end
+        end)
+        metadata.Provider.new("dispatch-outer-spinning"):refresh(metadata.EntityType.Release, function(ctx)
+            gate.refresh("dispatch-spinning")
+            return ctx.value
+        end)
+        metadata.Provider.new("dispatch-with-coroutine"):refresh(metadata.EntityType.Release, function(ctx)
+            coroutine.resume(coroutine.create(function()
+                gate.wait()
+                gate.mark()
+            end))
+            gate.wait()
+            return ctx.value
+        end)
         local api = require("@lyra/api")
         api.get("/dispatch-wait", function(_ctx)
             gate.wait()
@@ -236,18 +258,18 @@ fn dispatch_runtime(
     )?;
     let registry =
         futures::executor::block_on(crate::services::providers::provider_registry().read_owned());
-    let slow = registry
-        .get_refresh_callback("dispatch-slow", crate::services::EntityType::Release)
-        .copied()
-        .context("slow callback")?;
-    let fast = registry
-        .get_refresh_callback("dispatch-fast", crate::services::EntityType::Release)
-        .copied()
-        .context("fast callback")?;
-    let outer = registry
-        .get_refresh_callback("dispatch-outer", crate::services::EntityType::Release)
-        .copied()
-        .context("outer callback")?;
+    let refresh = |provider: &str| {
+        registry
+            .get_refresh_callback(provider, crate::services::EntityType::Release)
+            .copied()
+            .with_context(|| format!("{provider} callback"))
+    };
+    let slow = refresh("dispatch-slow")?;
+    let fast = refresh("dispatch-fast")?;
+    let outer = refresh("dispatch-outer")?;
+    let spinning = refresh("dispatch-spinning")?;
+    let outer_spinning = refresh("dispatch-outer-spinning")?;
+    let with_coroutine = refresh("dispatch-with-coroutine")?;
     let api = futures::executor::block_on(crate::plugins::api::tests::registered_handler(
         "GET",
         "/dispatch-wait",
@@ -259,6 +281,9 @@ fn dispatch_runtime(
             slow,
             fast,
             outer,
+            spinning,
+            outer_spinning,
+            with_coroutine,
             api,
         },
     ))
@@ -337,6 +362,9 @@ struct StagedExecutor {
     slow: PluginCallbackHandle,
     fast: PluginCallbackHandle,
     outer: PluginCallbackHandle,
+    spinning: PluginCallbackHandle,
+    outer_spinning: PluginCallbackHandle,
+    with_coroutine: PluginCallbackHandle,
     started: async_mpsc::UnboundedReceiver<()>,
     dropped: async_mpsc::UnboundedReceiver<()>,
     resumed: async_mpsc::UnboundedReceiver<()>,
@@ -378,6 +406,9 @@ impl StagedExecutor {
             slow: handlers.slow,
             fast: handlers.fast,
             outer: handlers.outer,
+            spinning: handlers.spinning,
+            outer_spinning: handlers.outer_spinning,
+            with_coroutine: handlers.with_coroutine,
             started,
             dropped,
             resumed,
@@ -388,12 +419,17 @@ impl StagedExecutor {
     /// Starts `handler` as its command does, with [`STAGED_TIMEOUT`] by the clock, running no
     /// round.
     fn start(&self, handler: PluginCallbackHandle) -> Result<RefreshAnswer> {
+        self.start_for(handler, STAGED_TIMEOUT)
+    }
+
+    /// [`Self::start`] with `timeout` by the clock.
+    fn start_for(&self, handler: PluginCallbackHandle, timeout: Duration) -> Result<RefreshAnswer> {
         let (reply, answer) = tokio::sync::oneshot::channel();
         let permit = Arc::new(tokio::sync::Semaphore::new(1)).try_acquire_owned()?;
         let request = MetadataRefreshRequest {
             handler,
             context: serde_json::json!({ "value": 42 }),
-            deadline: self.clock.now() + STAGED_TIMEOUT,
+            deadline: self.clock.now() + timeout,
         };
         self.runtime.start_metadata_refresh(request, reply, permit);
         Ok(answer)
@@ -595,6 +631,109 @@ async fn a_nested_handler_ready_after_its_caller_s_deadline_is_not_resumed() -> 
     assert!(executor.resumed.try_recv().is_err());
     assert_eq!(executor.pending_tasks()?, 0);
     deadline_expired(answer)
+}
+
+/// How long the spinning handler has left, by the clock, when it goes on after its wait.
+const LEFT_TO_SPIN: Duration = Duration::from_millis(50);
+
+/// Lets the spinning handler go on with [`LEFT_TO_SPIN`] of `timeout` left and returns how the
+/// call that began with `timeout` was answered. The clock stands still while it spins, so only
+/// the limit on its resume ends it: what was left when the resume began, counted in real time.
+fn answer_for_a_handler_spinning_late(
+    executor: &mut StagedExecutor,
+    mut answer: RefreshAnswer,
+    timeout: Duration,
+) -> Result<anyhow::Error> {
+    executor.started.try_recv().context("the handler waits")?;
+    executor.clock.advance(timeout - LEFT_TO_SPIN);
+    executor.release.notify_one();
+    let resumed = Instant::now();
+    executor.runtime.run_until_idle()?;
+    let spun = resumed.elapsed();
+
+    assert!(
+        spun < timeout / 2,
+        "it spun for {spun:?}, as if each resume had the whole timeout"
+    );
+    let error = answer
+        .try_recv()
+        .context("the handler is answered for")?
+        .expect_err("an interrupted handler fails");
+    assert!(
+        error.to_string().contains(harmony_luau::INTERRUPTED_ERROR),
+        "{error:#}"
+    );
+    assert_eq!(executor.pending_tasks()?, 0);
+    Ok(error)
+}
+
+/// The watcher ends a handler only between two resumes, so one that waits until late and then
+/// never yields again is ended by its resume's own limit, which is its deadline.
+#[tokio::test]
+async fn a_handler_that_spins_after_a_late_wait_is_interrupted_at_its_deadline() -> Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
+    let mut executor = StagedExecutor::new()?;
+    let answer = executor.start(executor.spinning)?;
+    executor.runtime.run_until_idle()?;
+
+    answer_for_a_handler_spinning_late(&mut executor, answer, STAGED_TIMEOUT)?;
+    Ok(())
+}
+
+/// As above for a handler run on the calling VM, by the nested call's own deadline: its caller
+/// has longer.
+#[tokio::test]
+async fn a_nested_handler_that_spins_after_a_late_wait_is_interrupted_at_its_deadline() -> Result<()>
+{
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
+    let mut executor = StagedExecutor::new()?;
+    let answer = executor.start_for(executor.outer_spinning, NESTED_TIMEOUT * 2)?;
+    executor.runtime.run_until_idle()?;
+
+    answer_for_a_handler_spinning_late(&mut executor, answer, NESTED_TIMEOUT)?;
+    Ok(())
+}
+
+/// A nested call has its own, longer time, but answers to the handler that made it: its handler's
+/// resume ends at that handler's deadline.
+#[tokio::test]
+async fn a_nested_handler_that_spins_late_is_interrupted_at_its_caller_s_deadline() -> Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
+    let mut executor = StagedExecutor::new()?;
+    assert!(STAGED_TIMEOUT < NESTED_TIMEOUT);
+    let answer = executor.start(executor.outer_spinning)?;
+    executor.runtime.run_until_idle()?;
+
+    answer_for_a_handler_spinning_late(&mut executor, answer, STAGED_TIMEOUT)?;
+    Ok(())
+}
+
+/// A handler runs in its plugin's run, with no group of its own, so cancelling it reaches its own
+/// thread only: a coroutine it started that waits on a call of its own is a task of the run, and
+/// goes on until the run ends.
+#[tokio::test]
+async fn a_coroutine_a_handler_started_goes_on_after_the_handler_s_deadline() -> Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
+    let mut executor = StagedExecutor::new()?;
+    let answer = executor.start(executor.with_coroutine)?;
+    executor.runtime.run_until_idle()?;
+    assert!(executor.started.try_recv().is_ok(), "the coroutine waits");
+    assert!(executor.started.try_recv().is_ok(), "the handler waits");
+
+    executor.clock.advance(STAGED_TIMEOUT);
+    executor.runtime.run_until_idle()?;
+    deadline_expired(answer)?;
+    assert!(executor.dropped.try_recv().is_ok(), "the handler's call");
+    assert!(executor.dropped.try_recv().is_err(), "the coroutine's call");
+
+    executor.release.notify_one();
+    executor.runtime.run_until_idle()?;
+    assert!(executor.resumed.try_recv().is_ok(), "the coroutine went on");
+    Ok(())
 }
 
 /// The handler ends in a round, and the round in which its watcher reads that comes only after

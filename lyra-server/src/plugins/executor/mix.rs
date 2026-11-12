@@ -21,7 +21,7 @@ use crate::services::plugin_dispatch::{
 };
 
 /// How long a mixer handler may run. Requests cut it to their own budget.
-const MIX_HANDLER_BUDGET: std::time::Duration = std::time::Duration::from_secs(300);
+const MIX_HANDLER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
 impl PluginExecutor {
     pub(super) fn start_mix_handler(
@@ -48,13 +48,13 @@ impl PluginExecutor {
             .as_ref()
             .ok()
             .and_then(|(handler, _, _)| handler.context.origin.plugin.clone());
-        let deadline = self.now() + MIX_HANDLER_BUDGET;
+        let deadline = self.now() + MIX_HANDLER_TIMEOUT;
         self.start_callback(
             deadline,
             super::callbacks::CallbackReply::Mix { reply, mixer_id },
             permit,
             plugin,
-            |timeout, completion| {
+            |limit, completion| {
                 let (handler, thread, argument) = prepared?;
                 let scheduler = self.vm.data().get::<LocalScheduler>()?;
                 let mut context = handler.context.clone();
@@ -62,12 +62,12 @@ impl PluginExecutor {
                     deadline,
                     context.origin.plugin.clone(),
                 ));
-                scheduler.schedule_luau_thread_with_budget_and_completion(
+                scheduler.schedule_luau_thread_with_limit_and_completion(
                     context,
                     self.vm.clone(),
                     thread.clone(),
                     vec![argument],
-                    timeout,
+                    limit,
                     completion,
                 );
                 Ok((scheduler, thread))
@@ -95,14 +95,15 @@ pub(super) async fn dispatch_mix_in_vm(
         .get::<crate::plugins::mix::MixCallbackRegistry>()?
         .get(request.handler)?;
     let argument = mix_context_value(vm, &handler, &request)?;
+    let deadline = super::now(vm)? + MIX_HANDLER_TIMEOUT;
     let values = super::metadata::run_function(
         vm,
         chain,
         &handler.function,
         handler.context.clone(),
         vec![argument],
-        MIX_HANDLER_BUDGET,
-        super::now(vm)? + MIX_HANDLER_BUDGET,
+        deadline,
+        None,
     )
     .await?
     .context("mixer handler did not complete within its budget")?;

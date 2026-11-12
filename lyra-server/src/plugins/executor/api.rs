@@ -21,7 +21,7 @@ use super::{
 };
 
 /// How long an API handler may run.
-const API_HANDLER_BUDGET: std::time::Duration = std::time::Duration::from_secs(300);
+const API_HANDLER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
 impl PluginExecutor {
     pub(super) fn start_api_handler(
@@ -34,7 +34,7 @@ impl PluginExecutor {
         if let Some(auth) = request.auth.clone() {
             dispatch_auth.record(auth);
         }
-        let deadline = self.now() + API_HANDLER_BUDGET;
+        let deadline = self.now() + API_HANDLER_TIMEOUT;
         let prepare = || {
             let routes = self.vm.data().get::<crate::plugins::api::ApiRouteStore>()?;
             let handler = routes.get(request.handler)?;
@@ -68,14 +68,14 @@ impl PluginExecutor {
             },
             permit,
             context.origin.plugin.clone(),
-            |timeout, completion| {
+            |limit, completion| {
                 let scheduler = self.vm.data().get::<LocalScheduler>()?;
-                scheduler.schedule_luau_thread_with_budget_and_completion(
+                scheduler.schedule_luau_thread_with_limit_and_completion(
                     context,
                     self.vm.clone(),
                     thread.clone(),
                     vec![argument],
-                    timeout,
+                    limit,
                     completion,
                 );
                 Ok((scheduler, thread))

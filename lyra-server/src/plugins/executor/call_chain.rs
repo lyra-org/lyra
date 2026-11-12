@@ -8,7 +8,10 @@ use std::{
     time::Instant,
 };
 
-use harmony_core::luau::ThreadDriveOptions;
+use harmony_core::{
+    ResumeLimit,
+    luau::ThreadDriveOptions,
+};
 use harmony_luau::CallContext;
 
 use crate::services::plugin_dispatch::INTERACTIVE_TRANSITION_WAIT;
@@ -19,6 +22,9 @@ use crate::services::plugin_scope::PluginId;
 /// `CallContext.caller` by what it calls. Its times are by the executor's clock, [`super::now`].
 #[derive(Clone)]
 pub(crate) struct CallChain {
+    /// When the handler the chain began with must have ended. `None` for a task no handler
+    /// answers for.
+    deadline: Option<Instant>,
     valid_until: Instant,
     /// `None` when nothing in the chain may wait.
     wait_until: Option<Instant>,
@@ -29,6 +35,7 @@ impl CallChain {
     /// A handler starting on the executor, which has until `deadline`.
     pub(crate) fn root(deadline: Instant, plugin: Option<Arc<str>>) -> Self {
         Self {
+            deadline: Some(deadline),
             valid_until: deadline,
             wait_until: Some(deadline),
             admitted: plugin.map(PluginId::validated).into_iter().collect(),
@@ -43,6 +50,7 @@ impl CallChain {
         now: Instant,
     ) -> Self {
         Self {
+            deadline: Some(now + options.timeout),
             valid_until: now + options.timeout,
             wait_until: None,
             admitted: plugin.map(PluginId::validated).into_iter().collect(),
@@ -59,7 +67,10 @@ impl CallChain {
             .ok()
             .filter(|chain| now < chain.valid_until)
             .map_or_else(
-                || Self::root(now + INTERACTIVE_TRANSITION_WAIT, None),
+                || Self {
+                    deadline: None,
+                    ..Self::root(now + INTERACTIVE_TRANSITION_WAIT, None)
+                },
                 |chain| (*chain).clone(),
             );
         chain.admitting(context.origin.plugin.as_ref())
@@ -69,6 +80,7 @@ impl CallChain {
     pub(crate) fn admitting(&self, plugin: Option<&Arc<str>>) -> Self {
         match plugin {
             Some(plugin) if !self.admits(plugin) => Self {
+                deadline: self.deadline,
                 valid_until: self.valid_until,
                 wait_until: self.wait_until,
                 admitted: self
@@ -85,6 +97,21 @@ impl CallChain {
     /// Until when a nested call made at `now` may wait for a transition.
     pub(crate) fn wait_deadline(&self, now: Instant) -> Instant {
         self.wait_until.unwrap_or(now)
+    }
+
+    /// When the handler the chain began with must have ended, which is also as long as anything
+    /// it calls may run.
+    pub(crate) fn deadline(&self) -> Option<Instant> {
+        self.deadline
+    }
+
+    /// `limit` for a handler called in this chain: none of its resumes runs past the chain's
+    /// deadline either.
+    pub(crate) fn limit_resumes(&self, limit: ResumeLimit) -> ResumeLimit {
+        match self.deadline {
+            Some(deadline) => limit.not_past(deadline),
+            None => limit,
+        }
     }
 
     pub(crate) fn admits(&self, plugin: &str) -> bool {

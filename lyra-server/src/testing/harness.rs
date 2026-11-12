@@ -24,7 +24,7 @@ use crate::plugins::executor::{
 };
 
 /// How long a [`TestPlugin::call`] may run, as long as an API handler may.
-const CALL_BUDGET: std::time::Duration = std::time::Duration::from_secs(300);
+const CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
 /// `{ sockets = TestSockets, plugin = TestPlugin, task = TestTask, catalog = TestCatalog }`.
 pub(super) fn value(vm: &luau::Vm, origin: &luau::ChunkOrigin) -> anyhow::Result<luau::Value> {
@@ -149,15 +149,15 @@ impl TestPlugin {
         own.caller
             .insert(crate::plugins::auth::DispatchAuth::default());
         let completion = Rc::new(harmony_core::LocalLuauTaskCompletion::default());
-        scheduler.schedule_luau_thread_with_budget_and_completion(
+        let deadline = scheduler.now() + CALL_TIMEOUT;
+        scheduler.schedule_luau_thread_with_limit_and_completion(
             own.clone(),
             vm.clone(),
             thread,
             args.0,
-            CALL_BUDGET,
+            harmony_core::ResumeLimit::until(deadline),
             completion.clone(),
         );
-        let deadline = scheduler.now() + CALL_BUDGET;
         let vm = vm.clone();
         Ok(luau::ScheduledFuture::new(async move {
             let values = completion

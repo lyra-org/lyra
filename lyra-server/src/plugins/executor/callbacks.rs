@@ -10,13 +10,13 @@ use super::{
 };
 use crate::services::plugin_dispatch::RefreshTargetGone;
 use anyhow::{
-    Context,
     Result,
     bail,
 };
 use harmony_core::{
     LocalLuauTaskCompletion,
     LocalScheduler,
+    ResumeLimit,
 };
 use harmony_luau::StringEnum;
 use std::{
@@ -30,10 +30,7 @@ use std::{
         Mutex,
         PoisonError,
     },
-    time::{
-        Duration,
-        Instant,
-    },
+    time::Instant,
 };
 
 const DISPATCH_CANCELLED: &str = "plugin handler dispatch was cancelled";
@@ -287,9 +284,10 @@ impl CallbackReply {
 impl PluginExecutor {
     /// Schedules the handler `prepare` makes and a task that watches it: the task waits for the
     /// handler to end, its caller to leave or `deadline`, by [`super::now`], to pass, cancels a
-    /// handler that hasn't ended, and replies. `prepare` gets what is left until the deadline.
-    /// Each round runs the task ahead of the handler, which isn't resumed once its caller is gone
-    /// or its deadline has passed. The handler holds `permit` until it is gone.
+    /// handler that hasn't ended, and replies. `prepare` gets the limit to run the handler's
+    /// resumes under, none of which runs past the deadline. Each round runs the task ahead of the
+    /// handler, which isn't resumed once its caller is gone or its deadline has passed. The
+    /// handler holds `permit` until it is gone.
     pub(super) fn start_callback(
         &self,
         deadline: Instant,
@@ -297,7 +295,7 @@ impl PluginExecutor {
         permit: tokio::sync::OwnedSemaphorePermit,
         plugin: Option<Arc<str>>,
         prepare: impl FnOnce(
-            Duration,
+            ResumeLimit,
             Rc<LocalLuauTaskCompletion>,
         ) -> Result<(Rc<LocalScheduler>, harmony_luau::Thread)>,
     ) {
@@ -311,11 +309,10 @@ impl PluginExecutor {
             if reply.is_cancelled() {
                 bail!("{DISPATCH_CANCELLED}");
             }
-            let timeout = deadline
-                .checked_duration_since(self.now())
-                .filter(|timeout| !timeout.is_zero())
-                .context("plugin handler deadline expired before execution")?;
-            prepare(timeout, completion.clone())
+            if self.now() >= deadline {
+                bail!("plugin handler deadline expired before execution");
+            }
+            prepare(ResumeLimit::until(deadline), completion.clone())
         })();
         let (scheduler, thread) = match scheduled {
             Ok(scheduled) => scheduled,
