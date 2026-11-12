@@ -5,6 +5,7 @@ use std::{
         TypeId,
         type_name,
     },
+    cell::RefCell,
     collections::HashMap,
     ffi::{
         CString,
@@ -109,14 +110,10 @@ pub enum Error {
     VmDataPoisoned,
     #[error("thread data lock is poisoned")]
     ThreadDataPoisoned,
-    #[error("userdata tag {tag} is outside Luau's supported tag range")]
-    InvalidUserDataTag { tag: i32 },
-    #[error("userdata tag {tag} is already registered for another Rust type")]
-    UserDataTagMismatch { tag: i32 },
     #[error("no Luau userdata tags are available")]
     UserDataTagExhausted,
-    #[error("userdata has tag {actual}, expected {expected}")]
-    UserDataTypeMismatch { expected: i32, actual: i32 },
+    #[error("expected userdata of type {expected}")]
+    UserDataTypeMismatch { expected: &'static str },
     #[error("Luau serialization failed: {0}")]
     Serialize(String),
     /// A host error of a fixed kind, which Luau code can branch on rather than match its message.
@@ -210,18 +207,9 @@ pub struct ChunkOrigin {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SourceBytes(pub Arc<[u8]>);
 
+/// The Luau tag of the userdata holding one Rust type, which also picks the destructor Luau runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct UserDataTag(i32);
-
-impl UserDataTag {
-    pub fn new(tag: i32) -> Result<Self> {
-        if (0..sys::LUA_UTAG_LIMIT).contains(&tag) {
-            Ok(Self(tag))
-        } else {
-            Err(Error::InvalidUserDataTag { tag })
-        }
-    }
-}
+struct UserDataTag(i32);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct VmOptions {
@@ -319,7 +307,7 @@ struct VmInner {
     state: NonNull<sys::lua_State>,
     control: NonNull<VmControl>,
     data: VmData,
-    userdata_tags: RwLock<HashMap<i32, TypeId>>,
+    userdata_tags: RefCell<UserDataTags>,
     started_at: Instant,
 }
 
@@ -361,7 +349,7 @@ impl Vm {
                 state,
                 control,
                 data: VmData::default(),
-                userdata_tags: RwLock::new(HashMap::new()),
+                userdata_tags: RefCell::default(),
                 started_at: Instant::now(),
             }),
         };
@@ -372,7 +360,18 @@ impl Vm {
     /// Gives `HostError` values their metatable. Luau holds it for the tag, so it lives as long
     /// as the state and holds no reference back to the [`Vm`].
     fn install_host_errors(&self) -> Result<()> {
-        self.register_userdata_tag::<HostError>(HOST_ERROR_TAG)?;
+        self.inner
+            .userdata_tags
+            .borrow_mut()
+            .by_type
+            .insert(TypeId::of::<HostError>(), HOST_ERROR_TAG);
+        unsafe {
+            sys::lua_setuserdatadtor(
+                self.inner.state.as_ptr(),
+                HOST_ERROR_TAG.0,
+                Some(drop_userdata::<HostError>),
+            );
+        }
         let _guard = self.stack_guard();
         let state = self.inner.state.as_ptr();
         unsafe {
@@ -400,7 +399,7 @@ impl Vm {
             Value::UserData(userdata)
                 if userdata.tag == HOST_ERROR_TAG && userdata.vm_id() == self.inner.id =>
             {
-                userdata.borrow(self, HOST_ERROR_TAG).ok()
+                userdata.borrow(self).ok()
             }
             _ => None,
         }
@@ -633,11 +632,12 @@ impl Vm {
         Ok(Buffer { reference })
     }
 
-    pub fn create_userdata<T>(&self, tag: UserDataTag, value: T) -> Result<UserData>
+    /// A userdata holding `value`, which only [`UserData::borrow`] as a `T` reads.
+    pub fn create_userdata<T>(&self, value: T) -> Result<UserData>
     where
         T: 'static,
     {
-        self.register_userdata_tag::<T>(tag)?;
+        let tag = self.assign_userdata_tag::<T>()?;
         let guard = self.stack_guard();
         unsafe {
             let ptr = gateway::new_userdata_tagged(
@@ -650,14 +650,6 @@ impl Vm {
         let reference = self.ref_top()?;
         drop(guard);
         Ok(UserData { reference, tag })
-    }
-
-    pub fn create_userdata_auto<T>(&self, value: T) -> Result<UserData>
-    where
-        T: 'static,
-    {
-        let tag = self.userdata_tag::<T>()?;
-        self.create_userdata(tag, value)
     }
 
     pub fn create_function(&self, origin: ChunkOrigin, callback: NativeFn) -> Result<Function> {
@@ -804,56 +796,38 @@ impl Vm {
         }
     }
 
-    fn register_userdata_tag<T>(&self, tag: UserDataTag) -> Result<()>
+    /// The tag of `T`'s userdata, or `None` before the VM has made any.
+    fn userdata_tag<T>(&self) -> Option<UserDataTag>
     where
         T: 'static,
     {
-        let mut tags = self
-            .inner
+        self.inner
             .userdata_tags
-            .write()
-            .map_err(|_| Error::VmDataPoisoned)?;
-        match tags.get(&tag.0) {
-            Some(type_id) if *type_id == TypeId::of::<T>() => Ok(()),
-            Some(_) => Err(Error::UserDataTagMismatch { tag: tag.0 }),
-            None => {
-                unsafe {
-                    sys::lua_setuserdatadtor(
-                        self.inner.state.as_ptr(),
-                        tag.0,
-                        Some(drop_userdata::<T>),
-                    );
-                }
-                tags.insert(tag.0, TypeId::of::<T>());
-                Ok(())
-            }
-        }
+            .borrow()
+            .by_type
+            .get(&TypeId::of::<T>())
+            .copied()
     }
 
-    pub fn userdata_tag<T>(&self) -> Result<UserDataTag>
+    /// The tag of `T`'s userdata, assigned on first use.
+    fn assign_userdata_tag<T>(&self) -> Result<UserDataTag>
     where
         T: 'static,
     {
-        let type_id = TypeId::of::<T>();
-        let mut tags = self
-            .inner
-            .userdata_tags
-            .write()
-            .map_err(|_| Error::VmDataPoisoned)?;
-        if let Some(tag) = tags
-            .iter()
-            .find_map(|(tag, existing)| (*existing == type_id).then_some(*tag))
-        {
-            return Ok(UserDataTag(tag));
+        if let Some(tag) = self.userdata_tag::<T>() {
+            return Ok(tag);
         }
-        let tag = (0..sys::LUA_UTAG_LIMIT)
-            .find(|tag| !tags.contains_key(tag))
-            .ok_or(Error::UserDataTagExhausted)?;
+        let mut tags = self.inner.userdata_tags.borrow_mut();
+        let tag = UserDataTag(tags.next);
+        if tag == HOST_ERROR_TAG {
+            return Err(Error::UserDataTagExhausted);
+        }
         unsafe {
-            sys::lua_setuserdatadtor(self.inner.state.as_ptr(), tag, Some(drop_userdata::<T>));
+            sys::lua_setuserdatadtor(self.inner.state.as_ptr(), tag.0, Some(drop_userdata::<T>));
         }
-        tags.insert(tag, type_id);
-        Ok(UserDataTag(tag))
+        tags.next += 1;
+        tags.by_type.insert(TypeId::of::<T>(), tag);
+        Ok(tag)
     }
 
     fn install_safe_os(&self) -> Result<()> {
@@ -1929,8 +1903,12 @@ impl UserData {
         self.reference.vm().id()
     }
 
-    pub fn tag(&self) -> UserDataTag {
-        self.tag
+    /// Whether the userdata holds a `T`.
+    pub fn is<T>(&self) -> bool
+    where
+        T: 'static,
+    {
+        self.reference.vm().userdata_tag::<T>() == Some(self.tag)
     }
 
     pub fn set_metatable(&self, metatable: Option<&Table>) -> Result<()> {
@@ -1941,24 +1919,22 @@ impl UserData {
         unsafe { gateway::set_metatable(vm.inner.state.as_ptr(), -2) }
     }
 
-    pub fn borrow<T>(&self, vm: &Vm, tag: UserDataTag) -> Result<UserDataRef<'_, T>>
+    /// The `T` the userdata holds; fails for userdata holding any other type.
+    pub fn borrow<T>(&self, vm: &Vm) -> Result<UserDataRef<'_, T>>
     where
         T: 'static,
     {
+        let mismatch = || Error::UserDataTypeMismatch {
+            expected: type_name::<T>(),
+        };
+        let tag = vm
+            .userdata_tag::<T>()
+            .filter(|tag| *tag == self.tag)
+            .ok_or_else(mismatch)?;
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
-        let actual = unsafe { sys::lua_userdatatag(vm.inner.state.as_ptr(), -1) };
-        if actual != tag.0 {
-            return Err(Error::UserDataTypeMismatch {
-                expected: tag.0,
-                actual,
-            });
-        }
         let ptr = unsafe { sys::lua_touserdatatagged(vm.inner.state.as_ptr(), -1, tag.0) };
-        let ptr = NonNull::new(ptr.cast::<T>()).ok_or(Error::UserDataTypeMismatch {
-            expected: tag.0,
-            actual,
-        })?;
+        let ptr = NonNull::new(ptr.cast::<T>()).ok_or_else(mismatch)?;
         Ok(UserDataRef {
             ptr,
             _owner: PhantomData,
@@ -3477,6 +3453,14 @@ unsafe fn run_native_function(
 /// The userdata tag of `HostError` values, kept from the tags [`Vm::userdata_tag`] hands out.
 const HOST_ERROR_TAG: UserDataTag = UserDataTag(sys::LUA_UTAG_LIMIT - 1);
 
+/// The userdata tag of each Rust type a VM has made userdata of.
+#[derive(Default)]
+struct UserDataTags {
+    by_type: HashMap<TypeId, UserDataTag>,
+    /// The next tag to assign; [`HOST_ERROR_TAG`] is the last one.
+    next: c_int,
+}
+
 /// What a `HostError` value holds: an [`Error::Kinded`] raised into Luau.
 struct HostError {
     kind: &'static str,
@@ -3874,25 +3858,6 @@ mod tests {
     }
 
     #[test]
-    fn userdata_tags_accept_only_luau_tag_range() -> Result<()> {
-        assert_eq!(UserDataTag::new(0)?, UserDataTag(0));
-        assert_eq!(
-            UserDataTag::new(sys::LUA_UTAG_LIMIT - 1)?,
-            UserDataTag(sys::LUA_UTAG_LIMIT - 1)
-        );
-
-        assert!(matches!(
-            UserDataTag::new(-1),
-            Err(Error::InvalidUserDataTag { tag: -1 })
-        ));
-        assert!(matches!(
-            UserDataTag::new(sys::LUA_UTAG_LIMIT),
-            Err(Error::InvalidUserDataTag { tag }) if tag == sys::LUA_UTAG_LIMIT
-        ));
-        Ok(())
-    }
-
-    #[test]
     fn local_metadata_stores_typed_values_without_vm() -> Result<()> {
         #[derive(Debug, PartialEq, Eq)]
         struct Label(&'static str);
@@ -4236,7 +4201,7 @@ mod tests {
     fn userdata_metatable_rejects_tables_from_another_vm() -> Result<()> {
         let owner = Vm::new()?;
         let other = Vm::new()?;
-        let userdata = owner.create_userdata_auto(0_u8)?;
+        let userdata = owner.create_userdata(0_u8)?;
         let foreign = other.create_table()?;
 
         let error = userdata
@@ -4293,22 +4258,15 @@ mod tests {
         }
 
         let vm = Vm::new()?;
-        let tag = UserDataTag::new(1)?;
-        let other_tag = UserDataTag::new(2)?;
-        let userdata = vm.create_userdata(tag, PluginObject { value: 42 })?;
+        let userdata = vm.create_userdata(PluginObject { value: 42 })?;
 
         assert_eq!(userdata.vm_id(), vm.id());
-        assert_eq!(userdata.tag(), tag);
-        assert_eq!(userdata.borrow::<PluginObject>(&vm, tag)?.value, 42);
-        assert!(matches!(
-            userdata.borrow::<PluginObject>(&vm, other_tag),
-            Err(Error::UserDataTypeMismatch { .. })
-        ));
+        assert!(userdata.is::<PluginObject>());
+        assert_eq!(userdata.borrow::<PluginObject>(&vm)?.value, 42);
 
-        let callback_tag = tag;
         let callback: NativeFn = Arc::new(move |mut frame| {
             let userdata: UserData = frame.args.read_named("object")?;
-            let object = userdata.borrow::<PluginObject>(frame.vm, callback_tag)?;
+            let object = userdata.borrow::<PluginObject>(frame.vm)?;
             frame.returns.write(object.value)?;
             Ok(())
         });
@@ -4329,6 +4287,37 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn userdata_borrows_only_as_the_type_it_holds() -> Result<()> {
+        let vm = Vm::new()?;
+        let byte = vm.create_userdata(42_u8)?;
+
+        assert!(!byte.is::<String>());
+        let mismatch = byte
+            .borrow::<String>(&vm)
+            .err()
+            .expect("a u8 borrowed as a String");
+        assert_eq!(
+            mismatch.to_string(),
+            "expected userdata of type alloc::string::String"
+        );
+        assert_eq!(vm.userdata_tag::<String>(), None);
+        let text = vm.create_userdata(String::from("text"))?;
+        assert!(matches!(
+            byte.borrow::<String>(&vm),
+            Err(Error::UserDataTypeMismatch { .. })
+        ));
+        assert!(matches!(
+            text.borrow::<u8>(&vm),
+            Err(Error::UserDataTypeMismatch { .. })
+        ));
+        assert_eq!(*byte.borrow::<u8>(&vm)?, 42);
+        assert_eq!(*text.borrow::<String>(&vm)?, "text");
+        assert_eq!(stack_top(&vm), 0);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn clearing_vm_data_frees_a_vm_its_values_reference() -> Result<()> {
         struct DropFlag(Arc<std::sync::atomic::AtomicBool>);
         impl Drop for DropFlag {
@@ -4341,7 +4330,7 @@ mod tests {
         let run = |clear: bool| -> Result<bool> {
             let freed = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let vm = Vm::new()?;
-            let userdata = vm.create_userdata(UserDataTag::new(1)?, DropFlag(freed.clone()))?;
+            let userdata = vm.create_userdata(DropFlag(freed.clone()))?;
             let function = vm.load_chunk(&Chunk::new(
                 Arc::<[u8]>::from(&b"local held = ...; return function() return held end"[..]),
                 ChunkOrigin::default(),
@@ -5744,10 +5733,7 @@ mod tests {
             ),
             (
                 "create_userdata",
-                Box::new(|vm, _| {
-                    vm.create_userdata_auto(DropCounter(dropped.clone()))
-                        .map(drop)
-                }),
+                Box::new(|vm, _| vm.create_userdata(DropCounter(dropped.clone())).map(drop)),
             ),
             (
                 "create_function",
@@ -6001,7 +5987,7 @@ mod tests {
 
         if std::env::var_os(PANICKING_DESTRUCTOR_CHILD).is_some() {
             let vm = Vm::new()?;
-            vm.create_userdata_auto(PanicsOnDrop)?;
+            vm.create_userdata(PanicsOnDrop)?;
             drop(vm);
             return Ok(());
         }
@@ -6257,7 +6243,7 @@ mod tests {
         assert_eq!(vm.error_kind(error), Some("missing"));
         assert_eq!(vm.error_message(error).as_deref(), Some(KINDED_FAILURE));
 
-        let other = vm.create_userdata_auto(1_u8)?;
+        let other = vm.create_userdata(1_u8)?;
         for value in [plain, table, &Value::UserData(other), &Value::Nil] {
             assert_eq!(vm.error_kind(value), None, "{value:?}");
             assert_eq!(vm.error_message(value), None, "{value:?}");

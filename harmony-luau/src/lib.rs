@@ -65,7 +65,6 @@ pub use runtime::{
     ToLuau,
     UserData,
     UserDataRef,
-    UserDataTag,
     Value,
     ValueRef,
     Variadic,

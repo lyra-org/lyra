@@ -153,7 +153,7 @@ mod tests {
             luau::ChunkOrigin::default(),
         ))?;
         let error = caught.call(&vm, &[luau::Value::Function(fail)])?.remove(0);
-        let other = vm.create_userdata_auto(1_u8)?;
+        let other = vm.create_userdata(1_u8)?;
 
         assert_eq!(
             join_log_values(&vm, &[error, luau::Value::UserData(other)]),

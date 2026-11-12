@@ -57,7 +57,9 @@ status. `clippy.toml` disallows those functions everywhere else.
 
 ## Userdata
 
-- A tag binds a Rust type to its userdata; `create_userdata_auto` assigns one per type.
+- Each Rust type's userdata gets a Luau tag of its own, and `UserData::borrow` reads a userdata
+  only as the type it holds. A host can't choose tags, and Luau code can't make userdata with a
+  host's tag: `newproxy` tags its userdata outside their range.
 - `UserData::borrow` gives shared access only, so state that changes needs interior mutability.
   Bound userdata is `Clone`, and methods receive a clone.
 - Luau runs the value's `Drop` when it collects the userdata. A panic there aborts the process.

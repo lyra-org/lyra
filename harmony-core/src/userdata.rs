@@ -13,12 +13,7 @@ type AsyncMethod<T> = Arc<
         + Sync,
 >;
 type EqMethod = Arc<
-    dyn Fn(
-            &luau::Vm,
-            &luau::UserData,
-            &luau::UserData,
-            luau::UserDataTag,
-        ) -> luau::runtime::Result<bool>
+    dyn Fn(&luau::Vm, &luau::UserData, &luau::UserData) -> luau::runtime::Result<bool>
         + Send
         + Sync,
 >;
@@ -132,9 +127,8 @@ where
         origin: &luau::ChunkOrigin,
         value: T,
     ) -> luau::runtime::Result<luau::UserData> {
-        let tag = vm.userdata_tag::<T>()?;
-        let userdata = vm.create_userdata(tag, value)?;
-        let metatable = self.metatable(vm, origin, tag)?;
+        let userdata = vm.create_userdata(value)?;
+        let metatable = self.metatable(vm, origin)?;
         userdata.set_metatable(Some(&metatable))?;
         Ok(userdata)
     }
@@ -153,8 +147,7 @@ where
         vm: &luau::Vm,
         userdata: &luau::UserData,
     ) -> luau::runtime::Result<T> {
-        let tag = vm.userdata_tag::<T>()?;
-        userdata.borrow::<T>(vm, tag).map(|value| value.clone())
+        userdata.borrow::<T>(vm).map(|value| value.clone())
     }
 
     pub fn read_value(
@@ -201,7 +194,6 @@ where
         &self,
         vm: &luau::Vm,
         origin: &luau::ChunkOrigin,
-        tag: luau::UserDataTag,
     ) -> luau::runtime::Result<luau::Table> {
         match vm.data().get::<UserDataClassRuntime<T>>() {
             Ok(runtime) => return Ok(runtime.metatable.clone()),
@@ -211,13 +203,13 @@ where
 
         let methods = vm.create_table_with_capacity(0, self.methods.len() as i32)?;
         for method in &self.methods {
-            self.install_method(vm, origin, tag, &methods, method)?;
+            self.install_method(vm, origin, &methods, method)?;
         }
 
         let metatable = vm.create_table_with_capacity(0, 1)?;
         metatable.set("__index", &methods)?;
         if let Some(equality) = &self.equality {
-            self.install_equality_method(vm, origin, tag, &metatable, equality.clone())?;
+            self.install_equality_method(vm, origin, &metatable, equality.clone())?;
         }
         methods.set_readonly(true)?;
         metatable.set_readonly(true)?;
@@ -232,7 +224,6 @@ where
         &self,
         vm: &luau::Vm,
         origin: &luau::ChunkOrigin,
-        tag: luau::UserDataTag,
         methods: &luau::Table,
         method: &UserDataMethod<T>,
     ) -> luau::runtime::Result<()> {
@@ -246,7 +237,7 @@ where
                 vm.create_function_with_options(
                     options,
                     Arc::new(move |mut frame| {
-                        let this = read_self(&mut frame.args, frame.vm, tag)?;
+                        let this = read_self(&mut frame.args, frame.vm)?;
                         callback(this, frame)
                     }),
                 )?
@@ -256,7 +247,7 @@ where
                 vm.create_function_with_options(
                     options,
                     crate::luau::async_callback(Arc::new(move |mut frame| {
-                        let this = read_self(&mut frame.args, frame.vm, tag)?;
+                        let this = read_self(&mut frame.args, frame.vm)?;
                         callback(this, frame)
                     })),
                 )?
@@ -269,7 +260,6 @@ where
         &self,
         vm: &luau::Vm,
         origin: &luau::ChunkOrigin,
-        tag: luau::UserDataTag,
         metatable: &luau::Table,
         equality: EqMethod,
     ) -> luau::runtime::Result<()> {
@@ -282,36 +272,31 @@ where
             Arc::new(move |mut frame| {
                 let lhs: luau::UserData = frame.args.read_named("lhs")?;
                 let rhs: luau::UserData = frame.args.read_named("rhs")?;
-                frame.returns.write(equality(frame.vm, &lhs, &rhs, tag)?)
+                frame.returns.write(equality(frame.vm, &lhs, &rhs)?)
             }),
         )?;
         metatable.set("__eq", &function)
     }
 }
 
-fn read_self<T>(
-    args: &mut luau::ArgReader<'_>,
-    vm: &luau::Vm,
-    tag: luau::UserDataTag,
-) -> luau::runtime::Result<T>
+fn read_self<T>(args: &mut luau::ArgReader<'_>, vm: &luau::Vm) -> luau::runtime::Result<T>
 where
     T: Clone + 'static,
 {
     let userdata: luau::UserData = args.read_named("self")?;
-    userdata.borrow::<T>(vm, tag).map(|value| value.clone())
+    userdata.borrow::<T>(vm).map(|value| value.clone())
 }
 
 fn equals_userdata<T>(
     vm: &luau::Vm,
     lhs: &luau::UserData,
     rhs: &luau::UserData,
-    tag: luau::UserDataTag,
 ) -> luau::runtime::Result<bool>
 where
     T: PartialEq + 'static,
 {
-    if lhs.tag() != tag || rhs.tag() != tag {
+    if !lhs.is::<T>() || !rhs.is::<T>() {
         return Ok(false);
     }
-    Ok(*lhs.borrow::<T>(vm, tag)? == *rhs.borrow::<T>(vm, tag)?)
+    Ok(*lhs.borrow::<T>(vm)? == *rhs.borrow::<T>(vm)?)
 }
