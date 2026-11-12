@@ -9,6 +9,7 @@ use std::{
         Path,
         PathBuf,
     },
+    sync::Arc,
 };
 
 use agdb::{
@@ -19,13 +20,10 @@ use anyhow::{
     Context,
     Result,
 };
-use rayon::iter::{
-    IntoParallelIterator,
-    ParallelIterator,
-};
 
 use crate::services::{
     STATE,
+    file_work,
     libraries::MediaRoots,
 };
 use lyra_db::{
@@ -319,19 +317,15 @@ pub(crate) async fn search_local_cover(
         .context("local cover search task panicked")?
 }
 
-/// The local cover in each search's directories, or why looking failed, off the async threads.
+/// The local cover in each search's directories, or why looking failed, looked for as file work.
 pub(crate) async fn search_local_covers<T: Send + 'static>(
     searches: Vec<(T, Vec<PathBuf>)>,
     roots: MediaRoots,
 ) -> Result<Vec<(T, Result<Option<PathBuf>>)>> {
-    tokio::task::spawn_blocking(move || {
-        searches
-            .into_par_iter()
-            .map(|(owner, dirs)| {
-                let found = find_local_cover(&dirs, &roots);
-                (owner, found)
-            })
-            .collect()
+    let roots = Arc::new(roots);
+    file_work::map(searches, move |(owner, dirs)| {
+        let found = find_local_cover(&dirs, &roots);
+        (owner, found)
     })
     .await
     .context("local cover search task panicked")

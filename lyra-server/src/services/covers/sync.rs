@@ -18,10 +18,6 @@ use anyhow::{
     anyhow,
 };
 use lyra_db::nanoid;
-use rayon::iter::{
-    IntoParallelIterator,
-    ParallelIterator,
-};
 use tokio::{
     fs,
     io::AsyncWriteExt,
@@ -31,7 +27,6 @@ use tokio::{
 
 use tokio_util::sync::CancellationToken;
 
-use crate::services::libraries::MediaRoots;
 use crate::services::plugin_dispatch::{
     CallSource,
     Published,
@@ -41,6 +36,10 @@ use crate::services::providers::{
     id_schemes,
     provider_registry,
     registry_for,
+};
+use crate::services::{
+    file_work,
+    libraries::MediaRoots,
 };
 use lyra_db::{
     Artist,
@@ -78,6 +77,7 @@ use super::{
         configured_cover_dir_for_release,
         cover_dirs_for_release,
         covers_locked,
+        find_local_cover,
         has_stored_cover,
         search_cover_files,
         search_local_cover,
@@ -86,6 +86,7 @@ use super::{
     },
     stale::{
         StoredCover,
+        confirmed_gone,
         confirmed_stale,
         lists_fully,
     },
@@ -995,11 +996,8 @@ async fn drop_rejected_local_covers(
     if rejected.is_empty() {
         return Ok(0);
     }
-    let listed = tokio::task::spawn_blocking(move || {
-        rejected
-            .into_par_iter()
-            .filter(RejectedLocalCover::evidence_lists)
-            .collect::<Vec<_>>()
+    let listed = file_work::map(rejected, |rejected| {
+        rejected.evidence_lists().then_some(rejected)
     })
     .await
     .context("cover folder listing task panicked")?;
@@ -1007,7 +1005,7 @@ async fn drop_rejected_local_covers(
     let mut db_write = db.write().await;
     let mut removed = 0;
     let mut orphaned = Vec::new();
-    for rejected in listed {
+    for rejected in listed.into_iter().flatten() {
         if rejected
             .still_stands(&db_write, folders, library_root)?
             .is_none()
@@ -1063,33 +1061,29 @@ pub(crate) async fn sync_release_covers_for_library(
                 continue;
             };
             let rejected_local = rejected_local_file(&*db_read, release_id, &dirs, &folders)?;
-            let files = stored_cover_files(&*db_read, release_id, rejected_local.as_deref())?;
-            searches.push(((release_id, release.id, files, rejected_local), dirs.owned));
+            let stored = stored_cover_files(&*db_read, release_id, rejected_local.as_deref())?;
+            searches.push(((release_id, release.id, stored, rejected_local), dirs.owned));
         }
 
         let roots = MediaRoots::for_principal(&*db_read, None)?.for_covers();
         (sorted_providers, searches, roots, folders)
     };
-    let searched = search_local_covers(searches, roots).await?;
-    let searched = tokio::task::spawn_blocking(move || {
-        searched
-            .into_par_iter()
-            .filter_map(
-                |((release_id, public_id, files, rejected_local), local_cover)| {
-                    let local_cover = local_cover.ok()?;
-                    let has_cover = local_cover.is_some() || any_cover_file(&files);
-                    Some((release_id, public_id, has_cover, rejected_local))
-                },
-            )
-            .collect::<Vec<_>>()
-    })
+    let roots = Arc::new(roots);
+    let searched = file_work::map(
+        searches,
+        move |((release_id, public_id, stored, rejected_local), dirs)| {
+            let local_cover = find_local_cover(&dirs, &roots).ok()?;
+            let has_cover = local_cover.is_some() || any_cover_file(&stored);
+            Some((release_id, public_id, has_cover, rejected_local))
+        },
+    )
     .await
     .context("cover file search task panicked")?;
 
     let resolve_contexts = {
         let db_read = db.read().await;
         let mut contexts = Vec::new();
-        for (release_id, public_id, has_cover, rejected_local) in searched {
+        for (release_id, public_id, has_cover, rejected_local) in searched.into_iter().flatten() {
             let Some(release) = lyra_db::releases::get_by_id(&db_read, release_id)?
                 .filter(|release| release.id == public_id)
             else {
@@ -1358,6 +1352,16 @@ struct GoneCovers {
     failed: Vec<anyhow::Error>,
 }
 
+/// Those of `candidates` whose file is confirmed gone.
+async fn gone_among(candidates: Vec<StoredCover>) -> Result<Vec<StoredCover>> {
+    let checked = file_work::map(candidates, |candidate| {
+        confirmed_gone(candidate.path()).then_some(candidate)
+    })
+    .await
+    .context("cover file search task panicked")?;
+    Ok(checked.into_iter().flatten().collect())
+}
+
 async fn find_gone_covers(
     db: &lyra_db::DbAsync,
     library_id: DbId,
@@ -1391,10 +1395,10 @@ async fn find_gone_covers(
     };
 
     let mut gone = GoneCovers {
-        removed: confirmed_stale(artist_covers).await?,
+        removed: gone_among(artist_covers).await?,
         ..GoneCovers::default()
     };
-    let (local, other): (Vec<_>, Vec<_>) = confirmed_stale(release_covers)
+    let (local, other): (Vec<_>, Vec<_>) = gone_among(release_covers)
         .await?
         .into_iter()
         .partition(|stale| stale.source() == CoverSource::Local);
@@ -1452,23 +1456,18 @@ async fn apply_gone_covers(db: &lyra_db::DbAsync, library_id: DbId, gone: GoneCo
         removed,
         mut failed,
     } = gone;
-    let computed = tokio::task::spawn_blocking(move || {
-        replaced
-            .into_par_iter()
-            .map(|(stale, path)| {
-                let hash = read_cover_hash(&path)?;
-                let cover = Cover {
-                    db_id: None,
-                    id: nanoid(),
-                    mime_type: cover_mime_from_path(&path).to_string(),
-                    blurhash: cover_blurhash(&path),
-                    path: path.to_string_lossy().into_owned(),
-                    hash,
-                    provider_id: None,
-                };
-                Ok((stale, cover))
-            })
-            .collect::<Vec<Result<_>>>()
+    let computed = file_work::map(replaced, |(stale, path)| {
+        let hash = read_cover_hash(&path)?;
+        let cover = Cover {
+            db_id: None,
+            id: nanoid(),
+            mime_type: cover_mime_from_path(&path).to_string(),
+            blurhash: cover_blurhash(&path),
+            path: path.to_string_lossy().into_owned(),
+            hash,
+            provider_id: None,
+        };
+        Ok((stale, cover))
     })
     .await;
     let computed = match computed {
@@ -1563,46 +1562,46 @@ async fn sync_local_cover_metadata_from_resolved(
             .collect::<Result<Vec<_>>>()?
     };
 
-    let (computed, unreadable): (Vec<_>, Vec<_>) = tokio::task::spawn_blocking(move || {
-        pending
-            .into_par_iter()
-            .filter_map(|PendingCover { found, stored }| {
-                if found
-                    .replaces
-                    .as_ref()
-                    .is_some_and(|rejected| !rejected.evidence_lists())
-                {
-                    return None;
-                }
-                let hash = match read_cover_hash(&found.path) {
-                    Ok(hash) => hash,
-                    Err(err) => return Some(Err(err)),
-                };
-                let path = found.path.to_string_lossy().into_owned();
-                if stored
-                    .as_ref()
-                    .is_some_and(|known| known.0 == path && known.1 == hash)
-                {
-                    return None;
-                }
-                Some(Ok(ComputedCover {
-                    owner_id: found.owner_id,
-                    owner_public_id: found.owner_public_id,
-                    replaces: found.replaces,
-                    stored,
-                    mime_type: cover_mime_from_path(&found.path).to_string(),
-                    blurhash: cover_blurhash(&found.path),
-                    path,
-                    hash,
-                }))
-            })
-            .partition_map(|computed: Result<ComputedCover>| match computed {
-                Ok(computed) => rayon::iter::Either::Left(computed),
-                Err(err) => rayon::iter::Either::Right(err),
-            })
+    let checked = file_work::map(pending, |PendingCover { found, stored }| {
+        if found
+            .replaces
+            .as_ref()
+            .is_some_and(|rejected| !rejected.evidence_lists())
+        {
+            return None;
+        }
+        let hash = match read_cover_hash(&found.path) {
+            Ok(hash) => hash,
+            Err(err) => return Some(Err(err)),
+        };
+        let path = found.path.to_string_lossy().into_owned();
+        if stored
+            .as_ref()
+            .is_some_and(|known| known.0 == path && known.1 == hash)
+        {
+            return None;
+        }
+        let computed = ComputedCover {
+            owner_id: found.owner_id,
+            owner_public_id: found.owner_public_id,
+            replaces: found.replaces,
+            stored,
+            mime_type: cover_mime_from_path(&found.path).to_string(),
+            blurhash: cover_blurhash(&found.path),
+            path,
+            hash,
+        };
+        Some(Ok(computed))
     })
     .await
     .context("cover metadata task panicked")?;
+    let (mut computed, mut unreadable) = (Vec::new(), Vec::new());
+    for checked in checked.into_iter().flatten() {
+        match checked {
+            Ok(changed) => computed.push(changed),
+            Err(err) => unreadable.push(err),
+        }
+    }
     if computed.is_empty() && unreadable.is_empty() {
         return Ok(0);
     }

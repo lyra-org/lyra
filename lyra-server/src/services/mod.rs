@@ -42,6 +42,7 @@ pub(crate) mod delivery;
 pub(crate) mod entities;
 pub(crate) mod entries;
 pub(crate) mod favorites;
+pub(crate) mod file_work;
 pub(crate) mod hls;
 pub(crate) mod libraries;
 pub(crate) mod listens;

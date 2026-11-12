@@ -9,6 +9,7 @@ use std::{
         HashSet,
     },
     fs::File,
+    io::Read,
     path::{
         Path,
         PathBuf,
@@ -16,18 +17,16 @@ use std::{
     time,
 };
 
+use anyhow::Context;
 use blake3::Hasher;
 use lyra_db::nanoid;
-use rayon::iter::{
-    IntoParallelIterator,
-    ParallelIterator,
-};
 use walkdir::{
     DirEntry,
     WalkDir,
 };
 
 use crate::services::{
+    file_work,
     libraries::{
         MediaRoots,
         is_media_file,
@@ -322,89 +321,109 @@ pub(crate) fn scan_fs(
 
 /// The scanned entries with what the library already knows of them: the stored ids of those at a
 /// known path, and the hash a file keeps while its size and modification time do. A file at a new
-/// path takes over the entry of a file the scan no longer sees, one outside `protected` paths,
-/// when exactly one such entry and exactly one new file share their content. Returns the entries
-/// and, as they were, those that moved.
-pub(crate) fn diff_and_match_moves(
-    scanned: Vec<Entry>,
-    stored: &StoredEntries,
-    protected: &[PathBuf],
-) -> (Vec<Entry>, Vec<Entry>) {
-    let scanned_paths = scanned
-        .iter()
-        .map(|entry| entry.full_path.clone())
-        .collect::<HashSet<_>>();
-    let mut db_by_sha1: HashMap<String, Vec<&Entry>> = HashMap::new();
-    for e in stored.entries() {
-        if e.kind == EntryKind::File
-            && !scanned_paths.contains(&e.full_path)
-            && !is_protected(&e.full_path, protected)
-            && let Some(ref h) = e.hash
-        {
-            db_by_sha1.entry(h.clone()).or_default().push(e);
-        }
-    }
-
-    let mut enriched = Vec::with_capacity(scanned.len());
-    let mut new_files = Vec::new();
-    for mut e in scanned.into_iter() {
-        match stored.at_path(&e.full_path) {
-            Some(old) => {
-                e.db_id = old.db_id;
-                e.id = old.id.clone();
-                if old.size == e.size && old.file_modified_at_ms == e.file_modified_at_ms {
-                    e.hash = old.hash.clone();
-                }
-            }
-            None if e.kind == EntryKind::File => new_files.push(enriched.len()),
-            None => {}
-        }
-        enriched.push(e);
-    }
-
-    let mut moved_from = Vec::new();
-    if db_by_sha1.is_empty() || new_files.is_empty() {
-        return (enriched, moved_from);
-    }
-    let hashes = compute_hashes(
-        new_files
-            .iter()
-            .map(|&index| enriched[index].full_path.clone())
-            .collect(),
-    );
-    let mut new_by_hash: HashMap<String, Vec<usize>> = HashMap::new();
-    for &index in &new_files {
-        let entry = &mut enriched[index];
-        entry.hash = hashes
-            .get(entry.full_path.to_string_lossy().as_ref())
-            .cloned();
-        if let Some(hash) = &entry.hash {
-            new_by_hash.entry(hash.clone()).or_default().push(index);
-        }
-    }
-    for (hash, indices) in &new_by_hash {
-        let ([index], Some([old])) = (indices.as_slice(), db_by_sha1.get(hash).map(Vec::as_slice))
-        else {
-            continue;
-        };
-        let entry = &mut enriched[*index];
-        if entry.file_kind != old.file_kind {
-            continue;
-        }
-        entry.db_id = old.db_id;
-        entry.id = old.id.clone();
-        moved_from.push((*old).clone());
-    }
-    (enriched, moved_from)
+/// path takes over the entry of a file the scan no longer sees, one outside the protected paths,
+/// when exactly one such entry and exactly one new file share their content.
+struct MoveMatch {
+    entries: Vec<Entry>,
+    /// The indices of the files at a new path.
+    new_files: Vec<usize>,
+    /// The hashed files the scan no longer sees, by hash.
+    gone_by_hash: HashMap<String, Vec<Entry>>,
 }
 
-pub(crate) fn hash_entry_group(mut entries: Vec<Entry>) -> Vec<Entry> {
+impl MoveMatch {
+    fn new(scanned: Vec<Entry>, stored: &StoredEntries, protected: &[PathBuf]) -> Self {
+        let scanned_paths = scanned
+            .iter()
+            .map(|entry| entry.full_path.clone())
+            .collect::<HashSet<_>>();
+        let mut gone_by_hash: HashMap<String, Vec<Entry>> = HashMap::new();
+        for e in stored.entries() {
+            if e.kind == EntryKind::File
+                && !scanned_paths.contains(&e.full_path)
+                && !is_protected(&e.full_path, protected)
+                && let Some(ref h) = e.hash
+            {
+                gone_by_hash.entry(h.clone()).or_default().push(e.clone());
+            }
+        }
+
+        let mut entries = Vec::with_capacity(scanned.len());
+        let mut new_files = Vec::new();
+        for mut e in scanned.into_iter() {
+            match stored.at_path(&e.full_path) {
+                Some(old) => {
+                    e.db_id = old.db_id;
+                    e.id = old.id.clone();
+                    if old.size == e.size && old.file_modified_at_ms == e.file_modified_at_ms {
+                        e.hash = old.hash.clone();
+                    }
+                }
+                None if e.kind == EntryKind::File => new_files.push(entries.len()),
+                None => {}
+            }
+            entries.push(e);
+        }
+        Self {
+            entries,
+            new_files,
+            gone_by_hash,
+        }
+    }
+
+    /// The entries and, as they were, those that moved, hashing the new files when an entry the
+    /// scan no longer sees could have moved to one of them.
+    async fn resolve(self) -> anyhow::Result<(Vec<Entry>, Vec<Entry>)> {
+        let Self {
+            mut entries,
+            new_files,
+            gone_by_hash,
+        } = self;
+        let mut moved_from = Vec::new();
+        if gone_by_hash.is_empty() || new_files.is_empty() {
+            return Ok((entries, moved_from));
+        }
+        let to_hash = new_files
+            .iter()
+            .map(|&index| entries[index].full_path.clone())
+            .collect();
+        let hashes = hash_files(to_hash).await?;
+        let mut new_by_hash: HashMap<String, Vec<usize>> = HashMap::new();
+        for &index in &new_files {
+            let entry = &mut entries[index];
+            entry.hash = hashes
+                .get(entry.full_path.to_string_lossy().as_ref())
+                .cloned();
+            if let Some(hash) = &entry.hash {
+                new_by_hash.entry(hash.clone()).or_default().push(index);
+            }
+        }
+        for (hash, indices) in &new_by_hash {
+            let ([index], Some([old])) = (
+                indices.as_slice(),
+                gone_by_hash.get(hash).map(Vec::as_slice),
+            ) else {
+                continue;
+            };
+            let entry = &mut entries[*index];
+            if entry.file_kind != old.file_kind {
+                continue;
+            }
+            entry.db_id = old.db_id;
+            entry.id = old.id.clone();
+            moved_from.push(old.clone());
+        }
+        Ok((entries, moved_from))
+    }
+}
+
+pub(crate) async fn hash_entry_group(mut entries: Vec<Entry>) -> anyhow::Result<Vec<Entry>> {
     let to_hash = entries
         .iter()
         .filter(|entry| entry.kind == EntryKind::File && entry.hash.is_none())
         .map(|entry| entry.full_path.clone())
         .collect();
-    let hash_map = compute_hashes(to_hash);
+    let hash_map = hash_files(to_hash).await?;
     for entry in &mut entries {
         if entry.kind == EntryKind::File
             && entry.hash.is_none()
@@ -413,27 +432,44 @@ pub(crate) fn hash_entry_group(mut entries: Vec<Entry>) -> Vec<Entry> {
             entry.hash = Some(hash.clone());
         }
     }
-    entries
+    Ok(entries)
 }
 
-pub(crate) fn compute_hashes(to_hash: Vec<PathBuf>) -> HashMap<String, String> {
-    let pairs: Vec<(String, String)> = to_hash
-        .into_par_iter()
-        .filter_map(|path| {
-            let file_path = path.to_string_lossy().into_owned();
-            let mut file = match File::open(&path) {
-                Ok(file) => file,
-                Err(err) => {
-                    tracing::warn!(
-                        path = %file_path,
-                        error = %err,
-                        "failed to open file for hashing"
-                    );
-                    return None;
-                }
-            };
-            let mut hasher = Hasher::new();
-            if let Err(err) = hasher.update_reader(&mut file) {
+/// The content hash of each of `paths` that could be read, by path.
+async fn hash_files(paths: Vec<PathBuf>) -> anyhow::Result<HashMap<String, String>> {
+    let hashed = file_work::map(paths, hash_file)
+        .await
+        .context("file hashing task panicked")?;
+    Ok(hashed.into_iter().flatten().collect())
+}
+
+/// How much of a file each read takes while hashing. Large sequential reads keep storage busy
+/// with only a few files read at once.
+const HASH_READ_BYTES: usize = 1 << 20;
+
+fn hash_file(path: PathBuf) -> Option<(String, String)> {
+    let file_path = path.to_string_lossy().into_owned();
+    let mut file = match File::open(&path) {
+        Ok(file) => file,
+        Err(err) => {
+            tracing::warn!(
+                path = %file_path,
+                error = %err,
+                "failed to open file for hashing"
+            );
+            return None;
+        }
+    };
+    let mut hasher = Hasher::new();
+    let mut buffer = vec![0; HASH_READ_BYTES];
+    loop {
+        match file.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => {
+                hasher.update(&buffer[..read]);
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(err) => {
                 tracing::warn!(
                     path = %file_path,
                     error = %err,
@@ -441,47 +477,56 @@ pub(crate) fn compute_hashes(to_hash: Vec<PathBuf>) -> HashMap<String, String> {
                 );
                 return None;
             }
-            Some((file_path, hasher.finalize().to_hex().to_string()))
-        })
-        .collect();
-
-    pairs.into_iter().collect()
+        }
+    }
+    Some((file_path, hasher.finalize().to_hex().to_string()))
 }
 
 /// Scans the library, following links with `followed` or skipping them without, and plans what
-/// changed. Fails closed when the scan finds no supported file while the
-/// library has entries, as on an unmounted share: nothing then counts as gone.
-pub(crate) fn prepare_entry_scan_plan(
+/// changed. Fails closed when the scan finds no supported file while the library has entries, as
+/// on an unmounted share: nothing then counts as gone.
+pub(crate) async fn prepare_entry_scan_plan(
     library: &Library,
     existing: Vec<Entry>,
     followed: Option<FollowedLinks>,
 ) -> anyhow::Result<EntryScanPlan> {
-    let ScanResult {
-        entries: scanned,
-        gaps,
-    } = scan_fs(&library.path, followed)?;
-    let stored = StoredEntries::new(library, existing)?;
-    if !stored.is_empty() && !scanned.iter().any(|entry| entry.kind == EntryKind::File) {
-        return Err(ScanError::EmptyRoot { gaps }.into());
-    }
-    let protected = gaps.protected_paths();
-    let (enriched, moved_from) = diff_and_match_moves(scanned, &stored, &protected);
-    let observed_paths = enriched
-        .iter()
-        .map(|entry| entry.full_path.clone())
-        .collect::<HashSet<_>>();
-    let (mut dirs, files): (Vec<_>, Vec<_>) = enriched
-        .into_iter()
-        .partition(|entry| entry.kind == EntryKind::Dir);
-    dirs.sort_by_key(|dir| dir.full_path.components().count());
-    Ok(EntryScanPlan {
-        dirs,
-        groups: group_by_source_dir(&library.path, files),
-        stored,
-        observed_paths,
-        moved_from,
-        gaps,
+    let scanned_library = library.clone();
+    let (moves, stored, gaps) = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+        let ScanResult {
+            entries: scanned,
+            gaps,
+        } = scan_fs(&scanned_library.path, followed)?;
+        let stored = StoredEntries::new(&scanned_library, existing)?;
+        if !stored.is_empty() && !scanned.iter().any(|entry| entry.kind == EntryKind::File) {
+            return Err(ScanError::EmptyRoot { gaps }.into());
+        }
+        let moves = MoveMatch::new(scanned, &stored, &gaps.protected_paths());
+        Ok((moves, stored, gaps))
     })
+    .await
+    .context("library scan task panicked")??;
+    let (enriched, moved_from) = moves.resolve().await?;
+    let root = library.path.clone();
+    tokio::task::spawn_blocking(move || {
+        let observed_paths = enriched
+            .iter()
+            .map(|entry| entry.full_path.clone())
+            .collect::<HashSet<_>>();
+        let (mut dirs, files): (Vec<_>, Vec<_>) = enriched
+            .into_iter()
+            .partition(|entry| entry.kind == EntryKind::Dir);
+        dirs.sort_by_key(|dir| dir.full_path.components().count());
+        EntryScanPlan {
+            dirs,
+            groups: group_by_source_dir(&root, files),
+            stored,
+            observed_paths,
+            moved_from,
+            gaps,
+        }
+    })
+    .await
+    .context("library scan task panicked")
 }
 
 #[cfg(test)]
@@ -682,7 +727,7 @@ mod tests {
 
         let db = new_db()?;
         let library = new_library(&db, &root).await?;
-        let plan = prepare_entry_scan_plan(&library, Vec::new(), None)?;
+        let plan = prepare_entry_scan_plan(&library, Vec::new(), None).await?;
         assert_eq!(plan.groups.len(), 1);
         full_sync(&db, &library).await?;
 
@@ -790,7 +835,7 @@ mod tests {
 
         let db = new_db()?;
         let library = new_library(&db, &root).await?;
-        let plan = prepare_entry_scan_plan(&library, Vec::new(), None)?;
+        let plan = prepare_entry_scan_plan(&library, Vec::new(), None).await?;
         assert_eq!(plan.groups.len(), 2);
         assert!(
             plan.groups
@@ -843,7 +888,7 @@ mod tests {
         let library = new_library(&db, &root).await?;
         let EntryScanPlan {
             dirs, mut stored, ..
-        } = prepare_entry_scan_plan(&library, Vec::new(), None)?;
+        } = prepare_entry_scan_plan(&library, Vec::new(), None).await?;
         sync_entry_dirs(&db, &mut stored, dirs).await?;
         assert_eq!(load_existing(&db, &library).await?.len(), 2);
 
@@ -895,7 +940,8 @@ mod tests {
         let late = old.join("nested/late.mp3");
         fs::write(&late, b"late")?;
 
-        let plan = prepare_entry_scan_plan(&library, load_existing(&db, &library).await?, None)?;
+        let plan =
+            prepare_entry_scan_plan(&library, load_existing(&db, &library).await?, None).await?;
         assert_eq!(plan.gaps.protected_paths(), vec![old.clone()]);
         full_sync(&db, &library).await?;
 
@@ -955,7 +1001,7 @@ mod tests {
             assert_eq!(entries.len(), 1);
             assert_eq!(entries[0].full_path, plain);
         }
-        let plan = prepare_entry_scan_plan(&library, Vec::new(), None)?;
+        let plan = prepare_entry_scan_plan(&library, Vec::new(), None).await?;
         let unlistable = plan
             .gaps
             .protected_paths()
@@ -1268,6 +1314,27 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn a_file_hashed_in_chunks_keeps_its_blake3_digest() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("long.flac");
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        let bytes = (0..2 * HASH_READ_BYTES + 12_345)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state as u8
+            })
+            .collect::<Vec<_>>();
+        std::fs::write(&path, &bytes)?;
+
+        let (hashed_path, digest) = hash_file(path.clone()).expect("hashes");
+        assert_eq!(hashed_path, path.to_string_lossy());
+        assert_eq!(digest, blake3::hash(&bytes).to_hex().to_string());
+        Ok(())
+    }
+
     #[tokio::test]
     async fn an_empty_new_library_scans() -> anyhow::Result<()> {
         let root = temp_path("empty-new");
@@ -1305,7 +1372,8 @@ mod tests {
             return Ok(());
         }
         fs::remove_file(open.join("c.mp3"))?;
-        let plan = prepare_entry_scan_plan(&library, load_existing(&db, &library).await?, None)?;
+        let plan =
+            prepare_entry_scan_plan(&library, load_existing(&db, &library).await?, None).await?;
         assert_eq!(plan.gaps.protected_paths(), vec![locked.clone()]);
         let result = full_sync(&db, &library).await;
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o755))?;

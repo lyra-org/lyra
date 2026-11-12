@@ -4,7 +4,6 @@
 // www.meshiplaw.com/lyra.
 
 use agdb::DbId;
-use anyhow::Context;
 use futures::StreamExt;
 use std::{
     collections::{
@@ -154,16 +153,12 @@ pub(crate) async fn sync_entries_incremental(
             followed,
         )
     };
-    let scan = {
-        let library = library.clone();
-        tokio::task::spawn_blocking(move || prepare_entry_scan_plan(&library, existing, followed))
-    };
-    // A cancelled run leaves the scan to finish on its own; it only reads.
+    let scan = prepare_entry_scan_plan(library, existing, followed);
+    // A cancelled run leaves a walk under way to finish on its own; it only reads.
     let scan_plan = tokio::select! {
         plan = scan => plan,
         err = progress.cancelled() => return Err(err.into()),
-    }
-    .context("library scan task panicked")?;
+    };
     let scan_plan = match scan_plan {
         Ok(plan) => plan,
         Err(err) => {
@@ -308,7 +303,7 @@ pub(crate) async fn sync_entries_incremental(
 
 /// Hashes the group's files and applies what changed, in one write. A group with no changes takes
 /// no write lock, and so counts as no catalog change. The group applies only if the run is not
-/// cancelled once it holds the write lock.
+/// cancelled once it holds the write lock; a cancelled run starts hashing none of its other files.
 async fn apply_entry_group(
     db: &DbAsync,
     stored: &StoredEntries,
@@ -317,7 +312,7 @@ async fn apply_entry_group(
 ) -> anyhow::Result<EntrySyncResult> {
     progress.check_cancelled()?;
     let entries = tokio::select! {
-        entries = tokio::task::spawn_blocking(move || hash_entry_group(entries)) => entries?,
+        entries = hash_entry_group(entries) => entries?,
         err = progress.cancelled() => return Err(err.into()),
     };
     #[cfg(test)]
