@@ -1,5 +1,4 @@
 use std::{
-    alloc::Layout,
     any::{
         Any,
         TypeId,
@@ -13,19 +12,13 @@ use std::{
     ffi::{
         CString,
         c_int,
-        c_void,
     },
     fmt,
     future::Future,
-    marker::PhantomData,
     ops::ControlFlow,
     panic::{
         AssertUnwindSafe,
         catch_unwind,
-    },
-    ptr::{
-        self,
-        NonNull,
     },
     rc::{
         Rc,
@@ -33,11 +26,9 @@ use std::{
     },
     sync::{
         Arc,
-        Once,
         RwLock,
         atomic::{
             AtomicBool,
-            AtomicPtr,
             AtomicU8,
             AtomicU64,
             AtomicUsize,
@@ -56,7 +47,9 @@ use harmony_luau_sys as sys;
 use time::OffsetDateTime;
 
 mod gateway;
+mod native;
 mod stack;
+mod state;
 
 pub use stack::UserDataRef;
 use stack::{
@@ -65,11 +58,14 @@ use stack::{
     StackIndex,
     ThreadRef,
 };
+use state::{
+    LuauState,
+    compile,
+};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
 static NEXT_VM_ID: AtomicU64 = AtomicU64::new(1);
-static LUAU_FLAGS: Once = Once::new();
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -337,8 +333,7 @@ assert_not_send_or_sync!(Vm, Function, Table, Thread, UserData, Buffer, Value);
 
 struct VmInner {
     id: u64,
-    state: NonNull<sys::lua_State>,
-    control: NonNull<VmControl>,
+    state: LuauState,
     data: VmData,
     userdata_tags: RefCell<stack::UserDataTags>,
     stacks: stack::LiveStacks,
@@ -351,37 +346,11 @@ impl Vm {
     }
 
     pub fn with_options(options: VmOptions) -> Result<Self> {
-        LUAU_FLAGS.call_once(|| {
-            // Keeps tables intact when growing or freezing them runs out of memory.
-            let set = unsafe { sys::harmony_luau_setfflag(c"LuauTableRobustOom".as_ptr(), 1) };
-            assert!(
-                set != 0,
-                "Luau no longer defines the LuauTableRobustOom flag"
-            );
-        });
-        let control = Box::into_raw(Box::new(VmControl::new(options)));
-        let state = unsafe { sys::lua_newstate(Some(alloc), control.cast()) };
-        let state = match NonNull::new(state) {
-            Some(state) => state,
-            None => {
-                unsafe {
-                    drop(Box::from_raw(control));
-                }
-                return Err(Error::VmCreate);
-            }
-        };
-        let control = NonNull::new(control).expect("Box::into_raw never returns null");
-        unsafe {
-            sys::lua_set_callback_userdata(state.as_ptr(), control.as_ptr().cast());
-            let callbacks = sys::lua_callbacks(state.as_ptr());
-            (*callbacks).userthread = Some(userthread);
-            (*callbacks).postresume = Some(postresume);
-        }
+        let state = LuauState::open(VmControl::new(options))?;
         let vm = Self {
             inner: Rc::new(VmInner {
                 id: NEXT_VM_ID.fetch_add(1, Ordering::Relaxed),
                 state,
-                control,
                 data: VmData::default(),
                 userdata_tags: RefCell::default(),
                 stacks: stack::LiveStacks::default(),
@@ -418,7 +387,7 @@ impl Vm {
     }
 
     pub fn state_id(&self) -> usize {
-        self.inner.state.as_ptr() as usize
+        self.inner.state.main().as_ptr() as usize
     }
 
     pub fn data(&self) -> &VmData {
@@ -479,23 +448,13 @@ impl Vm {
             .unwrap_or_else(|error| error.into_inner())
     }
 
-    /// Makes the innermost live budget the one the interrupt checks. Its signal stays owned by
-    /// `budgets` for as long as the interrupt can read it.
+    /// Makes the innermost live budget the one the interrupt checks.
     fn apply_innermost_budget(&self, budgets: &InterruptBudgets) {
         let control = self.inner.control();
         let innermost = budgets.active.last();
-        let signal = innermost
-            .and_then(|budget| budget.signal.as_ref())
-            .map_or(std::ptr::null_mut(), |signal| {
-                Arc::as_ptr(&signal.0).cast_mut()
-            });
-        control.interrupt_signal.store(signal, Ordering::Release);
-        let interrupted = innermost.map_or(std::ptr::null_mut(), |budget| {
-            Arc::as_ptr(&budget.interrupted).cast_mut()
-        });
-        control
-            .interrupt_interrupted
-            .store(interrupted, Ordering::Release);
+        *control.interrupt_signal.borrow_mut() = innermost.and_then(|budget| budget.signal.clone());
+        *control.interrupt_interrupted.borrow_mut() =
+            innermost.map(|budget| budget.interrupted.clone());
         self.set_interrupt_deadline_millis(innermost.map_or(0, |budget| budget.deadline_millis));
     }
 
@@ -703,12 +662,7 @@ impl Vm {
             .control()
             .interrupt_deadline_millis
             .store(deadline, Ordering::Release);
-        unsafe {
-            sys::lua_set_interrupt_callback(
-                self.inner.state.as_ptr(),
-                if deadline == 0 { None } else { Some(interrupt) },
-            );
-        }
+        self.inner.state.set_interrupt(deadline != 0);
     }
 
     fn install_safe_os(&self) -> Result<()> {
@@ -765,17 +719,9 @@ impl Vm {
     }
 }
 
-impl Drop for VmInner {
-    fn drop(&mut self) {
-        unsafe { sys::lua_close(self.state.as_ptr()) };
-        self.control().drop_collected();
-        unsafe { drop(Box::from_raw(self.control.as_ptr())) };
-    }
-}
-
 impl VmInner {
     fn control(&self) -> &VmControl {
-        unsafe { self.control.as_ref() }
+        self.state.control()
     }
 }
 
@@ -784,12 +730,12 @@ struct VmControl {
     memory_limit: AtomicUsize,
     /// The innermost live budget's deadline and signal, as the interrupt reads them.
     interrupt_deadline_millis: AtomicU64,
-    interrupt_signal: AtomicPtr<AtomicBool>,
+    interrupt_signal: RefCell<Option<InterruptSignal>>,
     /// Where the interrupt notes that it raised on that budget, and for which reason.
-    interrupt_interrupted: AtomicPtr<AtomicU8>,
-    /// Every live [`InterruptBudgetGuard`]'s budget, which owns the signal the interrupt reads.
+    interrupt_interrupted: RefCell<Option<Arc<AtomicU8>>>,
+    /// Every live [`InterruptBudgetGuard`]'s budget.
     interrupt_budgets: std::sync::Mutex<InterruptBudgets>,
-    /// Keyed by `lua_State` address; [`userthread`] keeps it in step with
+    /// Keyed by `lua_State` address; [`VmControl::track_thread`] keeps it in step with
     /// the threads Luau creates and frees. A coroutine shares its creator's context.
     thread_contexts: RwLock<HashMap<usize, Rc<CallContext>>>,
     /// What Luau freed while collecting garbage, for [`VmControl::drop_collected`] to drop: a
@@ -813,8 +759,8 @@ impl VmControl {
             allocated: AtomicUsize::new(0),
             memory_limit: AtomicUsize::new(options.memory_limit.unwrap_or(0)),
             interrupt_deadline_millis: AtomicU64::new(0),
-            interrupt_signal: AtomicPtr::new(std::ptr::null_mut()),
-            interrupt_interrupted: AtomicPtr::new(std::ptr::null_mut()),
+            interrupt_signal: RefCell::default(),
+            interrupt_interrupted: RefCell::default(),
             interrupt_budgets: std::sync::Mutex::default(),
             thread_contexts: RwLock::new(HashMap::new()),
             collected: RefCell::default(),
@@ -842,6 +788,52 @@ impl VmControl {
             abort_on_panic(|| drop(collected));
         }
         self.dropping_collected.set(false);
+    }
+
+    /// Whether the interrupt is to raise: once the innermost budget's signal is raised or its
+    /// deadline has passed. Notes on the budget why it raises.
+    fn interrupt_due(&self) -> bool {
+        let signalled = self
+            .interrupt_signal
+            .borrow()
+            .as_ref()
+            .is_some_and(InterruptSignal::is_raised);
+        let cause = if signalled {
+            InterruptCause::Signal
+        } else {
+            let deadline = self.interrupt_deadline_millis.load(Ordering::Acquire);
+            if deadline == 0 || current_unix_millis() < deadline {
+                return false;
+            }
+            InterruptCause::Time
+        };
+        if let Some(interrupted) = self.interrupt_interrupted.borrow().as_ref() {
+            interrupted.store(cause as u8, Ordering::Release);
+        }
+        true
+    }
+
+    /// Starts a new thread, such as a coroutine, sharing the call context of its `parent`, and
+    /// forgets the context of a freed one. Only a context no other thread shares is left for
+    /// [`Self::drop_collected`] to drop, so freeing coroutines in a loop leaves nothing behind.
+    fn track_thread(&self, parent: Option<usize>, thread: usize) {
+        let Ok(mut contexts) = self.thread_contexts.write() else {
+            return;
+        };
+        match parent {
+            None => {
+                let freed = contexts.remove(&thread).and_then(Rc::into_inner);
+                drop(contexts);
+                if let Some(context) = freed {
+                    self.defer_drop(Box::new(context));
+                }
+            }
+            Some(parent) => {
+                if let Some(context) = contexts.get(&parent).cloned() {
+                    contexts.insert(thread, context);
+                }
+            }
+        }
     }
 }
 
@@ -903,10 +895,8 @@ impl Drop for InterruptBudgetGuard {
         else {
             return;
         };
-        let removed = budgets.active.remove(index);
+        budgets.active.remove(index);
         self.vm.apply_innermost_budget(&budgets);
-        drop(budgets);
-        drop(removed);
     }
 }
 
@@ -1967,16 +1957,12 @@ fn checked_i64_arg(name: Arc<str>, value: f64) -> Result<i64> {
 
 #[derive(Clone)]
 pub struct ReturnWriter<'vm> {
-    state: NonNull<ReturnState>,
-    _marker: PhantomData<&'vm ReturnState>,
+    state: &'vm RefCell<ReturnState>,
 }
 
 impl<'vm> ReturnWriter<'vm> {
-    fn borrowed(state: &'vm mut ReturnState) -> Self {
-        Self {
-            state: NonNull::from(state),
-            _marker: PhantomData,
-        }
+    fn new(state: &'vm RefCell<ReturnState>) -> Self {
+        Self { state }
     }
 
     pub fn write<T: ToLuau>(&mut self, value: T) -> Result<()> {
@@ -1992,7 +1978,7 @@ impl<'vm> ReturnWriter<'vm> {
     }
 
     fn with_state_mut<T>(&mut self, callback: impl FnOnce(&mut ReturnState) -> T) -> T {
-        unsafe { callback(self.state.as_mut()) }
+        callback(&mut self.state.borrow_mut())
     }
 }
 
@@ -2773,109 +2759,19 @@ fn abort_on_panic<T>(callback: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(callback)).unwrap_or_else(|_| std::process::abort())
 }
 
-/// Takes the `CallbackSlot` of a native function Luau collects, for the VM to drop.
-unsafe extern "C-unwind" fn drop_callback_slot(state: *mut sys::lua_State, userdata: *mut c_void) {
-    abort_on_panic(|| unsafe { defer_drop::<CallbackSlot>(state, userdata) });
-}
-
-/// Takes the `T` of a userdata Luau collects, for the VM to drop.
-unsafe extern "C-unwind" fn drop_userdata<T>(state: *mut sys::lua_State, userdata: *mut c_void)
-where
-    T: 'static,
-{
-    abort_on_panic(|| unsafe { defer_drop::<T>(state, userdata) });
-}
-
-/// Moves the `T` out of `userdata`, which Luau frees, for its VM to drop outside the collection.
-///
-/// # Safety
-///
-/// `userdata` holds a `T`, which nothing reads after this, and `state` is a live thread of a VM's
-/// state.
-unsafe fn defer_drop<T>(state: *mut sys::lua_State, userdata: *mut c_void)
-where
-    T: 'static,
-{
-    if !std::mem::needs_drop::<T>() {
-        return;
-    }
-    let value = unsafe { ptr::read(userdata.cast::<T>()) };
-    let control = unsafe {
-        sys::lua_callback_userdata(state)
-            .cast::<VmControl>()
-            .as_ref()
-    };
-    control
-        .expect("a VM's state has a control block")
-        .defer_drop(Box::new(value));
-}
-
-enum CallbackExit {
-    Return(c_int),
-    Yield(c_int),
-    Raise,
-}
-
-/// Luau's entry into a native function. Everything with a destructor lives in
-/// [`call_native_function`], so this frame holds nothing a raise would skip.
-unsafe extern "C-unwind" fn native_callback(state: *mut sys::lua_State) -> c_int {
-    let exit = abort_on_panic(|| unsafe { call_native_function(state) });
-    match exit {
-        CallbackExit::Return(count) => count,
-        CallbackExit::Yield(count) => unsafe { gateway::yield_results(state, count) },
-        CallbackExit::Raise => unsafe { gateway::raise(state) },
-    }
-}
-
-/// Runs a native function and leaves its results on top of the stack, or the error to raise.
-unsafe fn call_native_function(state: *mut sys::lua_State) -> CallbackExit {
-    let state = NonNull::new(state).expect("Luau calls a native function on a thread");
-    // SAFETY: Luau calls `native_callback` only as the closure `Stack::push_native_function`
-    // makes.
-    let slot = unsafe { stack::callback_slot(state) };
-    let Some((slot, vm)) = slot.and_then(|slot| {
-        Some((
-            slot,
-            Vm {
-                inner: slot.vm.upgrade()?,
-            },
-        ))
-    }) else {
-        // SAFETY: a live state.
-        unsafe { gateway::push_error(state.as_ptr(), "Harmony VM is no longer available") };
-        return CallbackExit::Raise;
-    };
-    vm.drop_collected();
-    // SAFETY: as for `run_native_function`, whose stacks are gone.
-    match unsafe { run_native_function(&vm, slot, state) } {
-        Ok(exit) => exit,
-        Err(error) => {
-            // SAFETY: as for `run_native_function`, whose stacks are gone.
-            let mut stack = unsafe { Stack::from_raw(&vm, state) };
-            stack.push_raised(&error);
-            stack.keep();
-            CallbackExit::Raise
-        }
-    }
-}
-
-/// # Safety
-///
-/// Luau calls the native function `slot` holds on `state`, a live thread of `vm`.
-unsafe fn run_native_function(
-    vm: &Vm,
+/// Runs the native function `slot` holds with the arguments on `args`, a stack of the thread
+/// calling it, and returns what it wrote.
+fn run_native_function(
     slot: &CallbackSlot,
-    state: NonNull<sys::lua_State>,
-) -> std::result::Result<CallbackExit, RaisedError> {
-    // SAFETY: a live thread of `vm`, as the caller guarantees.
-    let mut args = unsafe { Stack::from_raw(vm, state) };
+    mut args: Stack<'_>,
+) -> std::result::Result<ReturnState, RaisedError> {
+    let vm = args.vm();
     let thread = args.own_thread().map_err(|error| error.to_string())?;
     let thread_context = vm
         .call_context_for_state(thread.state_id())
         .map_err(|error| error.to_string())?;
-    let mut return_state = ReturnState::default();
+    let returns = RefCell::new(ReturnState::default());
     let result = {
-        let returns = ReturnWriter::borrowed(&mut return_state);
         let caller = thread_context
             .as_ref()
             .map(|context| context.caller.clone())
@@ -2909,34 +2805,17 @@ unsafe fn run_native_function(
                 task_group,
             },
             args: ArgReader::new(args, slot.argument_names.clone()),
-            returns: returns.clone(),
+            returns: ReturnWriter::new(&returns),
             site: slot.site.clone(),
         };
 
         catch_unwind(AssertUnwindSafe(|| (slot.callback)(frame)))
     };
     match result {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => return Err(slot.site.raised_error(&error)),
-        Err(_) => return Err("Harmony callback panicked".into()),
+        Ok(Ok(())) => Ok(returns.into_inner()),
+        Ok(Err(error)) => Err(slot.site.raised_error(&error)),
+        Err(_) => Err("Harmony callback panicked".into()),
     }
-    // SAFETY: as for the arguments' stack, which is gone.
-    let mut results = unsafe { Stack::from_raw(vm, state) };
-    for value in &return_state.values {
-        results
-            .push_value(value)
-            .map_err(|error| error.to_string())?;
-    }
-    let count = return_state.values.len() as c_int;
-    if return_state.yield_requested && !results.is_yieldable() {
-        return Err("attempt to yield from a non-yieldable Harmony callback".into());
-    }
-    results.keep();
-    Ok(if return_state.yield_requested {
-        CallbackExit::Yield(count)
-    } else {
-        CallbackExit::Return(count)
-    })
 }
 
 /// The userdata tag of `HostError` values, kept from the tags [`Vm::userdata_tag`] hands out.
@@ -2946,31 +2825,6 @@ const HOST_ERROR_TAG: UserDataTag = UserDataTag(sys::LUA_UTAG_LIMIT - 1);
 struct HostError {
     kind: &'static str,
     message: String,
-}
-
-/// `HostError.__tostring`: the error's message. Luau gives a C function enough stack for it, so
-/// pushing it fails only by running out of memory.
-unsafe extern "C-unwind" fn host_error_tostring(state: *mut sys::lua_State) -> c_int {
-    let pushed = abort_on_panic(|| unsafe {
-        match stack::host_error_at(state, 1) {
-            Some(error) => match gateway::push_bytes(state, error.message.as_bytes()) {
-                Ok(()) => true,
-                Err(error) => {
-                    gateway::push_error(state, &error.to_string());
-                    false
-                }
-            },
-            None => {
-                gateway::push_error(state, "expected a host error");
-                false
-            }
-        }
-    });
-    if pushed {
-        1
-    } else {
-        unsafe { gateway::raise(state) }
-    }
 }
 
 /// The native function a call went to, which names where its errors came from.
@@ -3041,207 +2895,6 @@ fn format_os_date(format: &str, timestamp: i64) -> Result<String> {
         dt.minute(),
         dt.second()
     ))
-}
-
-/// A new thread, such as a coroutine, shares its creator's call context. A freed thread's context
-/// is left for the VM to drop outside the collection only when no other thread shares it, so
-/// freeing coroutines in a loop leaves nothing behind.
-unsafe extern "C-unwind" fn userthread(parent: *mut sys::lua_State, thread: *mut sys::lua_State) {
-    let control = unsafe {
-        sys::lua_callback_userdata(thread)
-            .cast::<VmControl>()
-            .as_ref()
-    };
-    let Some(control) = control else {
-        return;
-    };
-    let Ok(mut contexts) = control.thread_contexts.write() else {
-        return;
-    };
-    if parent.is_null() {
-        let freed = contexts.remove(&(thread as usize)).and_then(Rc::into_inner);
-        drop(contexts);
-        if let Some(context) = freed {
-            control.defer_drop(Box::new(context));
-        }
-    } else if let Some(context) = contexts.get(&(parent as usize)).cloned() {
-        contexts.insert(thread as usize, context);
-    }
-}
-
-/// Closes a thread [`Thread::cancel`] found live as soon as a resume leaves it suspended, before
-/// whatever resumed it runs again.
-unsafe extern "C-unwind" fn postresume(thread: *mut sys::lua_State) {
-    unsafe {
-        if sys::lua_status(thread) != sys::LUA_YIELD || !gateway::is_cancelled(thread) {
-            return;
-        }
-        match sys::lua_callback_userdata(thread)
-            .cast::<VmControl>()
-            .as_ref()
-        {
-            Some(control) => control.without_memory_limit(|| gateway::close_yielded(thread)),
-            None => gateway::close_yielded(thread),
-        }
-    }
-}
-
-unsafe extern "C-unwind" fn interrupt(state: *mut sys::lua_State, gc: c_int) {
-    if state.is_null() || gc >= 0 {
-        return;
-    }
-    let expired = abort_on_panic(|| {
-        let control = unsafe {
-            sys::lua_callback_userdata(state)
-                .cast::<VmControl>()
-                .as_ref()
-        };
-        control.is_some_and(|control| {
-            let signal = control.interrupt_signal.load(Ordering::Acquire);
-            // SAFETY: the signal and the note belong to a live budget in `interrupt_budgets`,
-            // which stops pointing the interrupt at them before dropping them, on this same
-            // thread.
-            let cause = if !signal.is_null() && unsafe { (*signal).load(Ordering::Acquire) } {
-                InterruptCause::Signal
-            } else {
-                let deadline = control.interrupt_deadline_millis.load(Ordering::Acquire);
-                if deadline == 0 || current_unix_millis() < deadline {
-                    return false;
-                }
-                InterruptCause::Time
-            };
-            let interrupted = control.interrupt_interrupted.load(Ordering::Acquire);
-            if !interrupted.is_null() {
-                unsafe { (*interrupted).store(cause as u8, Ordering::Release) };
-            }
-            true
-        })
-    });
-    if expired {
-        unsafe {
-            gateway::push_error(state, INTERRUPTED_ERROR);
-            gateway::raise(state);
-        }
-    }
-}
-
-fn compile(source: &[u8], options: CompileOptions) -> Result<CompiledBytecode> {
-    let mut compile_options = sys::lua_CompileOptions {
-        optimizationLevel: options.optimization_level,
-        debugLevel: options.debug_level,
-        typeInfoLevel: options.type_info_level,
-        mutableGlobals: ptr::null(),
-        disabledBuiltins: ptr::null(),
-    };
-    let mut len = 0usize;
-    let ptr = unsafe {
-        sys::luau_compile(
-            source.as_ptr().cast(),
-            source.len(),
-            &mut compile_options,
-            &mut len,
-        )
-    };
-    let ptr = NonNull::new(ptr).ok_or(Error::Compile)?;
-    Ok(CompiledBytecode { ptr, len })
-}
-
-struct CompiledBytecode {
-    ptr: NonNull<std::ffi::c_char>,
-    len: usize,
-}
-
-impl CompiledBytecode {
-    fn as_bytes(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr().cast(), self.len) }
-    }
-}
-
-impl Drop for CompiledBytecode {
-    fn drop(&mut self) {
-        unsafe {
-            sys::luau_free_compiled_bytecode(self.ptr.as_ptr());
-        }
-    }
-}
-
-/// Luau keeps 16-byte-aligned data at the start of its blocks (`lua_Page::data`, `LG`).
-const LUAU_ALIGN: usize = 16;
-
-unsafe extern "C-unwind" fn alloc(
-    ud: *mut c_void,
-    ptr: *mut c_void,
-    osize: usize,
-    nsize: usize,
-) -> *mut c_void {
-    abort_on_panic(|| unsafe { alloc_within_limit(ud, ptr, osize, nsize) })
-}
-
-unsafe fn alloc_within_limit(
-    ud: *mut c_void,
-    ptr: *mut c_void,
-    osize: usize,
-    nsize: usize,
-) -> *mut c_void {
-    let control = unsafe { ud.cast::<VmControl>().as_ref() };
-    if nsize == 0 {
-        unsafe { reallocate(ptr, osize, 0) };
-        if let Some(control) = control {
-            let allocated = control.allocated.load(Ordering::Relaxed);
-            control
-                .allocated
-                .store(allocated.saturating_sub(osize), Ordering::Relaxed);
-        }
-        ptr::null_mut()
-    } else {
-        if let Some(control) = control {
-            let allocated = control.allocated.load(Ordering::Relaxed);
-            let next_allocated = match allocated.saturating_sub(osize).checked_add(nsize) {
-                Some(value) => value,
-                None => return ptr::null_mut(),
-            };
-            let limit = control.memory_limit.load(Ordering::Relaxed);
-            if limit != 0 && next_allocated > limit {
-                return ptr::null_mut();
-            }
-            let result = unsafe { reallocate(ptr, osize, nsize) };
-            if !result.is_null() {
-                control.allocated.store(next_allocated, Ordering::Relaxed);
-            }
-            result
-        } else {
-            unsafe { reallocate(ptr, osize, nsize) }
-        }
-    }
-}
-
-/// Frees `ptr` when `nsize` is zero, allocates when `ptr` is null, and reallocates otherwise.
-/// Returns null when freeing or on failure.
-///
-/// # Safety
-///
-/// A non-null `ptr` is a live block from this function of `osize` bytes, which Luau guarantees.
-unsafe fn reallocate(ptr: *mut c_void, osize: usize, nsize: usize) -> *mut c_void {
-    // SAFETY: a live block was allocated with a valid layout of `osize` bytes and `LUAU_ALIGN`.
-    let old =
-        (!ptr.is_null()).then(|| unsafe { Layout::from_size_align_unchecked(osize, LUAU_ALIGN) });
-    if nsize == 0 {
-        if let Some(old) = old {
-            // SAFETY: `ptr` is live with layout `old`.
-            unsafe { std::alloc::dealloc(ptr.cast(), old) };
-        }
-        return ptr::null_mut();
-    }
-    let Ok(layout) = Layout::from_size_align(nsize, LUAU_ALIGN) else {
-        return ptr::null_mut();
-    };
-    match old {
-        // SAFETY: `layout` has a nonzero size.
-        None => unsafe { std::alloc::alloc(layout).cast() },
-        // SAFETY: `ptr` is live with layout `old`, and `layout` proves the new size is nonzero
-        // and does not overflow `isize` once rounded up to the alignment.
-        Some(old) => unsafe { std::alloc::realloc(ptr.cast(), old, layout.size()).cast() },
-    }
 }
 
 #[cfg(test)]
@@ -4106,7 +3759,7 @@ mod tests {
     }
 
     fn interrupt_is_installed(vm: &Vm) -> bool {
-        unsafe { (*sys::lua_callbacks(vm.inner.state.as_ptr())).interrupt }.is_some()
+        vm.inner.state.has_interrupt()
     }
 
     /// Each body runs on past the cancel, calls included, to where it yields, and is closed
@@ -4311,7 +3964,7 @@ mod tests {
         let freed = cancelled.state_id();
         assert!(Stack::of_thread(&cancelled).is_cancelled());
         drop(cancelled);
-        unsafe { sys::lua_gc(vm.inner.state.as_ptr(), sys::LUA_GCCOLLECT, 0) };
+        vm.inner.state.gc(sys::LUA_GCCOLLECT);
 
         let mut made = Vec::new();
         let reused = loop {
@@ -4551,9 +4204,12 @@ mod tests {
         // The outer guard goes first; the inner one's budget and signal still apply.
         drop(outer);
         let control = vm.inner.control();
-        assert_eq!(
-            control.interrupt_signal.load(Ordering::Acquire),
-            Arc::as_ptr(&inner_signal.0).cast_mut()
+        assert!(
+            control
+                .interrupt_signal
+                .borrow()
+                .as_ref()
+                .is_some_and(|signal| Arc::ptr_eq(&signal.0, &inner_signal.0))
         );
         inner_signal.raise();
         let error = vm
@@ -4562,7 +4218,7 @@ mod tests {
             .expect_err("the inner signal should stop the loop");
         assert!(matches!(error, Error::Runtime(message) if message.contains("interrupted")));
         drop(inner);
-        assert!(control.interrupt_signal.load(Ordering::Acquire).is_null());
+        assert!(control.interrupt_signal.borrow().is_none());
         assert_eq!(control.interrupt_deadline_millis.load(Ordering::Acquire), 0);
         Ok(())
     }
@@ -4599,11 +4255,7 @@ mod tests {
         ));
         assert!(started.elapsed() < Duration::from_secs(30));
         assert!(
-            vm.inner
-                .control()
-                .interrupt_signal
-                .load(Ordering::Acquire)
-                .is_null(),
+            vm.inner.control().interrupt_signal.borrow().is_none(),
             "the guard restores the signal before it"
         );
         Ok(())
@@ -4869,9 +4521,7 @@ mod tests {
         thread.clear_call_context()?;
         drop(thread);
         drop(function);
-        unsafe {
-            sys::lua_gc(vm.inner.state.as_ptr(), sys::LUA_GCCOLLECT, 0);
-        }
+        vm.inner.state.gc(sys::LUA_GCCOLLECT);
 
         let contexts = vm.inner.control().thread_contexts.read().expect("contexts");
         assert!(contexts.is_empty(), "{} contexts left", contexts.len());
@@ -5221,7 +4871,7 @@ mod tests {
         } else {
             sys::LUA_GCSTOP
         };
-        unsafe { sys::lua_gc(vm.inner.state.as_ptr(), what, 0) };
+        vm.inner.state.gc(what);
     }
 
     #[test]
@@ -5496,7 +5146,7 @@ mod tests {
     fn a_destructor_that_reaches_its_vm_runs_outside_collection() -> Result<()> {
         thread_local! {
             static VM: RefCell<Option<Vm>> = const { RefCell::new(None) };
-            static DROPS: Cell<usize> = const { Cell::new(0) };
+            static DROPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
         }
         struct Reenters;
         impl Drop for Reenters {
@@ -5510,12 +5160,12 @@ mod tests {
             }
         }
 
-        let drops = || DROPS.with(Cell::get);
+        let drops = || DROPS.with(std::cell::Cell::get);
         let vm = Vm::new()?;
         VM.with(|slot| *slot.borrow_mut() = Some(vm.clone()));
 
         drop(vm.create_userdata(Reenters)?);
-        unsafe { sys::lua_gc(vm.inner.state.as_ptr(), sys::LUA_GCCOLLECT, 0) };
+        vm.inner.state.gc(sys::LUA_GCCOLLECT);
         assert_eq!(drops(), 0, "collecting leaves the value for later");
         drop(vm.create_table()?);
         assert_eq!(drops(), 1, "the next entry into the VM drops it");

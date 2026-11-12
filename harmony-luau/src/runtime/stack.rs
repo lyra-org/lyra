@@ -7,6 +7,7 @@
 //! reverse order they were made in, which dropping one out of turn panics for, so a value a stack
 //! reads stays where it is while the stack is borrowed.
 
+#![allow(unsafe_code)]
 #![deny(clippy::undocumented_unsafe_blocks)]
 
 use std::{
@@ -53,14 +54,16 @@ use super::{
     Value,
     ValueRef,
     Vm,
-    drop_callback_slot,
-    drop_userdata,
     gateway::{
         self,
         CoStatus,
     },
-    host_error_tostring,
-    native_callback,
+    native::{
+        drop_callback_slot,
+        drop_userdata,
+        host_error_tostring,
+        native_callback,
+    },
 };
 
 /// Whether Luau aligns a userdata's data for `T`: to 8 bytes, and to 16 for 16 bytes or more
@@ -110,7 +113,7 @@ impl<'a> Stack<'a> {
     pub(super) fn main(vm: &'a Vm) -> Self {
         vm.drop_collected();
         // SAFETY: the main thread lives as long as the VM, which `vm` keeps alive.
-        unsafe { Self::from_raw(vm, vm.inner.state) }
+        unsafe { Self::from_raw(vm, vm.inner.state.main()) }
     }
 
     /// The stack of `thread`, whose registry reference keeps it alive.
@@ -155,7 +158,7 @@ impl<'a> Stack<'a> {
     }
 
     fn is_main(&self) -> bool {
-        self.state == self.vm.inner.state
+        self.state == self.vm.inner.state.main()
     }
 
     /// `index` as Luau takes it, after checking that it names a value on the stack.
@@ -693,7 +696,7 @@ impl<'a> Stack<'a> {
     /// The thread's state as `coroutine.status` reports it from the main thread.
     pub(super) fn co_status(&self) -> CoStatus {
         // SAFETY: both are live threads of one VM.
-        unsafe { gateway::co_status(self.vm.inner.state.as_ptr(), self.raw()) }
+        unsafe { gateway::co_status(self.vm.inner.state.main().as_ptr(), self.raw()) }
     }
 
     /// Whether the thread is a coroutine that has neither run nor been closed.
@@ -734,7 +737,7 @@ impl<'a> Stack<'a> {
         self.check_resumable()?;
         self.own(args);
         // SAFETY: a suspended coroutine of the VM, with `args` values on top.
-        unsafe { gateway::resume(self.vm.inner.state.as_ptr(), self.raw(), args) }
+        unsafe { gateway::resume(self.vm.inner.state.main().as_ptr(), self.raw(), args) }
     }
 
     /// Resumes the thread by raising `error` where it yielded, and returns whether it yielded
@@ -745,13 +748,13 @@ impl<'a> Stack<'a> {
         // instead.
         self.push_raised(error);
         // SAFETY: a suspended coroutine of the VM, with the error on top.
-        unsafe { gateway::resume_error(self.vm.inner.state.as_ptr(), self.raw()) }
+        unsafe { gateway::resume_error(self.vm.inner.state.main().as_ptr(), self.raw()) }
     }
 
     /// Closes a thread that isn't live, outside the memory limit, and returns whether it is
     /// dead.
     pub(super) fn close(&mut self) -> bool {
-        let main = self.vm.inner.state.as_ptr();
+        let main = self.vm.inner.state.main().as_ptr();
         let state = self.raw();
         self.vm.inner.control().without_memory_limit(|| {
             // SAFETY: both are live threads of one VM.
@@ -881,7 +884,11 @@ impl Vm {
         }
         // SAFETY: a live state, and only userdata holding a `T` get the new tag.
         unsafe {
-            sys::lua_setuserdatadtor(self.inner.state.as_ptr(), tag.0, Some(drop_userdata::<T>));
+            sys::lua_setuserdatadtor(
+                self.inner.state.main().as_ptr(),
+                tag.0,
+                Some(drop_userdata::<T>),
+            );
         }
         tags.next += 1;
         tags.by_type.insert(TypeId::of::<T>(), tag);
@@ -899,7 +906,7 @@ impl Vm {
         // SAFETY: a live state, and only `HostError` values get their tag.
         unsafe {
             sys::lua_setuserdatadtor(
-                self.inner.state.as_ptr(),
+                self.inner.state.main().as_ptr(),
                 HOST_ERROR_TAG.0,
                 Some(drop_userdata::<HostError>),
             )
@@ -1068,6 +1075,6 @@ impl PartialEq for RegistryRef {
 impl Drop for RegistrySlot {
     fn drop(&mut self) {
         // SAFETY: a live state, which the slot's `Vm` keeps alive, and a reference it made.
-        unsafe { sys::lua_unref(self.vm.inner.state.as_ptr(), self.reference) };
+        unsafe { sys::lua_unref(self.vm.inner.state.main().as_ptr(), self.reference) };
     }
 }

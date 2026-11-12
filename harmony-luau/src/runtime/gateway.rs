@@ -7,6 +7,7 @@
 //! error value. The workspace `clippy.toml` disallows the raising `harmony_luau_sys` functions
 //! everywhere else.
 
+#![allow(unsafe_code)]
 #![allow(clippy::disallowed_methods)]
 
 use std::{

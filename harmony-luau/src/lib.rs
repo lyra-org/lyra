@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+#![deny(unsafe_code)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
 use std::collections::{
