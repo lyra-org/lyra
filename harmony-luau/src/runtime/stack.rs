@@ -108,6 +108,7 @@ pub(super) struct Stack<'a> {
 impl<'a> Stack<'a> {
     /// The stack of the VM's main thread.
     pub(super) fn main(vm: &'a Vm) -> Self {
+        vm.drop_collected();
         // SAFETY: the main thread lives as long as the VM, which `vm` keeps alive.
         unsafe { Self::from_raw(vm, vm.inner.state) }
     }
@@ -115,6 +116,7 @@ impl<'a> Stack<'a> {
     /// The stack of `thread`, whose registry reference keeps it alive.
     pub(super) fn of_thread(thread: &'a Thread) -> Self {
         let thread_ref = &thread.inner.thread;
+        thread_ref.vm().drop_collected();
         // SAFETY: the thread's registry reference pins it, and `thread` is borrowed for as long
         // as the stack lives.
         unsafe { Self::from_raw(thread_ref.vm(), thread_ref.state) }
@@ -331,7 +333,7 @@ impl<'a> Stack<'a> {
     /// Pushes a userdata holding `value`, tagged for `T`, and returns its tag.
     pub(super) fn new_userdata<T>(&mut self, value: T) -> Result<UserDataTag>
     where
-        T: 'static,
+        T: Send + 'static,
     {
         const { assert!(fits_userdata::<T>()) };
         let tag = self.vm.assign_userdata_tag::<T>()?;
@@ -787,12 +789,17 @@ impl<'a> Stack<'a> {
 }
 
 impl Drop for Stack<'_> {
-    /// Cuts the stack back to its base, unless closing its thread emptied it.
+    /// Cuts the stack back to its base, unless closing its thread emptied it. Once no stack of the
+    /// VM is left, as when a call into it returns, drops what Luau collected meanwhile.
     fn drop(&mut self) {
-        self.vm.inner.stacks.leave(self.state, self.depth);
+        let stacks = &self.vm.inner.stacks;
+        stacks.leave(self.state, self.depth);
         if self.top() > self.base {
             // SAFETY: a live state, with values above the base.
             unsafe { gateway::truncate(self.raw(), self.base) };
+        }
+        if stacks.is_empty() && !std::thread::panicking() {
+            self.vm.drop_collected();
         }
     }
 }
@@ -830,6 +837,10 @@ impl LiveStacks {
         } else {
             depths[position].1 -= 1;
         }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.depths.borrow().is_empty()
     }
 }
 

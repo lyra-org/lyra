@@ -5,7 +5,10 @@ use std::{
         TypeId,
         type_name,
     },
-    cell::RefCell,
+    cell::{
+        Cell,
+        RefCell,
+    },
     collections::HashMap,
     ffi::{
         CString,
@@ -310,6 +313,28 @@ pub struct Vm {
     inner: Rc<VmInner>,
 }
 
+/// Fails to compile when one of the types is `Send` or `Sync`: the `<_>` then matches more than
+/// one impl, and the compiler reports multiple impls of `NotSendOrSync` for that type.
+macro_rules! assert_not_send_or_sync {
+    ($($type:ty),+ $(,)?) => {
+        const _: fn() = || {
+            trait NotSendOrSync<Witness> {
+                fn check() {}
+            }
+            impl<T: ?Sized> NotSendOrSync<()> for T {}
+            struct IsSend;
+            impl<T: ?Sized + Send> NotSendOrSync<IsSend> for T {}
+            struct IsSync;
+            impl<T: ?Sized + Sync> NotSendOrSync<IsSync> for T {}
+            $(<$type as NotSendOrSync<_>>::check();)+
+        };
+    };
+}
+
+// Native functions must be `Send + Sync` and userdata `Send`, which keeps these out of both only
+// while they are neither.
+assert_not_send_or_sync!(Vm, Function, Table, Thread, UserData, Buffer, Value);
+
 struct VmInner {
     id: u64,
     state: NonNull<sys::lua_State>,
@@ -398,6 +423,11 @@ impl Vm {
 
     pub fn data(&self) -> &VmData {
         &self.inner.data
+    }
+
+    /// Drops what Luau collected since this last ran, outside the collection.
+    fn drop_collected(&self) {
+        self.inner.control().drop_collected();
     }
 
     pub fn memory_used(&self) -> usize {
@@ -574,10 +604,12 @@ impl Vm {
         })
     }
 
-    /// A userdata holding `value`, which only [`UserData::borrow`] as a `T` reads.
+    /// A userdata holding `value`, which only [`UserData::borrow`] as a `T` reads. Once Luau
+    /// collects the userdata, the value is dropped where Rust code next enters the VM, outside the
+    /// collection. `T` is `Send`, which keeps VM handles out of it.
     pub fn create_userdata<T>(&self, value: T) -> Result<UserData>
     where
-        T: 'static,
+        T: Send + 'static,
     {
         let mut stack = Stack::main(self);
         let tag = stack.new_userdata(value)?;
@@ -632,10 +664,11 @@ impl Vm {
             .thread_contexts
             .write()
             .map_err(|_| Error::VmDataPoisoned)?;
-        Ok(match context {
-            Some(context) => contexts.insert(state_id, context),
+        let replaced = match context {
+            Some(context) => contexts.insert(state_id, Rc::new(context)),
             None => contexts.remove(&state_id),
-        })
+        };
+        Ok(replaced.map(Rc::unwrap_or_clone))
     }
 
     fn call_context_for_state(&self, state_id: usize) -> Result<Option<CallContext>> {
@@ -644,7 +677,11 @@ impl Vm {
             .thread_contexts
             .read()
             .map_err(|_| Error::VmDataPoisoned)
-            .map(|contexts| contexts.get(&state_id).cloned())
+            .map(|contexts| {
+                contexts
+                    .get(&state_id)
+                    .map(|context| CallContext::clone(context))
+            })
     }
 
     pub fn set_global_table(&self, name: &str, table: &Table) -> Result<()> {
@@ -730,10 +767,9 @@ impl Vm {
 
 impl Drop for VmInner {
     fn drop(&mut self) {
-        unsafe {
-            sys::lua_close(self.state.as_ptr());
-            drop(Box::from_raw(self.control.as_ptr()));
-        }
+        unsafe { sys::lua_close(self.state.as_ptr()) };
+        self.control().drop_collected();
+        unsafe { drop(Box::from_raw(self.control.as_ptr())) };
     }
 }
 
@@ -754,8 +790,12 @@ struct VmControl {
     /// Every live [`InterruptBudgetGuard`]'s budget, which owns the signal the interrupt reads.
     interrupt_budgets: std::sync::Mutex<InterruptBudgets>,
     /// Keyed by `lua_State` address; [`userthread`] keeps it in step with
-    /// the threads Luau creates and frees.
-    thread_contexts: RwLock<HashMap<usize, CallContext>>,
+    /// the threads Luau creates and frees. A coroutine shares its creator's context.
+    thread_contexts: RwLock<HashMap<usize, Rc<CallContext>>>,
+    /// What Luau freed while collecting garbage, for [`VmControl::drop_collected`] to drop: a
+    /// `Drop` could reach the VM, which can't be entered while it collects.
+    collected: RefCell<Vec<Box<dyn Any>>>,
+    dropping_collected: Cell<bool>,
 }
 
 impl VmControl {
@@ -777,7 +817,31 @@ impl VmControl {
             interrupt_interrupted: AtomicPtr::new(std::ptr::null_mut()),
             interrupt_budgets: std::sync::Mutex::default(),
             thread_contexts: RwLock::new(HashMap::new()),
+            collected: RefCell::default(),
+            dropping_collected: Cell::new(false),
         }
+    }
+
+    /// Keeps `value`, which Luau freed while collecting, for [`Self::drop_collected`].
+    fn defer_drop(&self, value: Box<dyn Any>) {
+        self.collected.borrow_mut().push(value);
+    }
+
+    /// Drops what Luau collected, which must not run inside a collection. A drop that enters the
+    /// VM can leave more, which this drops too rather than recursing. A panic aborts, as one in a
+    /// destructor Luau runs would.
+    fn drop_collected(&self) {
+        if self.collected.borrow().is_empty() || self.dropping_collected.replace(true) {
+            return;
+        }
+        loop {
+            let collected = std::mem::take(&mut *self.collected.borrow_mut());
+            if collected.is_empty() {
+                break;
+            }
+            abort_on_panic(|| drop(collected));
+        }
+        self.dropping_collected.set(false);
     }
 }
 
@@ -2709,12 +2773,41 @@ fn abort_on_panic<T>(callback: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(callback)).unwrap_or_else(|_| std::process::abort())
 }
 
-unsafe extern "C-unwind" fn drop_callback_slot(_: *mut sys::lua_State, userdata: *mut c_void) {
-    abort_on_panic(|| unsafe { ptr::drop_in_place(userdata.cast::<CallbackSlot>()) });
+/// Takes the `CallbackSlot` of a native function Luau collects, for the VM to drop.
+unsafe extern "C-unwind" fn drop_callback_slot(state: *mut sys::lua_State, userdata: *mut c_void) {
+    abort_on_panic(|| unsafe { defer_drop::<CallbackSlot>(state, userdata) });
 }
 
-unsafe extern "C-unwind" fn drop_userdata<T>(_: *mut sys::lua_State, userdata: *mut c_void) {
-    abort_on_panic(|| unsafe { ptr::drop_in_place(userdata.cast::<T>()) });
+/// Takes the `T` of a userdata Luau collects, for the VM to drop.
+unsafe extern "C-unwind" fn drop_userdata<T>(state: *mut sys::lua_State, userdata: *mut c_void)
+where
+    T: 'static,
+{
+    abort_on_panic(|| unsafe { defer_drop::<T>(state, userdata) });
+}
+
+/// Moves the `T` out of `userdata`, which Luau frees, for its VM to drop outside the collection.
+///
+/// # Safety
+///
+/// `userdata` holds a `T`, which nothing reads after this, and `state` is a live thread of a VM's
+/// state.
+unsafe fn defer_drop<T>(state: *mut sys::lua_State, userdata: *mut c_void)
+where
+    T: 'static,
+{
+    if !std::mem::needs_drop::<T>() {
+        return;
+    }
+    let value = unsafe { ptr::read(userdata.cast::<T>()) };
+    let control = unsafe {
+        sys::lua_callback_userdata(state)
+            .cast::<VmControl>()
+            .as_ref()
+    };
+    control
+        .expect("a VM's state has a control block")
+        .defer_drop(Box::new(value));
 }
 
 enum CallbackExit {
@@ -2752,6 +2845,7 @@ unsafe fn call_native_function(state: *mut sys::lua_State) -> CallbackExit {
         unsafe { gateway::push_error(state.as_ptr(), "Harmony VM is no longer available") };
         return CallbackExit::Raise;
     };
+    vm.drop_collected();
     // SAFETY: as for `run_native_function`, whose stacks are gone.
     match unsafe { run_native_function(&vm, slot, state) } {
         Ok(exit) => exit,
@@ -2949,8 +3043,9 @@ fn format_os_date(format: &str, timestamp: i64) -> Result<String> {
     ))
 }
 
-/// A new thread, such as a coroutine, starts with its creator's call context;
-/// a freed thread's context goes with it.
+/// A new thread, such as a coroutine, shares its creator's call context. A freed thread's context
+/// is left for the VM to drop outside the collection only when no other thread shares it, so
+/// freeing coroutines in a loop leaves nothing behind.
 unsafe extern "C-unwind" fn userthread(parent: *mut sys::lua_State, thread: *mut sys::lua_State) {
     let control = unsafe {
         sys::lua_callback_userdata(thread)
@@ -2964,7 +3059,11 @@ unsafe extern "C-unwind" fn userthread(parent: *mut sys::lua_State, thread: *mut
         return;
     };
     if parent.is_null() {
-        contexts.remove(&(thread as usize));
+        let freed = contexts.remove(&(thread as usize)).and_then(Rc::into_inner);
+        drop(contexts);
+        if let Some(context) = freed {
+            control.defer_drop(Box::new(context));
+        }
     } else if let Some(context) = contexts.get(&(parent as usize)).cloned() {
         contexts.insert(thread as usize, context);
     }
@@ -4779,6 +4878,39 @@ mod tests {
         Ok(())
     }
 
+    /// Coroutines share the context they inherit, so freeing them, as a loop in Luau does while
+    /// it runs, leaves nothing for the VM to drop.
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn freed_coroutines_leave_their_shared_context_alone() -> Result<()> {
+        let vm = Vm::with_options(VmOptions::default().memory_limit(2 * 1024 * 1024))?;
+        vm.open_standard_libraries(StandardLibraries {
+            coroutine: true,
+            ..StandardLibraries::none()
+        })?;
+        let function = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(
+                &b"for _ = 1, 200000 do coroutine.create(function() end) end coroutine.yield()"[..],
+            ),
+            ChunkOrigin::default(),
+        ))?;
+        let thread = vm.create_thread(&function)?;
+        let mut context = CallContext::default();
+        context.caller.insert(42_u64);
+        let marker = context.caller.get::<u64>()?;
+        thread.set_call_context(context)?;
+
+        // Holds a call into the VM open, which would drop what collection left as it returns.
+        let open = Stack::main(&vm);
+        assert!(matches!(thread.resume(&[])?, ThreadStatus::Yielded(_)));
+        let collected = vm.inner.control().collected.borrow().len();
+        let references = Arc::strong_count(&marker);
+        drop(open);
+        assert_eq!(collected, 0, "freed coroutines left contexts to drop");
+        assert_eq!(references, 2, "the thread's context and this test's");
+        Ok(())
+    }
+
     #[test]
     #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn calls_with_a_context_restore_the_previous_one() -> Result<()> {
@@ -5354,6 +5486,50 @@ mod tests {
         let resumed = thread.resume(&[Value::Function(allocate)]);
         assert!(matches!(resumed, Err(Error::OutOfMemory)), "{resumed:?}");
         assert_eq!(stack_top(&vm), 0);
+        Ok(())
+    }
+
+    /// A destructor that reaches its VM through a thread-local handle, which `Send` doesn't keep
+    /// out of what `Drop` can reach.
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn a_destructor_that_reaches_its_vm_runs_outside_collection() -> Result<()> {
+        thread_local! {
+            static VM: RefCell<Option<Vm>> = const { RefCell::new(None) };
+            static DROPS: Cell<usize> = const { Cell::new(0) };
+        }
+        struct Reenters;
+        impl Drop for Reenters {
+            fn drop(&mut self) {
+                let vm = VM.with(|vm| vm.borrow().clone()).expect("the VM is set");
+                let values = vm
+                    .eval(b"return {}".as_slice(), ChunkOrigin::default())
+                    .expect("the VM runs code from a destructor");
+                assert!(matches!(values.as_slice(), [Value::Table(_)]));
+                DROPS.with(|drops| drops.set(drops.get() + 1));
+            }
+        }
+
+        let drops = || DROPS.with(Cell::get);
+        let vm = Vm::new()?;
+        VM.with(|slot| *slot.borrow_mut() = Some(vm.clone()));
+
+        drop(vm.create_userdata(Reenters)?);
+        unsafe { sys::lua_gc(vm.inner.state.as_ptr(), sys::LUA_GCCOLLECT, 0) };
+        assert_eq!(drops(), 0, "collecting leaves the value for later");
+        drop(vm.create_table()?);
+        assert_eq!(drops(), 1, "the next entry into the VM drops it");
+
+        // Collected as allocating steps the collector, which then can't be entered again.
+        drop(vm.create_userdata(Reenters)?);
+        for _ in 0..100_000 {
+            drop(vm.create_table()?);
+            if drops() == 2 {
+                break;
+            }
+        }
+        VM.with(|slot| slot.borrow_mut().take());
+        assert_eq!(drops(), 2);
         Ok(())
     }
 

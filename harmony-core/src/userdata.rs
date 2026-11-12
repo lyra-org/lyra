@@ -23,7 +23,7 @@ pub struct UserDataClass<T> {
     _marker: PhantomData<fn() -> T>,
 }
 
-pub trait UserDataType: Clone + 'static {
+pub trait UserDataType: Clone + Send + 'static {
     const CLASS_NAME: &'static str;
     const DESCRIPTION: Option<&'static str> = None;
 }
@@ -56,7 +56,7 @@ struct UserDataClassRuntime<T> {
 
 impl<T> UserDataClass<T>
 where
-    T: Clone + 'static,
+    T: Clone + Send + 'static,
 {
     pub fn new(class_name: &'static str) -> Self {
         Self {

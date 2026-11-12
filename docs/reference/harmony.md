@@ -75,7 +75,14 @@ status. `clippy.toml` disallows those functions everywhere else.
   rejects a type that needs more when it compiles.
 - `UserData::borrow` gives shared access only, so state that changes needs interior mutability.
   Bound userdata is `Clone`, and methods receive a clone.
-- Luau runs the value's `Drop` when it collects the userdata. A panic there aborts the process.
+- Luau can't be entered while it collects garbage, so collecting a userdata moves its value
+  aside, as it does a collected native function's state and a freed thread's call context once
+  no other thread shares it (a coroutine shares its creator's). The VM drops them where Rust
+  code next enters it: a new stack, a native call, a call into the VM returning, or closing the
+  VM. A panic there aborts the process.
+- Userdata types must be `Send`, which keeps VM handles out of them, so a value waiting to drop
+  can't keep its VM alive. Its `Drop` may still reach the VM some other way, as through a
+  thread-local handle.
 
 ## Errors and Panics
 
