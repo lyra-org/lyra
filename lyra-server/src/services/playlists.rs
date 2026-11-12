@@ -527,11 +527,8 @@ pub(crate) fn delete(db: &mut DbAny, playlist_id: QueryId) -> anyhow::Result<Opt
         return Ok(None);
     };
 
-    let orphaned = lyra_db::playlists::delete(db, playlist_db_id)?;
-    let covers_root = crate::services::covers::configured_covers_root();
-    for cover in orphaned {
-        crate::services::covers::discard_cover(&covers_root, &cover);
-    }
+    lyra_db::playlists::delete(db, playlist_db_id)?;
+    crate::services::covers::discard_listed_cover_files(db);
     Ok(Some(playlist))
 }
 

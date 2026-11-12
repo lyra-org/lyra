@@ -168,70 +168,6 @@ async fn write_cover_image(path: &Path, bytes: &[u8]) -> Result<()> {
     written
 }
 
-/// Deletes a cover file Lyra wrote. Only a regular file whose directory, resolved on disk, lies
-/// inside the covers root is deleted, so library files and anything a symlink leads to are never
-/// touched. A missing path has nothing to delete.
-fn discard_cover_file(covers_root: &Path, path: &str) {
-    let path = Path::new(path);
-    let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
-        return;
-    };
-    let (Ok(root), Ok(dir)) = (
-        std::fs::canonicalize(covers_root),
-        std::fs::canonicalize(dir),
-    ) else {
-        return;
-    };
-    if !dir.starts_with(&root) {
-        return;
-    }
-    let target = dir.join(name);
-    if !std::fs::symlink_metadata(&target).is_ok_and(|meta| meta.file_type().is_file()) {
-        return;
-    }
-    if let Err(err) = std::fs::remove_file(&target)
-        && err.kind() != std::io::ErrorKind::NotFound
-    {
-        tracing::warn!(path = %target.display(), error = %err, "failed to remove replaced cover file");
-    }
-}
-
-/// Discards a cover no owner refers to anymore: its file under the covers root, and its
-/// transformed variants.
-pub(crate) fn discard_cover(covers_root: &Path, cover: &Cover) {
-    discard_cover_file(covers_root, &cover.path);
-    super::forget_cover_transforms(&cover.hash);
-}
-
-/// Discards the files of covers detached inside a transaction, once that transaction is over
-/// and only if it committed: a cover whose record survived, as after a rollback, keeps its file.
-/// Runs in the background, since the caller may still hold the database write guard.
-pub(crate) fn discard_unreferenced_cover_files(covers: Vec<Cover>) {
-    if covers.is_empty() {
-        return;
-    }
-    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-        return;
-    };
-    let db = crate::services::STATE.db.get();
-    let covers_root = super::configured_covers_root();
-    runtime.spawn(async move {
-        let unreferenced = {
-            let db = db.read().await;
-            covers
-                .into_iter()
-                .filter(|cover| {
-                    lyra_db::covers::get_by_public_id(&*db, &cover.id)
-                        .is_ok_and(|found| found.is_none())
-                })
-                .collect::<Vec<_>>()
-        };
-        for cover in unreferenced {
-            discard_cover(&covers_root, &cover);
-        }
-    });
-}
-
 /// A new image file under the covers root, not yet recorded as anyone's cover. Dropped before
 /// it is recorded, it deletes its file. Every stored file gets its own name, so a replaced cover
 /// never changes under another owner.
@@ -253,6 +189,8 @@ impl PreparedCover {
             nanoid(),
             cover.extension
         ));
+        // Neither a record nor the discard list knows the file until it is recorded, so a process
+        // killed in between leaves it behind.
         write_cover_image(&target, &cover.bytes).await?;
         Ok(Self {
             source,
@@ -274,7 +212,6 @@ impl PreparedCover {
     pub(super) fn record(
         mut self,
         db: &mut agdb::DbAny,
-        covers_root: &Path,
         owner_id: DbId,
         select: bool,
     ) -> Result<Cover> {
@@ -291,11 +228,7 @@ impl PreparedCover {
             anyhow::Ok(upserted)
         })?;
         self.pending = None;
-        if let Some(replaced) = upserted.replaced
-            && replaced.orphaned
-        {
-            discard_cover(covers_root, &replaced.cover);
-        }
+        super::discard_listed_cover_files(db);
         Ok(upserted.cover)
     }
 }
@@ -434,7 +367,6 @@ fn provider_sync_still_allowed(db: &agdb::DbAny, basis: &ProviderSyncBasis) -> R
 /// file, or none when the entity changed meanwhile.
 async fn save_provider_cover(
     db: &lyra_db::DbAsync,
-    covers_root: &Path,
     basis: &ProviderSyncBasis,
     target_dir: &Path,
     provider_id: &str,
@@ -446,7 +378,7 @@ async fn save_provider_cover(
     if !provider_sync_still_allowed(&db_write, basis)? {
         return Ok(None);
     }
-    let cover = prepared.record(&mut db_write, covers_root, basis.owner_id, false)?;
+    let cover = prepared.record(&mut db_write, basis.owner_id, false)?;
     Ok(Some(PathBuf::from(cover.path)))
 }
 
@@ -561,15 +493,8 @@ pub(crate) async fn sync_release_cover_for_tracks<S: CallSource>(
             }
         };
 
-        let Some(target) = save_provider_cover(
-            db,
-            paths.covers_root,
-            &basis,
-            &target_dir,
-            &provider_id,
-            &cover,
-        )
-        .await?
+        let Some(target) =
+            save_provider_cover(db, &basis, &target_dir, &provider_id, &cover).await?
         else {
             return Ok(false);
         };
@@ -661,15 +586,8 @@ pub(crate) async fn sync_artist_cover<S: CallSource>(
             }
         };
 
-        let Some(target) = save_provider_cover(
-            db,
-            paths.covers_root,
-            &basis,
-            &target_dir,
-            &provider_id,
-            &cover,
-        )
-        .await?
+        let Some(target) =
+            save_provider_cover(db, &basis, &target_dir, &provider_id, &cover).await?
         else {
             return Ok(false);
         };
@@ -697,7 +615,6 @@ struct CoverDownloadTask {
     release_title: String,
     provider_id: String,
     cover_url: String,
-    covers_root: PathBuf,
     target_dir: PathBuf,
 }
 
@@ -724,7 +641,6 @@ async fn execute_cover_download(db: lyra_db::DbAsync, task: CoverDownloadTask) -
 
     let target = match save_provider_cover(
         &db,
-        &task.covers_root,
         &task.basis,
         &task.target_dir,
         &task.provider_id,
@@ -1014,7 +930,6 @@ async fn drop_rejected_local_covers(
 
     let mut db_write = db.write().await;
     let mut removed = 0;
-    let mut orphaned = Vec::new();
     for rejected in listed.into_iter().flatten() {
         if rejected
             .still_stands(&db_write, folders, library_root)?
@@ -1025,17 +940,9 @@ async fn drop_rejected_local_covers(
         let owner_id = rejected.stored.owner_db_id();
         let detached = db_write
             .transaction_mut(|t| lyra_db::covers::remove(t, owner_id, CoverSource::Local))?;
-        if let Some(detached) = detached {
-            removed += 1;
-            if detached.orphaned {
-                orphaned.push(detached.cover.hash);
-            }
-        }
+        removed += usize::from(detached.is_some());
     }
-    drop(db_write);
-    for hash in orphaned {
-        super::forget_cover_transforms(&hash);
-    }
+    super::discard_listed_cover_files(&*db_write);
     Ok(removed)
 }
 
@@ -1176,7 +1083,6 @@ pub(crate) async fn sync_release_covers_for_library(
                 release_title: ctx.release_title.clone(),
                 provider_id: provider_id.clone(),
                 cover_url,
-                covers_root: paths.covers_root.to_path_buf(),
                 target_dir: ctx.target_dir.clone(),
             });
             break; // first provider with a URL wins
@@ -2005,20 +1911,18 @@ mod tests {
                     .expect("replacing is allowed")
             };
             saved.push(
-                save_provider_cover(
-                    &db,
-                    &covers_root,
-                    &basis,
-                    &target_dir,
-                    "provider",
-                    &downloaded_cover(),
-                )
-                .await?
-                .expect("the basis still holds"),
+                save_provider_cover(&db, &basis, &target_dir, "provider", &downloaded_cover())
+                    .await?
+                    .expect("the basis still holds"),
             );
         }
         let (first, second) = (&saved[0], &saved[1]);
 
+        assert!(
+            first.is_file(),
+            "the replaced provider file waits on the list"
+        );
+        super::super::discards::discard_listed(&db, &covers_root).await?;
         assert!(library_cover.is_file());
         assert!(!first.exists(), "the replaced provider file is discarded");
         assert!(second.is_file());
@@ -2030,62 +1934,6 @@ mod tests {
             .expect("the provider cover is recorded");
         assert_eq!(&PathBuf::from(&provider.path), second);
         assert_eq!(provider.provider_id.as_deref(), Some("provider"));
-        Ok(())
-    }
-
-    #[test]
-    fn discarding_never_touches_files_outside_the_covers_root() -> anyhow::Result<()> {
-        let root = tempfile::tempdir()?;
-        let covers_root = root.path().join("covers");
-        std_fs::create_dir_all(&covers_root)?;
-        let outside = root.path().join("library");
-        std_fs::create_dir_all(&outside)?;
-        let library_cover = outside.join("cover.png");
-        std_fs::write(&library_cover, PNG_1X1)?;
-
-        let escaping = covers_root.join("..").join("library").join("cover.png");
-        discard_cover_file(&covers_root, &library_cover.to_string_lossy());
-        discard_cover_file(&covers_root, &escaping.to_string_lossy());
-
-        // A directory symlink under the covers root that leads outside it.
-        std::os::unix::fs::symlink(&outside, covers_root.join("linked"))?;
-        discard_cover_file(
-            &covers_root,
-            &covers_root
-                .join("linked")
-                .join("cover.png")
-                .to_string_lossy(),
-        );
-        // A file symlink under the covers root.
-        std::os::unix::fs::symlink(&library_cover, covers_root.join("manual-link.png"))?;
-        discard_cover_file(
-            &covers_root,
-            &covers_root.join("manual-link.png").to_string_lossy(),
-        );
-
-        assert!(library_cover.is_file());
-        assert!(
-            covers_root
-                .join("manual-link.png")
-                .symlink_metadata()
-                .is_ok()
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn discarding_works_under_a_covers_root_with_dot_dot() -> anyhow::Result<()> {
-        let root = tempfile::tempdir()?;
-        std_fs::create_dir_all(root.path().join("data"))?;
-        let covers_root = root.path().join("data").join("..").join("covers");
-        let dir = covers_root.join("1");
-        std_fs::create_dir_all(&dir)?;
-        let stored = dir.join("manual-x.png");
-        std_fs::write(&stored, PNG_1X1)?;
-
-        discard_cover_file(&covers_root, &stored.to_string_lossy());
-        assert!(!stored.exists());
-        discard_cover_file(&covers_root, &dir.join("missing.png").to_string_lossy());
         Ok(())
     }
 
@@ -2137,18 +1985,9 @@ mod tests {
         };
         let save = |basis: ProviderSyncBasis| {
             let db = db.clone();
-            let covers_root = covers_root.clone();
             let target_dir = target_dir.clone();
             async move {
-                save_provider_cover(
-                    &db,
-                    &covers_root,
-                    &basis,
-                    &target_dir,
-                    "provider",
-                    &downloaded_cover(),
-                )
-                .await
+                save_provider_cover(&db, &basis, &target_dir, "provider", &downloaded_cover()).await
             }
         };
 
@@ -2622,7 +2461,6 @@ mod tests {
             let covers_root = self.root.path().join("covers");
             save_provider_cover(
                 &self.db,
-                &covers_root,
                 basis,
                 &configured_cover_dir_for_release(&covers_root, self.winner),
                 "provider",

@@ -57,10 +57,7 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
         }
     }
 
-    crate::services::covers::discard_unreferenced_cover_files(cascade_remove_entities(
-        db,
-        &orphan_track_ids,
-    )?);
+    cascade_remove_entities(db, &orphan_track_ids)?;
 
     let releases: Vec<Release> = roots::members::<Release>(db, Root::Releases)?;
     let mut orphan_release_ids = Vec::new();
@@ -83,10 +80,7 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
         }
     }
 
-    crate::services::covers::discard_unreferenced_cover_files(cascade_remove_entities(
-        db,
-        &orphan_release_ids,
-    )?);
+    cascade_remove_entities(db, &orphan_release_ids)?;
 
     let connected_artist_ids = lyra_db::artists::reachable_from_catalog(db)?;
     let all_artists: Vec<Artist> = roots::members::<Artist>(db, Root::Artists)?;
@@ -109,10 +103,7 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
     )?;
     orphan_artist_ids.retain(|artist_id| !spared.contains(artist_id));
 
-    crate::services::covers::discard_unreferenced_cover_files(cascade_remove_entities(
-        db,
-        &orphan_artist_ids,
-    )?);
+    cascade_remove_entities(db, &orphan_artist_ids)?;
 
     // Cleanup order matters for cue/source graph nodes:
     // 1) remove orphan track_sources, 2) then orphan cue_tracks no longer referenced
@@ -151,10 +142,7 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
             orphan_track_source_ids.push(source_db_id);
         }
     }
-    crate::services::covers::discard_unreferenced_cover_files(cascade_remove_entities(
-        db,
-        &orphan_track_source_ids,
-    )?);
+    cascade_remove_entities(db, &orphan_track_source_ids)?;
 
     let all_cue_tracks: Vec<CueTrack> = roots::members::<CueTrack>(db, Root::CueTracks)?;
     let mut orphan_cue_track_ids = Vec::new();
@@ -189,10 +177,7 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
             orphan_cue_track_ids.push(cue_track_db_id);
         }
     }
-    crate::services::covers::discard_unreferenced_cover_files(cascade_remove_entities(
-        db,
-        &orphan_cue_track_ids,
-    )?);
+    cascade_remove_entities(db, &orphan_cue_track_ids)?;
 
     let all_cue_sheets: Vec<CueSheet> = roots::members::<CueSheet>(db, Root::CueSheets)?;
     let mut orphan_cue_sheet_ids = Vec::new();
@@ -227,10 +212,8 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
             orphan_cue_sheet_ids.push(cue_sheet_db_id);
         }
     }
-    crate::services::covers::discard_unreferenced_cover_files(cascade_remove_entities(
-        db,
-        &orphan_cue_sheet_ids,
-    )?);
+    cascade_remove_entities(db, &orphan_cue_sheet_ids)?;
+    crate::services::covers::discard_listed_cover_files(db);
 
     Ok(())
 }
@@ -418,9 +401,8 @@ pub(super) fn merge_artist_into(
     lyra_db::covers::adopt_missing(db, winner, loser)?;
     // `merge_artist_into` runs inside `deduplicate_artists_by_external_id`'s outer
     // `transaction_mut`; use the in-txn variant — agdb does not support reentrant transactions.
-    crate::services::covers::discard_unreferenced_cover_files(
-        lyra_db::metadata::cascade_remove_entities_in_txn(db, &[loser])?,
-    );
+    lyra_db::metadata::cascade_remove_entities_in_txn(db, &[loser])?;
+    crate::services::covers::discard_listed_cover_files(db);
     for owner_id in reapplied_owners {
         crate::services::metadata::merging::apply_merged_metadata_to_entity_inside_tx(
             db, owner_id,

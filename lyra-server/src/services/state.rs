@@ -171,6 +171,7 @@ pub(crate) struct GenerationState {
     pub(crate) hls_cleanup: HlsCleanupState,
     pub(crate) transcode_cache: Arc<crate::services::transcoding::cache::TranscodeCache>,
     pub(crate) cover_transforms: OnceLock<Arc<crate::services::covers::TransformCache>>,
+    pub(crate) cover_discards: crate::services::covers::CoverDiscards,
 }
 
 impl GenerationState {

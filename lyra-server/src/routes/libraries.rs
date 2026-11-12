@@ -469,16 +469,17 @@ async fn delete_library(
         let (principal, library) = control::managed_library(&db, &principal, &id)?;
         let user_db_id = principal.require(&db)?;
         let library_db_id = library.db_id.ok_or_else(|| library_not_found(&id))?;
-        db.transaction_mut(|t| -> Result<_, AppError> {
+        let removed = db.transaction_mut(|t| -> Result<_, AppError> {
             if !principal.permissions.contains(&Permission::Admin)
                 && !lyra_db::libraries::user_has_access_in_txn(t, user_db_id, library_db_id)?
             {
                 return Err(library_not_found(&id));
             }
             Ok(lyra_db::libraries::delete(t, &library)?)
-        })?
+        })?;
+        crate::services::covers::discard_listed_cover_files(&*db);
+        removed
     };
-    crate::services::covers::discard_unreferenced_cover_files(removed.orphaned_covers);
     crate::services::hls::state::teardown_hls_jobs_for_tracks(&removed.track_ids).await;
     Ok(StatusCode::NO_CONTENT)
 }

@@ -135,9 +135,8 @@ pub(crate) fn merge_release_into_inside_tx(
 
     // The winner keeps its own covers and takes the loser's for the sources it lacks.
     lyra_db::covers::adopt_missing(db, winner, loser)?;
-    crate::services::covers::discard_unreferenced_cover_files(
-        lyra_db::metadata::cascade_remove_entities_in_txn(db, &[loser])?,
-    );
+    lyra_db::metadata::cascade_remove_entities_in_txn(db, &[loser])?;
+    crate::services::covers::discard_listed_cover_files(db);
 
     Ok(Some(merge))
 }

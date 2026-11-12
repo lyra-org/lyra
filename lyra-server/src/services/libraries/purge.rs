@@ -44,7 +44,7 @@ pub(crate) async fn apply(
         .await;
     for batch in plan.tracks.chunks(BATCH) {
         progress.check_cancelled()?;
-        let orphaned = {
+        {
             let mut db_write = db.write().await;
             let present = batch
                 .iter()
@@ -53,9 +53,9 @@ pub(crate) async fn apply(
                     lyra_db::tracks::get_by_id(&*db_write, *track).is_ok_and(|t| t.is_some())
                 })
                 .collect::<Vec<_>>();
-            lyra_db::metadata::cascade_remove_entities(&mut db_write, &present)?
-        };
-        crate::services::covers::discard_unreferenced_cover_files(orphaned);
+            lyra_db::metadata::cascade_remove_entities(&mut db_write, &present)?;
+            crate::services::covers::discard_listed_cover_files(&*db_write);
+        }
         for _ in batch {
             let work_id = progress
                 .start_work(SyncStageKey::Purge, SyncWorkDetails::new("purge_track"))

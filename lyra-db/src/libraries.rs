@@ -449,8 +449,6 @@ fn library_entry_ids(db: &impl super::DbAccess, library_id: DbId) -> anyhow::Res
 pub struct RemovedLibrary {
     /// Public ids of the removed tracks.
     pub track_ids: HashSet<String>,
-    /// Covers of removed entities no remaining owner shares, whose files may be discarded.
-    pub orphaned_covers: Vec<super::Cover>,
 }
 
 /// Remove the library's exclusive media graph in the caller's transaction.
@@ -624,7 +622,7 @@ pub fn delete(
         cue_children.extend(tracks.into_iter().filter_map(|track| track.db_id));
     }
     children.extend(cue_children);
-    let orphaned_covers = super::metadata::cascade_remove_entities_in_txn(db, &entities)?;
+    super::metadata::cascade_remove_entities_in_txn(db, &entities)?;
     children.push(library_id);
     for run in super::sync_runs::list_for_library(db, &library.id)? {
         if let Some(id) = run.db_id {
@@ -633,10 +631,7 @@ pub fn delete(
         }
     }
     db.exec_mut(QueryBuilder::remove().ids(children).query())?;
-    Ok(RemovedLibrary {
-        track_ids,
-        orphaned_covers,
-    })
+    Ok(RemovedLibrary { track_ids })
 }
 
 const ACCESS_KIND_KEY: &str = "library_access_kind";

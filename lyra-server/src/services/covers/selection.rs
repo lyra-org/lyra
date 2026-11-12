@@ -45,7 +45,6 @@ use super::{
     },
     sync::{
         PreparedCover,
-        discard_cover,
         download_cover,
     },
 };
@@ -271,7 +270,6 @@ async fn record_for_owner(
     prepared: PreparedCover,
     select: bool,
 ) -> Result<CoverCandidates, CoverSelectionError> {
-    let covers_root = configured_covers_root();
     let mut db = db.write().await;
     if resolve_owner(&db, principal, kind, id, Access::Write)? != owner_db_id {
         return Err(CoverSelectionError::NotFound(format!(
@@ -279,7 +277,7 @@ async fn record_for_owner(
             kind.label()
         )));
     }
-    prepared.record(&mut db, &covers_root, owner_db_id, select)?;
+    prepared.record(&mut db, owner_db_id, select)?;
     Ok(collect_candidates(&db, principal, kind, owner_db_id)?)
 }
 
@@ -338,11 +336,12 @@ pub(crate) async fn remove_manual(
     let owner_db_id = resolve_owner(&db, principal, kind, id, Access::Write)?;
     let detached =
         db.transaction_mut(|t| lyra_db::covers::remove(t, owner_db_id, CoverSource::Manual))?;
-    let detached = detached
-        .ok_or_else(|| CoverSelectionError::NotFound("no manual cover is stored".to_string()))?;
-    if detached.orphaned {
-        discard_cover(&configured_covers_root(), &detached.cover);
+    if detached.is_none() {
+        return Err(CoverSelectionError::NotFound(
+            "no manual cover is stored".to_string(),
+        ));
     }
+    super::discard_listed_cover_files(&*db);
     Ok(collect_candidates(&db, principal, kind, owner_db_id)?)
 }
 
@@ -502,12 +501,7 @@ mod tests {
             Some("provider"),
         )
         .await?;
-        prepared.record(
-            &mut *STATE.db.write().await,
-            &covers_root,
-            release_db_id,
-            false,
-        )
+        prepared.record(&mut *STATE.db.write().await, release_db_id, false)
     }
 
     fn active(found: &CoverCandidates) -> Option<Option<CoverSource>> {
@@ -610,6 +604,7 @@ mod tests {
             .expect("manual cover")
             .path
             .clone();
+        super::super::discards_settled().await;
         assert!(
             !Path::new(&first_manual).exists(),
             "the replaced upload is discarded"
@@ -619,6 +614,7 @@ mod tests {
         let found = remove_manual(&STATE.db.get(), &admin, CoverOwnerKind::Release, &id).await?;
         assert_eq!(found.selection, None);
         assert!(stored(&found, CoverSource::Manual).is_none());
+        super::super::discards_settled().await;
         assert!(!Path::new(&second_manual).exists());
         assert_eq!(active(&found), Some(Some(CoverSource::Provider)));
         assert!(library_cover.is_file());
@@ -783,6 +779,7 @@ mod tests {
             &mut *STATE.db.write().await,
             agdb::QueryId::Id(playlist_db_id),
         )?;
+        super::super::discards_settled().await;
         assert!(
             !Path::new(&path).exists(),
             "deleting the playlist discards its upload"

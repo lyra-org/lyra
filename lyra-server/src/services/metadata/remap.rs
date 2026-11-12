@@ -66,7 +66,7 @@ pub(crate) async fn remap(
         }
     }
 
-    let orphaned = {
+    {
         let mut db = STATE.db.write().await;
         let missing = track_db_id(&db, missing_id)?;
         let target = track_db_id(&db, target_id)?;
@@ -85,9 +85,9 @@ pub(crate) async fn remap(
                 "track {target_id} can't play"
             )));
         }
-        db.transaction_mut(|t| take_over(t, missing, target, missing_id, target_id))?
-    };
-    crate::services::covers::discard_unreferenced_cover_files(orphaned);
+        db.transaction_mut(|t| take_over(t, missing, target, missing_id, target_id))?;
+        crate::services::covers::discard_listed_cover_files(&*db);
+    }
     Ok(())
 }
 
@@ -116,15 +116,14 @@ fn track_db_id(db: &DbAny, id: &str) -> Result<DbId, RemapError> {
         .ok_or_else(|| RemapError::NotFound(id.to_string()))
 }
 
-/// `missing` takes `target`'s place and file, and `target` goes. Returns the covers no remaining
-/// owner shares.
+/// `missing` takes `target`'s place and file, and `target` goes.
 fn take_over(
     t: &mut DbAnyTransactionMut<'_>,
     missing: DbId,
     target: DbId,
     missing_id: &str,
     target_id: &str,
-) -> anyhow::Result<Vec<lyra_db::Cover>> {
+) -> anyhow::Result<()> {
     use lyra_db::graph::{
         inbound_neighbor_ids,
         neighbor_ids,
@@ -183,17 +182,14 @@ fn take_over(
     lyra_db::playbacks::retarget_queue_track(t, target_id, missing_id)?;
     lyra_db::covers::adopt_missing(t, missing, target)?;
 
-    let mut orphaned = lyra_db::metadata::cascade_remove_entities_in_txn(t, &[target])?;
+    lyra_db::metadata::cascade_remove_entities_in_txn(t, &[target])?;
     super::merging::apply_merged_metadata_to_entity_inside_tx(t, missing)?;
     for &release in old_releases.iter().filter(|r| !new_releases.contains(r)) {
         if neighbor_ids(t, release, "Track")?.is_empty() {
-            orphaned.extend(lyra_db::metadata::cascade_remove_entities_in_txn(
-                t,
-                &[release],
-            )?);
+            lyra_db::metadata::cascade_remove_entities_in_txn(t, &[release])?;
         }
     }
-    Ok(orphaned)
+    Ok(())
 }
 
 #[cfg(test)]

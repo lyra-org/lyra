@@ -149,6 +149,8 @@ async fn serve(
     {
         let mut db_write = services::STATE.db.write().await;
         lyra_db::server::ensure(&mut db_write)?;
+        // What a previous run, or a migration, listed and didn't get to.
+        services::covers::discard_listed_cover_files(&*db_write);
     }
 
     let plugin_runtime = plugin_bootstrap::initialize_harmony().await?;

@@ -1045,6 +1045,7 @@ mod tests {
         std::fs::remove_file(&path)?;
         let gone = get_public_cover(HeaderMap::new(), Path(cover_id), Query(query())).await;
         assert!(gone.is_err());
+        crate::services::covers::discards_settled().await;
         assert!(!cached.exists(), "a removed cover's transforms go with it");
         Ok(())
     }

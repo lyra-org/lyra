@@ -91,6 +91,7 @@ pub const ROOT_COLLECTION_ALIASES: &[&str] = &[
     "cue_tracks",
     "missing_entries",
     "artists",
+    "cover_discards",
     "datastore",
     "providers",
     "mixers",
@@ -121,6 +122,8 @@ const CORE_INDEXES: &[&str] = &[
     "identity",
     "id_value",
     "play_id",
+    // Cover records by file, so a listed cover file is discarded only once none holds it.
+    "path",
 ];
 
 pub fn open(kind: DbKind, db_path: &str) -> anyhow::Result<DbAny> {

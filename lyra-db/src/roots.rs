@@ -31,6 +31,8 @@ pub(crate) const MEMBER_CHILDREN: CountComparison = CountComparison::Equal(4);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Root {
     Artists,
+    /// The files of removed covers, until the server has discarded them.
+    CoverDiscards,
     CueSheets,
     CueTracks,
     Genres,
@@ -44,22 +46,11 @@ pub enum Root {
 }
 
 impl Root {
-    pub const ALL: [Self; 9] = [
-        Self::Artists,
-        Self::CueSheets,
-        Self::CueTracks,
-        Self::Genres,
-        Self::Labels,
-        Self::MissingEntries,
-        Self::Releases,
-        Self::Tracks,
-        Self::TrackSources,
-    ];
-
     /// The root node's alias. Search from it at [`MEMBERS`] rather than for its neighbors.
     pub(crate) const fn alias(self) -> &'static str {
         match self {
             Self::Artists => "artists",
+            Self::CoverDiscards => "cover_discards",
             Self::CueSheets => "cue_sheets",
             Self::CueTracks => "cue_tracks",
             Self::Genres => "genres",
@@ -96,6 +87,35 @@ pub fn link_all(db: &mut impl DbAccess, root: Root, ids: &[DbId]) -> anyhow::Res
         )?;
     }
     Ok(())
+}
+
+/// Whether `root` has any member.
+pub(crate) fn has_members(db: &impl DbAccess, root: Root) -> anyhow::Result<bool> {
+    Ok(!newest_member_edges(db, root, 1)?.is_empty())
+}
+
+/// Up to `limit` of the root's edges to its members, as `(edge, member)`, newest first: the
+/// order in which removing them is cheap.
+pub(crate) fn newest_member_edges(
+    db: &impl DbAccess,
+    root: Root,
+    limit: usize,
+) -> anyhow::Result<Vec<(DbId, DbId)>> {
+    Ok(db
+        .exec(
+            QueryBuilder::search()
+                .from(root.alias())
+                .limit(limit as u64)
+                .where_()
+                .edge()
+                .and()
+                .distance(CountComparison::Equal(1))
+                .query(),
+        )?
+        .elements
+        .into_iter()
+        .map(|edge| (edge.id, edge.to))
+        .collect())
 }
 
 /// Ends the membership of `ids` in `root`, leaving the nodes.

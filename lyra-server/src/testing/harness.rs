@@ -79,6 +79,7 @@ impl TestCatalog {
                 .ok_or_else(|| crate::plugins::runtime_error(format!("{id} is missing")))?;
             lyra_db::metadata::cascade_remove_entities(&mut db, &[node])
                 .map_err(crate::plugins::runtime_error)?;
+            crate::services::covers::discard_listed_cover_files(&*db);
             Ok(())
         }))
     }

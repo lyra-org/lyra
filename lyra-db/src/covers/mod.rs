@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+pub mod discards;
 pub mod display;
 
 use super::DbAccess;
@@ -227,6 +228,25 @@ pub fn get_by_public_id(db: &impl DbAccess, id: &str) -> anyhow::Result<Option<C
     super::graph::fetch_typed_by_index(db, "id", id, "Cover")
 }
 
+/// Whether any cover record holds the file at `path`.
+pub fn holds_file(db: &impl DbAccess, path: &str) -> anyhow::Result<bool> {
+    Ok(db
+        .exec(
+            QueryBuilder::search()
+                .index("path")
+                .value(path)
+                .limit(1)
+                .where_()
+                .node()
+                .and()
+                .key("db_element_id")
+                .value("Cover")
+                .query(),
+        )?
+        .result
+        > 0)
+}
+
 /// Pins `source` as the cover the owner shows, or clears the pin with `None`. Returns false,
 /// changing nothing, when the owner has no cover from `source`.
 pub fn select(
@@ -396,11 +416,13 @@ fn cover_lost(db: &mut impl DbAccess, owner_db_id: DbId) -> anyhow::Result<()> {
 #[derive(Clone, Debug)]
 pub struct DetachedCover {
     pub cover: Cover,
-    /// Whether no owner refers to the cover's file anymore, so it may be discarded.
+    /// Whether no owner refers to the cover anymore, so its record went and its file is listed
+    /// for discarding.
     pub orphaned: bool,
 }
 
-/// Removes the owner's cover from `source`. The node goes too unless another owner shares it.
+/// Removes the owner's cover from `source`. The node goes too unless another owner shares it,
+/// and its file is then listed for discarding.
 pub fn remove(
     db: &mut impl DbAccess,
     owner_db_id: DbId,
@@ -417,6 +439,7 @@ pub fn remove(
     let orphaned = owner_count(db, edge.cover_db_id)? == 0;
     if orphaned {
         db.exec_mut(QueryBuilder::remove().ids(edge.cover_db_id).query())?;
+        discards::enlist(db, &cover)?;
     }
     if edges.len() == 1 {
         cover_lost(db, owner_db_id)?;
@@ -424,19 +447,12 @@ pub fn remove(
     Ok(Some(DetachedCover { cover, orphaned }))
 }
 
-/// Detaches every cover of the owner, as when the owner is deleted, and returns those no other
-/// owner shares, whose files may be discarded.
-pub fn remove_all(db: &mut impl DbAccess, owner_db_id: DbId) -> anyhow::Result<Vec<Cover>> {
-    let mut orphaned = Vec::new();
+/// Detaches every cover of the owner, as when the owner is deleted.
+pub fn remove_all(db: &mut impl DbAccess, owner_db_id: DbId) -> anyhow::Result<()> {
     for edge in source_edges(db, owner_db_id)? {
-        let Some(detached) = remove(db, owner_db_id, edge.source)? else {
-            continue;
-        };
-        if detached.orphaned {
-            orphaned.push(detached.cover);
-        }
+        remove(db, owner_db_id, edge.source)?;
     }
-    Ok(orphaned)
+    Ok(())
 }
 
 /// The owner's cover from `source` after an upsert, and the cover it replaced.
@@ -444,7 +460,7 @@ pub fn remove_all(db: &mut impl DbAccess, owner_db_id: DbId) -> anyhow::Result<V
 pub struct UpsertedCover {
     pub cover: Cover,
     /// The previous cover from the source, when the upsert left its file unreferenced by this
-    /// owner.
+    /// owner. An orphaned one's file is listed for discarding.
     pub replaced: Option<DetachedCover>,
 }
 
@@ -482,6 +498,9 @@ pub fn upsert(
                     cover,
                     orphaned: true,
                 });
+            if let Some(replaced) = &replaced {
+                discards::enlist(db, &replaced.cover)?;
+            }
         }
         Some(edge) => {
             let previous = cover_by_db_id(db, edge.cover_db_id)?;
@@ -567,6 +586,15 @@ mod tests {
 
     fn shown_id(db: &DbAny, owner_db_id: DbId) -> anyhow::Result<Option<String>> {
         Ok(get(db, owner_db_id)?.map(|cover| cover.id))
+    }
+
+    fn listed_paths(db: &DbAny) -> anyhow::Result<Vec<String>> {
+        let mut paths = discards::listed(db)?
+            .into_iter()
+            .map(|listed| listed.path)
+            .collect::<Vec<_>>();
+        paths.sort();
+        Ok(paths)
     }
 
     #[test]
@@ -678,6 +706,7 @@ mod tests {
             .ok_or_else(|| anyhow!("the previous file is reported"))?;
         assert_eq!(replaced.cover.path, "/covers/1/provider-a.jpg");
         assert!(replaced.orphaned);
+        assert_eq!(listed_paths(&db)?, ["/covers/1/provider-a.jpg"]);
         assert_eq!(sources(&db, owner)?.len(), 1);
         Ok(())
     }
@@ -801,20 +830,12 @@ mod tests {
 
         let third = insert_owner(&mut db)?;
         adopt_missing(&mut db, third, first)?;
-        assert!(
-            remove_all(&mut db, third)?.is_empty(),
-            "the first owner keeps it"
-        );
+        remove_all(&mut db, third)?;
+        assert!(listed_paths(&db)?.is_empty(), "the first owner keeps it");
         assert!(get_by_public_id(&db, "shared")?.is_some());
 
-        let orphaned = remove_all(&mut db, first)?;
-        assert_eq!(
-            orphaned
-                .iter()
-                .map(|cover| cover.id.as_str())
-                .collect::<Vec<_>>(),
-            ["shared"]
-        );
+        remove_all(&mut db, first)?;
+        assert_eq!(listed_paths(&db)?, ["/covers/1/provider.jpg"]);
         assert!(get_by_public_id(&db, "shared")?.is_none());
         Ok(())
     }
@@ -938,14 +959,8 @@ mod tests {
         adopt_missing(&mut db, kept, other)?;
         remove_all(&mut db, other)?;
 
-        let orphaned = crate::metadata::cascade_remove_entities(&mut db, &[removed])?;
-        assert_eq!(
-            orphaned
-                .iter()
-                .map(|cover| cover.id.as_str())
-                .collect::<Vec<_>>(),
-            ["own"]
-        );
+        crate::metadata::cascade_remove_entities(&mut db, &[removed])?;
+        assert_eq!(listed_paths(&db)?, ["/covers/1/manual.jpg"]);
         assert!(get_by_public_id(&db, "own")?.is_none());
         assert_eq!(
             get(&db, kept)?.map(|cover| cover.id),

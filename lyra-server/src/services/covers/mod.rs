@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+mod discards;
 pub(crate) mod display;
 mod folders;
 mod image;
@@ -179,6 +180,12 @@ impl ProviderCoverSearchResult {
 }
 
 // Re-exports for convenient access from the rest of the crate.
+#[cfg(test)]
+pub(crate) use discards::settled as discards_settled;
+pub(crate) use discards::{
+    CoverDiscards,
+    discard_listed_cover_files,
+};
 pub(crate) use folders::AudioFolders;
 pub(crate) use image::{
     COVER_EXTENSIONS,
@@ -201,8 +208,6 @@ pub(crate) use resolve::{
 pub(crate) use sync::{
     ReleaseCoverSubject,
     artist_cover_wanted,
-    discard_cover,
-    discard_unreferenced_cover_files,
     forget_gone_covers,
     record_local_release_cover,
     refresh_gone_covers_for_library,
