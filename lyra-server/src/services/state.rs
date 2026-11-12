@@ -163,6 +163,7 @@ pub(crate) struct GenerationState {
     pub(crate) auth_caches: AuthCaches,
     pub(crate) providers: ProviderLocks,
     pub(crate) merge_journal: crate::services::metadata::merge_journal::MergeJournal,
+    pub(crate) artist_references: crate::services::metadata::cleanup::ArtistReferences,
     pub(crate) playback_updates: PlaybackUpdateRegistries,
     pub(crate) connection_bindings: ConnectionBindings,
     pub(crate) socket_claims: SocketClaims,

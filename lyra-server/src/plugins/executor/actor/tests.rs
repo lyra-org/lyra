@@ -122,6 +122,7 @@ async fn nested_refresh(
                 handler,
                 context: serde_json::json!({ "value": 42 }),
                 timeout: NESTED_TIMEOUT,
+                until_settled: Default::default(),
             };
             calls.metadata_refresh(request).await.map(|_| ())
         },
@@ -422,12 +423,31 @@ impl StagedExecutor {
 
     /// [`Self::start`] with `timeout` by the clock.
     fn start_for(&self, handler: PluginCallbackHandle, timeout: Duration) -> Result<RefreshAnswer> {
+        self.start_with(handler, timeout, Default::default())
+    }
+
+    /// [`Self::start`], with what the caller wants kept until the handler has settled.
+    fn start_keeping(
+        &self,
+        handler: PluginCallbackHandle,
+        until_settled: crate::services::plugin_dispatch::UntilSettled,
+    ) -> Result<RefreshAnswer> {
+        self.start_with(handler, STAGED_TIMEOUT, until_settled)
+    }
+
+    fn start_with(
+        &self,
+        handler: PluginCallbackHandle,
+        timeout: Duration,
+        until_settled: crate::services::plugin_dispatch::UntilSettled,
+    ) -> Result<RefreshAnswer> {
         let (reply, answer) = tokio::sync::oneshot::channel();
         let permit = Arc::new(tokio::sync::Semaphore::new(1)).try_acquire_owned()?;
         let request = MetadataRefreshRequest {
             handler,
             context: serde_json::json!({ "value": 42 }),
             timeout,
+            until_settled,
         };
         self.runtime.start_metadata_refresh(request, reply, permit);
         Ok(answer)
@@ -550,6 +570,57 @@ async fn a_handler_ready_as_its_caller_leaves_is_not_resumed() -> Result<()> {
 
     assert!(executor.resumed.try_recv().is_err(), "the handler went on");
     assert!(executor.dropped.try_recv().is_ok(), "its call is dropped");
+    Ok(())
+}
+
+/// A caller that leaves stops waiting at once, while its handler goes on until a round of the
+/// executor finds it gone.
+#[tokio::test]
+async fn what_a_caller_keeps_until_settled_outlasts_its_leaving() -> Result<()> {
+    use crate::services::plugin_dispatch::UntilSettled;
+
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
+    let mut executor = StagedExecutor::new()?;
+    let kept = Arc::new(());
+    let start = |executor: &mut StagedExecutor| -> Result<RefreshAnswer> {
+        let answer =
+            executor.start_keeping(executor.slow, UntilSettled::keeping(Arc::clone(&kept)))?;
+        executor.runtime.run_until_idle()?;
+        executor.started.try_recv().context("the handler waits")?;
+        Ok(answer)
+    };
+
+    let answer = start(&mut executor)?;
+    drop(answer);
+    assert_eq!(
+        Arc::strong_count(&kept),
+        2,
+        "the caller left before its handler settled"
+    );
+    executor.runtime.run_until_idle()?;
+    assert!(executor.dropped.try_recv().is_ok(), "its call is dropped");
+    assert_eq!(Arc::strong_count(&kept), 1);
+
+    let answer = start(&mut executor)?;
+    executor.clock.advance(STAGED_TIMEOUT);
+    assert_eq!(Arc::strong_count(&kept), 2);
+    executor.runtime.run_until_idle()?;
+    assert!(executor.dropped.try_recv().is_ok(), "its call is dropped");
+    assert_eq!(Arc::strong_count(&kept), 1);
+    deadline_expired(answer)?;
+
+    let answer = start(&mut executor)?;
+    executor.release.notify_one();
+    executor.runtime.run_until_idle()?;
+    assert!(executor.resumed.try_recv().is_ok(), "the handler ended");
+    assert_eq!(Arc::strong_count(&kept), 1);
+    answered(answer)?;
+
+    // A handler that never starts keeps nothing.
+    drop(executor.start_keeping(executor.slow, UntilSettled::keeping(Arc::clone(&kept)))?);
+    executor.runtime.run_until_idle()?;
+    assert_eq!(Arc::strong_count(&kept), 1);
     Ok(())
 }
 
@@ -874,6 +945,7 @@ fn request(handler: PluginCallbackHandle, timeout: Duration) -> MetadataRefreshR
         handler,
         context: serde_json::json!({ "value": 42 }),
         timeout,
+        until_settled: Default::default(),
     }
 }
 

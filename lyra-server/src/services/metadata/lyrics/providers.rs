@@ -405,6 +405,7 @@ async fn call_lyrics_handler<C: RuntimeCalls>(
         handler: spec.handler,
         context: track_context_to_json(context),
         timeout,
+        until_settled: Default::default(),
     };
     let result = call_metadata_handler(calls, "lyrics handler", request).await?;
     let value = result

@@ -7,12 +7,14 @@ use std::time::Duration;
 
 use crate::services::{
     EntityType,
+    STATE,
     plugin_dispatch::{
         CallSource,
         MetadataRefreshRequest,
         MetadataRefreshResult,
         PluginCallbackHandle,
         RuntimeCalls,
+        UntilSettled,
         call_metadata_handler,
     },
     providers::{
@@ -30,6 +32,7 @@ async fn run_metadata_handler<C: RuntimeCalls>(
     calls: &C,
     handler: PluginCallbackHandle,
     context: serde_json::Value,
+    until_settled: UntilSettled,
 ) -> anyhow::Result<MetadataRefreshResult> {
     call_metadata_handler(
         calls,
@@ -38,6 +41,7 @@ async fn run_metadata_handler<C: RuntimeCalls>(
             handler,
             context,
             timeout: DEFAULT_METADATA_REFRESH_TIMEOUT,
+            until_settled,
         },
     )
     .await
@@ -62,9 +66,18 @@ pub(super) async fn dispatch_refresh<S: CallSource>(
         |handler, calls| {
             let context = context.clone();
             async move {
-                run_metadata_handler("metadata refresh", &calls, handler, context)
-                    .await
-                    .map(|_| ())
+                // The handler ensures artists and saves the layers naming them in writes of its
+                // own, and may still be at it after this call gave up on it.
+                let references = STATE.generation().artist_references.flow().await;
+                run_metadata_handler(
+                    "metadata refresh",
+                    &calls,
+                    handler,
+                    context,
+                    UntilSettled::keeping(references),
+                )
+                .await
+                .map(|_| ())
             }
         },
     )
@@ -95,8 +108,14 @@ pub(super) async fn dispatch_sync_filter<S: CallSource>(
                 .then_some(ProviderLookup::Answer(true))
         },
         |handler, calls| async move {
-            let result =
-                run_metadata_handler("sync filter", &calls, handler, context.clone()).await?;
+            let result = run_metadata_handler(
+                "sync filter",
+                &calls,
+                handler,
+                context.clone(),
+                UntilSettled::default(),
+            )
+            .await?;
             Ok(result
                 .values
                 .first()

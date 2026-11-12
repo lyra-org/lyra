@@ -915,6 +915,7 @@ mod tests {
                 handler,
                 context: serde_json::json!({}),
                 timeout: std::time::Duration::from_secs(5),
+                until_settled: Default::default(),
             })
             .await?;
 

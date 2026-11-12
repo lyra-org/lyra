@@ -8,6 +8,11 @@ use std::collections::{
     HashMap,
     HashSet,
 };
+use std::sync::{
+    Arc,
+    Mutex,
+    Weak,
+};
 
 use agdb::{
     DbAny,
@@ -41,25 +46,137 @@ use lyra_db::{
 /// behind each candidate it checks.
 const ARTIST_BATCH: usize = 256;
 
-/// Removes the artists nothing references any more, among the candidates the writes since the
-/// last collection left. Takes no write lock when there are none. Returns how many it removed.
-pub(crate) async fn collect_unreferenced_artists(db: &DbAsync) -> anyhow::Result<usize> {
-    if !lyra_db::orphans::has_artist_candidates(&*db.read().await)? {
-        return Ok(0);
-    }
-    let mut removed = 0;
-    loop {
-        let pass = {
-            let mut db_write = db.write().await;
-            let pass = lyra_db::orphans::collect_artist_candidates(&mut db_write, ARTIST_BATCH)?;
-            crate::services::covers::discard_listed_cover_files(&*db_write);
-            pass
+/// The flows that reference artists across writes of their own, against the collection of
+/// unreferenced artists.
+///
+/// A provider's refresh ensures an artist in one write and credits it in a later one, or drops a
+/// credit and names the artist again further on; between the two the artist is unreferenced. The
+/// refresh holds this shared until its handler has settled. A collection takes it for each of its
+/// writes without waiting, and stops where a flow holds it: its candidates are stored, and the
+/// collection starts again when a flow lets go. Each generation has its own.
+#[derive(Clone, Default)]
+pub(crate) struct ArtistReferences {
+    inner: Arc<ArtistReferencesInner>,
+}
+
+#[derive(Default)]
+struct ArtistReferencesInner {
+    flows: Arc<tokio::sync::RwLock<()>>,
+    /// The collection a flow held back, to start again on the runtime it ran on.
+    held_back: Mutex<Option<(DbAsync, tokio::runtime::Handle)>>,
+}
+
+/// A flow's hold of [`ArtistReferences`], for as long as it lives.
+pub(crate) struct ArtistReferenceFlow {
+    flow: Option<tokio::sync::OwnedRwLockReadGuard<()>>,
+    /// Weak, so a flow that outlives its generation starts nothing on a database no longer in
+    /// use.
+    references: Weak<ArtistReferencesInner>,
+}
+
+impl Drop for ArtistReferenceFlow {
+    fn drop(&mut self) {
+        // Let go first, so the collection this starts finds the flows free unless another holds.
+        drop(self.flow.take());
+        let Some(inner) = self.references.upgrade() else {
+            return;
         };
-        removed += pass.removed;
-        if !pass.remaining {
-            return Ok(removed);
+        let held_back = inner
+            .held_back
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        let Some((db, runtime)) = held_back else {
+            return;
+        };
+        let references = ArtistReferences { inner };
+        runtime.spawn(async move {
+            if let Err(err) = references.collect_unreferenced(&db).await {
+                tracing::warn!(
+                    error = %format!("{err:#}"),
+                    "collecting the unreferenced artists a refresh held back failed"
+                );
+            }
+        });
+    }
+}
+
+/// What a collection of unreferenced artists did.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CollectedArtists {
+    pub(crate) removed: usize,
+    /// Whether a flow held the collection back, leaving candidates for the collection that
+    /// starts when it lets go.
+    pub(crate) held_back: bool,
+}
+
+impl ArtistReferences {
+    /// Holds collections back until the returned flow is dropped. Waits only for a collection's
+    /// write in progress.
+    pub(crate) async fn flow(&self) -> ArtistReferenceFlow {
+        ArtistReferenceFlow {
+            flow: Some(Arc::clone(&self.inner.flows).read_owned().await),
+            references: Arc::downgrade(&self.inner),
         }
     }
+
+    /// Removes the artists nothing references any more, among the candidates the writes since
+    /// the last collection left. Takes no write lock when there are none.
+    pub(crate) async fn collect_unreferenced(
+        &self,
+        db: &DbAsync,
+    ) -> anyhow::Result<CollectedArtists> {
+        let mut collected = CollectedArtists::default();
+        if !lyra_db::orphans::has_artist_candidates(&*db.read().await)? {
+            return Ok(collected);
+        }
+        loop {
+            let pass = {
+                let mut db_write = db.write().await;
+                // Taken under the write lock, so a flow that starts now waits for this write
+                // rather than for the lock.
+                let Some(_no_flow) = self.without_flows(db) else {
+                    collected.held_back = true;
+                    return Ok(collected);
+                };
+                let pass =
+                    lyra_db::orphans::collect_artist_candidates(&mut db_write, ARTIST_BATCH)?;
+                crate::services::covers::discard_listed_cover_files(&*db_write);
+                pass
+            };
+            collected.removed += pass.removed;
+            if !pass.remaining {
+                return Ok(collected);
+            }
+        }
+    }
+
+    /// The flows, taken while none holds them. Otherwise the collection of `db` is left for the
+    /// next flow to let go to start again.
+    fn without_flows(&self, db: &DbAsync) -> Option<tokio::sync::RwLockWriteGuard<'_, ()>> {
+        if let Ok(no_flow) = self.inner.flows.try_write() {
+            return Some(no_flow);
+        }
+        let mut held_back = self
+            .inner
+            .held_back
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *held_back = Some((db.clone(), tokio::runtime::Handle::current()));
+        // A flow that let go before it could see that left nobody to start the collection.
+        let no_flow = self.inner.flows.try_write().ok()?;
+        *held_back = None;
+        Some(no_flow)
+    }
+}
+
+/// [`ArtistReferences::collect_unreferenced`] among the current generation's flows.
+pub(crate) async fn collect_unreferenced_artists(db: &DbAsync) -> anyhow::Result<CollectedArtists> {
+    crate::services::STATE
+        .generation()
+        .artist_references
+        .collect_unreferenced(db)
+        .await
 }
 
 /// Merge artists that share the same external ID (e.g. MusicBrainz MBID) but were
@@ -350,7 +467,8 @@ mod tests {
             )
         };
 
-        assert_eq!(collect_unreferenced_artists(&db).await?, 1);
+        let flows = ArtistReferences::default();
+        assert_eq!(flows.collect_unreferenced(&db).await?.removed, 1);
         {
             let db = db.read().await;
             assert!(lyra_db::artists::get_by_id(&*db, credited)?.is_some());
@@ -361,11 +479,130 @@ mod tests {
         let reading = db.read().await;
         let collected = tokio::time::timeout(
             std::time::Duration::from_secs(10),
-            collect_unreferenced_artists(&db),
+            flows.collect_unreferenced(&db),
         )
         .await;
         drop(reading);
-        assert_eq!(collected.expect("no write lock is taken")?, 0);
+        assert_eq!(
+            collected.expect("no write lock is taken")?,
+            CollectedArtists::default()
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_collection_a_flow_holds_back_runs_once_the_flows_let_go() -> anyhow::Result<()> {
+        use lyra_db::credits::{
+            CreditLinkInput,
+            replace_for_owner,
+        };
+
+        let db = DbAsync::new(test_db::new_test_db()?);
+        let flows = ArtistReferences::default();
+        let (track, kept, abandoned) = {
+            let mut db = db.write().await;
+            let track = lyra_db::fixtures::insert_track(&mut db, "Track")?;
+            let kept = lyra_db::artists::create(&mut *db, "Kept", None)?;
+            test_db::connect_artist(&mut db, track, kept)?;
+            (
+                track,
+                kept,
+                lyra_db::artists::create(&mut *db, "Abandoned", None)?,
+            )
+        };
+        let reader = db.clone();
+        let exists = async |artist: DbId| -> anyhow::Result<bool> {
+            Ok(lyra_db::artists::get_by_id(&*reader.read().await, artist)?.is_some())
+        };
+        let credit = |artist_ids: &[DbId]| {
+            artist_ids
+                .iter()
+                .map(|&artist_id| CreditLinkInput {
+                    artist_id,
+                    credit_type: lyra_db::CreditType::Artist,
+                    detail: None,
+                })
+                .collect::<Vec<_>>()
+        };
+
+        // The flow drops the artist's only reference in one write.
+        let flow = flows.flow().await;
+        db.write()
+            .await
+            .transaction_mut(|t| replace_for_owner(t, track, &credit(&[])))?;
+
+        let collected = flows.collect_unreferenced(&db).await?;
+        assert_eq!(
+            collected,
+            CollectedArtists {
+                removed: 0,
+                held_back: true
+            }
+        );
+        assert!(exists(kept).await?);
+        assert!(exists(abandoned).await?);
+
+        // And names it again in a later one.
+        db.write()
+            .await
+            .transaction_mut(|t| replace_for_owner(t, track, &credit(&[kept])))?;
+        // A second flow still holds: letting go of the first starts the collection again, only
+        // for it to be held back once more.
+        let second = flows.flow().await;
+        drop(flow);
+        for _ in 0..64 {
+            tokio::task::yield_now().await;
+        }
+        assert!(exists(abandoned).await?);
+
+        // The collection held back starts by itself once the last flow lets go.
+        drop(second);
+        tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            while exists(abandoned).await? {
+                tokio::task::yield_now().await;
+            }
+            anyhow::Ok(())
+        })
+        .await
+        .expect("the held-back collection runs")?;
+        assert!(exists(kept).await?);
+
+        // Nothing was held back since, so a flow that ends starts no collection.
+        let unreferenced = lyra_db::artists::create(&mut *db.write().await, "Later", None)?;
+        drop(flows.flow().await);
+        for _ in 0..64 {
+            tokio::task::yield_now().await;
+        }
+        assert!(exists(unreferenced).await?);
+        let collected = flows.collect_unreferenced(&db).await?;
+        assert_eq!(
+            collected,
+            CollectedArtists {
+                removed: 1,
+                held_back: false
+            }
+        );
+        lyra_db::orphans::testing::assert_artists_tracked(&*db.read().await)?;
+        assert!(!lyra_db::orphans::has_artist_candidates(&*db.read().await)?);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_flow_that_outlives_its_generation_starts_no_collection() -> anyhow::Result<()> {
+        let db = DbAsync::new(test_db::new_test_db()?);
+        let flows = ArtistReferences::default();
+        let unreferenced = lyra_db::artists::create(&mut *db.write().await, "Left", None)?;
+        let flow = flows.flow().await;
+        assert!(flows.collect_unreferenced(&db).await?.held_back);
+
+        // The generation goes, as a reset drops it, while the flow still runs.
+        drop(flows);
+        drop(flow);
+        for _ in 0..64 {
+            tokio::task::yield_now().await;
+        }
+
+        assert!(lyra_db::artists::get_by_id(&*db.read().await, unreferenced)?.is_some());
         Ok(())
     }
 
@@ -379,7 +616,11 @@ mod tests {
             }
         }
 
-        assert_eq!(collect_unreferenced_artists(&db).await?, ARTIST_BATCH + 3);
+        let collected = ArtistReferences::default()
+            .collect_unreferenced(&db)
+            .await?;
+        assert_eq!(collected.removed, ARTIST_BATCH + 3);
+        assert!(!collected.held_back);
 
         lyra_db::orphans::testing::assert_drained(&*db.read().await)
     }

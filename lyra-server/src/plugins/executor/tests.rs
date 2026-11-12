@@ -1534,6 +1534,7 @@ fn plugin_executor_rejects_handles_from_another_runtime() -> Result<()> {
         handler,
         context: serde_json::json!({}),
         timeout: Duration::from_secs(5),
+        until_settled: Default::default(),
     };
 
     let result = runtime.dispatch_metadata_refresh(refresh_request(own.refresh))?;

@@ -131,7 +131,11 @@ impl Drop for RunningHandler {
 }
 
 pub(super) enum CallbackReply {
-    Refresh(tokio::sync::oneshot::Sender<Result<MetadataRefreshResult>>),
+    Refresh(
+        tokio::sync::oneshot::Sender<Result<MetadataRefreshResult>>,
+        /// Dropped with the reply, which goes once the handler has settled.
+        crate::services::plugin_dispatch::UntilSettled,
+    ),
     Api {
         reply: tokio::sync::oneshot::Sender<Result<super::ApiHandlerResponse>>,
         request: Box<super::ApiHandlerRequest>,
@@ -164,7 +168,7 @@ impl CallbackReply {
     /// Whether the caller stopped waiting for the reply.
     fn is_cancelled(&self) -> bool {
         match self {
-            Self::Refresh(reply) => reply.is_closed(),
+            Self::Refresh(reply, _) => reply.is_closed(),
             Self::Api { reply, .. } => reply.is_closed(),
             Self::Mix { reply, .. } => reply.is_closed(),
             Self::Source(reply) => reply.is_closed(),
@@ -179,7 +183,7 @@ impl CallbackReply {
     /// Completes once the caller stops waiting for the reply.
     async fn cancelled(&mut self) {
         match self {
-            Self::Refresh(reply) => reply.closed().await,
+            Self::Refresh(reply, _) => reply.closed().await,
             Self::Api { reply, .. } => reply.closed().await,
             Self::Mix { reply, .. } => reply.closed().await,
             Self::Source(reply) => reply.closed().await,
@@ -199,7 +203,7 @@ impl CallbackReply {
     /// A handler's failure as this reply's receiver reads it.
     fn failure(&self, error: harmony_luau::RaisedError) -> anyhow::Error {
         match self {
-            Self::Refresh(_) => refresh_failure(error),
+            Self::Refresh(..) => refresh_failure(error),
             _ => anyhow::Error::msg(error.message),
         }
     }
@@ -254,7 +258,7 @@ impl CallbackReply {
             Self::Source(reply) => {
                 let _ = reply.send(result.map(|_| ()));
             }
-            Self::Refresh(reply) => {
+            Self::Refresh(reply, _until_settled) => {
                 let result = result.and_then(|values| {
                     let values = values
                         .iter()
@@ -352,7 +356,7 @@ mod tests {
     fn only_a_metadata_refresh_reads_not_found_as_its_target_gone() {
         let (refresh, _refresh_answer) = oneshot::channel();
         assert!(
-            CallbackReply::Refresh(refresh)
+            CallbackReply::Refresh(refresh, Default::default())
                 .failure(not_found())
                 .is::<RefreshTargetGone>()
         );

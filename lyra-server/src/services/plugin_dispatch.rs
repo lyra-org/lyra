@@ -334,6 +334,7 @@ pub(crate) struct MetadataRefreshRequest {
     /// How long the handler has from when the runtime takes the request up, which for a queued
     /// one is after its wait for the runtime.
     pub(crate) timeout: Duration,
+    pub(crate) until_settled: UntilSettled,
 }
 
 /// How long past a handler's timeout its caller still waits for the plugin runtime's answer. The
@@ -359,6 +360,26 @@ pub(crate) async fn call_metadata_handler<C: RuntimeCalls>(
     )
     .await
     .map_err(|_| anyhow::anyhow!("{handler} timed out after {} ms", timeout.as_millis()))?
+}
+
+/// What a dispatch's caller wants kept until its handler has settled: ended, or cancelled with
+/// its work dropped. Whoever runs the dispatch drops it then and no sooner, whether or not the
+/// caller still waits, so it outlasts a caller that left or timed out.
+#[derive(Clone, Default)]
+pub(crate) struct UntilSettled(Option<Arc<dyn std::any::Any + Send + Sync>>);
+
+impl UntilSettled {
+    pub(crate) fn keeping(kept: impl std::any::Any + Send + Sync) -> Self {
+        Self(Some(Arc::new(kept)))
+    }
+}
+
+impl std::fmt::Debug for UntilSettled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("UntilSettled")
+            .field(&self.0.is_some())
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug)]

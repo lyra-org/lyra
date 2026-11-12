@@ -83,7 +83,7 @@ impl PluginExecutor {
             handler,
             request.context,
             self.now() + request.timeout,
-            super::callbacks::CallbackReply::Refresh(reply),
+            super::callbacks::CallbackReply::Refresh(reply, request.until_settled),
             permit,
         );
     }
@@ -339,6 +339,8 @@ impl RuntimeCalls for VmCalls {
             .data()
             .get::<crate::plugins::metadata::MetadataCallbackRegistry>()?
             .get(request.handler)?;
+        // The handler runs in this call, and is cancelled with it.
+        let _until_settled = request.until_settled;
         let argument = harmony_serde::json_to_luau_owned(request.context, 0)?;
         let deadline = super::now(&self.vm)? + request.timeout;
         let values = run_handler(

@@ -432,6 +432,8 @@ pub(super) async fn mark_missing_entries_for_scan(
 }
 
 /// Collects the artists the run's writes, and any since the last collection, left unreferenced.
+/// While a provider's refresh elsewhere holds the collection back, the step is skipped: the
+/// collection runs once that refresh has ended.
 async fn collect_unreferenced_artists(
     db: &DbAsync,
     library_db_id: DbId,
@@ -443,8 +445,8 @@ async fn collect_unreferenced_artists(
     let work_id = progress
         .start_work(SyncStageKey::Cleanup, details.clone())
         .await;
-    let removed = match cleanup::collect_unreferenced_artists(db).await {
-        Ok(removed) => removed,
+    let collected = match cleanup::collect_unreferenced_artists(db).await {
+        Ok(collected) => collected,
         Err(err) => {
             progress
                 .fail_work(work_id, SyncStageKey::Cleanup, details, format!("{err:#}"))
@@ -452,13 +454,27 @@ async fn collect_unreferenced_artists(
             return Err(err);
         }
     };
+    if collected.held_back {
+        progress
+            .skip_work(work_id, SyncStageKey::Cleanup, "refresh_running")
+            .await;
+        tracing::info!(
+            library_db_id = library_db_id.0,
+            run_id = %run_id,
+            removed_artists = collected.removed,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            stage = "cleanup",
+            "scan unreferenced artists left for the end of a running refresh"
+        );
+        return Ok(());
+    }
     progress.complete_work(work_id, SyncStageKey::Cleanup).await;
     #[cfg(test)]
     lyra_db::orphans::testing::assert_drained(&*db.read().await)?;
     tracing::info!(
         library_db_id = library_db_id.0,
         run_id = %run_id,
-        removed_artists = removed,
+        removed_artists = collected.removed,
         elapsed_ms = started.elapsed().as_millis() as u64,
         stage = "cleanup",
         "scan unreferenced artists collected"

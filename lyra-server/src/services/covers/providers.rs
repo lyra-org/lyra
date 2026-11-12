@@ -331,6 +331,7 @@ pub(crate) async fn search_provider(
                         handler,
                         context: serde_json::Value::String(query),
                         timeout: PROVIDER_SEARCH_TIMEOUT,
+                        until_settled: Default::default(),
                     },
                 )
                 .await
@@ -799,6 +800,7 @@ async fn search_provider_cover<S: CallSource>(
                         handler: spec.handler,
                         context: handler_context,
                         timeout: spec.timeout,
+                        until_settled: Default::default(),
                     },
                 )
                 .await

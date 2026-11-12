@@ -114,6 +114,7 @@ async fn refresh_call(provider: &str, value: i64) -> Result<i64, ProviderCallErr
                     handler,
                     context: serde_json::json!({ "value": value }),
                     timeout: Duration::from_secs(30),
+                    until_settled: Default::default(),
                 })
                 .await?;
             result.values[0].as_i64().context("handler's answer")

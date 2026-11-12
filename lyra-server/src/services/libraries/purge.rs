@@ -94,8 +94,12 @@ pub(crate) async fn purge(
         })?
     };
     let purged = apply(db, library, plan, progress).await?;
-    crate::services::metadata::cleanup::collect_unreferenced_artists(db).await?;
+    let collected = crate::services::metadata::cleanup::collect_unreferenced_artists(db).await?;
     #[cfg(test)]
-    lyra_db::orphans::testing::assert_drained(&*db.read().await)?;
+    if !collected.held_back {
+        lyra_db::orphans::testing::assert_drained(&*db.read().await)?;
+    }
+    #[cfg(not(test))]
+    let _ = collected;
     Ok(purged)
 }
