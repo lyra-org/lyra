@@ -50,7 +50,6 @@ pub use runtime::{
     NativeFunctionValue,
     OwnedTable,
     RaisedError,
-    RegistryRef,
     ReturnValues,
     ReturnWriter,
     ScheduledFuture,

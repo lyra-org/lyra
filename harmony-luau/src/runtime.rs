@@ -15,7 +15,6 @@ use std::{
     fmt,
     future::Future,
     marker::PhantomData,
-    mem,
     ops::ControlFlow,
     panic::{
         AssertUnwindSafe,
@@ -54,6 +53,15 @@ use harmony_luau_sys as sys;
 use time::OffsetDateTime;
 
 mod gateway;
+mod stack;
+
+pub use stack::UserDataRef;
+use stack::{
+    RegistryRef,
+    Stack,
+    StackIndex,
+    ThreadRef,
+};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -307,7 +315,8 @@ struct VmInner {
     state: NonNull<sys::lua_State>,
     control: NonNull<VmControl>,
     data: VmData,
-    userdata_tags: RefCell<UserDataTags>,
+    userdata_tags: RefCell<stack::UserDataTags>,
+    stacks: stack::LiveStacks,
     started_at: Instant,
 }
 
@@ -350,38 +359,12 @@ impl Vm {
                 control,
                 data: VmData::default(),
                 userdata_tags: RefCell::default(),
+                stacks: stack::LiveStacks::default(),
                 started_at: Instant::now(),
             }),
         };
         vm.install_host_errors()?;
         Ok(vm)
-    }
-
-    /// Gives `HostError` values their metatable. Luau holds it for the tag, so it lives as long
-    /// as the state and holds no reference back to the [`Vm`].
-    fn install_host_errors(&self) -> Result<()> {
-        self.inner
-            .userdata_tags
-            .borrow_mut()
-            .by_type
-            .insert(TypeId::of::<HostError>(), HOST_ERROR_TAG);
-        unsafe {
-            sys::lua_setuserdatadtor(
-                self.inner.state.as_ptr(),
-                HOST_ERROR_TAG.0,
-                Some(drop_userdata::<HostError>),
-            );
-        }
-        let _guard = self.stack_guard();
-        let state = self.inner.state.as_ptr();
-        unsafe {
-            gateway::create_table(state, 0, 1)?;
-            gateway::push_cclosure(state, Some(host_error_tostring), c"__tostring", 0)?;
-            gateway::raw_set_field(state, -2, b"__tostring")?;
-            gateway::set_readonly(state, -1, true)?;
-            sys::lua_setuserdatametatable(state, HOST_ERROR_TAG.0);
-        }
-        Ok(())
     }
 
     /// The kind of a `HostError` value; `None` for any other value.
@@ -495,18 +478,16 @@ impl Vm {
             (libraries.math, c"math"),
             (libraries.bit32, c"bit32"),
         ];
+        let mut stack = Stack::main(self);
         for (_, name) in opened.into_iter().filter(|(open, _)| *open) {
-            unsafe { gateway::open_library(self.inner.state.as_ptr(), name)? };
+            stack.open_library(name)?;
         }
         if libraries.base {
-            let _guard = self.stack_guard();
             // Environment access would reach any function's globals,
             // including the `require` a host gives a chunk.
             for name in [b"getfenv", b"setfenv"] {
-                unsafe {
-                    gateway::push_nil(self.inner.state.as_ptr())?;
-                    gateway::set_global(self.inner.state.as_ptr(), name)?;
-                }
+                stack.push_nil()?;
+                stack.set_global(name)?;
             }
         }
         if libraries.os {
@@ -516,23 +497,15 @@ impl Vm {
     }
 
     pub fn sandbox(&self) -> Result<()> {
-        unsafe { gateway::sandbox(self.inner.state.as_ptr()) }
+        Stack::main(self).sandbox_globals()
     }
 
     pub fn load_chunk(&self, chunk: &Chunk) -> Result<Function> {
         let bytecode = compile(&chunk.source.0, chunk.compile)?;
-        let guard = self.stack_guard();
-        unsafe {
-            gateway::load(
-                self.inner.state.as_ptr(),
-                &chunk.chunk_name(),
-                bytecode.as_bytes(),
-            )?
-        };
-        let reference = self.ref_top()?;
-        drop(guard);
+        let mut stack = Stack::main(self);
+        stack.load(&chunk.chunk_name(), bytecode.as_bytes())?;
         Ok(Function {
-            reference,
+            reference: stack.reference(StackIndex::TOP)?,
             origin: chunk.origin.clone(),
         })
     }
@@ -540,19 +513,16 @@ impl Vm {
     /// A table for [`Vm::load_chunk_with_globals`] that reads through to the
     /// shared globals and keeps the writes of the chunks loaded with it.
     pub fn create_global_scope(&self) -> Result<Table> {
-        let guard = self.stack_guard();
-        let state = self.inner.state.as_ptr();
-        unsafe {
-            gateway::create_table(state, 0, 0)?;
-            gateway::create_table(state, 0, 1)?;
-            gateway::push_value(state, sys::LUA_GLOBALSINDEX)?;
-            gateway::raw_set_field(state, -2, b"__index")?;
-            gateway::set_readonly(state, -1, true)?;
-            gateway::set_metatable(state, -2)?;
-        }
-        let reference = self.ref_top()?;
-        drop(guard);
-        Ok(Table { reference })
+        let mut stack = Stack::main(self);
+        stack.create_table(0, 0)?;
+        stack.create_table(0, 1)?;
+        stack.push_globals()?;
+        stack.raw_set_field(StackIndex::relative(-2), b"__index")?;
+        stack.set_readonly(StackIndex::TOP, true)?;
+        stack.set_metatable(StackIndex::relative(-2))?;
+        Ok(Table {
+            reference: stack.reference(StackIndex::TOP)?,
+        })
     }
 
     /// Loads `chunk` with an environment of its own holding `globals`. Every
@@ -566,33 +536,15 @@ impl Vm {
         scope: &Table,
     ) -> Result<Function> {
         let bytecode = compile(&chunk.source.0, chunk.compile)?;
-        let guard = self.stack_guard();
-        let main = self.inner.state;
-        // Luau gives a loaded chunk the environment of the state loading it.
-        let loader =
-            NonNull::new(unsafe { gateway::new_thread(main.as_ptr())? }).ok_or(Error::VmCreate)?;
-        unsafe { gateway::create_table(loader.as_ptr(), 0, globals.len() as c_int)? };
-        for (name, value) in globals {
-            self.push_value_to(loader, value)?;
-            unsafe { gateway::raw_set_field(loader.as_ptr(), -2, name.as_bytes())? };
-        }
-        unsafe { gateway::create_table(loader.as_ptr(), 0, 2)? };
-        for field in [b"__index".as_slice(), b"__newindex"] {
-            self.push_registry_to(loader, &scope.reference)?;
-            unsafe { gateway::raw_set_field(loader.as_ptr(), -2, field)? };
-        }
-        unsafe {
-            let loader = loader.as_ptr();
-            gateway::set_readonly(loader, -1, true)?;
-            gateway::set_metatable(loader, -2)?;
-            sys::lua_replace(loader, sys::LUA_GLOBALSINDEX);
-            gateway::load(loader, &chunk.chunk_name(), bytecode.as_bytes())?;
-            gateway::xmove(loader, main.as_ptr(), 1)?;
-        }
-        let reference = self.ref_top()?;
-        drop(guard);
+        let mut stack = Stack::main(self);
+        stack.load_with_globals(
+            &chunk.chunk_name(),
+            bytecode.as_bytes(),
+            globals,
+            &scope.reference,
+        )?;
         Ok(Function {
-            reference,
+            reference: stack.reference(StackIndex::TOP)?,
             origin: chunk.origin.clone(),
         })
     }
@@ -607,19 +559,19 @@ impl Vm {
     }
 
     pub fn create_table_with_capacity(&self, array: i32, records: i32) -> Result<Table> {
-        let guard = self.stack_guard();
-        unsafe { gateway::create_table(self.inner.state.as_ptr(), array, records)? };
-        let reference = self.ref_top()?;
-        drop(guard);
-        Ok(Table { reference })
+        let mut stack = Stack::main(self);
+        stack.create_table(array, records)?;
+        Ok(Table {
+            reference: stack.reference(StackIndex::TOP)?,
+        })
     }
 
     pub fn create_buffer(&self, bytes: &[u8]) -> Result<Buffer> {
-        let guard = self.stack_guard();
-        unsafe { gateway::new_buffer(self.inner.state.as_ptr(), bytes)? };
-        let reference = self.ref_top()?;
-        drop(guard);
-        Ok(Buffer { reference })
+        let mut stack = Stack::main(self);
+        stack.new_buffer(bytes)?;
+        Ok(Buffer {
+            reference: stack.reference(StackIndex::TOP)?,
+        })
     }
 
     /// A userdata holding `value`, which only [`UserData::borrow`] as a `T` reads.
@@ -627,20 +579,12 @@ impl Vm {
     where
         T: 'static,
     {
-        const { assert!(fits_userdata::<T>()) };
-        let tag = self.assign_userdata_tag::<T>()?;
-        let guard = self.stack_guard();
-        unsafe {
-            let ptr = gateway::new_userdata_tagged(
-                self.inner.state.as_ptr(),
-                mem::size_of::<T>(),
-                tag.0,
-            )?;
-            ptr::write(ptr.cast::<T>(), value);
-        }
-        let reference = self.ref_top()?;
-        drop(guard);
-        Ok(UserData { reference, tag })
+        let mut stack = Stack::main(self);
+        let tag = stack.new_userdata(value)?;
+        Ok(UserData {
+            reference: stack.reference(StackIndex::TOP)?,
+            tag,
+        })
     }
 
     pub fn create_function(&self, origin: ChunkOrigin, callback: NativeFn) -> Result<Function> {
@@ -652,25 +596,17 @@ impl Vm {
         options: NativeFunctionOptions,
         callback: NativeFn,
     ) -> Result<Function> {
-        let guard = self.stack_guard();
-        self.push_native_function_to(self.inner.state, &options, callback)?;
-        let reference = self.ref_top()?;
-        drop(guard);
+        let mut stack = Stack::main(self);
+        stack.push_native_function(&options, callback)?;
         Ok(Function {
-            reference,
+            reference: stack.reference(StackIndex::TOP)?,
             origin: options.origin,
         })
     }
 
     pub fn create_thread(&self, function: &Function) -> Result<Thread> {
-        let guard = self.stack_guard();
-        let state = unsafe { gateway::new_thread(self.inner.state.as_ptr())? };
-        let state = NonNull::new(state).ok_or(Error::VmCreate)?;
-        let reference = self.ref_top()?;
-        self.push_registry(&function.reference)?;
-        unsafe { gateway::xmove(self.inner.state.as_ptr(), state.as_ptr(), 1)? };
-        drop(guard);
-        Ok(Thread::new(reference, state, function.origin.clone()))
+        let thread = Stack::main(self).new_thread(&function.reference)?;
+        Ok(Thread::new(thread, function.origin.clone()))
     }
 
     /// Runs `source` as [`Vm::eval`] does, as a call made in `context`.
@@ -684,9 +620,10 @@ impl Vm {
         function.call_with_context(&[], context)
     }
 
+    /// Replaces the call context of the thread whose state is `state_id`.
     fn replace_state_context(
         &self,
-        state: NonNull<sys::lua_State>,
+        state_id: usize,
         context: Option<CallContext>,
     ) -> Result<Option<CallContext>> {
         let mut contexts = self
@@ -695,43 +632,33 @@ impl Vm {
             .thread_contexts
             .write()
             .map_err(|_| Error::VmDataPoisoned)?;
-        let key = state.as_ptr() as usize;
         Ok(match context {
-            Some(context) => contexts.insert(key, context),
-            None => contexts.remove(&key),
+            Some(context) => contexts.insert(state_id, context),
+            None => contexts.remove(&state_id),
         })
     }
 
-    fn call_context_for_state(
-        &self,
-        state: NonNull<sys::lua_State>,
-    ) -> Result<Option<CallContext>> {
+    fn call_context_for_state(&self, state_id: usize) -> Result<Option<CallContext>> {
         self.inner
             .control()
             .thread_contexts
             .read()
             .map_err(|_| Error::VmDataPoisoned)
-            .map(|contexts| contexts.get(&(state.as_ptr() as usize)).cloned())
+            .map(|contexts| contexts.get(&state_id).cloned())
     }
 
     pub fn set_global_table(&self, name: &str, table: &Table) -> Result<()> {
-        let _guard = self.stack_guard();
-        self.push_registry(&table.reference)?;
-        unsafe { gateway::set_global(self.inner.state.as_ptr(), name.as_bytes()) }
+        self.set_global(name, &table.reference)
     }
 
     pub fn set_global_function(&self, name: &str, function: &Function) -> Result<()> {
-        let _guard = self.stack_guard();
-        self.push_registry(&function.reference)?;
-        unsafe { gateway::set_global(self.inner.state.as_ptr(), name.as_bytes()) }
+        self.set_global(name, &function.reference)
     }
 
-    fn top(&self) -> i32 {
-        unsafe { sys::lua_gettop(self.inner.state.as_ptr()) }
-    }
-
-    fn stack_guard(&self) -> StackGuard<'_> {
-        StackGuard::new(self.inner.state)
+    fn set_global(&self, name: &str, value: &RegistryRef) -> Result<()> {
+        let mut stack = Stack::main(self);
+        stack.push_ref(value)?;
+        stack.set_global(name.as_bytes())
     }
 
     fn set_interrupt_deadline_millis(&self, deadline: u64) {
@@ -745,40 +672,6 @@ impl Vm {
                 if deadline == 0 { None } else { Some(interrupt) },
             );
         }
-    }
-
-    /// The tag of `T`'s userdata, or `None` before the VM has made any.
-    fn userdata_tag<T>(&self) -> Option<UserDataTag>
-    where
-        T: 'static,
-    {
-        self.inner
-            .userdata_tags
-            .borrow()
-            .by_type
-            .get(&TypeId::of::<T>())
-            .copied()
-    }
-
-    /// The tag of `T`'s userdata, assigned on first use.
-    fn assign_userdata_tag<T>(&self) -> Result<UserDataTag>
-    where
-        T: 'static,
-    {
-        if let Some(tag) = self.userdata_tag::<T>() {
-            return Ok(tag);
-        }
-        let mut tags = self.inner.userdata_tags.borrow_mut();
-        let tag = UserDataTag(tags.next);
-        if tag == HOST_ERROR_TAG {
-            return Err(Error::UserDataTagExhausted);
-        }
-        unsafe {
-            sys::lua_setuserdatadtor(self.inner.state.as_ptr(), tag.0, Some(drop_userdata::<T>));
-        }
-        tags.next += 1;
-        tags.by_type.insert(TypeId::of::<T>(), tag);
-        Ok(tag)
     }
 
     fn install_safe_os(&self) -> Result<()> {
@@ -832,186 +725,6 @@ impl Vm {
 
         self.set_global_table("os", &table)?;
         Ok(())
-    }
-
-    fn ref_top(&self) -> Result<RegistryRef> {
-        self.ref_value_from(self.inner.state, StackIndex::TOP)
-    }
-
-    fn ref_value_from(
-        &self,
-        state: NonNull<sys::lua_State>,
-        index: StackIndex,
-    ) -> Result<RegistryRef> {
-        let reference = unsafe { gateway::reference(state.as_ptr(), index.raw())? };
-        Ok(RegistryRef::new(self.clone(), reference))
-    }
-
-    fn ref_current_thread_from(&self, state: NonNull<sys::lua_State>) -> Result<RegistryRef> {
-        let state = state.as_ptr();
-        let reference = unsafe {
-            gateway::push_thread(state)?;
-            let reference = gateway::reference(state, -1);
-            sys::lua_pop(state, 1);
-            reference?
-        };
-        Ok(RegistryRef::new(self.clone(), reference))
-    }
-
-    fn push_registry(&self, reference: &RegistryRef) -> Result<()> {
-        self.push_registry_to(self.inner.state, reference)
-    }
-
-    fn push_registry_to(
-        &self,
-        state: NonNull<sys::lua_State>,
-        reference: &RegistryRef,
-    ) -> Result<()> {
-        if reference.vm().id() != self.inner.id {
-            return Err(Error::VmMismatch {
-                reference_vm: reference.vm().id(),
-                actual_vm: self.inner.id,
-            });
-        }
-        unsafe { gateway::get_ref(state.as_ptr(), reference.raw()) }
-    }
-
-    fn push_metatable(&self, metatable: Option<&Table>) -> Result<()> {
-        match metatable {
-            Some(metatable) => self.push_registry(&metatable.reference),
-            None => unsafe { gateway::push_nil(self.inner.state.as_ptr()) },
-        }
-    }
-
-    fn push_value(&self, value: &Value) -> Result<()> {
-        self.push_value_to(self.inner.state, value)
-    }
-
-    fn push_value_to(&self, state: NonNull<sys::lua_State>, value: &Value) -> Result<()> {
-        let state_ptr = state.as_ptr();
-        unsafe {
-            match value {
-                Value::Nil => gateway::push_nil(state_ptr),
-                Value::Boolean(value) => gateway::push_boolean(state_ptr, *value),
-                Value::Integer(value) => gateway::push_integer(state_ptr, *value),
-                Value::Number(value) => gateway::push_number(state_ptr, *value),
-                Value::String(value) => gateway::push_bytes(state_ptr, value),
-                Value::Buffer(value) => gateway::new_buffer(state_ptr, value),
-                Value::TableData(value) => value.push_to(self, state),
-                Value::NativeFunction(value) => {
-                    self.push_native_function_to(state, &value.options, value.callback.clone())
-                }
-                Value::Table(value) => self.push_registry_to(state, &value.reference),
-                Value::Function(value) => self.push_registry_to(state, &value.reference),
-                Value::Thread(value) => self.push_registry_to(state, &value.inner.reference),
-                Value::UserData(value) => self.push_registry_to(state, &value.reference),
-            }
-        }
-    }
-
-    fn push_native_function_to(
-        &self,
-        state: NonNull<sys::lua_State>,
-        options: &NativeFunctionOptions,
-        callback: NativeFn,
-    ) -> Result<()> {
-        unsafe {
-            let slot = gateway::new_userdata_dtor(
-                state.as_ptr(),
-                std::mem::size_of::<CallbackSlot>(),
-                Some(drop_callback_slot),
-            )?
-            .cast::<CallbackSlot>();
-            ptr::write(
-                slot,
-                CallbackSlot {
-                    vm: Rc::downgrade(&self.inner),
-                    callback,
-                    site: CallSite {
-                        origin: options.origin.clone(),
-                        function_name: options.function_name.clone(),
-                    },
-                    capability: options.capability.clone(),
-                    task_group: options.task_group,
-                    argument_names: options.argument_names.clone(),
-                    use_thread_context_origin: options.use_thread_context_origin,
-                },
-            );
-            gateway::push_cclosure(
-                state.as_ptr(),
-                Some(native_callback),
-                c"harmony_native_callback",
-                1,
-            )
-        }
-    }
-
-    fn read_value(&self, index: StackIndex) -> Result<Value> {
-        self.read_value_from(self.inner.state, index)
-    }
-
-    fn read_value_from(&self, state: NonNull<sys::lua_State>, index: StackIndex) -> Result<Value> {
-        self.read_value_ref_from(state, index)
-            .map(ValueRef::into_value)
-    }
-
-    fn read_value_ref<'a>(&self, index: StackIndex) -> Result<ValueRef<'a>> {
-        self.read_value_ref_from(self.inner.state, index)
-    }
-
-    /// Reads the value at `index`, borrowing a string's or buffer's bytes from the VM. The bytes
-    /// live while the value stays where it is on the stack.
-    fn read_value_ref_from<'a>(
-        &self,
-        state: NonNull<sys::lua_State>,
-        index: StackIndex,
-    ) -> Result<ValueRef<'a>> {
-        let state_ptr = state.as_ptr();
-        let raw_index = index.raw();
-        let value = unsafe {
-            match sys::lua_type(state_ptr, raw_index) {
-                sys::LUA_TNIL | sys::LUA_TNONE => ValueRef::Nil,
-                sys::LUA_TBOOLEAN => {
-                    ValueRef::Boolean(sys::lua_toboolean(state_ptr, raw_index) != 0)
-                }
-                sys::LUA_TINTEGER => {
-                    let mut is_integer = 0;
-                    ValueRef::Integer(sys::lua_tointeger64(state_ptr, raw_index, &mut is_integer))
-                }
-                sys::LUA_TNUMBER => {
-                    let mut is_number = 0;
-                    ValueRef::Number(sys::lua_tonumberx(state_ptr, raw_index, &mut is_number))
-                }
-                sys::LUA_TSTRING => ValueRef::String(
-                    gateway::string_bytes(state_ptr, raw_index).expect("string value has bytes"),
-                ),
-                sys::LUA_TBUFFER => {
-                    let mut len = 0usize;
-                    let ptr = sys::lua_tobuffer(state_ptr, raw_index, &mut len);
-                    ValueRef::Buffer(std::slice::from_raw_parts(ptr.cast(), len))
-                }
-                sys::LUA_TTABLE => ValueRef::Table(Table {
-                    reference: self.ref_value_from(state, index)?,
-                }),
-                sys::LUA_TFUNCTION => ValueRef::Function(Function {
-                    reference: self.ref_value_from(state, index)?,
-                    origin: ChunkOrigin::default(),
-                }),
-                sys::LUA_TTHREAD => {
-                    let thread_state = sys::lua_tothread(state_ptr, raw_index);
-                    let thread_state =
-                        NonNull::new(thread_state).expect("thread value is non-null");
-                    let reference = self.ref_value_from(state, index)?;
-                    ValueRef::Thread(Thread::new(reference, thread_state, ChunkOrigin::default()))
-                }
-                sys::LUA_TUSERDATA => ValueRef::UserData(UserData {
-                    reference: self.ref_value_from(state, index)?,
-                    tag: UserDataTag(sys::lua_userdatatag(state_ptr, raw_index)),
-                }),
-                _ => ValueRef::Nil,
-            }
-        };
-        Ok(value)
     }
 }
 
@@ -1183,122 +896,6 @@ impl VmData {
     }
 }
 
-struct StackGuard<'vm> {
-    state: NonNull<sys::lua_State>,
-    top: i32,
-    _vm: PhantomData<&'vm Vm>,
-}
-
-impl StackGuard<'_> {
-    fn new(state: NonNull<sys::lua_State>) -> Self {
-        Self {
-            state,
-            top: unsafe { sys::lua_gettop(state.as_ptr()) },
-            _vm: PhantomData,
-        }
-    }
-}
-
-impl Drop for StackGuard<'_> {
-    fn drop(&mut self) {
-        unsafe { gateway::truncate(self.state.as_ptr(), self.top) };
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct StackIndex(c_int);
-
-impl StackIndex {
-    const TOP: Self = Self(-1);
-
-    fn absolute(index: c_int) -> Self {
-        debug_assert!(index > 0, "absolute Luau stack indexes must be positive");
-        Self(index)
-    }
-
-    fn relative(index: c_int) -> Self {
-        debug_assert!(index < 0, "relative Luau stack indexes must be negative");
-        Self(index)
-    }
-
-    fn argument(index: usize) -> Self {
-        debug_assert!(
-            index < c_int::MAX as usize,
-            "Luau argument index must fit in c_int"
-        );
-        Self::absolute(index as c_int + 1)
-    }
-
-    fn raw(self) -> c_int {
-        self.0
-    }
-}
-
-/// A Luau value pinned in the registry. Clones share the pin, which the last one releases.
-#[derive(Clone)]
-pub struct RegistryRef {
-    slot: Rc<RegistrySlot>,
-}
-
-struct RegistrySlot {
-    vm: Vm,
-    reference: c_int,
-}
-
-impl RegistryRef {
-    fn new(vm: Vm, reference: c_int) -> Self {
-        Self {
-            slot: Rc::new(RegistrySlot { vm, reference }),
-        }
-    }
-
-    fn vm(&self) -> &Vm {
-        &self.slot.vm
-    }
-
-    fn raw(&self) -> c_int {
-        self.slot.reference
-    }
-}
-
-impl fmt::Debug for RegistryRef {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RegistryRef")
-            .field("vm_id", &self.vm().id())
-            .field("reference", &self.raw())
-            .finish()
-    }
-}
-
-impl PartialEq for RegistryRef {
-    fn eq(&self, other: &Self) -> bool {
-        if Rc::ptr_eq(&self.slot, &other.slot) {
-            return true;
-        }
-        if self.vm().id() != other.vm().id() {
-            return false;
-        }
-
-        let vm = self.vm();
-        let _guard = vm.stack_guard();
-        let state = vm.inner.state.as_ptr();
-        // A stack too full to hold both values cannot show them equal.
-        unsafe {
-            gateway::get_ref(state, self.raw()).is_ok()
-                && gateway::get_ref(state, other.raw()).is_ok()
-                && sys::lua_rawequal(state, -1, -2) != 0
-        }
-    }
-}
-
-impl Drop for RegistrySlot {
-    fn drop(&mut self) {
-        unsafe {
-            sys::lua_unref(self.vm.inner.state.as_ptr(), self.reference);
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct Function {
     reference: RegistryRef,
@@ -1311,19 +908,15 @@ impl Function {
     }
 
     pub fn call(&self, args: &[Value]) -> Result<Vec<Value>> {
-        let vm = self.reference.vm();
-        let guard = vm.stack_guard();
-        vm.push_registry(&self.reference)?;
+        let mut stack = Stack::main(self.reference.vm());
+        stack.push_ref(&self.reference)?;
         for arg in args {
-            vm.push_value(arg)?;
+            stack.push_value(arg)?;
         }
-        unsafe { gateway::pcall(vm.inner.state.as_ptr(), args.len() as i32)? };
-        let returned = vm.top() - guard.top;
-        let mut values = Vec::with_capacity(returned.max(0) as usize);
-        for offset in 0..returned {
-            values.push(vm.read_value(StackIndex::absolute(guard.top + 1 + offset))?);
-        }
-        Ok(values)
+        stack.pcall(args.len() as c_int)?;
+        (stack.base() + 1..=stack.top())
+            .map(|index| stack.read_value(StackIndex::absolute(index)))
+            .collect()
     }
 
     /// Calls the function as [`Function::call`] does, with `context` as the
@@ -1331,9 +924,9 @@ impl Function {
     /// creates.
     pub fn call_with_context(&self, args: &[Value], context: CallContext) -> Result<Vec<Value>> {
         let vm = self.reference.vm();
-        let previous = vm.replace_state_context(vm.inner.state, Some(context))?;
+        let previous = vm.replace_state_context(vm.state_id(), Some(context))?;
         let result = self.call(args);
-        vm.replace_state_context(vm.inner.state, previous)?;
+        vm.replace_state_context(vm.state_id(), previous)?;
         result
     }
 }
@@ -1353,8 +946,7 @@ pub struct Thread {
 }
 
 struct ThreadInner {
-    reference: RegistryRef,
-    state: NonNull<sys::lua_State>,
+    thread: ThreadRef,
     origin: ChunkOrigin,
     data: ThreadData,
 }
@@ -1363,19 +955,18 @@ impl Thread {
     /// Whether code running on this thread may yield here; it can't inside
     /// a metamethod, a `table.sort` comparator, or a host `pcall`.
     pub fn is_yieldable(&self) -> bool {
-        unsafe { sys::lua_isyieldable(self.inner.state.as_ptr()) != 0 }
+        Stack::of_thread(self).is_yieldable()
     }
 
     /// Whether [`Self::cancel`] found the thread live, so that it is closed where it next yields.
     pub fn is_cancelled(&self) -> bool {
-        unsafe { gateway::is_cancelled(self.inner.state.as_ptr()) }
+        Stack::of_thread(self).is_cancelled()
     }
 
-    fn new(reference: RegistryRef, state: NonNull<sys::lua_State>, origin: ChunkOrigin) -> Self {
+    fn new(thread: ThreadRef, origin: ChunkOrigin) -> Self {
         Self {
             inner: Rc::new(ThreadInner {
-                reference,
-                state,
+                thread,
                 origin,
                 data: ThreadData::default(),
             }),
@@ -1387,11 +978,11 @@ impl Thread {
     }
 
     fn vm(&self) -> &Vm {
-        self.inner.reference.vm()
+        self.inner.thread.vm()
     }
 
     pub fn state_id(&self) -> usize {
-        self.inner.state.as_ptr() as usize
+        self.inner.thread.state_id()
     }
 
     pub fn origin(&self) -> &ChunkOrigin {
@@ -1404,57 +995,46 @@ impl Thread {
 
     /// Whether the thread has run, or was closed and never will.
     pub fn is_started(&self) -> bool {
-        let main = self.vm().inner.state;
-        let state = self.inner.state.as_ptr();
-        let unstarted = unsafe { gateway::co_status(main.as_ptr(), state) }
-            == gateway::CoStatus::Suspended
-            && unsafe { sys::lua_status(state) } == sys::LUA_OK;
-        !unstarted
+        !Stack::of_thread(self).is_unstarted()
     }
 
     pub fn sandbox(&self) -> Result<()> {
-        unsafe { gateway::sandbox_thread(self.inner.state.as_ptr()) }
+        Stack::of_thread(self).sandbox_thread()
     }
 
     /// Makes `context` the call context native calls on the thread see, and returns the one it
     /// replaces.
     pub fn set_call_context(&self, context: CallContext) -> Result<Option<CallContext>> {
         self.vm()
-            .replace_state_context(self.inner.state, Some(context))
+            .replace_state_context(self.state_id(), Some(context))
     }
 
     pub fn clear_call_context(&self) -> Result<Option<CallContext>> {
-        self.vm().replace_state_context(self.inner.state, None)
+        self.vm().replace_state_context(self.state_id(), None)
     }
 
     /// The call context native calls on the thread see.
     pub fn call_context(&self) -> Result<Option<CallContext>> {
-        self.vm().call_context_for_state(self.inner.state)
+        self.vm().call_context_for_state(self.state_id())
     }
 
     pub fn resume(&self, args: &[Value]) -> Result<ThreadStatus> {
-        let vm = self.vm();
-        let state = self.prepare_resume()?;
-        let base = unsafe { sys::lua_gettop(state) };
+        let mut stack = self.prepare_resume()?;
         for arg in args {
-            if let Err(error) = vm.push_value_to(self.inner.state, arg) {
-                // Leaves an unstarted thread with just its function, so it still reads as unstarted.
-                unsafe { gateway::truncate(state, base) };
-                return Err(error);
-            }
+            // Failing leaves an unstarted thread with just its function, so it still reads as
+            // unstarted.
+            stack.push_value(arg)?;
         }
-
-        let resumed = unsafe { gateway::resume(vm.inner.state.as_ptr(), state, args.len() as i32) };
-        self.finish_resume(resumed)
+        let resumed = stack.resume(args.len() as c_int);
+        self.finish_resume(stack, resumed)
     }
 
     /// Resumes the thread by raising `error` where it yielded, as if the call it yielded in had
     /// raised it: the nearest `pcall` in this thread catches it, and with none the thread fails.
     pub fn resume_error(&self, error: &RaisedError) -> Result<ThreadStatus> {
-        let state = self.prepare_resume()?;
-        let resumed =
-            unsafe { gateway::resume_error(self.vm().inner.state.as_ptr(), state, error) };
-        self.finish_resume(resumed)
+        let mut stack = self.prepare_resume()?;
+        let resumed = stack.resume_error(error);
+        self.finish_resume(stack, resumed)
     }
 
     /// Closes the thread as `coroutine.close` does: Luau reports it as `dead` and nothing resumes
@@ -1483,59 +1063,37 @@ impl Thread {
         if self.try_close()? {
             return Ok(ThreadEnd::Closed);
         }
-        unsafe { gateway::cancel_thread(self.inner.state.as_ptr()) };
+        Stack::of_thread(self).cancel();
         Ok(ThreadEnd::ClosedAtYield)
     }
 
     /// Closes a thread that isn't live, and returns whether it is dead.
     fn try_close(&self) -> Result<bool> {
-        let vm = self.vm();
-        if self.inner.state == vm.inner.state {
+        if self.state_id() == self.vm().state_id() {
             return Err(Error::Runtime("cannot close the main thread".to_string()));
         }
-        let closed = vm.inner.control().without_memory_limit(|| unsafe {
-            gateway::close_thread(vm.inner.state.as_ptr(), self.inner.state.as_ptr())
-        });
-        Ok(closed)
+        Ok(Stack::of_thread(self).close())
     }
 
     /// Checks the thread can resume and clears what its last resume left on its stack. A thread
-    /// that has not started holds just its function, which stays below what is pushed. Only a
-    /// suspended coroutine resumes: one that runs or has resumed another still uses its stack.
-    fn prepare_resume(&self) -> Result<*mut sys::lua_State> {
-        let vm = self.vm();
-        let state = self.inner.state.as_ptr();
-        if self.inner.state == vm.inner.state {
-            return Err(Error::Runtime("cannot resume the main thread".to_string()));
-        }
-        match unsafe { gateway::co_status(vm.inner.state.as_ptr(), state) } {
-            gateway::CoStatus::Suspended => {}
-            gateway::CoStatus::Dead => {
-                return Err(Error::Runtime("cannot resume dead coroutine".to_string()));
-            }
-            gateway::CoStatus::Running | gateway::CoStatus::Normal => {
-                return Err(Error::Runtime(
-                    "cannot resume non-suspended coroutine".to_string(),
-                ));
-            }
-        }
+    /// that has not started holds just its function, which stays below what is pushed.
+    fn prepare_resume(&self) -> Result<Stack<'_>> {
+        let mut stack = Stack::of_thread(self);
+        stack.check_resumable()?;
         if self.is_started() {
-            unsafe { gateway::truncate(state, 0) };
+            stack.clear();
         }
-        Ok(state)
+        Ok(stack)
     }
 
-    fn finish_resume(&self, resumed: Result<bool>) -> Result<ThreadStatus> {
-        let vm = self.vm();
-        let state = self.inner.state.as_ptr();
+    fn finish_resume(&self, mut stack: Stack<'_>, resumed: Result<bool>) -> Result<ThreadStatus> {
         let result = resumed.and_then(|yielded| {
             // Cancelled as it ran, and closed as it yielded.
-            if yielded && unsafe { sys::lua_status(state) } != sys::LUA_YIELD {
+            if yielded && stack.status() != sys::LUA_YIELD {
                 return Ok(ThreadStatus::Closed);
             }
-            let top = unsafe { sys::lua_gettop(state) };
-            let values = (1..=top)
-                .map(|index| vm.read_value_from(self.inner.state, StackIndex::absolute(index)))
+            let values = (1..=stack.top())
+                .map(|index| stack.read_value(StackIndex::absolute(index)))
                 .collect::<Result<Vec<_>>>()?;
             if yielded {
                 Ok(ThreadStatus::Yielded(values))
@@ -1543,7 +1101,7 @@ impl Thread {
                 Ok(ThreadStatus::Completed(values))
             }
         });
-        unsafe { gateway::truncate(state, 0) };
+        stack.clear();
         result
     }
 }
@@ -1552,7 +1110,7 @@ impl fmt::Debug for Thread {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Thread")
             .field("vm_id", &self.vm_id())
-            .field("state", &self.inner.state)
+            .field("state_id", &self.state_id())
             .field("origin", &self.inner.origin)
             .finish()
     }
@@ -1560,7 +1118,7 @@ impl fmt::Debug for Thread {
 
 impl PartialEq for Thread {
     fn eq(&self, other: &Self) -> bool {
-        self.vm_id() == other.vm_id() && self.inner.state == other.inner.state
+        self.vm_id() == other.vm_id() && self.state_id() == other.state_id()
     }
 }
 
@@ -1608,53 +1166,42 @@ impl Table {
         self.reference.vm().id()
     }
 
-    fn vm(&self) -> &Vm {
-        self.reference.vm()
-    }
-
-    fn state(&self) -> *mut sys::lua_State {
-        self.vm().inner.state.as_ptr()
+    /// A stack with the table on top.
+    fn stack(&self) -> Result<Stack<'_>> {
+        let mut stack = Stack::main(self.reference.vm());
+        stack.push_ref(&self.reference)?;
+        Ok(stack)
     }
 
     pub fn set(&self, key: &str, value: impl Into<Value>) -> Result<()> {
-        let vm = self.vm();
-        let _guard = vm.stack_guard();
-        vm.push_registry(&self.reference)?;
-        vm.push_value(&value.into())?;
-        unsafe { gateway::raw_set_field(self.state(), -2, key.as_bytes()) }
+        let mut stack = self.stack()?;
+        stack.push_value(&value.into())?;
+        stack.raw_set_field(StackIndex::relative(-2), key.as_bytes())
     }
 
     pub fn set_integer(&self, key: i32, value: impl Into<Value>) -> Result<()> {
-        let vm = self.vm();
-        let _guard = vm.stack_guard();
-        vm.push_registry(&self.reference)?;
-        vm.push_value(&value.into())?;
-        unsafe { gateway::raw_set_index(self.state(), -2, key) }
+        let mut stack = self.stack()?;
+        stack.push_value(&value.into())?;
+        stack.raw_set_index(StackIndex::relative(-2), key)
     }
 
     pub fn set_key(&self, key: impl Into<Value>, value: impl Into<Value>) -> Result<()> {
-        let vm = self.vm();
-        let _guard = vm.stack_guard();
-        vm.push_registry(&self.reference)?;
-        vm.push_value(&key.into())?;
-        vm.push_value(&value.into())?;
-        unsafe { gateway::raw_set(self.state(), -3) }
+        let mut stack = self.stack()?;
+        stack.push_value(&key.into())?;
+        stack.push_value(&value.into())?;
+        stack.raw_set(StackIndex::relative(-3))
     }
 
     pub fn get(&self, key: &str) -> Result<Value> {
-        let vm = self.vm();
-        let _guard = vm.stack_guard();
-        vm.push_registry(&self.reference)?;
-        unsafe { gateway::raw_get_field(self.state(), -1, key.as_bytes())? };
-        vm.read_value(StackIndex::TOP)
+        let mut stack = self.stack()?;
+        stack.raw_get_field(StackIndex::TOP, key.as_bytes())?;
+        stack.read_value(StackIndex::TOP)
     }
 
     pub fn get_integer(&self, key: i32) -> Result<Value> {
-        let vm = self.vm();
-        let _guard = vm.stack_guard();
-        vm.push_registry(&self.reference)?;
-        unsafe { gateway::raw_get_index(self.state(), -1, key)? };
-        vm.read_value(StackIndex::TOP)
+        let mut stack = self.stack()?;
+        stack.raw_get_index(StackIndex::TOP, key)?;
+        stack.read_value(StackIndex::TOP)
     }
 
     /// The table's border, as the `#` operator finds it without `__len`.
@@ -1663,12 +1210,7 @@ impl Table {
         reason = "a zero border does not mean the table has no entries"
     )]
     pub fn len(&self) -> Result<usize> {
-        let vm = self.vm();
-        let _guard = vm.stack_guard();
-        vm.push_registry(&self.reference)?;
-        let len = unsafe { sys::lua_objlen(self.state(), -1) };
-        debug_assert!(len >= 0);
-        Ok(len as usize)
+        Ok(self.stack()?.raw_len(StackIndex::TOP))
     }
 
     /// The values at `1, 2, ...` up to the first nil.
@@ -1687,22 +1229,16 @@ impl Table {
         &self,
         mut visit: impl FnMut(ValueRef<'_>) -> Result<ControlFlow<()>>,
     ) -> Result<()> {
-        let vm = self.vm();
-        let _guard = vm.stack_guard();
-        vm.push_registry(&self.reference)?;
-
-        let state = self.state();
-        let table = unsafe { sys::lua_absindex(state, -1) };
+        let mut stack = self.stack()?;
+        let table = StackIndex::absolute(stack.top());
         for index in 1..=i32::MAX {
-            unsafe { gateway::raw_get_index(state, table, index)? };
-            let value = vm.read_value_ref(StackIndex::TOP)?;
+            stack.raw_get_index(table, index)?;
+            let value = stack.read_value_ref(StackIndex::TOP)?;
             if matches!(value, ValueRef::Nil) {
                 return Ok(());
             }
             let flow = visit(value)?;
-            unsafe {
-                sys::lua_pop(state, 1);
-            }
+            stack.pop(1);
             if flow.is_break() {
                 return Ok(());
             }
@@ -1728,21 +1264,16 @@ impl Table {
         &self,
         mut visit: impl FnMut(ValueRef<'_>, ValueRef<'_>) -> Result<ControlFlow<()>>,
     ) -> Result<()> {
-        let vm = self.vm();
-        let _guard = vm.stack_guard();
-        vm.push_registry(&self.reference)?;
-        let state = self.state();
-        let table = unsafe { sys::lua_absindex(state, -1) };
-        unsafe {
-            gateway::push_nil(state)?;
-            while gateway::next(state, table)? {
-                let key = vm.read_value_ref(StackIndex::relative(-2))?;
-                let value = vm.read_value_ref(StackIndex::TOP)?;
-                if visit(key, value)?.is_break() {
-                    return Ok(());
-                }
-                sys::lua_pop(state, 1);
+        let mut stack = self.stack()?;
+        let table = StackIndex::absolute(stack.top());
+        stack.push_nil()?;
+        while stack.next(table)? {
+            let key = stack.read_value_ref(StackIndex::relative(-2))?;
+            let value = stack.read_value_ref(StackIndex::TOP)?;
+            if visit(key, value)?.is_break() {
+                return Ok(());
             }
+            stack.pop(1);
         }
         Ok(())
     }
@@ -1750,37 +1281,34 @@ impl Table {
     /// What tells this table apart from every other live one: two handles to the same table
     /// share it.
     pub fn identity(&self) -> Result<usize> {
-        let vm = self.vm();
-        let _guard = vm.stack_guard();
-        vm.push_registry(&self.reference)?;
-        Ok(unsafe { gateway::to_pointer(self.state(), -1) })
+        Ok(self.stack()?.to_pointer(StackIndex::TOP))
     }
 
     pub fn set_metatable(&self, metatable: Option<&Table>) -> Result<()> {
-        let vm = self.vm();
-        let _guard = vm.stack_guard();
-        vm.push_registry(&self.reference)?;
-        vm.push_metatable(metatable)?;
-        unsafe { gateway::set_metatable(self.state(), -2) }
+        let mut stack = self.stack()?;
+        push_metatable(&mut stack, metatable)?;
+        stack.set_metatable(StackIndex::relative(-2))
     }
 
     pub fn metatable(&self) -> Result<Option<Table>> {
-        let vm = self.vm();
-        let _guard = vm.stack_guard();
-        vm.push_registry(&self.reference)?;
-        let has_metatable = unsafe { gateway::get_metatable(self.state(), -1)? };
-        if !has_metatable {
+        let mut stack = self.stack()?;
+        if !stack.get_metatable(StackIndex::TOP)? {
             return Ok(None);
         }
-        let reference = vm.ref_top()?;
-        Ok(Some(Table { reference }))
+        Ok(Some(Table {
+            reference: stack.reference(StackIndex::TOP)?,
+        }))
     }
 
     pub fn set_readonly(&self, readonly: bool) -> Result<()> {
-        let vm = self.vm();
-        let _guard = vm.stack_guard();
-        vm.push_registry(&self.reference)?;
-        unsafe { gateway::set_readonly(self.state(), -1, readonly) }
+        self.stack()?.set_readonly(StackIndex::TOP, readonly)
+    }
+}
+
+fn push_metatable(stack: &mut Stack<'_>, metatable: Option<&Table>) -> Result<()> {
+    match metatable {
+        Some(metatable) => stack.push_ref(&metatable.reference),
+        None => stack.push_nil(),
     }
 }
 
@@ -1795,10 +1323,9 @@ impl Buffer {
     }
 
     pub fn to_vec(&self) -> Result<Vec<u8>> {
-        let vm = self.reference.vm();
-        let _guard = vm.stack_guard();
-        vm.push_registry(&self.reference)?;
-        match vm.read_value(StackIndex::TOP)? {
+        let mut stack = Stack::main(self.reference.vm());
+        stack.push_ref(&self.reference)?;
+        match stack.read_value(StackIndex::TOP)? {
             Value::Buffer(bytes) => Ok(bytes),
             other => Err(Error::ArgumentType {
                 name: Arc::from("buffer"),
@@ -1829,11 +1356,10 @@ impl UserData {
     }
 
     pub fn set_metatable(&self, metatable: Option<&Table>) -> Result<()> {
-        let vm = self.reference.vm();
-        let _guard = vm.stack_guard();
-        vm.push_registry(&self.reference)?;
-        vm.push_metatable(metatable)?;
-        unsafe { gateway::set_metatable(vm.inner.state.as_ptr(), -2) }
+        let mut stack = Stack::main(self.reference.vm());
+        stack.push_ref(&self.reference)?;
+        push_metatable(&mut stack, metatable)?;
+        stack.set_metatable(StackIndex::relative(-2))
     }
 
     /// The `T` the userdata holds; fails for userdata holding any other type.
@@ -1841,35 +1367,7 @@ impl UserData {
     where
         T: 'static,
     {
-        let mismatch = || Error::UserDataTypeMismatch {
-            expected: type_name::<T>(),
-        };
-        let vm = self.reference.vm();
-        let tag = vm
-            .userdata_tag::<T>()
-            .filter(|tag| *tag == self.tag)
-            .ok_or_else(mismatch)?;
-        let _guard = vm.stack_guard();
-        vm.push_registry(&self.reference)?;
-        let ptr = unsafe { sys::lua_touserdatatagged(vm.inner.state.as_ptr(), -1, tag.0) };
-        let ptr = NonNull::new(ptr.cast::<T>()).ok_or_else(mismatch)?;
-        Ok(UserDataRef {
-            ptr,
-            _owner: PhantomData,
-        })
-    }
-}
-
-pub struct UserDataRef<'a, T> {
-    ptr: NonNull<T>,
-    _owner: PhantomData<&'a UserData>,
-}
-
-impl<T> std::ops::Deref for UserDataRef<'_, T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { self.ptr.as_ref() }
+        UserDataRef::new(self)
     }
 }
 
@@ -2062,36 +1560,11 @@ impl OwnedTable {
     pub fn entries(&self) -> &[(Value, Value)] {
         &self.entries
     }
-
-    fn push_to(&self, vm: &Vm, state: NonNull<sys::lua_State>) -> Result<()> {
-        let state_ptr = state.as_ptr();
-        unsafe {
-            gateway::create_table(
-                state_ptr,
-                self.array.len() as i32,
-                (self.fields.len() + self.entries.len()) as i32,
-            )?;
-        }
-        for (index, value) in self.array.iter().enumerate() {
-            vm.push_value_to(state, value)?;
-            unsafe { gateway::raw_set_index(state_ptr, -2, index as i32 + 1)? };
-        }
-        for (key, value) in &self.fields {
-            vm.push_value_to(state, value)?;
-            unsafe { gateway::raw_set_field(state_ptr, -2, key.as_bytes())? };
-        }
-        for (key, value) in &self.entries {
-            vm.push_value_to(state, key)?;
-            vm.push_value_to(state, value)?;
-            unsafe { gateway::raw_set(state_ptr, -3)? };
-        }
-        Ok(())
-    }
 }
 
 pub struct ArgReader<'vm> {
-    vm: &'vm Vm,
-    state: NonNull<sys::lua_State>,
+    /// The native function's arguments are what is on it below its base.
+    stack: Stack<'vm>,
     cursor: ArgCursor,
 }
 
@@ -2148,21 +1621,15 @@ impl ArgCursor {
 }
 
 impl<'vm> ArgReader<'vm> {
-    fn stack(
-        vm: &'vm Vm,
-        state: NonNull<sys::lua_State>,
-        argc: i32,
-        names: impl IntoIterator<Item = Arc<str>>,
-    ) -> Self {
+    fn new(stack: Stack<'vm>, names: impl IntoIterator<Item = Arc<str>>) -> Self {
         Self {
-            vm,
-            state,
-            cursor: ArgCursor::new(argc, names),
+            cursor: ArgCursor::new(stack.base(), names),
+            stack,
         }
     }
 
     pub fn vm(&self) -> &'vm Vm {
-        self.vm
+        self.stack.vm()
     }
 
     /// The name of the argument the next read takes, for a reader's own error messages.
@@ -2247,8 +1714,8 @@ impl<'vm> ArgReader<'vm> {
         if self.cursor.is_finished() {
             return Err(Error::MissingArgument(name));
         }
-        let index = StackIndex::argument(self.cursor.index()).raw();
-        let actual_type = unsafe { sys::lua_type(self.state.as_ptr(), index) };
+        let index = StackIndex::argument(self.cursor.index());
+        let actual_type = self.stack.type_at(index);
         if actual_type != sys::LUA_TBOOLEAN {
             return Err(Error::ArgumentType {
                 name,
@@ -2256,7 +1723,7 @@ impl<'vm> ArgReader<'vm> {
                 actual: stack_type_name(actual_type),
             });
         }
-        let value = unsafe { sys::lua_toboolean(self.state.as_ptr(), index) != 0 };
+        let value = self.stack.read_bool(index);
         self.cursor.advance();
         Ok(value)
     }
@@ -2266,19 +1733,11 @@ impl<'vm> ArgReader<'vm> {
         if self.cursor.is_finished() {
             return Err(Error::MissingArgument(name));
         }
-        let index = StackIndex::argument(self.cursor.index()).raw();
-        let actual_type = unsafe { sys::lua_type(self.state.as_ptr(), index) };
+        let index = StackIndex::argument(self.cursor.index());
+        let actual_type = self.stack.type_at(index);
         let value = match actual_type {
-            sys::LUA_TINTEGER => {
-                let mut is_integer = 0;
-                unsafe { sys::lua_tointeger64(self.state.as_ptr(), index, &mut is_integer) }
-            }
-            sys::LUA_TNUMBER => {
-                let mut is_number = 0;
-                let value =
-                    unsafe { sys::lua_tonumberx(self.state.as_ptr(), index, &mut is_number) };
-                checked_i64_arg(name.clone(), value)?
-            }
+            sys::LUA_TINTEGER => self.stack.read_integer(index),
+            sys::LUA_TNUMBER => checked_i64_arg(name.clone(), self.stack.read_number(index))?,
             _ => {
                 return Err(Error::ArgumentType {
                     name,
@@ -2296,17 +1755,11 @@ impl<'vm> ArgReader<'vm> {
         if self.cursor.is_finished() {
             return Err(Error::MissingArgument(name));
         }
-        let index = StackIndex::argument(self.cursor.index()).raw();
-        let actual_type = unsafe { sys::lua_type(self.state.as_ptr(), index) };
+        let index = StackIndex::argument(self.cursor.index());
+        let actual_type = self.stack.type_at(index);
         let value = match actual_type {
-            sys::LUA_TINTEGER => {
-                let mut is_integer = 0;
-                unsafe { sys::lua_tointeger64(self.state.as_ptr(), index, &mut is_integer) as f64 }
-            }
-            sys::LUA_TNUMBER => {
-                let mut is_number = 0;
-                unsafe { sys::lua_tonumberx(self.state.as_ptr(), index, &mut is_number) }
-            }
+            sys::LUA_TINTEGER => self.stack.read_integer(index) as f64,
+            sys::LUA_TNUMBER => self.stack.read_number(index),
             _ => {
                 return Err(Error::ArgumentType {
                     name,
@@ -2370,34 +1823,21 @@ impl<'vm> ArgReader<'vm> {
     }
 
     fn value_at(&self, index: usize) -> Result<Value> {
-        self.vm
-            .read_value_from(self.state, StackIndex::argument(index))
+        self.stack.read_value(StackIndex::argument(index))
     }
 
     fn bytes_at(&self, index: usize, expected: &'static str) -> &[u8] {
-        let state = self.state.as_ptr();
-        let index = StackIndex::argument(index).raw();
-        if expected != "buffer" {
-            return unsafe { gateway::string_bytes(state, index) }.unwrap_or_default();
-        }
-        unsafe {
-            let mut len = 0usize;
-            let ptr = sys::lua_tobuffer(state, index, &mut len).cast::<u8>();
-            if ptr.is_null() {
-                &[]
-            } else {
-                std::slice::from_raw_parts(ptr, len)
-            }
-        }
+        let index = StackIndex::argument(index);
+        let bytes = if expected == "buffer" {
+            self.stack.buffer_bytes(index)
+        } else {
+            self.stack.string_bytes(index)
+        };
+        bytes.unwrap_or_default()
     }
 
     fn type_name_at(&self, index: usize) -> &'static str {
-        unsafe {
-            stack_type_name(sys::lua_type(
-                self.state.as_ptr(),
-                StackIndex::argument(index).raw(),
-            ))
-        }
+        stack_type_name(self.stack.type_at(StackIndex::argument(index)))
     }
 }
 
@@ -3275,40 +2715,52 @@ unsafe extern "C-unwind" fn native_callback(state: *mut sys::lua_State) -> c_int
 
 /// Runs a native function and leaves its results on top of the stack, or the error to raise.
 unsafe fn call_native_function(state: *mut sys::lua_State) -> CallbackExit {
-    match unsafe { run_native_function(state) } {
+    let state = NonNull::new(state).expect("Luau calls a native function on a thread");
+    // SAFETY: Luau calls `native_callback` only as the closure `Stack::push_native_function`
+    // makes.
+    let slot = unsafe { stack::callback_slot(state) };
+    let Some((slot, vm)) = slot.and_then(|slot| {
+        Some((
+            slot,
+            Vm {
+                inner: slot.vm.upgrade()?,
+            },
+        ))
+    }) else {
+        // SAFETY: a live state.
+        unsafe { gateway::push_error(state.as_ptr(), "Harmony VM is no longer available") };
+        return CallbackExit::Raise;
+    };
+    // SAFETY: as for `run_native_function`, whose stacks are gone.
+    match unsafe { run_native_function(&vm, slot, state) } {
         Ok(exit) => exit,
         Err(error) => {
-            unsafe { push_raised(state, &error) };
+            // SAFETY: as for `run_native_function`, whose stacks are gone.
+            let mut stack = unsafe { Stack::from_raw(&vm, state) };
+            stack.push_raised(&error);
+            stack.keep();
             CallbackExit::Raise
         }
     }
 }
 
+/// # Safety
+///
+/// Luau calls the native function `slot` holds on `state`, a live thread of `vm`.
 unsafe fn run_native_function(
-    state_ptr: *mut sys::lua_State,
+    vm: &Vm,
+    slot: &CallbackSlot,
+    state: NonNull<sys::lua_State>,
 ) -> std::result::Result<CallbackExit, RaisedError> {
-    let slot = unsafe {
-        sys::lua_touserdata(state_ptr, sys::lua_upvalueindex(1))
-            .cast::<CallbackSlot>()
-            .as_ref()
-    }
-    .ok_or("missing Harmony callback slot")?;
-    let inner = slot
-        .vm
-        .upgrade()
-        .ok_or("Harmony VM is no longer available")?;
-    let state = NonNull::new(state_ptr).ok_or("missing Luau state")?;
-    let vm = Vm { inner };
+    // SAFETY: a live thread of `vm`, as the caller guarantees.
+    let mut args = unsafe { Stack::from_raw(vm, state) };
+    let thread = args.own_thread().map_err(|error| error.to_string())?;
     let thread_context = vm
-        .call_context_for_state(state)
-        .map_err(|error| error.to_string())?;
-    let thread_reference = vm
-        .ref_current_thread_from(state)
+        .call_context_for_state(thread.state_id())
         .map_err(|error| error.to_string())?;
     let mut return_state = ReturnState::default();
     let result = {
         let returns = ReturnWriter::borrowed(&mut return_state);
-        let argc = unsafe { sys::lua_gettop(state_ptr) };
         let caller = thread_context
             .as_ref()
             .map(|context| context.caller.clone())
@@ -3333,15 +2785,15 @@ unsafe fn run_native_function(
             slot.site.origin.clone()
         };
         let frame = CallFrame {
-            vm: &vm,
-            thread: Thread::new(thread_reference, state, origin.clone()),
+            vm,
+            thread: Thread::new(thread, origin.clone()),
             context: CallContext {
                 origin,
                 capability: slot.capability.clone(),
                 caller,
                 task_group,
             },
-            args: ArgReader::stack(&vm, state, argc, slot.argument_names.clone()),
+            args: ArgReader::new(args, slot.argument_names.clone()),
             returns: returns.clone(),
             site: slot.site.clone(),
         };
@@ -3353,30 +2805,27 @@ unsafe fn run_native_function(
         Ok(Err(error)) => return Err(slot.site.raised_error(&error)),
         Err(_) => return Err("Harmony callback panicked".into()),
     }
+    // SAFETY: as for the arguments' stack, which is gone.
+    let mut results = unsafe { Stack::from_raw(vm, state) };
     for value in &return_state.values {
-        vm.push_value_to(state, value)
+        results
+            .push_value(value)
             .map_err(|error| error.to_string())?;
     }
     let count = return_state.values.len() as c_int;
-    if !return_state.yield_requested {
-        return Ok(CallbackExit::Return(count));
-    }
-    if unsafe { sys::lua_isyieldable(state_ptr) } == 0 {
+    if return_state.yield_requested && !results.is_yieldable() {
         return Err("attempt to yield from a non-yieldable Harmony callback".into());
     }
-    Ok(CallbackExit::Yield(count))
+    results.keep();
+    Ok(if return_state.yield_requested {
+        CallbackExit::Yield(count)
+    } else {
+        CallbackExit::Return(count)
+    })
 }
 
 /// The userdata tag of `HostError` values, kept from the tags [`Vm::userdata_tag`] hands out.
 const HOST_ERROR_TAG: UserDataTag = UserDataTag(sys::LUA_UTAG_LIMIT - 1);
-
-/// The userdata tag of each Rust type a VM has made userdata of.
-#[derive(Default)]
-struct UserDataTags {
-    by_type: HashMap<TypeId, UserDataTag>,
-    /// The next tag to assign; [`HOST_ERROR_TAG`] is the last one.
-    next: c_int,
-}
 
 /// What a `HostError` value holds: an [`Error::Kinded`] raised into Luau.
 struct HostError {
@@ -3384,47 +2833,11 @@ struct HostError {
     message: String,
 }
 
-/// Pushes `error` as the value to raise: a `HostError` when it has a kind, else its message. A
-/// `HostError` that can't be made falls back to the message, so exactly one value is pushed.
-unsafe fn push_raised(state: *mut sys::lua_State, error: &RaisedError) {
-    if let Some(kind) = error.kind {
-        let pushed = unsafe {
-            gateway::new_userdata_tagged_with_metatable(
-                state,
-                mem::size_of::<HostError>(),
-                HOST_ERROR_TAG.0,
-            )
-        };
-        if let Ok(data) = pushed {
-            unsafe {
-                ptr::write(
-                    data.cast::<HostError>(),
-                    HostError {
-                        kind,
-                        message: error.message.clone(),
-                    },
-                )
-            };
-            return;
-        }
-    }
-    unsafe { gateway::push_error(state, &error.message) };
-}
-
-/// The `HostError` at `index`, or `None` for any other value. It lives as long as the value does.
-unsafe fn host_error_at<'a>(state: *mut sys::lua_State, index: c_int) -> Option<&'a HostError> {
-    unsafe {
-        sys::lua_touserdatatagged(state, index, HOST_ERROR_TAG.0)
-            .cast::<HostError>()
-            .as_ref()
-    }
-}
-
 /// `HostError.__tostring`: the error's message. Luau gives a C function enough stack for it, so
 /// pushing it fails only by running out of memory.
 unsafe extern "C-unwind" fn host_error_tostring(state: *mut sys::lua_State) -> c_int {
     let pushed = abort_on_panic(|| unsafe {
-        match host_error_at(state, 1) {
+        match stack::host_error_at(state, 1) {
             Some(error) => match gateway::push_bytes(state, error.message.as_bytes()) {
                 Ok(()) => true,
                 Err(error) => {
@@ -3635,12 +3048,6 @@ impl Drop for CompiledBytecode {
 /// Luau keeps 16-byte-aligned data at the start of its blocks (`lua_Page::data`, `LG`).
 const LUAU_ALIGN: usize = 16;
 
-/// Whether Luau aligns a userdata's data for `T`: to 8 bytes, and to 16 for 16 bytes or more
-/// (`Udata`).
-const fn fits_userdata<T>() -> bool {
-    mem::align_of::<T>() <= 8 || (mem::align_of::<T>() <= 16 && mem::size_of::<T>() >= 16)
-}
-
 unsafe extern "C-unwind" fn alloc(
     ud: *mut c_void,
     ptr: *mut c_void,
@@ -3722,7 +3129,55 @@ mod tests {
     use super::*;
 
     fn stack_top(vm: &Vm) -> i32 {
-        vm.top()
+        Stack::main(vm).top()
+    }
+
+    /// Dropping a stack out of turn panics before cutting its thread back, which would pop what
+    /// the later stack reads.
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn a_stack_dropped_before_a_later_one_on_its_thread_panics() -> Result<()> {
+        let vm = Vm::new()?;
+        let mut outer = Stack::main(&vm);
+        outer.push_bytes(b"outer")?;
+        let mut inner = Stack::main(&vm);
+        inner.push_bytes(b"inner")?;
+        let bytes = inner.string_bytes(StackIndex::TOP);
+
+        let panic = catch_unwind(AssertUnwindSafe(move || drop(outer)))
+            .expect_err("dropping the outer stack first panics");
+        assert_eq!(
+            panic.downcast_ref::<&str>(),
+            Some(&"a Luau stack dropped before one made on its thread after it")
+        );
+        assert_eq!(bytes, Some(b"inner".as_slice()));
+        assert_eq!(inner.top(), 2, "both values are still on the stack");
+        drop(inner);
+        assert_eq!(stack_top(&vm), 1, "the outer stack's value stays");
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn stacks_on_different_threads_drop_in_any_order() -> Result<()> {
+        let vm = Vm::new()?;
+        let function = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(&b"return 1"[..]),
+            ChunkOrigin::default(),
+        ))?;
+        let thread = vm.create_thread(&function)?;
+        let mut main = Stack::main(&vm);
+        main.push_bytes(b"main")?;
+        let mut coroutine = Stack::of_thread(&thread);
+        coroutine.push_bytes(b"coroutine")?;
+        drop(main);
+        assert_eq!(
+            coroutine.string_bytes(StackIndex::TOP),
+            Some(b"coroutine".as_slice())
+        );
+        drop(coroutine);
+        assert_eq!(stack_top(&vm), 0);
+        Ok(())
     }
 
     #[test]
@@ -4734,7 +4189,7 @@ mod tests {
             panic!("expected a thread");
         };
         let freed = cancelled.state_id();
-        assert!(unsafe { gateway::is_cancelled(cancelled.inner.state.as_ptr()) });
+        assert!(Stack::of_thread(&cancelled).is_cancelled());
         drop(cancelled);
         unsafe { sys::lua_gc(vm.inner.state.as_ptr(), sys::LUA_GCCOLLECT, 0) };
 
@@ -4913,7 +4368,7 @@ mod tests {
             .collect::<Result<Vec<_>>>()?;
         let (closed, closed_at_yield) = threads.split_at(500);
         for thread in closed_at_yield {
-            unsafe { gateway::cancel_thread(thread.inner.state.as_ptr()) };
+            Stack::of_thread(thread).cancel();
         }
         set_gc_running(&vm, false);
 

@@ -26,7 +26,6 @@ use harmony_luau_sys::{
 
 use super::{
     Error,
-    RaisedError,
     Result,
 };
 
@@ -147,7 +146,7 @@ unsafe fn take_error(state: *mut lua_State, status: c_int) -> Error {
     let error = unsafe {
         if status == sys::LUA_ERRMEM || is_memory_error(state, -1) {
             Error::OutOfMemory
-        } else if let Some(error) = super::host_error_at(state, -1) {
+        } else if let Some(error) = super::stack::host_error_at(state, -1) {
             Error::Kinded {
                 kind: error.kind,
                 message: error.message.clone(),
@@ -473,19 +472,12 @@ pub(super) unsafe fn resume(
     }
 }
 
-/// Resumes `thread` from `from` by raising `error` where it yielded, so the nearest `pcall` in
-/// that thread catches it; with none, the thread finishes with the error. Returns whether it
-/// yielded again rather than finished.
-pub(super) unsafe fn resume_error(
-    from: *mut lua_State,
-    thread: *mut lua_State,
-    error: &RaisedError,
-) -> Result<bool> {
+/// Resumes `thread` from `from` by raising the error value on top of `thread` where it yielded,
+/// so the nearest `pcall` in that thread catches it; with none, the thread finishes with the error.
+/// Returns whether it yielded again rather than finished.
+pub(super) unsafe fn resume_error(from: *mut lua_State, thread: *mut lua_State) -> Result<bool> {
     let mut status = 0;
     unsafe {
-        // Failing to push the error leaves the out-of-memory error in its place, which is raised
-        // instead.
-        super::push_raised(thread, error);
         check(
             from,
             harmony_luau_gateway_resumeerror(from, thread, &mut status),

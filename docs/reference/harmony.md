@@ -42,6 +42,16 @@ status. `clippy.toml` disallows those functions everywhere else.
 - A newly used raising function needs a shim, a gateway wrapper and a `clippy.toml` entry.
 - When upgrading Luau, check for functions that have started to raise.
 - `Vm::with_options` asserts that Luau still defines the `LuauTableRobustOom` flag.
+- `harmony-luau/src/runtime/stack.rs` owns access to Luau stacks, the registry and userdata. Its
+  `Stack` checks the indexes and value types it is given, so the handles, argument reading and
+  native function calls hold no `unsafe`, and Clippy requires a `SAFETY:` comment on every
+  `unsafe` block in the module. Stacks on one thread drop innermost first, and one dropped out of
+  turn panics rather than pop what a later one reads. A `Thread` gets its state only from a
+  `Stack` holding the thread. What has no `Vm` to make a `Stack` with works on the raw state:
+  creating and closing the VM, Luau's callbacks (`userthread`, `postresume`, the interrupt, the
+  allocator and userdata destructors), a native function's entry until its slot gives it the VM
+  and its exit by raising or yielding, `HostError.__tostring`, and the gateway reading a raised
+  error.
 
 ## Values
 
