@@ -5,6 +5,7 @@
 
 use std::{
     borrow::Cow,
+    io,
     path::Path as FsPath,
 };
 
@@ -26,13 +27,16 @@ use axum::http::{
     },
 };
 use bytes::Bytes;
+use futures::{
+    Stream,
+    StreamExt,
+};
 use tokio::io::{
     AsyncReadExt,
     AsyncSeekExt,
     SeekFrom,
 };
-use tokio::sync::mpsc as tokio_mpsc;
-use tokio_stream::wrappers::ReceiverStream;
+use tokio_util::io::ReaderStream;
 
 use crate::routes::streamed_body::streamed_body;
 
@@ -148,11 +152,11 @@ pub(crate) async fn build_ranged_file_body(
     if !metadata.is_file() {
         bail!("path '{}' is not a file", path.display());
     }
-    build_ranged_body(file, metadata.len(), range_header, base_status)
+    build_ranged_body(file, metadata.len(), range_header, base_status).await
 }
 
 /// Serves `size` bytes of an already open `file`, honoring a single byte range.
-pub(crate) fn build_ranged_body(
+pub(crate) async fn build_ranged_body(
     mut file: tokio::fs::File,
     size: u64,
     range_header: Option<&HeaderValue>,
@@ -192,73 +196,49 @@ pub(crate) fn build_ranged_body(
     let content_length_u64 = if size == 0 { 0 } else { end - start + 1 };
     let content_length = HeaderValue::from_str(&content_length_u64.to_string())
         .context("failed to encode content-length header")?;
-    let (tx, rx) = tokio_mpsc::channel::<Result<Bytes, std::io::Error>>(64);
-    let shutdown = crate::services::shutdown::token();
-
-    tokio::spawn(async move {
-        let mut buffer = vec![0_u8; FILE_STREAM_CHUNK_SIZE];
-        if start > 0
-            && let Err(err) = tokio::select! {
-                _ = shutdown.cancelled() => return,
-                result = file.seek(SeekFrom::Start(start)) => result,
-            }
-        {
-            let _ = tx.send(Err(err)).await;
-            return;
-        }
-        let mut remaining = content_length_u64;
-        while remaining > 0 {
-            if shutdown.is_cancelled() {
-                break;
-            }
-            let read_len = std::cmp::min(buffer.len() as u64, remaining) as usize;
-            let read_result = tokio::select! {
-                _ = shutdown.cancelled() => break,
-                result = file.read(&mut buffer[..read_len]) => result,
-            };
-            match read_result {
-                Ok(0) => break,
-                Ok(read_len) => {
-                    remaining = remaining.saturating_sub(read_len as u64);
-                    let chunk = Ok(Bytes::copy_from_slice(&buffer[..read_len]));
-                    tokio::select! {
-                        _ = shutdown.cancelled() => break,
-                        sent = tx.send(chunk) => {
-                            if sent.is_err() {
-                                break;
-                            }
-                        }
-                    }
-                }
-                Err(err) => {
-                    tokio::select! {
-                        _ = shutdown.cancelled() => {}
-                        _ = tx.send(Err(err)) => {}
-                    }
-                    break;
-                }
-            }
-        }
-    });
+    if start > 0 {
+        file.seek(SeekFrom::Start(start))
+            .await
+            .context("failed to seek to the range start")?;
+    }
 
     Ok(RangedFileBody {
-        body: streamed_body(ReceiverStream::new(rx)),
+        body: streamed_body(exactly(file, content_length_u64)),
         content_length,
         status,
         content_range,
     })
 }
 
+/// The next `len` bytes of `file`, failing if it ends before them.
+fn exactly(file: tokio::fs::File, len: u64) -> impl Stream<Item = io::Result<Bytes>> {
+    let chunks = ReaderStream::with_capacity(file.take(len), FILE_STREAM_CHUNK_SIZE);
+    futures::stream::unfold(Some((chunks, len)), |state| async move {
+        let (mut chunks, remaining) = state?;
+        match chunks.next().await {
+            Some(Ok(chunk)) => {
+                let remaining = remaining - chunk.len() as u64;
+                Some((Ok(chunk), Some((chunks, remaining))))
+            }
+            Some(Err(err)) => Some((Err(err), None)),
+            None if remaining > 0 => Some((
+                Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    format!("the file ended {remaining} bytes short"),
+                )),
+                None,
+            )),
+            None => None,
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
+
     use super::*;
-    use axum::body::to_bytes;
     use axum::http::HeaderName;
-    use std::time::{
-        Duration,
-        SystemTime,
-        UNIX_EPOCH,
-    };
 
     struct ShutdownResetGuard;
 
@@ -280,6 +260,34 @@ mod tests {
             .iter()
             .map(|(name, value)| (name.clone(), HeaderValue::from_static(value)))
             .collect()
+    }
+
+    /// A temporary file of `len` bytes, each its offset modulo 251.
+    fn patterned_file(len: usize) -> anyhow::Result<(tempfile::NamedTempFile, Vec<u8>)> {
+        let content: Vec<u8> = (0..len).map(|offset| (offset % 251) as u8).collect();
+        let mut file = tempfile::NamedTempFile::new()?;
+        file.write_all(&content)?;
+        Ok((file, content))
+    }
+
+    /// The bytes `body` yields before it ends, and the kind of failure it ends with, if any.
+    async fn drain(body: Body) -> (Vec<u8>, Option<io::ErrorKind>) {
+        let mut stream = body.into_data_stream();
+        let mut received = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(chunk) => received.extend_from_slice(&chunk),
+                Err(err) => {
+                    let kind = std::iter::successors(Some(&err as &dyn std::error::Error), |err| {
+                        err.source()
+                    })
+                    .find_map(|err| err.downcast_ref::<io::Error>())
+                    .map(io::Error::kind);
+                    return (received, Some(kind.expect("an io error")));
+                }
+            }
+        }
+        (received, None)
     }
 
     #[test]
@@ -330,23 +338,169 @@ mod tests {
         assert_eq!(parse("bytes=1000-2000", 1000), None);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn ranged_file_body_finishes_after_shutdown_cancelled() -> anyhow::Result<()> {
+    #[tokio::test]
+    async fn a_range_yields_exactly_its_bytes() -> anyhow::Result<()> {
+        let (file, content) = patterned_file(FILE_STREAM_CHUNK_SIZE * 3)?;
+        let size = content.len() as u64;
+        let first = FILE_STREAM_CHUNK_SIZE - 10;
+        let last = FILE_STREAM_CHUNK_SIZE * 2 + 10;
+        let cases = [
+            (format!("bytes={first}-{last}"), first, last),
+            (
+                "bytes=-100".to_owned(),
+                content.len() - 100,
+                content.len() - 1,
+            ),
+            (format!("bytes={first}-"), first, content.len() - 1),
+        ];
+        for (range, first, last) in cases {
+            let ranged = build_ranged_file_body(
+                file.path(),
+                Some(&HeaderValue::from_str(&range)?),
+                StatusCode::OK,
+            )
+            .await?;
+            assert_eq!(ranged.status, StatusCode::PARTIAL_CONTENT, "{range}");
+            assert_eq!(
+                ranged.content_range,
+                Some(HeaderValue::from_str(&format!(
+                    "bytes {first}-{last}/{size}"
+                ))?),
+                "{range}"
+            );
+            assert_eq!(ranged.content_length, (last - first + 1).to_string());
+            let (received, failure) = drain(ranged.body).await;
+            assert!(failure.is_none(), "{range}: {failure:?}");
+            assert!(received == content[first..=last], "{range}");
+        }
+
+        let whole = build_ranged_file_body(file.path(), None, StatusCode::OK).await?;
+        assert_eq!(whole.status, StatusCode::OK);
+        let (received, failure) = drain(whole.body).await;
+        assert!(failure.is_none(), "{failure:?}");
+        assert!(received == content);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_file_cut_short_after_opening_fails_the_body() -> anyhow::Result<()> {
+        let (file, content) = patterned_file(FILE_STREAM_CHUNK_SIZE * 2)?;
+        let opened = tokio::fs::File::open(file.path()).await?;
+        let size = opened.metadata().await?.len();
+        let kept = FILE_STREAM_CHUNK_SIZE + 7;
+        file.as_file().set_len(kept as u64)?;
+
+        let ranged = build_ranged_body(opened, size, None, StatusCode::OK).await?;
+        assert_eq!(ranged.content_length, size.to_string());
+        let (received, failure) = drain(ranged.body).await;
+
+        assert!(received == content[..kept]);
+        assert_eq!(failure, Some(io::ErrorKind::UnexpectedEof));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_body_is_read_to_its_end_through_shutdown() -> anyhow::Result<()> {
         let _runtime_guard = crate::services::testing::runtime_test_lock().await;
         let _guard = ShutdownResetGuard;
         let shutdown = crate::services::shutdown::reset();
-        let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-        let path = std::env::temp_dir().join(format!("lyra-ranged-shutdown-test-{nanos}.bin"));
-        let file_size = FILE_STREAM_CHUNK_SIZE * 96;
-        tokio::fs::write(&path, vec![7_u8; file_size]).await?;
+        let (file, content) = patterned_file(FILE_STREAM_CHUNK_SIZE * 8)?;
 
-        let ranged = build_ranged_file_body(&path, None, StatusCode::OK).await?;
+        let ranged = build_ranged_file_body(file.path(), None, StatusCode::OK).await?;
+        let mut stream = ranged.body.into_data_stream();
+        let mut received = stream.next().await.expect("a first chunk")?.to_vec();
         shutdown.cancel();
-        let bytes = tokio::time::timeout(Duration::from_secs(1), to_bytes(ranged.body, usize::MAX))
-            .await??;
+        while let Some(chunk) = stream.next().await {
+            received.extend_from_slice(&chunk?);
+        }
+        assert!(received == content);
 
-        assert!(bytes.len() <= file_size);
-        let _ = tokio::fs::remove_file(path).await;
+        let ranged = build_ranged_file_body(file.path(), None, StatusCode::OK).await?;
+        let (received, failure) = drain(ranged.body).await;
+        assert!(failure.is_none(), "{failure:?}");
+        assert!(received == content, "a body built after shutdown is whole");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_download_in_flight_at_shutdown_completes_within_the_drain() -> anyhow::Result<()> {
+        use axum::routing::get;
+        use rustix::fs::{
+            CWD,
+            Mode,
+        };
+        use tokio::io::{
+            AsyncReadExt,
+            AsyncWriteExt,
+        };
+
+        use crate::routes::listener::tests::{
+            BOUND,
+            connect,
+            limits,
+            start,
+        };
+
+        let _runtime_guard = crate::services::testing::runtime_test_lock().await;
+        let _guard = ShutdownResetGuard;
+        crate::services::shutdown::reset();
+        // The body is served from a pipe, so it cannot be read past what the test has written.
+        // Each half fits the pipe's buffer, and the writer holds the read end open too, so no
+        // open or write here blocks.
+        let content: Vec<u8> = (0..8 * 1024).map(|offset| (offset % 251) as u8).collect();
+        let (before, after) = content.split_at(content.len() / 2);
+        let dir = tempfile::tempdir()?;
+        let fifo = dir.path().join("download");
+        rustix::fs::mkfifoat(CWD, &fifo, Mode::RUSR | Mode::WUSR)?;
+        let mut writer = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&fifo)?;
+        let size = content.len() as u64;
+        let app = axum::Router::new().route(
+            "/download",
+            get(move || {
+                let fifo = fifo.clone();
+                async move {
+                    let file = tokio::fs::File::open(&fifo).await.unwrap();
+                    let ranged = build_ranged_body(file, size, None, StatusCode::OK)
+                        .await
+                        .unwrap();
+                    axum::response::Response::builder()
+                        .header(axum::http::header::CONTENT_LENGTH, ranged.content_length)
+                        .body(ranged.body)
+                        .unwrap()
+                }
+            }),
+        );
+        let server = start(app, limits()).await;
+
+        let mut stream = connect(server.addr).await;
+        stream
+            .write_all(b"GET /download HTTP/1.1\r\nHost: lyra.test\r\n\r\n")
+            .await?;
+        writer.write_all(before)?;
+        let mut head = Vec::new();
+        let mut received = vec![0; before.len()];
+        tokio::time::timeout(BOUND, async {
+            while !head.ends_with(b"\r\n\r\n") {
+                head.push(stream.read_u8().await?);
+            }
+            stream.read_exact(&mut received).await?;
+            anyhow::Ok(())
+        })
+        .await??;
+        assert!(head.starts_with(b"HTTP/1.1 200"));
+
+        crate::services::shutdown::cancel();
+        let mut stopping = std::pin::pin!(server.stop());
+        assert!(futures::poll!(stopping.as_mut()).is_pending());
+        writer.write_all(after)?;
+        tokio::time::timeout(BOUND, stream.read_to_end(&mut received)).await??;
+        stopping.await;
+
+        assert!(received == content);
         Ok(())
     }
 }

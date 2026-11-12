@@ -265,7 +265,8 @@ pub(crate) async fn serve_cover(
                     mime_type,
                     request_headers,
                     PUBLIC_COVER_CACHE_CONTROL,
-                );
+                )
+                .await;
             }
         }
     };

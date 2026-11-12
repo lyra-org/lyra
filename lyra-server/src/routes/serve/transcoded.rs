@@ -97,7 +97,7 @@ pub(super) async fn transcoded_response(
         let found = tokio::task::spawn_blocking(move || cache.find_ready(&key)).await??;
         return match found {
             Some(ready) => {
-                open_file_response(ready.file, ready.size, delivery.content_type, headers)
+                open_file_response(ready.file, ready.size, delivery.content_type, headers).await
             }
             None => unfinished_head_response(delivery.content_type, follow_encode),
         };
@@ -131,7 +131,7 @@ pub(super) async fn transcoded_response(
     .map_err(refusal_to_app_error)?;
     match lookup {
         Lookup::Ready(ready) => {
-            open_file_response(ready.file, ready.size, delivery.content_type, headers)
+            open_file_response(ready.file, ready.size, delivery.content_type, headers).await
         }
         Lookup::Encoding(encoding) if follow_encode => {
             let mut encoding = encoding;
@@ -143,7 +143,7 @@ pub(super) async fn transcoded_response(
             // client still waiting: a retry then finds it finished or further along.
             encoding.keep_running();
             let ready = encoding.finished().await?;
-            open_file_response(ready.file, ready.size, delivery.content_type, headers)
+            open_file_response(ready.file, ready.size, delivery.content_type, headers).await
         }
     }
 }

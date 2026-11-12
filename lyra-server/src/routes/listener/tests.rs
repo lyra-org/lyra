@@ -61,7 +61,7 @@ use tokio_util::sync::CancellationToken;
 use super::*;
 
 /// How long anything a test waits for may take. Reached only when a test is failing.
-pub(super) const BOUND: Duration = Duration::from_secs(10);
+pub(in crate::routes) const BOUND: Duration = Duration::from_secs(10);
 
 pub(super) const SHORT: Duration = Duration::from_millis(150);
 

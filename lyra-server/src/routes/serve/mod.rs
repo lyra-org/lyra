@@ -235,20 +235,20 @@ async fn source_file_response(
             "the track's source changed while it was being served; retry",
         ));
     }
-    open_file_response(file, metadata.len(), content_type, headers)
+    open_file_response(file, metadata.len(), content_type, headers).await
 }
 
 /// Serves an already open file of `size` bytes, as [`file_response`] serves a path.
-fn open_file_response(
+async fn open_file_response(
     file: tokio::fs::File,
     size: u64,
     content_type: &str,
     headers: &HeaderMap,
 ) -> Result<Response<Body>, AppError> {
-    open_file_response_with_cache_control(file, size, content_type, headers, NO_STORE)
+    open_file_response_with_cache_control(file, size, content_type, headers, NO_STORE).await
 }
 
-pub(crate) fn open_file_response_with_cache_control(
+pub(crate) async fn open_file_response_with_cache_control(
     file: tokio::fs::File,
     size: u64,
     content_type: &str,
@@ -256,7 +256,7 @@ pub(crate) fn open_file_response_with_cache_control(
     cache_control: &str,
 ) -> Result<Response<Body>, AppError> {
     let range = own_range(headers);
-    let ranged = build_ranged_body(file, size, range, StatusCode::OK)?;
+    let ranged = build_ranged_body(file, size, range, StatusCode::OK).await?;
     ranged_response(ranged, content_type, cache_control)
 }
 
