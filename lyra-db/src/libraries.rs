@@ -452,7 +452,8 @@ pub struct RemovedLibrary {
 }
 
 /// Remove the library's exclusive media graph in the caller's transaction.
-/// Media reachable from another library remains available there.
+/// Media reachable from another library remains available there, and the artists only this
+/// library's media referenced become candidates for collection.
 pub fn delete(
     db: &mut DbAnyTransactionMut<'_>,
     library: &Library,
@@ -480,34 +481,8 @@ pub fn delete(
             );
         }
     }
-    // Artists that layers of surviving entities reference stay, along with
-    // everything a walk from them reaches.
-    let removing: HashSet<DbId> = descendants
-        .elements
-        .iter()
-        .filter(|element| {
-            !retained.contains(&element.id)
-                && ["Track", "Release", "Artist"]
-                    .iter()
-                    .any(|kind| super::graph::is_element_type(element, kind))
-        })
-        .map(|element| element.id)
-        .collect();
-    for artist_id in super::metadata::layers::edges::spared_artists(db, &removing)? {
-        retained.insert(artist_id);
-        retained.extend(
-            db.exec(
-                QueryBuilder::search()
-                    .from(artist_id)
-                    .where_()
-                    .node()
-                    .query(),
-            )?
-            .ids(),
-        );
-    }
     let mut entities = Vec::new();
-    let mut children: Vec<_> = removed_entries.iter().copied().collect();
+    let mut children: Vec<DbId> = Vec::new();
     let mut track_ids = HashSet::new();
     for element in descendants.elements {
         if retained.contains(&element.id) {
@@ -520,7 +495,7 @@ pub fn delete(
             .and_then(|kv| kv.value.string().ok())
             .map(String::as_str);
         match kind {
-            Some("Track" | "Release" | "Artist") => {
+            Some("Track" | "Release") => {
                 entities.push(element.id);
                 if kind == Some("Track")
                     && let Some(id) = element
@@ -536,33 +511,13 @@ pub fn delete(
             _ => {}
         }
     }
+    let mut left = super::orphans::Candidates::default();
     for &entry_id in &removed_entries {
-        let sources: Vec<super::TrackSource> = db
-            .exec(
-                QueryBuilder::select()
-                    .elements::<super::TrackSource>()
-                    .search()
-                    .to(entry_id)
-                    .where_()
-                    .neighbor()
-                    .end_where()
-                    .query(),
-            )?
-            .try_into()?;
-        for source_id in sources.into_iter().filter_map(|source| source.db_id) {
-            let tracks: Vec<super::Track> = db
-                .exec(
-                    QueryBuilder::select()
-                        .elements::<super::Track>()
-                        .search()
-                        .to(source_id)
-                        .where_()
-                        .neighbor()
-                        .end_where()
-                        .query(),
-                )?
-                .try_into()?;
-            track_ids.extend(tracks.into_iter().map(|track| track.id));
+        for source_id in super::graph::inbound_neighbor_ids(db, entry_id, "TrackSource")? {
+            let tracks = super::graph::inbound_neighbor_ids(db, source_id, "Track")?;
+            for track in super::tracks::get_existing_by_ids(db, &tracks)?.into_values() {
+                track_ids.insert(track.id);
+            }
             children.push(source_id);
         }
     }
@@ -622,7 +577,17 @@ pub fn delete(
         cue_children.extend(tracks.into_iter().filter_map(|track| track.db_id));
     }
     children.extend(cue_children);
-    super::metadata::cascade_remove_entities_in_txn(db, &entities)?;
+    // The removals below are raw, so what each leaves is read before it goes: a cue track's
+    // sheet may live on through a cue file another library holds.
+    for &id in &children {
+        left.tracks
+            .extend(super::graph::inbound_neighbor_ids(db, id, "Track")?);
+        left.cue_tracks
+            .extend(super::graph::neighbor_ids(db, id, "CueTrack")?);
+        left.cue_sheets
+            .extend(super::graph::inbound_neighbor_ids(db, id, "CueSheet")?);
+    }
+    children.extend(removed_entries.iter().copied());
     children.push(library_id);
     for run in super::sync_runs::list_for_library(db, &library.id)? {
         if let Some(id) = run.db_id {
@@ -630,7 +595,11 @@ pub fn delete(
             children.push(id);
         }
     }
+    // Before anything is collected, so no id here names an element reissued since it was read.
     db.exec_mut(QueryBuilder::remove().ids(children).query())?;
+    super::metadata::cascade_remove_entities_in_txn(db, &entities)?;
+    // A track another library reaches may have played this library's files alone.
+    super::orphans::collect(db, left)?;
     Ok(RemovedLibrary { track_ids })
 }
 
@@ -1164,6 +1133,8 @@ mod tests {
         crate::fixtures::connect(&mut db, kept_id, kept_release)?;
         test_db::connect_artist(&mut db, deleted_release, credited)?;
         test_db::connect_artist(&mut db, deleted_release, related)?;
+        let exclusive = crate::fixtures::insert_artist(&mut db, "Exclusive")?;
+        test_db::connect_artist(&mut db, deleted_release, exclusive)?;
         test_db::connect_artist(&mut db, kept_release, band)?;
         for node_id in [kept_release, band] {
             crate::metadata::layers::upsert(
@@ -1199,6 +1170,13 @@ mod tests {
         db.transaction_mut(|t| delete(t, &deleted))?;
 
         assert!(crate::releases::get_by_id(&db, deleted_release)?.is_none());
+        assert!(
+            crate::artists::get_by_id(&db, exclusive)?.is_some(),
+            "artists wait for their collection"
+        );
+        crate::orphans::testing::assert_artists_tracked(&db)?;
+        assert_eq!(crate::orphans::testing::drain_artists(&mut db)?, 1);
+        assert!(crate::artists::get_by_id(&db, exclusive)?.is_none());
         assert!(crate::artists::get_by_id(&db, credited)?.is_some());
         assert!(crate::artists::get_by_id(&db, related)?.is_some());
         assert_eq!(edges::credits(&db, release_layer)?[0].target_id, credited);
@@ -1207,7 +1185,7 @@ mod tests {
     }
 
     #[test]
-    fn delete_removes_owned_sources_and_cue_records_but_preserves_shared_track_and_files()
+    fn delete_removes_owned_sources_and_cue_records_with_the_track_only_they_played()
     -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let deleted = db.transaction_mut(|t| -> anyhow::Result<_> {
@@ -1265,13 +1243,11 @@ mod tests {
                 )?;
                 Ok((sheet, selected, unselected, source))
             })?;
+        let track_id = crate::tracks::get_by_id(&db, track)?.unwrap().id;
         let affected = db.transaction_mut(|t| delete(t, &deleted))?;
-        assert!(
-            affected
-                .track_ids
-                .contains(&crate::tracks::get_by_id(&db, track)?.unwrap().id)
-        );
-        for id in [entry_id, sheet, selected, unselected, source] {
+        assert!(affected.track_ids.contains(&track_id));
+        // The other library reached the track, but only this library's file played it.
+        for id in [entry_id, sheet, selected, unselected, source, track] {
             assert!(
                 db.exec(QueryBuilder::select().ids(id).query()).is_err(),
                 "node {} survived",
@@ -1281,6 +1257,59 @@ mod tests {
         assert_eq!(std::fs::read(&file_path)?, b"preserve music");
         std::fs::remove_file(file_path)?;
         Ok(())
+    }
+
+    #[test]
+    fn delete_collects_a_cue_sheet_another_library_holds_once_its_audio_is_gone()
+    -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let deleted = db.transaction_mut(|t| -> anyhow::Result<_> {
+            Ok(create_system(t, insert_request("Deleted", "cue-deleted"))?)
+        })?;
+        let kept = db.transaction_mut(|t| -> anyhow::Result<_> {
+            Ok(create_system(t, insert_request("Kept", "cue-kept"))?)
+        })?;
+        let (deleted_id, kept_id) = (deleted.db_id.unwrap(), kept.db_id.unwrap());
+        // The audio is the deleted library's, the cue file naming it the kept one's.
+        let audio = crate::fixtures::insert_file_entry(&mut db, deleted_id, "image.flac")?;
+        let cue = crate::fixtures::insert_file_entry(&mut db, kept_id, "image.cue")?;
+        let release = crate::fixtures::insert_release(&mut db, "Shared")?;
+        crate::fixtures::connect(&mut db, deleted_id, release)?;
+        crate::fixtures::connect(&mut db, kept_id, release)?;
+        let track = crate::fixtures::insert_track(&mut db, "Segment")?;
+        crate::fixtures::link_track(&mut db, release, track)?;
+        let (sheet, cue_track, source) = db.transaction_mut(|t| -> anyhow::Result<_> {
+            let sheet = crate::cue::sheets::upsert(t, cue, "hash")?;
+            let cue_track = crate::cue::tracks::upsert(t, sheet, cue, 1, audio, None, 0)?;
+            let source = crate::track_sources::upsert(
+                t,
+                track,
+                audio,
+                crate::track_sources::TrackSourceUpsert {
+                    source_kind: "cue".into(),
+                    source_key: "shared-segment".into(),
+                    is_primary: true,
+                    start_ms: Some(0),
+                    end_ms: Some(1000),
+                    format: Default::default(),
+                },
+                Some(cue_track),
+            )?;
+            Ok((sheet, cue_track, source))
+        })?;
+        crate::orphans::testing::assert_collected(&db)?;
+
+        db.transaction_mut(|t| delete(t, &deleted))?;
+
+        for id in [audio, source, cue_track, sheet, track, release] {
+            assert!(
+                db.exec(QueryBuilder::select().ids(id).query()).is_err(),
+                "node {} survived",
+                id.0
+            );
+        }
+        assert!(crate::entries::get_by_id(&db, cue)?.is_some());
+        crate::orphans::testing::assert_collected(&db)
     }
 
     #[test]

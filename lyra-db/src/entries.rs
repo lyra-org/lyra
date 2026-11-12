@@ -635,8 +635,8 @@ fn tracks_plan(
 }
 
 /// Removes the missing entries among `entry_ids`, with the sources and cue sheets depending on
-/// them, then the library's missing directories left without a file beneath. Tracks the sources
-/// leave without any are left for the orphan cleanup.
+/// them, then the library's missing directories left without a file beneath, and collects the
+/// tracks and cue records that leaves unreferenced.
 pub fn remove_missing(
     db: &mut DbAny,
     library: &Library,
@@ -675,9 +675,16 @@ pub fn remove_missing(
     order.retain(|id| doomed.remove(id));
     order.extend(doomed);
     db.transaction_mut(|t| -> anyhow::Result<()> {
+        let mut left = crate::orphans::Candidates::default();
         let mut dependents = Vec::new();
         for &entry_id in &order {
-            dependents.extend(crate::track_sources::depending_on(t, entry_id)?);
+            for source in crate::track_sources::depending_on(t, entry_id)? {
+                left.tracks
+                    .extend(super::graph::inbound_neighbor_ids(t, source, "Track")?);
+                left.cue_tracks
+                    .extend(super::graph::neighbor_ids(t, source, "CueTrack")?);
+                dependents.push(source);
+            }
             for sheet in super::graph::inbound_neighbor_ids(t, entry_id, "CueSheet")? {
                 dependents.extend(super::graph::neighbor_ids(t, sheet, "CueTrack")?);
                 dependents.push(sheet);
@@ -689,7 +696,7 @@ pub fn remove_missing(
             t.exec_mut(QueryBuilder::remove().ids(&dependents).query())?;
         }
         t.exec_mut(QueryBuilder::remove().ids(&order).query())?;
-        Ok(())
+        crate::orphans::collect(t, left)
     })?;
     Ok(removed.len())
 }

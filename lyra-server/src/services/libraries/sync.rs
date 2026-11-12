@@ -55,7 +55,7 @@ use crate::services::{
     metadata::{
         CueLinks,
         TrackMetadata,
-        cleanup::cleanup_orphaned_metadata,
+        cleanup,
         ingestion::{
             MetadataApplyResult,
             MetadataGroup,
@@ -431,41 +431,37 @@ pub(super) async fn mark_missing_entries_for_scan(
     Ok(())
 }
 
-async fn cleanup_metadata_orphans(
+/// Collects the artists the run's writes, and any since the last collection, left unreferenced.
+async fn collect_unreferenced_artists(
     db: &DbAsync,
     library_db_id: DbId,
     progress: SyncRunProgress,
 ) -> anyhow::Result<()> {
     let run_id = progress.run_id().to_string();
     let started = Instant::now();
+    let details = SyncWorkDetails::new("collect_unreferenced_artists");
     let work_id = progress
-        .start_work(
-            SyncStageKey::Cleanup,
-            SyncWorkDetails::new("cleanup_orphaned_metadata"),
-        )
+        .start_work(SyncStageKey::Cleanup, details.clone())
         .await;
-    let result = {
-        let mut db_write = db.write().await;
-        cleanup_orphaned_metadata(&mut db_write)
+    let removed = match cleanup::collect_unreferenced_artists(db).await {
+        Ok(removed) => removed,
+        Err(err) => {
+            progress
+                .fail_work(work_id, SyncStageKey::Cleanup, details, format!("{err:#}"))
+                .await;
+            return Err(err);
+        }
     };
-    if let Err(err) = result {
-        progress
-            .fail_work(
-                work_id,
-                SyncStageKey::Cleanup,
-                SyncWorkDetails::new("cleanup_orphaned_metadata"),
-                format!("{err:#}"),
-            )
-            .await;
-        return Err(err);
-    }
     progress.complete_work(work_id, SyncStageKey::Cleanup).await;
+    #[cfg(test)]
+    lyra_db::orphans::testing::assert_drained(&*db.read().await)?;
     tracing::info!(
         library_db_id = library_db_id.0,
         run_id = %run_id,
+        removed_artists = removed,
         elapsed_ms = started.elapsed().as_millis() as u64,
         stage = "cleanup",
-        "scan orphan metadata cleanup finished"
+        "scan unreferenced artists collected"
     );
     Ok(())
 }
@@ -602,12 +598,12 @@ pub(crate) async fn sync_library_pipeline(
         sync_changed_artist_covers(db, library, &plans, stages.covers, &progress).await?;
     }
     purge_expired_missing(db, library, &observation, &progress).await?;
-    cleanup_metadata_orphans(db, library_db_id, progress).await?;
+    collect_unreferenced_artists(db, library_db_id, progress).await?;
     Ok(())
 }
 
 /// Purges the files missing longer than the library keeps them, when it sets a limit, before the
-/// orphan cleanup that collects what they leave.
+/// collection of the artists that leaves unreferenced.
 async fn purge_expired_missing(
     db: &DbAsync,
     library: &Library,

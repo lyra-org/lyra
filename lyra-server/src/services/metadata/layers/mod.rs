@@ -365,6 +365,10 @@ fn write_provider_layer(
         )?;
     }
 
+    // Every layer a plugin saves comes through here.
+    #[cfg(test)]
+    lyra_db::orphans::testing::assert_artists_tracked(db)?;
+
     Ok(())
 }
 
@@ -589,6 +593,109 @@ mod tests {
         insert_release,
     };
     use lyra_db::test_db::new_test_db;
+
+    fn ensured(db: &mut DbAny, id_value: &str, name: &str) -> anyhow::Result<DbId> {
+        Ok(ensure_provider_artist(
+            db,
+            "provider",
+            ProviderArtist {
+                id_type: "artist_id".to_string(),
+                id_value: id_value.to_string(),
+                artist_name: Some(name.to_string()),
+                sort_name: None,
+                artist_type: None,
+                description: None,
+            },
+        )?)
+    }
+
+    #[test]
+    fn an_ensured_artist_stays_until_a_collection_finds_it_unreferenced() -> anyhow::Result<()> {
+        use lyra_db::orphans::testing::{
+            assert_artists_tracked,
+            drain_artists,
+        };
+
+        let mut db = new_test_db()?;
+        lyra_db::providers::upsert(
+            &mut db,
+            &lyra_db::ProviderConfig {
+                db_id: None,
+                provider_id: "provider".to_string(),
+                position: 0,
+                enabled: true,
+            },
+        )?;
+        let release_id = insert_release(&mut db, "Release")?;
+        let credited = ensured(&mut db, "a-1", "Credited")?;
+        let never_referenced = ensured(&mut db, "a-2", "Never Referenced")?;
+        let credits = |artist_ids: &[DbId]| ProviderValues {
+            credits: LayerCredits::from([(
+                CreditType::Artist,
+                artist_ids
+                    .iter()
+                    .map(|&artist_id| LayerCreditInput {
+                        artist_id,
+                        detail: None,
+                    })
+                    .collect(),
+            )]),
+            ..Default::default()
+        };
+        let none = HashMap::new();
+        let no_custom = CustomFieldChanges::default();
+        for artist in [credited, never_referenced] {
+            assert!(lyra_db::artists::get_by_id(&db, artist)?.is_some());
+        }
+        assert_artists_tracked(&db)?;
+
+        // The provider's later write references one of them.
+        save_provider_layer(
+            &mut db,
+            release_id,
+            "provider",
+            &credits(&[credited]),
+            &none,
+            &no_custom,
+        )?;
+        assert_eq!(drain_artists(&mut db)?, 1);
+        assert!(lyra_db::artists::get_by_id(&db, credited)?.is_some());
+        assert!(lyra_db::artists::get_by_id(&db, never_referenced)?.is_none());
+
+        // A refresh drops the credit in one write and names the artist again in a later one.
+        save_provider_layer(
+            &mut db,
+            release_id,
+            "provider",
+            &credits(&[]),
+            &none,
+            &no_custom,
+        )?;
+        assert!(lyra_db::artists::get_by_id(&db, credited)?.is_some());
+        assert_artists_tracked(&db)?;
+        save_provider_layer(
+            &mut db,
+            release_id,
+            "provider",
+            &credits(&[credited]),
+            &none,
+            &no_custom,
+        )?;
+        assert_eq!(drain_artists(&mut db)?, 0);
+        assert!(lyra_db::artists::get_by_id(&db, credited)?.is_some());
+
+        save_provider_layer(
+            &mut db,
+            release_id,
+            "provider",
+            &credits(&[]),
+            &none,
+            &no_custom,
+        )?;
+        assert_eq!(drain_artists(&mut db)?, 1);
+        assert!(lyra_db::artists::get_by_id(&db, credited)?.is_none());
+        Ok(())
+    }
 
     #[test]
     fn a_replacing_save_lets_what_it_leaves_out_fall_through() -> anyhow::Result<()> {

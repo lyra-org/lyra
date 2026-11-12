@@ -481,6 +481,13 @@ async fn delete_library(
         removed
     };
     crate::services::hls::state::teardown_hls_jobs_for_tracks(&removed.track_ids).await;
+    // The artists only this library referenced stay candidates if this fails, for the next
+    // collection.
+    if let Err(err) =
+        crate::services::metadata::cleanup::collect_unreferenced_artists(&STATE.db.get()).await
+    {
+        tracing::warn!(error = %format!("{err:#}"), "collecting unreferenced artists failed");
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -27,8 +27,8 @@ use lyra_db::{
 const BATCH: usize = 256;
 
 /// Removes what `plan` names: its tracks a batch at a time, each batch under a write of its own,
-/// with everything attached to them, then its entries. What that leaves without a track, such as
-/// an emptied release, is left for the orphan cleanup. Returns how many tracks it removed.
+/// with everything attached to them and the releases they empty, then its entries. The artists
+/// that leaves unreferenced wait for the caller's collection. Returns how many tracks it removed.
 pub(crate) async fn apply(
     db: &DbAsync,
     library: &Library,
@@ -65,7 +65,9 @@ pub(crate) async fn apply(
     }
     let removed = {
         let mut db_write = db.write().await;
-        lyra_db::entries::remove_missing(&mut db_write, library, &plan.entries)?
+        let removed = lyra_db::entries::remove_missing(&mut db_write, library, &plan.entries)?;
+        crate::services::covers::discard_listed_cover_files(&*db_write);
+        removed
     };
     tracing::info!(
         library_db_id = ?library.db_id,
@@ -77,7 +79,7 @@ pub(crate) async fn apply(
 }
 
 /// Purges `scope` from `library` as a run of its own does: applies its plan, then collects
-/// what that left without a track.
+/// the artists that left unreferenced.
 pub(crate) async fn purge(
     db: &DbAsync,
     library: &Library,
@@ -92,10 +94,8 @@ pub(crate) async fn purge(
         })?
     };
     let purged = apply(db, library, plan, progress).await?;
-    let orphaned = {
-        let mut db_write = db.write().await;
-        crate::services::metadata::cleanup::cleanup_orphaned_metadata(&mut db_write)
-    };
-    orphaned?;
+    crate::services::metadata::cleanup::collect_unreferenced_artists(db).await?;
+    #[cfg(test)]
+    lyra_db::orphans::testing::assert_drained(&*db.read().await)?;
     Ok(purged)
 }

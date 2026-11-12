@@ -18,7 +18,6 @@ use agdb::{
 };
 
 use super::super::super::{
-    Artist,
     DbAccess,
     artists::relations::ArtistRelationType,
     credits::CreditType,
@@ -430,63 +429,6 @@ pub fn reference_count(db: &impl DbAccess, target_id: DbId) -> anyhow::Result<u6
         + of_target::<LayerRelation>(db, target_id)?.len()
         + of_target::<LayerGenre>(db, target_id)?.len()
         + of_target::<LayerLabel>(db, target_id)?.len()) as u64)
-}
-
-/// The artists among `removing` that must stay: a layer of an entity that
-/// stays references them, or a walk from an artist that stays reaches them, as
-/// the walk from a surviving root reaches its artists' relation targets.
-pub fn spared_artists(
-    db: &impl DbAccess,
-    removing: &HashSet<DbId>,
-) -> anyhow::Result<HashSet<DbId>> {
-    let mut spared = HashSet::new();
-    loop {
-        let mut newly_spared = Vec::new();
-        for &artist_id in removing {
-            if spared.contains(&artist_id) {
-                continue;
-            }
-            let layer_ids = of_target::<LayerCredit>(db, artist_id)?
-                .into_iter()
-                .map(|link| link.layer_id)
-                .chain(
-                    of_target::<LayerRelation>(db, artist_id)?
-                        .into_iter()
-                        .map(|link| link.layer_id),
-                );
-            for layer_id in layer_ids {
-                if super::owner_id(db, layer_id)?
-                    .is_some_and(|owner| !removing.contains(&owner) || spared.contains(&owner))
-                {
-                    newly_spared.push(artist_id);
-                    break;
-                }
-            }
-        }
-        if newly_spared.is_empty() {
-            return Ok(spared);
-        }
-        for artist_id in newly_spared {
-            if !spared.insert(artist_id) {
-                continue;
-            }
-            let reachable: Vec<Artist> = db
-                .exec(
-                    QueryBuilder::select()
-                        .elements::<Artist>()
-                        .search()
-                        .from(artist_id)
-                        .query(),
-                )?
-                .try_into()?;
-            spared.extend(
-                reachable
-                    .into_iter()
-                    .filter_map(|artist| artist.db_id.map(DbId::from))
-                    .filter(|id| removing.contains(id)),
-            );
-        }
-    }
 }
 
 /// The artists the given layers credit or relate, which stop being referenced with them.

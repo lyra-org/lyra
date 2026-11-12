@@ -174,7 +174,6 @@ mod tests {
     use crate::services::metadata::mapping::ensure_config;
     use crate::services::metadata::{
         TrackMetadata,
-        cleanup::cleanup_orphaned_metadata,
         parse_metadata,
     };
     use agdb::QueryBuilder;
@@ -546,9 +545,48 @@ mod tests {
             }
         }
 
-        cleanup_orphaned_metadata(db)?;
+        collect_unreferenced_artists(db)?;
+        lyra_db::orphans::testing::assert_drained(db)
+    }
 
+    /// Collects the artist candidates as a scan's end does, after holding the writes before it
+    /// to having marked the artists they left.
+    fn collect_unreferenced_artists(db: &mut DbAny) -> anyhow::Result<()> {
+        lyra_db::orphans::testing::assert_artists_tracked(db)?;
+        lyra_db::orphans::testing::drain_artists(db)?;
         Ok(())
+    }
+
+    /// Removes `entry_db_id` as a purge does, collecting what `track_db_id` leaves once it has
+    /// no file.
+    fn remove_entry(db: &mut DbAny, entry_db_id: DbId, track_db_id: DbId) -> anyhow::Result<()> {
+        db.transaction_mut(|t| -> anyhow::Result<()> {
+            let track_sources =
+                lyra_db::graph::inbound_neighbor_ids(t, entry_db_id, "TrackSource")?;
+            t.exec_mut(QueryBuilder::remove().ids(entry_db_id).query())?;
+            lyra_db::orphans::collect(
+                t,
+                lyra_db::orphans::Candidates {
+                    tracks: vec![track_db_id],
+                    track_sources,
+                    ..Default::default()
+                },
+            )?;
+            Ok(())
+        })
+    }
+
+    fn collect_releases(db: &mut DbAny, releases: &[DbId]) -> anyhow::Result<()> {
+        db.transaction_mut(|t| -> anyhow::Result<()> {
+            lyra_db::orphans::collect(
+                t,
+                lyra_db::orphans::Candidates {
+                    releases: releases.to_vec(),
+                    ..Default::default()
+                },
+            )?;
+            Ok(())
+        })
     }
 
     #[test]
@@ -568,8 +606,8 @@ mod tests {
         connect_track_to_entry_source(&mut db, track_db_id, entry_db_id)?;
         lyra_db::test_db::connect_artist(&mut db, track_db_id, artist_db_id)?;
 
-        db.exec_mut(QueryBuilder::remove().ids(entry_db_id).query())?;
-        cleanup_orphaned_metadata(&mut db)?;
+        remove_entry(&mut db, entry_db_id, track_db_id)?;
+        collect_unreferenced_artists(&mut db)?;
 
         assert!(select_tracks(&db)?.is_empty());
         assert!(select_releases(&db)?.is_empty());
@@ -620,8 +658,8 @@ mod tests {
         connect(&mut db, track_db_id, ext_id)?;
 
         // Delete the entry → track becomes orphan
-        db.exec_mut(QueryBuilder::remove().ids(entry_db_id).query())?;
-        cleanup_orphaned_metadata(&mut db)?;
+        remove_entry(&mut db, entry_db_id, track_db_id)?;
+        collect_unreferenced_artists(&mut db)?;
 
         assert!(select_tracks(&db)?.is_empty());
         assert!(select_releases(&db)?.is_empty());
@@ -657,7 +695,7 @@ mod tests {
         lyra_db::test_db::connect_artist(&mut db, release_db_id, artist_db_id)?;
         connect_track_to_entry_source(&mut db, track_db_id, entry_db_id)?;
 
-        cleanup_orphaned_metadata(&mut db)?;
+        collect_unreferenced_artists(&mut db)?;
 
         assert_eq!(select_tracks(&db)?.len(), 1);
         assert_eq!(select_releases(&db)?.len(), 1);
@@ -735,7 +773,9 @@ mod tests {
             None,
         )?;
 
-        cleanup_orphaned_metadata(&mut db)?;
+        collect_releases(&mut db, &[release_db_id, empty_release_id])?;
+        lyra_db::orphans::testing::assert_collected(&db)?;
+        collect_unreferenced_artists(&mut db)?;
 
         assert!(lyra_db::artists::get_by_id(&db, hidden_id)?.is_some());
         assert!(lyra_db::artists::get_by_id(&db, member_id)?.is_some());
@@ -751,7 +791,7 @@ mod tests {
         db.transaction_mut(|t| {
             lyra_db::metadata::layers::remove_inside_tx(t, track_db_id, "provider")
         })?;
-        cleanup_orphaned_metadata(&mut db)?;
+        collect_unreferenced_artists(&mut db)?;
 
         assert!(lyra_db::artists::get_by_id(&db, hidden_id)?.is_none());
         assert!(lyra_db::artists::get_by_id(&db, member_id)?.is_none());
@@ -783,7 +823,9 @@ mod tests {
 
         lyra_db::test_db::connect_artist(&mut db, release_drop_id, artist_drop_id)?;
 
-        cleanup_orphaned_metadata(&mut db)?;
+        collect_releases(&mut db, &[release_keep_id, release_drop_id])?;
+        collect_unreferenced_artists(&mut db)?;
+        lyra_db::orphans::testing::assert_drained(&db)?;
 
         let releases = select_releases(&db)?;
         assert_eq!(releases.len(), 1);
@@ -1248,16 +1290,108 @@ mod tests {
             &Default::default(),
         )?;
 
-        cleanup_orphaned_metadata(&mut db)?;
+        collect_unreferenced_artists(&mut db)?;
         assert!(lyra_db::artists::get_by_id(&db, actor_id)?.is_some());
         assert_eq!(voice_actors_of(&db, character_id)?, vec!["Actor"]);
 
         crate::services::metadata::layers::clear_provider_layer(&mut db, character_id, "provider")?;
         assert!(voice_actors_of(&db, character_id)?.is_empty());
-        cleanup_orphaned_metadata(&mut db)?;
+        collect_unreferenced_artists(&mut db)?;
         assert!(lyra_db::artists::get_by_id(&db, actor_id)?.is_none());
         assert!(lyra_db::artists::get_by_id(&db, character_id)?.is_some());
         Ok(())
+    }
+
+    #[test]
+    fn a_file_read_under_another_source_drops_the_track_it_was() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let library =
+            test_db::insert_test_library_node(&mut db, "Album", PathBuf::from("/music/album"))?;
+        let library_id = library.db_id.unwrap();
+        let entry = insert_entry(&mut db, "/music/album/image.flac")?;
+        connect(&mut db, library_id, entry)?;
+        let whole = track_metadata(entry.0, "Whole", "Old Artist", None, Some(1), 1);
+        apply_metadata(&mut db, library_id, vec![whole])?;
+        let old_track: DbId = select_tracks(&db)?[0].db_id.clone().unwrap().into();
+        let old_release: DbId = select_releases(&db)?[0].db_id.clone().unwrap().into();
+        let old_source = lyra_db::graph::neighbor_ids(&db, old_track, "TrackSource")?[0];
+        // agdb reissues freed ids, so what is gone is told by its public id.
+        let mut old_ids = Vec::new();
+        for node in [old_track, old_release, old_source] {
+            old_ids.push(lyra_db::lookup::find_id_by_db_id(&db, node)?.expect("public id"));
+        }
+        let artist_names = |db: &DbAny| -> anyhow::Result<Vec<String>> {
+            let mut names: Vec<String> = select_artists(db)?
+                .into_iter()
+                .map(|artist| artist.artist_name)
+                .collect();
+            names.sort();
+            Ok(names)
+        };
+        collect_unreferenced_artists(&mut db)?;
+
+        // A cue sheet now splits the file, so the entry yields other sources.
+        let mut segments = Vec::new();
+        for number in 1..=2 {
+            let mut segment = track_metadata(entry.0, "Split", "New Artist", None, Some(1), number);
+            segment.source_key = format!("entry:{}:segment:{number}", entry.0);
+            segments.push(segment);
+        }
+        apply_metadata(&mut db, library_id, segments)?;
+
+        for id in &old_ids {
+            assert_eq!(lyra_db::lookup::find_node_id_by_id(&db, id)?, None);
+        }
+        assert_eq!(select_tracks(&db)?.len(), 2);
+        assert_eq!(select_releases(&db)?.len(), 1);
+        assert_eq!(
+            artist_names(&db)?,
+            ["New Artist", "Old Artist"],
+            "artists wait for the scan's end"
+        );
+        lyra_db::orphans::testing::assert_collected(&db)?;
+
+        collect_unreferenced_artists(&mut db)?;
+        assert_eq!(artist_names(&db)?, ["New Artist"]);
+        lyra_db::orphans::testing::assert_drained(&db)
+    }
+
+    #[test]
+    fn a_release_whose_tracks_all_join_another_goes_with_that_write() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let library =
+            test_db::insert_test_library_node(&mut db, "Albums", PathBuf::from("/music/albums"))?;
+        let library_id = library.db_id.unwrap();
+        let mut tracks = Vec::new();
+        for (number, album) in [(1, "Kept"), (2, "Kept"), (3, "Emptied")] {
+            let entry = insert_entry(&mut db, &format!("/music/albums/{number:02}.flac"))?;
+            connect(&mut db, library_id, entry)?;
+            tracks.push(track_metadata(
+                entry.0,
+                album,
+                "Artist",
+                None,
+                Some(1),
+                number,
+            ));
+        }
+        apply_metadata(&mut db, library_id, tracks.clone())?;
+        assert_eq!(select_releases(&db)?.len(), 2);
+        collect_unreferenced_artists(&mut db)?;
+
+        for track in &mut tracks {
+            track.album = Some("Kept".to_string());
+        }
+        apply_metadata(&mut db, library_id, tracks)?;
+
+        let releases = select_releases(&db)?;
+        assert_eq!(releases.len(), 1);
+        assert_eq!(releases[0].release_title, "Kept");
+        assert_eq!(select_tracks(&db)?.len(), 3);
+        lyra_db::orphans::testing::assert_collected(&db)?;
+        collect_unreferenced_artists(&mut db)?;
+        assert_eq!(select_artists(&db)?.len(), 1);
+        lyra_db::orphans::testing::assert_drained(&db)
     }
 
     #[test]
@@ -1344,7 +1478,7 @@ mod tests {
         }
         apply_metadata(&mut db, library_id, tracks.clone())?;
         apply_metadata(&mut db, library_id, vec![tracks[2].clone()])?;
-        cleanup_orphaned_metadata(&mut db)?;
+        collect_unreferenced_artists(&mut db)?;
 
         let releases = select_releases(&db)?;
         assert_eq!(releases.len(), 1);
@@ -1551,7 +1685,7 @@ mod tests {
         );
 
         apply_metadata(&mut db, library_id, vec![tracks[1].clone()])?;
-        cleanup_orphaned_metadata(&mut db)?;
+        collect_unreferenced_artists(&mut db)?;
 
         assert_eq!(artist_named(&db, "Mr Children")?, None);
         assert_eq!(select_artists(&db)?.len(), 1);
@@ -1696,7 +1830,7 @@ mod tests {
         }
 
         apply_metadata(&mut db, library_id, vec![metadata])?;
-        cleanup_orphaned_metadata(&mut db)?;
+        collect_unreferenced_artists(&mut db)?;
         for owner in [release_id, track_id] {
             assert_eq!(artists_of(&db, owner)?, split, "a rescan keeps the split");
         }

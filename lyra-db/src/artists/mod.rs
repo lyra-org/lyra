@@ -298,25 +298,6 @@ pub fn ids_with_type(
         .ids())
 }
 
-/// The artists any path of outgoing edges reaches from a release or track.
-pub fn reachable_from_catalog(db: &impl super::DbAccess) -> anyhow::Result<HashSet<DbId>> {
-    let mut reached = HashSet::new();
-    for root in [Root::Releases, Root::Tracks] {
-        reached.extend(
-            db.exec(
-                QueryBuilder::search()
-                    .from(root.alias())
-                    .where_()
-                    .key("db_element_id")
-                    .value("Artist")
-                    .query(),
-            )?
-            .ids(),
-        );
-    }
-    Ok(reached)
-}
-
 /// The credited artists, of `artist_type` when given.
 pub fn credited_ids(
     db: &impl super::DbAccess,

@@ -10,11 +10,9 @@ use std::collections::{
 };
 
 use agdb::{
-    CountComparison,
     DbAny,
     DbAnyTransactionMut,
     DbId,
-    QueryBuilder,
 };
 
 use super::id_links::{
@@ -34,188 +32,34 @@ use lyra_db::roots::{
 };
 use lyra_db::{
     Artist,
-    CueSheet,
-    CueTrack,
-    Release,
-    Track,
-    TrackSource,
+    DbAsync,
     graph::edge_count_map,
-    metadata::cascade_remove_entities,
 };
 
-pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
-    let all_tracks: Vec<Track> = roots::members::<Track>(db, Root::Tracks)?;
+/// How many artist candidates one write checks, and at most how many artists it removes;
+/// collecting many holds the write lock a batch at a time. A batch still reads every artist
+/// behind each candidate it checks.
+const ARTIST_BATCH: usize = 256;
 
-    let mut orphan_track_ids: Vec<DbId> = Vec::new();
-    for track in all_tracks {
-        let track_db_id: DbId = match track.db_id {
-            Some(id) => id.into(),
-            None => continue,
+/// Removes the artists nothing references any more, among the candidates the writes since the
+/// last collection left. Takes no write lock when there are none. Returns how many it removed.
+pub(crate) async fn collect_unreferenced_artists(db: &DbAsync) -> anyhow::Result<usize> {
+    if !lyra_db::orphans::has_artist_candidates(&*db.read().await)? {
+        return Ok(0);
+    }
+    let mut removed = 0;
+    loop {
+        let pass = {
+            let mut db_write = db.write().await;
+            let pass = lyra_db::orphans::collect_artist_candidates(&mut db_write, ARTIST_BATCH)?;
+            crate::services::covers::discard_listed_cover_files(&*db_write);
+            pass
         };
-        if lyra_db::entries::get_by_track(db, track_db_id)?.is_empty() {
-            orphan_track_ids.push(track_db_id);
+        removed += pass.removed;
+        if !pass.remaining {
+            return Ok(removed);
         }
     }
-
-    cascade_remove_entities(db, &orphan_track_ids)?;
-
-    let releases: Vec<Release> = roots::members::<Release>(db, Root::Releases)?;
-    let mut orphan_release_ids = Vec::new();
-    for release in releases {
-        let release_db_id: DbId = match release.db_id {
-            Some(id) => id.into(),
-            None => continue,
-        };
-        let tracks: Vec<Track> = db
-            .exec(
-                QueryBuilder::select()
-                    .elements::<Track>()
-                    .search()
-                    .from(release_db_id)
-                    .query(),
-            )?
-            .try_into()?;
-        if tracks.is_empty() {
-            orphan_release_ids.push(release_db_id);
-        }
-    }
-
-    cascade_remove_entities(db, &orphan_release_ids)?;
-
-    let connected_artist_ids = lyra_db::artists::reachable_from_catalog(db)?;
-    let all_artists: Vec<Artist> = roots::members::<Artist>(db, Root::Artists)?;
-    let mut orphan_artist_ids: Vec<DbId> = all_artists
-        .into_iter()
-        .filter_map(|artist| {
-            let artist_db_id: DbId = artist.db_id?.into();
-            if connected_artist_ids.contains(&artist_db_id) {
-                None
-            } else {
-                Some(artist_db_id)
-            }
-        })
-        .collect();
-    // Layer edges point from an artist into the layer, so the walk from the
-    // roots misses artists that only layers reference.
-    let spared = lyra_db::metadata::layers::edges::spared_artists(
-        db,
-        &orphan_artist_ids.iter().copied().collect(),
-    )?;
-    orphan_artist_ids.retain(|artist_id| !spared.contains(artist_id));
-
-    cascade_remove_entities(db, &orphan_artist_ids)?;
-
-    // Cleanup order matters for cue/source graph nodes:
-    // 1) remove orphan track_sources, 2) then orphan cue_tracks no longer referenced
-    // by any source, 3) then orphan cue_sheets with no remaining cue_track children.
-    let all_track_sources: Vec<TrackSource> =
-        roots::members::<TrackSource>(db, Root::TrackSources)?;
-    let mut orphan_track_source_ids = Vec::new();
-    for source in all_track_sources {
-        let Some(source_db_id) = source.db_id else {
-            continue;
-        };
-        let incoming = db.exec(
-            QueryBuilder::search()
-                .to(source_db_id)
-                .where_()
-                .edge()
-                .and()
-                .distance(CountComparison::Equal(1))
-                .query(),
-        )?;
-        let mut has_track_ref = false;
-        for edge in incoming.elements {
-            if edge.to != source_db_id {
-                continue;
-            }
-            let from_id = edge.from;
-            if from_id.0 == 0 {
-                continue;
-            }
-            if lyra_db::tracks::get_by_id(db, from_id)?.is_some() {
-                has_track_ref = true;
-                break;
-            }
-        }
-        if !has_track_ref {
-            orphan_track_source_ids.push(source_db_id);
-        }
-    }
-    cascade_remove_entities(db, &orphan_track_source_ids)?;
-
-    let all_cue_tracks: Vec<CueTrack> = roots::members::<CueTrack>(db, Root::CueTracks)?;
-    let mut orphan_cue_track_ids = Vec::new();
-    for cue_track in all_cue_tracks {
-        let Some(cue_track_db_id) = cue_track.db_id else {
-            continue;
-        };
-        let incoming = db.exec(
-            QueryBuilder::search()
-                .to(cue_track_db_id)
-                .where_()
-                .edge()
-                .and()
-                .distance(CountComparison::Equal(1))
-                .query(),
-        )?;
-        let mut has_source_ref = false;
-        for edge in incoming.elements {
-            if edge.to != cue_track_db_id {
-                continue;
-            }
-            let from_id = edge.from;
-            if from_id.0 == 0 {
-                continue;
-            }
-            if lyra_db::track_sources::get_by_id(db, from_id)?.is_some() {
-                has_source_ref = true;
-                break;
-            }
-        }
-        if !has_source_ref {
-            orphan_cue_track_ids.push(cue_track_db_id);
-        }
-    }
-    cascade_remove_entities(db, &orphan_cue_track_ids)?;
-
-    let all_cue_sheets: Vec<CueSheet> = roots::members::<CueSheet>(db, Root::CueSheets)?;
-    let mut orphan_cue_sheet_ids = Vec::new();
-    for cue_sheet in all_cue_sheets {
-        let Some(cue_sheet_db_id) = cue_sheet.db_id else {
-            continue;
-        };
-        let outgoing = db.exec(
-            QueryBuilder::search()
-                .from(cue_sheet_db_id)
-                .where_()
-                .edge()
-                .and()
-                .distance(CountComparison::Equal(1))
-                .query(),
-        )?;
-        let mut has_cue_track_ref = false;
-        for edge in outgoing.elements {
-            if edge.from != cue_sheet_db_id {
-                continue;
-            }
-            let to_id = edge.to;
-            if to_id.0 == 0 {
-                continue;
-            }
-            if lyra_db::cue::tracks::get_by_id(db, to_id)?.is_some() {
-                has_cue_track_ref = true;
-                break;
-            }
-        }
-        if !has_cue_track_ref {
-            orphan_cue_sheet_ids.push(cue_sheet_db_id);
-        }
-    }
-    cascade_remove_entities(db, &orphan_cue_sheet_ids)?;
-    crate::services::covers::discard_listed_cover_files(db);
-
-    Ok(())
 }
 
 /// Merge artists that share the same external ID (e.g. MusicBrainz MBID) but were
@@ -280,12 +124,17 @@ fn select_merge_winner(
     artist_lookup: &HashMap<DbId, Artist>,
     artist_ids: &[DbId],
 ) -> anyhow::Result<DbId> {
-    // Layer edges are not effective references, so they never pick the winner.
+    // Layer edges are not effective references, so they never pick the winner; nor is waiting
+    // for a collection.
     let mut edge_counts = edge_count_map(db, artist_ids)?;
     for (&artist_id, count) in &mut edge_counts {
-        *count = count.saturating_sub(lyra_db::metadata::layers::edges::reference_count(
-            db, artist_id,
-        )?);
+        *count = count
+            .saturating_sub(lyra_db::metadata::layers::edges::reference_count(
+                db, artist_id,
+            )?)
+            .saturating_sub(u64::from(lyra_db::orphans::is_artist_candidate(
+                db, artist_id,
+            )?));
     }
     let mut ordered_ids = artist_ids.to_vec();
 
@@ -471,6 +320,7 @@ pub(super) fn migrate_metadata(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agdb::QueryBuilder;
     use lyra_db::{
         IdSource,
         test_db,
@@ -480,7 +330,58 @@ mod tests {
         db: &mut DbAny,
         declared: &DeclaredIds,
     ) -> anyhow::Result<u32> {
-        super::deduplicate_artists_by_external_id(db, declared, &MergeJournal::default())
+        let merged =
+            super::deduplicate_artists_by_external_id(db, declared, &MergeJournal::default())?;
+        lyra_db::orphans::testing::assert_artists_tracked(db)?;
+        Ok(merged)
+    }
+
+    #[tokio::test]
+    async fn collecting_artists_takes_no_write_lock_without_candidates() -> anyhow::Result<()> {
+        let db = DbAsync::new(test_db::new_test_db()?);
+        let (credited, unreferenced) = {
+            let mut db = db.write().await;
+            let track = lyra_db::fixtures::insert_track(&mut db, "Track")?;
+            let credited = lyra_db::artists::create(&mut *db, "Credited", None)?;
+            test_db::connect_artist(&mut db, track, credited)?;
+            (
+                credited,
+                lyra_db::artists::create(&mut *db, "Unreferenced", None)?,
+            )
+        };
+
+        assert_eq!(collect_unreferenced_artists(&db).await?, 1);
+        {
+            let db = db.read().await;
+            assert!(lyra_db::artists::get_by_id(&*db, credited)?.is_some());
+            assert!(lyra_db::artists::get_by_id(&*db, unreferenced)?.is_none());
+        }
+
+        // A writer would wait for this reader for ever.
+        let reading = db.read().await;
+        let collected = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            collect_unreferenced_artists(&db),
+        )
+        .await;
+        drop(reading);
+        assert_eq!(collected.expect("no write lock is taken")?, 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn collecting_goes_on_past_one_batch_of_candidates() -> anyhow::Result<()> {
+        let db = DbAsync::new(test_db::new_test_db()?);
+        {
+            let mut db = db.write().await;
+            for index in 0..ARTIST_BATCH + 3 {
+                lyra_db::artists::create(&mut *db, &format!("Artist {index}"), None)?;
+            }
+        }
+
+        assert_eq!(collect_unreferenced_artists(&db).await?, ARTIST_BATCH + 3);
+
+        lyra_db::orphans::testing::assert_drained(&*db.read().await)
     }
 
     #[test]
