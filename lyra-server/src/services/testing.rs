@@ -890,8 +890,7 @@ mod fake_dispatch {
                     .ok_or_else(|| anyhow!("metadata handler {handler_id} not found"))?;
                 self.record(handler_id, request.context);
                 if let FakeResponse::UntilDeadline = response {
-                    tokio::time::sleep_until(tokio::time::Instant::from_std(request.deadline))
-                        .await;
+                    tokio::time::sleep(request.timeout).await;
                     bail!("plugin handler deadline expired");
                 }
                 Ok(MetadataRefreshResult {

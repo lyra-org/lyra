@@ -113,7 +113,7 @@ async fn refresh_call(provider: &str, value: i64) -> Result<i64, ProviderCallErr
                 .metadata_refresh(MetadataRefreshRequest {
                     handler,
                     context: serde_json::json!({ "value": value }),
-                    deadline: Instant::now() + Duration::from_secs(30),
+                    timeout: Duration::from_secs(30),
                 })
                 .await?;
             result.values[0].as_i64().context("handler's answer")

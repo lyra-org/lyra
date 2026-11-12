@@ -149,8 +149,8 @@ impl PluginExecutor {
 
 /// The time by `vm`'s scheduler. The executor makes every deadline it gives the scheduler from
 /// this and checks each against it, so a test that installs a manual clock decides when they
-/// pass. A deadline that arrives with a request is the caller's to make: by the real clock in
-/// production, which the scheduler's is there, and from the installed clock in such a test.
+/// pass. A request carries how long its handler has, which becomes a deadline here, once the
+/// executor takes the request up.
 pub(crate) fn now(vm: &harmony_luau::Vm) -> harmony_luau::runtime::Result<std::time::Instant> {
     Ok(vm.data().get::<LocalScheduler>()?.now())
 }

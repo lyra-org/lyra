@@ -1536,7 +1536,7 @@ fn plugin_executor_rejects_handles_from_another_runtime() -> Result<()> {
     let refresh_request = |handler| MetadataRefreshRequest {
         handler,
         context: serde_json::json!({}),
-        deadline: std::time::Instant::now() + Duration::from_secs(5),
+        timeout: Duration::from_secs(5),
     };
 
     let result = runtime.dispatch_metadata_refresh(refresh_request(own.refresh))?;

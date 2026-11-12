@@ -914,7 +914,7 @@ mod tests {
             .dispatch_metadata_refresh(MetadataRefreshRequest {
                 handler,
                 context: serde_json::json!({}),
-                deadline: std::time::Instant::now() + std::time::Duration::from_secs(5),
+                timeout: std::time::Duration::from_secs(5),
             })
             .await?;
 

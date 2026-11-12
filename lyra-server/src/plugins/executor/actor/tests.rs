@@ -95,11 +95,10 @@ struct DispatchHandlers {
 }
 
 /// Calls `provider`'s release refresh from the VM a handler runs on, as a host function reaches a
-/// provider, giving it until `deadline`.
+/// provider, giving it [`NESTED_TIMEOUT`].
 async fn nested_refresh(
     calls: &super::super::VmCalls,
     provider: &str,
-    deadline: Instant,
 ) -> Result<(), crate::services::providers::ProviderCallError> {
     use crate::services::plugin_dispatch::RuntimeCalls;
     use crate::services::providers::{
@@ -122,7 +121,7 @@ async fn nested_refresh(
             let request = MetadataRefreshRequest {
                 handler,
                 context: serde_json::json!({ "value": 42 }),
-                deadline,
+                timeout: NESTED_TIMEOUT,
             };
             calls.metadata_refresh(request).await.map(|_| ())
         },
@@ -202,9 +201,8 @@ fn dispatch_runtime(
                     FunctionSpec::new("refresh").call_async(Arc::new(|mut frame| {
                         let provider: String = frame.args.read_named("provider")?;
                         let calls = super::super::VmCalls::of(frame.vm, &frame.context)?;
-                        let deadline = super::super::now(frame.vm)? + NESTED_TIMEOUT;
                         Ok(harmony_luau::ScheduledFuture::new(async move {
-                            nested_refresh(&calls, &provider, deadline)
+                            nested_refresh(&calls, &provider)
                                 .await
                                 .map_err(crate::plugins::runtime_error)?;
                             Ok(true)
@@ -429,7 +427,7 @@ impl StagedExecutor {
         let request = MetadataRefreshRequest {
             handler,
             context: serde_json::json!({ "value": 42 }),
-            deadline: self.clock.now() + timeout,
+            timeout,
         };
         self.runtime.start_metadata_refresh(request, reply, permit);
         Ok(answer)
@@ -633,6 +631,35 @@ async fn a_nested_handler_ready_after_its_caller_s_deadline_is_not_resumed() -> 
     deadline_expired(answer)
 }
 
+/// A request carries how long its handler has, not until when: the time counts from when the
+/// executor takes the request up, by its clock, however long ago the request was made.
+#[tokio::test]
+async fn a_handler_s_timeout_counts_from_when_the_executor_takes_its_request() -> Result<()> {
+    let _guard = crate::services::testing::runtime_test_lock().await;
+    crate::plugins::testing::init_default_test_state()?;
+    let mut executor = StagedExecutor::new()?;
+    let (reply, mut answer) = tokio::sync::oneshot::channel();
+    let permit = Arc::new(tokio::sync::Semaphore::new(1)).try_acquire_owned()?;
+    let request = request(executor.slow, STAGED_TIMEOUT);
+
+    executor.clock.advance(STAGED_TIMEOUT * 2);
+    executor
+        .runtime
+        .start_metadata_refresh(request, reply, permit);
+    executor.runtime.run_until_idle()?;
+    executor.started.try_recv().context("the handler waits")?;
+
+    executor
+        .clock
+        .advance(STAGED_TIMEOUT - Duration::from_nanos(1));
+    executor.runtime.run_until_idle()?;
+    assert!(unanswered(&mut answer), "expired before its deadline");
+
+    executor.clock.advance(Duration::from_nanos(1));
+    executor.runtime.run_until_idle()?;
+    deadline_expired(answer)
+}
+
 /// How long the spinning handler has left, by the clock, when it goes on after its wait.
 const LEFT_TO_SPIN: Duration = Duration::from_millis(50);
 
@@ -802,8 +829,7 @@ fn answer_for_a_nested_call_ending(
     use futures::FutureExt;
 
     let calls = super::super::VmCalls::of(&executor.runtime.vm, &Default::default())?;
-    let deadline = executor.clock.now() + NESTED_TIMEOUT;
-    let mut call = std::pin::pin!(nested_refresh(&calls, "dispatch-slow", deadline));
+    let mut call = std::pin::pin!(nested_refresh(&calls, "dispatch-slow"));
     assert!(
         call.as_mut().now_or_never().is_none(),
         "the call ended before its handler ran"
@@ -847,7 +873,7 @@ fn request(handler: PluginCallbackHandle, timeout: Duration) -> MetadataRefreshR
     MetadataRefreshRequest {
         handler,
         context: serde_json::json!({ "value": 42 }),
-        deadline: Instant::now() + timeout,
+        timeout,
     }
 }
 
@@ -917,8 +943,7 @@ async fn expired_metadata_never_starts_and_completed_callback_returns_its_values
     let _guard = crate::services::testing::runtime_test_lock().await;
     crate::plugins::testing::init_default_test_state()?;
     let mut executor = test_executor()?;
-    let mut expired = request(executor.slow, Duration::ZERO);
-    expired.deadline = Instant::now() - Duration::from_secs(1);
+    let expired = request(executor.slow, Duration::ZERO);
     assert!(
         executor
             .handle

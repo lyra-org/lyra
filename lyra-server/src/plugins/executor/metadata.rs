@@ -80,7 +80,7 @@ impl PluginExecutor {
         self.start_metadata_task(
             handler,
             request.context,
-            request.deadline,
+            self.now() + request.timeout,
             super::callbacks::CallbackReply::Refresh(reply),
             permit,
         );
@@ -373,13 +373,14 @@ impl RuntimeCalls for VmCalls {
             .get::<crate::plugins::metadata::MetadataCallbackRegistry>()?
             .get(request.handler)?;
         let argument = harmony_serde::json_to_luau_owned(request.context, 0)?;
+        let deadline = super::now(&self.vm)? + request.timeout;
         let values = run_handler(
             &self.vm,
             &self.chain,
             &handler,
             MetadataDispatchContext,
             vec![argument],
-            request.deadline,
+            deadline,
             None,
         )
         .await

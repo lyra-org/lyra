@@ -1088,7 +1088,7 @@ mod tests {
                     crate::services::plugin_dispatch::MetadataRefreshRequest {
                         handler,
                         context: serde_json::json!({ "value": 42 }),
-                        deadline: std::time::Instant::now() + std::time::Duration::from_secs(30),
+                        timeout: std::time::Duration::from_secs(30),
                     },
                 )
                 .await

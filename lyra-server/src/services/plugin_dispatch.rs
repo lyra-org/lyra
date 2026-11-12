@@ -331,7 +331,34 @@ impl DispatchCancellation {
 pub(crate) struct MetadataRefreshRequest {
     pub(crate) handler: PluginCallbackHandle,
     pub(crate) context: serde_json::Value,
-    pub(crate) deadline: std::time::Instant,
+    /// How long the handler has from when the runtime takes the request up, which for a queued
+    /// one is after its wait for the runtime.
+    pub(crate) timeout: Duration,
+}
+
+/// How long past a handler's timeout its caller still waits for the plugin runtime's answer. The
+/// handler's time starts when the runtime takes the request up, so this covers the request's
+/// wait for the runtime, and then the runtime's cancelling of a late handler's thread, which it
+/// answers only after. A caller that holds something across the call, as a provider's call lock
+/// keeps one provider's calls from overlapping, releases it after that answer only when the wait
+/// for the runtime fits in here.
+pub(crate) const HANDLER_ANSWER_GRACE: Duration = Duration::from_secs(5);
+
+/// Calls a metadata handler through `calls` and waits for its answer, no longer than the
+/// request's timeout and [`HANDLER_ANSWER_GRACE`]. `handler` names it in that failure, as
+/// "lyrics handler".
+pub(crate) async fn call_metadata_handler<C: RuntimeCalls>(
+    calls: &C,
+    handler: &str,
+    request: MetadataRefreshRequest,
+) -> Result<MetadataRefreshResult> {
+    let timeout = request.timeout;
+    tokio::time::timeout(
+        timeout.saturating_add(HANDLER_ANSWER_GRACE),
+        calls.metadata_refresh(request),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("{handler} timed out after {} ms", timeout.as_millis()))?
 }
 
 #[derive(Clone, Debug)]

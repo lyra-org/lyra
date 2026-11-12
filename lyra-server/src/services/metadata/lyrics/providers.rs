@@ -39,6 +39,7 @@ use crate::{
         MetadataRefreshRequest,
         RuntimeCalls,
         TransitionWait,
+        call_metadata_handler,
     },
     services::providers::{
         ExternalIdsByScheme,
@@ -403,13 +404,9 @@ async fn call_lyrics_handler<C: RuntimeCalls>(
     let request = MetadataRefreshRequest {
         handler: spec.handler,
         context: track_context_to_json(context),
-        deadline: std::time::Instant::now() + timeout,
+        timeout,
     };
-    let result = tokio::time::timeout(timeout, calls.metadata_refresh(request))
-        .await
-        .map_err(|_| {
-            anyhow::anyhow!("lyrics handler timed out after {} ms", timeout.as_millis())
-        })??;
+    let result = call_metadata_handler(calls, "lyrics handler", request).await?;
     let value = result
         .values
         .into_iter()
@@ -814,7 +811,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn failures_are_reported_without_skipping_other_providers() -> anyhow::Result<()> {
         let _guard = crate::services::testing::runtime_test_lock().await;
         let dispatch = initialize_test_runtime().await?;

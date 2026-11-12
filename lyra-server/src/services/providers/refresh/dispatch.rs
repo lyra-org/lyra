@@ -13,6 +13,7 @@ use crate::services::{
         MetadataRefreshResult,
         PluginCallbackHandle,
         RuntimeCalls,
+        call_metadata_handler,
     },
     providers::{
         ProviderCallError,
@@ -24,33 +25,22 @@ use crate::services::{
 
 const DEFAULT_METADATA_REFRESH_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// How long past a handler's deadline the server still waits for the plugin
-/// runtime's answer. The runtime answers a late handler only once it has
-/// cancelled its thread, so the provider's call lock, which keeps one
-/// provider's refreshes from overlapping, is released only after that.
-const METADATA_REFRESH_DEADLINE_GRACE: Duration = Duration::from_secs(5);
-
 async fn run_metadata_handler<C: RuntimeCalls>(
     role: &str,
     calls: &C,
     handler: PluginCallbackHandle,
     context: serde_json::Value,
 ) -> anyhow::Result<MetadataRefreshResult> {
-    tokio::time::timeout(
-        DEFAULT_METADATA_REFRESH_TIMEOUT + METADATA_REFRESH_DEADLINE_GRACE,
-        calls.metadata_refresh(MetadataRefreshRequest {
+    call_metadata_handler(
+        calls,
+        &format!("{role} handler"),
+        MetadataRefreshRequest {
             handler,
             context,
-            deadline: std::time::Instant::now() + DEFAULT_METADATA_REFRESH_TIMEOUT,
-        }),
+            timeout: DEFAULT_METADATA_REFRESH_TIMEOUT,
+        },
     )
     .await
-    .map_err(|_| {
-        anyhow::anyhow!(
-            "{role} handler timed out after {} ms",
-            DEFAULT_METADATA_REFRESH_TIMEOUT.as_millis()
-        )
-    })?
 }
 
 pub(super) async fn dispatch_refresh<S: CallSource>(

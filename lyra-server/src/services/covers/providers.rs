@@ -28,8 +28,8 @@ use crate::{
         CallSource,
         MetadataRefreshRequest,
         Published,
-        RuntimeCalls,
         TransitionWait,
+        call_metadata_handler,
     },
     services::providers::{
         ExternalIdsByScheme,
@@ -53,6 +53,7 @@ use lyra_db::{
 
 use super::CoverImageCandidate;
 
+const PROVIDER_SEARCH_TIMEOUT: Duration = Duration::from_secs(300);
 const PROVIDER_COVER_CACHE_HIT_TTL: Duration = Duration::from_secs(30 * 60);
 const PROVIDER_COVER_CACHE_MISS_TTL: Duration = Duration::from_secs(5 * 60);
 pub(crate) const DEFAULT_COVER_HANDLER_TIMEOUT: Duration = Duration::from_secs(15);
@@ -323,14 +324,17 @@ pub(crate) async fn search_provider(
         |handler, calls| {
             let query = query.clone();
             async move {
-                calls
-                    .metadata_refresh(MetadataRefreshRequest {
+                call_metadata_handler(
+                    &calls,
+                    &format!("provider search handler for '{provider}'"),
+                    MetadataRefreshRequest {
                         handler,
                         context: serde_json::Value::String(query),
-                        deadline: std::time::Instant::now() + Duration::from_secs(300),
-                    })
-                    .await
-                    .with_context(|| format!("provider search handler failed for '{provider}'"))
+                        timeout: PROVIDER_SEARCH_TIMEOUT,
+                    },
+                )
+                .await
+                .with_context(|| format!("provider search handler failed for '{provider}'"))
             }
         },
     )
@@ -788,22 +792,16 @@ async fn search_provider_cover<S: CallSource>(
         |spec, calls| {
             let handler_context = handler_context.clone();
             async move {
-                let timeout = spec.timeout;
-                tokio::time::timeout(
-                    timeout,
-                    calls.metadata_refresh(MetadataRefreshRequest {
+                call_metadata_handler(
+                    &calls,
+                    &format!("provider cover handler for '{provider_id}'"),
+                    MetadataRefreshRequest {
                         handler: spec.handler,
                         context: handler_context,
-                        deadline: std::time::Instant::now() + timeout,
-                    }),
+                        timeout: spec.timeout,
+                    },
                 )
                 .await
-                .with_context(|| {
-                    format!(
-                        "provider cover handler for '{provider_id}' timed out after {}ms",
-                        timeout.as_millis()
-                    )
-                })?
                 .map(Some)
             }
         },
