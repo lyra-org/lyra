@@ -35,6 +35,7 @@ use super::bootstrap::{
 
 mod listen_totals;
 mod reported_session_key;
+mod unreferenced;
 
 /// The release before this version; its databases run every step in `STEPS`.
 pub(crate) const PREVIOUS_RELEASE: Option<&str> = Some("0.0.1");
@@ -43,7 +44,11 @@ pub(crate) type Step = fn(&mut DbAnyTransactionMut<'_>) -> anyhow::Result<()>;
 
 /// Rewrites stored data from the shape `PREVIOUS_RELEASE` left it in, one
 /// change at a time. Append only: databases record how many steps they ran.
-pub(crate) const STEPS: &[Step] = &[reported_session_key::run, listen_totals::run];
+pub(crate) const STEPS: &[Step] = &[
+    reported_session_key::run,
+    listen_totals::run,
+    unreferenced::run,
+];
 
 const STAMP_ALIAS: &str = "server";
 const VERSION_KEY: &str = "lyra_version";
