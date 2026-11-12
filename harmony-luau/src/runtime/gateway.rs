@@ -123,6 +123,14 @@ unsafe extern "C-unwind" {
         co: *mut lua_State,
         status: *mut c_int,
     ) -> c_int;
+    fn harmony_luau_gateway_closethread(
+        L: *mut lua_State,
+        co: *mut lua_State,
+        costatus: *mut c_int,
+    ) -> c_int;
+    fn harmony_luau_gateway_closeyielded(co: *mut lua_State);
+    fn harmony_luau_gateway_cancelthread(co: *mut lua_State);
+    fn harmony_luau_gateway_iscancelled(L: *mut lua_State) -> c_int;
     fn harmony_luau_gateway_openlibrary(L: *mut lua_State, name: *const c_char) -> c_int;
     fn harmony_luau_gateway_sandbox(L: *mut lua_State) -> c_int;
     fn harmony_luau_gateway_sandboxthread(L: *mut lua_State) -> c_int;
@@ -483,6 +491,73 @@ pub(super) unsafe fn resume_error(
         )?;
         resume_status(thread, status)
     }
+}
+
+/// A thread's state as `coroutine.status` reports it from the thread `from`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CoStatus {
+    Running,
+    Suspended,
+    /// It has resumed another thread. A running thread reads so too from any thread but itself.
+    Normal,
+    Dead,
+}
+
+impl CoStatus {
+    /// On the stack of what runs now.
+    pub(super) fn is_live(self) -> bool {
+        matches!(self, Self::Running | Self::Normal)
+    }
+}
+
+/// Reads a value of Luau's `lua_CoStatus`.
+fn co_status_from(costatus: c_int) -> CoStatus {
+    match costatus {
+        0 => CoStatus::Running,
+        1 => CoStatus::Suspended,
+        2 => CoStatus::Normal,
+        _ => CoStatus::Dead,
+    }
+}
+
+/// Resets a suspended `thread` as `coroutine.close` does, leaving it dead, and leaves a dead one
+/// as it is. Returns whether it is dead: a live one is left alone.
+///
+/// The reset allocates to shrink the stack. Failing there before the thread reads as dead leaves
+/// a suspended thread with no frame, which a resume would run as garbage, so the process aborts.
+pub(super) unsafe fn close_thread(from: *mut lua_State, thread: *mut lua_State) -> bool {
+    let mut costatus = 0;
+    unsafe {
+        let status = harmony_luau_gateway_closethread(from, thread, &mut costatus);
+        if status != sys::LUA_OK {
+            sys::lua_pop(from, 1);
+        }
+    }
+    match co_status_from(costatus) {
+        CoStatus::Suspended => std::process::abort(),
+        status => !status.is_live(),
+    }
+}
+
+/// Resets `thread`, which a resume has just left suspended, as `coroutine.close` does. A reset
+/// that fails aborts the process, as [`close_thread`] does.
+///
+/// # Safety
+///
+/// The thread is one a resume has just yielded, which isn't running.
+pub(super) unsafe fn close_yielded(thread: *mut lua_State) {
+    unsafe { harmony_luau_gateway_closeyielded(thread) }
+}
+
+/// Marks `thread` as cancelled, for as long as it exists: it runs on, but is closed where it next
+/// yields.
+pub(super) unsafe fn cancel_thread(thread: *mut lua_State) {
+    unsafe { harmony_luau_gateway_cancelthread(thread) }
+}
+
+/// Whether [`cancel_thread`] marked `thread`.
+pub(super) unsafe fn is_cancelled(thread: *mut lua_State) -> bool {
+    unsafe { harmony_luau_gateway_iscancelled(thread) != 0 }
 }
 
 unsafe fn resume_status(thread: *mut lua_State, status: c_int) -> Result<bool> {

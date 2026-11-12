@@ -59,6 +59,7 @@ pub use runtime::{
     TaskGroupId,
     Thread,
     ThreadData,
+    ThreadEnd,
     ThreadStatus,
     ToLuau,
     UserData,

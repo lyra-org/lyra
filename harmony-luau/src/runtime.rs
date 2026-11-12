@@ -342,7 +342,9 @@ impl Vm {
         let control = NonNull::new(control).expect("Box::into_raw never returns null");
         unsafe {
             sys::lua_set_callback_userdata(state.as_ptr(), control.as_ptr().cast());
-            (*sys::lua_callbacks(state.as_ptr())).userthread = Some(userthread);
+            let callbacks = sys::lua_callbacks(state.as_ptr());
+            (*callbacks).userthread = Some(userthread);
+            (*callbacks).postresume = Some(postresume);
         }
         let vm = Self {
             inner: Rc::new(VmInner {
@@ -1135,6 +1137,15 @@ struct VmControl {
 }
 
 impl VmControl {
+    /// Runs `close` outside the memory limit, which shrinking a closed thread's stack could
+    /// otherwise hit partway.
+    fn without_memory_limit<T>(&self, close: impl FnOnce() -> T) -> T {
+        let limit = self.memory_limit.swap(0, Ordering::Relaxed);
+        let closed = close();
+        self.memory_limit.store(limit, Ordering::Relaxed);
+        closed
+    }
+
     fn new(options: VmOptions) -> Self {
         Self {
             allocated: AtomicUsize::new(0),
@@ -1392,6 +1403,15 @@ impl Function {
     }
 }
 
+/// How [`Thread::cancel`] left a thread.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThreadEnd {
+    /// Dead.
+    Closed,
+    /// Live still, and closed where it next yields.
+    ClosedAtYield,
+}
+
 #[derive(Clone)]
 pub struct Thread {
     inner: Rc<ThreadInner>,
@@ -1412,6 +1432,11 @@ impl Thread {
     /// a metamethod, a `table.sort` comparator, or a host `pcall`.
     pub fn is_yieldable(&self) -> bool {
         unsafe { sys::lua_isyieldable(self.inner.state.as_ptr()) != 0 }
+    }
+
+    /// Whether [`Self::cancel`] found the thread live, so that it is closed where it next yields.
+    pub fn is_cancelled(&self) -> bool {
+        unsafe { gateway::is_cancelled(self.inner.state.as_ptr()) }
     }
 
     fn new(
@@ -1451,8 +1476,9 @@ impl Thread {
         &self.inner.data
     }
 
+    /// Whether the thread has run, or was closed and never will.
     pub fn is_started(&self) -> bool {
-        self.inner.started.get() || self.has_started_state()
+        self.inner.started.get() || self.inner.finished.get() || self.has_started_state()
     }
 
     fn reference(&self) -> Option<&RegistryRef> {
@@ -1495,6 +1521,56 @@ impl Thread {
         self.finish_resume(vm, resumed)
     }
 
+    /// Closes the thread as `coroutine.close` does: Luau reports it as `dead` and nothing resumes
+    /// it again. One that hasn't started never runs, and one that has ended stays as it is. Fails,
+    /// leaving the thread alone, for one that is running or has resumed another, and for the VM's
+    /// main thread, which is no coroutine.
+    ///
+    /// Closing frees the thread's stack, which allocates a smaller one, outside the VM's memory
+    /// limit. If the allocator itself fails there, the process aborts: the thread is left
+    /// suspended with no frame, and resuming it would run garbage.
+    pub fn close(&self, vm: &Vm) -> Result<()> {
+        if self.try_close(vm)? {
+            return Ok(());
+        }
+        Err(Error::Runtime(
+            "cannot close a coroutine that is running or has resumed another".to_string(),
+        ))
+    }
+
+    /// [`Self::close`], or for a thread that is running or has resumed another, as soon as it
+    /// can be: where it next yields, before whatever resumed it runs again. Until then it runs
+    /// on, calls included. Nothing after that yield runs, and the resume returns no values, or
+    /// [`ThreadStatus::Closed`] from [`Self::resume`]. One that returns or fails first ends as any
+    /// other. The threads it has resumed are left as they are.
+    pub fn cancel(&self, vm: &Vm) -> Result<ThreadEnd> {
+        if self.try_close(vm)? {
+            return Ok(ThreadEnd::Closed);
+        }
+        unsafe { gateway::cancel_thread(self.inner.state.as_ptr()) };
+        Ok(ThreadEnd::ClosedAtYield)
+    }
+
+    /// Closes a thread that isn't live, and returns whether it is dead.
+    fn try_close(&self, vm: &Vm) -> Result<bool> {
+        if self.vm_id() != vm.inner.id {
+            return Err(Error::VmMismatch {
+                reference_vm: self.vm_id(),
+                actual_vm: vm.inner.id,
+            });
+        }
+        if self.inner.state == vm.inner.state {
+            return Err(Error::Runtime("cannot close the main thread".to_string()));
+        }
+        let closed = vm.inner.control().without_memory_limit(|| unsafe {
+            gateway::close_thread(vm.inner.state.as_ptr(), self.inner.state.as_ptr())
+        });
+        if closed {
+            self.inner.finished.set(true);
+        }
+        Ok(closed)
+    }
+
     /// Checks the thread can resume in `vm` and clears what its last resume left on its stack. A
     /// thread that has not started holds just its function, which stays below what is pushed.
     fn prepare_resume(&self, vm: &Vm) -> Result<*mut sys::lua_State> {
@@ -1517,6 +1593,11 @@ impl Thread {
     fn finish_resume(&self, vm: &Vm, resumed: Result<bool>) -> Result<ThreadStatus> {
         let state = self.inner.state.as_ptr();
         let result = resumed.and_then(|yielded| {
+            // Cancelled as it ran, and closed as it yielded.
+            if yielded && unsafe { sys::lua_status(state) } != sys::LUA_YIELD {
+                self.inner.finished.set(true);
+                return Ok(ThreadStatus::Closed);
+            }
             let top = unsafe { sys::lua_gettop(state) };
             let values = (1..=top)
                 .map(|index| vm.read_value_from(self.inner.state, StackIndex::absolute(index)))
@@ -1577,6 +1658,8 @@ impl ThreadData {
 pub enum ThreadStatus {
     Yielded(Vec<Value>),
     Completed(Vec<Value>),
+    /// Cancelled while it ran, and closed where it yielded: see [`Thread::cancel`].
+    Closed,
 }
 
 /// A table pinned in its VM's registry. Every access is raw: it bypasses
@@ -3515,6 +3598,23 @@ unsafe extern "C-unwind" fn userthread(parent: *mut sys::lua_State, thread: *mut
     }
 }
 
+/// Closes a thread [`Thread::cancel`] found live as soon as a resume leaves it suspended, before
+/// whatever resumed it runs again.
+unsafe extern "C-unwind" fn postresume(thread: *mut sys::lua_State) {
+    unsafe {
+        if sys::lua_status(thread) != sys::LUA_YIELD || !gateway::is_cancelled(thread) {
+            return;
+        }
+        match sys::lua_callback_userdata(thread)
+            .cast::<VmControl>()
+            .as_ref()
+        {
+            Some(control) => control.without_memory_limit(|| gateway::close_yielded(thread)),
+            None => gateway::close_yielded(thread),
+        }
+    }
+}
+
 unsafe extern "C-unwind" fn interrupt(state: *mut sys::lua_State, gc: c_int) {
     if state.is_null() || gc >= 0 {
         return;
@@ -4281,6 +4381,555 @@ mod tests {
             ])
         );
         assert_eq!(stack_top(&vm), 0);
+        Ok(())
+    }
+
+    /// What Luau makes of `thread`: its status, and what resuming it returns.
+    fn status_and_resume(vm: &Vm, thread: &Thread) -> Result<Vec<Value>> {
+        vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(
+                &b"local co = ...; return coroutine.status(co), coroutine.resume(co)"[..],
+            ),
+            ChunkOrigin::default(),
+        ))?
+        .call(vm, &[Value::Thread(thread.clone())])
+    }
+
+    fn dead() -> Vec<Value> {
+        vec![
+            Value::String(b"dead".to_vec()),
+            Value::Boolean(false),
+            Value::String(b"cannot resume dead coroutine".to_vec()),
+        ]
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn a_closed_thread_is_dead_to_luau_whatever_it_was_doing() -> Result<()> {
+        let vm = Vm::new()?;
+        vm.open_standard_libraries(StandardLibraries::all_supported())?;
+        let values = vm.eval(
+            Arc::<[u8]>::from(
+                &br#"
+                    local function descend(depth)
+                        if depth == 0 then
+                            coroutine.yield()
+                            ran_on = true
+                        else
+                            descend(depth - 1)
+                        end
+                        return depth
+                    end
+                    local suspended = coroutine.create(function() descend(100) end)
+                    coroutine.resume(suspended)
+                    local unstarted = coroutine.create(function() ran_on = true end)
+                    local finished = coroutine.create(function() end)
+                    coroutine.resume(finished)
+                    local failed = coroutine.create(function() error("boom") end)
+                    coroutine.resume(failed)
+                    return suspended, unstarted, finished, failed
+                "#[..],
+            ),
+            ChunkOrigin::default(),
+        )?;
+        assert_eq!(values.len(), 4);
+
+        for value in &values {
+            let Value::Thread(thread) = value else {
+                panic!("expected a thread");
+            };
+            thread.close(&vm)?;
+            thread.close(&vm)?;
+            assert_eq!(status_and_resume(&vm, thread)?, dead());
+            assert!(thread.resume(&vm, &[]).is_err());
+        }
+        assert_eq!(
+            vm.eval(
+                Arc::<[u8]>::from(&b"return ran_on"[..]),
+                ChunkOrigin::default()
+            )?,
+            vec![Value::Nil]
+        );
+        assert_eq!(stack_top(&vm), 0);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn a_thread_that_is_running_or_has_resumed_another_refuses_to_close() -> Result<()> {
+        let vm = Vm::new()?;
+        vm.open_standard_libraries(StandardLibraries::all_supported())?;
+        let close: NativeFn = Arc::new(|mut frame| {
+            let thread: Thread = frame.args.read()?;
+            frame.returns.write(thread.close(frame.vm).is_err())?;
+            Ok(())
+        });
+        let close = vm.create_function_with_options(
+            NativeFunctionOptions::new(ChunkOrigin::default()).function_name("close"),
+            close,
+        )?;
+        vm.set_global_function("close", &close)?;
+
+        assert_eq!(
+            vm.eval(
+                Arc::<[u8]>::from(
+                    &br#"
+                        return coroutine.wrap(function()
+                            local outer = coroutine.running()
+                            local inner = coroutine.create(function()
+                                local closed_self = close(coroutine.running())
+                                local closed_outer = close(outer)
+                                coroutine.yield(closed_self, closed_outer)
+                                return "went on"
+                            end)
+                            local _, closed_self, closed_outer = coroutine.resume(inner)
+                            return closed_self, closed_outer, select(2, coroutine.resume(inner))
+                        end)()
+                    "#[..],
+                ),
+                ChunkOrigin::default(),
+            )?,
+            vec![
+                Value::Boolean(true),
+                Value::Boolean(true),
+                Value::String(b"went on".to_vec()),
+            ]
+        );
+        Ok(())
+    }
+
+    /// A VM with natives for a thread to be cancelled live: `cancel(thread)` another, or its own
+    /// without one, `cancel_and_wait()` its own before asking to yield, and `wait()`, which asks
+    /// to yield.
+    fn vm_that_cancels() -> Result<Vm> {
+        let vm = Vm::new()?;
+        vm.open_standard_libraries(StandardLibraries::all_supported())?;
+        let cancel_live = |thread: &Thread, vm: &Vm| -> Result<()> {
+            assert_eq!(thread.cancel(vm)?, ThreadEnd::ClosedAtYield);
+            Ok(())
+        };
+        let cancel: NativeFn = Arc::new(move |mut frame| {
+            let thread: Option<Thread> = frame.args.read()?;
+            cancel_live(thread.as_ref().unwrap_or(&frame.thread), frame.vm)
+        });
+        let cancel_and_wait: NativeFn = Arc::new(move |mut frame| {
+            cancel_live(&frame.thread, frame.vm)?;
+            frame.returns.request_yield();
+            Ok(())
+        });
+        let wait: NativeFn = Arc::new(|mut frame| {
+            frame.returns.request_yield();
+            Ok(())
+        });
+        for (name, function) in [
+            ("cancel", cancel),
+            ("cancel_and_wait", cancel_and_wait),
+            ("wait", wait),
+        ] {
+            let function = vm.create_function_with_options(
+                NativeFunctionOptions::new(ChunkOrigin::default()).function_name(name),
+                function,
+            )?;
+            vm.set_global_function(name, &function)?;
+        }
+        Ok(vm)
+    }
+
+    fn eval_str(vm: &Vm, source: &str) -> Result<Vec<Value>> {
+        vm.eval(Arc::<[u8]>::from(source.as_bytes()), ChunkOrigin::default())
+    }
+
+    fn string(value: &str) -> Value {
+        Value::String(value.as_bytes().to_vec())
+    }
+
+    /// Runs `body` as the coroutine `co`, resumed by Luau code, and returns how many values that
+    /// resume returned and the first two, then `ran_on` and `went_on`, then the coroutine's
+    /// status and what resuming it again returns.
+    fn resume_body(vm: &Vm, body: &str) -> Vec<Value> {
+        eval_str(
+            vm,
+            &format!(
+                r#"
+                    ran_on, went_on = nil, nil
+                    co = coroutine.create(function() {body} end)
+                    local resumed = table.pack(coroutine.resume(co))
+                    return resumed.n, resumed[1], resumed[2], ran_on, went_on,
+                        coroutine.status(co), coroutine.resume(co)
+                "#
+            ),
+        )
+        .expect("the resuming chunk runs")
+    }
+
+    /// [`resume_body`] through `coroutine.wrap`: how many values the call returned, then
+    /// `ran_on` and `went_on`, then what calling it again raises.
+    fn wrap_body(vm: &Vm, body: &str) -> Vec<Value> {
+        eval_str(
+            vm,
+            &format!(
+                r#"
+                    ran_on, went_on = nil, nil
+                    local wrapped = coroutine.wrap(function() {body} end)
+                    local returned = table.pack(wrapped())
+                    return returned.n, ran_on, went_on, pcall(wrapped)
+                "#
+            ),
+        )
+        .expect("the calling chunk runs")
+    }
+
+    fn interrupt_is_installed(vm: &Vm) -> bool {
+        unsafe { (*sys::lua_callbacks(vm.inner.state.as_ptr())).interrupt }.is_some()
+    }
+
+    /// Each body runs on past the cancel, calls included, to where it yields, and is closed
+    /// there: the resume returns no values, and nothing after the yield runs.
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn a_thread_cancelled_while_it_runs_is_closed_where_it_next_yields() -> Result<()> {
+        let vm = vm_that_cancels()?;
+        for body in [
+            "cancel() ran_on = true coroutine.yield('lost') went_on = true",
+            "cancel() ran_on = true wait() went_on = true",
+            "ran_on = true cancel_and_wait() went_on = true",
+            "cancel() ran_on = true pcall(coroutine.yield) went_on = true",
+            "cancel() ran_on = true pcall(wait) went_on = true",
+            "cancel() ran_on = true xpcall(coroutine.yield, error) went_on = true",
+            "cancel() ran_on = true while true do pcall(coroutine.yield) end",
+            // Luau's own, which still holds the thread yieldable.
+            "cancel() ran_on = coroutine.isyieldable() coroutine.yield() went_on = true",
+            // Cancelled by a coroutine it resumed, while it wasn't the one running.
+            r#"
+                local outer = coroutine.running()
+                coroutine.resume(coroutine.create(function() cancel(outer) end))
+                ran_on = true
+                coroutine.yield()
+                went_on = true
+            "#,
+        ] {
+            assert_eq!(
+                resume_body(&vm, body),
+                vec![
+                    Value::Number(1.0),
+                    Value::Boolean(true),
+                    Value::Nil,
+                    Value::Boolean(true),
+                    Value::Nil,
+                    string("dead"),
+                    Value::Boolean(false),
+                    string("cannot resume dead coroutine"),
+                ],
+                "{body}"
+            );
+            assert_eq!(
+                wrap_body(&vm, body),
+                vec![
+                    Value::Number(0.0),
+                    Value::Boolean(true),
+                    Value::Nil,
+                    Value::Boolean(false),
+                    string("cannot resume dead coroutine"),
+                ],
+                "{body}"
+            );
+        }
+        assert!(!interrupt_is_installed(&vm));
+        Ok(())
+    }
+
+    /// The reset closes the thread's upvalues first, so a closure it made outlives it with the
+    /// values it saw.
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn a_closure_made_in_a_thread_closed_where_it_yields_keeps_its_upvalues() -> Result<()> {
+        let vm = vm_that_cancels()?;
+        let resumed = resume_body(
+            &vm,
+            r#"
+                local kept = "kept"
+                read_kept = function()
+                    return kept
+                end
+                cancel()
+                ran_on = true
+                kept = "changed"
+                coroutine.yield()
+                went_on = true
+            "#,
+        );
+        assert_eq!(resumed[5], string("dead"));
+        assert_eq!(
+            eval_str(&vm, "return read_kept()")?,
+            vec![string("changed")]
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn a_cancelled_thread_that_returns_or_fails_first_ends_as_any_other() -> Result<()> {
+        let vm = vm_that_cancels()?;
+        for (body, ok, result) in [
+            ("cancel() ran_on = true return 'returned'", true, "returned"),
+            ("cancel() ran_on = true error('failed', 0)", false, "failed"),
+        ] {
+            assert_eq!(
+                resume_body(&vm, body),
+                vec![
+                    Value::Number(2.0),
+                    Value::Boolean(ok),
+                    string(result),
+                    Value::Boolean(true),
+                    Value::Nil,
+                    string("dead"),
+                    Value::Boolean(false),
+                    string("cannot resume dead coroutine"),
+                ],
+                "{body}"
+            );
+        }
+        Ok(())
+    }
+
+    /// Harmony's own resume, by value and by error, tells a thread closed as it yielded from one
+    /// that is waiting.
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn resuming_a_thread_cancelled_as_it_runs_reads_as_closed_once_it_yields() -> Result<()> {
+        let vm = vm_that_cancels()?;
+        let thread = |source: &'static str| {
+            vm.create_thread(&vm.load_chunk(&Chunk::new(
+                Arc::<[u8]>::from(source.as_bytes()),
+                ChunkOrigin::default(),
+            ))?)
+        };
+        let yields = thread("cancel() coroutine.yield(1) went_on = true")?;
+        assert_eq!(yields.resume(&vm, &[])?, ThreadStatus::Closed);
+        let caught = thread("pcall(coroutine.yield) cancel() wait() went_on = true")?;
+        assert_eq!(caught.resume(&vm, &[])?, ThreadStatus::Yielded(vec![]));
+        assert_eq!(
+            caught.resume_error(&vm, &"boom".into())?,
+            ThreadStatus::Closed
+        );
+
+        for thread in [&yields, &caught] {
+            assert_eq!(status_and_resume(&vm, thread)?, dead());
+            assert!(thread.resume(&vm, &[]).is_err());
+        }
+        assert_eq!(eval_str(&vm, "return went_on")?, vec![Value::Nil]);
+        assert_eq!(stack_top(&vm), 0);
+        Ok(())
+    }
+
+    /// The cancelled thread is the one that resumed the coroutine asking. That coroutine, beneath
+    /// it, yields back to it and is resumed again later, as if nothing had happened.
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn the_threads_a_cancelled_thread_resumed_are_left_as_they_are() -> Result<()> {
+        let vm = vm_that_cancels()?;
+        assert_eq!(
+            eval_str(
+                &vm,
+                r#"
+                    local outer, inner, inner_status
+                    outer = coroutine.create(function()
+                        inner = coroutine.create(function()
+                            cancel(outer)
+                            local back = coroutine.yield("yielded")
+                            wait()
+                            return "returned", back
+                        end)
+                        local _, yielded = coroutine.resume(inner)
+                        inner_status = coroutine.status(inner)
+                        return yielded
+                    end)
+                    local ok, yielded = coroutine.resume(outer)
+                    local resumed, waiting = coroutine.resume(inner, "back")
+                    return ok, yielded, coroutine.status(outer), inner_status, resumed, waiting,
+                        coroutine.status(inner), coroutine.resume(inner)
+                "#,
+            )?,
+            vec![
+                Value::Boolean(true),
+                string("yielded"),
+                string("dead"),
+                string("suspended"),
+                Value::Boolean(true),
+                Value::Nil,
+                string("suspended"),
+                Value::Boolean(true),
+                string("returned"),
+                string("back"),
+            ]
+        );
+        Ok(())
+    }
+
+    /// Luau gives a new thread the memory of one it freed. The thread that takes a cancelled
+    /// thread's place yields as any other.
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn a_thread_made_where_a_cancelled_one_was_freed_can_yield() -> Result<()> {
+        let vm = vm_that_cancels()?;
+        let function = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(&b"local back = coroutine.yield(1) wait() return back"[..]),
+            ChunkOrigin::default(),
+        ))?;
+        // Keeps the page of the thread to free in use, so that Luau keeps the page.
+        let _neighbour = vm.create_thread(&function)?;
+        let Some(Value::Thread(cancelled)) = eval_str(
+            &vm,
+            "local co = coroutine.create(function() cancel() end) coroutine.resume(co) return co",
+        )?
+        .pop() else {
+            panic!("expected a thread");
+        };
+        let freed = cancelled.state_id();
+        assert!(unsafe { gateway::is_cancelled(cancelled.inner.state.as_ptr()) });
+        drop(cancelled);
+        unsafe { sys::lua_gc(vm.inner.state.as_ptr(), sys::LUA_GCCOLLECT, 0) };
+
+        let mut made = Vec::new();
+        let reused = loop {
+            let thread = vm.create_thread(&function)?;
+            if thread.state_id() == freed {
+                break thread;
+            }
+            made.push(thread);
+            assert!(made.len() < 4096, "no thread reused the freed one's memory");
+        };
+
+        assert_eq!(
+            reused.resume(&vm, &[])?,
+            ThreadStatus::Yielded(vec![Value::Number(1.0)])
+        );
+        assert_eq!(
+            reused.resume(&vm, &[Value::Number(2.0)])?,
+            ThreadStatus::Yielded(vec![])
+        );
+        assert_eq!(
+            reused.resume(&vm, &[])?,
+            ThreadStatus::Completed(vec![Value::Number(2.0)])
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn cancel_closes_a_suspended_thread_and_neither_closes_the_main_one() -> Result<()> {
+        let vm = vm_that_cancels()?;
+        let Some(Value::Thread(suspended)) = eval_str(
+            &vm,
+            "local co = coroutine.create(function() coroutine.yield() went_on = true end)
+             coroutine.resume(co) return co",
+        )?
+        .pop() else {
+            panic!("expected a thread");
+        };
+        assert_eq!(suspended.cancel(&vm)?, ThreadEnd::Closed);
+        assert_eq!(status_and_resume(&vm, &suspended)?, dead());
+
+        let main: NativeFn = Arc::new(|frame| {
+            for refusal in [
+                frame.thread.close(frame.vm).map(|()| ThreadEnd::Closed),
+                frame.thread.cancel(frame.vm),
+            ] {
+                let refusal = refusal.expect_err("the main thread closed");
+                assert!(refusal.to_string().contains("main thread"), "{refusal}");
+            }
+            Ok(())
+        });
+        let main = vm.create_function_with_options(
+            NativeFunctionOptions::new(ChunkOrigin::default()).function_name("main"),
+            main,
+        )?;
+        main.call(&vm, &[])?;
+        assert_eq!(eval_str(&vm, "return went_on")?, vec![Value::Nil]);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn a_thread_closed_before_it_ran_reads_as_started() -> Result<()> {
+        let vm = Vm::new()?;
+        vm.open_standard_libraries(StandardLibraries::all_supported())?;
+        let function = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(&b"return 1"[..]),
+            ChunkOrigin::default(),
+        ))?;
+        let thread = vm.create_thread(&function)?;
+        assert!(!thread.is_started());
+
+        thread.close(&vm)?;
+
+        assert!(thread.is_started());
+        // As does a handle made from the thread afterwards, which shares no flags with the first.
+        let Some(Value::Thread(read_back)) = vm
+            .load_chunk(&Chunk::new(
+                Arc::<[u8]>::from(&b"return ..."[..]),
+                ChunkOrigin::default(),
+            ))?
+            .call(&vm, &[Value::Thread(thread)])?
+            .pop()
+        else {
+            panic!("expected a thread");
+        };
+        assert!(read_back.is_started());
+        assert!(read_back.resume(&vm, &[]).is_err());
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn closing_threads_ignores_the_memory_limit() -> Result<()> {
+        let vm = Vm::new()?;
+        vm.open_standard_libraries(StandardLibraries::all_supported())?;
+        let function = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(
+                &br#"
+                    local function descend(depth)
+                        if depth == 0 then
+                            coroutine.yield()
+                            coroutine.yield()
+                        else
+                            descend(depth - 1)
+                        end
+                        return depth
+                    end
+                    descend(200)
+                "#[..],
+            ),
+            ChunkOrigin::default(),
+        ))?;
+        // Enough of them that shrinking their stacks needs new pages. Half are closed where they
+        // wait, and half where they next yield, as cancelled threads that run.
+        let threads = (0..1000)
+            .map(|_| {
+                let thread = vm.create_thread(&function)?;
+                assert_eq!(thread.resume(&vm, &[])?, ThreadStatus::Yielded(vec![]));
+                Ok(thread)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let (closed, closed_at_yield) = threads.split_at(500);
+        for thread in closed_at_yield {
+            unsafe { gateway::cancel_thread(thread.inner.state.as_ptr()) };
+        }
+        set_gc_running(&vm, false);
+
+        set_memory_limit(&vm, 1);
+        for thread in closed {
+            thread.close(&vm)?;
+        }
+        for thread in closed_at_yield {
+            assert_eq!(thread.resume(&vm, &[])?, ThreadStatus::Closed);
+        }
+
+        assert_eq!(vm.memory_limit(), Some(1));
+        set_memory_limit(&vm, 0);
+        for thread in &threads {
+            assert_eq!(status_and_resume(&vm, thread)?, dead());
+        }
         Ok(())
     }
 

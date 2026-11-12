@@ -1430,8 +1430,17 @@ pub fn async_luau_callback(callback: luau::NativeAsyncFn) -> luau::NativeFn {
         if let Some(delay) = future.take_start_delay() {
             ensure_yieldable(&thread)?;
             returns.request_yield();
-            scheduler.park_luau_thread(&thread);
-            scheduler.schedule_luau_future_after(context, delay, vm, thread, future.for_call(site));
+            // A cancelled thread is closed as it yields, and nothing is to wake it.
+            if !thread.is_cancelled() {
+                scheduler.park_luau_thread(&thread);
+                scheduler.schedule_luau_future_after(
+                    context,
+                    delay,
+                    vm,
+                    thread,
+                    future.for_call(site),
+                );
+            }
             return Ok(());
         }
         match poll_luau_future_once(&mut future) {
@@ -1440,8 +1449,10 @@ pub fn async_luau_callback(callback: luau::NativeAsyncFn) -> luau::NativeFn {
             Poll::Pending => {
                 ensure_yieldable(&thread)?;
                 returns.request_yield();
-                scheduler.park_luau_thread(&thread);
-                scheduler.schedule_luau_future(context, vm, thread, future.for_call(site));
+                if !thread.is_cancelled() {
+                    scheduler.park_luau_thread(&thread);
+                    scheduler.schedule_luau_future(context, vm, thread, future.for_call(site));
+                }
             }
         }
         Ok(())

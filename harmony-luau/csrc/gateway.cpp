@@ -9,6 +9,7 @@
 
 #include "harmony_luau.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 namespace
@@ -36,6 +37,9 @@ const luaL_Reg libraries[] = {
     {LUA_MATHLIBNAME, luaopen_math},
     {LUA_BITLIBNAME, luaopen_bit32},
 };
+
+// What the thread data of a cancelled thread points at.
+const char cancelled = 0;
 
 } // namespace
 
@@ -216,6 +220,41 @@ int harmony_luau_gateway_resume(lua_State* L, lua_State* co, int nargs, int* sta
 int harmony_luau_gateway_resumeerror(lua_State* L, lua_State* co, int* status)
 {
     return protect(L, [&](lua_State* L) { *status = lua_resumeerror(co, L); });
+}
+
+// Resets a suspended `co` as coroutine.close does and reports its lua_CoStatus afterwards through
+// `costatus`: dead once reset, or as it was for one that is dead already, running, or has resumed
+// another thread. The reset shrinks the stack, which allocates; one that fails before it has
+// cleared the thread's status leaves the thread reading as suspended.
+int harmony_luau_gateway_closethread(lua_State* L, lua_State* co, int* costatus)
+{
+    int status = LUA_OK;
+    if (lua_costatus(L, co) == LUA_COSUS)
+        status = protect(L, [&](lua_State*) { lua_resetthread(co); });
+    *costatus = lua_costatus(L, co);
+    return status;
+}
+
+// Resets `co`, which a resume has just left suspended, as coroutine.close does. Nothing protects
+// the postresume callback this runs from, and a thread left suspended with no frame would run
+// garbage when resumed, so a reset that fails aborts. The protected call runs on the main thread,
+// as the reset leaves `co` in no state to recover an error on.
+void harmony_luau_gateway_closeyielded(lua_State* co)
+{
+    if (protect(lua_mainthread(co), [&](lua_State*) { lua_resetthread(co); }) != LUA_OK)
+        abort();
+}
+
+// Marks `co` as cancelled in its thread data, which Luau clears for a new thread and Harmony uses
+// for nothing else. Neither this nor the read raises.
+void harmony_luau_gateway_cancelthread(lua_State* co)
+{
+    lua_setthreaddata(co, const_cast<char*>(&cancelled));
+}
+
+int harmony_luau_gateway_iscancelled(lua_State* L)
+{
+    return lua_getthreaddata(L) == &cancelled;
 }
 
 int harmony_luau_gateway_openlibrary(lua_State* L, const char* name)

@@ -17,6 +17,8 @@ shape of the modules plugins see, follow [the plugin API conventions](../plugin-
 - `Function`, `Table`, `Thread` and `UserData` pin their value in the registry until the last clone
   drops, and keep the `Vm` alive. Using one with another VM fails with `Error::VmMismatch`.
 - `VmData` and `ThreadData` hold typed host state, one value per type.
+- `harmony-luau` keeps a thread's cancelled mark in Luau's per-thread data pointer, and closes a
+  marked thread from Luau's `postresume` callback, so a host must set neither itself.
 
 ## Sandboxing
 
@@ -67,6 +69,9 @@ status. `clippy.toml` disallows those functions everywhere else.
   plugin can raise one.
 - A panic in a native function or destructor aborts the process, since unwinding into Luau's C++
   frames would corrupt it. Callbacks must return errors rather than panic.
+- Closing a thread, by `Thread::close` or `Thread::cancel` or as a cancelled one yields, aborts the
+  process if the allocator itself, not the VM's memory limit, fails while Luau frees its stack:
+  the thread would be left suspended with no frame, and resuming it would run garbage.
 
 ## Async and Yielding
 
@@ -74,6 +79,13 @@ status. `clippy.toml` disallows those functions everywhere else.
   future completes. One that is ready at once returns without yielding.
 - Code can't yield inside a metamethod, a `table.sort` comparator or a host `pcall`. A call that
   must wait there fails with "attempt to yield from a non-yieldable Harmony callback".
+- `Thread::cancel` closes a thread as `coroutine.close` does. One that runs, or has resumed
+  another, can't be closed yet, and is marked instead: it runs on, calls included, to where it
+  next yields, by `coroutine.yield` or a native function that asks to, and is closed there before
+  what resumed it runs again. Nothing after that yield runs, and the resume returns no values:
+  `coroutine.resume` returns just `true`, and `Thread::resume` returns `ThreadStatus::Closed`.
+  One that returns or fails first ends as any other. `coroutine.isyieldable` still returns `true`
+  in a marked thread.
 - A scheduler with a resume limit runs each resume under an interrupt budget. Past it, the thread
   raises `INTERRUPTED_ERROR`.
 - A host that polls a scheduler sleeps between polls in `LocalScheduler::wait_for_work`, which a

@@ -2229,6 +2229,7 @@ fn poll_luau_resume(
         Ok(luau::ThreadStatus::Completed(values)) => WorkPoll::Completed {
             output: Some(values),
         },
+        Ok(luau::ThreadStatus::Closed) => WorkPoll::Cancelled,
         Ok(luau::ThreadStatus::Yielded(_)) => {
             if let Ok(scheduler) = vm.data().get::<LocalScheduler>()
                 && scheduler.take_parked_luau_thread(thread)
