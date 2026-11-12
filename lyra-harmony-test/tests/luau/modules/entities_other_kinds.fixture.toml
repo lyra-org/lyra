@@ -1,0 +1,36 @@
+run_as = "listener"
+
+[[users]]
+key = "listener"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener"]
+
+[[artists]]
+key = "amy"
+name = "Amy"
+
+[[genres]]
+key = "rock"
+name = "Rock"
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+artists = ["amy"]
+genres = ["rock"]
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+
+[[playlists]]
+key = "mix"
+owner = "listener"
+name = "Mix"
+public = false
+tracks = ["song"]

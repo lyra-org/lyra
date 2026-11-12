@@ -97,6 +97,8 @@ for _, method in { "getAlbumInfo2", "getAlbumInfo" } do
 	assert(call.error_code(method, key, { id = ids.h1 }) == 70, `{method} of a hidden song`)
 	assert(call.error_code(method, key, { id = ids.amy }) == 70, `{method} of an artist`)
 	assert(call.error_code(method, key, { id = "missing" }) == 70, `{method} of an unknown id`)
+	assert(call.error_code(method, key, { id = ids.rock }) == 70, `{method} of a genre`)
+	assert(call.error_code(method, key, { id = fixture.libraries.music }) == 70, `{method} of a library`)
 end
 local notes_xml = call.raw("getAlbumInfo2", { apiKey = key, id = ids.solo }).body
 assert(string.find(notes_xml, "<albumInfo><notes>Solo's story</notes></albumInfo>", 1, true), notes_xml)

@@ -57,6 +57,18 @@ pub(super) enum DetectedEntityType {
     Artist,
 }
 
+impl DetectedEntityType {
+    /// The projected type of a node of `kind`, or `None` for a kind without projections.
+    fn of_kind(kind: &str) -> Option<Self> {
+        match kind {
+            "Release" => Some(Self::Release),
+            "Track" => Some(Self::Track),
+            "Artist" => Some(Self::Artist),
+            _ => None,
+        }
+    }
+}
+
 enum ResolvedEntity {
     Release(DbId, Release),
     Track(DbId, Track),
@@ -286,12 +298,8 @@ pub(super) fn detect_entity_type(element: &DbElement) -> anyhow::Result<Detected
                 .value
                 .string()
                 .map_err(|_| anyhow::anyhow!("db_element_id is not a string"))?;
-            return match type_name.as_str() {
-                "Release" => Ok(DetectedEntityType::Release),
-                "Track" => Ok(DetectedEntityType::Track),
-                "Artist" => Ok(DetectedEntityType::Artist),
-                other => anyhow::bail!("unknown entity type: {other}"),
-            };
+            return DetectedEntityType::of_kind(type_name)
+                .ok_or_else(|| anyhow::anyhow!("unknown entity type: {type_name}"));
         }
     }
     anyhow::bail!("entity missing db_element_id")
@@ -537,8 +545,9 @@ pub(crate) fn project_entity(
     }
 }
 
-/// [`project_entities`] limited to what `viewer` sees: an entity it can't see projects to `None`,
-/// and includes list only the releases, tracks and entries it can see.
+/// [`project_entities`] limited to what `viewer` sees: an entity it can't see, or a node that is not
+/// a release, track or artist, projects to `None`, and includes list only the releases, tracks and
+/// entries it can see.
 pub(crate) fn project_visible_entities(
     db: &DbAny,
     viewer: &Viewer,
@@ -550,7 +559,11 @@ pub(crate) fn project_visible_entities(
     let mut visible = Vec::with_capacity(query_ids.len());
     for query_id in query_ids {
         let entity_id = resolve_entity_id(db, query_id)?;
-        visible.push(viewer.sees(db, entity_id)?.then_some(entity_id));
+        let projectable = lyra_db::graph::element_kind(db, entity_id)?
+            .as_deref()
+            .and_then(DetectedEntityType::of_kind)
+            .is_some();
+        visible.push((projectable && viewer.sees(db, entity_id)?).then_some(entity_id));
     }
 
     let query_ids = visible

@@ -245,6 +245,7 @@ impl EntitiesModule {
     }
 
     #[harmony(
+        description = "Projections of the releases, tracks and artists with these ids that the caller can see, keyed by id. Ids naming anything else, or nothing, are left out.",
         args(request: EntityQueryManyRequest),
         returns(HashMap<String, EntityProjection>)
     )]

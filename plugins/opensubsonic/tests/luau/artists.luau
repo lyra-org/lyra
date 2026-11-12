@@ -135,6 +135,7 @@ for method, container in { getArtistInfo2 = "artistInfo2", getArtistInfo = "arti
 	assert(call.error_code(method, key, { id = ids.secret }) == 70, `{method}: nor does a hidden album`)
 	assert(call.error_code(method, key, { id = ids.h1 }) == 70, `{method}: nor a hidden song`)
 	assert(call.error_code(method, key, { id = "not-an-id" }) == 70, `{method}: an unknown id`)
+	assert(call.error_code(method, key, { id = fixture.libraries.music }) == 70, `{method}: a library`)
 	assert(call.error_code(method, key, { id = ids.amy, count = "many" }) == 0, `{method}: a bad count`)
 	assert(call.error_code(method, key, { id = ids.amy, includeNotPresent = "maybe" }) == 0, `{method}: a bad flag`)
 end
