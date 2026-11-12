@@ -128,8 +128,6 @@ pub(crate) struct LibrarySyncOptions {
 pub(crate) struct ScanObservation {
     pub(super) observed_paths: HashSet<std::path::PathBuf>,
     protected_paths: Vec<std::path::PathBuf>,
-    /// The entries that moved, as they were before.
-    moved_from: Vec<Entry>,
 }
 
 pub(crate) async fn sync_entries_incremental(
@@ -203,6 +201,17 @@ pub(crate) async fn sync_entries_incremental(
         "scan entry groups discovered"
     );
 
+    if !moved_from.is_empty() {
+        #[cfg(test)]
+        tests::before_unsync_left_by_moves()?;
+        lyra_db::entries::unsync_left_by_moves(
+            &mut *db.write().await,
+            library,
+            &observed_paths,
+            &moved_from,
+            |moved, present| albums_left_by(&library.path, moved, present),
+        )?;
+    }
     sync_entry_dirs(db, &mut stored, dirs).await?;
 
     let stored = &stored;
@@ -212,6 +221,7 @@ pub(crate) async fn sync_entries_incremental(
             let progress = progress.clone();
             let run_id = run_id.clone();
             async move {
+                progress.check_cancelled()?;
                 let started = Instant::now();
                 let source_dir = group.source_dir.clone();
                 let entry_count = group.entries.len();
@@ -231,10 +241,19 @@ pub(crate) async fn sync_entries_incremental(
                     stage = "entry_sync",
                     "scan entry group stage started"
                 );
-                let result = apply_entry_group(&db, stored, group.entries).await;
+                #[cfg(test)]
+                tests::before_entry_hash(&source_dir).await;
+                let result = apply_entry_group(&db, stored, group.entries, &progress).await;
+                #[cfg(test)]
+                if result.is_ok() {
+                    tests::entry_group_applied(&source_dir);
+                }
 
                 let result = match result {
                     Ok(result) => result,
+                    Err(err) if err.downcast_ref::<SyncRunControlError>().is_some() => {
+                        return Err(err);
+                    }
                     Err(err) => {
                         progress
                             .fail_work(
@@ -271,30 +290,44 @@ pub(crate) async fn sync_entries_incremental(
         .collect::<Vec<_>>()
         .await;
 
-    for group_result in group_results {
-        group_result?;
+    let mut failure = None;
+    for err in group_results.into_iter().filter_map(Result::err) {
+        if failure.is_none() || err.downcast_ref::<SyncRunControlError>().is_some() {
+            failure = Some(err);
+        }
+    }
+    if let Some(err) = failure {
+        return Err(err);
     }
 
     Ok(ScanObservation {
         observed_paths,
         protected_paths,
-        moved_from,
     })
 }
 
-/// Hashes the group's files and applies what changed. A group with no changes takes no write lock,
-/// and so counts as no catalog change.
+/// Hashes the group's files and applies what changed, in one write. A group with no changes takes
+/// no write lock, and so counts as no catalog change. The group applies only if the run is not
+/// cancelled once it holds the write lock.
 async fn apply_entry_group(
     db: &DbAsync,
     stored: &StoredEntries,
     entries: Vec<Entry>,
+    progress: &SyncRunProgress,
 ) -> anyhow::Result<EntrySyncResult> {
-    let entries = tokio::task::spawn_blocking(move || hash_entry_group(entries)).await?;
+    progress.check_cancelled()?;
+    let entries = tokio::select! {
+        entries = tokio::task::spawn_blocking(move || hash_entry_group(entries)) => entries?,
+        err = progress.cancelled() => return Err(err.into()),
+    };
+    #[cfg(test)]
+    tests::after_entry_hash(&entries).await?;
     let changes = stored.changes(entries);
     if changes.is_empty() {
         return Ok(EntrySyncResult::default());
     }
     let mut db_write = db.write().await;
+    progress.check_cancelled()?;
     stored.apply_entry_changes(&mut db_write, changes)
 }
 
@@ -377,7 +410,6 @@ pub(super) async fn mark_missing_entries_for_scan(
             library,
             &observation.observed_paths,
             &observation.protected_paths,
-            &observation.moved_from,
             |missing, present| albums_left_by(&library.path, missing, present),
         )
     };
@@ -1880,6 +1912,12 @@ FILE "album.flac" WAVE
     type Gate<T> =
         std::sync::Arc<dyn Fn(T) -> futures::future::BoxFuture<'static, ()> + Send + Sync>;
     type ArtifactGate = Gate<Option<String>>;
+    /// Runs on a group's hashed files before it applies them, failing the group with its error.
+    type EntryGate = std::sync::Arc<
+        dyn Fn(Vec<PathBuf>) -> futures::future::BoxFuture<'static, anyhow::Result<()>>
+            + Send
+            + Sync,
+    >;
 
     #[derive(Default)]
     struct Hooks {
@@ -1888,6 +1926,11 @@ FILE "album.flac" WAVE
         before_refresh: Option<ArtifactGate>,
         before_artifacts: Option<ArtifactGate>,
         before_parse: Option<Gate<PathBuf>>,
+        before_entry_hash: Option<Gate<PathBuf>>,
+        after_entry_hash: Option<EntryGate>,
+        entry_applied: Option<std::sync::Arc<dyn Fn(PathBuf) + Send + Sync>>,
+        /// Fails the write unsyncing what the scan's moves leave behind.
+        fail_unsync_left_by_moves: bool,
         planned: std::sync::Mutex<Vec<(Vec<DbId>, Vec<DbId>)>>,
     }
 
@@ -1916,6 +1959,55 @@ FILE "album.flac" WAVE
             .flatten();
         if let Some(gate) = gate {
             gate(source_dir.to_path_buf()).await;
+        }
+    }
+
+    pub(super) fn before_unsync_left_by_moves() -> anyhow::Result<()> {
+        if HOOKS
+            .try_with(|hooks| hooks.fail_unsync_left_by_moves)
+            .unwrap_or(false)
+        {
+            anyhow::bail!("the unsync write fails");
+        }
+        Ok(())
+    }
+
+    pub(super) async fn before_entry_hash(source_dir: &Path) {
+        let gate = HOOKS
+            .try_with(|hooks| hooks.before_entry_hash.clone())
+            .ok()
+            .flatten();
+        if let Some(gate) = gate {
+            gate(source_dir.to_path_buf()).await;
+        }
+    }
+
+    pub(super) async fn after_entry_hash(entries: &[Entry]) -> anyhow::Result<()> {
+        let gate = HOOKS
+            .try_with(|hooks| hooks.after_entry_hash.clone())
+            .ok()
+            .flatten();
+        match gate {
+            Some(gate) => {
+                gate(
+                    entries
+                        .iter()
+                        .map(|entry| entry.full_path.clone())
+                        .collect(),
+                )
+                .await
+            }
+            None => Ok(()),
+        }
+    }
+
+    pub(super) fn entry_group_applied(source_dir: &Path) {
+        let applied = HOOKS
+            .try_with(|hooks| hooks.entry_applied.clone())
+            .ok()
+            .flatten();
+        if let Some(applied) = applied {
+            applied(source_dir.to_path_buf());
         }
     }
 
@@ -4549,6 +4641,217 @@ FILE "album.flac" WAVE
 
         sync(&library).await?;
         assert!(synced(&library, &second).await?);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    /// How the group of a late file stops a scan once another group stored a move.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Interruption {
+        /// Cancels the run before the group hashes its files.
+        CancelBeforeHash,
+        /// Cancels the run once the group's files are hashed, before it applies them.
+        CancelAfterHash,
+        /// Fails the group once its files are hashed.
+        Fail,
+    }
+
+    /// Scans a library where one file of a two-file album moved and a new file arrived, the new
+    /// file's group stopping the scan as `interruption` says once the move is stored. Checks what
+    /// any stopped scan must leave, and that the next scan finishes the job; returns the error.
+    async fn scan_interrupted_after_a_move(
+        name: &str,
+        interruption: Interruption,
+    ) -> anyhow::Result<anyhow::Error> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library(name).await?;
+        let (album, moved_dir, late_dir) =
+            (root.join("Album"), root.join("Moved"), root.join("Late"));
+        let left = album.join("2.flac");
+        album_file(&album.join("1.flac"), "Album", 1)?;
+        album_file(&left, "Album", 2)?;
+        sync(&library).await?;
+        assert!(synced(&library, &left).await?);
+
+        let moved = moved_dir.join("1.flac");
+        std::fs::create_dir_all(&moved_dir)?;
+        std::fs::rename(album.join("1.flac"), &moved)?;
+        let late = late_dir.join("1.flac");
+        album_file(&late, "Late", 1)?;
+
+        let progress = super::super::orchestrator::begin_test_run(&library).await;
+        let (stored_tx, stored_rx) = tokio::sync::oneshot::channel::<()>();
+        let stored_tx = std::sync::Mutex::new(Some(stored_tx));
+        let stored_rx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(stored_rx)));
+        let applied_dir = moved_dir.clone();
+        let entry_applied = std::sync::Arc::new(move |source_dir: PathBuf| {
+            if source_dir == applied_dir
+                && let Some(stored) = stored_tx.lock().expect("stored").take()
+            {
+                let _ = stored.send(());
+            }
+        });
+        // The late file's group waits until the move is stored, then stops the scan.
+        let interrupt = {
+            let run_id = progress.run_id().to_string();
+            move || {
+                let (run_id, stored_rx) = (run_id.clone(), stored_rx.clone());
+                async move {
+                    if let Some(stored) = stored_rx.lock().await.take() {
+                        stored.await.expect("the move is stored");
+                    }
+                    if interruption == Interruption::Fail {
+                        anyhow::bail!("the late group fails");
+                    }
+                    super::super::orchestrator::cancel_sync_run(&run_id)
+                        .await
+                        .expect("cancel");
+                    Ok(())
+                }
+            }
+        };
+        let mut hooks = Hooks {
+            entry_applied: Some(entry_applied),
+            ..Hooks::default()
+        };
+        if interruption == Interruption::CancelBeforeHash {
+            let (interrupt, late_dir) = (interrupt.clone(), late_dir.clone());
+            hooks.before_entry_hash = Some(std::sync::Arc::new(move |source_dir: PathBuf| {
+                let interrupt = (source_dir == late_dir).then(&interrupt);
+                Box::pin(async move {
+                    if let Some(interrupt) = interrupt {
+                        interrupt.await.expect("cancels");
+                    }
+                })
+            }));
+        } else {
+            let late = late.clone();
+            hooks.after_entry_hash = Some(std::sync::Arc::new(move |files: Vec<PathBuf>| {
+                let interrupt = files.contains(&late).then(&interrupt);
+                Box::pin(async move {
+                    match interrupt {
+                        Some(interrupt) => interrupt.await,
+                        None => Ok(()),
+                    }
+                })
+            }));
+        }
+        let result = tokio::time::timeout(
+            Duration::from_secs(60),
+            sync_with(hooks.into(), &library, progress.clone()),
+        )
+        .await?;
+        super::super::orchestrator::end_test_run(&progress).await;
+
+        let err = result.expect_err("the run finished despite its interruption");
+        let snapshot = snapshot(&library).await?;
+        assert!(snapshot.contains_key(&moved), "the move was stored");
+        assert!(
+            !snapshot.contains_key(&late),
+            "the interrupted group was applied"
+        );
+        assert!(
+            !synced(&library, &left).await?,
+            "the album the stored move left keeps its sync"
+        );
+        assert!(
+            !entry_for(&library, &left).await?.is_missing(),
+            "a partial scan marked a file missing"
+        );
+
+        sync(&library).await?;
+        assert!(synced(&library, &left).await?);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(err)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_scan_cancelled_after_storing_a_move_unsyncs_the_album_it_left() -> anyhow::Result<()>
+    {
+        let err =
+            scan_interrupted_after_a_move("cancelled-move", Interruption::CancelBeforeHash).await?;
+        assert!(
+            err.downcast_ref::<SyncRunControlError>().is_some(),
+            "{err:#}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_group_cancelled_once_hashed_applies_nothing() -> anyhow::Result<()> {
+        let err = scan_interrupted_after_a_move("cancelled-hashed", Interruption::CancelAfterHash)
+            .await?;
+        assert!(
+            err.downcast_ref::<SyncRunControlError>().is_some(),
+            "{err:#}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_scan_failing_after_storing_a_move_unsyncs_the_album_it_left() -> anyhow::Result<()> {
+        let err = scan_interrupted_after_a_move("failed-move", Interruption::Fail).await?;
+        assert!(
+            err.downcast_ref::<SyncRunControlError>().is_none(),
+            "{err:#}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_scan_failing_to_unsync_what_its_moves_leave_stores_none_of_them()
+    -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("failed-unsync").await?;
+        let (album, moved_dir) = (root.join("Album"), root.join("Moved"));
+        album_file(&album.join("1.flac"), "Album", 1)?;
+        album_file(&album.join("2.flac"), "Album", 2)?;
+        sync(&library).await?;
+
+        let moved = moved_dir.join("1.flac");
+        std::fs::create_dir_all(&moved_dir)?;
+        std::fs::rename(album.join("1.flac"), &moved)?;
+        let hooks = Hooks {
+            fail_unsync_left_by_moves: true,
+            ..Hooks::default()
+        };
+        sync_with(
+            hooks.into(),
+            &library,
+            SyncRunProgress::unreported_for_test(),
+        )
+        .await
+        .expect_err("the run finished despite the failed write");
+        assert!(
+            !snapshot(&library).await?.contains_key(&moved),
+            "the move was stored"
+        );
+
+        let parsed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let gate: Gate<PathBuf> = {
+            let parsed = parsed.clone();
+            std::sync::Arc::new(move |source_dir| {
+                parsed.lock().expect("parsed").push(source_dir);
+                Box::pin(async {})
+            })
+        };
+        let hooks = Hooks {
+            before_parse: Some(gate),
+            ..Hooks::default()
+        };
+        sync_with(
+            hooks.into(),
+            &library,
+            SyncRunProgress::unreported_for_test(),
+        )
+        .await?;
+        assert!(snapshot(&library).await?.contains_key(&moved));
+        assert!(
+            parsed.lock().expect("parsed").contains(&album),
+            "the album the move left wasn't read again"
+        );
         let _ = std::fs::remove_dir_all(root);
         Ok(())
     }

@@ -757,7 +757,6 @@ mod tests {
             &library,
             &observation.observed_paths,
             &[],
-            &[],
             |removed, surviving| {
                 crate::services::metadata::ingestion::albums_left_by(
                     &library.path,

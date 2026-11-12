@@ -734,15 +734,14 @@ pub struct MarkResult {
 /// Marks the entries missing from `observed_paths` as missing, except where `protected` paths
 /// leave the scan without evidence, and revives the missing entries it observed. Missing
 /// directories with no file left beneath them are removed. The present entries `left_behind`
-/// picks, given the newly missing ones and `moved_from`, the moved entries at their old paths,
-/// lose their sync so the next one reads them again, as do those a newly missing, revived or
-/// moved one shares a cue sheet with.
+/// picks, given the newly missing ones, lose their sync so the next one reads them again, as do
+/// those a newly missing or revived one shares a cue sheet with. Moves are
+/// [`unsync_left_by_moves`]'s.
 pub fn mark_missing(
     db: &mut DbAny,
     library: &Library,
     observed_paths: &HashSet<PathBuf>,
     protected: &[PathBuf],
-    moved_from: &[Entry],
     left_behind: impl LeftBehind,
 ) -> anyhow::Result<MarkResult> {
     let library_db_id = library
@@ -777,25 +776,18 @@ pub fn mark_missing(
         .filter_map(|dir| dir.db_id)
         .collect::<Vec<_>>();
 
-    let gone = newly_missing
-        .iter()
-        .chain(moved_from)
-        .cloned()
-        .collect::<Vec<_>>();
-    let left = left_behind(&gone, &present);
+    let left = left_behind(&newly_missing, &present);
     let missing_ids = entry_ids(&newly_missing)?
         .into_iter()
         .filter(|entry_id| !removed_dirs.contains(entry_id))
         .collect::<Vec<_>>();
     let revived_ids = entry_ids(&revived)?;
-    let moved_ids = entry_ids(moved_from)?;
     let now = super::users::now_ms().unsigned_abs();
 
     db.transaction_mut(|t| -> anyhow::Result<MarkResult> {
         let changed = missing_ids
             .iter()
             .chain(&revived_ids)
-            .chain(&moved_ids)
             .copied()
             .collect::<Vec<_>>();
         let kept = missing_ids
@@ -1242,24 +1234,17 @@ mod tests {
             .chain(dirs)
             .map(PathBuf::from)
             .collect::<HashSet<_>>();
-        mark_missing(
-            &mut db,
-            &library,
-            &observed,
-            &[],
-            &[],
-            |removed, surviving| {
-                surviving
-                    .iter()
-                    .filter(|entry| {
-                        removed
-                            .iter()
-                            .any(|gone| gone.full_path.parent() == entry.full_path.parent())
-                    })
-                    .filter_map(|entry| entry.db_id)
-                    .collect()
-            },
-        )?;
+        mark_missing(&mut db, &library, &observed, &[], |removed, surviving| {
+            surviving
+                .iter()
+                .filter(|entry| {
+                    removed
+                        .iter()
+                        .any(|gone| gone.full_path.parent() == entry.full_path.parent())
+                })
+                .filter_map(|entry| entry.db_id)
+                .collect()
+        })?;
 
         let synced = |db: &DbAny, path: &str| -> anyhow::Result<bool> {
             Ok(get_by_id(db, id_of(db, path)?)?
@@ -1291,7 +1276,7 @@ mod tests {
             .chain(&dirs)
             .map(PathBuf::from)
             .collect::<HashSet<_>>();
-        let result = mark_missing(&mut db, &library, &observed, &[], &[], |_, _| Vec::new())?;
+        let result = mark_missing(&mut db, &library, &observed, &[], |_, _| Vec::new())?;
         assert_eq!(result.revived, 2);
         assert!(!missing(&db, paths[0])? && !missing(&db, paths[3])?);
         assert!(
@@ -1344,15 +1329,12 @@ mod tests {
         let seen = |kept: &[&str]| kept.iter().map(PathBuf::from).collect::<HashSet<_>>();
         let all = ["/music/A", paths[1], paths[2], "/music/B", paths[3]];
 
-        mark_missing(&mut db, &library, &seen(&all[3..]), &[], &[], |_, _| {
-            Vec::new()
-        })?;
+        mark_missing(&mut db, &library, &seen(&all[3..]), &[], |_, _| Vec::new())?;
         assert_missing_root_matches(&db, library_db_id)?;
         mark_missing(
             &mut db,
             &library,
             &seen(&["/music/A", paths[1], "/music/B"]),
-            &[],
             &[],
             |_, _| Vec::new(),
         )?;
@@ -1364,9 +1346,9 @@ mod tests {
             .collect::<Vec<_>>();
         remove_missing(&mut db, &library, &gone)?;
         assert_missing_root_matches(&db, library_db_id)?;
-        mark_missing(&mut db, &library, &seen(&[]), &[], &[], |_, _| Vec::new())?;
+        mark_missing(&mut db, &library, &seen(&[]), &[], |_, _| Vec::new())?;
         assert_missing_root_matches(&db, library_db_id)?;
-        mark_missing(&mut db, &library, &seen(&all), &[], &[], |_, _| Vec::new())?;
+        mark_missing(&mut db, &library, &seen(&all), &[], |_, _| Vec::new())?;
         assert_missing_root_matches(&db, library_db_id)?;
         assert!(missing_ids(&db)?.is_empty());
         Ok(())
@@ -1394,7 +1376,6 @@ mod tests {
             &library,
             &observed,
             &[PathBuf::from("/music/Locked")],
-            &[],
             |_, _| Vec::new(),
         )?;
         assert_eq!((result.marked, result.removed_dirs), (2, 1));
