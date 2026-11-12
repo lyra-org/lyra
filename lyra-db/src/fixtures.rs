@@ -63,6 +63,7 @@ pub fn insert_release(db: &mut DbAny, title: &str) -> anyhow::Result<DbId> {
     Ok(release_id)
 }
 
+/// An artist nothing references yet, a candidate for collection as a created one is.
 pub fn insert_artist(db: &mut DbAny, name: &str) -> anyhow::Result<DbId> {
     let artist = super::artists::Artist {
         db_id: None,
@@ -81,6 +82,7 @@ pub fn insert_artist(db: &mut DbAny, name: &str) -> anyhow::Result<DbId> {
         .exec_mut(QueryBuilder::insert().element(&artist).query())?
         .ids()[0];
     roots::link(db, Root::Artists, artist_id)?;
+    roots::link(db, Root::ArtistCandidates, artist_id)?;
     Ok(artist_id)
 }
 

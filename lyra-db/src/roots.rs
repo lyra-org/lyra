@@ -30,6 +30,8 @@ pub(crate) const MEMBER_CHILDREN: CountComparison = CountComparison::Equal(4);
 /// The root collections that something enumerates in full and that grow with the catalog.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Root {
+    /// The artists a write may have left unreferenced, so collecting them reads these alone.
+    ArtistCandidates,
     Artists,
     /// The files of removed covers, until the server has discarded them.
     CoverDiscards,
@@ -49,6 +51,7 @@ impl Root {
     /// The root node's alias. Search from it at [`MEMBERS`] rather than for its neighbors.
     pub(crate) const fn alias(self) -> &'static str {
         match self {
+            Self::ArtistCandidates => "artist_candidates",
             Self::Artists => "artists",
             Self::CoverDiscards => "cover_discards",
             Self::CueSheets => "cue_sheets",
@@ -85,6 +88,35 @@ pub fn link_all(db: &mut impl DbAccess, root: Root, ids: &[DbId]) -> anyhow::Res
                 .to(ids)
                 .query(),
         )?;
+    }
+    Ok(())
+}
+
+/// Whether `id` is a member of `root`, read from the member's side: the walk is over the
+/// member's incoming edges, however many it has.
+pub(crate) fn is_member(db: &impl DbAccess, root: Root, id: DbId) -> anyhow::Result<bool> {
+    Ok(db
+        .exec(
+            QueryBuilder::search()
+                .to(id)
+                .limit(1)
+                .where_()
+                .distance(MEMBERS)
+                .and()
+                .ids(root.alias())
+                .query(),
+        )?
+        .result
+        > 0)
+}
+
+/// Makes each of `ids` a member of `root` unless it already is one.
+pub(crate) fn link_once(db: &mut impl DbAccess, root: Root, ids: &[DbId]) -> anyhow::Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    for &id in ids {
+        if seen.insert(id) && !is_member(db, root, id)? {
+            link(db, root, id)?;
+        }
     }
     Ok(())
 }
@@ -244,6 +276,49 @@ mod tests {
             ids[32..].iter().copied().collect::<HashSet<_>>()
         );
         assert_eq!(member_ids(&db, Root::Releases)?, vec![other]);
+        Ok(())
+    }
+
+    #[test]
+    fn linking_once_keeps_one_edge_per_member() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let first = insert_node(&mut db)?;
+        let second = insert_node(&mut db)?;
+        link(&mut db, Root::Artists, first)?;
+        assert!(!is_member(&db, Root::ArtistCandidates, first)?);
+        assert!(!has_members(&db, Root::ArtistCandidates)?);
+
+        link_once(&mut db, Root::ArtistCandidates, &[first, first])?;
+        link_once(&mut db, Root::ArtistCandidates, &[second, first])?;
+
+        assert!(is_member(&db, Root::ArtistCandidates, first)?);
+        assert_eq!(
+            newest_member_edges(&db, Root::ArtistCandidates, 8)?
+                .into_iter()
+                .map(|(_, member)| member)
+                .collect::<Vec<_>>(),
+            vec![second, first]
+        );
+        assert_eq!(
+            newest_member_edges(&db, Root::ArtistCandidates, 1)?.len(),
+            1
+        );
+        assert_eq!(member_ids(&db, Root::Artists)?, vec![first]);
+        Ok(())
+    }
+
+    #[test]
+    fn membership_ends_with_the_member() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let member = insert_node(&mut db)?;
+        link_once(&mut db, Root::ArtistCandidates, &[member])?;
+
+        db.exec_mut(QueryBuilder::remove().ids(member).query())?;
+        let reissued = insert_node(&mut db)?;
+
+        assert_eq!(reissued, member, "agdb reuses the freed id");
+        assert!(!has_members(&db, Root::ArtistCandidates)?);
+        assert!(!is_member(&db, Root::ArtistCandidates, reissued)?);
         Ok(())
     }
 

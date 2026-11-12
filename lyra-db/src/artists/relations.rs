@@ -174,7 +174,8 @@ pub fn link(
     Ok(edge_id)
 }
 
-/// Removes the `relation_type` relation from one artist to another, if any.
+/// Removes the `relation_type` relation from one artist to another, if any. The artist it led
+/// to becomes a candidate.
 pub fn unlink(
     db: &mut impl DbAccess,
     from_artist_id: DbId,
@@ -197,6 +198,7 @@ pub fn unlink(
         .collect();
     if !matching.is_empty() {
         db.exec_mut(QueryBuilder::remove().ids(matching).query())?;
+        crate::orphans::mark_artists(db, &[to_artist_id])?;
     }
     Ok(())
 }

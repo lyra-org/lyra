@@ -541,13 +541,16 @@ pub fn remove_inside_tx(
     Ok(true)
 }
 
-/// Removes layers with their relationship edges, collecting labels only they referenced.
+/// Removes layers with their relationship edges, collecting labels only they referenced. The
+/// artists they referenced become candidates.
 pub(crate) fn remove_by_ids(db: &mut impl DbAccess, layer_ids: &[DbId]) -> anyhow::Result<()> {
     if layer_ids.is_empty() {
         return Ok(());
     }
     let label_ids = edges::label_ids_of(db, layer_ids)?;
+    let artist_ids = edges::artists_referenced_by(db, layer_ids)?;
     db.exec_mut(QueryBuilder::remove().ids(layer_ids).query())?;
+    crate::orphans::mark_artists(db, &artist_ids)?;
     super::super::labels::collect_unreferenced(db, &label_ids)
 }
 

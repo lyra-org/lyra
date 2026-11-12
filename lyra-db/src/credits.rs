@@ -431,6 +431,7 @@ pub fn replace_for_owner(
         .map(|link| link.artist_id)
         .filter(|artist_id| !desired.iter().any(|input| input.artist_id == *artist_id))
         .collect();
+    crate::orphans::mark_artists(db, &uncredited)?;
     recompute_credited(db, &uncredited)
 }
 
@@ -565,6 +566,8 @@ mod tests {
         let release = insert_release(&mut db, "release")?;
         let track = insert_track(&mut db, "track")?;
         crate::fixtures::link_track(&mut db, release, track)?;
+        let other = insert_track(&mut db, "other")?;
+        crate::fixtures::link_track(&mut db, release, other)?;
         let track_only = insert_artist(&mut db, "Track Only")?;
         let both = insert_artist(&mut db, "Both")?;
         connect_artist(&mut db, track, track_only)?;

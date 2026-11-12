@@ -233,7 +233,13 @@ pub fn replace_credits(
     {
         return Ok(false);
     }
+    let dropped: Vec<DbId> = previous
+        .iter()
+        .map(|link| link.target_id)
+        .filter(|artist_id| !artist_ids.contains(artist_id))
+        .collect();
     remove(db, previous.into_iter().map(|link| link.edge_id).collect())?;
+    crate::orphans::mark_artists(db, &dropped)?;
     for (artist_order, input) in desired.into_iter().enumerate() {
         insert(
             db,
@@ -298,7 +304,13 @@ pub fn replace_relations(
     {
         return Ok(false);
     }
+    let dropped: Vec<DbId> = previous
+        .iter()
+        .map(|link| link.target_id)
+        .filter(|artist_id| !artist_ids.contains(artist_id))
+        .collect();
     remove(db, previous.into_iter().map(|link| link.edge_id).collect())?;
+    crate::orphans::mark_artists(db, &dropped)?;
     for (artist_id, attributes) in desired_by_artist {
         insert(
             db,
@@ -477,6 +489,43 @@ pub fn spared_artists(
     }
 }
 
+/// The artists the given layers credit or relate, which stop being referenced with them.
+pub(crate) fn artists_referenced_by(
+    db: &impl DbAccess,
+    layer_ids: &[DbId],
+) -> anyhow::Result<Vec<DbId>> {
+    let mut artist_ids = Vec::new();
+    for &layer_id in layer_ids {
+        artist_ids.extend(
+            of_layer::<LayerCredit>(db, layer_id)?
+                .into_iter()
+                .map(|link| link.target_id),
+        );
+        artist_ids.extend(
+            of_layer::<LayerRelation>(db, layer_id)?
+                .into_iter()
+                .map(|link| link.target_id),
+        );
+    }
+    Ok(artist_ids)
+}
+
+/// The layers crediting or relating the artist.
+pub(crate) fn layers_referencing_artist(
+    db: &impl DbAccess,
+    artist_id: DbId,
+) -> anyhow::Result<Vec<DbId>> {
+    Ok(of_target::<LayerCredit>(db, artist_id)?
+        .into_iter()
+        .map(|link| link.layer_id)
+        .chain(
+            of_target::<LayerRelation>(db, artist_id)?
+                .into_iter()
+                .map(|link| link.layer_id),
+        )
+        .collect())
+}
+
 /// Labels the given layers reference, for collection once the layers are gone.
 pub(crate) fn label_ids_of(db: &impl DbAccess, layer_ids: &[DbId]) -> anyhow::Result<Vec<DbId>> {
     let mut label_ids = Vec::new();
@@ -521,6 +570,7 @@ pub fn retarget_artist(db: &mut impl DbAccess, winner: DbId, loser: DbId) -> any
         }
         remove(db, vec![link.edge_id])?;
     }
+    crate::orphans::mark_artists(db, &[loser])?;
     // The winner's own layers cannot relate it to itself.
     let winner_layers = super::ids_for_entity(db, winner)?;
     remove(
@@ -621,6 +671,7 @@ pub(crate) fn copy_all(
     from_layer: DbId,
     to_layer: DbId,
 ) -> anyhow::Result<()> {
+    let dropped = artists_referenced_by(db, &[to_layer])?;
     let mut stale = Vec::new();
     stale.extend(
         of_layer::<LayerCredit>(db, to_layer)?
@@ -654,6 +705,7 @@ pub(crate) fn copy_all(
     for link in of_layer::<LayerLabel>(db, from_layer)? {
         insert(db, to_layer, link.target_id, &link.edge)?;
     }
+    crate::orphans::mark_artists(db, &dropped)?;
     super::super::super::labels::collect_unreferenced(db, &stale_label_ids)
 }
 

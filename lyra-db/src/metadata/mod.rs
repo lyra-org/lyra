@@ -45,19 +45,16 @@ pub(crate) fn collect_custom_field_ids(
 }
 
 /// Cascade-remove entity nodes and their inbound favorite, rating, and tag edges, and detach
-/// their covers, listing the files of those no remaining owner shares for discarding.
+/// their covers, then collect what they leave unreferenced: a removed track's emptied release
+/// and its sources, with their cue records. Artists they referenced become candidates, and the
+/// files of the covers no remaining owner shares are listed for discarding.
 /// Callers already inside a `transaction_mut` must use [`cascade_remove_entities_in_txn`]
 /// — agdb transactions are not reentrant.
 pub fn cascade_remove_entities(db: &mut DbAny, node_ids: &[DbId]) -> anyhow::Result<()> {
     if node_ids.is_empty() {
         return Ok(());
     }
-    let playlist_db_ids = super::covers::display::playlist_ids_for_tracks(db, node_ids)?;
-    db.transaction_mut(|t| {
-        cascade_remove_entities_pre_favorites(t, node_ids)?;
-        cascade_remove_favorites_and_nodes(t, node_ids)?;
-        super::covers::display::sync_playlist_covers(t, &playlist_db_ids)
-    })
+    db.transaction_mut(|t| cascade_remove_entities_in_txn(t, node_ids))
 }
 
 /// [`cascade_remove_entities`] inside the caller's transaction.
@@ -65,6 +62,17 @@ pub fn cascade_remove_entities_in_txn(
     db: &mut impl DbAccess,
     node_ids: &[DbId],
 ) -> anyhow::Result<()> {
+    if node_ids.is_empty() {
+        return Ok(());
+    }
+    let left = super::orphans::Candidates::around(db, node_ids)?;
+    remove_entities(db, node_ids)?;
+    super::orphans::collect(db, left)
+}
+
+/// Removes the entities with what is attached to them, leaving what they referenced as it is
+/// but for the artists, which become candidates.
+pub(crate) fn remove_entities(db: &mut impl DbAccess, node_ids: &[DbId]) -> anyhow::Result<()> {
     if node_ids.is_empty() {
         return Ok(());
     }
@@ -107,6 +115,11 @@ fn cascade_remove_favorites_and_nodes(
         super::bookmarks::remove_inbound_for_target(db, id)?;
     }
     let credited = super::credits::credited_artist_ids(db, node_ids)?;
+    let mut referenced = Vec::new();
+    for &id in node_ids {
+        referenced.extend(super::graph::neighbor_ids(db, id, "Artist")?);
+    }
     db.exec_mut(QueryBuilder::remove().ids(node_ids).query())?;
+    super::orphans::mark_artists(db, &referenced)?;
     super::credits::recompute_credited(db, &credited)
 }

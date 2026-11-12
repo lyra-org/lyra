@@ -445,7 +445,7 @@ mod tests {
 
         // t[1] takes t[3]'s place and leaves its own.
         db.transaction_mut(|tx| hand_over(tx, t[3], t[1]))?;
-        crate::releases::unlink_track(&mut db, urn.release, t[3])?;
+        let _ = crate::releases::unlink_track(&mut db, urn.release, t[3])?;
         assert_eq!(
             members(&get_for_release(&db, urn.release)?),
             vec![vec![t[0], t[2], t[1]]]
@@ -600,13 +600,13 @@ mod tests {
         let t = &urn.tracks;
         replace_for_release(&mut db, urn.release, &[vec![t[0], t[1]], vec![t[2], t[3]]])??;
 
-        crate::releases::replace_track_release(&mut db, other.release, t[1])?;
+        let _ = crate::releases::replace_track_release(&mut db, other.release, t[1])?;
         assert_eq!(
             members(&get_for_release(&db, urn.release)?),
             vec![vec![t[2], t[3]]]
         );
 
-        crate::releases::unlink_track(&mut db, urn.release, t[3])?;
+        let _ = crate::releases::unlink_track(&mut db, urn.release, t[3])?;
         assert!(get_for_release(&db, urn.release)?.is_empty());
         assert!(links_for_tracks(&db, t)?.is_empty());
         Ok(())
@@ -619,7 +619,7 @@ mod tests {
         let t = &urn.tracks;
         let stored = replace_for_release(&mut db, urn.release, std::slice::from_ref(t))??;
 
-        crate::releases::replace_track_release(&mut db, urn.release, t[0])?;
+        let _ = crate::releases::replace_track_release(&mut db, urn.release, t[0])?;
         crate::releases::link_track(&mut db, urn.release, t[1])?;
 
         assert_eq!(get_for_release(&db, urn.release)?, stored);
@@ -640,7 +640,7 @@ mod tests {
         }
         move_release_chains(&mut db, disc_two.release, urn.release)?;
         for &track in t {
-            crate::releases::unlink_track(&mut db, disc_two.release, track)?;
+            let _ = crate::releases::unlink_track(&mut db, disc_two.release, track)?;
         }
 
         assert!(get_for_release(&db, disc_two.release)?.is_empty());

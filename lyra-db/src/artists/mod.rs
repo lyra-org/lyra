@@ -537,7 +537,8 @@ pub fn absorb_scan_names(
     Ok(())
 }
 
-/// Creates an artist whose scan name is `artist_name`.
+/// Creates an artist whose scan name is `artist_name`. Nothing references it yet, so it starts
+/// as a candidate for collection.
 pub fn create(
     db: &mut impl super::DbAccess,
     artist_name: &str,
@@ -568,6 +569,7 @@ pub fn create(
         .copied()
         .ok_or_else(|| anyhow!("artist insert returned no id"))?;
     roots::link(db, Root::Artists, artist_db_id)?;
+    roots::link(db, Root::ArtistCandidates, artist_db_id)?;
     Ok(artist_db_id)
 }
 

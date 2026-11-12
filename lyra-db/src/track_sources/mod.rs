@@ -356,6 +356,7 @@ pub fn upsert(
             .query(),
     )?;
 
+    let mut left_cue_tracks = Vec::new();
     for edge in outgoing_edges.elements {
         if edge.from != source_id {
             continue;
@@ -387,6 +388,7 @@ pub fn upsert(
             cue_track_query.try_into().unwrap_or_default();
         if !cue_track_targets.is_empty() && Some(target_id) != cue_track_id {
             db.exec_mut(QueryBuilder::remove().ids(edge.id).query())?;
+            left_cue_tracks.push(target_id);
         }
     }
 
@@ -437,6 +439,13 @@ pub fn upsert(
             )?;
         }
     }
+    super::orphans::collect(
+        db,
+        super::orphans::Candidates {
+            cue_tracks: left_cue_tracks,
+            ..Default::default()
+        },
+    )?;
 
     Ok(source_id)
 }

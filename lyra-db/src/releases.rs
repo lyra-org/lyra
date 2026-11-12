@@ -271,21 +271,28 @@ pub fn link_track(
     Ok(())
 }
 
+/// Ends the track's place on the release. The release is returned as a candidate for the
+/// caller to collect, in case this was its last track.
 pub fn unlink_track(
     db: &mut impl DbAccess,
     release_db_id: DbId,
     track_db_id: DbId,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<super::orphans::Candidates> {
     super::chains::remove_for_departing_track(db, release_db_id, track_db_id)?;
     if super::graph::remove_edges_between(db, release_db_id, track_db_id)? {
         super::covers::display::resync_playlists_with_track(db, track_db_id)?;
     }
-    Ok(())
+    Ok(super::orphans::Candidates {
+        releases: vec![release_db_id],
+        ..Default::default()
+    })
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default)]
 pub struct TrackReleaseDelta {
     pub membership_changed: bool,
+    /// The releases the track left, for the caller to collect once its write is done with them.
+    pub left: super::orphans::Candidates,
 }
 
 /// Make `release_db_id` the track's sole release without publishing per-edge
@@ -296,7 +303,7 @@ pub fn replace_track_release(
     release_db_id: DbId,
     track_db_id: DbId,
 ) -> anyhow::Result<TrackReleaseDelta> {
-    let mut removed_other = false;
+    let mut left = super::orphans::Candidates::default();
     let mut seen = HashSet::new();
     for release in get_by_track(db, track_db_id)? {
         let Some(current_release_db_id) = release.db_id.map(DbId::from) else {
@@ -306,13 +313,15 @@ pub fn replace_track_release(
             continue;
         }
         super::chains::remove_for_departing_track(db, current_release_db_id, track_db_id)?;
-        removed_other |=
-            super::graph::remove_edges_between(db, current_release_db_id, track_db_id)?;
+        if super::graph::remove_edges_between(db, current_release_db_id, track_db_id)? {
+            left.releases.push(current_release_db_id);
+        }
     }
 
     let target_added = super::graph::ensure_owned_edge(db, release_db_id, track_db_id)?;
     Ok(TrackReleaseDelta {
-        membership_changed: removed_other || target_added,
+        membership_changed: !left.releases.is_empty() || target_added,
+        left,
     })
 }
 
