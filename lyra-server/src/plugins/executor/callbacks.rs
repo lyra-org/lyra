@@ -14,9 +14,11 @@ use anyhow::{
     bail,
 };
 use harmony_core::{
-    LocalLuauTaskCompletion,
+    LateEnd,
     LocalScheduler,
     ResumeLimit,
+    Watched,
+    WatchedThread,
 };
 use harmony_luau::StringEnum;
 use std::{
@@ -24,7 +26,6 @@ use std::{
         HashMap,
         HashSet,
     },
-    rc::Rc,
     sync::{
         Arc,
         Mutex,
@@ -284,7 +285,7 @@ impl CallbackReply {
 impl PluginExecutor {
     /// Schedules the handler `prepare` makes and a task that watches it: the task waits for the
     /// handler to end, its caller to leave or `deadline`, by [`super::now`], to pass, cancels a
-    /// handler that hasn't ended, and replies. `prepare` gets the limit to run the handler's
+    /// handler that hasn't ended, and replies. `prepare` gets the limit to schedule the handler's
     /// resumes under, none of which runs past the deadline. Each round runs the task ahead of the
     /// handler, which isn't resumed once its caller is gone or its deadline has passed. The
     /// handler holds `permit` until it is gone.
@@ -294,12 +295,8 @@ impl PluginExecutor {
         mut reply: CallbackReply,
         permit: tokio::sync::OwnedSemaphorePermit,
         plugin: Option<Arc<str>>,
-        prepare: impl FnOnce(
-            ResumeLimit,
-            Rc<LocalLuauTaskCompletion>,
-        ) -> Result<(Rc<LocalScheduler>, harmony_luau::Thread)>,
+        prepare: impl FnOnce(ResumeLimit) -> Result<WatchedThread>,
     ) {
-        let completion = Rc::new(LocalLuauTaskCompletion::default());
         let scheduled = (|| {
             if self.is_quiesced(plugin.as_deref()) {
                 return Err(anyhow::Error::new(
@@ -312,37 +309,27 @@ impl PluginExecutor {
             if self.now() >= deadline {
                 bail!("plugin handler deadline expired before execution");
             }
-            prepare(ResumeLimit::until(deadline), completion.clone())
+            let scheduler = self.vm.data().get::<LocalScheduler>()?;
+            let handler = prepare(ResumeLimit::until(deadline))?;
+            Ok((scheduler, handler))
         })();
-        let (scheduler, thread) = match scheduled {
+        let (scheduler, handler) = match scheduled {
             Ok(scheduled) => scheduled,
             Err(error) => return reply.send(&self.vm, deadline, Err(error)),
         };
-        let expired = scheduler.sleep_until(deadline);
         let running = self.running.enter(plugin.clone());
         let vm = self.vm.clone();
-        let handler = super::WatchedThread::new(&scheduler, thread);
         scheduler.schedule_watcher(super::watcher_context(plugin), async move {
-            let ended = tokio::select! {
-                biased;
-                () = reply.cancelled() => Err(DISPATCH_CANCELLED),
-                result = completion.wait() => Ok(result),
-                () = expired => Err(DEADLINE_EXPIRED),
-            };
-            let result = match ended {
-                // A handler that ended before its deadline is answered with what it returned,
-                // however late this task reads it. One that ended at it or later is not.
-                Ok(_) if completion.ended_at().is_some_and(|ended| ended >= deadline) => {
-                    Err(anyhow::anyhow!(DEADLINE_EXPIRED))
-                }
-                Ok(result) => result.map_err(|error| reply.failure(error)),
-                Err(reason) => {
-                    handler.cancel().await;
-                    Err(anyhow::anyhow!(reason))
-                }
+            let result = match handler
+                .watch(reply.cancelled(), deadline, LateEnd::Expired)
+                .await
+            {
+                Watched::Ended { result, .. } => result.map_err(|error| reply.failure(error)),
+                Watched::Stopped(()) => Err(anyhow::anyhow!(DISPATCH_CANCELLED)),
+                Watched::Expired => Err(anyhow::anyhow!(DEADLINE_EXPIRED)),
             };
             reply.send(&vm, deadline, result);
-            drop((handler, permit, running));
+            drop((permit, running));
             Ok(())
         });
     }

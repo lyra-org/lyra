@@ -68,17 +68,18 @@ impl PluginExecutor {
             },
             permit,
             context.origin.plugin.clone(),
-            |limit, completion| {
-                let scheduler = self.vm.data().get::<LocalScheduler>()?;
-                scheduler.schedule_luau_thread_with_limit_and_completion(
-                    context,
-                    self.vm.clone(),
-                    thread.clone(),
-                    vec![argument],
-                    limit,
-                    completion,
-                );
-                Ok((scheduler, thread))
+            |limit| {
+                Ok(self
+                    .vm
+                    .data()
+                    .get::<LocalScheduler>()?
+                    .schedule_watched_luau_thread(
+                        context,
+                        self.vm.clone(),
+                        thread,
+                        vec![argument],
+                        Some(limit),
+                    ))
             },
         );
     }

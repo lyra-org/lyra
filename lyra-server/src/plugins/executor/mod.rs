@@ -155,41 +155,6 @@ pub(crate) fn now(vm: &harmony_luau::Vm) -> harmony_luau::runtime::Result<std::t
     Ok(vm.data().get::<LocalScheduler>()?.now())
 }
 
-/// A thread its watcher answers for. However the watcher goes, the thread doesn't outlive it.
-struct WatchedThread {
-    scheduler: std::rc::Weak<LocalScheduler>,
-    thread: harmony_luau::Thread,
-}
-
-impl WatchedThread {
-    fn new(scheduler: &Rc<LocalScheduler>, thread: harmony_luau::Thread) -> Self {
-        Self {
-            scheduler: Rc::downgrade(scheduler),
-            thread,
-        }
-    }
-
-    /// Cancels the thread, which runs no further, and completes once its work is dropped.
-    async fn cancel(&self) {
-        let settled = self
-            .scheduler
-            .upgrade()
-            .map(|scheduler| scheduler.cancel_luau_thread_and_settle(&self.thread));
-        if let Some(settled) = settled {
-            settled.await;
-        }
-    }
-}
-
-impl Drop for WatchedThread {
-    fn drop(&mut self) {
-        // Nothing for a thread that ended; a watcher that panicked leaves one that hasn't.
-        if let Some(scheduler) = self.scheduler.upgrade() {
-            scheduler.schedule_cancel_luau_thread(self.thread.clone());
-        }
-    }
-}
-
 /// The context of a task that watches one of `plugin`'s threads. It is in no run's group, so it
 /// outlives the run to answer for the thread.
 fn watcher_context(plugin: Option<Arc<str>>) -> CallContext {

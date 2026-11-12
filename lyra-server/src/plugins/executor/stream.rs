@@ -11,7 +11,6 @@
 
 use std::{
     pin::Pin,
-    rc::Rc,
     sync::{
         Arc,
         Mutex,
@@ -35,11 +34,13 @@ use std::{
 use bytes::Bytes;
 use futures::task::AtomicWaker;
 use harmony_core::{
-    LocalLuauTaskCompletion,
+    LateEnd,
     LocalScheduler,
     ResumeLimit,
     Sleep,
     UserDataBinding,
+    Watched,
+    WatchedThread,
 };
 use harmony_luau as luau;
 
@@ -389,11 +390,6 @@ pub(crate) struct StreamOrigin {
     pub(crate) path: String,
 }
 
-struct Running {
-    completion: Rc<LocalLuauTaskCompletion>,
-    producer: super::WatchedThread,
-}
-
 struct StreamTask {
     produce: luau::Function,
     context: luau::CallContext,
@@ -437,7 +433,7 @@ impl StreamTask {
         self.end.fail(error);
     }
 
-    fn start(&self, vm: &luau::Vm) -> anyhow::Result<Running> {
+    fn start(&self, vm: &luau::Vm) -> anyhow::Result<WatchedThread> {
         let scheduler = vm.data().get::<LocalScheduler>()?;
         anyhow::ensure!(
             !scheduler.is_group_cancelled(self.context.task_group),
@@ -446,19 +442,13 @@ impl StreamTask {
         let writer =
             ApiStreamWriter::class().create_value(vm, &self.context.origin, self.writer.clone())?;
         let thread = vm.create_thread(&self.produce)?;
-        let completion = Rc::new(LocalLuauTaskCompletion::default());
-        scheduler.schedule_luau_thread_with_limit_and_completion(
+        Ok(scheduler.schedule_watched_luau_thread(
             self.context.clone(),
             vm.clone(),
-            thread.clone(),
+            thread,
             vec![writer],
-            ResumeLimit::until(self.deadline).or_on(self.shared().closed.clone()),
-            completion.clone(),
-        );
-        Ok(Running {
-            completion,
-            producer: super::WatchedThread::new(&scheduler, thread),
-        })
+            Some(ResumeLimit::until(self.deadline).or_on(self.shared().closed.clone())),
+        ))
     }
 
     /// Produces the body once one of `places` is free, until the producer ends, the stream is
@@ -471,33 +461,22 @@ impl StreamTask {
             () = &mut expired => return self.fail(DEADLINE_EXPIRED),
             place = places.acquire_owned() => place,
         };
-        let producing = match self.start(&vm) {
-            Ok(producing) => producing,
+        let producer = match self.start(&vm) {
+            Ok(producer) => producer,
             Err(error) => return self.fail(&error.to_string()),
         };
-        let ended = tokio::select! {
-            biased;
-            reason = self.shared().told_to_stop() => Err(reason),
-            result = producing.completion.wait() => Ok(result),
-            () = &mut expired => Err(DEADLINE_EXPIRED),
-        };
-        let outcome = match ended {
-            // A producer that ended before its deadline ends the body as it did, however late
-            // this task reads it. One that ended at it or later does not.
-            Ok(_)
-                if producing
-                    .completion
-                    .ended_at()
-                    .is_some_and(|ended| ended >= self.deadline) =>
-            {
-                Err(DEADLINE_EXPIRED.to_string())
-            }
-            Ok(result) => result.map(|_| ()).map_err(|error| error.message),
-            Err(reason) => {
-                // The producer holds its place until it is gone.
-                producing.producer.cancel().await;
-                Err(reason.to_string())
-            }
+        // The producer holds its place until it is gone, which the watch waits for.
+        let outcome = match producer
+            .watch(
+                self.shared().told_to_stop(),
+                self.deadline,
+                LateEnd::Expired,
+            )
+            .await
+        {
+            Watched::Ended { result, .. } => result.map(|_| ()).map_err(|error| error.message),
+            Watched::Stopped(reason) => Err(reason.to_string()),
+            Watched::Expired => Err(DEADLINE_EXPIRED.to_string()),
         };
         match outcome {
             // A producer that caught an interrupt or a failed write may still return.

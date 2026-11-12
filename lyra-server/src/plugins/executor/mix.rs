@@ -54,7 +54,7 @@ impl PluginExecutor {
             super::callbacks::CallbackReply::Mix { reply, mixer_id },
             permit,
             plugin,
-            |limit, completion| {
+            |limit| {
                 let (handler, thread, argument) = prepared?;
                 let scheduler = self.vm.data().get::<LocalScheduler>()?;
                 let mut context = handler.context.clone();
@@ -62,15 +62,13 @@ impl PluginExecutor {
                     deadline,
                     context.origin.plugin.clone(),
                 ));
-                scheduler.schedule_luau_thread_with_limit_and_completion(
+                Ok(scheduler.schedule_watched_luau_thread(
                     context,
                     self.vm.clone(),
-                    thread.clone(),
+                    thread,
                     vec![argument],
-                    limit,
-                    completion,
-                );
-                Ok((scheduler, thread))
+                    Some(limit),
+                ))
             },
         );
     }

@@ -1645,7 +1645,7 @@ enum ScheduledEntrypoint {
     NoEntrypoint,
     /// Already evaluated, by an earlier run or a dependent's `require`.
     Cached,
-    Running(RunningEntrypoint),
+    Running(Box<RunningEntrypoint>),
 }
 
 /// A plugin's entrypoint running on the scheduler.
@@ -1654,8 +1654,7 @@ struct RunningEntrypoint {
     plugin_id: Arc<str>,
     entrypoint: Arc<str>,
     load: crate::modules::SourceLoad,
-    thread: luau::Thread,
-    completion: Rc<crate::LocalLuauTaskCompletion>,
+    watched: crate::WatchedThread,
     deadline: Instant,
     cancelled: crate::Cancellation,
     run_end_hooks: Rc<[RunEndHook]>,
@@ -1663,9 +1662,26 @@ struct RunningEntrypoint {
 
 impl RunningEntrypoint {
     /// Waits for the entrypoint to end, at its deadline at the latest, and records how it did: a
-    /// failed entrypoint ends the run.
+    /// failed entrypoint ends the run. Cancellation wins over a completion that landed; a
+    /// completion wins over the deadline, which only keeps an entrypoint from holding up its
+    /// runtime for good: nobody was promised an answer by then, so a plugin that loaded isn't
+    /// unloaded for having loaded late. An entrypoint that didn't complete is cancelled.
     async fn finish(self) -> anyhow::Result<()> {
-        let result = self.ended().await;
+        let result = match self
+            .watched
+            .watch(
+                self.cancelled.cancelled(),
+                self.deadline,
+                crate::LateEnd::Ended,
+            )
+            .await
+        {
+            crate::Watched::Ended { result, .. } => {
+                result.map_err(|error| anyhow::Error::msg(error.message))
+            }
+            crate::Watched::Stopped(()) => Err(anyhow::anyhow!("entrypoint was cancelled")),
+            crate::Watched::Expired => Err(anyhow::anyhow!("entrypoint did not complete")),
+        };
         let finished = self
             .vm
             .data()
@@ -1682,41 +1698,6 @@ impl RunningEntrypoint {
             end_plugin_run(&self.vm, &self.run_end_hooks, &self.plugin_id)?;
         }
         finished.map(|_| ())
-    }
-
-    /// Cancellation wins over a completion that landed; a completion wins over the deadline,
-    /// which only keeps an entrypoint from holding up its runtime for good: nobody was promised
-    /// an answer by then, so a plugin that loaded isn't unloaded for having loaded late. An
-    /// entrypoint that didn't complete is cancelled.
-    async fn ended(&self) -> anyhow::Result<Vec<luau::Value>> {
-        let mut expired = self
-            .vm
-            .data()
-            .get::<LocalScheduler>()?
-            .sleep_until(self.deadline);
-        let mut cancelled = std::pin::pin!(self.cancelled.cancelled());
-        let failure = std::future::poll_fn(|cx| {
-            if cancelled.as_mut().poll(cx).is_ready() {
-                return std::task::Poll::Ready(Err("entrypoint was cancelled"));
-            }
-            if let std::task::Poll::Ready(result) = self.completion.poll(cx) {
-                return std::task::Poll::Ready(Ok(result));
-            }
-            std::pin::Pin::new(&mut expired)
-                .poll(cx)
-                .map(|()| Err("entrypoint did not complete"))
-        })
-        .await;
-        match failure {
-            Ok(result) => result.map_err(|error| anyhow::Error::msg(error.message)),
-            Err(failure) => {
-                self.vm
-                    .data()
-                    .get::<LocalScheduler>()?
-                    .cancel_luau_thread(&self.thread);
-                Err(anyhow::anyhow!(failure))
-            }
-        }
     }
 }
 
@@ -1832,7 +1813,7 @@ impl Runtime {
         let scheduler = self.vm.data().get::<LocalScheduler>()?;
         require.plugin_group(&scheduler, plugin_id);
         let started = match self.schedule_entrypoint(plugin, &require, &scheduler) {
-            Ok(ScheduledEntrypoint::Running(entrypoint)) => Ok(Some(entrypoint)),
+            Ok(ScheduledEntrypoint::Running(entrypoint)) => Ok(Some(*entrypoint)),
             Ok(ScheduledEntrypoint::NoEntrypoint) => Ok(None),
             // Invalidated just above, so nothing may have cached it since.
             Ok(ScheduledEntrypoint::Cached) => Err(anyhow::anyhow!(
@@ -1872,8 +1853,7 @@ impl Runtime {
             crate::modules::SourceLoadStart::Started(load) => load,
         };
         let timeout = ThreadDriveOptions::default().timeout;
-        let completion = Rc::new(crate::LocalLuauTaskCompletion::default());
-        let thread = (|| {
+        let watched = (|| {
             let function = load_chunk_with_require(
                 &self.vm,
                 load.source.bytes.clone(),
@@ -1882,31 +1862,29 @@ impl Runtime {
             )?;
             let thread = self.vm.create_thread(&function)?;
             self.vm.sandbox_thread(&thread)?;
-            scheduler.schedule_luau_thread_with_completion(
+            anyhow::Ok(scheduler.schedule_watched_luau_thread(
                 CallContext {
                     origin: load.source.origin.clone(),
                     task_group: load.task_group,
                     ..CallContext::default()
                 },
                 self.vm.clone(),
-                thread.clone(),
+                thread,
                 Vec::new(),
-                completion.clone(),
-            );
-            anyhow::Ok(thread)
+                None,
+            ))
         })();
-        match thread {
-            Ok(thread) => Ok(ScheduledEntrypoint::Running(RunningEntrypoint {
+        match watched {
+            Ok(watched) => Ok(ScheduledEntrypoint::Running(Box::new(RunningEntrypoint {
                 vm: self.vm.clone(),
                 cancelled: self.entrypoints_cancelled.clone(),
                 run_end_hooks: self.run_end_hooks.clone(),
                 plugin_id: Arc::from(plugin_id),
                 entrypoint: Arc::from(entrypoint),
                 load,
-                thread,
-                completion,
+                watched,
                 deadline: scheduler.now() + timeout,
-            })),
+            }))),
             Err(error) => {
                 let failed = require.finish_source_load(load, Err(error));
                 failed
@@ -1920,7 +1898,7 @@ impl Runtime {
     /// Runs `entrypoint` to its end on this thread, driving the scheduler meanwhile.
     fn drive_entrypoint(&self, entrypoint: RunningEntrypoint) -> anyhow::Result<()> {
         let scheduler = self.vm.data().get::<LocalScheduler>()?;
-        let task = scheduler.luau_thread_handle(&entrypoint.thread);
+        let task = scheduler.luau_thread_handle(entrypoint.watched.thread());
         let waker = scheduler.wake_handle().waker();
         let mut cx = std::task::Context::from_waker(&waker);
         let mut finish = std::pin::pin!(entrypoint.finish());
@@ -1983,7 +1961,7 @@ impl Runtime {
         let require = self.vm.data().get::<RequireRuntime>()?;
         require.plugin_group(&scheduler, &plugin.manifest.id);
         match self.schedule_entrypoint(plugin, &require, &scheduler) {
-            Ok(ScheduledEntrypoint::Running(entrypoint)) => Ok(Some(entrypoint)),
+            Ok(ScheduledEntrypoint::Running(entrypoint)) => Ok(Some(*entrypoint)),
             Ok(ScheduledEntrypoint::NoEntrypoint | ScheduledEntrypoint::Cached) => Ok(None),
             Err(error) => {
                 self.stop_plugin(&plugin.manifest.id)?;
@@ -2847,7 +2825,7 @@ mod tests {
                 return Ok(());
             };
             let scheduler = self.scheduler();
-            let task = scheduler.luau_thread_handle(&entrypoint.thread);
+            let task = scheduler.luau_thread_handle(entrypoint.watched.thread());
             let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
             let mut finish = std::pin::pin!(entrypoint.finish());
             let result = loop {

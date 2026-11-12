@@ -19,11 +19,13 @@ use anyhow::{
     bail,
 };
 use harmony_core::{
-    LocalLuauTaskCompletion,
+    LateEnd,
     LocalScheduler,
     ResumeBound,
     ResumeLimit,
     UserDataBinding,
+    Watched,
+    WatchedThread,
 };
 
 use super::CallChain;
@@ -118,8 +120,8 @@ impl PluginExecutor {
             .as_ref()
             .ok()
             .and_then(|handler| handler.context.origin.plugin.clone());
-        self.start_callback(deadline, reply, permit, plugin, |limit, completion| {
-            schedule_metadata_handler(&self.vm, handler?, context, deadline, limit, completion)
+        self.start_callback(deadline, reply, permit, plugin, |limit| {
+            schedule_metadata_handler(&self.vm, handler?, context, deadline, limit)
         });
     }
 
@@ -146,22 +148,14 @@ fn schedule_metadata_handler(
     request_context: serde_json::Value,
     deadline: Instant,
     limit: ResumeLimit,
-    completion: Rc<LocalLuauTaskCompletion>,
-) -> Result<(Rc<LocalScheduler>, harmony_luau::Thread)> {
+) -> Result<WatchedThread> {
     let argument = harmony_serde::json_to_luau_owned(request_context, 0)?;
     let mut context = handler.context.clone();
     context.caller.insert(MetadataDispatchContext);
     context
         .caller
         .insert(CallChain::root(deadline, context.origin.plugin.clone()));
-    schedule_function(
-        vm,
-        &handler.function,
-        context,
-        vec![argument],
-        limit,
-        completion,
-    )
+    schedule_function(vm, &handler.function, context, vec![argument], limit)
 }
 
 fn schedule_function(
@@ -170,19 +164,12 @@ fn schedule_function(
     context: harmony_core::CallContext,
     args: Vec<harmony_luau::Value>,
     limit: ResumeLimit,
-    completion: Rc<LocalLuauTaskCompletion>,
-) -> Result<(Rc<LocalScheduler>, harmony_luau::Thread)> {
+) -> Result<WatchedThread> {
     let thread = vm.create_thread(function)?;
-    let scheduler = vm.data().get::<LocalScheduler>()?;
-    scheduler.schedule_luau_thread_with_limit_and_completion(
-        context,
-        vm.clone(),
-        thread.clone(),
-        args,
-        limit,
-        completion,
-    );
-    Ok((scheduler, thread))
+    Ok(vm
+        .data()
+        .get::<LocalScheduler>()?
+        .schedule_watched_luau_thread(context, vm.clone(), thread, args, Some(limit)))
 }
 
 /// [`run_function`] for `handler`, marking the call with `marker`.
@@ -250,45 +237,25 @@ pub(super) async fn run_function(
     let mut context = context;
     context.caller.insert(chain.admitting(plugin.as_ref()));
     let _running = running.enter(plugin);
-    let completion = Rc::new(LocalLuauTaskCompletion::default());
     let limit = ResumeLimit::until(deadline);
     let limit = match resume_budget {
         Some(budget) => limit.with_budget(budget),
         None => limit,
     };
-    let (scheduler, thread) = schedule_function(
-        vm,
-        function,
-        context,
-        args,
-        chain.limit_resumes(limit),
-        completion.clone(),
-    )?;
-    let expired = scheduler.sleep_until(deadline);
-    let mut guard = ScheduledThreadGuard {
-        scheduler,
-        thread,
-        armed: true,
-    };
-    let completed = tokio::select! {
-        biased;
-        result = completion.wait() => Some(result),
-        () = expired => None,
-    };
-    let Some(result) = completed else {
-        return Ok(None);
-    };
-    guard.armed = false;
-    if completion.ended_at().is_some_and(|ended| ended >= deadline) {
-        return Ok(None);
+    let function = schedule_function(vm, function, context, args, chain.limit_resumes(limit))?;
+    match function.watch_until(deadline, LateEnd::Expired).await {
+        Watched::Ended {
+            result,
+            interrupted_by,
+        } => result.map(Some).map_err(|raised| {
+            HandlerRaised {
+                raised,
+                interrupted_by,
+            }
+            .into()
+        }),
+        Watched::Expired => Ok(None),
     }
-    result.map(Some).map_err(|raised| {
-        HandlerRaised {
-            raised,
-            interrupted_by: completion.interrupted_by(),
-        }
-        .into()
-    })
 }
 
 /// How a host function reaches plugin handlers: on the VM making the call, which the executor is
@@ -592,21 +559,6 @@ fn similar_releases_handler(
     vm.data()
         .get::<crate::plugins::metadata::MetadataCallbackRegistry>()?
         .get_for_provider(handler, provider_id, crate::services::EntityType::Release)
-}
-
-struct ScheduledThreadGuard {
-    scheduler: Rc<LocalScheduler>,
-    thread: harmony_luau::Thread,
-    armed: bool,
-}
-
-impl Drop for ScheduledThreadGuard {
-    fn drop(&mut self) {
-        if self.armed {
-            self.scheduler
-                .schedule_cancel_luau_thread(self.thread.clone());
-        }
-    }
 }
 
 pub(super) fn decode_similar_releases_result(

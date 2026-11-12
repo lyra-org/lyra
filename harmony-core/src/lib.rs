@@ -52,6 +52,7 @@ pub use modules::{
 };
 pub use scheduler::{
     Cancellation,
+    LateEnd,
     LocalLuauTaskCompletion,
     LocalScheduler,
     ResumeBound,
@@ -64,6 +65,8 @@ pub use scheduler::{
     TaskId,
     TaskSnapshot,
     TaskState,
+    Watched,
+    WatchedThread,
 };
 pub use tokio_runtime::TokioRuntimeContext;
 pub use userdata::{
