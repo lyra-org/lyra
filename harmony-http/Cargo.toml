@@ -21,3 +21,6 @@ url = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
+
+[lints]
+workspace = true

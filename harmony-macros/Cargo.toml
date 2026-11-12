@@ -15,3 +15,6 @@ syn = { version = "2", features = ["full"] }
 [dev-dependencies]
 harmony-core = { path = "../harmony-core" }
 harmony-luau = { path = "../harmony-luau" }
+
+[lints]
+workspace = true

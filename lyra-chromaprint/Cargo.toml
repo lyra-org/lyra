@@ -8,3 +8,6 @@ license-file = "../LICENSE"
 lyra-ffmpeg = { path = "../lyra-ffmpeg" }
 base64 = { workspace = true }
 thiserror = { workspace = true }
+
+[lints]
+workspace = true

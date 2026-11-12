@@ -8,3 +8,6 @@ license-file = "../LICENSE"
 harmony-core = { path = "../harmony-core" }
 harmony-luau = { path = "../harmony-luau" }
 tracing = { workspace = true }
+
+[lints]
+workspace = true

@@ -89,3 +89,6 @@ lyra-db = { path = "../lyra-db", features = ["testing"] }
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
 tar = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

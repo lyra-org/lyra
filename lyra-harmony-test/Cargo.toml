@@ -25,3 +25,6 @@ percent-encoding = { workspace = true }
 url = { workspace = true }
 anyhow = { workspace = true }
 flate2 = "1"
+
+[lints]
+workspace = true

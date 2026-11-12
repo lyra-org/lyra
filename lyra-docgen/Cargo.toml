@@ -20,3 +20,6 @@ harmony-task = { path = "../harmony-task" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 lyra-server = { path = "../lyra-server", features = ["docgen"] }
+
+[lints]
+workspace = true

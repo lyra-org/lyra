@@ -23,3 +23,6 @@ url = { workspace = true }
 [dev-dependencies]
 rustls = { workspace = true, default-features = false, features = ["ring", "std", "tls12"] }
 tokio = { workspace = true, features = ["macros", "net", "rt", "rt-multi-thread"] }
+
+[lints]
+workspace = true

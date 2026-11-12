@@ -23,6 +23,10 @@ resolver = "2"
 [workspace.package]
 version = "0.0.2-dev.2"
 
+# Every member but harmony-luau and lyra-ffmpeg, which wrap C libraries, takes these.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
 [workspace.dependencies]
 anyhow = "1"
 base64 = "0.22"

@@ -42,7 +42,8 @@ status. `clippy.toml` disallows those functions everywhere else.
 - A newly used raising function needs a shim, a gateway wrapper and a `clippy.toml` entry.
 - When upgrading Luau, check for functions that have started to raise.
 - `Vm::with_options` asserts that Luau still defines the `LuauTableRobustOom` flag.
-- `harmony-luau` denies `unsafe` code outside four modules of `harmony-luau/src/runtime/`:
+- `harmony-luau` denies `unsafe` code outside four modules of `harmony-luau/src/runtime/`, and the
+  other workspace crates but `lyra-ffmpeg` forbid it:
   - `gateway.rs`, above.
   - `stack.rs` owns access to Luau stacks, the registry and userdata. Its `Stack` checks the
     indexes and value types it is given, so the handles and argument reading hold no `unsafe`,
