@@ -5,7 +5,6 @@ use std::{
         TypeId,
         type_name,
     },
-    cell::Cell,
     collections::HashMap,
     ffi::{
         CString,
@@ -693,8 +692,6 @@ impl Vm {
             state,
             self.inner.id,
             function.origin.clone(),
-            false,
-            false,
         ))
     }
 
@@ -1103,15 +1100,11 @@ impl Vm {
                     let thread_state =
                         NonNull::new(thread_state).expect("thread value is non-null");
                     let reference = self.ref_value_from(state, index)?;
-                    let status = sys::lua_status(thread_state.as_ptr());
-                    let top = sys::lua_gettop(thread_state.as_ptr());
                     ValueRef::Thread(Thread::new(
                         Some(reference),
                         thread_state,
                         self.inner.id,
                         ChunkOrigin::default(),
-                        status != sys::LUA_OK || top != 1,
-                        status == sys::LUA_OK && top == 0,
                     ))
                 }
                 sys::LUA_TUSERDATA => ValueRef::UserData(UserData {
@@ -1471,8 +1464,6 @@ struct ThreadInner {
     vm_id: u64,
     origin: ChunkOrigin,
     data: ThreadData,
-    started: Cell<bool>,
-    finished: Cell<bool>,
 }
 
 impl Thread {
@@ -1492,8 +1483,6 @@ impl Thread {
         state: NonNull<sys::lua_State>,
         vm_id: u64,
         origin: ChunkOrigin,
-        started: bool,
-        finished: bool,
     ) -> Self {
         Self {
             inner: Rc::new(ThreadInner {
@@ -1502,8 +1491,6 @@ impl Thread {
                 vm_id,
                 origin,
                 data: ThreadData::default(),
-                started: Cell::new(started),
-                finished: Cell::new(finished),
             }),
         }
     }
@@ -1526,7 +1513,17 @@ impl Thread {
 
     /// Whether the thread has run, or was closed and never will.
     pub fn is_started(&self) -> bool {
-        self.inner.started.get() || self.inner.finished.get() || self.has_started_state()
+        let main = self
+            .reference()
+            .expect("a thread handle holds a reference to its thread")
+            .vm()
+            .inner
+            .state;
+        let state = self.inner.state.as_ptr();
+        let unstarted = unsafe { gateway::co_status(main.as_ptr(), state) }
+            == gateway::CoStatus::Suspended
+            && unsafe { sys::lua_status(state) } == sys::LUA_OK;
+        !unstarted
     }
 
     fn reference(&self) -> Option<&RegistryRef> {
@@ -1535,13 +1532,6 @@ impl Thread {
 
     fn state(&self) -> NonNull<sys::lua_State> {
         self.inner.state
-    }
-
-    fn has_started_state(&self) -> bool {
-        unsafe {
-            sys::lua_status(self.inner.state.as_ptr()) != sys::LUA_OK
-                || sys::lua_gettop(self.inner.state.as_ptr()) != 1
-        }
     }
 
     pub fn resume(&self, vm: &Vm, args: &[Value]) -> Result<ThreadStatus> {
@@ -1554,7 +1544,6 @@ impl Thread {
                 return Err(error);
             }
         }
-        self.inner.started.set(true);
 
         let resumed = unsafe { gateway::resume(vm.inner.state.as_ptr(), state, args.len() as i32) };
         self.finish_resume(vm, resumed)
@@ -1564,7 +1553,6 @@ impl Thread {
     /// raised it: the nearest `pcall` in this thread catches it, and with none the thread fails.
     pub fn resume_error(&self, vm: &Vm, error: &RaisedError) -> Result<ThreadStatus> {
         let state = self.prepare_resume(vm)?;
-        self.inner.started.set(true);
         let resumed = unsafe { gateway::resume_error(vm.inner.state.as_ptr(), state, error) };
         self.finish_resume(vm, resumed)
     }
@@ -1613,9 +1601,6 @@ impl Thread {
         let closed = vm.inner.control().without_memory_limit(|| unsafe {
             gateway::close_thread(vm.inner.state.as_ptr(), self.inner.state.as_ptr())
         });
-        if closed {
-            self.inner.finished.set(true);
-        }
         Ok(closed)
     }
 
@@ -1629,9 +1614,6 @@ impl Thread {
                 reference_vm: self.vm_id(),
                 actual_vm: vm.inner.id,
             });
-        }
-        if self.inner.finished.get() {
-            return Err(Error::Runtime("thread already completed".to_string()));
         }
         let state = self.inner.state.as_ptr();
         if self.inner.state == vm.inner.state {
@@ -1659,7 +1641,6 @@ impl Thread {
         let result = resumed.and_then(|yielded| {
             // Cancelled as it ran, and closed as it yielded.
             if yielded && unsafe { sys::lua_status(state) } != sys::LUA_YIELD {
-                self.inner.finished.set(true);
                 return Ok(ThreadStatus::Closed);
             }
             let top = unsafe { sys::lua_gettop(state) };
@@ -1669,7 +1650,6 @@ impl Thread {
             if yielded {
                 Ok(ThreadStatus::Yielded(values))
             } else {
-                self.inner.finished.set(true);
                 Ok(ThreadStatus::Completed(values))
             }
         });
@@ -3461,14 +3441,7 @@ unsafe fn run_native_function(
         };
         let frame = CallFrame {
             vm: &vm,
-            thread: Thread::new(
-                Some(thread_reference),
-                state,
-                slot.vm_id,
-                origin.clone(),
-                true,
-                false,
-            ),
+            thread: Thread::new(Some(thread_reference), state, slot.vm_id, origin.clone()),
             context: CallContext {
                 origin,
                 capability: slot.capability.clone(),
@@ -4413,7 +4386,7 @@ mod tests {
         );
         assert!(matches!(
             thread.resume(&vm, &[]),
-            Err(Error::Runtime(message)) if message.contains("already completed")
+            Err(Error::Runtime(message)) if message.contains("dead coroutine")
         ));
         assert_eq!(stack_top(&vm), 0);
         Ok(())
@@ -4920,6 +4893,58 @@ mod tests {
         )?;
         main.call(&vm, &[])?;
         assert_eq!(eval_str(&vm, "return went_on")?, vec![Value::Nil]);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn a_thread_read_while_it_runs_a_native_function_reads_as_running() -> Result<()> {
+        let vm = Vm::new()?;
+        vm.open_standard_libraries(StandardLibraries::all_supported())?;
+        let check: NativeFn = Arc::new(|mut frame| {
+            let thread: Thread = frame.args.read()?;
+            frame.returns.write(thread.is_started())?;
+            Ok(())
+        });
+        let capture: NativeFn = Arc::new(|frame| {
+            let Some(Value::Thread(thread)) = frame
+                .vm
+                .eval(Arc::<[u8]>::from(&b"return co"[..]), ChunkOrigin::default())?
+                .pop()
+            else {
+                return Err(Error::Runtime("expected a thread".to_string()));
+            };
+            frame.vm.data().insert(thread)?;
+            Ok(())
+        });
+        for (name, callback) in [("check", check), ("capture", capture)] {
+            let function = vm.create_function_with_options(
+                NativeFunctionOptions::new(ChunkOrigin::default()).function_name(name),
+                callback,
+            )?;
+            vm.set_global_function(name, &function)?;
+        }
+
+        assert_eq!(
+            eval_str(
+                &vm,
+                "co = coroutine.create(function()
+                     local started = check(coroutine.running())
+                     capture()
+                     coroutine.yield(started)
+                     return 'done'
+                 end)
+                 return coroutine.resume(co)"
+            )?,
+            vec![Value::Boolean(true), Value::Boolean(true)]
+        );
+        let captured = vm.data().get::<Thread>()?;
+        assert!(captured.is_started());
+        assert_eq!(
+            captured.resume(&vm, &[])?,
+            ThreadStatus::Completed(vec![string("done")])
+        );
+        vm.data().clear()?;
         Ok(())
     }
 
