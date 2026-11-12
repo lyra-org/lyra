@@ -30,7 +30,6 @@ blake3 = "1.8"
 cc = "1"
 ffmpeg-sys-next = { version = "9.0", default-features = false, features = ["avcodec", "avformat", "swresample"] }
 flate2 = "1"
-json5 = { git = "https://github.com/StayBlue/json5-rs.git", rev = "3bf73f7937c9e4db7c19564e22fa8168404c75c0" }
 harmony-luau-sys = { git = "https://github.com/lyra-org/harmony-luau-sys" }
 harmony-luau = { path = "harmony-luau" }
 percent-encoding = "2"

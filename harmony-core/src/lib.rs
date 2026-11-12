@@ -22,7 +22,11 @@ pub use harmony_luau::{
     ModuleId,
     TaskGroupId,
 };
-pub use luaurc::LuaurcConfig;
+pub use luaurc::{
+    LuaurcConfig,
+    LuaurcError,
+    LuaurcValue,
+};
 pub use modules::{
     AllowAllCapabilities,
     CapabilityPolicy,

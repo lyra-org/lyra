@@ -298,17 +298,16 @@ fn read_or_create_luaurc(path: &Path) -> Result<LuaurcConfig> {
         Err(err) => {
             Err(err).with_context(|| format!("failed to read .luaurc at {}", path.display()))
         }
-        Ok(contents) => LuaurcConfig::from_json5_str(&contents)
+        Ok(contents) => LuaurcConfig::parse(&contents)
             .with_context(|| format!("failed to parse .luaurc at {}", path.display())),
     }
 }
 
 fn write_luaurc(path: &Path, luaurc: &LuaurcConfig) -> Result<()> {
-    let mut serialized = luaurc
-        .to_pretty_json5_string()
-        .with_context(|| format!("failed to serialize .luaurc for {}", path.display()))?;
-    serialized.push('\n');
-    fs::write(path, serialized).with_context(|| format!("failed to write {}", path.display()))
+    let rendered = luaurc
+        .render()
+        .with_context(|| format!("failed to render .luaurc for {}", path.display()))?;
+    fs::write(path, rendered).with_context(|| format!("failed to write {}", path.display()))
 }
 
 fn merge_setup_aliases(project_root: &Path, luaurc: &mut LuaurcConfig) -> Result<()> {
