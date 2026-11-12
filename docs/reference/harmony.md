@@ -92,7 +92,10 @@ status. `clippy.toml` disallows those functions everywhere else.
   any OS thread. Past any of them the thread raises `INTERRUPTED_ERROR`, and
   `LocalLuauTaskCompletion::interrupted_by` tells which one it was: the budget when it was no
   longer than what was left until the deadline, and none for a thread that failed on its own
-  after its limit had passed.
+  after its limit had passed. Luau looks for an interrupt only at calls, loops and returns, so
+  a thread that is to be resumed with no time left, at or after the deadline, on a budget of
+  none or with the signal raised, isn't resumed at all: it is closed, and its task fails as
+  interrupted.
 - A host that polls a scheduler sleeps between polls in `LocalScheduler::wait_for_work`, which a
   woken or due task ends, as does the deadline it is given. For anything else the host polls
   there, it takes a `SchedulerWake` and fires it from any thread, directly or as a `Waker`; a

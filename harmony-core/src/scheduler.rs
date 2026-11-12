@@ -304,8 +304,21 @@ impl ResumeLimit {
     }
 
     /// What a resume starting now runs under, and which of the budget and the deadline is the
-    /// one it would run into.
-    fn guard(&self, vm: &luau::Vm, clock: &Clock) -> (luau::InterruptBudgetGuard, ResumeBound) {
+    /// one it would run into. Fails with the bound already reached for a resume that is too late
+    /// to start: Luau looks for an interrupt only at calls, loops and returns, so a resume given
+    /// no time would still run up to the first of them.
+    fn guard(
+        &self,
+        vm: &luau::Vm,
+        clock: &Clock,
+    ) -> std::result::Result<(luau::InterruptBudgetGuard, ResumeBound), ResumeBound> {
+        if self
+            .signal
+            .as_ref()
+            .is_some_and(luau::InterruptSignal::is_raised)
+        {
+            return Err(ResumeBound::Signal);
+        }
         let left = self
             .deadline
             .map(|deadline| deadline.saturating_duration_since(clock.now()));
@@ -314,7 +327,10 @@ impl ResumeLimit {
             (Some(budget), _) => (budget, ResumeBound::Budget),
             (None, left) => (left.unwrap_or(Duration::MAX), ResumeBound::Deadline),
         };
-        (vm.interrupt_after_or_on(time, self.signal.as_ref()), bound)
+        if time.is_zero() {
+            return Err(bound);
+        }
+        Ok((vm.interrupt_after_or_on(time, self.signal.as_ref()), bound))
     }
 }
 
@@ -2259,13 +2275,23 @@ struct Resuming<'a> {
 }
 
 impl Resuming<'_> {
-    /// Runs `resume`, which resumes a thread, under the limit.
+    /// Runs `resume`, which resumes `thread`, under the limit. A thread whose limit leaves it no
+    /// time isn't resumed: it is closed, and fails as one interrupted at its first instruction.
     fn resume(
         &self,
         vm: &luau::Vm,
+        thread: &luau::Thread,
         resume: impl FnOnce() -> luau::runtime::Result<luau::ThreadStatus>,
     ) -> luau::runtime::Result<luau::ThreadStatus> {
-        let limited = self.limit.map(|limit| (limit, limit.guard(vm, self.clock)));
+        let limited = match self.limit.map(|limit| (limit, limit.guard(vm, self.clock))) {
+            Some((_, Err(reached))) => {
+                close_cancelled_thread(vm, thread);
+                self.interrupted_by.set(Some(reached));
+                return Err(luau::Error::Runtime(luau::INTERRUPTED_ERROR.to_string()));
+            }
+            Some((limit, Ok(guard))) => Some((limit, guard)),
+            None => None,
+        };
         let result = resume();
         // An interruption is what the interrupt raised on this limit and the thread failed with:
         // not a failure that outlasted the limit, nor one that came after the thread had caught
@@ -2358,7 +2384,7 @@ fn poll_work(
                 Ok(previous) => previous,
                 Err(error) => return WorkPoll::Failed(error.to_string().into()),
             };
-            let result = resuming.resume(vm, || thread.resume(vm, args));
+            let result = resuming.resume(vm, thread, || thread.resume(vm, args));
             args.clear();
             poll_luau_resume(vm, thread, result, previous)
         }
@@ -2391,7 +2417,7 @@ fn poll_work(
                 Ok(previous) => previous,
                 Err(error) => return WorkPoll::Failed(error.to_string().into()),
             };
-            let result = resuming.resume(&vm, || match output {
+            let result = resuming.resume(&vm, &thread, || match output {
                 Ok(values) => thread.resume(&vm, values.as_slice()),
                 Err(error) => thread.resume_error(&vm, &error),
             });
@@ -3842,6 +3868,13 @@ pub(crate) mod tests {
     /// `cancel_as_it_wakes()` and `cancel_group_as_it_wakes()`, waits that cancel the thread they
     /// are about to wake, or its group.
     fn vm_with_waits() -> luau::runtime::Result<(luau::Vm, Rc<LocalScheduler>)> {
+        vm_with_waits_on(LocalScheduler::new())
+    }
+
+    /// [`vm_with_waits`] with `scheduler` as the VM's.
+    fn vm_with_waits_on(
+        scheduler: LocalScheduler,
+    ) -> luau::runtime::Result<(luau::Vm, Rc<LocalScheduler>)> {
         use crate::modules::{
             FunctionSpec,
             ModuleSpec,
@@ -3850,7 +3883,7 @@ pub(crate) mod tests {
 
         let vm = luau::Vm::new()?;
         vm.open_standard_libraries(luau::StandardLibraries::all_supported())?;
-        vm.data().insert(LocalScheduler::new())?;
+        vm.data().insert(scheduler)?;
         let module = ModuleSpec::new("demo/waits")
             .function(FunctionSpec::new("wait").call_async(Arc::new(|_frame| {
                 Ok(luau::ScheduledFuture::new(pending::<
@@ -4237,6 +4270,141 @@ pub(crate) mod tests {
         assert_closed(&vm, &by_thread);
         scheduler.cancel_group(group);
         assert_closed(&vm, &by_group);
+        Ok(())
+    }
+
+    /// Schedules `source` under `limit` and returns its thread and what its task ends with.
+    fn spawn_limited(
+        vm: &luau::Vm,
+        scheduler: &LocalScheduler,
+        source: &'static str,
+        limit: ResumeLimit,
+    ) -> luau::runtime::Result<(luau::Thread, Rc<LocalLuauTaskCompletion>)> {
+        let thread = chunk_thread(vm, source)?;
+        let completion = Rc::new(LocalLuauTaskCompletion::default());
+        scheduler.schedule_luau_thread_with_limit_and_completion(
+            CallContext::default(),
+            vm.clone(),
+            thread.clone(),
+            Vec::new(),
+            limit,
+            completion.clone(),
+        );
+        Ok((thread, completion))
+    }
+
+    #[track_caller]
+    fn assert_interrupted(completion: &LocalLuauTaskCompletion) {
+        let ended = completion_message(completion).expect("the task ended");
+        assert!(
+            ended
+                .as_ref()
+                .is_err_and(|error| error.contains(luau::INTERRUPTED_ERROR)),
+            "{ended:?}"
+        );
+    }
+
+    /// Luau looks for an interrupt only at calls, loops and returns, so a resume given no time
+    /// would still run what comes before the first of them. A deadline is the first instant that
+    /// is too late: a thread is resumed just before it and not at it.
+    #[test]
+    fn a_thread_is_not_started_once_its_limit_s_deadline_is_reached() -> luau::runtime::Result<()> {
+        const TIMEOUT: Duration = Duration::from_secs(30);
+
+        for (late_by, started) in [
+            (None, luau::Value::Boolean(true)),
+            (Some(Duration::ZERO), luau::Value::Nil),
+            (Some(TIMEOUT), luau::Value::Nil),
+        ] {
+            let clock = ManualClock::new();
+            let (vm, scheduler) =
+                vm_with_waits_on(LocalScheduler::with_manual_clock(clock.clone()))?;
+            let (thread, completion) = spawn_limited(
+                &vm,
+                &scheduler,
+                "started = true",
+                ResumeLimit::until(clock.now() + TIMEOUT),
+            )?;
+            match late_by {
+                None => clock.advance(TIMEOUT - Duration::from_nanos(1)),
+                Some(late_by) => clock.advance(TIMEOUT + late_by),
+            }
+
+            scheduler.poll_ready();
+
+            assert_eq!(eval(&vm, "return started")?, vec![started], "{late_by:?}");
+            if late_by.is_some() {
+                assert_interrupted(&completion);
+                assert_closed(&vm, &thread);
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_thread_is_not_resumed_from_a_wait_that_outlasted_its_limit_s_deadline()
+    -> luau::runtime::Result<()> {
+        const TIMEOUT: Duration = Duration::from_secs(30);
+
+        let clock = ManualClock::new();
+        let (vm, scheduler) = vm_with_waits_on(LocalScheduler::with_manual_clock(clock.clone()))?;
+        let (thread, completion) = spawn_limited(
+            &vm,
+            &scheduler,
+            "started = true pause() went_on = true",
+            ResumeLimit::until(clock.now() + TIMEOUT),
+        )?;
+        scheduler.poll_ready();
+        assert_eq!(
+            eval(&vm, "return started")?,
+            vec![luau::Value::Boolean(true)]
+        );
+        assert!(completion_message(&completion).is_none());
+
+        clock.advance(TIMEOUT);
+        scheduler.poll_ready();
+
+        assert_interrupted(&completion);
+        assert_closed(&vm, &thread);
+        Ok(())
+    }
+
+    /// A budget of no time is no resume, not one that ends at its first call, loop or return.
+    #[test]
+    fn a_thread_is_not_started_on_a_limit_that_gives_it_no_time() -> luau::runtime::Result<()> {
+        let far = Instant::now() + Duration::from_secs(600);
+        for limit in [
+            ResumeLimit::budget(Duration::ZERO),
+            ResumeLimit::until(far).with_budget(Duration::ZERO),
+        ] {
+            let (vm, scheduler) = vm_with_waits()?;
+            let (thread, completion) = spawn_limited(&vm, &scheduler, "went_on = true", limit)?;
+
+            scheduler.poll_ready();
+
+            assert_interrupted(&completion);
+            assert_eq!(completion.interrupted_by(), Some(ResumeBound::Budget));
+            assert_closed(&vm, &thread);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_thread_is_not_started_once_its_limit_s_signal_is_raised() -> luau::runtime::Result<()> {
+        let (vm, scheduler) = vm_with_waits()?;
+        let signal = luau::InterruptSignal::new();
+        let (thread, completion) = spawn_limited(
+            &vm,
+            &scheduler,
+            "went_on = true",
+            ResumeLimit::budget(Duration::from_secs(600)).or_on(signal.clone()),
+        )?;
+        signal.raise();
+
+        scheduler.poll_ready();
+
+        assert_interrupted(&completion);
+        assert_closed(&vm, &thread);
         Ok(())
     }
 
