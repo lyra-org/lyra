@@ -344,7 +344,7 @@ enum LuauThreadStart {
     Delayed(Duration),
     Limited {
         limit: ResumeLimit,
-        completion: Option<Rc<LocalLuauTaskCompletion>>,
+        completion: Rc<LocalLuauTaskCompletion>,
     },
     /// Immediately, under the scheduler's own limit, reporting to the completion.
     WithCompletion(Rc<LocalLuauTaskCompletion>),
@@ -1492,26 +1492,6 @@ impl LocalScheduler {
         self.schedule_luau_thread_start(context, vm, thread, args, LuauThreadStart::Immediate);
     }
 
-    pub fn schedule_luau_thread_with_budget(
-        &self,
-        context: CallContext,
-        vm: luau::Vm,
-        thread: luau::Thread,
-        args: Vec<luau::Value>,
-        resume_budget: Duration,
-    ) {
-        self.schedule_luau_thread_start(
-            context,
-            vm,
-            thread,
-            args,
-            LuauThreadStart::Limited {
-                limit: ResumeLimit::budget(resume_budget),
-                completion: None,
-            },
-        );
-    }
-
     /// Runs `thread` under the scheduler's own resume budget, reporting to `completion`.
     pub fn schedule_luau_thread_with_completion(
         &self,
@@ -1530,25 +1510,6 @@ impl LocalScheduler {
         );
     }
 
-    pub fn schedule_luau_thread_with_budget_and_completion(
-        &self,
-        context: CallContext,
-        vm: luau::Vm,
-        thread: luau::Thread,
-        args: Vec<luau::Value>,
-        resume_budget: Duration,
-        completion: Rc<LocalLuauTaskCompletion>,
-    ) {
-        self.schedule_luau_thread_with_limit_and_completion(
-            context,
-            vm,
-            thread,
-            args,
-            ResumeLimit::budget(resume_budget),
-            completion,
-        );
-    }
-
     pub fn schedule_luau_thread_with_limit_and_completion(
         &self,
         context: CallContext,
@@ -1563,10 +1524,7 @@ impl LocalScheduler {
             vm,
             thread,
             args,
-            LuauThreadStart::Limited {
-                limit,
-                completion: Some(completion),
-            },
+            LuauThreadStart::Limited { limit, completion },
         );
     }
 
@@ -1643,7 +1601,7 @@ impl LocalScheduler {
                         args,
                         LuauTaskOptions {
                             resume_limit: Some(limit),
-                            completion,
+                            completion: Some(completion),
                         },
                     )
                 }
@@ -2051,10 +2009,7 @@ impl LocalScheduler {
             let context = match &work {
                 PendingLuauWork::Thread { context, start, .. } => {
                     if let LuauThreadStart::WithCompletion(completion)
-                    | LuauThreadStart::Limited {
-                        completion: Some(completion),
-                        ..
-                    } = start
+                    | LuauThreadStart::Limited { completion, .. } = start
                     {
                         completion.complete(Err("Luau task was cancelled".into()), now);
                     }
@@ -3214,12 +3169,12 @@ pub(crate) mod tests {
         let completion = Rc::new(LocalLuauTaskCompletion::default());
 
         scheduler.polling.set(true);
-        scheduler.schedule_luau_thread_with_budget_and_completion(
+        scheduler.schedule_luau_thread_with_limit_and_completion(
             CallContext::default(),
             vm,
             thread.clone(),
             Vec::new(),
-            Duration::from_secs(1),
+            ResumeLimit::budget(Duration::from_secs(1)),
             completion.clone(),
         );
         scheduler.polling.set(false);

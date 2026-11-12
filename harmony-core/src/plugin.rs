@@ -2976,12 +2976,12 @@ mod tests {
             runtime.vm.data().get::<TestHandlers>()?.0.borrow()[index].clone();
         let completion = std::rc::Rc::new(crate::LocalLuauTaskCompletion::default());
         let scheduler = runtime.vm.data().get::<crate::LocalScheduler>()?;
-        scheduler.schedule_luau_thread_with_budget_and_completion(
+        scheduler.schedule_luau_thread_with_limit_and_completion(
             context,
             runtime.vm.clone(),
             runtime.vm.create_thread(&function)?,
             Vec::new(),
-            std::time::Duration::from_secs(5),
+            crate::ResumeLimit::budget(std::time::Duration::from_secs(5)),
             completion.clone(),
         );
         Ok(completion)
