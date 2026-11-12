@@ -86,8 +86,13 @@ status. `clippy.toml` disallows those functions everywhere else.
   `coroutine.resume` returns just `true`, and `Thread::resume` returns `ThreadStatus::Closed`.
   One that returns or fails first ends as any other. `coroutine.isyieldable` still returns `true`
   in a marked thread.
-- A scheduler with a resume limit runs each resume under an interrupt budget. Past it, the thread
-  raises `INTERRUPTED_ERROR`.
+- A `ResumeLimit` bounds each resume of a thread: by a budget, by a deadline no resume runs
+  past, or by both, when a resume gets the smaller of its budget and what is left until the
+  deadline. It can also hold an `InterruptSignal`, which ends a resume once it is raised, from
+  any OS thread. Past any of them the thread raises `INTERRUPTED_ERROR`, and
+  `LocalLuauTaskCompletion::interrupted_by` tells which one it was: the budget when it was no
+  longer than what was left until the deadline, and none for a thread that failed on its own
+  after its limit had passed.
 - A host that polls a scheduler sleeps between polls in `LocalScheduler::wait_for_work`, which a
   woken or due task ends, as does the deadline it is given. For anything else the host polls
   there, it takes a `SchedulerWake` and fires it from any thread, directly or as a `Waker`; a
@@ -128,7 +133,7 @@ status. `clippy.toml` disallows those functions everywhere else.
 ## Time
 
 - A scheduler reads time from one clock, `LocalScheduler::now`: delayed tasks and futures,
-  `Sleep`, `ResumeLimit::Until`, the deadlines of entrypoints and of `drive_thread`, and
+  `Sleep`, `ResumeLimit::until`, the deadlines of entrypoints and of `drive_thread`, and
   `LocalLuauTaskCompletion::ended_at`, which is read as the thread ends or is cancelled. A host
   makes the deadlines it hands the scheduler from `now`, not from `Instant::now()`.
 - A deadline is the first instant that is too late: a `Sleep` is over once the clock reaches it,
@@ -146,8 +151,8 @@ status. `clippy.toml` disallows those functions everywhere else.
   runtime's `exec_all`, `exec_plugin`, `restart_plugin`, `run_plugin_source` and `eval_source_*`.
   A test polls instead, with `poll_ready`, `Runtime::start_plugin_restart` and
   `testing::drive_thread_while_ready`.
-- Resume budgets stay real on any clock. `ResumeLimit::Budget` is real time, and
-  `ResumeLimit::Until` takes what is left until its deadline from the clock as each resume starts,
+- Resume budgets stay real on any clock. `ResumeLimit::budget` is real time, and
+  `ResumeLimit::until` takes what is left until its deadline from the clock as each resume starts,
   then counts it in real time, so a clock that stands still doesn't let `while true do end` run on.
 - A manually polled test can't see a missed wake. Tests of what ends a wait run on the real clock
   and `wait_for_work`, and send the wake once `SchedulerWake::owner_is_waiting`, also under

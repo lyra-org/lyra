@@ -50,6 +50,7 @@ pub use scheduler::{
     Cancellation,
     LocalLuauTaskCompletion,
     LocalScheduler,
+    ResumeBound,
     ResumeLimit,
     Scheduler,
     SchedulerWake,

@@ -452,10 +452,7 @@ impl StreamTask {
             vm.clone(),
             thread.clone(),
             vec![writer],
-            ResumeLimit::Until {
-                deadline: self.deadline,
-                signal: self.shared().closed.clone(),
-            },
+            ResumeLimit::until(self.deadline).or_on(self.shared().closed.clone()),
             completion.clone(),
         );
         Ok(Running {
