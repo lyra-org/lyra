@@ -36,6 +36,7 @@ use std::{
         atomic::{
             AtomicBool,
             AtomicPtr,
+            AtomicU8,
             AtomicU64,
             AtomicUsize,
             Ordering,
@@ -154,6 +155,15 @@ impl From<&str> for RaisedError {
             kind: None,
             message: message.to_string(),
         }
+    }
+}
+
+impl Error {
+    /// Whether this is the error the interrupt raises, as it left the thread it was raised in:
+    /// [`INTERRUPTED_ERROR`] itself, and not an error of the thread's own that came after it
+    /// caught that one.
+    pub fn is_interruption(&self) -> bool {
+        matches!(self, Self::Runtime(message) if message == INTERRUPTED_ERROR)
     }
 }
 
@@ -439,6 +449,7 @@ impl Vm {
                 token,
                 deadline_millis,
                 signal: signal.cloned(),
+                interrupted: Arc::default(),
             });
             self.apply_innermost_budget(&budgets);
             token
@@ -468,6 +479,12 @@ impl Vm {
                 Arc::as_ptr(&signal.0).cast_mut()
             });
         control.interrupt_signal.store(signal, Ordering::Release);
+        let interrupted = innermost.map_or(std::ptr::null_mut(), |budget| {
+            Arc::as_ptr(&budget.interrupted).cast_mut()
+        });
+        control
+            .interrupt_interrupted
+            .store(interrupted, Ordering::Release);
         self.set_interrupt_deadline_millis(innermost.map_or(0, |budget| budget.deadline_millis));
     }
 
@@ -1129,6 +1146,8 @@ struct VmControl {
     /// The innermost live budget's deadline and signal, as the interrupt reads them.
     interrupt_deadline_millis: AtomicU64,
     interrupt_signal: AtomicPtr<AtomicBool>,
+    /// Where the interrupt notes that it raised on that budget, and for which reason.
+    interrupt_interrupted: AtomicPtr<AtomicU8>,
     /// Every live [`InterruptBudgetGuard`]'s budget, which owns the signal the interrupt reads.
     interrupt_budgets: std::sync::Mutex<InterruptBudgets>,
     /// Keyed by `lua_State` address; [`userthread`] keeps it in step with
@@ -1152,6 +1171,7 @@ impl VmControl {
             memory_limit: AtomicUsize::new(options.memory_limit.unwrap_or(0)),
             interrupt_deadline_millis: AtomicU64::new(0),
             interrupt_signal: AtomicPtr::new(std::ptr::null_mut()),
+            interrupt_interrupted: AtomicPtr::new(std::ptr::null_mut()),
             interrupt_budgets: std::sync::Mutex::default(),
             thread_contexts: RwLock::new(HashMap::new()),
         }
@@ -1169,6 +1189,17 @@ struct InterruptBudget {
     token: u64,
     deadline_millis: u64,
     signal: Option<InterruptSignal>,
+    /// An [`InterruptCause`] once the interrupt has raised on this budget, 0 before.
+    interrupted: Arc<AtomicU8>,
+}
+
+/// Why the interrupt raised on a budget.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InterruptCause {
+    /// The budget ran out.
+    Time = 1,
+    /// The budget's signal was raised.
+    Signal = 2,
 }
 
 /// Holds an interrupt budget until dropped. Guards may drop in any order; the innermost live one
@@ -1176,6 +1207,23 @@ struct InterruptBudget {
 pub struct InterruptBudgetGuard {
     vm: Vm,
     token: u64,
+}
+
+impl InterruptBudgetGuard {
+    /// Why the interrupt raised in what ran under this budget, if it did. A budget that ran out
+    /// while a native function ran, which then failed on its own, interrupted nothing.
+    pub fn interrupted(&self) -> Option<InterruptCause> {
+        let budgets = self.vm.interrupt_budgets();
+        let budget = budgets
+            .active
+            .iter()
+            .find(|budget| budget.token == self.token)?;
+        match budget.interrupted.load(Ordering::Acquire) {
+            0 => None,
+            cause if cause == InterruptCause::Signal as u8 => Some(InterruptCause::Signal),
+            _ => Some(InterruptCause::Time),
+        }
+    }
 }
 
 impl Drop for InterruptBudgetGuard {
@@ -3627,13 +3675,23 @@ unsafe extern "C-unwind" fn interrupt(state: *mut sys::lua_State, gc: c_int) {
         };
         control.is_some_and(|control| {
             let signal = control.interrupt_signal.load(Ordering::Acquire);
-            // SAFETY: the signal belongs to a live budget in `interrupt_budgets`, which stops
-            // pointing the interrupt at it before dropping it, on this same thread.
-            if !signal.is_null() && unsafe { (*signal).load(Ordering::Acquire) } {
-                return true;
+            // SAFETY: the signal and the note belong to a live budget in `interrupt_budgets`,
+            // which stops pointing the interrupt at them before dropping them, on this same
+            // thread.
+            let cause = if !signal.is_null() && unsafe { (*signal).load(Ordering::Acquire) } {
+                InterruptCause::Signal
+            } else {
+                let deadline = control.interrupt_deadline_millis.load(Ordering::Acquire);
+                if deadline == 0 || current_unix_millis() < deadline {
+                    return false;
+                }
+                InterruptCause::Time
+            };
+            let interrupted = control.interrupt_interrupted.load(Ordering::Acquire);
+            if !interrupted.is_null() {
+                unsafe { (*interrupted).store(cause as u8, Ordering::Release) };
             }
-            let deadline = control.interrupt_deadline_millis.load(Ordering::Acquire);
-            deadline != 0 && current_unix_millis() >= deadline
+            true
         })
     });
     if expired {
@@ -5044,10 +5102,35 @@ mod tests {
         ))?;
         let thread = vm.create_thread(&function)?;
 
-        let _guard = vm.interrupt_after(Duration::ZERO);
+        let signal = InterruptSignal::new();
+        signal.raise();
+        let on_signal = vm.interrupt_after_or_on(Duration::from_secs(600), Some(&signal));
+        assert_eq!(on_signal.interrupted(), None, "nothing ran under it yet");
+        vm.create_thread(&function)?
+            .resume(&vm, &[])
+            .expect_err("the raised signal should stop the loop");
+        assert_eq!(on_signal.interrupted(), Some(InterruptCause::Signal));
+        drop(on_signal);
+
+        // The budget ran out, but what failed under it failed on its own.
+        let outlasted = vm.interrupt_after(Duration::ZERO);
+        let failing: NativeFn = Arc::new(|_| Err(Error::Runtime("on its own".to_string())));
+        vm.create_function_with_options(
+            NativeFunctionOptions::new(ChunkOrigin::default()).function_name("failing"),
+            failing,
+        )?
+        .call(&vm, &[])
+        .expect_err("the function fails");
+        assert_eq!(outlasted.interrupted(), None);
+        drop(outlasted);
+
+        let guard = vm.interrupt_after(Duration::ZERO);
         let error = thread
             .resume(&vm, &[])
             .expect_err("interrupt budget should stop the loop");
+        assert_eq!(guard.interrupted(), Some(InterruptCause::Time));
+        assert!(error.is_interruption());
+        assert!(!Error::Runtime(format!("chunk:1: {INTERRUPTED_ERROR}")).is_interruption());
 
         assert!(matches!(
             error,
