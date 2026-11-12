@@ -73,13 +73,7 @@ impl PluginExecutor {
                     .vm
                     .data()
                     .get::<LocalScheduler>()?
-                    .schedule_watched_luau_thread(
-                        context,
-                        self.vm.clone(),
-                        thread,
-                        vec![argument],
-                        Some(limit),
-                    ))
+                    .schedule_watched_luau_thread(context, thread, vec![argument], Some(limit)))
             },
         );
     }

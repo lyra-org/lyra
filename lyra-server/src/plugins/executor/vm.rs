@@ -347,13 +347,7 @@ impl PluginExecutor {
                     .vm
                     .data()
                     .get::<harmony_core::LocalScheduler>()?
-                    .schedule_watched_luau_thread(
-                        context,
-                        self.vm.clone(),
-                        thread,
-                        args,
-                        Some(limit),
-                    ))
+                    .schedule_watched_luau_thread(context, thread, args, Some(limit)))
             },
         );
     }

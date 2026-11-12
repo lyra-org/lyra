@@ -160,7 +160,7 @@ mod tests {
         ))?;
         let thread = vm.create_thread(&function)?;
         let handle =
-            scheduler.spawn_luau_thread(CallContext::default(), vm, thread.clone(), Vec::new());
+            scheduler.spawn_luau_thread(CallContext::default(), thread.clone(), Vec::new());
 
         let values = drive_thread(
             &tokio_runtime,
@@ -190,7 +190,7 @@ mod tests {
             luau::ChunkOrigin::default(),
         ))?;
         let thread = vm.create_thread(&function)?;
-        scheduler.spawn_luau_thread(CallContext::default(), vm, thread.clone(), Vec::new());
+        scheduler.spawn_luau_thread(CallContext::default(), thread.clone(), Vec::new());
 
         let values = drive_thread(&tokio_runtime, &scheduler, &thread, options(Duration::MAX))?;
 
@@ -213,7 +213,7 @@ mod tests {
         ))?;
         let thread = vm.create_thread(&function)?;
         let handle =
-            scheduler.spawn_luau_thread(CallContext::default(), vm, thread.clone(), Vec::new());
+            scheduler.spawn_luau_thread(CallContext::default(), thread.clone(), Vec::new());
 
         let error = drive_thread(
             &tokio_runtime,
@@ -239,7 +239,7 @@ mod tests {
         ))?;
         let thread = vm.create_thread(&function)?;
         let handle =
-            scheduler.spawn_luau_thread(CallContext::default(), vm, thread.clone(), Vec::new());
+            scheduler.spawn_luau_thread(CallContext::default(), thread.clone(), Vec::new());
         assert!(scheduler.cancel(handle.id()));
 
         let error = drive_thread(
@@ -266,7 +266,7 @@ mod tests {
         ))?;
         let thread = vm.create_thread(&function)?;
         let handle =
-            scheduler.spawn_luau_thread(CallContext::default(), vm, thread.clone(), Vec::new());
+            scheduler.spawn_luau_thread(CallContext::default(), thread.clone(), Vec::new());
         let cancellation = Cancellation::new(scheduler.wake_handle());
         cancellation.cancel();
         let mut options = options(Duration::from_secs(1));
@@ -292,7 +292,7 @@ mod tests {
         ))?;
         let thread = vm.create_thread(&function)?;
         let handle =
-            scheduler.spawn_luau_thread(CallContext::default(), vm, thread.clone(), Vec::new());
+            scheduler.spawn_luau_thread(CallContext::default(), thread.clone(), Vec::new());
 
         let error = drive_thread(
             &tokio_runtime,
@@ -320,7 +320,6 @@ mod tests {
         scheduler.spawn_luau_thread_after(
             CallContext::default(),
             Duration::from_millis(10),
-            vm,
             thread.clone(),
             Vec::new(),
         );
@@ -346,12 +345,7 @@ mod tests {
             luau::ChunkOrigin::default(),
         ))?;
         let thread = vm.create_thread(&function)?;
-        scheduler.spawn_luau_thread(
-            CallContext::default(),
-            vm.clone(),
-            thread.clone(),
-            Vec::new(),
-        );
+        scheduler.spawn_luau_thread(CallContext::default(), thread.clone(), Vec::new());
 
         let error = drive_thread(&tokio_runtime, &scheduler, &thread, options(Duration::MAX))
             .expect_err("a manual clock can't be waited on");
@@ -367,7 +361,7 @@ mod tests {
         );
 
         let thread = vm.create_thread(&function)?;
-        scheduler.spawn_luau_thread(CallContext::default(), vm, thread.clone(), Vec::new());
+        scheduler.spawn_luau_thread(CallContext::default(), thread.clone(), Vec::new());
         let values = crate::testing::drive_thread_while_ready(&tokio_runtime, &scheduler, &thread)?;
         assert!(matches!(values.as_slice(), [luau::Value::Number(42.0)]));
         Ok(())

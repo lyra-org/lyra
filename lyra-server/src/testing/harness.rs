@@ -152,7 +152,6 @@ impl TestPlugin {
         let deadline = scheduler.now() + CALL_TIMEOUT;
         scheduler.schedule_luau_thread_with_limit_and_completion(
             own.clone(),
-            vm.clone(),
             thread,
             args.0,
             harmony_core::ResumeLimit::until(deadline),

@@ -122,12 +122,7 @@ impl PluginExecutor {
                 context.origin.plugin.clone(),
                 scheduler.now(),
             ));
-            scheduler.spawn_luau_thread(
-                context,
-                self.vm.clone(),
-                thread.clone(),
-                vec![payload_value.clone()],
-            );
+            scheduler.spawn_luau_thread(context, thread.clone(), vec![payload_value.clone()]);
             if let Err(error) = drive_thread(&self.tokio_runtime, &scheduler, &thread, options) {
                 on_error(
                     handler.context.origin.plugin.as_deref().unwrap_or_default(),

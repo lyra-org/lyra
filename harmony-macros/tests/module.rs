@@ -117,7 +117,7 @@ fn run(source: &str, context: CallContext) -> luau::runtime::Result<Vec<luau::Va
         context.origin.clone(),
     ))?;
     let thread = vm.create_thread(&root)?;
-    scheduler.spawn_luau_thread(context, vm.clone(), thread.clone(), vec![]);
+    scheduler.spawn_luau_thread(context, thread.clone(), vec![]);
     let tokio = TokioRuntimeContext::new().expect("tokio runtime");
     Ok(
         harmony_core::luau::drive_thread(&tokio, &scheduler, &thread, Default::default())

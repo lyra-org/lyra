@@ -200,7 +200,7 @@ pub struct Scheduler {
     /// The Luau thread of every pending task that has one, whatever its work is at the moment:
     /// what cancelling the task closes. Shared with [`LocalScheduler`], which reads it while this
     /// scheduler is borrowed for polling.
-    threads: Rc<RefCell<HashMap<TaskId, (luau::Vm, luau::Thread)>>>,
+    threads: Rc<RefCell<HashMap<TaskId, luau::Thread>>>,
 }
 
 impl Default for Scheduler {
@@ -310,34 +310,25 @@ impl Scheduler {
     pub fn spawn_luau_function(
         &mut self,
         context: CallContext,
-        vm: luau::Vm,
         function: &luau::Function,
         args: Vec<luau::Value>,
     ) -> luau::runtime::Result<TaskHandle> {
-        let thread = vm.create_thread(function)?;
-        Ok(self.spawn_luau_thread(context, vm, thread, args))
+        let thread = function.vm().create_thread(function)?;
+        Ok(self.spawn_luau_thread(context, thread, args))
     }
 
     pub fn spawn_luau_thread(
         &mut self,
         context: CallContext,
-        vm: luau::Vm,
         thread: luau::Thread,
         args: Vec<luau::Value>,
     ) -> TaskHandle {
-        self.spawn_luau_thread_with_options(
-            context,
-            vm,
-            thread,
-            args,
-            self.default_luau_task_options(),
-        )
+        self.spawn_luau_thread_with_options(context, thread, args, self.default_luau_task_options())
     }
 
     fn spawn_luau_thread_with_options(
         &mut self,
         context: CallContext,
-        vm: luau::Vm,
         thread: luau::Thread,
         args: Vec<luau::Value>,
         options: LuauTaskOptions,
@@ -346,7 +337,6 @@ impl Scheduler {
         self.insert_work(
             context,
             TaskWork::LuauThread {
-                vm,
                 thread,
                 args,
                 pending_start,
@@ -361,7 +351,6 @@ impl Scheduler {
         &mut self,
         context: CallContext,
         delay: Duration,
-        vm: luau::Vm,
         thread: luau::Thread,
         args: Vec<luau::Value>,
     ) -> TaskHandle {
@@ -370,7 +359,6 @@ impl Scheduler {
         self.insert_work(
             context,
             TaskWork::LuauThread {
-                vm,
                 thread,
                 args,
                 pending_start,
@@ -387,14 +375,13 @@ impl Scheduler {
         &mut self,
         context: CallContext,
         awaiting: TaskGroupId,
-        vm: luau::Vm,
         thread: luau::Thread,
         future: luau::ScheduledFuture,
         wake_at: Option<Instant>,
     ) -> TaskHandle {
         let handle = self.insert_work(
             context,
-            TaskWork::LuauFuture { vm, thread, future },
+            TaskWork::LuauFuture { thread, future },
             wake_at,
             self.default_luau_task_options(),
             false,
@@ -413,7 +400,6 @@ impl Scheduler {
         &mut self,
         id: TaskId,
         awaiting: TaskGroupId,
-        vm: luau::Vm,
         thread: luau::Thread,
         future: luau::ScheduledFuture,
         wake_at: Option<Instant>,
@@ -427,13 +413,13 @@ impl Scheduler {
             detach(
                 &self.detached,
                 context,
-                Some(TaskWork::LuauFuture { vm, thread, future }),
+                Some(TaskWork::LuauFuture { thread, future }),
             );
             return false;
         }
         self.await_group(id, awaiting);
         let task = self.tasks.get_mut(&id).expect("task checked above");
-        task.work = Some(TaskWork::LuauFuture { vm, thread, future });
+        task.work = Some(TaskWork::LuauFuture { thread, future });
         task.state = TaskState::Pending;
         task.error = None;
         task.output = None;
@@ -474,12 +460,8 @@ impl Scheduler {
         let group = context.task_group;
         let handle = TaskHandle { id };
 
-        if let TaskWork::LuauThread { vm, thread, .. } | TaskWork::LuauFuture { vm, thread, .. } =
-            &work
-        {
-            self.threads
-                .borrow_mut()
-                .insert(id, (vm.clone(), thread.clone()));
+        if let TaskWork::LuauThread { thread, .. } | TaskWork::LuauFuture { thread, .. } = &work {
+            self.threads.borrow_mut().insert(id, thread.clone());
         }
         self.groups
             .borrow_mut()
@@ -564,7 +546,7 @@ impl Scheduler {
         }
 
         // Before the work is dropped, whose destructors may run code that holds the thread.
-        if let Some((_, thread)) = settle(&self.threads, id, task, TaskState::Cancelled) {
+        if let Some(thread) = settle(&self.threads, id, task, TaskState::Cancelled) {
             close_cancelled_thread(&thread);
         }
         detach(&self.detached, &task.context, task.work.take());
@@ -910,15 +892,15 @@ fn start_wake_is_not_later(new_wake_at: Option<Instant>, old_wake_at: Option<Ins
 /// loses the context the task ran it with, unless the task only borrowed it and the context is
 /// the thread's own.
 fn settle(
-    threads: &RefCell<HashMap<TaskId, (luau::Vm, luau::Thread)>>,
+    threads: &RefCell<HashMap<TaskId, luau::Thread>>,
     id: TaskId,
     task: &mut Task,
     state: TaskState,
-) -> Option<(luau::Vm, luau::Thread)> {
+) -> Option<luau::Thread> {
     task.state = state;
     task.wake_at = None;
     let thread = threads.borrow_mut().remove(&id);
-    if let Some((_, thread)) = &thread
+    if let Some(thread) = &thread
         && !task.borrows_thread
     {
         let _ = thread.clear_call_context();

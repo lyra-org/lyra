@@ -72,7 +72,7 @@ pub struct LocalScheduler {
     /// Told once the poll under way has ended and what it deferred is done.
     poll_end: RefCell<Vec<tokio::sync::oneshot::Sender<()>>>,
     pub(super) polling: Cell<bool>,
-    threads: Rc<RefCell<HashMap<TaskId, (luau::Vm, luau::Thread)>>>,
+    threads: Rc<RefCell<HashMap<TaskId, luau::Thread>>>,
     timers: Rc<Timers>,
     last_group_id: Rc<Cell<u64>>,
     /// Kept apart from the scheduler, which is borrowed while it polls.
@@ -184,12 +184,9 @@ impl LocalScheduler {
                 .borrow()
                 .iter()
                 .filter(|work| work.is_in(group))
-                .map(|work| {
-                    let (vm, thread) = work.thread();
-                    (vm.clone(), thread.clone())
-                }),
+                .map(|work| work.thread().clone()),
         );
-        for (_, thread) in threads {
+        for thread in threads {
             close_cancelled_thread(&thread);
         }
     }
@@ -247,35 +244,31 @@ impl LocalScheduler {
     pub fn spawn_luau_thread(
         &self,
         context: CallContext,
-        vm: luau::Vm,
         thread: luau::Thread,
         args: Vec<luau::Value>,
     ) -> TaskHandle {
-        self.spawn_luau_thread_start(context, vm, thread, args, LuauThreadStart::Immediate)
+        self.spawn_luau_thread_start(context, thread, args, LuauThreadStart::Immediate)
     }
 
     pub fn schedule_luau_thread(
         &self,
         context: CallContext,
-        vm: luau::Vm,
         thread: luau::Thread,
         args: Vec<luau::Value>,
     ) {
-        self.schedule_luau_thread_start(context, vm, thread, args, LuauThreadStart::Immediate);
+        self.schedule_luau_thread_start(context, thread, args, LuauThreadStart::Immediate);
     }
 
     /// Runs `thread` under the scheduler's own resume budget, reporting to `completion`.
     pub fn schedule_luau_thread_with_completion(
         &self,
         context: CallContext,
-        vm: luau::Vm,
         thread: luau::Thread,
         args: Vec<luau::Value>,
         completion: Rc<LocalLuauTaskCompletion>,
     ) {
         self.schedule_luau_thread_start(
             context,
-            vm,
             thread,
             args,
             LuauThreadStart::WithCompletion(completion),
@@ -285,7 +278,6 @@ impl LocalScheduler {
     pub fn schedule_luau_thread_with_limit_and_completion(
         &self,
         context: CallContext,
-        vm: luau::Vm,
         thread: luau::Thread,
         args: Vec<luau::Value>,
         limit: ResumeLimit,
@@ -293,7 +285,6 @@ impl LocalScheduler {
     ) {
         self.schedule_luau_thread_start(
             context,
-            vm,
             thread,
             args,
             LuauThreadStart::Limited { limit, completion },
@@ -305,7 +296,6 @@ impl LocalScheduler {
     pub fn schedule_watched_luau_thread(
         self: &Rc<Self>,
         context: CallContext,
-        vm: luau::Vm,
         thread: luau::Thread,
         args: Vec<luau::Value>,
         limit: Option<ResumeLimit>,
@@ -318,14 +308,13 @@ impl LocalScheduler {
             },
             None => LuauThreadStart::WithCompletion(completion.clone()),
         };
-        self.schedule_luau_thread_start(context, vm, thread.clone(), args, start);
+        self.schedule_luau_thread_start(context, thread.clone(), args, start);
         WatchedThread::new(Rc::downgrade(self), self.timers.clone(), thread, completion)
     }
 
     fn schedule_luau_thread_start(
         &self,
         context: CallContext,
-        vm: luau::Vm,
         thread: luau::Thread,
         args: Vec<luau::Value>,
         start: LuauThreadStart,
@@ -335,7 +324,6 @@ impl LocalScheduler {
                 .borrow_mut()
                 .push(PendingLuauWork::Thread {
                     context,
-                    vm,
                     thread,
                     args,
                     start,
@@ -343,13 +331,12 @@ impl LocalScheduler {
             return;
         }
 
-        self.spawn_luau_thread_start(context, vm, thread, args, start);
+        self.spawn_luau_thread_start(context, thread, args, start);
     }
 
     fn spawn_luau_thread_start(
         &self,
         context: CallContext,
-        vm: luau::Vm,
         thread: luau::Thread,
         args: Vec<luau::Value>,
         start: LuauThreadStart,
@@ -364,16 +351,15 @@ impl LocalScheduler {
         let args = self.prepare_luau_thread_start_args(key, &thread, args, wake_at);
         let handle =
             match start {
-                LuauThreadStart::Immediate => self.scheduler.borrow_mut().spawn_luau_thread(
-                    context,
-                    vm.clone(),
-                    thread.clone(),
-                    args,
-                ),
+                LuauThreadStart::Immediate => {
+                    self.scheduler
+                        .borrow_mut()
+                        .spawn_luau_thread(context, thread.clone(), args)
+                }
                 LuauThreadStart::Delayed(delay) => self
                     .scheduler
                     .borrow_mut()
-                    .spawn_luau_thread_after(context, delay, vm.clone(), thread.clone(), args),
+                    .spawn_luau_thread_after(context, delay, thread.clone(), args),
                 LuauThreadStart::WithCompletion(completion) => {
                     let options = LuauTaskOptions {
                         completion: Some(completion),
@@ -381,7 +367,6 @@ impl LocalScheduler {
                     };
                     self.scheduler.borrow_mut().spawn_luau_thread_with_options(
                         context,
-                        vm.clone(),
                         thread.clone(),
                         args,
                         options,
@@ -390,7 +375,6 @@ impl LocalScheduler {
                 LuauThreadStart::Limited { limit, completion } => {
                     self.scheduler.borrow_mut().spawn_luau_thread_with_options(
                         context,
-                        vm.clone(),
                         thread.clone(),
                         args,
                         LuauTaskOptions {
@@ -408,50 +392,45 @@ impl LocalScheduler {
         &self,
         context: CallContext,
         delay: Duration,
-        vm: luau::Vm,
         thread: luau::Thread,
         args: Vec<luau::Value>,
     ) -> TaskHandle {
-        self.spawn_luau_thread_start(context, vm, thread, args, LuauThreadStart::Delayed(delay))
+        self.spawn_luau_thread_start(context, thread, args, LuauThreadStart::Delayed(delay))
     }
 
     pub fn schedule_luau_thread_after(
         &self,
         context: CallContext,
         delay: Duration,
-        vm: luau::Vm,
         thread: luau::Thread,
         args: Vec<luau::Value>,
     ) {
-        self.schedule_luau_thread_start(context, vm, thread, args, LuauThreadStart::Delayed(delay));
+        self.schedule_luau_thread_start(context, thread, args, LuauThreadStart::Delayed(delay));
     }
 
     pub fn schedule_luau_future(
         &self,
         context: CallContext,
-        vm: luau::Vm,
         thread: luau::Thread,
         future: luau::ScheduledFuture,
     ) {
-        self.schedule_luau_future_with_delay(context, None, vm, thread, future);
+        self.schedule_luau_future_with_delay(context, None, thread, future);
     }
 
     pub fn schedule_luau_future_after(
         &self,
         context: CallContext,
         delay: Duration,
-        vm: luau::Vm,
         thread: luau::Thread,
         future: luau::ScheduledFuture,
     ) {
-        self.schedule_luau_future_with_delay(context, Some(delay), vm, thread, future);
+        self.schedule_luau_future_with_delay(context, Some(delay), thread, future);
     }
 
     fn schedule_luau_future_with_delay(
         &self,
         context: CallContext,
         delay: Option<Duration>,
-        vm: luau::Vm,
         thread: luau::Thread,
         future: luau::ScheduledFuture,
     ) {
@@ -464,7 +443,6 @@ impl LocalScheduler {
                     target,
                     context,
                     delay,
-                    vm,
                     thread,
                     future,
                 });
@@ -474,7 +452,6 @@ impl LocalScheduler {
         self.spawn_untracked_luau_future(
             context.task_group,
             self.delay_until(delay),
-            vm,
             thread,
             future,
         );
@@ -486,7 +463,6 @@ impl LocalScheduler {
         &self,
         awaiting: TaskGroupId,
         wake_at: Option<Instant>,
-        vm: luau::Vm,
         thread: luau::Thread,
         future: luau::ScheduledFuture,
     ) {
@@ -497,7 +473,6 @@ impl LocalScheduler {
         let handle = self.scheduler.borrow_mut().spawn_luau_future(
             context,
             awaiting,
-            vm.clone(),
             thread.clone(),
             future,
             wake_at,
@@ -537,7 +512,7 @@ impl LocalScheduler {
             return scheduled;
         }
         // Work a poll put off and never took up, as when it unwound, goes with the task.
-        let pending = self.cancel_pending_luau_work(|work| luau_thread_key(work.thread().1) == key);
+        let pending = self.cancel_pending_luau_work(|work| luau_thread_key(work.thread()) == key);
         let Some(handle) = self.thread_tasks.borrow_mut().remove(&key) else {
             return pending;
         };
@@ -555,7 +530,7 @@ impl LocalScheduler {
                 .borrow()
                 .iter()
                 .map(PendingLuauWork::thread)
-                .any(|(_, thread)| luau_thread_key(thread) == key);
+                .any(|thread| luau_thread_key(thread) == key);
         if !held {
             return false;
         }
@@ -786,8 +761,7 @@ impl LocalScheduler {
         *self.pending_luau_work.borrow_mut() = kept;
         // Closed before the work is dropped, as a task's is.
         for work in &cancelled {
-            let (_, thread) = work.thread();
-            close_cancelled_thread(thread);
+            close_cancelled_thread(work.thread());
         }
         let any = !cancelled.is_empty();
         let now = self.now();
@@ -814,18 +788,16 @@ impl LocalScheduler {
             match pending {
                 PendingLuauWork::Thread {
                     context,
-                    vm,
                     thread,
                     args,
                     start,
                 } => {
-                    self.spawn_luau_thread_start(context, vm, thread, args, start);
+                    self.spawn_luau_thread_start(context, thread, args, start);
                 }
                 PendingLuauWork::Future {
                     target,
                     context,
                     delay,
-                    vm,
                     thread,
                     future,
                 } => {
@@ -838,7 +810,6 @@ impl LocalScheduler {
                         self.spawn_untracked_luau_future(
                             context.task_group,
                             wake_at,
-                            vm,
                             thread,
                             future,
                         );
@@ -847,7 +818,6 @@ impl LocalScheduler {
                     let replaced = self.scheduler.borrow_mut().replace_with_luau_future(
                         handle.id(),
                         context.task_group,
-                        vm.clone(),
                         thread.clone(),
                         future,
                         wake_at,
@@ -919,7 +889,6 @@ fn luau_thread_key(thread: &luau::Thread) -> (u64, usize) {
 pub(super) enum PendingLuauWork {
     Thread {
         context: CallContext,
-        vm: luau::Vm,
         thread: luau::Thread,
         args: Vec<luau::Value>,
         start: LuauThreadStart,
@@ -928,16 +897,15 @@ pub(super) enum PendingLuauWork {
         target: Option<TaskHandle>,
         context: CallContext,
         delay: Option<Duration>,
-        vm: luau::Vm,
         thread: luau::Thread,
         future: luau::ScheduledFuture,
     },
 }
 
 impl PendingLuauWork {
-    fn thread(&self) -> (&luau::Vm, &luau::Thread) {
+    fn thread(&self) -> &luau::Thread {
         match self {
-            Self::Thread { vm, thread, .. } | Self::Future { vm, thread, .. } => (vm, thread),
+            Self::Thread { thread, .. } | Self::Future { thread, .. } => thread,
         }
     }
 

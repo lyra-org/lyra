@@ -1413,7 +1413,6 @@ fn withheld_function(
 
 pub fn async_luau_callback(callback: luau::NativeAsyncFn) -> luau::NativeFn {
     Arc::new(move |frame| {
-        let vm = frame.vm.clone();
         let thread = frame.thread.clone();
         let context = frame.context.clone();
         let scheduler = frame.vm.data().get::<crate::LocalScheduler>()?;
@@ -1437,13 +1436,7 @@ pub fn async_luau_callback(callback: luau::NativeAsyncFn) -> luau::NativeFn {
             // A cancelled thread is closed as it yields, and nothing is to wake it.
             if !thread.is_cancelled() {
                 scheduler.park_luau_thread(&thread);
-                scheduler.schedule_luau_future_after(
-                    context,
-                    delay,
-                    vm,
-                    thread,
-                    future.for_call(site),
-                );
+                scheduler.schedule_luau_future_after(context, delay, thread, future.for_call(site));
             }
             return Ok(());
         }
@@ -1455,7 +1448,7 @@ pub fn async_luau_callback(callback: luau::NativeAsyncFn) -> luau::NativeFn {
                 returns.request_yield();
                 if !thread.is_cancelled() {
                     scheduler.park_luau_thread(&thread);
-                    scheduler.schedule_luau_future(context, vm, thread, future.for_call(site));
+                    scheduler.schedule_luau_future(context, thread, future.for_call(site));
                 }
             }
         }
@@ -1654,7 +1647,7 @@ mod tests {
         ))?;
         let thread = vm.create_thread(&root)?;
 
-        scheduler.spawn_luau_thread(crate::CallContext::default(), vm.clone(), thread, vec![]);
+        scheduler.spawn_luau_thread(crate::CallContext::default(), thread, vec![]);
         assert_eq!(scheduler.poll_ready(), 1);
         assert_eq!(scheduler.poll_ready(), 0);
         assert_eq!(
@@ -1696,8 +1689,7 @@ mod tests {
             luau::ChunkOrigin::default(),
         ))?;
         let thread = vm.create_thread(&root)?;
-        let handle =
-            scheduler.spawn_luau_thread(crate::CallContext::default(), vm.clone(), thread, vec![]);
+        let handle = scheduler.spawn_luau_thread(crate::CallContext::default(), thread, vec![]);
 
         scheduler.poll_ready();
         scheduler.poll_ready();
@@ -1751,12 +1743,8 @@ mod tests {
         ))?;
         let thread = vm.create_thread(&root)?;
 
-        let handle = scheduler.spawn_luau_thread(
-            crate::CallContext::default(),
-            vm.clone(),
-            thread.clone(),
-            vec![],
-        );
+        let handle =
+            scheduler.spawn_luau_thread(crate::CallContext::default(), thread.clone(), vec![]);
         assert_eq!(scheduler.luau_thread_handle(&thread), Some(handle));
         assert_eq!(scheduler.poll_ready(), 1);
         assert_eq!(scheduler.luau_thread_handle(&thread), Some(handle));
@@ -1862,8 +1850,7 @@ mod tests {
             luau::ChunkOrigin::default(),
         ))?;
         let thread = vm.create_thread(&root)?;
-        let handle =
-            scheduler.spawn_luau_thread(crate::CallContext::default(), vm.clone(), thread, vec![]);
+        let handle = scheduler.spawn_luau_thread(crate::CallContext::default(), thread, vec![]);
         for _ in 0..16 {
             scheduler.poll_ready();
             let snapshot = scheduler.snapshot(handle.id()).expect("task snapshot");

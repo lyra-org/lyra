@@ -907,6 +907,11 @@ impl Function {
         self.reference.vm().id()
     }
 
+    /// The VM the value belongs to.
+    pub fn vm(&self) -> &Vm {
+        self.reference.vm()
+    }
+
     pub fn call(&self, args: &[Value]) -> Result<Vec<Value>> {
         let mut stack = Stack::main(self.reference.vm());
         stack.push_ref(&self.reference)?;
@@ -977,7 +982,8 @@ impl Thread {
         self.vm().id()
     }
 
-    fn vm(&self) -> &Vm {
+    /// The VM the thread belongs to.
+    pub fn vm(&self) -> &Vm {
         self.inner.thread.vm()
     }
 
@@ -1166,6 +1172,11 @@ impl Table {
         self.reference.vm().id()
     }
 
+    /// The VM the value belongs to.
+    pub fn vm(&self) -> &Vm {
+        self.reference.vm()
+    }
+
     /// A stack with the table on top.
     fn stack(&self) -> Result<Stack<'_>> {
         let mut stack = Stack::main(self.reference.vm());
@@ -1322,6 +1333,11 @@ impl Buffer {
         self.reference.vm().id()
     }
 
+    /// The VM the value belongs to.
+    pub fn vm(&self) -> &Vm {
+        self.reference.vm()
+    }
+
     pub fn to_vec(&self) -> Result<Vec<u8>> {
         let mut stack = Stack::main(self.reference.vm());
         stack.push_ref(&self.reference)?;
@@ -1345,6 +1361,11 @@ pub struct UserData {
 impl UserData {
     pub fn vm_id(&self) -> u64 {
         self.reference.vm().id()
+    }
+
+    /// The VM the value belongs to.
+    pub fn vm(&self) -> &Vm {
+        self.reference.vm()
     }
 
     /// Whether the userdata holds a `T`.

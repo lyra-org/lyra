@@ -142,7 +142,7 @@ impl PluginExecutor {
     ) -> Result<Vec<luau::Value>> {
         let thread = self.runtime.load_source_thread(source, &mut context)?;
         let scheduler = self.vm.data().get::<LocalScheduler>()?;
-        scheduler.spawn_luau_thread(context, self.vm.clone(), thread.clone(), Vec::new());
+        scheduler.spawn_luau_thread(context, thread.clone(), Vec::new());
         harmony_core::testing::drive_thread_while_ready(&self.tokio_runtime, &scheduler, &thread)
     }
 

@@ -1988,12 +1988,7 @@ mod tests {
             harmony_luau::ChunkOrigin::default(),
         ))?;
         let thread = vm.create_thread(&root)?;
-        scheduler.spawn_luau_thread(
-            harmony_core::CallContext::default(),
-            vm.clone(),
-            thread,
-            vec![],
-        );
+        scheduler.spawn_luau_thread(harmony_core::CallContext::default(), thread, vec![]);
 
         assert_eq!(scheduler.poll_ready(), 1);
         assert_eq!(scheduler.poll_ready(), 0);
@@ -2704,12 +2699,7 @@ mod tests {
             harmony_luau::ChunkOrigin::default(),
         ))?;
         let thread = vm.create_thread(&root)?;
-        scheduler.spawn_luau_thread(
-            harmony_core::CallContext::default(),
-            vm.clone(),
-            thread,
-            vec![],
-        );
+        scheduler.spawn_luau_thread(harmony_core::CallContext::default(), thread, vec![]);
         for _ in 0..100 {
             scheduler.poll_ready();
             tokio::task::yield_now().await;

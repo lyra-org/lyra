@@ -134,9 +134,9 @@ fn schedule_task(
 
     let context = context.clone();
     if let Some(delay) = delay {
-        scheduler.schedule_luau_thread_after(context, delay, vm.clone(), thread.clone(), args.0);
+        scheduler.schedule_luau_thread_after(context, delay, thread.clone(), args.0);
     } else {
-        scheduler.schedule_luau_thread(context, vm.clone(), thread.clone(), args.0);
+        scheduler.schedule_luau_thread(context, thread.clone(), args.0);
     };
     Ok(thread)
 }

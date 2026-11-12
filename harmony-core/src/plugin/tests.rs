@@ -522,7 +522,6 @@ fn task_test_module(recorded: Arc<Mutex<Vec<String>>>) -> ModuleSpec {
                 .schedule_luau_thread_after(
                     group_context(&frame),
                     std::time::Duration::from_secs_f64(seconds),
-                    frame.vm.clone(),
                     thread,
                     Vec::new(),
                 );
@@ -805,7 +804,7 @@ impl StagedRuntime {
             .runtime
             .load_source_thread(Arc::<[u8]>::from(source), &mut context)?;
         let scheduler = self.scheduler();
-        scheduler.spawn_luau_thread(context, self.vm.clone(), thread.clone(), Vec::new());
+        scheduler.spawn_luau_thread(context, thread.clone(), Vec::new());
         crate::testing::drive_thread_while_ready(&self.runtime.tokio_runtime, &scheduler, &thread)
     }
 
@@ -879,7 +878,6 @@ fn call_handler(
     let scheduler = runtime.vm.data().get::<crate::LocalScheduler>()?;
     scheduler.schedule_luau_thread_with_limit_and_completion(
         context,
-        runtime.vm.clone(),
         runtime.vm.create_thread(&function)?,
         Vec::new(),
         crate::ResumeLimit::budget(std::time::Duration::from_secs(5)),

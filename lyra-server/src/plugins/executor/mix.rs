@@ -64,7 +64,6 @@ impl PluginExecutor {
                 ));
                 Ok(scheduler.schedule_watched_luau_thread(
                     context,
-                    self.vm.clone(),
                     thread,
                     vec![argument],
                     Some(limit),

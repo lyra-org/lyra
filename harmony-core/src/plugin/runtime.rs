@@ -464,7 +464,6 @@ impl Runtime {
                     task_group: load.task_group,
                     ..CallContext::default()
                 },
-                self.vm.clone(),
                 thread,
                 Vec::new(),
                 None,
@@ -613,7 +612,7 @@ impl Runtime {
         scheduler.ensure_can_wait()?;
         let mut context = context;
         let thread = self.load_source_thread(source, &mut context)?;
-        scheduler.spawn_luau_thread(context, self.vm.clone(), thread.clone(), args);
+        scheduler.spawn_luau_thread(context, thread.clone(), args);
         drive_thread(
             &self.tokio_runtime,
             &scheduler,

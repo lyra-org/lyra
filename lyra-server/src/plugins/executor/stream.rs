@@ -444,7 +444,6 @@ impl StreamTask {
         let thread = vm.create_thread(&self.produce)?;
         Ok(scheduler.schedule_watched_luau_thread(
             self.context.clone(),
-            vm.clone(),
             thread,
             vec![writer],
             Some(ResumeLimit::until(self.deadline).or_on(self.shared().closed.clone())),

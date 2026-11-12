@@ -64,12 +64,7 @@ impl PluginExecutor {
         let mut context = handler.context.clone();
         context.caller.insert(request.dispatch_auth);
         let scheduler = self.vm.data().get::<LocalScheduler>()?;
-        let handle = scheduler.spawn_luau_thread(
-            context,
-            self.vm.clone(),
-            thread,
-            vec![reader, sender, ctx],
-        );
+        let handle = scheduler.spawn_luau_thread(context, thread, vec![reader, sender, ctx]);
         self.websocket_tasks
             .borrow_mut()
             .insert(TaskIdKey(handle.id().0), request.state);

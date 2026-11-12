@@ -169,7 +169,7 @@ fn schedule_function(
     Ok(vm
         .data()
         .get::<LocalScheduler>()?
-        .schedule_watched_luau_thread(context, vm.clone(), thread, args, Some(limit)))
+        .schedule_watched_luau_thread(context, thread, args, Some(limit)))
 }
 
 /// [`run_function`] for `handler`, marking the call with `marker`.

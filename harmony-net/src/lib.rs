@@ -1066,12 +1066,7 @@ mod tests {
             harmony_luau::ChunkOrigin::default(),
         ))?;
         let thread = vm.create_thread(&root)?;
-        scheduler.spawn_luau_thread(
-            harmony_core::CallContext::default(),
-            vm.clone(),
-            thread,
-            vec![],
-        );
+        scheduler.spawn_luau_thread(harmony_core::CallContext::default(), thread, vec![]);
 
         for _ in 0..20 {
             scheduler.poll_ready();
@@ -1137,12 +1132,7 @@ mod tests {
             harmony_luau::ChunkOrigin::default(),
         ))?;
         let thread = vm.create_thread(&root)?;
-        scheduler.spawn_luau_thread(
-            harmony_core::CallContext::default(),
-            vm.clone(),
-            thread,
-            vec![],
-        );
+        scheduler.spawn_luau_thread(harmony_core::CallContext::default(), thread, vec![]);
 
         for _ in 0..40 {
             scheduler.poll_ready();

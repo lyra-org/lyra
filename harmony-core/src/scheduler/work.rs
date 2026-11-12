@@ -56,11 +56,13 @@ impl Resuming<'_> {
     /// time isn't resumed: it is closed, and fails as one interrupted at its first instruction.
     fn resume(
         &self,
-        vm: &luau::Vm,
         thread: &luau::Thread,
         resume: impl FnOnce() -> luau::runtime::Result<luau::ThreadStatus>,
     ) -> luau::runtime::Result<luau::ThreadStatus> {
-        let limited = match self.limit.map(|limit| (limit, limit.guard(vm, self.clock))) {
+        let limited = match self
+            .limit
+            .map(|limit| (limit, limit.guard(thread.vm(), self.clock)))
+        {
             Some((_, Err(reached))) => {
                 close_cancelled_thread(thread);
                 self.interrupted_by.set(Some(reached));
@@ -90,13 +92,11 @@ impl Resuming<'_> {
 pub(super) enum TaskWork {
     Future(TaskFuture),
     LuauThread {
-        vm: luau::Vm,
         thread: luau::Thread,
         args: Vec<luau::Value>,
         pending_start: bool,
     },
     LuauFuture {
-        vm: luau::Vm,
         thread: luau::Thread,
         future: luau::ScheduledFuture,
     },
@@ -128,7 +128,6 @@ pub(super) fn poll_work(
             Err(panic) => WorkPoll::Failed(panic.into()),
         },
         TaskWork::LuauThread {
-            vm,
             thread,
             args,
             pending_start,
@@ -143,11 +142,11 @@ pub(super) fn poll_work(
                 Ok(previous) => previous,
                 Err(error) => return WorkPoll::Failed(error.to_string().into()),
             };
-            let result = resuming.resume(vm, thread, || thread.resume(args));
+            let result = resuming.resume(thread, || thread.resume(args));
             args.clear();
-            poll_luau_resume(vm, thread, result, previous)
+            poll_luau_resume(thread, result, previous)
         }
-        TaskWork::LuauFuture { vm, thread, future } => {
+        TaskWork::LuauFuture { thread, future } => {
             let output = match catch_host_panic(context, || Pin::new(&mut *future).poll(cx)) {
                 Ok(Poll::Ready(Ok(values))) => Ok(values),
                 // Raised where the thread waits, as the call would have raised it had it not
@@ -156,12 +155,11 @@ pub(super) fn poll_work(
                 Err(panic) => Err(future.raised_error(&luau::Error::Runtime(panic))),
                 Ok(Poll::Pending) => return WorkPoll::Pending,
             };
-            let (vm, thread) = (vm.clone(), thread.clone());
+            let thread = thread.clone();
             // The future is done; what is left is the thread itself.
             let finished = std::mem::replace(
                 work,
                 TaskWork::LuauThread {
-                    vm: vm.clone(),
                     thread: thread.clone(),
                     args: Vec::new(),
                     pending_start: false,
@@ -176,11 +174,11 @@ pub(super) fn poll_work(
                 Ok(previous) => previous,
                 Err(error) => return WorkPoll::Failed(error.to_string().into()),
             };
-            let result = resuming.resume(&vm, &thread, || match output {
+            let result = resuming.resume(&thread, || match output {
                 Ok(values) => thread.resume(values.as_slice()),
                 Err(error) => thread.resume_error(&error),
             });
-            poll_luau_resume(&vm, &thread, result, previous)
+            poll_luau_resume(&thread, result, previous)
         }
     }
 }
@@ -248,7 +246,6 @@ fn catch_host_panic<T>(context: &CallContext, run: impl FnOnce() -> T) -> Result
 /// After a resume the thread gets back the context it had before: none for a
 /// thread the scheduler runs, its own for a coroutine it resumed.
 fn poll_luau_resume(
-    vm: &luau::Vm,
     thread: &luau::Thread,
     result: luau::runtime::Result<luau::ThreadStatus>,
     previous: Option<luau::CallContext>,
@@ -263,7 +260,7 @@ fn poll_luau_resume(
         },
         Ok(luau::ThreadStatus::Closed) => WorkPoll::Cancelled,
         Ok(luau::ThreadStatus::Yielded(_)) => {
-            if let Ok(scheduler) = vm.data().get::<LocalScheduler>()
+            if let Ok(scheduler) = thread.vm().data().get::<LocalScheduler>()
                 && scheduler.take_parked_luau_thread(thread)
             {
                 WorkPoll::Parked
