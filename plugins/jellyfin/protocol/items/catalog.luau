@@ -55,7 +55,6 @@ end
 type JsonValue = api.JsonValue
 type JsonObject = { [string]: JsonValue }
 type EntityProjectionInfo = entities.EntityProjectionInfo
-type EntityQueryManyRequest = entities.EntityQueryManyRequest
 type ReleaseProjectionInfo = entities.ReleaseProjectionInfo
 type TrackProjectionInfo = entities.TrackProjectionInfo
 type CreditedArtistProjectionInfo = entities.CreditedArtistProjectionInfo
@@ -607,30 +606,6 @@ function helpers.resolve_tag_infos(target_id: string?, context: ItemContext?): {
 	end
 
 	return helpers.fetch_tag_infos(if context then context.user_id else nil, target_id)
-end
-
-function helpers.query_many_projections(
-	ids: { string },
-	include_values: { string }?
-): { [string]: EntityProjectionInfo }
-	if #ids == 0 then
-		return {}
-	end
-	if type(entities.query_many) ~= "function" then
-		return {}
-	end
-
-	local request: EntityQueryManyRequest = { ids = ids }
-	if type(include_values) == "table" and #include_values > 0 then
-		request.include = include_values
-	end
-
-	local ok, projections = pcall(entities.query_many, request)
-	if not ok or type(projections) ~= "table" then
-		return {}
-	end
-
-	return projections
 end
 
 function helpers.projection_credits(projection: EntityProjectionInfo?): { CreditedArtistProjectionInfo }?
@@ -1832,7 +1807,7 @@ function helpers.prefetch_credit_relations(context: ItemContext, seed: Realizati
 	end
 
 	helpers.ensure_relation_entries(context.credited_artists_by_owner_id, ids)
-	local projection_lookup = helpers.query_many_projections(ids, { "credits" })
+	local projection_lookup = entities.get(ids, { include = "credits" })
 	for _, id in ids do
 		local credits = helpers.projection_credits(projection_lookup[id])
 		if credits ~= nil then

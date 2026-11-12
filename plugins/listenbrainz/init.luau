@@ -34,7 +34,6 @@ type TrackProjectionInfo = entities.TrackProjectionInfo
 type ReleaseProjectionInfo = entities.ReleaseProjectionInfo
 type ArtistProjectionInfo = entities.ArtistProjectionInfo
 type TrackProjectionIncludes = entities.TrackProjectionIncludes
-type EntityQueryRequest = entities.EntityQueryRequest
 type ExternalIdsByScheme = { [string]: string }
 
 type AdditionalInfo = documents.AdditionalInfo
@@ -53,37 +52,19 @@ local function require_non_empty_string(value: string?): string?
 	return nil
 end
 
-local function query_release_projection(entity_id: string, include: string | { string }): ReleaseProjectionInfo?
-	local request: EntityQueryRequest = {
-		id = entity_id,
-		include = include,
-	}
-	local ok, projection = pcall(entities.query_release, request)
-	if not ok or type(projection) ~= "table" then
-		return nil
-	end
-	return projection
+local function release_projection(release_id: string): ReleaseProjectionInfo?
+	local projection = entities.get({ release_id }, { include = "external_ids" })[release_id]
+	return if projection and projection.entity_type == "release" then projection else nil
 end
 
-local function query_artist_projection(entity_id: string, include: string | { string }): ArtistProjectionInfo?
-	local request: EntityQueryRequest = {
-		id = entity_id,
-		include = include,
-	}
-	local ok, projection = pcall(entities.query_artist, request)
-	if not ok or type(projection) ~= "table" then
-		return nil
-	end
-	return projection
+local function artist_projection(artist_id: string): ArtistProjectionInfo?
+	local projection = entities.get({ artist_id }, { include = "external_ids" })[artist_id]
+	return if projection and projection.entity_type == "artist" then projection else nil
 end
 
-local function query_track_projection(track_id: string): (TrackProjection?, TrackProjectionIncludes?)
-	local request: EntityQueryRequest = {
-		id = track_id,
-		include = { "artists", "releases", "external_ids" },
-	}
-	local ok, projection = pcall(entities.query_track, request)
-	if not ok or type(projection) ~= "table" then
+local function track_projection(track_id: string): (TrackProjection?, TrackProjectionIncludes?)
+	local projection = entities.get({ track_id }, { include = { "artists", "releases", "external_ids" } })[track_id]
+	if not projection or projection.entity_type ~= "track" then
 		return nil, nil
 	end
 	return projection.entity, projection.includes
@@ -109,8 +90,8 @@ local function resolve_release_metadata(releases_list: { ReleaseProjection }?): 
 	end
 
 	for _, release in releases_list do
-		local release_projection = query_release_projection(release.id, "external_ids")
-		local external_ids = if release_projection then release_projection.includes.external_ids else nil
+		local projection = release_projection(release.id)
+		local external_ids = if projection then projection.includes.external_ids else nil
 		local release_mbid = if external_ids then external_ids["musicbrainz:release"] else nil
 		local release_group_mbid = if external_ids then external_ids["musicbrainz:release-group"] else nil
 
@@ -128,8 +109,8 @@ local function collect_artist_mbids(artists_list: { ArtistProjection }?): { stri
 	end
 
 	for _, artist in artists_list do
-		local artist_projection = query_artist_projection(artist.id, "external_ids")
-		local external_ids = if artist_projection then artist_projection.includes.external_ids else nil
+		local projection = artist_projection(artist.id)
+		local external_ids = if projection then projection.includes.external_ids else nil
 		local artist_mbid = if external_ids then external_ids["musicbrainz:artist"] else nil
 		if artist_mbid ~= nil and not seen[artist_mbid] then
 			seen[artist_mbid] = true
@@ -177,7 +158,7 @@ local function build_additional_info(
 end
 
 local function build_track_metadata(track_id: string): TrackMetadata?
-	local track, includes = query_track_projection(track_id)
+	local track, includes = track_projection(track_id)
 	local artists_list = if includes then includes.artists else nil
 	local releases_list = if includes then includes.releases else nil
 	local external_ids = if includes then includes.external_ids else nil

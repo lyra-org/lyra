@@ -12,7 +12,6 @@ local item_types = require("./types")
 
 type Artist = artists.Artist
 type EntityProjectionInfo = entities.EntityProjectionInfo
-type EntityQueryManyRequest = entities.EntityQueryManyRequest
 type ExternalUrlInfo = item_types.ExternalUrlInfo
 type IdLink = entities.IdLink
 type ExternalIdsByScheme = { [string]: string }
@@ -117,13 +116,7 @@ function module.fetch(
 		index.links = {}
 	end
 
-	local request: EntityQueryManyRequest = { ids = ids, include = include, library_id = library_id }
-	local ok, projections = pcall(entities.query_many, request)
-	if not ok or type(projections) ~= "table" then
-		return index
-	end
-
-	for _, projection: EntityProjectionInfo in projections do
+	for _, projection: EntityProjectionInfo in entities.get(ids, { include = include, library_id = library_id }) do
 		local item_id = item_ids.encode(projection.entity.id)
 		if item_id == nil then
 			continue

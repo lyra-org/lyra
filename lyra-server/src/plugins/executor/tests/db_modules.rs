@@ -50,8 +50,8 @@ fn plugin_executor_exposes_db_backed_lyra_entities_module() -> Result<()> {
                 local entities = require("@lyra/entities")
                 local track_id = "{track_public_id}"
 
-                local fetched = entities.query_track({{ id = track_id }})
-                local many = entities.query_many({{ ids = {{ track_id, "missing" }} }})
+                local many = entities.get({{ track_id, "missing" }})
+                local fetched = many[track_id]
 
                 return fetched.entity.track_title,
                     fetched.entity.id,
@@ -1928,8 +1928,8 @@ fn entities_links_include_resolves_templates_and_functions() -> Result<()> {
                 error("boom")
             end)
 
-            local without = entities.query_release({{ id = "{release}" }})
-            local with = entities.query_release({{ id = "{release}", include = {{ "links", "tracks" }} }})
+            local without = entities.get({{ "{release}" }})["{release}"]
+            local with = entities.get({{ "{release}" }}, {{ include = {{ "links", "tracks" }} }})["{release}"]
             local urls = {{}}
             for _, link in with.includes.links do
                 table.insert(urls, link.url)
@@ -2015,7 +2015,7 @@ fn release_link_urls(runtime: &PluginExecutor, release: &str) -> Result<String> 
         format!(
             r#"
                 local entities = require("@lyra/entities")
-                local release = entities.query_release({{ id = "{release}", include = "links" }})
+                local release = entities.get({{ "{release}" }}, {{ include = "links" }})["{release}"]
                 local urls = {{}}
                 for _, link in release.includes.links do
                     table.insert(urls, link.url)
@@ -2065,7 +2065,7 @@ fn entities_links_isolate_failing_slow_and_unsafe_generators() -> Result<()> {
             provider:id({ id_type = "z_slow_id", entity = ET.Release, scheme = "test:z-slow-id" }, function(id)
                 slow_runs += 1
                 task.spawn(function()
-                    local ok, err = pcall(entities.query, { id = "any", include = "links" })
+                    local ok, err = pcall(entities.get, { "any" }, { include = "links" })
                     spawned_links_error = if ok then "allowed" else tostring(err)
                 end)
                 task.wait(60)
@@ -2200,7 +2200,7 @@ fn entities_links_time_out_and_suspend_a_busy_generator_within_the_batch_deadlin
             format!(
                 r#"
                     local entities = require("@lyra/entities")
-                    local projections = entities.query_many({{ ids = {{ {ids} }}, include = "links" }})
+                    local projections = entities.get({{ {ids} }}, {{ include = "links" }})
                     local count = 0
                     for _, projection in projections do
                         count += #projection.includes.links

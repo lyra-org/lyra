@@ -37,13 +37,11 @@ local MAX_TOP_COUNT = 500
 -- The artist an artist, album or song id names: the artist itself, or the first artist credited
 -- on the album or song. Fails with 70 for anything else, or an album or song without an artist.
 local function artist_projection(id: string): any
-	local projection = entities.query_many({ ids = { id }, include = { "external_ids" } })[id] :: any
+	local projection = entities.get({ id }, { include = "external_ids" })[id] :: any
 	if projection and projection.entity_type ~= "artist" then
 		local refs = credits.artists(credits.projections({ id }, { "credits" })[id])
 		local artist_id = if refs then refs[1].id else nil
-		projection = if artist_id
-			then entities.query_many({ ids = { artist_id }, include = { "external_ids" } })[artist_id]
-			else nil
+		projection = if artist_id then entities.get({ artist_id }, { include = "external_ids" })[artist_id] else nil
 	end
 	if not projection then
 		return request.not_found("Artist")
@@ -104,13 +102,11 @@ end
 -- The album an album or song id names, the song's own; fails with 70 for anything else, or a song
 -- without an album.
 local function album_projection(id: string): any
-	local projection = entities.query_many({ ids = { id }, include = { "external_ids" } })[id] :: any
+	local projection = entities.get({ id }, { include = "external_ids" })[id] :: any
 	if projection and projection.entity_type == "track" then
-		local song = entities.query_many({ ids = { id }, include = { "releases" } })[id] :: any
+		local song = entities.get({ id }, { include = "releases" })[id] :: any
 		local album = if song then (song.includes.releases or {})[1] else nil
-		projection = if album
-			then entities.query_many({ ids = { album.id }, include = { "external_ids" } })[album.id]
-			else nil
+		projection = if album then entities.get({ album.id }, { include = "external_ids" })[album.id] else nil
 	end
 	if not projection or projection.entity_type ~= "release" then
 		return request.not_found("Album")

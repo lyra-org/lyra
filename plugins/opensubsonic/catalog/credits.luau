@@ -30,7 +30,7 @@ function module.projections(ids: { string }, include: { string }): { [string]: E
 	if #ids == 0 then
 		return {}
 	end
-	return entities.query_many({ ids = ids, include = include })
+	return entities.get(ids, { include = include })
 end
 
 local function credits_of(projection: EntityProjectionInfo?): { CreditedArtistProjectionInfo }

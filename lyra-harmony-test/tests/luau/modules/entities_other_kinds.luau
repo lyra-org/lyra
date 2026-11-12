@@ -9,7 +9,7 @@ for _, id in others do
 	assert(entities.get_type(id) ~= nil, "the caller sees the node")
 end
 
-local projected = entities.query_many({ ids = { ids.song, ids.album, ids.amy, table.unpack(others) } })
+local projected = entities.get({ ids.song, ids.album, ids.amy, table.unpack(others) })
 assert(projected[ids.song].entity_type == "track", "the track")
 assert(projected[ids.album].entity_type == "release", "the release")
 assert(projected[ids.amy].entity_type == "artist", "the artist")

@@ -13,5 +13,4 @@ local function check(release: any)
 	end
 end
 
-check(entities.query_release({ id = seen, include = "tracks" }))
-check(entities.query_many({ ids = { seen }, include = "tracks" })[seen])
+check(entities.get({ seen }, { include = "tracks" })[seen])

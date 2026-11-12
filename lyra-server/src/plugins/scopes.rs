@@ -1686,17 +1686,7 @@ mod tests {
                 "barcodes_match(a, b)",
             ],
         ),
-        (
-            "lyra/entities",
-            &[
-                "query(request)",
-                "query_release(request)",
-                "query_track(request)",
-                "query_artist(request)",
-                "get_type(id)",
-                "query_many(request)",
-            ],
-        ),
+        ("lyra/entities", &["get_type(id)", "get(ids, options)"]),
         (
             "lyra/entries",
             &["get(ids)", "by_parent(parent_ids)", "by_track(track_ids)"],

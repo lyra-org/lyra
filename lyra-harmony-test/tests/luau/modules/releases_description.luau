@@ -12,7 +12,7 @@ end
 assert(description(ids.described) == "The album's story", "a release reads its description")
 assert(description(ids.bare) == nil, "a release without one reads nil")
 
-local projection = entities.query_release({ id = ids.described })
+local projection = entities.get({ ids.described })[ids.described]
 assert(projection.entity.description == "The album's story", "the projection carries the description")
 
 local layer = metadata.Provider.new("description-test"):layer(ids.bare)

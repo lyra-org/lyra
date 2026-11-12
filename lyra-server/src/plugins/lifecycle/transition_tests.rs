@@ -517,7 +517,7 @@ async fn id_links_projected_during_entrypoints_use_the_new_vms_generators() -> a
                     {{ id_type = "thing_id", entity = metadata.EntityType.Release, scheme = "test:linker" }},
                     function(id) return "https://{host}.example/" .. id end
                 )
-                local release = entities.query_release({{ id = "{release}", include = "links" }})
+                local release = entities.get({{ "{release}" }}, {{ include = "links" }})["{release}"]
                 assert(release.includes.links[1].url == "https://{host}.example/x", "wrong generator")
             "#
         )
@@ -1314,7 +1314,7 @@ async fn id_links_projected_during_a_restart_use_its_new_generators() -> anyhow:
                     {{ id_type = "thing_id", entity = metadata.EntityType.Release, scheme = "test:linker" }},
                     function(id) return "https://{host}.example/" .. id end
                 )
-                local release = entities.query_release({{ id = "{release}", include = "links" }})
+                local release = entities.get({{ "{release}" }}, {{ include = "links" }})["{release}"]
                 assert(release.includes.links[1].url == "https://{host}.example/x", "wrong generator")
             "#
         )
@@ -1465,7 +1465,7 @@ async fn external_ids_are_projected_from_the_calling_vms_scope() -> anyhow::Resu
                 metadata.Provider.new("ids"):id(
                     {{ id_type = "thing_id", entity = metadata.EntityType.Release, scheme = "test:ids" }}
                 )
-                local release = entities.query_release({{ id = "{release}", include = "external_ids" }})
+                local release = entities.get({{ "{release}" }}, {{ include = "external_ids" }})["{release}"]
                 assert(release.includes.external_ids["test:ids"] == "x", "the scheme was not resolved")
             "#
         ),
@@ -1781,7 +1781,8 @@ async fn a_listing_omits_a_restarting_plugins_links_and_does_not_remember_that()
         &runtime,
         "reader",
         r#"
-            local release = require("@lyra/entities").query_release({ id = (...), include = "links" })
+            local id = ...
+            local release = require("@lyra/entities").get({ id }, { include = "links" })[id]
             local links = release.includes.links
             assert(links == nil or #links == 0, "a link from a plugin being replaced")
         "#,
@@ -1800,7 +1801,8 @@ async fn a_listing_omits_a_restarting_plugins_links_and_does_not_remember_that()
         &runtime,
         "reader",
         r#"
-            local release = require("@lyra/entities").query_release({ id = (...), include = "links" })
+            local id = ...
+            local release = require("@lyra/entities").get({ id }, { include = "links" })[id]
             assert(release.includes.links[1].url == "https://new.example/x", "the omission stuck")
         "#,
         release,
