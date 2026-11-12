@@ -15,6 +15,7 @@ use futures_util::stream::{
     StreamExt,
 };
 use harmony_core::plugin::{
+    LoadedManifest,
     LoadedPlugin,
     PLUGIN_CONFIG_FILENAME,
     PluginHost,
@@ -462,7 +463,7 @@ fn describe(
     host: &PluginHost,
 ) -> Result<Described, ResolveError> {
     let label = PathBuf::from(format!("{location}/{PLUGIN_CONFIG_FILENAME}"));
-    let loaded = PluginManager::load_manifest(&label, config, host);
+    let loaded = LoadedManifest::load(&label, config, host);
     let Some(id) = plugin_id(config) else {
         let Err(source) = loaded else {
             unreachable!("a plugin.json that loads has a valid id");

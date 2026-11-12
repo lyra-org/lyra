@@ -1318,7 +1318,7 @@ mod tests {
                 r#"{{"schema_version":1,"id":"demo","name":"Demo","version":"1.0.0","lyra":"{}","description":"","scopes":{scopes}}}"#,
                 crate::plugins::testing::HOST_REQUIREMENT
             );
-            harmony_core::plugin::PluginManager::load_manifest(
+            harmony_core::plugin::LoadedManifest::load(
                 std::path::Path::new("plugin.json"),
                 json.as_bytes(),
                 &super::plugin_host(),
@@ -1932,7 +1932,7 @@ mod tests {
                 "description": "",
                 "scopes": [http],
             });
-            harmony_core::plugin::PluginManager::load_manifest(
+            harmony_core::plugin::LoadedManifest::load(
                 std::path::Path::new("plugin.json"),
                 manifest.to_string().as_bytes(),
                 &super::plugin_host(),

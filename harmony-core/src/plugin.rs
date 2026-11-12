@@ -564,13 +564,127 @@ fn parse_requirement<E: de::Error>(field: &str, value: &str) -> Result<VersionRe
 }
 
 /// A `plugin.json` that passed every check its contents alone can answer.
-/// [`PluginManager::load_manifest`] produces it without a plugin directory.
+/// [`Self::load`] produces it without a plugin directory.
 #[derive(Debug, Clone)]
 pub struct LoadedManifest {
     pub manifest: PluginManifest,
     /// Deduplicated, validated copy of `manifest.scopes` kept as `Arc<str>`
     /// so the runtime gate can share allocations across lookups.
     pub declared_scopes: HashSet<Arc<str>>,
+}
+
+impl LoadedManifest {
+    /// Parses and validates `plugin.json` contents on their own, so a plugin
+    /// can be vetted before any of its files are downloaded. `path` labels
+    /// where the bytes came from, such as a file path or a repository URL
+    /// path, and appears in errors; it is never read.
+    pub fn load(path: &Path, bytes: &[u8], host: &PluginHost) -> Result<Self, PluginLoadError> {
+        let manifest = parse_manifest(path, bytes, host)?;
+
+        if manifest.schema_version != PLUGIN_SCHEMA_VERSION {
+            return Err(PluginLoadError::InvalidSchemaVersion {
+                plugin_id: manifest.id,
+                version: manifest.schema_version,
+            });
+        }
+
+        if let Err(reason) = validate_plugin_id(&manifest.id) {
+            return Err(PluginLoadError::InvalidPluginId {
+                plugin_id: manifest.id,
+                reason,
+            });
+        }
+
+        if host.reserved_ids.contains(&manifest.id) {
+            return Err(PluginLoadError::InvalidPluginId {
+                reason: format!("'{}' is reserved by {}", manifest.id, host.name),
+                plugin_id: manifest.id,
+            });
+        }
+
+        if !manifest.host_requirement.matches(&host.version) {
+            return Err(PluginLoadError::IncompatibleHost {
+                plugin_id: manifest.id,
+                requirement: manifest.host_requirement,
+                host: host.name.clone(),
+                host_version: host.version.clone(),
+            });
+        }
+
+        let mut declared_scopes: HashSet<Arc<str>> = HashSet::new();
+        for scope in &manifest.scopes {
+            if scope.len() > PLUGIN_CONFIG_MAX_SCOPE_LEN {
+                return Err(PluginLoadError::ScopeEntryTooLong {
+                    plugin_id: manifest.id.clone(),
+                    scope: scope.clone(),
+                    max: PLUGIN_CONFIG_MAX_SCOPE_LEN,
+                });
+            }
+            // Intern via host.scope_ids so declared_scopes entries share
+            // allocations with the module registry — clones in the runtime
+            // gate are ref-count bumps, not string copies.
+            let Some(interned) = host.scope_ids.get(scope.as_str()) else {
+                return Err(PluginLoadError::UnknownScope {
+                    plugin_id: manifest.id.clone(),
+                    scope: scope.clone(),
+                });
+            };
+            declared_scopes.insert(interned.clone());
+        }
+        for scope in &manifest.scopes {
+            if let Some(parent) = host.scope_parents.get(scope.as_str())
+                && !declared_scopes.contains(parent)
+            {
+                return Err(PluginLoadError::ScopeWithoutParent {
+                    plugin_id: manifest.id.clone(),
+                    scope: scope.clone(),
+                    parent: parent.to_string(),
+                });
+            }
+        }
+        for scope in &manifest.scopes {
+            if let Some(grant) = host.scope_grant(scope)
+                && !manifest.scope_grants.contains_key(scope)
+            {
+                return Err(PluginLoadError::MissingScopeGrant {
+                    plugin_id: manifest.id.clone(),
+                    scope: scope.clone(),
+                    key: grant.key().to_string(),
+                });
+            }
+        }
+
+        validate_dependencies(&manifest)?;
+
+        Ok(Self {
+            manifest,
+            declared_scopes,
+        })
+    }
+}
+
+fn parse_manifest(
+    path: &Path,
+    bytes: &[u8],
+    host: &PluginHost,
+) -> Result<PluginManifest, PluginLoadError> {
+    if bytes.len() as u64 > PLUGIN_CONFIG_MAX_BYTES {
+        return Err(PluginLoadError::ConfigTooLarge {
+            path: path.to_path_buf(),
+            bytes: bytes.len() as u64,
+            max: PLUGIN_CONFIG_MAX_BYTES,
+        });
+    }
+
+    // Same message `std::fs::read_to_string` gives for invalid UTF-8.
+    let text = std::str::from_utf8(bytes).map_err(|_| PluginLoadError::ConfigParseError {
+        path: path.to_path_buf(),
+        error: "stream did not contain valid UTF-8".into(),
+    })?;
+    PluginManifest::from_json(text, host).map_err(|e| PluginLoadError::ConfigParseError {
+        path: path.to_path_buf(),
+        error: e.to_string(),
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -1244,30 +1358,6 @@ fn read_manifest_bytes(config_path: &Path) -> Result<Vec<u8>, PluginLoadError> {
     })
 }
 
-fn parse_manifest(
-    path: &Path,
-    bytes: &[u8],
-    host: &PluginHost,
-) -> Result<PluginManifest, PluginLoadError> {
-    if bytes.len() as u64 > PLUGIN_CONFIG_MAX_BYTES {
-        return Err(PluginLoadError::ConfigTooLarge {
-            path: path.to_path_buf(),
-            bytes: bytes.len() as u64,
-            max: PLUGIN_CONFIG_MAX_BYTES,
-        });
-    }
-
-    // Same message `std::fs::read_to_string` gives for invalid UTF-8.
-    let text = std::str::from_utf8(bytes).map_err(|_| PluginLoadError::ConfigParseError {
-        path: path.to_path_buf(),
-        error: "stream did not contain valid UTF-8".into(),
-    })?;
-    PluginManifest::from_json(text, host).map_err(|e| PluginLoadError::ConfigParseError {
-        path: path.to_path_buf(),
-        error: e.to_string(),
-    })
-}
-
 impl PluginManager {
     fn installed_version(&self, plugin_id: &str) -> Option<&Version> {
         self.plugins
@@ -1298,7 +1388,7 @@ impl PluginManager {
 
     /// Parses and validates a plugin directory without binding it to its
     /// installed location, so install tooling can vet staged candidates
-    /// before they land under `plugins_dir`. Runs [`Self::load_manifest`],
+    /// before they land under `plugins_dir`. Runs [`LoadedManifest::load`],
     /// then the checks that need the directory's files.
     pub fn load_plugin_dir(dir: &Path, host: &PluginHost) -> Result<LoadedPlugin, PluginLoadError> {
         let config_path = dir.join(PLUGIN_CONFIG_FILENAME);
@@ -1306,7 +1396,7 @@ impl PluginManager {
         let LoadedManifest {
             manifest,
             declared_scopes,
-        } = Self::load_manifest(&config_path, &bytes, host)?;
+        } = LoadedManifest::load(&config_path, &bytes, host)?;
 
         if let Some(entrypoint) = manifest.entrypoint.as_deref() {
             let path = dir.join(entrypoint);
@@ -1321,98 +1411,6 @@ impl PluginManager {
         Ok(LoadedPlugin {
             manifest,
             directory: dir.to_path_buf(),
-            declared_scopes,
-        })
-    }
-
-    /// Parses and validates `plugin.json` contents on their own, so a plugin
-    /// can be vetted before any of its files are downloaded. `path` labels
-    /// where the bytes came from, such as a file path or a repository URL
-    /// path, and appears in errors; it is never read.
-    pub fn load_manifest(
-        path: &Path,
-        bytes: &[u8],
-        host: &PluginHost,
-    ) -> Result<LoadedManifest, PluginLoadError> {
-        let manifest = parse_manifest(path, bytes, host)?;
-
-        if manifest.schema_version != PLUGIN_SCHEMA_VERSION {
-            return Err(PluginLoadError::InvalidSchemaVersion {
-                plugin_id: manifest.id,
-                version: manifest.schema_version,
-            });
-        }
-
-        if let Err(reason) = validate_plugin_id(&manifest.id) {
-            return Err(PluginLoadError::InvalidPluginId {
-                plugin_id: manifest.id,
-                reason,
-            });
-        }
-
-        if host.reserved_ids.contains(&manifest.id) {
-            return Err(PluginLoadError::InvalidPluginId {
-                reason: format!("'{}' is reserved by {}", manifest.id, host.name),
-                plugin_id: manifest.id,
-            });
-        }
-
-        if !manifest.host_requirement.matches(&host.version) {
-            return Err(PluginLoadError::IncompatibleHost {
-                plugin_id: manifest.id,
-                requirement: manifest.host_requirement,
-                host: host.name.clone(),
-                host_version: host.version.clone(),
-            });
-        }
-
-        let mut declared_scopes: HashSet<Arc<str>> = HashSet::new();
-        for scope in &manifest.scopes {
-            if scope.len() > PLUGIN_CONFIG_MAX_SCOPE_LEN {
-                return Err(PluginLoadError::ScopeEntryTooLong {
-                    plugin_id: manifest.id.clone(),
-                    scope: scope.clone(),
-                    max: PLUGIN_CONFIG_MAX_SCOPE_LEN,
-                });
-            }
-            // Intern via host.scope_ids so declared_scopes entries share
-            // allocations with the module registry — clones in the runtime
-            // gate are ref-count bumps, not string copies.
-            let Some(interned) = host.scope_ids.get(scope.as_str()) else {
-                return Err(PluginLoadError::UnknownScope {
-                    plugin_id: manifest.id.clone(),
-                    scope: scope.clone(),
-                });
-            };
-            declared_scopes.insert(interned.clone());
-        }
-        for scope in &manifest.scopes {
-            if let Some(parent) = host.scope_parents.get(scope.as_str())
-                && !declared_scopes.contains(parent)
-            {
-                return Err(PluginLoadError::ScopeWithoutParent {
-                    plugin_id: manifest.id.clone(),
-                    scope: scope.clone(),
-                    parent: parent.to_string(),
-                });
-            }
-        }
-        for scope in &manifest.scopes {
-            if let Some(grant) = host.scope_grant(scope)
-                && !manifest.scope_grants.contains_key(scope)
-            {
-                return Err(PluginLoadError::MissingScopeGrant {
-                    plugin_id: manifest.id.clone(),
-                    scope: scope.clone(),
-                    key: grant.key().to_string(),
-                });
-            }
-        }
-
-        validate_dependencies(&manifest)?;
-
-        Ok(LoadedManifest {
-            manifest,
             declared_scopes,
         })
     }
@@ -4128,7 +4126,7 @@ mod tests {
     }
 
     fn load_manifest(bytes: &[u8]) -> Result<LoadedManifest, PluginLoadError> {
-        PluginManager::load_manifest(std::path::Path::new("plugin.json"), bytes, &host())
+        LoadedManifest::load(std::path::Path::new("plugin.json"), bytes, &host())
     }
 
     #[test]
@@ -4166,11 +4164,7 @@ mod tests {
         .with_scope_parents([("net.all", "net")]);
         let load = |scopes: &str| {
             let json = manifest_json("demo", "").replace(r#"["net"]"#, scopes);
-            PluginManager::load_manifest(
-                std::path::Path::new("plugin.json"),
-                json.as_bytes(),
-                &host,
-            )
+            LoadedManifest::load(std::path::Path::new("plugin.json"), json.as_bytes(), &host)
         };
 
         assert!(load(r#"["net.all","net"]"#).is_ok());
@@ -4199,7 +4193,7 @@ mod tests {
         .unwrap()
         .with_scope_parents([("net.all", "net")]);
         let json = manifest_json("demo", "").replace(r#"["net"]"#, &scopes.to_string());
-        PluginManager::load_manifest(std::path::Path::new("plugin.json"), json.as_bytes(), &host)
+        LoadedManifest::load(std::path::Path::new("plugin.json"), json.as_bytes(), &host)
     }
 
     fn scope_parse_error(scopes: serde_json::Value) -> String {
@@ -4352,7 +4346,7 @@ mod tests {
         .unwrap()
         .with_scope_grant("net", Arc::new(Words));
         let json = manifest_json("demo", "").replace(r#"["net"]"#, &scopes.to_string());
-        PluginManager::load_manifest(std::path::Path::new("plugin.json"), json.as_bytes(), &host)
+        LoadedManifest::load(std::path::Path::new("plugin.json"), json.as_bytes(), &host)
     }
 
     fn grant_parse_error(scopes: serde_json::Value) -> String {
@@ -4504,7 +4498,7 @@ mod tests {
         )
         .unwrap()
         .with_scope_grant("net", Arc::new(Words));
-        let error = PluginManager::load_manifest(
+        let error = LoadedManifest::load(
             std::path::Path::new("plugin.json"),
             manifest_json("demo", "").as_bytes(),
             &host,
@@ -4653,11 +4647,7 @@ mod tests {
         )
         .unwrap();
         let load = |json: String| {
-            PluginManager::load_manifest(
-                std::path::Path::new("plugin.json"),
-                json.as_bytes(),
-                &other,
-            )
+            LoadedManifest::load(std::path::Path::new("plugin.json"), json.as_bytes(), &other)
         };
         let named =
             |requirement: &str| manifest_json("demo", &format!(r#","other":"{requirement}""#));
@@ -4691,7 +4681,7 @@ mod tests {
         let json = manifest_json("update", "");
 
         assert!(load_manifest(json.as_bytes()).is_ok());
-        let err = PluginManager::load_manifest(
+        let err = LoadedManifest::load(
             std::path::Path::new("plugin.json"),
             json.as_bytes(),
             &reserving,
