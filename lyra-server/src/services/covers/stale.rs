@@ -20,10 +20,6 @@ use agdb::{
     DbId,
 };
 use anyhow::Context;
-use rayon::iter::{
-    IntoParallelIterator,
-    ParallelIterator,
-};
 
 use super::ResolvedCover;
 use lyra_db::{
@@ -111,13 +107,14 @@ impl StoredCover {
     }
 }
 
-/// The `candidates` whose file is confirmed gone, looked for off the async threads.
+/// The `candidates` whose file is confirmed gone, looked for one at a time off the async threads,
+/// as the few of one request or one owner are.
 pub(crate) async fn confirmed_stale(
     candidates: Vec<StoredCover>,
 ) -> anyhow::Result<Vec<StoredCover>> {
     tokio::task::spawn_blocking(move || {
         candidates
-            .into_par_iter()
+            .into_iter()
             .filter(|candidate| confirmed_gone(Path::new(&candidate.path)))
             .collect()
     })
