@@ -28,7 +28,10 @@ use super::{
         CoverFilter,
         playlists::generated_cover_for_playlist,
     },
-    image::MAX_COVER_BYTES,
+    image::{
+        DecodeClass,
+        MAX_COVER_BYTES,
+    },
     providers::{
         EntityType,
         search_artist_cover_candidates,
@@ -299,18 +302,16 @@ pub(crate) async fn set_manual(
         let db = db.read().await;
         resolve_owner(&db, principal, kind, id, Access::Write)?
     };
-    let (bytes, ext) = tokio::task::spawn_blocking(move || {
-        super::image::validate_cover_image(&bytes).map(|ext| (bytes, ext))
+    let cover = super::image::decode(DecodeClass::Foreground, move || {
+        super::image::validate_cover(bytes)
     })
-    .await
-    .map_err(|err| anyhow::anyhow!("cover validation task failed: {err}"))?
+    .await?
     .map_err(|err| CoverSelectionError::Invalid(format!("{err:#}")))?;
 
     let prepared = PreparedCover::write(
         &kind.cover_dir(&configured_covers_root(), owner_db_id),
         CoverSource::Manual,
-        ext,
-        &bytes,
+        &cover,
         None,
     )
     .await?;
@@ -390,14 +391,13 @@ pub(crate) async fn set_provider(
         )));
     }
 
-    let (bytes, ext) = download_cover(provider_id, entity_type, url)
+    let cover = download_cover(provider_id, entity_type, url, DecodeClass::Foreground)
         .await
         .map_err(|err| CoverSelectionError::Upstream(format!("{err:#}")))?;
     let prepared = PreparedCover::write(
         &kind.cover_dir(&configured_covers_root(), owner_db_id),
         CoverSource::Provider,
-        ext,
-        &bytes,
+        &cover,
         Some(provider_id),
     )
     .await?;
@@ -498,8 +498,7 @@ mod tests {
         let prepared = PreparedCover::write(
             &configured_cover_dir_for_release(&covers_root, release_db_id),
             CoverSource::Provider,
-            "png",
-            &png(),
+            &super::super::image::validate_cover(png())?,
             Some("provider"),
         )
         .await?;
@@ -856,7 +855,13 @@ mod tests {
         let other = insert_release(&mut *STATE.db.write().await, "Other")?;
         let covers_root = configured_covers_root();
         let dir = configured_cover_dir_for_release(&covers_root, other);
-        let prepared = PreparedCover::write(&dir, CoverSource::Manual, "png", &png(), None).await?;
+        let prepared = PreparedCover::write(
+            &dir,
+            CoverSource::Manual,
+            &super::super::image::validate_cover(png())?,
+            None,
+        )
+        .await?;
 
         // As when `id`'s release was deleted and its database id reused while the upload ran.
         let error = record_for_owner(
@@ -888,8 +893,8 @@ mod tests {
         let (release_db_id, id, _) = release_with_local_cover(library.path()).await?;
         let covers_root = configured_covers_root();
         let dir = configured_cover_dir_for_release(&covers_root, release_db_id);
-        let image = png();
-        let prepare = || PreparedCover::write(&dir, CoverSource::Manual, "png", &image, None);
+        let image = super::super::image::validate_cover(png())?;
+        let prepare = || PreparedCover::write(&dir, CoverSource::Manual, &image, None);
 
         // Demoted from admin while the upload ran.
         let demoted = user("demoted", true).await?;

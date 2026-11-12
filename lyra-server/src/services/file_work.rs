@@ -28,8 +28,14 @@ const FILE_WORK_WIDTH: usize = 4;
 
 static FILE_WORK: LazyLock<FileWork> = LazyLock::new(|| FileWork::with_width(FILE_WORK_WIDTH));
 
-/// `work` of each item, in the items' order, each on a blocking thread once one of the server's
-/// file work slots is free.
+/// `work` on a blocking thread, once one of the server's file work slots is free.
+pub(crate) async fn run<U: Send + 'static>(
+    work: impl FnOnce() -> U + Send + 'static,
+) -> Result<U, JoinError> {
+    FILE_WORK.run(work).await
+}
+
+/// `work` of each item, in the items' order, each [`run`] on its own.
 pub(crate) async fn map<T, U, F>(items: Vec<T>, work: F) -> Result<Vec<U>, JoinError>
 where
     T: Send + 'static,

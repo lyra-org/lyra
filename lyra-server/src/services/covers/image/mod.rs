@@ -16,7 +16,10 @@ use std::{
         Seek,
     },
     num::NonZeroUsize,
-    path::Path,
+    path::{
+        Path,
+        PathBuf,
+    },
     sync::{
         Arc,
         LazyLock,
@@ -173,12 +176,35 @@ fn png_decoder(
     image::codecs::png::PngDecoder::with_limits(Cursor::new(bytes), limits)
 }
 
-/// The extension for a cover image read from its bytes, whatever its source
-/// claims it is. The bytes must decode in full as a JPEG, PNG or WebP image
-/// within the cover limits.
-pub(crate) fn validate_cover_image(bytes: &[u8]) -> Result<&'static str> {
-    let (header, _) = decode_cover(bytes)?;
-    Ok(extension_from_image_format(header.format).expect("cover formats have extensions"))
+/// Cover image bytes that decode in full as a JPEG, PNG or WebP image within the cover limits,
+/// with what their decode gave.
+#[derive(Debug)]
+pub(crate) struct ValidatedCover {
+    pub(crate) bytes: Vec<u8>,
+    /// Read from the bytes, whatever their source claims they are.
+    pub(crate) extension: &'static str,
+    pub(crate) hash: String,
+    pub(crate) blurhash: Option<String>,
+}
+
+impl ValidatedCover {
+    pub(crate) fn mime_type(&self) -> &'static str {
+        mime_from_extension(self.extension)
+    }
+}
+
+/// `bytes` as a cover, if they are one. A decode: run it through [`decode`].
+pub(crate) fn validate_cover(bytes: Vec<u8>) -> Result<ValidatedCover> {
+    let (header, image) = decode_cover(&bytes)?;
+    Ok(ValidatedCover {
+        extension: extension_from_image_format(header.format)
+            .expect("cover formats have extensions"),
+        hash: xxh3_128_hex_bytes(&bytes),
+        blurhash: transform_refusal(&header)
+            .is_none()
+            .then(|| blurhash_of(&image)),
+        bytes,
+    })
 }
 
 pub(crate) fn parse_cover_image_format(raw_format: &str) -> Option<image::ImageFormat> {
@@ -299,14 +325,21 @@ fn transform_cover_file(path: &Path, options: &CoverTransformOptions) -> Result<
     Ok(cursor.into_inner())
 }
 
-/// Transforms run on at most one blocking thread per two cores across the server, leaving the
-/// rest for streaming and scans.
-static TRANSFORM_SLOTS: LazyLock<Arc<Semaphore>> = LazyLock::new(|| {
+/// Image decodes, a request's transforms and background work's alike, run on at most one blocking
+/// thread per two cores across the server, leaving the rest for streaming and scans.
+static DECODE_SLOTS: LazyLock<Arc<Semaphore>> = LazyLock::new(|| {
     let cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
     Arc::new(Semaphore::new((cores / 2).max(1)))
 });
 
-/// How long a transform waits for a slot before the request is refused as busy.
+/// How many decodes background work holds or waits for at once, so a request waits behind at
+/// most that many of them.
+pub(crate) const BACKGROUND_DECODES: usize = 2;
+
+static BACKGROUND_DECODE_TURNS: LazyLock<Arc<Semaphore>> =
+    LazyLock::new(|| Arc::new(Semaphore::new(BACKGROUND_DECODES)));
+
+/// How long a transform waits for a decode slot before the request is refused as busy.
 const TRANSFORM_SLOT_WAIT: Duration = Duration::from_secs(5);
 
 /// The cover file with content `hash` as the options ask for it. The file itself is served when
@@ -320,7 +353,7 @@ pub(crate) async fn render_cover(
     let cache = TransformCache::current();
     render_cover_on(
         &cache,
-        &TRANSFORM_SLOTS,
+        &DECODE_SLOTS,
         TRANSFORM_SLOT_WAIT,
         path,
         hash,
@@ -446,12 +479,69 @@ pub(crate) fn read_cover_hash(path: &Path) -> anyhow::Result<String> {
     Ok(xxh3_128_hex_bytes(&bytes))
 }
 
-pub(crate) fn cover_blurhash(path: &Path) -> Option<String> {
+/// Who waits on a decode, which decides how it waits for a decode slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DecodeClass {
+    /// A request: it takes the next free slot.
+    Foreground,
+    /// Work no request waits on, such as a cover sync: it takes one of background work's turns
+    /// first, so requests find most slots free.
+    Background,
+}
+
+/// `work`, an image decode, on a blocking thread holding one of the decode slots, waited for as
+/// its `class` does.
+pub(crate) async fn decode<T: Send + 'static>(
+    class: DecodeClass,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T> {
+    decode_on(&BACKGROUND_DECODE_TURNS, &DECODE_SLOTS, class, work).await
+}
+
+/// The turn and the slot move into the blocking task, so a caller that stops waiting frees
+/// neither while the work still runs.
+async fn decode_on<T: Send + 'static>(
+    turns: &Arc<Semaphore>,
+    slots: &Arc<Semaphore>,
+    class: DecodeClass,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T> {
+    let turn = match class {
+        DecodeClass::Foreground => None,
+        DecodeClass::Background => Some(
+            Arc::clone(turns)
+                .acquire_owned()
+                .await
+                .expect("the background decode semaphore is never closed"),
+        ),
+    };
+    let slot = Arc::clone(slots)
+        .acquire_owned()
+        .await
+        .expect("the cover decode semaphore is never closed");
+    tokio::task::spawn_blocking(move || {
+        let _held = (turn, slot);
+        work()
+    })
+    .await
+    .context("cover decode task panicked")
+}
+
+/// The blurhash of the cover file at `path`, when it decodes and would transform.
+pub(crate) async fn cover_blurhash(path: PathBuf, class: DecodeClass) -> Result<Option<String>> {
+    decode(class, move || compute_blurhash(&path)).await
+}
+
+fn compute_blurhash(path: &Path) -> Option<String> {
     if transform_refusal(&probe_cover_file(path).ok()?).is_some() {
         return None;
     }
     let (_, image) = decode_cover(&read_cover_file(path).ok()?).ok()?;
-    Some(blurhash::encode(&image.thumbnail(128, 128).to_rgba8()))
+    Some(blurhash_of(&image))
+}
+
+fn blurhash_of(image: &image::DynamicImage) -> String {
+    blurhash::encode(&image.thumbnail(128, 128).to_rgba8())
 }
 
 #[cfg(test)]
@@ -534,33 +624,35 @@ mod tests {
     }
 
     #[test]
-    fn validate_cover_image_reads_the_format_from_the_bytes() {
+    fn validate_cover_reads_the_format_from_the_bytes() {
         for (format, extension) in [
             (image::ImageFormat::Jpeg, "jpg"),
             (image::ImageFormat::Png, "png"),
             (image::ImageFormat::WebP, "webp"),
         ] {
             assert_eq!(
-                validate_cover_image(&encoded(format, 1, 1)).ok(),
+                validate_cover(encoded(format, 1, 1))
+                    .ok()
+                    .map(|cover| cover.extension),
                 Some(extension)
             );
         }
     }
 
     #[test]
-    fn validate_cover_image_rejects_other_content() {
+    fn validate_cover_rejects_other_content() {
         for bytes in [
             &b"GIF89a\x01\x00\x01\x00"[..],
             b"<!doctype html><title>x</title>",
             b"{\"secret\":true}",
             b"",
         ] {
-            assert!(validate_cover_image(bytes).is_err(), "{bytes:?}");
+            assert!(validate_cover(bytes.to_vec()).is_err(), "{bytes:?}");
         }
     }
 
     #[test]
-    fn validate_cover_image_rejects_image_signatures_over_other_content() {
+    fn validate_cover_rejects_image_signatures_over_other_content() {
         let mut fake_jpeg = vec![0xFF, 0xD8, 0xFF];
         fake_jpeg.extend_from_slice(b"secret data, not an image");
         let mut fake_png = encoded(image::ImageFormat::Png, 1, 1)[..33].to_vec();
@@ -569,7 +661,7 @@ mod tests {
         let truncated_png = &png[..png.len() / 2];
 
         for bytes in [&fake_jpeg[..], &fake_png, truncated_png] {
-            assert!(validate_cover_image(bytes).is_err(), "{bytes:?}");
+            assert!(validate_cover(bytes.to_vec()).is_err(), "{bytes:?}");
         }
     }
 
@@ -582,11 +674,11 @@ mod tests {
             ("big.webp", webp(&[(b"VP8 ", &vp8_frame(16_000, 16_000))])),
         ] {
             let path = write_cover(&dir, name, &bytes);
-            assert!(validate_cover_image(&bytes).is_err(), "{name}");
+            assert!(validate_cover(bytes.to_vec()).is_err(), "{name}");
             assert!(probe_cover_file(&path).is_err(), "{name}");
-            assert!(cover_blurhash(&path).is_none(), "{name}");
+            assert!(compute_blurhash(&path).is_none(), "{name}");
         }
-        assert!(validate_cover_image(&jpeg_header(6_000, 6_000)).is_err());
+        assert!(validate_cover(jpeg_header(6_000, 6_000).to_vec()).is_err());
         assert!(bounded_cover_header(&mut Cursor::new(jpeg_header(6_000, 6_000)), 64).is_ok());
     }
 
@@ -596,10 +688,29 @@ mod tests {
         let png = write_cover(&dir, "cover.png", &encoded(image::ImageFormat::Png, 4, 4));
         let lossless = write_cover(&dir, "cover.webp", &encoded(image::ImageFormat::WebP, 4, 4));
 
-        assert!(cover_blurhash(&png).is_some());
+        assert!(compute_blurhash(&png).is_some());
         assert!(probe_cover_file(&lossless).expect("reads header").lossless);
         assert!(decode_cover(&std::fs::read(&lossless).expect("read")).is_ok());
-        assert!(cover_blurhash(&lossless).is_none());
+        assert!(compute_blurhash(&lossless).is_none());
+    }
+
+    #[test]
+    fn a_validated_cover_has_the_blurhash_its_stored_file_would() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for (name, format) in [
+            ("cover.png", image::ImageFormat::Png),
+            ("cover.webp", image::ImageFormat::WebP),
+        ] {
+            let bytes = encoded(format, 40, 30);
+            let stored = write_cover(&dir, name, &bytes);
+            let validated = validate_cover(bytes).expect("a cover");
+            assert_eq!(validated.blurhash, compute_blurhash(&stored), "{name}");
+            assert_eq!(
+                validated.hash,
+                read_cover_hash(&stored).expect("reads"),
+                "{name}"
+            );
+        }
     }
 
     #[test]
@@ -614,7 +725,7 @@ mod tests {
 
         assert!(probe_cover_file(&path).is_err());
         assert!(read_cover_file(&path).is_err());
-        assert!(cover_blurhash(&path).is_none());
+        assert!(compute_blurhash(&path).is_none());
     }
 
     #[test]
@@ -640,7 +751,7 @@ mod tests {
 
         assert!(unbounded.is_some_and(|profile| profile.len() as u64 > PNG_METADATA_BYTES));
         assert!(bounded.is_none());
-        assert!(validate_cover_image(&bytes).is_ok());
+        assert!(validate_cover(bytes.to_vec()).is_ok());
     }
 
     #[test]
@@ -663,7 +774,7 @@ mod tests {
             Some(image::ImageFormat::Png)
         );
         assert!(probe_cover_file(&text).is_err());
-        assert!(cover_blurhash(&text).is_none());
+        assert!(compute_blurhash(&text).is_none());
     }
 
     #[tokio::test]
@@ -801,6 +912,43 @@ mod tests {
         }
         assert_eq!(cache::testing::flights(&cache), 0);
         assert_eq!(slots.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn background_decodes_leave_requests_the_slots_past_their_turns() {
+        let (turns, slots) = (Arc::new(Semaphore::new(2)), Arc::new(Semaphore::new(4)));
+        let gate = Arc::new(tokio::sync::RwLock::new(()));
+        let closed = gate.write().await;
+        let (started, mut starts) = tokio::sync::mpsc::unbounded_channel();
+        // On this runtime every spawned decode is polled, taking a turn or queueing for one,
+        // before the test runs again.
+        let decodes = (0..5)
+            .map(|_| {
+                let (turns, slots) = (Arc::clone(&turns), Arc::clone(&slots));
+                let (gate, started) = (Arc::clone(&gate), started.clone());
+                tokio::spawn(async move {
+                    decode_on(&turns, &slots, DecodeClass::Background, move || {
+                        started.send(()).expect("test is listening");
+                        drop(gate.blocking_read());
+                    })
+                    .await
+                })
+            })
+            .collect::<Vec<_>>();
+        for _ in 0..2 {
+            starts.recv().await.expect("a decode starts");
+        }
+        assert_eq!(slots.available_permits(), 2);
+
+        decode_on(&turns, &slots, DecodeClass::Foreground, || ())
+            .await
+            .expect("a request decodes while background work waits");
+        drop(closed);
+        for decode in decodes {
+            decode.await.expect("joins").expect("decodes");
+        }
+        assert_eq!(slots.available_permits(), 4);
+        assert_eq!(turns.available_permits(), 2);
     }
 
     #[tokio::test]

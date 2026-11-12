@@ -17,6 +17,10 @@ use anyhow::{
     Result,
     anyhow,
 };
+use futures::{
+    StreamExt,
+    TryStreamExt,
+};
 use lyra_db::nanoid;
 use tokio::{
     fs,
@@ -55,11 +59,15 @@ use super::{
     CoverUpdate,
     folders::AudioFolders,
     image::{
+        BACKGROUND_DECODES,
+        DecodeClass,
         MAX_COVER_BYTES,
+        ValidatedCover,
         cover_blurhash,
         cover_mime_from_path,
+        decode,
         read_cover_hash,
-        validate_cover_image,
+        validate_cover,
     },
     providers::{
         EntityType,
@@ -105,7 +113,8 @@ pub(super) async fn download_cover(
     provider_id: &str,
     entity_type: EntityType,
     url: &str,
-) -> Result<(Vec<u8>, &'static str)> {
+    class: DecodeClass,
+) -> Result<ValidatedCover> {
     let plugin_id = provider_registry()
         .read()
         .await
@@ -127,13 +136,9 @@ pub(super) async fn download_cover(
             response.status
         ));
     }
-    let (bytes, extension) = tokio::task::spawn_blocking(move || {
-        validate_cover_image(&response.body).map(|ext| (response.body, ext))
-    })
-    .await
-    .context("cover validation task panicked")?
-    .with_context(|| format!("cover from {url} is not a usable image"))?;
-    Ok((bytes, extension))
+    decode(class, move || validate_cover(response.body))
+        .await?
+        .with_context(|| format!("cover from {url} is not a usable image"))
 }
 
 async fn write_cover_image(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -239,31 +244,28 @@ impl PreparedCover {
     pub(super) async fn write(
         dir: &Path,
         source: CoverSource,
-        ext: &str,
-        bytes: &[u8],
+        cover: &ValidatedCover,
         provider_id: Option<&str>,
     ) -> Result<Self> {
-        let target = dir.join(format!("{}-{}.{ext}", source.as_str(), nanoid()));
-        write_cover_image(&target, bytes).await?;
-        let mut prepared = Self {
+        let target = dir.join(format!(
+            "{}-{}.{}",
+            source.as_str(),
+            nanoid(),
+            cover.extension
+        ));
+        write_cover_image(&target, &cover.bytes).await?;
+        Ok(Self {
             source,
             pending: Some(Cover {
                 db_id: None,
                 id: nanoid(),
                 path: target.to_string_lossy().into_owned(),
-                mime_type: String::new(),
-                hash: String::new(),
-                blurhash: None,
+                mime_type: cover.mime_type().to_string(),
+                hash: cover.hash.clone(),
+                blurhash: cover.blurhash.clone(),
                 provider_id: provider_id.map(str::to_string),
             }),
-        };
-        let (hash, blurhash, mime_type) = cover_file_metadata(&target).await?;
-        if let Some(cover) = prepared.pending.as_mut() {
-            cover.hash = hash;
-            cover.blurhash = blurhash;
-            cover.mime_type = mime_type;
-        }
-        Ok(prepared)
+        })
     }
 
     /// Records the file as the owner's cover from its source, under the write guard in which the
@@ -436,17 +438,10 @@ async fn save_provider_cover(
     basis: &ProviderSyncBasis,
     target_dir: &Path,
     provider_id: &str,
-    ext: &str,
-    bytes: &[u8],
+    cover: &ValidatedCover,
 ) -> Result<Option<PathBuf>> {
-    let prepared = PreparedCover::write(
-        target_dir,
-        CoverSource::Provider,
-        ext,
-        bytes,
-        Some(provider_id),
-    )
-    .await?;
+    let prepared =
+        PreparedCover::write(target_dir, CoverSource::Provider, cover, Some(provider_id)).await?;
     let mut db_write = db.write().await;
     if !provider_sync_still_allowed(&db_write, basis)? {
         return Ok(None);
@@ -546,7 +541,13 @@ pub(crate) async fn sync_release_cover_for_tracks<S: CallSource>(
             }
         };
 
-        let (bytes, ext) = match download_cover(&provider_id, EntityType::Release, &cover_url).await
+        let cover = match download_cover(
+            &provider_id,
+            EntityType::Release,
+            &cover_url,
+            DecodeClass::Background,
+        )
+        .await
         {
             Ok(value) => value,
             Err(err) => {
@@ -566,8 +567,7 @@ pub(crate) async fn sync_release_cover_for_tracks<S: CallSource>(
             &basis,
             &target_dir,
             &provider_id,
-            ext,
-            &bytes,
+            &cover,
         )
         .await?
         else {
@@ -641,7 +641,13 @@ pub(crate) async fn sync_artist_cover<S: CallSource>(
             }
         };
 
-        let (bytes, ext) = match download_cover(&provider_id, EntityType::Artist, &cover_url).await
+        let cover = match download_cover(
+            &provider_id,
+            EntityType::Artist,
+            &cover_url,
+            DecodeClass::Background,
+        )
+        .await
         {
             Ok(value) => value,
             Err(err) => {
@@ -661,8 +667,7 @@ pub(crate) async fn sync_artist_cover<S: CallSource>(
             &basis,
             &target_dir,
             &provider_id,
-            ext,
-            &bytes,
+            &cover,
         )
         .await?
         else {
@@ -697,19 +702,25 @@ struct CoverDownloadTask {
 }
 
 async fn execute_cover_download(db: lyra_db::DbAsync, task: CoverDownloadTask) -> bool {
-    let (bytes, ext) =
-        match download_cover(&task.provider_id, EntityType::Release, &task.cover_url).await {
-            Ok(value) => value,
-            Err(err) => {
-                tracing::warn!(
-                    provider = %task.provider_id,
-                    cover_url = %task.cover_url,
-                    error = %err,
-                    "failed to download cover"
-                );
-                return false;
-            }
-        };
+    let cover = match download_cover(
+        &task.provider_id,
+        EntityType::Release,
+        &task.cover_url,
+        DecodeClass::Background,
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(err) => {
+            tracing::warn!(
+                provider = %task.provider_id,
+                cover_url = %task.cover_url,
+                error = %err,
+                "failed to download cover"
+            );
+            return false;
+        }
+    };
 
     let target = match save_provider_cover(
         &db,
@@ -717,8 +728,7 @@ async fn execute_cover_download(db: lyra_db::DbAsync, task: CoverDownloadTask) -
         &task.basis,
         &task.target_dir,
         &task.provider_id,
-        ext,
-        &bytes,
+        &cover,
     )
     .await
     {
@@ -1211,17 +1221,15 @@ pub(crate) async fn sync_release_covers_for_library(
 }
 
 async fn cover_file_metadata(path: &Path) -> Result<(String, Option<String>, String)> {
-    let path = path.to_path_buf();
-    let (hash, blurhash, mime_type) = tokio::task::spawn_blocking(move || {
-        (
-            read_cover_hash(&path),
-            cover_blurhash(&path),
-            cover_mime_from_path(&path).to_string(),
-        )
-    })
-    .await
-    .context("cover metadata computation task panicked")?;
-    Ok((hash?, blurhash, mime_type))
+    let hash = {
+        let path = path.to_path_buf();
+        file_work::run(move || read_cover_hash(&path))
+            .await
+            .context("cover metadata computation task panicked")??
+    };
+    // Only syncs record a library file as a cover.
+    let blurhash = cover_blurhash(path.to_path_buf(), DecodeClass::Background).await?;
+    Ok((hash, blurhash, cover_mime_from_path(path).to_string()))
 }
 
 /// Records the image at `cover_path` as the local cover of the owner read as `owner_public_id`,
@@ -1456,22 +1464,31 @@ async fn apply_gone_covers(db: &lyra_db::DbAsync, library_id: DbId, gone: GoneCo
         removed,
         mut failed,
     } = gone;
-    let computed = file_work::map(replaced, |(stale, path)| {
+    let hashed = file_work::map(replaced, |(stale, path)| {
         let hash = read_cover_hash(&path)?;
-        let cover = Cover {
-            db_id: None,
-            id: nanoid(),
-            mime_type: cover_mime_from_path(&path).to_string(),
-            blurhash: cover_blurhash(&path),
-            path: path.to_string_lossy().into_owned(),
-            hash,
-            provider_id: None,
-        };
-        Ok((stale, cover))
+        Ok((stale, path, hash))
     })
     .await;
-    let computed = match computed {
-        Ok(computed) => computed,
+    let computed = match hashed {
+        Ok(hashed) => {
+            futures::stream::iter(hashed)
+                .map(|hashed: Result<_>| async move {
+                    let (stale, path, hash) = hashed?;
+                    let cover = Cover {
+                        db_id: None,
+                        id: nanoid(),
+                        mime_type: cover_mime_from_path(&path).to_string(),
+                        blurhash: cover_blurhash(path.clone(), DecodeClass::Background).await?,
+                        path: path.to_string_lossy().into_owned(),
+                        hash,
+                        provider_id: None,
+                    };
+                    Ok((stale, cover))
+                })
+                .buffered(BACKGROUND_DECODES)
+                .collect::<Vec<Result<_>>>()
+                .await
+        }
         Err(err) => vec![Err(anyhow!("cover metadata task failed: {err}"))],
     };
 
@@ -1587,21 +1604,29 @@ async fn sync_local_cover_metadata_from_resolved(
             replaces: found.replaces,
             stored,
             mime_type: cover_mime_from_path(&found.path).to_string(),
-            blurhash: cover_blurhash(&found.path),
+            blurhash: None,
             path,
             hash,
         };
-        Some(Ok(computed))
+        Some(Ok((computed, found.path)))
     })
     .await
     .context("cover metadata task panicked")?;
-    let (mut computed, mut unreadable) = (Vec::new(), Vec::new());
+    let (mut changed, mut unreadable) = (Vec::new(), Vec::new());
     for checked in checked.into_iter().flatten() {
         match checked {
-            Ok(changed) => computed.push(changed),
+            Ok(changed_cover) => changed.push(changed_cover),
             Err(err) => unreadable.push(err),
         }
     }
+    let computed = futures::stream::iter(changed)
+        .map(|(mut computed, source)| async move {
+            computed.blurhash = cover_blurhash(source, DecodeClass::Background).await?;
+            anyhow::Ok(computed)
+        })
+        .buffered(BACKGROUND_DECODES)
+        .try_collect::<Vec<_>>()
+        .await?;
     if computed.is_empty() && unreadable.is_empty() {
         return Ok(0);
     }
@@ -1699,6 +1724,15 @@ mod tests {
     use lyra_db::fixtures::insert_release;
     use lyra_db::test_db::new_test_db;
 
+    /// A provider cover as a download gives it.
+    fn downloaded_cover() -> ValidatedCover {
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        ::image::RgbImage::new(1, 1)
+            .write_to(&mut bytes, ::image::ImageFormat::Png)
+            .expect("encode png");
+        validate_cover(bytes.into_inner()).expect("a cover")
+    }
+
     const PNG_1X1: &[u8] = &[
         0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
         0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x04, 0x00, 0x00, 0x00, 0xB5,
@@ -1762,6 +1796,7 @@ mod tests {
             "unregistered-cover-provider",
             EntityType::Release,
             "http://127.0.0.1:9/cover.png",
+            DecodeClass::Background,
         )
         .await
         .expect_err("no plugin owns the handler the URL came from");
@@ -1971,8 +2006,7 @@ mod tests {
                     &basis,
                     &target_dir,
                     "provider",
-                    "png",
-                    PNG_1X1,
+                    &downloaded_cover(),
                 )
                 .await?
                 .expect("the basis still holds"),
@@ -2107,8 +2141,7 @@ mod tests {
                     &basis,
                     &target_dir,
                     "provider",
-                    "png",
-                    PNG_1X1,
+                    &downloaded_cover(),
                 )
                 .await
             }
@@ -2588,8 +2621,7 @@ mod tests {
                 basis,
                 &configured_cover_dir_for_release(&covers_root, self.winner),
                 "provider",
-                "png",
-                PNG_1X1,
+                &downloaded_cover(),
             )
             .await
         }
