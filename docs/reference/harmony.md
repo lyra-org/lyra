@@ -146,10 +146,9 @@ status. `clippy.toml` disallows those functions everywhere else.
 - A round polls each task ready as it begins, once, with the scheduler free; a task that polls
   the scheduler it runs on panics. A thread or future a task schedules during a round is a task
   at once, and, like any task started or woken during a round, first runs in the next one. A
-  group a task cancels is cancelled at once, along with its tasks, except the task being polled,
-  which is cancelled as its poll returns. A thread a task cancels is dropped after the watchers
-  and again after the other tasks, and runs no further in that round;
-  `cancel_luau_thread_and_settle` returns a future for the moment the thread is gone. A task's
+  thread or group a task cancels is cancelled at once, and the work of its tasks dropped before
+  the task goes on, except the task being polled, which is cancelled as its poll returns:
+  `cancel_luau_thread_and_settle` returns a future for the moment its work is gone. A task's
   future must not hold the scheduler's `Rc` across an await, which would keep the scheduler alive
   through itself.
 - Cancelling a thread, or a group, closes each thread as `coroutine.close` does, at once and

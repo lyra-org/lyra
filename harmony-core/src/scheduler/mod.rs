@@ -187,9 +187,6 @@ pub struct Scheduler {
     /// Set while [`Self::poll_ready`] runs a round.
     in_round: Cell<bool>,
     pending_luau_work: RefCell<Vec<PendingLuauWork>>,
-    pending_luau_cancellations: RefCell<Vec<luau::Thread>>,
-    /// Told once the poll under way has ended and what it deferred is done.
-    poll_end: RefCell<Vec<tokio::sync::oneshot::Sender<()>>>,
     polling: Cell<bool>,
 }
 
@@ -222,8 +219,6 @@ impl Scheduler {
             wake_queue,
             in_round: Cell::default(),
             pending_luau_work: RefCell::default(),
-            pending_luau_cancellations: RefCell::default(),
-            poll_end: RefCell::default(),
             polling: Cell::default(),
         }
     }
@@ -317,7 +312,6 @@ impl Scheduler {
             // Waits a poll put off go with the group.
             self.cancel_pending_luau_work(|work| work.is_in(group));
         }
-        self.flush_pending_luau_cancellations();
     }
 
     /// Runs `future` as a task of `context`'s group, from the next round on.
@@ -587,38 +581,21 @@ impl Scheduler {
         let deferred = self.state.borrow_mut().cancel(id);
         let cancelled = deferred.is_some();
         self.finish(deferred);
-        self.flush_pending_luau_cancellations();
         cancelled
     }
 
     /// Cancels `thread`'s task, and closes the thread at once: Luau code holding it can't resume
-    /// it from here on. While the scheduler polls, as from a task, the task is cancelled once the
-    /// scheduler is free: before any other task runs when a watcher asks, and at the end of the
-    /// poll otherwise. A thread that is running, or has resumed another, goes on to where it next
-    /// yields, and is closed there.
+    /// it from here on. A thread that is running, or has resumed another, goes on to where it
+    /// next yields, and is closed there. The task being polled is cancelled as its poll returns.
     pub fn cancel_luau_thread(&self, thread: &luau::Thread) -> bool {
         let key = thread_key(thread);
-        let scheduled = self.close_scheduled(thread);
-        if self.polling.get() {
-            self.mark_cancelling(thread);
-            self.pending_luau_cancellations
-                .borrow_mut()
-                .push(thread.clone());
-            return scheduled;
-        }
-        // Work a poll put off and never took up, as when it unwound, goes with the task.
+        self.close_scheduled(thread);
+        // A wait a poll put off goes with the task.
         let pending = self.cancel_pending_luau_work(|work| thread_key(&work.thread) == key);
         let Some(handle) = self.state.borrow_mut().untrack_thread(thread) else {
             return pending;
         };
         self.cancel(handle.id()) || pending
-    }
-
-    fn mark_cancelling(&self, thread: &luau::Thread) {
-        let mut state = self.state.borrow_mut();
-        if let Some(handle) = state.thread_task(thread) {
-            state.mark_cancelling(handle.id());
-        }
     }
 
     /// Closes `thread` if the scheduler holds work for it, and returns whether it does.
@@ -638,17 +615,14 @@ impl Scheduler {
     }
 
     /// [`Self::cancel_luau_thread`], returning a future that completes once the thread's work is
-    /// dropped: at once outside a poll, and when the scheduler is free inside one.
+    /// dropped: at once, unless the thread's task is the one being polled, which is cancelled as
+    /// its poll returns.
     pub fn cancel_luau_thread_and_settle(
         &self,
         thread: &luau::Thread,
     ) -> impl Future<Output = ()> + use<> {
+        let settled = self.state.borrow_mut().wait_for_polled_thread(thread);
         self.cancel_luau_thread(thread);
-        let settled = self.polling.get().then(|| {
-            let (ended, settled) = tokio::sync::oneshot::channel();
-            self.poll_end.borrow_mut().push(ended);
-            settled
-        });
         async move {
             if let Some(settled) = settled {
                 let _ = settled.await;
@@ -656,22 +630,10 @@ impl Scheduler {
         }
     }
 
-    /// Cancels `thread`'s task the next time the scheduler is free to, for a caller that may be
-    /// running inside it, such as a destructor. The thread is closed at once, as
-    /// [`Self::cancel_luau_thread`] closes it.
-    pub fn schedule_cancel_luau_thread(&self, thread: luau::Thread) {
-        self.close_scheduled(&thread);
-        if self.polling.get() {
-            self.mark_cancelling(&thread);
-        }
-        self.pending_luau_cancellations.borrow_mut().push(thread);
-    }
-
     pub fn remove(&self, id: TaskId) -> bool {
         let deferred = self.state.borrow_mut().remove(id);
         let removed = deferred.is_some();
         self.finish(deferred);
-        self.flush_pending_luau_cancellations();
         removed
     }
 
@@ -739,7 +701,6 @@ impl Scheduler {
         let waker = TaskWaker::of(id, &self.wake_queue);
         let mut cx = Context::from_waker(&waker);
         let interrupted_by = Cell::new(None);
-        let cancel_asked = || self.state.borrow().cancel_asked(id);
         let polled = poll_work(
             &taken.context,
             taken
@@ -748,42 +709,41 @@ impl Scheduler {
                 .expect("the work is out until the poll ends"),
             &mut cx,
             &Resuming {
-                cancel_asked: &cancel_asked,
+                cancelled: &taken.cancelled,
                 limit: taken.resume_limit.as_ref(),
                 clock: self.timers.clock(),
                 interrupted_by: &interrupted_by,
             },
         );
         let (context, work) = taken.put_back();
-        let (counted, deferred) =
+        let (counted, deferred, settled) =
             self.state
                 .borrow_mut()
                 .after_poll(id, context, work, polled, interrupted_by.get());
         self.finish(deferred);
+        for settled in settled {
+            let _ = settled.send(());
+        }
         counted
     }
 
     /// Takes task `id`'s work out of its slot to poll it, under a guard that fails the task if the
     /// poll unwinds before the work is put back.
     fn take_work(&self, id: TaskId) -> Option<TakenWork<'_>> {
-        let (context, work, resume_limit) = self.state.borrow_mut().take_for_poll(id)?;
+        let (context, work, resume_limit, cancelled) = self.state.borrow_mut().take_for_poll(id)?;
         Some(TakenWork {
             scheduler: self,
             id,
             context,
             work: Some(work),
             resume_limit,
+            cancelled,
         })
     }
 
-    /// Does what was asked of the scheduler while it polled.
+    /// Takes up the waits threads asked for while the scheduler polled.
     fn end_poll(&self) {
         self.flush_pending_luau_futures();
-        self.flush_pending_luau_cancellations();
-        self.state.borrow_mut().clear_cancelling();
-        for ended in std::mem::take(&mut *self.poll_end.borrow_mut()) {
-            let _ = ended.send(());
-        }
     }
 
     pub fn snapshot(&self, id: TaskId) -> Option<TaskSnapshot> {
@@ -853,7 +813,6 @@ impl Scheduler {
     pub fn remove_finished(&self) -> usize {
         let (removed, deferred) = self.state.borrow_mut().remove_finished();
         self.finish(deferred);
-        self.flush_pending_luau_cancellations();
         removed
     }
 
@@ -936,13 +895,6 @@ impl Scheduler {
         }
     }
 
-    fn flush_pending_luau_cancellations(&self) {
-        let pending = std::mem::take(&mut *self.pending_luau_cancellations.borrow_mut());
-        for thread in pending {
-            self.cancel_luau_thread(&thread);
-        }
-    }
-
     /// `delay` from now, or now when that is past the last instant.
     fn delay_until(&self, delay: Option<Duration>) -> Option<Instant> {
         delay.map(|delay| {
@@ -980,6 +932,7 @@ struct TakenWork<'a> {
     context: CallContext,
     work: Option<TaskWork>,
     resume_limit: Option<ResumeLimit>,
+    cancelled: Rc<Cell<bool>>,
 }
 
 impl TakenWork<'_> {
@@ -998,9 +951,11 @@ impl Drop for TakenWork<'_> {
         let Ok(mut state) = self.scheduler.state.try_borrow_mut() else {
             return;
         };
-        let failed = state.poll_unwound(self.id, std::mem::take(&mut self.context), work);
+        let (failed, settled) =
+            state.poll_unwound(self.id, std::mem::take(&mut self.context), work);
         drop(state);
         self.scheduler.finish([failed]);
+        drop(settled);
     }
 }
 

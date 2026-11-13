@@ -1,4 +1,5 @@
 use std::{
+    cell::Cell,
     collections::{
         HashMap,
         HashSet,
@@ -17,6 +18,7 @@ use harmony_luau::{
     CallContext,
     TaskGroupId,
 };
+use tokio::sync::oneshot;
 
 use super::limit::{
     ResumeBound,
@@ -68,9 +70,7 @@ pub(super) struct State {
     groups: HashMap<TaskGroupId, HashSet<TaskId>>,
     cancelled_groups: HashSet<TaskGroupId>,
     /// The task being polled, whose work is out of its slot.
-    polled: Option<TaskId>,
-    /// Tasks whose cancellation waits for the poll under way to end, and which it runs no further.
-    cancelling: HashSet<TaskId>,
+    polled: Option<Polled>,
     /// The task that last took up each thread.
     thread_tasks: HashMap<ThreadKey, TaskHandle>,
     parked_threads: HashSet<ThreadKey>,
@@ -82,6 +82,18 @@ pub(super) struct LuauTaskOptions {
     pub(super) resume_limit: Option<ResumeLimit>,
     pub(super) completion: Option<Rc<LocalLuauTaskCompletion>>,
 }
+
+struct Polled {
+    id: TaskId,
+    /// Set once the task is cancelled during its poll, which cancels it as the poll returns.
+    cancelled: Rc<Cell<bool>>,
+    /// Told once the task has settled after its poll.
+    settled: Vec<oneshot::Sender<()>>,
+}
+
+/// What a round takes off a task to poll it: the context it runs as, its work, the limit it runs
+/// under, and what its cancellation during the poll sets.
+pub(super) type Taken = (CallContext, TaskWork, Option<ResumeLimit>, Rc<Cell<bool>>);
 
 pub(super) type TaskResult = std::result::Result<Vec<luau::Value>, luau::RaisedError>;
 
@@ -151,7 +163,6 @@ impl State {
             groups: HashMap::new(),
             cancelled_groups: HashSet::new(),
             polled: None,
-            cancelling: HashSet::new(),
             thread_tasks: HashMap::new(),
             parked_threads: HashSet::new(),
         }
@@ -369,10 +380,9 @@ impl State {
         if task.state != TaskState::Pending {
             return None;
         }
-        if self.polled == Some(id) {
-            let thread = task.thread.clone();
-            self.cancelling.insert(id);
-            return Some(Deferred::Close(thread));
+        if let Some(polled) = self.polled.as_ref().filter(|polled| polled.id == id) {
+            polled.cancelled.set(true);
+            return Some(Deferred::Close(task.thread.clone()));
         }
         let message = format!("Luau task {} was cancelled", id.0);
         Some(self.settle(
@@ -401,28 +411,8 @@ impl State {
         ids.into_iter().filter_map(|id| self.cancel(id)).collect()
     }
 
-    pub(super) fn mark_cancelling(&mut self, id: TaskId) {
-        self.cancelling.insert(id);
-    }
-
     pub(super) fn is_cancelled(&self, group: TaskGroupId) -> bool {
         self.cancelled_groups.contains(&group)
-    }
-
-    /// Whether `id`, or one of its groups, was cancelled during the poll under way.
-    pub(super) fn cancel_asked(&self, id: TaskId) -> bool {
-        if self.cancelling.contains(&id) {
-            return true;
-        }
-        self.tasks.get(&id).is_some_and(|task| {
-            std::iter::once(task.context.task_group)
-                .chain(task.awaiting)
-                .any(|group| self.is_cancelled(group))
-        })
-    }
-
-    pub(super) fn clear_cancelling(&mut self) {
-        self.cancelling.clear();
     }
 
     pub(super) fn park_luau_thread(&mut self, thread: &luau::Thread) {
@@ -434,11 +424,6 @@ impl State {
     }
 
     #[cfg(test)]
-    pub(super) fn has_cancelling(&self) -> bool {
-        !self.cancelling.is_empty()
-    }
-
-    #[cfg(test)]
     pub(super) fn has_parked_threads(&self) -> bool {
         !self.parked_threads.is_empty()
     }
@@ -446,7 +431,7 @@ impl State {
     /// Parked on an async call: still pending, waiting for that call's future to become its
     /// work.
     pub(super) fn is_parked(&self, id: TaskId) -> bool {
-        self.polled != Some(id)
+        !self.is_polled(id)
             && self
                 .tasks
                 .get(&id)
@@ -494,42 +479,78 @@ impl State {
         Some(id)
     }
 
-    /// Takes the work off pending task `id` to poll it, unless its cancellation is under way,
-    /// with the context and the limit it runs under.
-    pub(super) fn take_for_poll(
+    fn is_polled(&self, id: TaskId) -> bool {
+        self.polled.as_ref().is_some_and(|polled| polled.id == id)
+    }
+
+    /// The task being polled, if `thread` is the thread it runs: found by the task itself, which
+    /// keeps its thread for as long as it is polled, and not by what `thread` last started as.
+    fn polled_with_thread(&mut self, thread: &luau::Thread) -> Option<&mut Polled> {
+        let key = thread_key(thread);
+        let polled = self.polled.as_mut()?;
+        let runs = self
+            .tasks
+            .get(&polled.id)
+            .and_then(|task| task.thread.as_ref())
+            .is_some_and(|own| thread_key(own) == key);
+        runs.then_some(polled)
+    }
+
+    /// A future that completes once the task being polled, if it runs `thread`, has settled after
+    /// its poll.
+    pub(super) fn wait_for_polled_thread(
         &mut self,
-        id: TaskId,
-    ) -> Option<(CallContext, TaskWork, Option<ResumeLimit>)> {
+        thread: &luau::Thread,
+    ) -> Option<oneshot::Receiver<()>> {
+        let polled = self.polled_with_thread(thread)?;
+        let (settled, waiting) = oneshot::channel();
+        polled.settled.push(settled);
+        Some(waiting)
+    }
+
+    /// Takes the work off pending task `id` to poll it, with the context and the limit it runs
+    /// under, and what its cancellation during the poll sets.
+    pub(super) fn take_for_poll(&mut self, id: TaskId) -> Option<Taken> {
         debug_assert!(self.polled.is_none(), "a task is already being polled");
-        let task = self.tasks.get(&id)?;
-        if task.state != TaskState::Pending || self.cancel_asked(id) {
+        let task = self.tasks.get_mut(&id)?;
+        if task.state != TaskState::Pending {
             return None;
         }
-        let task = self.tasks.get_mut(&id)?;
         let work = task.work.take()?;
-        self.polled = Some(id);
-        Some((task.context.clone(), work, task.resume_limit.clone()))
+        let cancelled = Rc::new(Cell::new(false));
+        self.polled = Some(Polled {
+            id,
+            cancelled: cancelled.clone(),
+            settled: Vec::new(),
+        });
+        Some((
+            task.context.clone(),
+            work,
+            task.resume_limit.clone(),
+            cancelled,
+        ))
     }
 
     /// Puts back the work of the task just polled, or settles the task as the poll came to, and
     /// cancels the task if that was asked during its poll. Returns whether the poll ended or
-    /// parked the task, and what to finish with.
+    /// parked the task, what to finish with, and whom to tell the task has settled.
     pub(super) fn after_poll(
         &mut self,
         id: TaskId,
         context: CallContext,
         work: TaskWork,
-        polled: WorkPoll,
+        outcome: WorkPoll,
         interrupted_by: Option<ResumeBound>,
-    ) -> (bool, Vec<Deferred>) {
-        self.polled = None;
+    ) -> (bool, Vec<Deferred>, Vec<oneshot::Sender<()>>) {
+        let polled = self.polled.take().expect("a task is being polled");
+        debug_assert_eq!(polled.id, id);
         let Some(task) = self.tasks.get_mut(&id) else {
-            return (false, vec![Deferred::work(context, work)]);
+            return (false, vec![Deferred::work(context, work)], polled.settled);
         };
         if task.state != TaskState::Pending {
-            return (false, vec![Deferred::work(context, work)]);
+            return (false, vec![Deferred::work(context, work)], polled.settled);
         }
-        let (counted, deferred) = match polled {
+        let (counted, deferred) = match outcome {
             WorkPoll::Completed { output } => {
                 let result = if task.completion.is_some() {
                     Some(Ok(output.unwrap_or_default()))
@@ -601,39 +622,44 @@ impl State {
             self.stop_awaiting(id);
         }
         let mut deferred: Vec<_> = deferred.into_iter().collect();
-        if self.cancel_asked(id) {
-            self.cancelling.remove(&id);
+        if polled.cancelled.get() {
             deferred.extend(self.cancel(id));
         }
-        (counted, deferred)
+        (counted, deferred, polled.settled)
     }
 
-    /// Fails the task whose poll unwound while its work was out of its slot.
+    /// Fails the task whose poll unwound while its work was out of its slot. Returns what to
+    /// finish with, and whom to tell the task has settled.
     pub(super) fn poll_unwound(
         &mut self,
         id: TaskId,
         context: CallContext,
         work: TaskWork,
-    ) -> Deferred {
-        self.polled = None;
+    ) -> (Deferred, Vec<oneshot::Sender<()>>) {
+        let settled = self
+            .polled
+            .take()
+            .map(|polled| polled.settled)
+            .unwrap_or_default();
         let pending = self
             .tasks
             .get(&id)
             .is_some_and(|task| task.state == TaskState::Pending);
         if !pending {
-            return Deferred::work(context, work);
+            return (Deferred::work(context, work), settled);
         }
         let message = "the scheduler's poll of the task unwound";
         let task = self.tasks.get_mut(&id).expect("task checked above");
         task.work = Some(work);
         task.error = Some(Arc::from(message));
         let raised = format!("Luau task {} failed: {message}", id.0);
-        self.settle(
+        let failed = self.settle(
             id,
             TaskState::Failed,
             Some((Err(raised.into()), None)),
             true,
-        )
+        );
+        (failed, settled)
     }
 
     /// Takes `task` out of the pending ones as `state`, and returns what it leaves: its work, the
@@ -727,7 +753,6 @@ impl State {
     /// Forgets task `id`, and returns the work it had.
     pub(super) fn remove(&mut self, id: TaskId) -> Option<Deferred> {
         let mut task = self.tasks.remove(&id)?;
-        self.cancelling.remove(&id);
         self.thread_tasks.retain(|_, handle| handle.id() != id);
         for group in std::iter::once(task.context.task_group).chain(task.awaiting) {
             if let Some(group_tasks) = self.groups.get_mut(&group) {

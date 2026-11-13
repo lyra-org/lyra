@@ -1186,11 +1186,6 @@ fn a_watch_cancels_a_thread_still_running_once_stopped() -> luau::runtime::Resul
     scheduler.poll_ready();
     let ended = completion_message(&completion).expect("the thread is cancelled");
     assert!(ended.is_err_and(|error| error.contains("cancelled")));
-    assert!(
-        outcome.borrow().is_none(),
-        "the watch ended before the cancel settled"
-    );
-    scheduler.poll_ready();
     assert!(matches!(outcome.take(), Some(Watched::Stopped(()))));
     Ok(())
 }
@@ -1457,7 +1452,7 @@ fn a_watcher_s_cancel_reaches_the_threads_its_thread_was_waiting_on() -> luau::r
     impl Drop for CancelOnDrop {
         fn drop(&mut self) {
             if let Some(scheduler) = self.0.upgrade() {
-                scheduler.schedule_cancel_luau_thread(self.1.clone());
+                scheduler.cancel_luau_thread(&self.1);
             }
         }
     }
@@ -3293,13 +3288,12 @@ fn cancelled_work_panicking_as_it_drops_fails_nothing_else() -> luau::runtime::R
 
     run_until(&scheduler, || settled.get());
     assert!(dropped.get(), "the cancel after the panicking one was lost");
-    assert!(!scheduler.state.borrow().has_cancelling());
     Ok(())
 }
 
+/// Another task's thread is cancelled, and its work dropped, before the canceller goes on.
 #[test]
-fn a_task_cancelling_a_thread_goes_on_once_the_thread_s_work_is_dropped()
--> luau::runtime::Result<()> {
+fn a_task_cancelling_another_s_thread_finds_its_work_dropped() -> luau::runtime::Result<()> {
     let vm = luau::Vm::new()?;
     let scheduler = Rc::new(Scheduler::new());
     let dropped = Arc::new(AtomicBool::new(false));
@@ -3307,27 +3301,144 @@ fn a_task_cancelling_a_thread_goes_on_once_the_thread_s_work_is_dropped()
     scheduler.poll_ready();
     assert!(!dropped.load(Ordering::Acquire));
 
-    let dropped_when_settled = Rc::new(Cell::new(None));
+    let dropped_when_cancelled = Rc::new(Cell::new(None));
     scheduler.schedule_future(CallContext::default(), {
         let scheduler = Rc::downgrade(&scheduler);
-        let (dropped, dropped_when_settled) = (dropped.clone(), dropped_when_settled.clone());
+        let (dropped, dropped_when_cancelled) = (dropped.clone(), dropped_when_cancelled.clone());
         async move {
             let settled = scheduler
                 .upgrade()
                 .expect("the scheduler is polling")
                 .cancel_luau_thread_and_settle(&thread);
-            assert!(
-                !dropped.load(Ordering::Acquire),
-                "the poll defers the cancel"
-            );
+            dropped_when_cancelled.set(Some(dropped.load(Ordering::Acquire)));
             settled.await;
-            dropped_when_settled.set(Some(dropped.load(Ordering::Acquire)));
             Ok(())
         }
     });
 
-    run_until(&scheduler, || dropped_when_settled.get().is_some());
-    assert_eq!(dropped_when_settled.get(), Some(true));
+    scheduler.poll_ready();
+    assert_eq!(dropped_when_cancelled.get(), Some(true));
+    Ok(())
+}
+
+/// The thread cancels itself and asks to hear once that has settled: its task is the one being
+/// polled, so the wait ends once the poll has returned and the task is cancelled.
+#[test]
+fn settling_the_cancel_of_the_task_being_polled_waits_for_its_poll() -> luau::runtime::Result<()> {
+    let (vm, scheduler) = vm_with_waits()?;
+    // 1: the settling was still to come as the thread cancelled itself; 2: and it came after.
+    let seen = Arc::new(AtomicUsize::new(0));
+    let cancel_and_settle: luau::NativeFn = Arc::new({
+        let seen = seen.clone();
+        move |frame| {
+            let scheduler = frame.vm.data().get::<Scheduler>()?;
+            let task = scheduler
+                .luau_thread_handle(&frame.thread)
+                .expect("the thread's task")
+                .id();
+            let mut settled = Box::pin(scheduler.cancel_luau_thread_and_settle(&frame.thread));
+            if settled
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_pending()
+            {
+                seen.store(1, Ordering::Release);
+            }
+            let (weak, seen) = (Rc::downgrade(&scheduler), seen.clone());
+            scheduler.schedule_future(CallContext::default(), async move {
+                settled.await;
+                let state = weak
+                    .upgrade()
+                    .and_then(|scheduler| scheduler.snapshot(task))
+                    .map(|task| task.state);
+                if state == Some(TaskState::Cancelled) && seen.load(Ordering::Acquire) == 1 {
+                    seen.store(2, Ordering::Release);
+                }
+                Ok(())
+            });
+            Ok(())
+        }
+    });
+    let cancel_and_settle = vm.create_function_with_options(
+        luau::NativeFunctionOptions::new(luau::ChunkOrigin::default())
+            .function_name("cancel_and_settle"),
+        cancel_and_settle,
+    )?;
+    vm.set_global_function("cancel_and_settle", &cancel_and_settle)?;
+    let thread = spawn_chunk(
+        &vm,
+        &scheduler,
+        CallContext::default(),
+        "cancel_and_settle() coroutine.yield() went_on = true",
+    )?;
+
+    scheduler.poll_ready();
+    scheduler.poll_ready();
+
+    assert_eq!(seen.load(Ordering::Acquire), 2);
+    assert_closed(&vm, &thread);
+    Ok(())
+}
+
+/// As above, after the thread already cancelled itself, and asking twice: each wait still ends
+/// only once the poll has returned and the task is cancelled.
+#[test]
+fn settling_a_repeated_cancel_of_the_task_being_polled_waits_for_its_poll()
+-> luau::runtime::Result<()> {
+    let (vm, scheduler) = vm_with_waits()?;
+    // 1: both settlings were still to come as the thread cancelled itself; 2: and both came after.
+    let seen = Arc::new(AtomicUsize::new(0));
+    let cancel_again_and_settle: luau::NativeFn = Arc::new({
+        let seen = seen.clone();
+        move |frame| {
+            let scheduler = frame.vm.data().get::<Scheduler>()?;
+            let task = scheduler
+                .luau_thread_handle(&frame.thread)
+                .expect("the thread's task")
+                .id();
+            scheduler.cancel_luau_thread(&frame.thread);
+            let mut first = Box::pin(scheduler.cancel_luau_thread_and_settle(&frame.thread));
+            let mut second = Box::pin(scheduler.cancel_luau_thread_and_settle(&frame.thread));
+            let mut cx = Context::from_waker(Waker::noop());
+            if first.as_mut().poll(&mut cx).is_pending()
+                && second.as_mut().poll(&mut cx).is_pending()
+            {
+                seen.store(1, Ordering::Release);
+            }
+            let (weak, seen) = (Rc::downgrade(&scheduler), seen.clone());
+            scheduler.schedule_future(CallContext::default(), async move {
+                first.await;
+                second.await;
+                let state = weak
+                    .upgrade()
+                    .and_then(|scheduler| scheduler.snapshot(task))
+                    .map(|task| task.state);
+                if state == Some(TaskState::Cancelled) && seen.load(Ordering::Acquire) == 1 {
+                    seen.store(2, Ordering::Release);
+                }
+                Ok(())
+            });
+            Ok(())
+        }
+    });
+    let cancel_again_and_settle = vm.create_function_with_options(
+        luau::NativeFunctionOptions::new(luau::ChunkOrigin::default())
+            .function_name("cancel_again_and_settle"),
+        cancel_again_and_settle,
+    )?;
+    vm.set_global_function("cancel_again_and_settle", &cancel_again_and_settle)?;
+    let thread = spawn_chunk(
+        &vm,
+        &scheduler,
+        CallContext::default(),
+        "cancel_again_and_settle() coroutine.yield() went_on = true",
+    )?;
+
+    scheduler.poll_ready();
+    scheduler.poll_ready();
+
+    assert_eq!(seen.load(Ordering::Acquire), 2);
+    assert_closed(&vm, &thread);
     Ok(())
 }
 

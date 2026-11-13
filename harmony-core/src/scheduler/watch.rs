@@ -140,7 +140,7 @@ impl Drop for WatchedThread {
         if self.live.get()
             && let Some(scheduler) = self.scheduler.upgrade()
         {
-            scheduler.schedule_cancel_luau_thread(self.thread.clone());
+            scheduler.cancel_luau_thread(&self.thread);
         }
     }
 }

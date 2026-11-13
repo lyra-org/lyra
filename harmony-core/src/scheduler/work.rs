@@ -39,8 +39,8 @@ pub(super) fn close_cancelled_thread(thread: &luau::Thread) {
 
 /// What a poll of Luau work reads and tells of the scheduler it runs in.
 pub(super) struct Resuming<'a> {
-    /// Whether the task or one of its groups was cancelled during this poll.
-    pub(super) cancel_asked: &'a dyn Fn() -> bool,
+    /// Set once the task is cancelled during this poll.
+    pub(super) cancelled: &'a Cell<bool>,
     pub(super) limit: Option<&'a ResumeLimit>,
     pub(super) clock: &'a Clock,
     /// Set to the bound of the limit that cut a resume short.
@@ -163,7 +163,7 @@ pub(super) fn poll_work(
             );
             drop_catching_panic(context, finished);
             // The future, or its drop, cancelled the thread it was to wake, which is closed.
-            if (resuming.cancel_asked)() {
+            if resuming.cancelled.get() {
                 return WorkPoll::Pending;
             }
             let previous = match thread.set_call_context(context.clone()) {
