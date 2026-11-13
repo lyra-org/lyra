@@ -48,7 +48,7 @@ pub struct WatchedThread {
     scheduler: Weak<Scheduler>,
     timers: Rc<Timers>,
     thread: luau::Thread,
-    pub(super) completion: Rc<LocalLuauTaskCompletion>,
+    completion: Rc<LocalLuauTaskCompletion>,
     /// Until [`Self::watch`] saw the thread end or cancelled it.
     live: Cell<bool>,
 }
@@ -142,5 +142,178 @@ impl Drop for WatchedThread {
         {
             scheduler.cancel_luau_thread(&self.thread);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use crate::testing::ManualClock;
+
+    use super::*;
+    use crate::scheduler::testing::*;
+    use crate::scheduler::*;
+
+    /// Schedules a thread that returns at once, and a task that moves the clock on by a second,
+    /// in the order given, and runs them in one round. Returns when the thread ended, as its
+    /// completion has it, counted from the round's start.
+    fn ended_after(advance_first: bool) -> luau::runtime::Result<Duration> {
+        let vm = luau::Vm::new()?;
+        let clock = ManualClock::new();
+        let scheduler = Scheduler::with_manual_clock(clock.clone());
+        let completion = Rc::new(LocalLuauTaskCompletion::default());
+        let advance = |scheduler: &Scheduler| {
+            let clock = clock.clone();
+            scheduler.spawn_future(CallContext::default(), async move {
+                clock.advance(Duration::from_secs(1));
+                Ok(())
+            });
+        };
+        if advance_first {
+            advance(&scheduler);
+        }
+        scheduler.spawn_luau_thread_with_completion(
+            CallContext::default(),
+            chunk_thread(&vm, "return 42")?,
+            Vec::new(),
+            completion.clone(),
+        );
+        if !advance_first {
+            advance(&scheduler);
+        }
+
+        let start = clock.now();
+        assert!(completion.ended_at().is_none());
+        scheduler.poll_ready();
+        assert_eq!(clock.now(), start + Duration::from_secs(1));
+        Ok(completion.ended_at().expect("the thread ended") - start)
+    }
+
+    /// Watches a thread that ends at its deadline, before the watcher sees the deadline pass.
+    fn watched_ending_at_its_deadline(
+        late: LateEnd,
+    ) -> luau::runtime::Result<Watched<std::convert::Infallible>> {
+        let vm = luau::Vm::new()?;
+        let clock = ManualClock::new();
+        let scheduler = Rc::new(Scheduler::with_manual_clock(clock.clone()));
+        let deadline = clock.now() + Duration::from_secs(1);
+        scheduler.spawn_future(CallContext::default(), {
+            let clock = clock.clone();
+            async move {
+                clock.advance(Duration::from_secs(1));
+                Ok(())
+            }
+        });
+        let watched = scheduler.spawn_watched_luau_thread(
+            CallContext::default(),
+            chunk_thread(&vm, "return 42")?,
+            Vec::new(),
+            None,
+        );
+        let completion = watched.completion.clone();
+        let outcome = Rc::new(RefCell::new(None));
+        scheduler.spawn_watcher(CallContext::default(), {
+            let outcome = outcome.clone();
+            async move {
+                let watched = watched.watch(std::future::pending(), deadline, late).await;
+                *outcome.borrow_mut() = Some(watched);
+                Ok(())
+            }
+        });
+
+        scheduler.poll_ready();
+        assert_eq!(completion.ended_at(), Some(deadline));
+        assert!(outcome.borrow().is_none(), "the watch ended in the round");
+        scheduler.poll_ready();
+        Ok(outcome.take().expect("the watch ended"))
+    }
+
+    #[test]
+    fn a_watch_takes_an_end_at_the_deadline_as_its_rule_says() -> luau::runtime::Result<()> {
+        assert!(matches!(
+            watched_ending_at_its_deadline(LateEnd::Expired)?,
+            Watched::Expired
+        ));
+        assert!(matches!(
+            watched_ending_at_its_deadline(LateEnd::Ended)?,
+            Watched::Ended { result: Ok(values), .. }
+                if matches!(values[..], [luau::Value::Number(n)] if n == 42.0)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn a_watch_cancels_a_thread_still_running_once_stopped() -> luau::runtime::Result<()> {
+        let vm = luau::Vm::new()?;
+        vm.open_standard_libraries(luau::StandardLibraries::all_supported())?;
+        let clock = ManualClock::new();
+        let scheduler = Rc::new(Scheduler::with_manual_clock(clock.clone()));
+        let watched = scheduler.spawn_watched_luau_thread(
+            CallContext::default(),
+            chunk_thread(&vm, "coroutine.yield()")?,
+            Vec::new(),
+            None,
+        );
+        let completion = watched.completion.clone();
+        let stop = Cancellation::new(scheduler.wake_handle());
+        let deadline = clock.now() + Duration::from_secs(3600);
+        let outcome = Rc::new(RefCell::new(None));
+        scheduler.spawn_watcher(CallContext::default(), {
+            let (outcome, stop) = (outcome.clone(), stop.clone());
+            async move {
+                let watched = watched
+                    .watch(stop.cancelled(), deadline, LateEnd::Expired)
+                    .await;
+                *outcome.borrow_mut() = Some(watched);
+                Ok(())
+            }
+        });
+        scheduler.poll_ready();
+        assert!(completion.ended_at().is_none(), "a yield ended the thread");
+
+        stop.cancel();
+        scheduler.poll_ready();
+        let ended = completion_message(&completion).expect("the thread is cancelled");
+        assert!(ended.is_err_and(|error| error.contains("cancelled")));
+        assert!(matches!(outcome.take(), Some(Watched::Stopped(()))));
+        Ok(())
+    }
+
+    /// The end is timed when it happens, not when its round began or ended.
+    #[test]
+    fn a_completion_records_the_time_its_thread_ended() -> luau::runtime::Result<()> {
+        assert_eq!(ended_after(false)?, Duration::ZERO);
+        assert_eq!(ended_after(true)?, Duration::from_secs(1));
+        Ok(())
+    }
+
+    #[test]
+    fn a_completion_records_the_time_its_thread_was_cancelled() -> luau::runtime::Result<()> {
+        let vm = luau::Vm::new()?;
+        vm.open_standard_libraries(luau::StandardLibraries::all_supported())?;
+        let clock = ManualClock::new();
+        let scheduler = Scheduler::with_manual_clock(clock.clone());
+        let start = clock.now();
+        let completion = Rc::new(LocalLuauTaskCompletion::default());
+        let thread = chunk_thread(&vm, "coroutine.yield()")?;
+        scheduler.spawn_luau_thread_with_completion(
+            CallContext::default(),
+            thread.clone(),
+            Vec::new(),
+            completion.clone(),
+        );
+        scheduler.poll_ready();
+        assert!(completion.ended_at().is_none(), "a yield ended the thread");
+
+        clock.advance(Duration::from_secs(3));
+        assert!(completion.ended_at().is_none());
+        clock.advance(Duration::from_secs(4));
+        assert!(scheduler.cancel_luau_thread(&thread));
+        clock.advance(Duration::from_secs(5));
+
+        assert_eq!(completion.ended_at(), Some(start + Duration::from_secs(7)));
+        let ended = completion_message(&completion).expect("the thread is cancelled");
+        assert!(ended.is_err_and(|error| error.contains("cancelled")));
+        Ok(())
     }
 }

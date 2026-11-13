@@ -790,4 +790,6 @@ impl Drop for TakenWork<'_> {
 }
 
 #[cfg(test)]
-pub(crate) mod tests;
+pub(crate) mod testing;
+#[cfg(test)]
+mod tests;

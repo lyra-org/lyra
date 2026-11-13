@@ -45,9 +45,9 @@ use super::{
 };
 
 /// A Luau thread as the scheduler indexes it: by its VM and its state.
-pub(super) type ThreadKey = (u64, usize);
+type ThreadKey = (u64, usize);
 
-pub(super) fn thread_key(thread: &luau::Thread) -> ThreadKey {
+fn thread_key(thread: &luau::Thread) -> ThreadKey {
     (thread.vm_id(), thread.state_id())
 }
 
@@ -868,11 +868,6 @@ impl State {
             .values()
             .any(|task| task.state == TaskState::Pending)
     }
-
-    #[cfg(test)]
-    pub(super) fn task(&self, id: TaskId) -> Option<&Task> {
-        self.tasks.get(&id)
-    }
 }
 
 fn start_wake_is_not_later(new_wake_at: Option<Instant>, old_wake_at: Option<Instant>) -> bool {
@@ -897,11 +892,14 @@ pub(super) struct Task {
     /// The Luau thread the task runs, until it settles, whatever its work is at the moment: what
     /// cancelling the task closes.
     thread: Option<luau::Thread>,
-    pub(super) work: Option<TaskWork>,
+    work: Option<TaskWork>,
     state: TaskState,
     error: Option<Arc<str>>,
     output: Option<Vec<luau::Value>>,
     wake_at: Option<Instant>,
-    pub(super) resume_limit: Option<ResumeLimit>,
-    pub(super) completion: Option<Rc<LocalLuauTaskCompletion>>,
+    resume_limit: Option<ResumeLimit>,
+    completion: Option<Rc<LocalLuauTaskCompletion>>,
 }
+
+#[cfg(test)]
+mod tests;

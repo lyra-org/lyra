@@ -206,3 +206,132 @@ impl Wake for TaskWaker {
         self.queue.wake_task(self.id);
     }
 }
+
+#[cfg(test)]
+mod tests {
+
+    use crate::testing::ManualClock;
+
+    use super::*;
+    use crate::scheduler::testing::*;
+    use crate::scheduler::*;
+
+    /// Returns once the scheduler's owner is asleep in a wait.
+    fn once_waiting(wake: &SchedulerWake) {
+        while !wake.owner_is_waiting() {
+            std::thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn a_wake_handle_ends_a_wait_from_another_thread() {
+        ending_without_a_missed_wake(|| {
+            let scheduler = Scheduler::new();
+            let wake = scheduler.wake_handle();
+            let waker = std::thread::spawn(move || {
+                once_waiting(&wake);
+                wake.wake();
+            });
+
+            scheduler.wait_for_wake(None);
+            waker.join().expect("waker thread");
+        });
+    }
+
+    /// The task's own waker, called from another thread while the owner sleeps with nothing due,
+    /// is all that ends the wait.
+    #[test]
+    fn a_task_s_waker_ends_a_wait_from_another_thread() {
+        ending_without_a_missed_wake(|| {
+            let scheduler = Scheduler::new();
+            let (ready, readied) = tokio::sync::oneshot::channel::<()>();
+            let seen = Rc::new(Cell::new(false));
+            scheduler.spawn_future(CallContext::default(), {
+                let seen = seen.clone();
+                async move {
+                    let _ = readied.await;
+                    seen.set(true);
+                    Ok(())
+                }
+            });
+            scheduler.poll_ready();
+            assert!(!seen.get());
+
+            let waker = std::thread::spawn({
+                let wake = scheduler.wake_handle();
+                move || {
+                    once_waiting(&wake);
+                    let _ = ready.send(());
+                }
+            });
+            run_until(&scheduler, || seen.get());
+            waker.join().expect("waking thread");
+        });
+    }
+
+    #[test]
+    fn a_wake_before_the_wait_is_kept_for_it() {
+        ending_without_a_missed_wake(|| {
+            let scheduler = Scheduler::new();
+            scheduler.wake_handle().waker().wake();
+
+            scheduler.wait_for_wake(None);
+        });
+    }
+
+    #[test]
+    fn a_cancellation_ends_a_wait_for_work_without_a_deadline() {
+        ending_without_a_missed_wake(|| {
+            let scheduler = Scheduler::new();
+            let cancellation = Cancellation::new(scheduler.wake_handle());
+            let cancel = std::thread::spawn({
+                let (cancellation, wake) = (cancellation.clone(), scheduler.wake_handle());
+                move || {
+                    once_waiting(&wake);
+                    cancellation.cancel();
+                }
+            });
+
+            scheduler.wait_for_work(None);
+            assert!(cancellation.is_cancelled());
+            cancel.join().expect("cancelling thread");
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "manual clock can't block")]
+    fn a_scheduler_on_a_manual_clock_refuses_to_wait_for_a_wake() {
+        let scheduler = Scheduler::with_manual_clock(ManualClock::new());
+        scheduler.wake_handle().wake();
+        scheduler.wait_for_wake(Some(Duration::ZERO));
+    }
+
+    #[test]
+    fn a_cancellation_wakes_the_task_waiting_on_it() {
+        ending_without_a_missed_wake(|| {
+            let scheduler = Scheduler::new();
+            let cancellation = Cancellation::new(scheduler.wake_handle());
+            let seen = Rc::new(Cell::new(false));
+            scheduler.spawn_future(CallContext::default(), {
+                let (cancellation, seen) = (cancellation.clone(), seen.clone());
+                async move {
+                    cancellation.cancelled().await;
+                    seen.set(true);
+                    Ok(())
+                }
+            });
+            scheduler.poll_ready();
+            assert!(!seen.get());
+
+            let cancel = std::thread::spawn({
+                let wake = scheduler.wake_handle();
+                move || {
+                    once_waiting(&wake);
+                    cancellation.cancel();
+                }
+            });
+            run_until(&scheduler, || seen.get());
+            cancel.join().expect("cancelling thread");
+        });
+    }
+}

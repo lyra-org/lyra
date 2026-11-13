@@ -98,3 +98,6 @@ impl ResumeLimit {
         Ok((vm.interrupt_after_or_on(time, self.signal.as_ref()), bound))
     }
 }
+
+#[cfg(test)]
+mod tests;

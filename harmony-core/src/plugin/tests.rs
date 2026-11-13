@@ -28,7 +28,7 @@ use crate::{
     ModuleSpec,
 };
 use crate::{
-    scheduler::tests::ending_without_a_missed_wake,
+    scheduler::testing::ending_without_a_missed_wake,
     testing::ManualClock,
 };
 use harmony_luau as luau;

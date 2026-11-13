@@ -226,3 +226,165 @@ fn poll_luau_resume(
         Err(error) => WorkPoll::Failed((&error).into()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        sync::Arc,
+        task::Poll,
+    };
+
+    use super::*;
+
+    use crate::scheduler::*;
+    use harmony_luau::ModuleId;
+
+    #[test]
+    fn panicking_future_fails_only_its_own_task() {
+        let scheduler = Scheduler::new();
+        let panicking = scheduler.spawn_future(CallContext::default(), async {
+            panic!("upstream sent nonsense");
+        });
+        let healthy = scheduler.spawn_future(CallContext::default(), async { Ok(()) });
+
+        assert_eq!(scheduler.poll_ready(), 2);
+        let failed = scheduler.snapshot(panicking.id()).expect("panicking task");
+        assert_eq!(failed.state, TaskState::Failed);
+        assert!(
+            failed
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("upstream sent nonsense")),
+            "{:?}",
+            failed.error
+        );
+        assert_eq!(
+            scheduler
+                .snapshot(healthy.id())
+                .expect("healthy task")
+                .state,
+            TaskState::Completed
+        );
+    }
+
+    #[test]
+    fn future_panicking_again_when_dropped_fails_only_its_own_task() {
+        struct PanicsTwice;
+        impl Future for PanicsTwice {
+            type Output = Result<()>;
+            fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<()>> {
+                panic!("poll panicked");
+            }
+        }
+        impl Drop for PanicsTwice {
+            fn drop(&mut self) {
+                if !std::thread::panicking() {
+                    panic!("drop panicked");
+                }
+            }
+        }
+
+        let scheduler = Scheduler::new();
+        let panicking = scheduler.spawn_future(CallContext::default(), PanicsTwice);
+        let healthy = scheduler.spawn_future(CallContext::default(), async { Ok(()) });
+
+        assert_eq!(scheduler.poll_ready(), 2);
+        assert_eq!(
+            scheduler
+                .snapshot(panicking.id())
+                .expect("panicking task")
+                .state,
+            TaskState::Failed
+        );
+        assert_eq!(
+            scheduler
+                .snapshot(healthy.id())
+                .expect("healthy task")
+                .state,
+            TaskState::Completed
+        );
+    }
+
+    #[test]
+    fn failed_future_preserves_error_for_diagnostics() {
+        let scheduler = Scheduler::new();
+        let handle =
+            scheduler.spawn_future(CallContext::default(), async { anyhow::bail!("boom") });
+
+        assert_eq!(scheduler.poll_ready(), 1);
+        let snapshot = scheduler.snapshot(handle.id()).expect("task snapshot");
+        assert_eq!(snapshot.state, TaskState::Failed);
+        assert!(
+            snapshot
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("boom"))
+        );
+    }
+
+    #[test]
+    fn luau_root_thread_completes_on_scheduler() -> luau::runtime::Result<()> {
+        let vm = luau::Vm::new()?;
+        let function = vm.load_chunk(&luau::Chunk::new(
+            Arc::<[u8]>::from(&b"local value = ...; return value + 1"[..]),
+            luau::ChunkOrigin {
+                module: Some(ModuleId(Arc::from("demo/root"))),
+                plugin: Some(Arc::from("demo")),
+                path: Some(Arc::from("plugins/demo/init.luau")),
+            },
+        ))?;
+        let scheduler = Scheduler::new();
+        let group = scheduler.create_group();
+        let context = CallContext {
+            origin: ChunkOrigin {
+                module: Some(ModuleId(Arc::from("demo/root"))),
+                plugin: Some(Arc::from("demo")),
+                path: Some(Arc::from("plugins/demo/init.luau")),
+            },
+            task_group: group,
+            ..CallContext::default()
+        };
+
+        let handle = scheduler.spawn_luau_thread(
+            context,
+            vm.create_thread(&function)?,
+            vec![luau::Value::Number(41.0)],
+        );
+
+        assert_eq!(scheduler.poll_ready(), 1);
+        let snapshot = scheduler.snapshot(handle.id()).expect("task snapshot");
+        assert_eq!(snapshot.state, TaskState::Completed);
+        assert_eq!(snapshot.origin.plugin.as_deref(), Some("demo"));
+        Ok(())
+    }
+
+    #[test]
+    fn luau_root_thread_failure_is_scheduler_failure() -> luau::runtime::Result<()> {
+        let vm = luau::Vm::new()?;
+        vm.open_standard_libraries(luau::StandardLibraries {
+            base: true,
+            ..luau::StandardLibraries::none()
+        })?;
+        let function = vm.load_chunk(&luau::Chunk::new(
+            Arc::<[u8]>::from(&b"error('root failed')"[..]),
+            luau::ChunkOrigin::default(),
+        ))?;
+        let scheduler = Scheduler::new();
+        let handle = scheduler.spawn_luau_thread(
+            CallContext::default(),
+            vm.create_thread(&function)?,
+            vec![],
+        );
+
+        assert_eq!(scheduler.poll_ready(), 1);
+        let snapshot = scheduler.snapshot(handle.id()).expect("task snapshot");
+        assert_eq!(snapshot.state, TaskState::Failed);
+        assert!(
+            snapshot
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("root failed"))
+        );
+        Ok(())
+    }
+}
