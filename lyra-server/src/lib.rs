@@ -281,7 +281,8 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
         });
 
     tracing_subscriber::registry()
-        .with(routes::trace::log_filter(&log.directives, log.filter))
+        .with(log.filter)
+        .with(routes::trace::raw_query_guard(&log.directives))
         .with(tracing_subscriber::fmt::layer().with_writer(non_blocking))
         .init();
 
@@ -490,8 +491,7 @@ mod tests {
         use tracing::Level;
 
         let log = config::LogFilter::default();
-        let subscriber = tracing_subscriber::registry()
-            .with(routes::trace::log_filter(&log.directives, log.filter));
+        let subscriber = tracing_subscriber::registry().with(log.filter);
         tracing::subscriber::with_default(subscriber, || {
             assert!(tracing::enabled!(target: "lyra_db::bootstrap", Level::INFO));
             assert!(!tracing::enabled!(target: "lyra_db::bootstrap", Level::DEBUG));

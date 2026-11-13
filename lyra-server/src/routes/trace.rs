@@ -11,26 +11,31 @@ use axum::{
     http::Request,
 };
 use tower_http::trace::TraceLayer;
-use tracing::Span;
-use tracing_subscriber::EnvFilter;
+use tracing::{
+    Span,
+    Subscriber,
+};
+use tracing_subscriber::{
+    Layer,
+    filter::filter_fn,
+};
 
 /// Target of the event that logs each request's raw query string. Queries
 /// carry credentials (API keys, passwords, media tokens, WebSocket tickets),
 /// so the request span names the parameters only, and the values reach the
-/// log only when a filter directive names this target.
+/// log only when a filter directive targets this one by name.
 const RAW_QUERY_TARGET: &str = "lyra::http::query";
 
-/// Keeps [`RAW_QUERY_TARGET`] off in `filter`, built from `directives`, unless
-/// they name it, so a blanket `trace` doesn't log credentials.
-pub(crate) fn log_filter(directives: &str, filter: EnvFilter) -> EnvFilter {
-    if directives.contains(RAW_QUERY_TARGET) {
-        return filter;
-    }
-    filter.add_directive(
-        format!("{RAW_QUERY_TARGET}=off")
-            .parse()
-            .expect("raw query directive parses"),
-    )
+/// Drops [`RAW_QUERY_TARGET`] unless one of `directives` targets it by name,
+/// whatever the others enable, span directives included.
+pub(crate) fn raw_query_guard<S: Subscriber>(directives: &str) -> impl Layer<S> {
+    let named = directives.split(',').any(|directive| {
+        directive
+            .split(['[', '='])
+            .next()
+            .is_some_and(|target| target.trim() == RAW_QUERY_TARGET)
+    });
+    filter_fn(move |metadata| named || metadata.target() != RAW_QUERY_TARGET)
 }
 
 pub(crate) fn apply(router: Router) -> Router {
@@ -79,7 +84,11 @@ mod tests {
         },
     };
 
-    use tracing_subscriber::fmt::MakeWriter;
+    use tracing_subscriber::{
+        EnvFilter,
+        fmt::MakeWriter,
+        layer::SubscriberExt,
+    };
 
     use super::*;
 
@@ -107,13 +116,17 @@ mod tests {
 
     fn logged_request(filter: &str, uri: &str) -> String {
         let captured = Captured::default();
-        let subscriber = tracing_subscriber::fmt()
-            .with_env_filter(log_filter(filter, EnvFilter::try_new(filter).unwrap()))
-            .with_writer(captured.clone())
-            .with_ansi(false)
-            .without_time()
-            .finish();
+        let subscriber = tracing_subscriber::registry()
+            .with(EnvFilter::try_new(filter).unwrap())
+            .with(raw_query_guard(filter))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(captured.clone())
+                    .with_ansi(false)
+                    .without_time(),
+            );
         tracing::subscriber::with_default(subscriber, || {
+            let _connection = tracing::info_span!("connection").entered();
             let request = Request::get(uri).body(Body::empty()).unwrap();
             let _entered = request_span(&request).entered();
             tracing::debug!(target: "tower_http::trace::on_response", "finished processing request");
@@ -147,11 +160,22 @@ mod tests {
     #[test]
     fn raw_query_logs_only_when_its_target_is_named() {
         let uri = "/api/ws?ticket=secret";
-        assert!(!logged_request("trace", uri).contains("secret"));
-        assert!(!logged_request("lyra=trace", uri).contains("secret"));
-        assert!(
-            logged_request(&format!("info,{RAW_QUERY_TARGET}=trace"), uri)
-                .contains("query=\"ticket=secret\"")
-        );
+        for filter in [
+            "trace",
+            "lyra=trace",
+            "lyra::http=trace",
+            "[connection]=trace",
+            &format!("trace,[{RAW_QUERY_TARGET}]=off"),
+        ] {
+            let log = logged_request(filter, uri);
+            assert!(!log.contains("secret"), "{filter}: {log}");
+        }
+        for filter in [
+            format!("info,{RAW_QUERY_TARGET}=trace"),
+            format!("info,{RAW_QUERY_TARGET}"),
+        ] {
+            let log = logged_request(&filter, uri);
+            assert!(log.contains("query=\"ticket=secret\""), "{filter}: {log}");
+        }
     }
 }
