@@ -18,9 +18,32 @@ use std::{
     task::Poll,
 };
 
-use super::local::Polling;
 use super::*;
 use crate::testing::ManualClock;
+
+impl Scheduler {
+    fn spawn(
+        &self,
+        context: CallContext,
+        future: impl Future<Output = Result<()>> + 'static,
+    ) -> TaskHandle {
+        self.state
+            .borrow_mut()
+            .spawn_boxed(context, Box::pin(future))
+    }
+
+    fn spawn_after(
+        &self,
+        context: CallContext,
+        delay: Duration,
+        future: impl Future<Output = Result<()>> + 'static,
+    ) -> TaskHandle {
+        let wake_at = self.delay_until(Some(delay));
+        self.state
+            .borrow_mut()
+            .insert_task(context, Box::pin(future), wake_at)
+    }
+}
 use harmony_luau::{
     CapabilityId,
     ModuleId,
@@ -28,7 +51,7 @@ use harmony_luau::{
 
 #[test]
 fn ready_future_completes_with_origin_snapshot() {
-    let mut scheduler = Scheduler::new();
+    let scheduler = Scheduler::new();
     let group = scheduler.create_group();
     let context = CallContext {
         origin: ChunkOrigin {
@@ -52,7 +75,7 @@ fn ready_future_completes_with_origin_snapshot() {
 
 #[test]
 fn panicking_future_fails_only_its_own_task() {
-    let mut scheduler = Scheduler::new();
+    let scheduler = Scheduler::new();
     let panicking = scheduler.spawn(CallContext::default(), async {
         panic!("upstream sent nonsense");
     });
@@ -95,7 +118,7 @@ fn future_panicking_again_when_dropped_fails_only_its_own_task() {
         }
     }
 
-    let mut scheduler = Scheduler::new();
+    let scheduler = Scheduler::new();
     let panicking = scheduler.spawn(CallContext::default(), PanicsTwice);
     let healthy = scheduler.spawn(CallContext::default(), async { Ok(()) });
 
@@ -118,7 +141,7 @@ fn future_panicking_again_when_dropped_fails_only_its_own_task() {
 
 #[test]
 fn removing_one_finished_task_preserves_other_finished_tasks() {
-    let mut scheduler = Scheduler::new();
+    let scheduler = Scheduler::new();
     let first = scheduler.spawn(CallContext::default(), async { Ok(()) });
     let second = scheduler.spawn(CallContext::default(), async { Ok(()) });
 
@@ -133,7 +156,7 @@ fn removing_one_finished_task_preserves_other_finished_tasks() {
 
 #[test]
 fn cancelling_group_cancels_pending_tasks() {
-    let mut scheduler = Scheduler::new();
+    let scheduler = Scheduler::new();
     let group = scheduler.create_group();
     let context = CallContext {
         task_group: group,
@@ -149,7 +172,7 @@ fn cancelling_group_cancels_pending_tasks() {
         pending(),
     );
 
-    assert_eq!(scheduler.cancel_group(group), 2);
+    scheduler.cancel_group(group);
     assert_eq!(
         scheduler.snapshot(first.id()).expect("first task").state,
         TaskState::Cancelled
@@ -161,23 +184,8 @@ fn cancelling_group_cancels_pending_tasks() {
 }
 
 #[test]
-fn local_and_inner_scheduler_groups_never_collide() {
-    let scheduler = LocalScheduler::new();
-    let groups = [
-        scheduler.create_group(),
-        scheduler.scheduler.borrow().create_group(),
-        scheduler.create_group(),
-        scheduler.scheduler.borrow().create_group(),
-    ];
-
-    let distinct: HashSet<_> = groups.iter().collect();
-    assert_eq!(distinct.len(), groups.len());
-    assert!(!groups.contains(&TaskGroupId::default()));
-}
-
-#[test]
 fn cancelled_group_cancels_tasks_spawned_into_it_later() {
-    let mut scheduler = Scheduler::new();
+    let scheduler = Scheduler::new();
     let group = scheduler.create_group();
     let other = scheduler.create_group();
     scheduler.cancel_group(group);
@@ -222,18 +230,24 @@ fn nil_thread() -> luau::runtime::Result<luau::Thread> {
 }
 
 /// What a parked async call leaves: a pending task with no work.
-fn park(scheduler: &mut Scheduler, id: TaskId) {
-    scheduler.tasks.get_mut(&id).expect("task").work = None;
+fn park(scheduler: &Scheduler, id: TaskId) {
+    scheduler
+        .state
+        .borrow_mut()
+        .tasks
+        .get_mut(&id)
+        .expect("task")
+        .work = None;
 }
 
 #[test]
 fn only_a_parked_task_takes_a_future() -> luau::runtime::Result<()> {
-    let mut scheduler = Scheduler::new();
+    let scheduler = Scheduler::new();
     let task = scheduler.spawn(CallContext::default(), async { Ok(()) });
     scheduler.poll_ready();
     let thread = nil_thread()?;
 
-    assert!(!scheduler.replace_with_luau_future(
+    assert!(!scheduler.state.borrow_mut().replace_with_luau_future(
         task.id(),
         TaskGroupId::default(),
         thread,
@@ -250,7 +264,7 @@ fn only_a_parked_task_takes_a_future() -> luau::runtime::Result<()> {
 #[test]
 fn a_task_awaiting_another_group_s_future_belongs_to_both_groups() -> luau::runtime::Result<()> {
     for cancel_callee in [true, false] {
-        let mut scheduler = Scheduler::new();
+        let scheduler = Scheduler::new();
         let caller = scheduler.create_group();
         let callee = scheduler.create_group();
         let task = scheduler.spawn(
@@ -261,9 +275,9 @@ fn a_task_awaiting_another_group_s_future_belongs_to_both_groups() -> luau::runt
             pending(),
         );
         let thread = nil_thread()?;
-        park(&mut scheduler, task.id());
+        park(&scheduler, task.id());
 
-        assert!(scheduler.replace_with_luau_future(
+        assert!(scheduler.state.borrow_mut().replace_with_luau_future(
             task.id(),
             callee,
             thread,
@@ -278,7 +292,7 @@ fn a_task_awaiting_another_group_s_future_belongs_to_both_groups() -> luau::runt
         }
 
         let cancelled = if cancel_callee { callee } else { caller };
-        assert_eq!(scheduler.cancel_group(cancelled), 1);
+        scheduler.cancel_group(cancelled);
         assert_eq!(
             scheduler.snapshot(task.id()).expect("task").state,
             TaskState::Cancelled
@@ -292,7 +306,7 @@ fn a_task_awaiting_another_group_s_future_belongs_to_both_groups() -> luau::runt
 
 #[test]
 fn a_task_leaves_the_awaited_group_once_its_future_completes() -> luau::runtime::Result<()> {
-    let mut scheduler = Scheduler::new();
+    let scheduler = Scheduler::new();
     let caller = scheduler.create_group();
     let callee = scheduler.create_group();
     let thread = nil_thread()?;
@@ -303,8 +317,8 @@ fn a_task_leaves_the_awaited_group_once_its_future_completes() -> luau::runtime:
         },
         pending(),
     );
-    park(&mut scheduler, task.id());
-    assert!(scheduler.replace_with_luau_future(
+    park(&scheduler, task.id());
+    assert!(scheduler.state.borrow_mut().replace_with_luau_future(
         task.id(),
         callee,
         thread,
@@ -321,10 +335,10 @@ fn a_task_leaves_the_awaited_group_once_its_future_completes() -> luau::runtime:
 
 #[test]
 fn default_group_is_never_cancelled() {
-    let mut scheduler = Scheduler::new();
+    let scheduler = Scheduler::new();
     let pending_task = scheduler.spawn(CallContext::default(), pending());
 
-    assert_eq!(scheduler.cancel_group(TaskGroupId::default()), 0);
+    scheduler.cancel_group(TaskGroupId::default());
     let later = scheduler.spawn(CallContext::default(), async { Ok(()) });
 
     assert_eq!(scheduler.poll_ready(), 1);
@@ -343,7 +357,7 @@ fn default_group_is_never_cancelled() {
 
 #[test]
 fn failed_future_preserves_error_for_diagnostics() {
-    let mut scheduler = Scheduler::new();
+    let scheduler = Scheduler::new();
     let handle = scheduler.spawn(CallContext::default(), async { anyhow::bail!("boom") });
 
     assert_eq!(scheduler.poll_ready(), 1);
@@ -359,7 +373,7 @@ fn failed_future_preserves_error_for_diagnostics() {
 
 #[test]
 fn pending_future_is_polled_again_after_waker_signal() {
-    let mut scheduler = Scheduler::new();
+    let scheduler = Scheduler::new();
     let polls = Arc::new(AtomicUsize::new(0));
     let handle = scheduler.spawn(CallContext::default(), {
         let polls = polls.clone();
@@ -397,12 +411,10 @@ fn pending_future_is_polled_again_after_waker_signal() {
 #[test]
 fn delayed_task_waits_until_wake_time() {
     let clock = ManualClock::new();
-    let mut scheduler = Scheduler::with_manual_clock(clock.clone());
-    let handle = scheduler.spawn_boxed_after(
-        CallContext::default(),
-        Duration::from_secs(5),
-        Box::pin(async { Ok(()) }),
-    );
+    let scheduler = Scheduler::with_manual_clock(clock.clone());
+    let handle = scheduler.spawn_after(CallContext::default(), Duration::from_secs(5), async {
+        Ok(())
+    });
     let state = |scheduler: &Scheduler| {
         scheduler
             .snapshot(handle.id())
@@ -425,12 +437,10 @@ fn delayed_task_waits_until_wake_time() {
 
 #[test]
 fn a_cancelled_delayed_task_leaves_nothing_to_wait_for() {
-    let mut scheduler = Scheduler::with_manual_clock(ManualClock::new());
-    let handle = scheduler.spawn_boxed_after(
-        CallContext::default(),
-        Duration::from_secs(5),
-        Box::pin(async { Ok(()) }),
-    );
+    let scheduler = Scheduler::with_manual_clock(ManualClock::new());
+    let handle = scheduler.spawn_after(CallContext::default(), Duration::from_secs(5), async {
+        Ok(())
+    });
     assert_eq!(scheduler.next_wake_delay(), Some(Duration::from_secs(5)));
 
     assert!(scheduler.cancel(handle.id()));
@@ -448,7 +458,7 @@ fn luau_root_thread_completes_on_scheduler() -> luau::runtime::Result<()> {
             path: Some(Arc::from("plugins/demo/init.luau")),
         },
     ))?;
-    let mut scheduler = Scheduler::new();
+    let scheduler = Scheduler::new();
     let group = scheduler.create_group();
     let context = CallContext {
         origin: ChunkOrigin {
@@ -460,8 +470,11 @@ fn luau_root_thread_completes_on_scheduler() -> luau::runtime::Result<()> {
         ..CallContext::default()
     };
 
-    let handle =
-        scheduler.spawn_luau_function(context, &function, vec![luau::Value::Number(41.0)])?;
+    let handle = scheduler.spawn_luau_thread(
+        context,
+        vm.create_thread(&function)?,
+        vec![luau::Value::Number(41.0)],
+    );
 
     assert_eq!(scheduler.poll_ready(), 1);
     let snapshot = scheduler.snapshot(handle.id()).expect("task snapshot");
@@ -481,8 +494,9 @@ fn luau_root_thread_failure_is_scheduler_failure() -> luau::runtime::Result<()> 
         Arc::<[u8]>::from(&b"error('root failed')"[..]),
         luau::ChunkOrigin::default(),
     ))?;
-    let mut scheduler = Scheduler::new();
-    let handle = scheduler.spawn_luau_function(CallContext::default(), &function, vec![])?;
+    let scheduler = Scheduler::new();
+    let handle =
+        scheduler.spawn_luau_thread(CallContext::default(), vm.create_thread(&function)?, vec![]);
 
     assert_eq!(scheduler.poll_ready(), 1);
     let snapshot = scheduler.snapshot(handle.id()).expect("task snapshot");
@@ -511,16 +525,17 @@ fn per_task_luau_budget_does_not_leak_to_other_tasks() -> luau::runtime::Result<
     ))?;
     let timed_thread = vm.create_thread(&timed_function)?;
     let ordinary_thread = vm.create_thread(&ordinary_function)?;
-    let mut scheduler = Scheduler::new();
-    let timed = scheduler.spawn_luau_thread_with_options(
+    let scheduler = Scheduler::new();
+    scheduler.schedule_luau_thread_with_limit_and_completion(
         CallContext::default(),
-        timed_thread,
+        timed_thread.clone(),
         Vec::new(),
-        LuauTaskOptions {
-            resume_limit: Some(ResumeLimit::budget(Duration::ZERO)),
-            completion: None,
-        },
+        ResumeLimit::budget(Duration::ZERO),
+        Rc::default(),
     );
+    let timed = scheduler
+        .luau_thread_handle(&timed_thread)
+        .expect("the timed thread's task");
     let ordinary = scheduler.spawn_luau_thread(CallContext::default(), ordinary_thread, Vec::new());
 
     assert_eq!(scheduler.poll_ready(), 2);
@@ -547,7 +562,7 @@ fn a_resume_limited_until_a_deadline_stops_at_it_or_at_its_signal() -> luau::run
     ))?;
     let raised = luau::InterruptSignal::new();
     raised.raise();
-    let mut scheduler = Scheduler::new();
+    let scheduler = Scheduler::new();
     let far = Instant::now() + Duration::from_secs(600);
     let limits = [
         (ResumeLimit::until(far).or_on(raised), ResumeBound::Signal),
@@ -575,15 +590,15 @@ fn a_resume_limited_until_a_deadline_stops_at_it_or_at_its_signal() -> luau::run
         .into_iter()
         .map(|(limit, bound)| -> luau::runtime::Result<_> {
             let completion = Rc::new(LocalLuauTaskCompletion::default());
-            let task = scheduler.spawn_luau_thread_with_options(
+            let thread = vm.create_thread(&function)?;
+            scheduler.schedule_luau_thread_with_limit_and_completion(
                 CallContext::default(),
-                vm.create_thread(&function)?,
+                thread.clone(),
                 Vec::new(),
-                LuauTaskOptions {
-                    resume_limit: Some(limit),
-                    completion: Some(completion.clone()),
-                },
+                limit,
+                completion.clone(),
             );
+            let task = scheduler.luau_thread_handle(&thread).expect("its task");
             Ok((task, completion, bound))
         })
         .collect::<luau::runtime::Result<_>>()?;
@@ -613,7 +628,7 @@ fn a_task_tells_which_bound_of_its_limit_cut_it_short() -> luau::runtime::Result
     vm.open_standard_libraries(luau::StandardLibraries::all_supported())?;
     let run = |source: &'static str, limit: fn(Instant) -> ResumeLimit| {
         let clock = ManualClock::new();
-        let scheduler = LocalScheduler::with_manual_clock(clock.clone());
+        let scheduler = Scheduler::with_manual_clock(clock.clone());
         let completion = Rc::new(LocalLuauTaskCompletion::default());
         scheduler.schedule_luau_thread_with_limit_and_completion(
             CallContext::default(),
@@ -695,7 +710,7 @@ fn pending_budgeted_luau_thread_preserves_budget_and_completion() -> luau::runti
         luau::ChunkOrigin::default(),
     ))?;
     let thread = vm.create_thread(&function)?;
-    let scheduler = LocalScheduler::new();
+    let scheduler = Scheduler::new();
     let completion = Rc::new(LocalLuauTaskCompletion::default());
 
     scheduler.polling.set(true);
@@ -712,7 +727,7 @@ fn pending_budgeted_luau_thread_preserves_budget_and_completion() -> luau::runti
     let handle = scheduler
         .luau_thread_handle(&thread)
         .expect("scheduled thread handle");
-    let inner = scheduler.scheduler.borrow();
+    let inner = scheduler.state.borrow();
     let task = inner.tasks.get(&handle.id()).expect("scheduled task");
     assert!(matches!(
         task.resume_limit,
@@ -762,7 +777,7 @@ fn once_waiting(wake: &SchedulerWake) {
 
 /// Runs rounds that sleep in between, as a host does, until `done`. Only a wake or a due
 /// task ends each sleep.
-fn run_until(scheduler: &LocalScheduler, done: impl Fn() -> bool) {
+fn run_until(scheduler: &Scheduler, done: impl Fn() -> bool) {
     loop {
         scheduler.poll_ready();
         if done() {
@@ -792,7 +807,7 @@ fn a_wake_handle_ends_a_wait_from_another_thread() {
 #[test]
 fn a_task_s_waker_ends_a_wait_from_another_thread() {
     ending_without_a_missed_wake(|| {
-        let scheduler = LocalScheduler::new();
+        let scheduler = Scheduler::new();
         let (ready, readied) = tokio::sync::oneshot::channel::<()>();
         let seen = Rc::new(Cell::new(false));
         scheduler.schedule_future(CallContext::default(), {
@@ -831,7 +846,7 @@ fn a_wake_before_the_wait_is_kept_for_it() {
 #[test]
 fn a_cancellation_ends_a_wait_for_work_without_a_deadline() {
     ending_without_a_missed_wake(|| {
-        let scheduler = LocalScheduler::new();
+        let scheduler = Scheduler::new();
         let cancellation = Cancellation::new(scheduler.wake_handle());
         let cancel = std::thread::spawn({
             let (cancellation, wake) = (cancellation.clone(), scheduler.wake_handle());
@@ -849,7 +864,7 @@ fn a_cancellation_ends_a_wait_for_work_without_a_deadline() {
 
 #[test]
 fn a_task_spawns_another_while_the_scheduler_polls() {
-    let scheduler = Rc::new(LocalScheduler::new());
+    let scheduler = Rc::new(Scheduler::new());
     let ran = Rc::new(Cell::new(false));
     scheduler.schedule_future(CallContext::default(), {
         let (scheduler, ran) = (Rc::downgrade(&scheduler), ran.clone());
@@ -874,7 +889,7 @@ fn a_task_spawns_another_while_the_scheduler_polls() {
 /// itself, even twice, runs once a round, and the task behind it still gets its turn.
 #[test]
 fn a_task_that_keeps_itself_ready_runs_once_a_round() {
-    fn respawn(scheduler: std::rc::Weak<LocalScheduler>, runs: Rc<Cell<usize>>) {
+    fn respawn(scheduler: std::rc::Weak<Scheduler>, runs: Rc<Cell<usize>>) {
         let Some(strong) = scheduler.upgrade() else {
             return;
         };
@@ -885,7 +900,7 @@ fn a_task_that_keeps_itself_ready_runs_once_a_round() {
         });
     }
 
-    let scheduler = Rc::new(LocalScheduler::new());
+    let scheduler = Rc::new(Scheduler::new());
     let respawned = Rc::new(Cell::new(0));
     respawn(Rc::downgrade(&scheduler), respawned.clone());
     let woken = Rc::new(Cell::new(0));
@@ -919,7 +934,7 @@ fn a_task_that_keeps_itself_ready_runs_once_a_round() {
 #[test]
 fn what_a_watcher_starts_first_runs_in_the_next_round() -> luau::runtime::Result<()> {
     let vm = luau::Vm::new()?;
-    let scheduler = Rc::new(LocalScheduler::new());
+    let scheduler = Rc::new(Scheduler::new());
     let thread = chunk_thread(&vm, "ran = true")?;
     scheduler.schedule_watcher(CallContext::default(), {
         let (scheduler, thread) = (Rc::downgrade(&scheduler), thread.clone());
@@ -955,7 +970,7 @@ fn what_a_watcher_starts_first_runs_in_the_next_round() -> luau::runtime::Result
 #[test]
 fn a_sleep_ends_the_wait_and_wakes_its_task_at_the_deadline() {
     ending_without_a_missed_wake(|| {
-        let scheduler = LocalScheduler::new();
+        let scheduler = Scheduler::new();
         let woke = Rc::new(Cell::new(None));
         let deadline = Instant::now() + Duration::from_millis(50);
         let sleep = scheduler.sleep_until(deadline);
@@ -975,7 +990,7 @@ fn a_sleep_ends_the_wait_and_wakes_its_task_at_the_deadline() {
 }
 
 /// A task waiting on a sleep, and whether it has woken.
-fn sleeper(scheduler: &LocalScheduler, deadline: Instant) -> Rc<Cell<bool>> {
+fn sleeper(scheduler: &Scheduler, deadline: Instant) -> Rc<Cell<bool>> {
     let woke = Rc::new(Cell::new(false));
     let sleep = scheduler.sleep_until(deadline);
     scheduler.schedule_future(CallContext::default(), {
@@ -993,7 +1008,7 @@ fn sleeper(scheduler: &LocalScheduler, deadline: Instant) -> Rc<Cell<bool>> {
 #[test]
 fn a_sleep_is_over_at_its_deadline_and_not_before() {
     let clock = ManualClock::new();
-    let scheduler = LocalScheduler::with_manual_clock(clock.clone());
+    let scheduler = Scheduler::with_manual_clock(clock.clone());
     let woke = sleeper(&scheduler, clock.now() + Duration::from_secs(5));
 
     scheduler.poll_ready();
@@ -1020,7 +1035,7 @@ fn a_sleep_is_over_at_its_deadline_and_not_before() {
 #[test]
 fn a_dropped_sleep_leaves_nothing_to_wait_for() {
     let clock = ManualClock::new();
-    let scheduler = LocalScheduler::with_manual_clock(clock.clone());
+    let scheduler = Scheduler::with_manual_clock(clock.clone());
     let mut sleep = scheduler.sleep_until(clock.now() + Duration::from_secs(3600));
     let mut cx = Context::from_waker(Waker::noop());
     assert!(Pin::new(&mut sleep).poll(&mut cx).is_pending());
@@ -1034,7 +1049,7 @@ fn a_dropped_sleep_leaves_nothing_to_wait_for() {
 #[should_panic(expected = "manual clock can't block")]
 fn a_scheduler_on_a_manual_clock_refuses_to_wait_for_work() {
     let clock = ManualClock::new();
-    let scheduler = LocalScheduler::with_manual_clock(clock.clone());
+    let scheduler = Scheduler::with_manual_clock(clock.clone());
     // Even with work due at once, which a real wait would return for.
     scheduler.schedule_future(CallContext::default(), async { Ok(()) });
     scheduler.wait_for_work(Some(clock.now()));
@@ -1061,9 +1076,9 @@ fn chunk_thread(vm: &luau::Vm, source: &'static str) -> luau::runtime::Result<lu
 fn ended_after(advance_first: bool) -> luau::runtime::Result<Duration> {
     let vm = luau::Vm::new()?;
     let clock = ManualClock::new();
-    let scheduler = LocalScheduler::with_manual_clock(clock.clone());
+    let scheduler = Scheduler::with_manual_clock(clock.clone());
     let completion = Rc::new(LocalLuauTaskCompletion::default());
-    let advance = |scheduler: &LocalScheduler| {
+    let advance = |scheduler: &Scheduler| {
         let clock = clock.clone();
         scheduler.schedule_future(CallContext::default(), async move {
             clock.advance(Duration::from_secs(1));
@@ -1096,7 +1111,7 @@ fn watched_ending_at_its_deadline(
 ) -> luau::runtime::Result<Watched<std::convert::Infallible>> {
     let vm = luau::Vm::new()?;
     let clock = ManualClock::new();
-    let scheduler = Rc::new(LocalScheduler::with_manual_clock(clock.clone()));
+    let scheduler = Rc::new(Scheduler::with_manual_clock(clock.clone()));
     let deadline = clock.now() + Duration::from_secs(1);
     scheduler.schedule_future(CallContext::default(), {
         let clock = clock.clone();
@@ -1148,7 +1163,7 @@ fn a_watch_cancels_a_thread_still_running_once_stopped() -> luau::runtime::Resul
     let vm = luau::Vm::new()?;
     vm.open_standard_libraries(luau::StandardLibraries::all_supported())?;
     let clock = ManualClock::new();
-    let scheduler = Rc::new(LocalScheduler::with_manual_clock(clock.clone()));
+    let scheduler = Rc::new(Scheduler::with_manual_clock(clock.clone()));
     let watched = scheduler.schedule_watched_luau_thread(
         CallContext::default(),
         chunk_thread(&vm, "coroutine.yield()")?,
@@ -1198,7 +1213,7 @@ fn a_completion_records_the_time_its_thread_was_cancelled() -> luau::runtime::Re
     let vm = luau::Vm::new()?;
     vm.open_standard_libraries(luau::StandardLibraries::all_supported())?;
     let clock = ManualClock::new();
-    let scheduler = LocalScheduler::with_manual_clock(clock.clone());
+    let scheduler = Scheduler::with_manual_clock(clock.clone());
     let start = clock.now();
     let completion = Rc::new(LocalLuauTaskCompletion::default());
     let thread = chunk_thread(&vm, "coroutine.yield()")?;
@@ -1229,7 +1244,7 @@ fn a_completion_records_the_time_its_thread_was_cancelled() -> luau::runtime::Re
 fn a_frozen_clock_still_interrupts_a_resume_at_its_limit() -> luau::runtime::Result<()> {
     let vm = luau::Vm::new()?;
     let clock = ManualClock::new();
-    let scheduler = LocalScheduler::with_manual_clock(clock.clone());
+    let scheduler = Scheduler::with_manual_clock(clock.clone());
     let limits = [
         ResumeLimit::budget(Duration::from_millis(20)),
         ResumeLimit::until(clock.now() + Duration::from_millis(20)),
@@ -1265,7 +1280,7 @@ fn a_resume_limited_until_a_deadline_already_passed_by_the_clock_is_interrupted_
 -> luau::runtime::Result<()> {
     let vm = luau::Vm::new()?;
     let clock = ManualClock::new();
-    let scheduler = LocalScheduler::with_manual_clock(clock.clone());
+    let scheduler = Scheduler::with_manual_clock(clock.clone());
     // An hour away in real time, and passed once the clock says so.
     let deadline = clock.now() + Duration::from_secs(3600);
     clock.advance(Duration::from_secs(3600));
@@ -1287,7 +1302,7 @@ fn a_resume_limited_until_a_deadline_already_passed_by_the_clock_is_interrupted_
 #[test]
 fn a_cancellation_wakes_the_task_waiting_on_it() {
     ending_without_a_missed_wake(|| {
-        let scheduler = LocalScheduler::new();
+        let scheduler = Scheduler::new();
         let cancellation = Cancellation::new(scheduler.wake_handle());
         let seen = Rc::new(Cell::new(false));
         scheduler.schedule_future(CallContext::default(), {
@@ -1316,7 +1331,7 @@ fn a_cancellation_wakes_the_task_waiting_on_it() {
 /// A thread that waits forever on a host call, whose future raises `dropped` when dropped.
 fn waiting_thread(
     vm: &luau::Vm,
-    scheduler: &LocalScheduler,
+    scheduler: &Scheduler,
     context: CallContext,
     dropped: Arc<AtomicBool>,
 ) -> luau::runtime::Result<luau::Thread> {
@@ -1355,7 +1370,7 @@ fn completion_message(completion: &LocalLuauTaskCompletion) -> Option<Result<(),
 #[test]
 fn a_watcher_scheduled_after_a_thread_cancels_it_before_it_starts() -> luau::runtime::Result<()> {
     let vm = luau::Vm::new()?;
-    let scheduler = Rc::new(LocalScheduler::new());
+    let scheduler = Rc::new(Scheduler::new());
     let thread = vm.create_thread(&vm.load_chunk(&luau::Chunk::new(
         Arc::<[u8]>::from(&b"ran = true"[..]),
         luau::ChunkOrigin::default(),
@@ -1390,7 +1405,7 @@ fn a_watcher_scheduled_after_a_thread_cancels_it_before_it_starts() -> luau::run
 fn a_watcher_woken_after_its_thread_still_cancels_it_before_it_resumes() -> luau::runtime::Result<()>
 {
     let vm = luau::Vm::new()?;
-    let scheduler = Rc::new(LocalScheduler::new());
+    let scheduler = Rc::new(Scheduler::new());
     let thread = vm.create_thread(&vm.load_chunk(&luau::Chunk::new(
         Arc::<[u8]>::from(&b"coroutine.yield()"[..]),
         luau::ChunkOrigin::default(),
@@ -1443,7 +1458,7 @@ fn a_watcher_woken_after_its_thread_still_cancels_it_before_it_resumes() -> luau
 /// dropped. The inner thread is ready in the round the outer one's watcher cancels it.
 #[test]
 fn a_watcher_s_cancel_reaches_the_threads_its_thread_was_waiting_on() -> luau::runtime::Result<()> {
-    struct CancelOnDrop(std::rc::Weak<LocalScheduler>, luau::Thread);
+    struct CancelOnDrop(std::rc::Weak<Scheduler>, luau::Thread);
     impl Drop for CancelOnDrop {
         fn drop(&mut self) {
             if let Some(scheduler) = self.0.upgrade() {
@@ -1453,7 +1468,7 @@ fn a_watcher_s_cancel_reaches_the_threads_its_thread_was_waiting_on() -> luau::r
     }
 
     let vm = luau::Vm::new()?;
-    let scheduler = Rc::new(LocalScheduler::new());
+    let scheduler = Rc::new(Scheduler::new());
     let chunk = |source: &'static [u8]| {
         vm.create_thread(&vm.load_chunk(&luau::Chunk::new(
             Arc::<[u8]>::from(source),
@@ -1502,14 +1517,12 @@ fn a_watcher_s_cancel_reaches_the_threads_its_thread_was_waiting_on() -> luau::r
 /// one that returns in the next round, `cancel(thread)` and `cancel_group(id)`, and
 /// `cancel_as_it_wakes()` and `cancel_group_as_it_wakes()`, waits that cancel the thread they
 /// are about to wake, or its group.
-fn vm_with_waits() -> luau::runtime::Result<(luau::Vm, Rc<LocalScheduler>)> {
-    vm_with_waits_on(LocalScheduler::new())
+fn vm_with_waits() -> luau::runtime::Result<(luau::Vm, Rc<Scheduler>)> {
+    vm_with_waits_on(Scheduler::new())
 }
 
 /// [`vm_with_waits`] with `scheduler` as the VM's.
-fn vm_with_waits_on(
-    scheduler: LocalScheduler,
-) -> luau::runtime::Result<(luau::Vm, Rc<LocalScheduler>)> {
+fn vm_with_waits_on(scheduler: Scheduler) -> luau::runtime::Result<(luau::Vm, Rc<Scheduler>)> {
     use crate::modules::{
         FunctionSpec,
         ModuleSpec,
@@ -1532,7 +1545,7 @@ fn vm_with_waits_on(
         })))
         .function(
             FunctionSpec::new("cancel_as_it_wakes").call_async(Arc::new(|frame| {
-                let scheduler = Rc::downgrade(&frame.vm.data().get::<LocalScheduler>()?);
+                let scheduler = Rc::downgrade(&frame.vm.data().get::<Scheduler>()?);
                 let thread = frame.thread.clone();
                 Ok(luau::ScheduledFuture::after(Duration::ZERO, async move {
                     scheduler
@@ -1545,7 +1558,7 @@ fn vm_with_waits_on(
         )
         .function(
             FunctionSpec::new("cancel_group_as_it_wakes").call_async(Arc::new(|frame| {
-                let scheduler = Rc::downgrade(&frame.vm.data().get::<LocalScheduler>()?);
+                let scheduler = Rc::downgrade(&frame.vm.data().get::<Scheduler>()?);
                 let group = frame.context.task_group;
                 Ok(luau::ScheduledFuture::after(Duration::ZERO, async move {
                     scheduler
@@ -1561,7 +1574,7 @@ fn vm_with_waits_on(
             frame
                 .vm
                 .data()
-                .get::<LocalScheduler>()?
+                .get::<Scheduler>()?
                 .cancel_group(TaskGroupId(group as u64));
             Ok(())
         }))
@@ -1570,7 +1583,7 @@ fn vm_with_waits_on(
             frame
                 .vm
                 .data()
-                .get::<LocalScheduler>()?
+                .get::<Scheduler>()?
                 .cancel_luau_thread(&thread);
             Ok(())
         }));
@@ -1588,13 +1601,13 @@ fn vm_with_waits_on(
         };
         vm.set_global_function(name, &function)?;
     }
-    let scheduler = vm.data().get::<LocalScheduler>()?;
+    let scheduler = vm.data().get::<Scheduler>()?;
     Ok((vm, scheduler))
 }
 
 fn spawn_chunk(
     vm: &luau::Vm,
-    scheduler: &LocalScheduler,
+    scheduler: &Scheduler,
     context: CallContext,
     source: &'static str,
 ) -> luau::runtime::Result<luau::Thread> {
@@ -1908,7 +1921,7 @@ fn a_coroutine_cancelled_in_a_host_wait_is_closed() -> luau::runtime::Result<()>
 /// Schedules `source` under `limit` and returns its thread and what its task ends with.
 fn spawn_limited(
     vm: &luau::Vm,
-    scheduler: &LocalScheduler,
+    scheduler: &Scheduler,
     source: &'static str,
     limit: ResumeLimit,
 ) -> luau::runtime::Result<(luau::Thread, Rc<LocalLuauTaskCompletion>)> {
@@ -1948,7 +1961,7 @@ fn a_thread_is_not_started_once_its_limit_s_deadline_is_reached() -> luau::runti
         (Some(TIMEOUT), luau::Value::Nil),
     ] {
         let clock = ManualClock::new();
-        let (vm, scheduler) = vm_with_waits_on(LocalScheduler::with_manual_clock(clock.clone()))?;
+        let (vm, scheduler) = vm_with_waits_on(Scheduler::with_manual_clock(clock.clone()))?;
         let (thread, completion) = spawn_limited(
             &vm,
             &scheduler,
@@ -1977,7 +1990,7 @@ fn a_thread_is_not_resumed_from_a_wait_that_outlasted_its_limit_s_deadline()
     const TIMEOUT: Duration = Duration::from_secs(30);
 
     let clock = ManualClock::new();
-    let (vm, scheduler) = vm_with_waits_on(LocalScheduler::with_manual_clock(clock.clone()))?;
+    let (vm, scheduler) = vm_with_waits_on(Scheduler::with_manual_clock(clock.clone()))?;
     let (thread, completion) = spawn_limited(
         &vm,
         &scheduler,
@@ -2145,7 +2158,7 @@ fn cancelling_work_the_scheduler_has_not_taken_up_closes_its_thread() -> luau::r
 
 /// Whether the scheduler holds nothing for any thread: no pending task, no wait parked or put
 /// off.
-fn holds_nothing(scheduler: &LocalScheduler) -> bool {
+fn holds_nothing(scheduler: &Scheduler) -> bool {
     !scheduler.has_pending()
         && scheduler.parked_threads.borrow().is_empty()
         && scheduler.pending_luau_work.borrow().is_empty()
@@ -2615,7 +2628,7 @@ fn a_thread_left_parked_by_a_poll_that_unwound_is_closed_with_its_wait() -> luau
 
 /// Runs a round of `scheduler` that unwinds after the tasks scheduled so far ran, as one does
 /// when a completion's waker panics. What they put off is left for a later round.
-fn unwind_a_round(vm: &luau::Vm, scheduler: &LocalScheduler) -> luau::runtime::Result<()> {
+fn unwind_a_round(vm: &luau::Vm, scheduler: &Scheduler) -> luau::runtime::Result<()> {
     struct PanickingWake;
     impl std::task::Wake for PanickingWake {
         fn wake(self: Arc<Self>) {
@@ -2835,7 +2848,7 @@ fn a_poll_that_unwinds_leaves_the_scheduler_taking_work_at_once() -> luau::runti
         luau::ChunkOrigin::default(),
     ))?;
     let thread = vm.create_thread(&function)?;
-    let scheduler = LocalScheduler::new();
+    let scheduler = Scheduler::new();
     let completion = Rc::new(LocalLuauTaskCompletion::default());
     scheduler.schedule_luau_thread_with_completion(
         CallContext::default(),
@@ -2872,7 +2885,7 @@ fn a_completion_read_twice_panics() {
         ))
         .expect("chunk");
     let thread = vm.create_thread(&function).expect("thread");
-    let scheduler = LocalScheduler::new();
+    let scheduler = Scheduler::new();
     let completion = Rc::new(LocalLuauTaskCompletion::default());
     scheduler.schedule_luau_thread_with_completion(
         CallContext::default(),
@@ -2898,7 +2911,7 @@ impl<F: FnMut()> Drop for OnDrop<F> {
 /// A thread that waits forever on a host call, whose future holds `held`.
 fn thread_holding(
     vm: &luau::Vm,
-    scheduler: &LocalScheduler,
+    scheduler: &Scheduler,
     held: impl Sized + 'static,
 ) -> luau::runtime::Result<luau::Thread> {
     let thread = vm.create_thread(&vm.load_chunk(&luau::Chunk::new(
@@ -2921,7 +2934,7 @@ fn thread_holding(
 #[test]
 fn cancelled_work_may_call_the_scheduler_as_it_drops() -> luau::runtime::Result<()> {
     let vm = luau::Vm::new()?;
-    let scheduler = Rc::new(LocalScheduler::new());
+    let scheduler = Rc::new(Scheduler::new());
     let other = vm.create_thread(&vm.load_chunk(&luau::Chunk::new(
         Arc::<[u8]>::from(&b"ran = true"[..]),
         luau::ChunkOrigin::default(),
@@ -2970,7 +2983,7 @@ fn cancelled_work_may_call_the_scheduler_as_it_drops() -> luau::runtime::Result<
 #[test]
 fn cancelled_work_panicking_as_it_drops_fails_nothing_else() -> luau::runtime::Result<()> {
     let vm = luau::Vm::new()?;
-    let scheduler = Rc::new(LocalScheduler::new());
+    let scheduler = Rc::new(Scheduler::new());
     let panicking = thread_holding(&vm, &scheduler, OnDrop(|| panic!("drop panicked")))?;
     let dropped = Rc::new(Cell::new(false));
     let quiet = thread_holding(
@@ -3007,7 +3020,7 @@ fn cancelled_work_panicking_as_it_drops_fails_nothing_else() -> luau::runtime::R
 fn a_task_cancelling_a_thread_goes_on_once_the_thread_s_work_is_dropped()
 -> luau::runtime::Result<()> {
     let vm = luau::Vm::new()?;
-    let scheduler = Rc::new(LocalScheduler::new());
+    let scheduler = Rc::new(Scheduler::new());
     let dropped = Arc::new(AtomicBool::new(false));
     let thread = waiting_thread(&vm, &scheduler, CallContext::default(), dropped.clone())?;
     scheduler.poll_ready();
@@ -3040,7 +3053,7 @@ fn a_task_cancelling_a_thread_goes_on_once_the_thread_s_work_is_dropped()
 #[test]
 fn a_group_cancelled_from_a_task_runs_no_further() -> luau::runtime::Result<()> {
     let vm = luau::Vm::new()?;
-    let scheduler = Rc::new(LocalScheduler::new());
+    let scheduler = Rc::new(Scheduler::new());
     let group = scheduler.create_group();
     let context = CallContext {
         task_group: group,

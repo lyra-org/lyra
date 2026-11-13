@@ -1042,8 +1042,8 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn luau_udp_socket_round_trips_datagram() -> harmony_luau::runtime::Result<()> {
         let vm = harmony_luau::Vm::new()?;
-        vm.data().insert(harmony_core::LocalScheduler::new())?;
-        let scheduler = vm.data().get::<harmony_core::LocalScheduler>()?;
+        vm.data().insert(harmony_core::Scheduler::new())?;
+        let scheduler = vm.data().get::<harmony_core::Scheduler>()?;
         let spec = NetModule::module_spec();
         let table =
             harmony_core::luau::install_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;
@@ -1100,8 +1100,8 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn luau_tcp_listener_accepts_stream() -> harmony_luau::runtime::Result<()> {
         let vm = harmony_luau::Vm::new()?;
-        vm.data().insert(harmony_core::LocalScheduler::new())?;
-        let scheduler = vm.data().get::<harmony_core::LocalScheduler>()?;
+        vm.data().insert(harmony_core::Scheduler::new())?;
+        let scheduler = vm.data().get::<harmony_core::Scheduler>()?;
         let spec = NetModule::module_spec();
         let table =
             harmony_core::luau::install_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;

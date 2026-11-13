@@ -12,12 +12,12 @@ use std::{
     },
 };
 
+use super::Scheduler;
 use super::TaskFuture;
 use super::limit::{
     ResumeBound,
     ResumeLimit,
 };
-use super::local::LocalScheduler;
 use super::time::Clock;
 use anyhow::Result;
 use harmony_luau as luau;
@@ -260,7 +260,7 @@ fn poll_luau_resume(
         },
         Ok(luau::ThreadStatus::Closed) => WorkPoll::Cancelled,
         Ok(luau::ThreadStatus::Yielded(_)) => {
-            if let Ok(scheduler) = thread.vm().data().get::<LocalScheduler>()
+            if let Ok(scheduler) = thread.vm().data().get::<Scheduler>()
                 && scheduler.take_parked_luau_thread(thread)
             {
                 WorkPoll::Parked

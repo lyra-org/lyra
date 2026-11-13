@@ -10,8 +10,8 @@ use std::{
 };
 
 use super::LocalLuauTaskCompletion;
+use super::Scheduler;
 use super::limit::ResumeBound;
-use super::local::LocalScheduler;
 use super::time::Timers;
 use harmony_luau as luau;
 use std::cell::Cell;
@@ -42,10 +42,10 @@ pub enum Watched<S> {
     Expired,
 }
 
-/// A Luau thread its watcher answers for, as [`LocalScheduler::schedule_watched_luau_thread`]
+/// A Luau thread its watcher answers for, as [`Scheduler::schedule_watched_luau_thread`]
 /// schedules it: however the watcher goes, the thread doesn't outlive it.
 pub struct WatchedThread {
-    scheduler: Weak<LocalScheduler>,
+    scheduler: Weak<Scheduler>,
     timers: Rc<Timers>,
     thread: luau::Thread,
     pub(super) completion: Rc<LocalLuauTaskCompletion>,
@@ -55,7 +55,7 @@ pub struct WatchedThread {
 
 impl WatchedThread {
     pub(super) fn new(
-        scheduler: Weak<LocalScheduler>,
+        scheduler: Weak<Scheduler>,
         timers: Rc<Timers>,
         thread: luau::Thread,
         completion: Rc<LocalLuauTaskCompletion>,

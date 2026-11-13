@@ -2,7 +2,6 @@ use std::{
     collections::{
         HashMap,
         HashSet,
-        VecDeque,
     },
     future::Future,
     pin::Pin,
@@ -32,7 +31,7 @@ use std::cell::{
 };
 
 mod limit;
-mod local;
+mod state;
 mod time;
 mod wake;
 mod watch;
@@ -42,20 +41,13 @@ pub use limit::{
     ResumeBound,
     ResumeLimit,
 };
-pub use local::LocalScheduler;
+use state::State;
 pub(crate) use time::Clock;
 pub use time::Sleep;
-use time::{
-    TimerId,
-    Timers,
-};
+use time::Timers;
 pub use wake::{
     Cancellation,
     SchedulerWake,
-};
-use wake::{
-    TaskWaker,
-    WakeQueue,
 };
 pub use watch::{
     LateEnd,
@@ -64,12 +56,8 @@ pub use watch::{
 };
 use work::{
     Detached,
-    Resuming,
-    TaskWork,
-    WorkPoll,
     close_cancelled_thread,
-    detach,
-    poll_work,
+    drop_catching_panic,
 };
 
 /// Polled on the scheduler's thread only, so it may hold VM handles.
@@ -173,788 +161,888 @@ impl TaskHandle {
     }
 }
 
+enum LuauThreadStart {
+    Immediate,
+    Delayed(Duration),
+    Limited {
+        limit: ResumeLimit,
+        completion: Rc<LocalLuauTaskCompletion>,
+    },
+    /// Immediately, under the scheduler's own limit, reporting to the completion.
+    WithCompletion(Rc<LocalLuauTaskCompletion>),
+}
+
 pub struct Scheduler {
-    next_task_id: u64,
-    /// Shared with [`LocalScheduler`], which creates groups while this
-    /// scheduler is borrowed for polling.
-    last_group_id: Rc<Cell<u64>>,
-    ready: VecDeque<TaskId>,
-    /// The ready tasks that watch others, which a round runs first.
-    ready_watchers: VecDeque<TaskId>,
-    /// The tasks the round under way has yet to poll: what was ready as it began.
-    round: VecDeque<TaskId>,
-    round_watchers: VecDeque<TaskId>,
-    timers: Rc<Timers>,
-    luau_resume_budget: Option<Duration>,
-    wake_queue: Arc<WakeQueue>,
-    tasks: HashMap<TaskId, Task>,
-    /// Shared with [`LocalScheduler`], which reads it while this scheduler is borrowed for
-    /// polling.
-    groups: Rc<RefCell<HashMap<TaskGroupId, HashSet<TaskId>>>>,
-    /// Shared with [`LocalScheduler`], which reads it while this scheduler
-    /// is borrowed for polling.
+    state: RefCell<State>,
     cancelled_groups: Rc<RefCell<HashSet<TaskGroupId>>>,
-    /// Tasks whose cancellation waits for the poll under way to end, and which it runs no further.
-    /// Shared with [`LocalScheduler`], which fills it while this scheduler is borrowed for polling.
+    groups: Rc<RefCell<HashMap<TaskGroupId, HashSet<TaskId>>>>,
+    thread_tasks: RefCell<HashMap<(u64, usize), TaskHandle>>,
+    parked_threads: RefCell<HashSet<(u64, usize)>>,
+    pending_luau_work: RefCell<Vec<PendingLuauWork>>,
+    pending_luau_cancellations: RefCell<Vec<luau::Thread>>,
+    pending_futures: RefCell<Vec<(CallContext, TaskFuture, bool)>>,
     cancelling: Rc<RefCell<HashSet<TaskId>>>,
-    /// Where a [`LocalScheduler`] has this scheduler leave the work it takes off its tasks, to
-    /// drop it once this scheduler is no longer borrowed.
-    detached: Option<Rc<RefCell<Vec<Detached>>>>,
-    /// The Luau thread of every pending task that has one, whatever its work is at the moment:
-    /// what cancelling the task closes. Shared with [`LocalScheduler`], which reads it while this
-    /// scheduler is borrowed for polling.
+    /// Work the scheduler took off its tasks while borrowed, see [`Self::drop_detached`].
+    detached: Rc<RefCell<Vec<Detached>>>,
+    pending_group_cancellations: RefCell<Vec<TaskGroupId>>,
+    /// Told once the poll under way has ended and what it deferred is done.
+    poll_end: RefCell<Vec<tokio::sync::oneshot::Sender<()>>>,
+    polling: Cell<bool>,
     threads: Rc<RefCell<HashMap<TaskId, luau::Thread>>>,
+    timers: Rc<Timers>,
+    last_group_id: Rc<Cell<u64>>,
+    /// Kept apart from the scheduler, which is borrowed while it polls.
+    wake: SchedulerWake,
 }
 
 impl Default for Scheduler {
     fn default() -> Self {
-        Self::new()
+        Self::with_clock(Clock::Real)
     }
 }
 
 impl Scheduler {
     pub fn new() -> Self {
-        Self::with_clock(Clock::Real)
+        Self::default()
     }
 
-    /// A scheduler whose time is `clock`'s, for a test that polls it: it never blocks, so
-    /// [`Self::wait_for_wake`] panics.
+    /// A scheduler whose time is `clock`'s, for a test that polls it. It never blocks:
+    /// [`Self::wait_for_work`] and [`Self::wait_for_wake`] panic, and what drives a thread to its
+    /// end on the calling thread, such as [`crate::luau::drive_thread`], fails before running it.
     #[cfg(any(test, feature = "testing"))]
     pub fn with_manual_clock(clock: crate::testing::ManualClock) -> Self {
         Self::with_clock(Clock::Manual(clock))
     }
 
-    fn with_clock(clock: Clock) -> Self {
+    pub(crate) fn with_clock(clock: Clock) -> Self {
+        let mut state = State::with_clock(clock);
+        let detached = Rc::<RefCell<Vec<Detached>>>::default();
+        state.detached = Some(detached.clone());
         Self {
-            next_task_id: 1,
-            last_group_id: Rc::default(),
-            ready: VecDeque::new(),
-            ready_watchers: VecDeque::new(),
-            round: VecDeque::new(),
-            round_watchers: VecDeque::new(),
-            timers: Rc::new(Timers::new(clock)),
-            luau_resume_budget: None,
-            wake_queue: Arc::new(WakeQueue::default()),
-            tasks: HashMap::new(),
-            groups: Rc::default(),
-            cancelled_groups: Rc::default(),
-            cancelling: Rc::default(),
-            detached: None,
-            threads: Rc::default(),
+            detached,
+            cancelled_groups: state.cancelled_groups.clone(),
+            groups: state.groups.clone(),
+            last_group_id: state.last_group_id.clone(),
+            wake: state.wake_handle(),
+            timers: state.timers.clone(),
+            cancelling: state.cancelling.clone(),
+            threads: state.threads.clone(),
+            state: RefCell::new(state),
+            thread_tasks: RefCell::default(),
+            parked_threads: RefCell::default(),
+            pending_luau_work: RefCell::default(),
+            pending_luau_cancellations: RefCell::default(),
+            pending_futures: RefCell::default(),
+            pending_group_cancellations: RefCell::default(),
+            poll_end: RefCell::default(),
+            polling: Cell::default(),
         }
     }
 
     /// The time by the scheduler's clock, which every deadline given to it is read against.
+    /// Usable while the scheduler polls, as from a task.
     pub fn now(&self) -> Instant {
         self.timers.now()
     }
 
-    /// `delay` from now, or now when that is past the last instant.
-    fn wake_after(&self, delay: Duration) -> Instant {
-        let now = self.now();
-        now.checked_add(delay).unwrap_or(now)
-    }
-
-    pub fn set_luau_resume_budget(&mut self, budget: Option<Duration>) {
-        self.luau_resume_budget = budget;
+    /// Fails on a manual clock, for a caller about to block on this scheduler.
+    pub(crate) fn ensure_can_wait(&self) -> Result<()> {
+        self.timers.clock().ensure_can_wait()
     }
 
     pub fn create_group(&self) -> TaskGroupId {
-        Self::next_group(&self.last_group_id)
+        State::next_group(&self.last_group_id)
     }
 
-    fn next_group(last_group_id: &Cell<u64>) -> TaskGroupId {
-        let id = last_group_id.get().saturating_add(1);
-        last_group_id.set(id);
-        TaskGroupId(id)
+    /// Cancels every pending task in `group`, and any task later spawned into it, and closes
+    /// their threads at once, as [`Self::cancel_luau_thread`] closes one. The default group is
+    /// never cancelled. While the scheduler polls, as from a task, the group's tasks run no
+    /// further and are cancelled once the poll ends.
+    pub fn cancel_group(&self, group: TaskGroupId) {
+        if self.polling.get() {
+            if group != TaskGroupId::default() {
+                self.cancelled_groups.borrow_mut().insert(group);
+                self.pending_group_cancellations.borrow_mut().push(group);
+                self.close_group(group);
+            }
+            return;
+        }
+        self.state.borrow_mut().cancel_group_tasks(group);
+        if group != TaskGroupId::default() {
+            // Work a poll put off and never took up, as when it unwound, goes with the group.
+            self.cancel_pending_luau_work(|work| work.is_in(group));
+            let (cancelled, kept) = std::mem::take(&mut *self.pending_futures.borrow_mut())
+                .into_iter()
+                .partition::<Vec<_>, _>(|(context, ..)| context.task_group == group);
+            *self.pending_futures.borrow_mut() = kept;
+            for (context, future, _) in cancelled {
+                drop_catching_panic(&context, future);
+            }
+        }
+        self.drop_detached();
+        self.flush_pending_luau_cancellations();
     }
 
-    pub fn spawn(
-        &mut self,
+    /// Closes the threads of `group`'s pending tasks and of the work a poll has put off for it,
+    /// whoever has the scheduler borrowed.
+    fn close_group(&self, group: TaskGroupId) {
+        let mut threads: Vec<_> = {
+            let (groups, threads) = (self.groups.borrow(), self.threads.borrow());
+            groups
+                .get(&group)
+                .into_iter()
+                .flatten()
+                .filter_map(|id| threads.get(id).cloned())
+                .collect()
+        };
+        threads.extend(
+            self.pending_luau_work
+                .borrow()
+                .iter()
+                .filter(|work| work.is_in(group))
+                .map(|work| work.thread().clone()),
+        );
+        for thread in threads {
+            close_cancelled_thread(&thread);
+        }
+    }
+
+    /// Runs `future` as a task of `context`'s group. While the scheduler polls, as from another
+    /// task, the task starts once the poll ends.
+    pub fn schedule_future(
+        &self,
         context: CallContext,
         future: impl Future<Output = Result<()>> + 'static,
-    ) -> TaskHandle {
-        self.spawn_boxed(context, Box::pin(future))
+    ) {
+        self.schedule_boxed(context, Box::pin(future), false);
     }
 
-    pub fn spawn_boxed(&mut self, context: CallContext, future: TaskFuture) -> TaskHandle {
-        self.insert_task(context, future, None)
-    }
-
-    /// Spawns a task that every poll runs ahead of the ready tasks that aren't watchers. Only
-    /// [`LocalScheduler::poll_ready`] also does what the watchers asked before the others run.
-    fn spawn_boxed_watcher(&mut self, context: CallContext, future: TaskFuture) -> TaskHandle {
-        self.insert_work(
-            context,
-            TaskWork::Future(future),
-            None,
-            self.default_luau_task_options(),
-            true,
-        )
-    }
-
-    pub fn spawn_after(
-        &mut self,
+    /// [`Self::schedule_future`] for a task that watches others: every poll runs the watchers
+    /// first, see [`Self::poll_ready`], so a thread one cancels on waking isn't resumed again.
+    pub fn schedule_watcher(
+        &self,
         context: CallContext,
-        delay: Duration,
         future: impl Future<Output = Result<()>> + 'static,
-    ) -> TaskHandle {
-        self.spawn_boxed_after(context, delay, Box::pin(future))
+    ) {
+        self.schedule_boxed(context, Box::pin(future), true);
     }
 
-    pub fn spawn_boxed_after(
-        &mut self,
-        context: CallContext,
-        delay: Duration,
-        future: TaskFuture,
-    ) -> TaskHandle {
-        let wake_at = self.wake_after(delay);
-        self.insert_task(context, future, Some(wake_at))
+    fn schedule_boxed(&self, context: CallContext, future: TaskFuture, watcher: bool) {
+        if self.polling.get() {
+            self.pending_futures
+                .borrow_mut()
+                .push((context, future, watcher));
+            return;
+        }
+        {
+            let mut state = self.state.borrow_mut();
+            if watcher {
+                state.spawn_boxed_watcher(context, future);
+            } else {
+                state.spawn_boxed(context, future);
+            }
+        }
+        // A task spawned into a cancelled group is cancelled at once.
+        self.drop_detached();
     }
 
-    pub fn spawn_luau_function(
-        &mut self,
-        context: CallContext,
-        function: &luau::Function,
-        args: Vec<luau::Value>,
-    ) -> luau::runtime::Result<TaskHandle> {
-        let thread = function.vm().create_thread(function)?;
-        Ok(self.spawn_luau_thread(context, thread, args))
+    /// A future that completes once the scheduler's clock reaches `deadline`, for a task of this
+    /// scheduler to wait on: the deadline ends [`Self::wait_for_work`], and the poll that follows
+    /// wakes the task.
+    pub fn sleep_until(&self, deadline: Instant) -> Sleep {
+        self.timers.sleep(deadline)
+    }
+
+    pub fn set_luau_resume_budget(&self, budget: Option<Duration>) {
+        self.state.borrow_mut().set_luau_resume_budget(budget);
     }
 
     pub fn spawn_luau_thread(
-        &mut self,
+        &self,
         context: CallContext,
         thread: luau::Thread,
         args: Vec<luau::Value>,
     ) -> TaskHandle {
-        self.spawn_luau_thread_with_options(context, thread, args, self.default_luau_task_options())
+        self.spawn_luau_thread_start(context, thread, args, LuauThreadStart::Immediate)
     }
 
-    fn spawn_luau_thread_with_options(
-        &mut self,
+    pub fn schedule_luau_thread(
+        &self,
         context: CallContext,
         thread: luau::Thread,
         args: Vec<luau::Value>,
-        options: LuauTaskOptions,
-    ) -> TaskHandle {
-        let pending_start = !thread.is_started();
-        self.insert_work(
+    ) {
+        self.schedule_luau_thread_start(context, thread, args, LuauThreadStart::Immediate);
+    }
+
+    /// Runs `thread` under the scheduler's own resume budget, reporting to `completion`.
+    pub fn schedule_luau_thread_with_completion(
+        &self,
+        context: CallContext,
+        thread: luau::Thread,
+        args: Vec<luau::Value>,
+        completion: Rc<LocalLuauTaskCompletion>,
+    ) {
+        self.schedule_luau_thread_start(
             context,
-            TaskWork::LuauThread {
-                thread,
-                args,
-                pending_start,
+            thread,
+            args,
+            LuauThreadStart::WithCompletion(completion),
+        );
+    }
+
+    pub fn schedule_luau_thread_with_limit_and_completion(
+        &self,
+        context: CallContext,
+        thread: luau::Thread,
+        args: Vec<luau::Value>,
+        limit: ResumeLimit,
+        completion: Rc<LocalLuauTaskCompletion>,
+    ) {
+        self.schedule_luau_thread_start(
+            context,
+            thread,
+            args,
+            LuauThreadStart::Limited { limit, completion },
+        );
+    }
+
+    /// Runs `thread` under `limit`, or the scheduler's own resume budget without one, for a
+    /// watcher to answer for.
+    pub fn schedule_watched_luau_thread(
+        self: &Rc<Self>,
+        context: CallContext,
+        thread: luau::Thread,
+        args: Vec<luau::Value>,
+        limit: Option<ResumeLimit>,
+    ) -> WatchedThread {
+        let completion = Rc::new(LocalLuauTaskCompletion::default());
+        let start = match limit {
+            Some(limit) => LuauThreadStart::Limited {
+                limit,
+                completion: completion.clone(),
             },
-            None,
-            options,
-            false,
-        )
+            None => LuauThreadStart::WithCompletion(completion.clone()),
+        };
+        self.schedule_luau_thread_start(context, thread.clone(), args, start);
+        WatchedThread::new(Rc::downgrade(self), self.timers.clone(), thread, completion)
+    }
+
+    fn schedule_luau_thread_start(
+        &self,
+        context: CallContext,
+        thread: luau::Thread,
+        args: Vec<luau::Value>,
+        start: LuauThreadStart,
+    ) {
+        if self.polling.get() {
+            self.pending_luau_work
+                .borrow_mut()
+                .push(PendingLuauWork::Thread {
+                    context,
+                    thread,
+                    args,
+                    start,
+                });
+            return;
+        }
+
+        self.spawn_luau_thread_start(context, thread, args, start);
+    }
+
+    fn spawn_luau_thread_start(
+        &self,
+        context: CallContext,
+        thread: luau::Thread,
+        args: Vec<luau::Value>,
+        start: LuauThreadStart,
+    ) -> TaskHandle {
+        let key = luau_thread_key(&thread);
+        let wake_at = match &start {
+            LuauThreadStart::Delayed(delay) => self.delay_until(Some(*delay)),
+            LuauThreadStart::Immediate
+            | LuauThreadStart::Limited { .. }
+            | LuauThreadStart::WithCompletion(_) => None,
+        };
+        let args = self.prepare_luau_thread_start_args(key, &thread, args, wake_at);
+        let handle = match start {
+            LuauThreadStart::Immediate => {
+                self.state
+                    .borrow_mut()
+                    .spawn_luau_thread(context, thread.clone(), args)
+            }
+            LuauThreadStart::Delayed(delay) => self.state.borrow_mut().spawn_luau_thread_after(
+                context,
+                delay,
+                thread.clone(),
+                args,
+            ),
+            LuauThreadStart::WithCompletion(completion) => {
+                let options = LuauTaskOptions {
+                    completion: Some(completion),
+                    ..self.state.borrow().default_luau_task_options()
+                };
+                self.state.borrow_mut().spawn_luau_thread_with_options(
+                    context,
+                    thread.clone(),
+                    args,
+                    options,
+                )
+            }
+            LuauThreadStart::Limited { limit, completion } => {
+                self.state.borrow_mut().spawn_luau_thread_with_options(
+                    context,
+                    thread.clone(),
+                    args,
+                    LuauTaskOptions {
+                        resume_limit: Some(limit),
+                        completion: Some(completion),
+                    },
+                )
+            }
+        };
+        self.thread_tasks.borrow_mut().insert(key, handle);
+        handle
     }
 
     pub fn spawn_luau_thread_after(
-        &mut self,
+        &self,
         context: CallContext,
         delay: Duration,
         thread: luau::Thread,
         args: Vec<luau::Value>,
     ) -> TaskHandle {
-        let wake_at = self.wake_after(delay);
-        let pending_start = !thread.is_started();
-        self.insert_work(
-            context,
-            TaskWork::LuauThread {
-                thread,
-                args,
-                pending_start,
-            },
-            Some(wake_at),
-            self.default_luau_task_options(),
-            false,
-        )
+        self.spawn_luau_thread_start(context, thread, args, LuauThreadStart::Delayed(delay))
     }
 
-    /// Runs `future` for `thread`, which acts as `context`, while the task
-    /// also belongs to `awaiting`, the group of the run the future acts for.
-    pub fn spawn_luau_future(
-        &mut self,
+    pub fn schedule_luau_thread_after(
+        &self,
         context: CallContext,
-        awaiting: TaskGroupId,
+        delay: Duration,
+        thread: luau::Thread,
+        args: Vec<luau::Value>,
+    ) {
+        self.schedule_luau_thread_start(context, thread, args, LuauThreadStart::Delayed(delay));
+    }
+
+    pub fn schedule_luau_future(
+        &self,
+        context: CallContext,
         thread: luau::Thread,
         future: luau::ScheduledFuture,
-        wake_at: Option<Instant>,
-    ) -> TaskHandle {
-        let handle = self.insert_work(
-            context,
-            TaskWork::LuauFuture { thread, future },
-            wake_at,
-            self.default_luau_task_options(),
-            false,
-        );
-        if let Some(task) = self.tasks.get_mut(&handle.id()) {
-            task.borrows_thread = true;
-        }
-        self.await_group(handle.id(), awaiting);
-        handle
+    ) {
+        self.schedule_luau_future_with_delay(context, None, thread, future);
     }
 
-    /// The task keeps its thread's context and also joins `awaiting` while
-    /// the future runs. Fails, leaving the task alone, unless the task is
-    /// parked and both groups' runs are live.
-    fn replace_with_luau_future(
-        &mut self,
-        id: TaskId,
-        awaiting: TaskGroupId,
+    pub fn schedule_luau_future_after(
+        &self,
+        context: CallContext,
+        delay: Duration,
         thread: luau::Thread,
         future: luau::ScheduledFuture,
-        wake_at: Option<Instant>,
-    ) -> bool {
-        if !self.is_parked(id) {
-            return false;
-        }
-        let context = &self.tasks[&id].context;
-        if self.is_cancelled(context.task_group) || self.is_cancelled(awaiting) {
-            // Dropped once the caller has cancelled the task, which closes the thread first.
-            detach(
-                &self.detached,
-                context,
-                Some(TaskWork::LuauFuture { thread, future }),
-            );
-            return false;
-        }
-        self.await_group(id, awaiting);
-        let task = self.tasks.get_mut(&id).expect("task checked above");
-        task.work = Some(TaskWork::LuauFuture { thread, future });
-        task.state = TaskState::Pending;
-        task.error = None;
-        task.output = None;
-        task.wake_at = wake_at;
-        if let Some(wake_at) = wake_at {
-            self.wake_task_at(id, wake_at);
-        } else {
-            self.enqueue(id);
-        }
-        true
+    ) {
+        self.schedule_luau_future_with_delay(context, Some(delay), thread, future);
     }
 
-    fn insert_task(
-        &mut self,
+    fn schedule_luau_future_with_delay(
+        &self,
         context: CallContext,
-        future: TaskFuture,
-        wake_at: Option<Instant>,
-    ) -> TaskHandle {
-        self.insert_work(
-            context,
-            TaskWork::Future(future),
-            wake_at,
-            self.default_luau_task_options(),
-            false,
-        )
-    }
-
-    fn insert_work(
-        &mut self,
-        context: CallContext,
-        work: TaskWork,
-        wake_at: Option<Instant>,
-        options: LuauTaskOptions,
-        watcher: bool,
-    ) -> TaskHandle {
-        let id = TaskId(self.next_task_id);
-        self.next_task_id = self.next_task_id.saturating_add(1);
-        let group = context.task_group;
-        let handle = TaskHandle { id };
-
-        if let TaskWork::LuauThread { thread, .. } | TaskWork::LuauFuture { thread, .. } = &work {
-            self.threads.borrow_mut().insert(id, thread.clone());
-        }
-        self.groups
-            .borrow_mut()
-            .entry(group)
-            .or_default()
-            .insert(id);
-        self.tasks.insert(
-            id,
-            Task {
-                awaiting: None,
-                borrows_thread: false,
-                watcher,
-                queued: false,
-                context,
-                work: Some(work),
-                state: TaskState::Pending,
-                error: None,
-                output: None,
-                wake_at,
-                resume_limit: options.resume_limit,
-                completion: options.completion,
-            },
-        );
-        if self.is_cancelled(group) {
-            self.cancel(id);
-        } else if let Some(wake_at) = wake_at {
-            self.wake_task_at(id, wake_at);
-        } else {
-            self.enqueue(id);
+        delay: Option<Duration>,
+        thread: luau::Thread,
+        future: luau::ScheduledFuture,
+    ) {
+        let key = (thread.vm_id(), thread.state_id());
+        let target = self.thread_tasks.borrow().get(&key).copied();
+        if self.polling.get() {
+            self.pending_luau_work
+                .borrow_mut()
+                .push(PendingLuauWork::Future {
+                    target,
+                    context,
+                    delay,
+                    thread,
+                    future,
+                });
+            return;
         }
 
-        handle
-    }
-
-    fn default_luau_task_options(&self) -> LuauTaskOptions {
-        LuauTaskOptions {
-            resume_limit: self.luau_resume_budget.map(ResumeLimit::budget),
-            completion: None,
-        }
-    }
-
-    fn take_pending_luau_thread_start(
-        &mut self,
-        id: TaskId,
-        wake_at: Option<Instant>,
-    ) -> Option<Vec<luau::Value>> {
-        let task = self.tasks.get_mut(&id)?;
-        if task.state != TaskState::Pending || !start_wake_is_not_later(wake_at, task.wake_at) {
-            return None;
-        }
-
-        let Some(TaskWork::LuauThread {
+        self.spawn_untracked_luau_future(
+            context.task_group,
+            self.delay_until(delay),
             thread,
-            args,
-            pending_start,
-            ..
-        }) = task.work.as_mut()
-        else {
-            return None;
-        };
-        if !*pending_start || thread.is_started() {
-            return None;
-        }
-
-        let args = std::mem::take(args);
-        detach(&self.detached, &task.context, task.work.take());
-        // Not closed: the thread starts again as another task.
-        settle(&self.threads, id, task, TaskState::Cancelled);
-        self.timers.remove(TimerId::Task(id));
-        Some(args)
-    }
-
-    /// Cancels a pending task and closes its Luau thread, a coroutine the task only borrowed
-    /// included, so that code still holding the thread can't resume it either.
-    pub fn cancel(&mut self, id: TaskId) -> bool {
-        let Some(task) = self.tasks.get_mut(&id) else {
-            return false;
-        };
-        if task.state != TaskState::Pending {
-            return false;
-        }
-
-        // Before the work is dropped, whose destructors may run code that holds the thread.
-        if let Some(thread) = settle(&self.threads, id, task, TaskState::Cancelled) {
-            close_cancelled_thread(&thread);
-        }
-        detach(&self.detached, &task.context, task.work.take());
-        if let Some(completion) = task.completion.as_ref() {
-            completion.complete(
-                Err(format!("Luau task {} was cancelled", id.0).into()),
-                self.timers.now(),
-            );
-        }
-        self.timers.remove(TimerId::Task(id));
-        true
-    }
-
-    /// Cancels every pending task in `group`, and any task later spawned
-    /// into it. The default group is never cancelled.
-    pub fn cancel_group(&mut self, group: TaskGroupId) -> usize {
-        self.cancel_group_tasks(group).len()
-    }
-
-    fn cancel_group_tasks(&mut self, group: TaskGroupId) -> Vec<TaskId> {
-        if group == TaskGroupId::default() {
-            return Vec::new();
-        }
-        self.cancelled_groups.borrow_mut().insert(group);
-        let ids: Vec<_> = self
-            .groups
-            .borrow()
-            .get(&group)
-            .into_iter()
-            .flatten()
-            .copied()
-            .collect();
-        ids.into_iter().filter(|id| self.cancel(*id)).collect()
-    }
-
-    pub fn poll_ready(&mut self) -> usize {
-        self.begin_round();
-        self.poll_queue(true) + self.poll_queue(false)
-    }
-
-    /// Makes ready the tasks that were woken or are due, and takes every ready task into the round
-    /// that begins, after any a round that unwound left. What is made ready during the round waits
-    /// for the next one.
-    fn begin_round(&mut self) {
-        self.timers.wake_due(self.now());
-        self.drain_wake_queue();
-        self.round_watchers.append(&mut self.ready_watchers);
-        self.round.append(&mut self.ready);
-    }
-
-    /// Makes task `id` ready once the clock reaches `wake_at`.
-    fn wake_task_at(&self, id: TaskId, wake_at: Instant) {
-        self.timers.set(
-            TimerId::Task(id),
-            wake_at,
-            &TaskWaker::of(id, &self.wake_queue),
+            future,
         );
     }
 
-    /// Polls the round's watchers, or its other tasks, once each.
-    fn poll_queue(&mut self, watchers: bool) -> usize {
-        let mut completed = 0;
-        // Popped one by one, so that a poll that unwinds leaves the rest to the next round.
-        loop {
-            let next = if watchers {
-                self.round_watchers.pop_front()
-            } else {
-                self.round.pop_front()
-            };
-            let Some(id) = next else {
-                break;
-            };
-            let Some(task) = self.tasks.get_mut(&id) else {
-                continue;
-            };
-            task.queued = false;
-            if task.state != TaskState::Pending {
-                continue;
-            }
-            // It or its group was cancelled during this poll, which cancels the task once the poll
-            // ends.
-            let groups = (task.context.task_group, task.awaiting);
-            let cancel_asked = || {
-                self.cancelling.borrow().contains(&id)
-                    || std::iter::once(groups.0)
-                        .chain(groups.1)
-                        .any(|group| self.cancelled_groups.borrow().contains(&group))
-            };
-            if cancel_asked() {
-                continue;
-            }
-            let Some(work) = task.work.as_mut() else {
-                continue;
-            };
-
-            let waker = TaskWaker::of(id, &self.wake_queue);
-            let mut cx = Context::from_waker(&waker);
-            let clock = self.timers.clock();
-            let interrupted_by = Cell::new(None);
-            let polled = poll_work(
-                &task.context,
-                work,
-                &mut cx,
-                &Resuming {
-                    cancel_asked: &cancel_asked,
-                    limit: task.resume_limit.as_ref(),
-                    clock,
-                    interrupted_by: &interrupted_by,
-                },
-            );
-            match polled {
-                WorkPoll::Completed { output } => {
-                    if let Some(completion) = task.completion.as_ref() {
-                        completion.complete(Ok(output.unwrap_or_default()), clock.now());
-                        task.output = None;
-                    } else {
-                        task.output = output;
-                    }
-                    detach(&self.detached, &task.context, task.work.take());
-                    settle(&self.threads, id, task, TaskState::Completed);
-                    completed += 1;
-                }
-                // Stays pending, without work, until the parked call's future
-                // replaces it or a refused replacement cancels it.
-                WorkPoll::Parked => {
-                    detach(&self.detached, &task.context, task.work.take());
-                    task.wake_at = None;
-                    completed += 1;
-                }
-                WorkPoll::Cancelled => {
-                    if let Some(completion) = task.completion.as_ref() {
-                        completion.complete(
-                            Err(format!("Luau task {} was cancelled", id.0).into()),
-                            clock.now(),
-                        );
-                    }
-                    detach(&self.detached, &task.context, task.work.take());
-                    // Not closed: other code started the thread and runs it, or it was closed as
-                    // it yielded.
-                    settle(&self.threads, id, task, TaskState::Cancelled);
-                    completed += 1;
-                }
-                WorkPoll::Failed(error) => {
-                    if let Some(completion) = task.completion.as_ref() {
-                        completion.interrupted_by.set(interrupted_by.get());
-                        completion.complete(
-                            Err(luau::RaisedError {
-                                kind: error.kind,
-                                message: format!("Luau task {} failed: {}", id.0, error.message),
-                            }),
-                            clock.now(),
-                        );
-                    }
-                    detach(&self.detached, &task.context, task.work.take());
-                    settle(&self.threads, id, task, TaskState::Failed);
-                    task.error = Some(Arc::from(error.message));
-                    completed += 1;
-                }
-                WorkPoll::Yielded if task.borrows_thread => {
-                    detach(&self.detached, &task.context, task.work.take());
-                    settle(&self.threads, id, task, TaskState::Completed);
-                    completed += 1;
-                }
-                WorkPoll::Yielded | WorkPoll::Pending => {}
-            }
-            if !matches!(task.work, Some(TaskWork::LuauFuture { .. })) {
-                self.stop_awaiting(id);
-            }
-        }
-
-        completed
+    /// A thread no task tracks, such as a coroutine, keeps acting as itself
+    /// while it awaits `future`; only its membership follows the future.
+    fn spawn_untracked_luau_future(
+        &self,
+        awaiting: TaskGroupId,
+        wake_at: Option<Instant>,
+        thread: luau::Thread,
+        future: luau::ScheduledFuture,
+    ) {
+        // Luau code, not the scheduler, resumed the thread that parked, so
+        // no resume will take its park; the new task starts it fresh.
+        self.take_parked_luau_thread(&thread);
+        let context = thread.call_context().ok().flatten().unwrap_or_default();
+        let handle = self.state.borrow_mut().spawn_luau_future(
+            context,
+            awaiting,
+            thread.clone(),
+            future,
+            wake_at,
+        );
+        self.thread_tasks
+            .borrow_mut()
+            .insert(luau_thread_key(&thread), handle);
     }
 
-    /// Makes pending task `id` ready, unless it already is: a task is polled at most once a round,
-    /// however often it was woken.
-    fn enqueue(&mut self, id: TaskId) {
-        let Some(task) = self.tasks.get_mut(&id) else {
-            return;
+    /// Whether `group`'s run has ended; readable while the scheduler polls.
+    pub fn is_group_cancelled(&self, group: TaskGroupId) -> bool {
+        self.cancelled_groups.borrow().contains(&group)
+    }
+
+    pub fn cancel(&self, id: TaskId) -> bool {
+        let cancelled = { self.state.borrow_mut().cancel(id) };
+        self.drop_detached();
+        self.flush_pending_luau_cancellations();
+        cancelled
+    }
+
+    /// Cancels `thread`'s task, and closes the thread at once: Luau code holding it can't resume
+    /// it from here on. While the scheduler polls, as from a task, the task is cancelled once the
+    /// scheduler is free: before any other task runs when a watcher asks, and at the end of the
+    /// poll otherwise. A thread that is running, or has resumed another, goes on to where it next
+    /// yields, and is closed there.
+    pub fn cancel_luau_thread(&self, thread: &luau::Thread) -> bool {
+        let key = luau_thread_key(thread);
+        let scheduled = self.close_scheduled(thread);
+        if self.polling.get() {
+            if let Some(handle) = self.thread_tasks.borrow().get(&key) {
+                self.cancelling.borrow_mut().insert(handle.id());
+            }
+            self.pending_luau_cancellations
+                .borrow_mut()
+                .push(thread.clone());
+            return scheduled;
+        }
+        // Work a poll put off and never took up, as when it unwound, goes with the task.
+        let pending = self.cancel_pending_luau_work(|work| luau_thread_key(work.thread()) == key);
+        let Some(handle) = self.thread_tasks.borrow_mut().remove(&key) else {
+            return pending;
         };
-        if task.state != TaskState::Pending || task.queued {
-            return;
+        self.cancel(handle.id()) || pending
+    }
+
+    /// Closes `thread` if the scheduler holds work for it, whoever has the scheduler borrowed, and
+    /// returns whether it does.
+    fn close_scheduled(&self, thread: &luau::Thread) -> bool {
+        let key = luau_thread_key(thread);
+        let task = self.thread_tasks.borrow().get(&key).copied();
+        let held = task.is_some_and(|handle| self.threads.borrow().contains_key(&handle.id()))
+            || self
+                .pending_luau_work
+                .borrow()
+                .iter()
+                .map(PendingLuauWork::thread)
+                .any(|thread| luau_thread_key(thread) == key);
+        if !held {
+            return false;
         }
-        task.queued = true;
-        if task.watcher {
-            self.ready_watchers.push_back(id);
-        } else {
-            self.ready.push_back(id);
+        close_cancelled_thread(thread);
+        true
+    }
+
+    /// [`Self::cancel_luau_thread`], returning a future that completes once the thread's work is
+    /// dropped: at once outside a poll, and when the scheduler is free inside one.
+    pub fn cancel_luau_thread_and_settle(
+        &self,
+        thread: &luau::Thread,
+    ) -> impl Future<Output = ()> + use<> {
+        self.cancel_luau_thread(thread);
+        let settled = self.polling.get().then(|| {
+            let (ended, settled) = tokio::sync::oneshot::channel();
+            self.poll_end.borrow_mut().push(ended);
+            settled
+        });
+        async move {
+            if let Some(settled) = settled {
+                let _ = settled.await;
+            }
         }
     }
 
-    fn drain_wake_queue(&mut self) {
-        for id in self.wake_queue.drain() {
-            self.enqueue(id);
-        }
-    }
-
-    /// How long, by the scheduler's clock, until it has a task to poll. `None` when no task is
-    /// ready or due.
-    pub fn next_wake_delay(&self) -> Option<Duration> {
-        if !self.ready.is_empty()
-            || !self.ready_watchers.is_empty()
-            || !self.round.is_empty()
-            || !self.round_watchers.is_empty()
-            || self.wake_queue.has_pending_wake()
+    /// Cancels `thread`'s task the next time the scheduler is free to, for a caller that may be
+    /// running inside it, such as a destructor. The thread is closed at once, as
+    /// [`Self::cancel_luau_thread`] closes it.
+    pub fn schedule_cancel_luau_thread(&self, thread: luau::Thread) {
+        self.close_scheduled(&thread);
+        if self.polling.get()
+            && let Some(handle) = self.thread_tasks.borrow().get(&luau_thread_key(&thread))
         {
-            return Some(Duration::ZERO);
+            self.cancelling.borrow_mut().insert(handle.id());
         }
-
-        self.timers.next_delay(self.now())
+        self.pending_luau_cancellations.borrow_mut().push(thread);
     }
 
-    /// Waits until a task is woken, [`SchedulerWake::wake`] is called, or `timeout` passes.
-    /// Returns at once when either happened since the last wait.
+    pub fn remove(&self, id: TaskId) -> bool {
+        self.thread_tasks
+            .borrow_mut()
+            .retain(|_, handle| handle.id() != id);
+        let removed = { self.state.borrow_mut().remove(id) };
+        self.drop_detached();
+        self.flush_pending_luau_cancellations();
+        removed
+    }
+
+    pub fn park_luau_thread(&self, thread: &luau::Thread) {
+        self.parked_threads
+            .borrow_mut()
+            .insert((thread.vm_id(), thread.state_id()));
+    }
+
+    pub fn luau_thread_handle(&self, thread: &luau::Thread) -> Option<TaskHandle> {
+        self.thread_tasks
+            .borrow()
+            .get(&(thread.vm_id(), thread.state_id()))
+            .copied()
+    }
+
+    pub fn take_luau_thread_output(&self, thread: &luau::Thread) -> Option<Vec<luau::Value>> {
+        let handle = self.luau_thread_handle(thread)?;
+        self.state
+            .borrow_mut()
+            .tasks
+            .get_mut(&handle.id())
+            .and_then(|task| task.output.take())
+    }
+
+    pub(super) fn take_parked_luau_thread(&self, thread: &luau::Thread) -> bool {
+        self.parked_threads
+            .borrow_mut()
+            .remove(&luau_thread_key(thread))
+    }
+
+    /// Runs a round: every task ready as it begins, once. The watchers run first, and what they
+    /// asked for is done before any other task runs: a thread or a group one of them cancelled is
+    /// dropped, along with whatever its work held, such as the threads of the calls it was waiting
+    /// on. A task started or woken during the round first runs in the next one.
+    pub fn poll_ready(&self) -> usize {
+        let watchers = {
+            let _polling = Polling::begin(&self.polling);
+            let mut state = self.state.borrow_mut();
+            state.begin_round();
+            state.poll_queue(true)
+        };
+        self.end_poll();
+        let others = {
+            let _polling = Polling::begin(&self.polling);
+            self.state.borrow_mut().poll_queue(false)
+        };
+        self.end_poll();
+        watchers + others
+    }
+
+    /// Drops the work the scheduler took off its tasks, now that the scheduler isn't borrowed:
+    /// a destructor is free to call it, and one that panics fails nothing else.
+    fn drop_detached(&self) {
+        loop {
+            let detached = std::mem::take(&mut *self.detached.borrow_mut());
+            if detached.is_empty() {
+                break;
+            }
+            drop(detached);
+        }
+    }
+
+    /// Does what was asked of the scheduler while it was borrowed for polling.
+    fn end_poll(&self) {
+        self.flush_pending_luau_threads();
+        self.flush_pending_futures();
+        self.flush_pending_group_cancellations();
+        self.flush_pending_luau_cancellations();
+        self.drop_detached();
+        self.cancelling.borrow_mut().clear();
+        for ended in std::mem::take(&mut *self.poll_end.borrow_mut()) {
+            let _ = ended.send(());
+        }
+    }
+
+    pub fn snapshot(&self, id: TaskId) -> Option<TaskSnapshot> {
+        self.state.borrow().snapshot(id)
+    }
+
+    pub fn snapshots(&self) -> Vec<TaskSnapshot> {
+        self.state.borrow().snapshots()
+    }
+
+    pub fn group_snapshots(&self, group: TaskGroupId) -> Vec<TaskSnapshot> {
+        self.state.borrow().group_snapshots(group)
+    }
+
+    pub fn has_pending(&self) -> bool {
+        self.state.borrow().has_pending()
+    }
+
+    pub fn next_wake_delay(&self) -> Option<Duration> {
+        self.state.borrow().next_wake_delay()
+    }
+
+    pub fn wait_for_wake(&self, timeout: Option<Duration>) {
+        self.state.borrow().wait_for_wake(timeout);
+    }
+
+    /// Usable while the scheduler polls, as from a host call.
+    pub fn wake_handle(&self) -> SchedulerWake {
+        self.wake.clone()
+    }
+
+    /// Sleeps until there is something to poll: a task is woken or due, a [`Sleep`] is due, a
+    /// [`SchedulerWake`] fires, or `deadline`, the earliest among the work the caller polls
+    /// itself, passes.
     ///
     /// # Panics
     ///
     /// On a manual clock, whose time no wait would see pass.
-    pub fn wait_for_wake(&self, timeout: Option<Duration>) {
-        if let Err(error) = self.timers.clock().ensure_can_wait() {
-            panic!("{error}");
-        }
-        self.wake_queue.wait(timeout);
-    }
-
-    pub fn wake_handle(&self) -> SchedulerWake {
-        SchedulerWake::of(self.wake_queue.clone())
-    }
-
-    /// Parked on an async call: still pending, waiting for that call's
-    /// future to become its work.
-    fn is_parked(&self, id: TaskId) -> bool {
-        self.tasks
-            .get(&id)
-            .is_some_and(|task| task.state == TaskState::Pending && task.work.is_none())
-    }
-
-    fn is_cancelled(&self, group: TaskGroupId) -> bool {
-        self.cancelled_groups.borrow().contains(&group)
-    }
-
-    /// A task belongs to its own group for its whole life, and also to the
-    /// group of a future from another run while it awaits one. These two
-    /// keep `groups` in step with that, so cancelling either group finds it.
-    fn await_group(&mut self, id: TaskId, group: TaskGroupId) {
-        let Some(task) = self.tasks.get_mut(&id) else {
-            return;
+    pub fn wait_for_work(&self, deadline: Option<Instant>) {
+        let state = self.state.borrow();
+        let now = self.now();
+        let due = if state.has_pending() {
+            state.next_wake_delay()
+        } else {
+            state.timers.next_delay(now)
         };
-        let awaiting = (group != task.context.task_group).then_some(group);
-        let previous = std::mem::replace(&mut task.awaiting, awaiting);
-        if previous == awaiting {
-            return;
-        }
-        let mut groups = self.groups.borrow_mut();
-        if let Some(previous) = previous
-            && let Some(group_tasks) = groups.get_mut(&previous)
-        {
-            group_tasks.remove(&id);
-        }
-        if let Some(awaiting) = awaiting {
-            groups.entry(awaiting).or_default().insert(id);
-            drop(groups);
-            if self.is_cancelled(awaiting) {
-                self.cancel(id);
-            }
-        }
-    }
-
-    fn stop_awaiting(&mut self, id: TaskId) {
-        let Some(task) = self.tasks.get_mut(&id) else {
-            return;
+        let until_deadline = deadline.map(|deadline| deadline.saturating_duration_since(now));
+        let timeout = match (due, until_deadline) {
+            (Some(due), Some(until_deadline)) => Some(due.min(until_deadline)),
+            (due, until_deadline) => due.or(until_deadline),
         };
-        if let Some(previous) = task.awaiting.take()
-            && let Some(group_tasks) = self.groups.borrow_mut().get_mut(&previous)
-        {
-            group_tasks.remove(&id);
-        }
+        state.wait_for_wake(timeout);
     }
 
-    pub fn remove(&mut self, id: TaskId) -> bool {
-        let Some(mut task) = self.tasks.remove(&id) else {
-            return false;
-        };
-        self.threads.borrow_mut().remove(&id);
-        detach(&self.detached, &task.context, task.work.take());
-
-        for group in std::iter::once(task.context.task_group).chain(task.awaiting) {
-            if let Some(group_tasks) = self.groups.borrow_mut().get_mut(&group) {
-                group_tasks.remove(&id);
-            }
-        }
-        for queue in [
-            &mut self.ready,
-            &mut self.ready_watchers,
-            &mut self.round,
-            &mut self.round_watchers,
-        ] {
-            queue.retain(|queued| *queued != id);
-        }
-        self.timers.remove(TimerId::Task(id));
-        true
-    }
-
-    pub fn snapshot(&self, id: TaskId) -> Option<TaskSnapshot> {
-        let task = self.tasks.get(&id)?;
-        Some(TaskSnapshot {
-            id,
-            group: task.context.task_group,
-            origin: task.context.origin.clone(),
-            state: task.state,
-            error: task.error.clone(),
-        })
-    }
-
-    pub fn group_snapshots(&self, group: TaskGroupId) -> Vec<TaskSnapshot> {
-        let groups = self.groups.borrow();
-        let Some(tasks) = groups.get(&group) else {
-            return Vec::new();
-        };
-
-        let mut snapshots: Vec<_> = tasks.iter().filter_map(|id| self.snapshot(*id)).collect();
-        snapshots.sort_by_key(|snapshot| snapshot.id.0);
-        snapshots
-    }
-
-    pub fn snapshots(&self) -> Vec<TaskSnapshot> {
-        let mut snapshots: Vec<_> = self
-            .tasks
-            .keys()
-            .filter_map(|id| self.snapshot(*id))
-            .collect();
-        snapshots.sort_by_key(|snapshot| snapshot.id.0);
-        snapshots
-    }
-
-    pub fn has_pending(&self) -> bool {
-        self.tasks
-            .values()
-            .any(|task| task.state == TaskState::Pending)
-    }
-
-    pub fn remove_finished(&mut self) -> usize {
-        let finished: Vec<_> = self
-            .tasks
-            .iter()
-            .filter_map(|(id, task)| (task.state != TaskState::Pending).then_some(*id))
-            .collect();
-
-        let mut removed = 0;
-        for id in finished {
-            if self.remove(id) {
-                removed += 1;
-            }
+    pub fn remove_finished(&self) -> usize {
+        let finished_ids = self
+            .state
+            .borrow()
+            .snapshots()
+            .into_iter()
+            .filter_map(|snapshot| (snapshot.state != TaskState::Pending).then_some(snapshot.id))
+            .collect::<HashSet<_>>();
+        if finished_ids.is_empty() {
+            return 0;
         }
 
+        self.thread_tasks
+            .borrow_mut()
+            .retain(|_, handle| !finished_ids.contains(&handle.id()));
+        let removed = { self.state.borrow_mut().remove_finished() };
+        self.flush_pending_luau_cancellations();
         removed
     }
-}
 
-fn start_wake_is_not_later(new_wake_at: Option<Instant>, old_wake_at: Option<Instant>) -> bool {
-    match (new_wake_at, old_wake_at) {
-        (None, _) => true,
-        (Some(_), None) => false,
-        (Some(new_wake_at), Some(old_wake_at)) => new_wake_at <= old_wake_at,
+    fn prepare_luau_thread_start_args(
+        &self,
+        key: (u64, usize),
+        thread: &luau::Thread,
+        mut args: Vec<luau::Value>,
+        wake_at: Option<Instant>,
+    ) -> Vec<luau::Value> {
+        if thread.is_started() {
+            return args;
+        }
+
+        let Some(handle) = self.thread_tasks.borrow().get(&key).copied() else {
+            return args;
+        };
+        let Some(mut merged_args) = self
+            .state
+            .borrow_mut()
+            .take_pending_luau_thread_start(handle.id(), wake_at)
+        else {
+            return args;
+        };
+
+        self.thread_tasks.borrow_mut().remove(&key);
+        merged_args.append(&mut args);
+        merged_args
+    }
+
+    /// Cancels the work a poll put off that `matches`, as its tasks would be: closes its threads,
+    /// tells a start's completion it was cancelled and drops the work, and returns whether there
+    /// was any.
+    fn cancel_pending_luau_work(&self, matches: impl Fn(&PendingLuauWork) -> bool) -> bool {
+        let (cancelled, kept) = std::mem::take(&mut *self.pending_luau_work.borrow_mut())
+            .into_iter()
+            .partition::<Vec<_>, _>(matches);
+        *self.pending_luau_work.borrow_mut() = kept;
+        // Closed before the work is dropped, as a task's is.
+        for work in &cancelled {
+            close_cancelled_thread(work.thread());
+        }
+        let any = !cancelled.is_empty();
+        let now = self.now();
+        for work in cancelled {
+            let context = match &work {
+                PendingLuauWork::Thread { context, start, .. } => {
+                    if let LuauThreadStart::WithCompletion(completion)
+                    | LuauThreadStart::Limited { completion, .. } = start
+                    {
+                        completion.complete(Err("Luau task was cancelled".into()), now);
+                    }
+                    context.clone()
+                }
+                PendingLuauWork::Future { context, .. } => context.clone(),
+            };
+            drop_catching_panic(&context, work);
+        }
+        any
+    }
+
+    pub(super) fn flush_pending_luau_threads(&self) {
+        let pending = std::mem::take(&mut *self.pending_luau_work.borrow_mut());
+        for pending in pending {
+            match pending {
+                PendingLuauWork::Thread {
+                    context,
+                    thread,
+                    args,
+                    start,
+                } => {
+                    self.spawn_luau_thread_start(context, thread, args, start);
+                }
+                PendingLuauWork::Future {
+                    target,
+                    context,
+                    delay,
+                    thread,
+                    future,
+                } => {
+                    let wake_at = self.delay_until(delay);
+                    // A task that is not parked, such as a finished one that
+                    // borrowed a coroutine, no longer carries the thread.
+                    let target = target.filter(|handle| self.state.borrow().is_parked(handle.id()));
+                    let Some(handle) = target else {
+                        self.spawn_untracked_luau_future(
+                            context.task_group,
+                            wake_at,
+                            thread,
+                            future,
+                        );
+                        continue;
+                    };
+                    let replaced = self.state.borrow_mut().replace_with_luau_future(
+                        handle.id(),
+                        context.task_group,
+                        thread.clone(),
+                        future,
+                        wake_at,
+                    );
+                    if replaced {
+                        self.thread_tasks
+                            .borrow_mut()
+                            .insert(luau_thread_key(&thread), handle);
+                    } else {
+                        // The parked thread has nothing left to resume it.
+                        self.cancel(handle.id());
+                    }
+                }
+            }
+        }
+    }
+
+    fn flush_pending_futures(&self) {
+        let pending = std::mem::take(&mut *self.pending_futures.borrow_mut());
+        for (context, future, watcher) in pending {
+            self.schedule_boxed(context, future, watcher);
+        }
+    }
+
+    fn flush_pending_group_cancellations(&self) {
+        let pending = std::mem::take(&mut *self.pending_group_cancellations.borrow_mut());
+        for group in pending {
+            self.cancel_group(group);
+        }
+    }
+
+    fn flush_pending_luau_cancellations(&self) {
+        let pending = std::mem::take(&mut *self.pending_luau_cancellations.borrow_mut());
+        for thread in pending {
+            self.cancel_luau_thread(&thread);
+        }
+    }
+
+    /// `delay` from now, or now when that is past the last instant.
+    fn delay_until(&self, delay: Option<Duration>) -> Option<Instant> {
+        delay.map(|delay| {
+            let now = self.now();
+            now.checked_add(delay).unwrap_or(now)
+        })
     }
 }
 
-/// Takes `task` out of the pending ones as `state`, and returns the thread it had. The thread
-/// loses the context the task ran it with, unless the task only borrowed it and the context is
-/// the thread's own.
-fn settle(
-    threads: &RefCell<HashMap<TaskId, luau::Thread>>,
-    id: TaskId,
-    task: &mut Task,
-    state: TaskState,
-) -> Option<luau::Thread> {
-    task.state = state;
-    task.wake_at = None;
-    let thread = threads.borrow_mut().remove(&id);
-    if let Some(thread) = &thread
-        && !task.borrows_thread
-    {
-        let _ = thread.clear_call_context();
+/// Marks a [`Scheduler`] as polling until dropped, so that a poll that unwinds doesn't leave
+/// it putting off whatever it is asked from then on.
+pub(super) struct Polling<'a>(&'a Cell<bool>);
+
+impl<'a> Polling<'a> {
+    pub(super) fn begin(polling: &'a Cell<bool>) -> Self {
+        polling.set(true);
+        Self(polling)
     }
-    thread
 }
 
-struct Task {
-    context: CallContext,
-    /// Another run's group whose future the task awaits.
-    awaiting: Option<TaskGroupId>,
-    /// The task only carries a thread Luau code drives, such as a
-    /// coroutine, through one wait; a plain yield hands the thread back.
-    borrows_thread: bool,
-    /// Polled ahead of the ready tasks that aren't.
-    watcher: bool,
-    /// In a ready queue, or in the round under way's.
-    queued: bool,
-    work: Option<TaskWork>,
-    state: TaskState,
-    error: Option<Arc<str>>,
-    output: Option<Vec<luau::Value>>,
-    wake_at: Option<Instant>,
-    resume_limit: Option<ResumeLimit>,
-    completion: Option<Rc<LocalLuauTaskCompletion>>,
+impl Drop for Polling<'_> {
+    fn drop(&mut self) {
+        self.0.set(false);
+    }
+}
+
+fn luau_thread_key(thread: &luau::Thread) -> (u64, usize) {
+    (thread.vm_id(), thread.state_id())
+}
+
+enum PendingLuauWork {
+    Thread {
+        context: CallContext,
+        thread: luau::Thread,
+        args: Vec<luau::Value>,
+        start: LuauThreadStart,
+    },
+    Future {
+        target: Option<TaskHandle>,
+        context: CallContext,
+        delay: Option<Duration>,
+        thread: luau::Thread,
+        future: luau::ScheduledFuture,
+    },
+}
+
+impl PendingLuauWork {
+    fn thread(&self) -> &luau::Thread {
+        match self {
+            Self::Thread { thread, .. } | Self::Future { thread, .. } => thread,
+        }
+    }
+
+    /// Whether the task this becomes belongs to `group`: as its own, or as that of the run
+    /// whose future it awaits.
+    fn is_in(&self, group: TaskGroupId) -> bool {
+        match self {
+            Self::Thread { context, .. } => context.task_group == group,
+            Self::Future {
+                context, thread, ..
+            } => {
+                context.task_group == group
+                    || thread
+                        .call_context()
+                        .ok()
+                        .flatten()
+                        .is_some_and(|own| own.task_group == group)
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use harmony_core::{
-    LocalScheduler,
+    Scheduler,
     UserDataBinding,
 };
 use harmony_luau as luau;
@@ -63,7 +63,7 @@ impl PluginExecutor {
         let thread = self.vm.create_thread(&handler.handler)?;
         let mut context = handler.context.clone();
         context.caller.insert(request.dispatch_auth);
-        let scheduler = self.vm.data().get::<LocalScheduler>()?;
+        let scheduler = self.vm.data().get::<Scheduler>()?;
         let handle = scheduler.spawn_luau_thread(context, thread, vec![reader, sender, ctx]);
         self.websocket_tasks
             .borrow_mut()

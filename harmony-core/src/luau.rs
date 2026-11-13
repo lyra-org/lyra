@@ -8,7 +8,7 @@ use harmony_luau as luau;
 
 use crate::{
     Cancellation,
-    LocalScheduler,
+    Scheduler,
     TaskState,
     TokioRuntimeContext,
 };
@@ -39,7 +39,7 @@ impl Default for ThreadDriveOptions {
 
 pub fn drive_thread(
     tokio_runtime: &TokioRuntimeContext,
-    scheduler: &LocalScheduler,
+    scheduler: &Scheduler,
     thread: &luau::Thread,
     options: ThreadDriveOptions,
 ) -> Result<Vec<luau::Value>> {
@@ -83,7 +83,7 @@ pub fn drive_thread(
 /// forgets its task.
 pub(crate) fn poll_thread(
     tokio_runtime: &TokioRuntimeContext,
-    scheduler: &LocalScheduler,
+    scheduler: &Scheduler,
     thread: &luau::Thread,
 ) -> Result<Option<Vec<luau::Value>>> {
     {
@@ -118,7 +118,7 @@ pub(crate) fn poll_thread(
 }
 
 /// Cancels `thread` and forgets its task.
-pub(crate) fn abandon_thread(scheduler: &LocalScheduler, thread: &luau::Thread) {
+pub(crate) fn abandon_thread(scheduler: &Scheduler, thread: &luau::Thread) {
     let task_id = scheduler
         .luau_thread_handle(thread)
         .map(|handle| handle.id());
@@ -153,7 +153,7 @@ mod tests {
     fn completed_thread_returns_values_and_removes_task() -> Result<()> {
         let tokio_runtime = runtime()?;
         let vm = luau::Vm::new()?;
-        let scheduler = LocalScheduler::new();
+        let scheduler = Scheduler::new();
         let function = vm.load_chunk(&luau::Chunk::new(
             Arc::<[u8]>::from(&b"return 42, 'done'"[..]),
             luau::ChunkOrigin::default(),
@@ -184,7 +184,7 @@ mod tests {
     fn timeout_past_instant_range_drives_without_a_deadline() -> Result<()> {
         let tokio_runtime = runtime()?;
         let vm = luau::Vm::new()?;
-        let scheduler = LocalScheduler::new();
+        let scheduler = Scheduler::new();
         let function = vm.load_chunk(&luau::Chunk::new(
             Arc::<[u8]>::from(&b"return 1"[..]),
             luau::ChunkOrigin::default(),
@@ -206,7 +206,7 @@ mod tests {
             base: true,
             ..luau::StandardLibraries::none()
         })?;
-        let scheduler = LocalScheduler::new();
+        let scheduler = Scheduler::new();
         let function = vm.load_chunk(&luau::Chunk::new(
             Arc::<[u8]>::from(&b"error('boom')"[..]),
             luau::ChunkOrigin::default(),
@@ -232,7 +232,7 @@ mod tests {
     fn cancelled_thread_returns_error_and_removes_task() -> Result<()> {
         let tokio_runtime = runtime()?;
         let vm = luau::Vm::new()?;
-        let scheduler = LocalScheduler::new();
+        let scheduler = Scheduler::new();
         let function = vm.load_chunk(&luau::Chunk::new(
             Arc::<[u8]>::from(&b"return 1"[..]),
             luau::ChunkOrigin::default(),
@@ -259,7 +259,7 @@ mod tests {
     fn cancellation_flag_stops_and_removes_thread() -> Result<()> {
         let tokio_runtime = runtime()?;
         let vm = luau::Vm::new()?;
-        let scheduler = LocalScheduler::new();
+        let scheduler = Scheduler::new();
         let function = vm.load_chunk(&luau::Chunk::new(
             Arc::<[u8]>::from(&b"coroutine.yield(); return 1"[..]),
             luau::ChunkOrigin::default(),
@@ -285,7 +285,7 @@ mod tests {
         let tokio_runtime = runtime()?;
         let vm = luau::Vm::new()?;
         vm.open_standard_libraries(luau::StandardLibraries::all_supported())?;
-        let scheduler = LocalScheduler::new();
+        let scheduler = Scheduler::new();
         let function = vm.load_chunk(&luau::Chunk::new(
             Arc::<[u8]>::from(&b"coroutine.yield(); return 1"[..]),
             luau::ChunkOrigin::default(),
@@ -311,7 +311,7 @@ mod tests {
     fn delayed_thread_completes_after_wake() -> Result<()> {
         let tokio_runtime = runtime()?;
         let vm = luau::Vm::new()?;
-        let scheduler = LocalScheduler::new();
+        let scheduler = Scheduler::new();
         let function = vm.load_chunk(&luau::Chunk::new(
             Arc::<[u8]>::from(&b"return 7"[..]),
             luau::ChunkOrigin::default(),
@@ -339,7 +339,7 @@ mod tests {
     fn a_thread_on_a_manual_clock_is_refused_before_it_runs() -> Result<()> {
         let tokio_runtime = runtime()?;
         let vm = luau::Vm::new()?;
-        let scheduler = LocalScheduler::with_manual_clock(crate::testing::ManualClock::new());
+        let scheduler = Scheduler::with_manual_clock(crate::testing::ManualClock::new());
         let function = vm.load_chunk(&luau::Chunk::new(
             Arc::<[u8]>::from(&b"runs = (runs or 0) + 1 return 42"[..]),
             luau::ChunkOrigin::default(),

@@ -53,7 +53,7 @@ impl Clock {
 }
 
 /// Every deadline the scheduler wakes something at: its delayed tasks' and its [`Sleep`]s'.
-/// Shared with [`LocalScheduler`](super::LocalScheduler), which hands out [`Sleep`]s while the scheduler is borrowed for
+/// Shared with [`Scheduler`](super::Scheduler), which hands out [`Sleep`]s while the scheduler is borrowed for
 /// polling.
 pub(super) struct Timers {
     clock: Clock,
@@ -144,7 +144,7 @@ impl Timers {
     }
 }
 
-/// Completes at its deadline; see [`LocalScheduler::sleep_until`](super::LocalScheduler::sleep_until).
+/// Completes at its deadline; see [`Scheduler::sleep_until`](super::Scheduler::sleep_until).
 pub struct Sleep {
     timers: Rc<Timers>,
     id: u64,

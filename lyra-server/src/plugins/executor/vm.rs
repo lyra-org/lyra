@@ -171,7 +171,7 @@ impl PluginExecutor {
         let wake = runtime
             .vm
             .data()
-            .get::<harmony_core::LocalScheduler>()?
+            .get::<harmony_core::Scheduler>()?
             .wake_handle();
 
         Ok(Self {
@@ -248,7 +248,7 @@ impl PluginExecutor {
                 return;
             }
         };
-        let scheduler = match self.vm.data().get::<harmony_core::LocalScheduler>() {
+        let scheduler = match self.vm.data().get::<harmony_core::Scheduler>() {
             Ok(scheduler) => scheduler,
             Err(error) => {
                 let _ = reply.send(Err(error.into()));
@@ -346,7 +346,7 @@ impl PluginExecutor {
                 Ok(self
                     .vm
                     .data()
-                    .get::<harmony_core::LocalScheduler>()?
+                    .get::<harmony_core::Scheduler>()?
                     .schedule_watched_luau_thread(context, thread, args, Some(limit)))
             },
         );

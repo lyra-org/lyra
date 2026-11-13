@@ -75,7 +75,7 @@ use harmony_core::ModuleId;
 use harmony_core::{
     CallContext,
     ChunkOrigin,
-    LocalScheduler,
+    Scheduler,
     SchedulerWake,
     TaskState,
     plugin::Runtime,
@@ -106,7 +106,7 @@ impl std::ops::Deref for PluginExecutor {
 impl PluginExecutor {
     /// One round of the executor's work: every task that is ready runs once.
     fn poll_background_tasks(&self) {
-        let Ok(scheduler) = self.vm.data().get::<LocalScheduler>() else {
+        let Ok(scheduler) = self.vm.data().get::<Scheduler>() else {
             return;
         };
         {
@@ -131,7 +131,7 @@ impl PluginExecutor {
     fn wait_for_work(&self) {
         self.vm
             .data()
-            .get::<LocalScheduler>()
+            .get::<Scheduler>()
             .expect("a runtime keeps its scheduler until it shuts down")
             .wait_for_work(None);
     }
@@ -152,7 +152,7 @@ impl PluginExecutor {
 /// pass. A request carries how long its handler has, which becomes a deadline here, once the
 /// executor takes the request up.
 pub(crate) fn now(vm: &harmony_luau::Vm) -> harmony_luau::runtime::Result<std::time::Instant> {
-    Ok(vm.data().get::<LocalScheduler>()?.now())
+    Ok(vm.data().get::<Scheduler>()?.now())
 }
 
 /// The context of a task that watches one of `plugin`'s threads. It is in no run's group, so it

@@ -107,7 +107,7 @@ status. `clippy.toml` disallows those functions everywhere else.
 
 ## Async and Yielding
 
-- An `async fn` in a module yields to the `LocalScheduler`, which resumes the thread when its
+- An `async fn` in a module yields to the `Scheduler`, which resumes the thread when its
   future completes. One that is ready at once returns without yielding.
 - Code can't yield inside a metamethod, a `table.sort` comparator or a host `pcall`. A call that
   must wait there fails with "attempt to yield from a non-yieldable Harmony callback".
@@ -128,7 +128,7 @@ status. `clippy.toml` disallows those functions everywhere else.
   a thread that is to be resumed with no time left, at or after the deadline, on a budget of
   none or with the signal raised, isn't resumed at all: it is closed, and its task fails as
   interrupted.
-- A host that polls a scheduler sleeps between polls in `LocalScheduler::wait_for_work`, which a
+- A host that polls a scheduler sleeps between polls in `Scheduler::wait_for_work`, which a
   woken or due task ends, as does the deadline it is given. For anything else the host polls
   there, it takes a `SchedulerWake` and fires it from any thread, directly or as a `Waker`; a
   wake that arrives between two waits ends the next one. Nothing ticks, so work with no wake and
@@ -136,9 +136,9 @@ status. `clippy.toml` disallows those functions everywhere else.
 - `Cancellation` is a flag that fires such a wake when set. `drive_thread` and a runtime's
   entrypoints take theirs from the scheduler they run on.
 - Host work that watches a Luau thread belongs in a task of its own rather than in the host's
-  loop, so that the scheduler wakes it: `LocalScheduler::schedule_watcher` runs a future, which
+  loop, so that the scheduler wakes it: `Scheduler::schedule_watcher` runs a future, which
   need not be `Send`. There, `LocalLuauTaskCompletion::wait` waits for the thread's end,
-  `LocalScheduler::sleep_until` for a deadline and `Cancellation::cancelled` for a cancellation.
+  `Scheduler::sleep_until` for a deadline and `Cancellation::cancelled` for a cancellation.
   Every round runs the woken watchers first and drops what they cancelled before any other task
   runs, so a thread whose watcher cancels it, for a caller gone or a deadline passed before the
   poll began, isn't resumed again, and neither are the threads its work was waiting on.
@@ -167,7 +167,7 @@ status. `clippy.toml` disallows those functions everywhere else.
 
 ## Time
 
-- A scheduler reads time from one clock, `LocalScheduler::now`: delayed tasks and futures,
+- A scheduler reads time from one clock, `Scheduler::now`: delayed tasks and futures,
   `Sleep`, `ResumeLimit::until`, the deadlines of entrypoints and of `drive_thread`, and
   `LocalLuauTaskCompletion::ended_at`, which is read as the thread ends or is cancelled. A host
   makes the deadlines it hands the scheduler from `now`, not from `Instant::now()`.
@@ -177,10 +177,10 @@ status. `clippy.toml` disallows those functions everywhere else.
   blocks the thread. A `tokio::time` wait doesn't follow it and stays real on any clock, so a
   host that must wait in Tokio for a deadline made from `now` waits for what is left until it,
   the deadline less `now`, from Tokio's own time.
-- The `testing` feature adds `testing::ManualClock`, which `LocalScheduler::with_manual_clock`,
-  `Scheduler::with_manual_clock` and `RuntimeBuilder::manual_clock` install for the scheduler's
-  whole life. It starts at the real time and only moves forward, by `advance`, which runs nothing:
-  the next `poll_ready` wakes what came due.
+- The `testing` feature adds `testing::ManualClock`, which `Scheduler::with_manual_clock` and
+  `RuntimeBuilder::manual_clock` install for the scheduler's whole life. It starts at the real
+  time and only moves forward, by `advance`, which runs nothing: the next `poll_ready` wakes what
+  came due.
 - A scheduler on a manual clock never blocks. `wait_for_work` and `wait_for_wake` panic, and what
   runs code to its end on the calling thread fails before running any: `drive_thread`, and a
   runtime's `exec_all`, `exec_plugin`, `restart_plugin`, `run_plugin_source` and `eval_source_*`.

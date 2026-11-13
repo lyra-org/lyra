@@ -462,7 +462,7 @@ impl StagedExecutor {
         Ok(())
     }
 
-    fn scheduler(&self) -> Result<std::rc::Rc<harmony_core::LocalScheduler>> {
+    fn scheduler(&self) -> Result<std::rc::Rc<harmony_core::Scheduler>> {
         Ok(self.runtime.vm.data().get()?)
     }
 
@@ -1194,7 +1194,7 @@ fn a_stream_waiting_for_a_place_ends_at_its_deadline() -> Result<()> {
 
     let clock = ManualClock::new();
     let (runtime, context, produce) = stream_executor(COUNTING_PRODUCER, Some(clock.clone()))?;
-    let scheduler = runtime.vm.data().get::<harmony_core::LocalScheduler>()?;
+    let scheduler = runtime.vm.data().get::<harmony_core::Scheduler>()?;
     let started = || runtime.eval_source_while_ready(&b"return started"[..], context.clone());
     let _producing = fill_the_places(&runtime, &produce, &context)?;
     assert_eq!(started()?, [harmony_luau::Value::Number(16.0)]);
@@ -1281,7 +1281,7 @@ fn a_stream_ends_by_when_its_producer_ended_against_its_deadline() -> Result<()>
         runtime
             .vm
             .data()
-            .get::<harmony_core::LocalScheduler>()?
+            .get::<harmony_core::Scheduler>()?
             .schedule_future(harmony_core::CallContext::default(), {
                 let clock = clock.clone();
                 async move {
@@ -1320,13 +1320,14 @@ fn a_stream_queued_while_the_scheduler_polls_is_produced() -> Result<()> {
         stream_executor("return function(writer) writer:write('chunk') end", None)?;
     let (queued, body) = std::sync::mpsc::channel();
     let vm = runtime.vm.clone();
-    vm.data()
-        .get::<harmony_core::LocalScheduler>()?
-        .schedule_future(harmony_core::CallContext::default(), async move {
+    vm.data().get::<harmony_core::Scheduler>()?.schedule_future(
+        harmony_core::CallContext::default(),
+        async move {
             let body = queue_demo_stream(&vm, produce, context, Duration::from_secs(60))?;
             let _ = queued.send(body);
             Ok(())
-        });
+        },
+    );
 
     let chunks = serve_until(&runtime, async move {
         let mut body = tokio::task::spawn_blocking(move || body.recv())

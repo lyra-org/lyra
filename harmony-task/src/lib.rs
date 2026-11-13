@@ -70,7 +70,7 @@ impl TaskModule {
 
     #[harmony(description = "Cancels a scheduled thread and closes it, as `coroutine.close` does.")]
     fn cancel(vm: &luau::Vm, thread: luau::Thread) -> luau::runtime::Result<()> {
-        let scheduler = vm.data().get::<harmony_core::LocalScheduler>()?;
+        let scheduler = vm.data().get::<harmony_core::Scheduler>()?;
         scheduler.cancel_luau_thread(&thread);
         Ok(())
     }
@@ -126,7 +126,7 @@ fn schedule_task(
     args: luau::Variadic<luau::Value>,
     delay: Option<Duration>,
 ) -> luau::runtime::Result<luau::Thread> {
-    let scheduler = vm.data().get::<harmony_core::LocalScheduler>()?;
+    let scheduler = vm.data().get::<harmony_core::Scheduler>()?;
     let thread = match task {
         TaskTarget::Function(function) => vm.create_thread(&function)?,
         TaskTarget::Thread(thread) => thread,
@@ -156,8 +156,8 @@ mod tests {
             base: true,
             ..harmony_luau::StandardLibraries::none()
         })?;
-        vm.data().insert(harmony_core::LocalScheduler::new())?;
-        let scheduler = vm.data().get::<harmony_core::LocalScheduler>()?;
+        vm.data().insert(harmony_core::Scheduler::new())?;
+        let scheduler = vm.data().get::<harmony_core::Scheduler>()?;
         let spec = TaskModule::module_spec();
         let table =
             harmony_core::luau::install_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;

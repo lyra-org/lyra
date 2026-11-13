@@ -106,7 +106,7 @@ impl PluginExecutor {
         what: &str,
         mut done: impl FnMut() -> Option<T>,
     ) -> Result<T> {
-        let scheduler = self.vm.data().get::<LocalScheduler>()?;
+        let scheduler = self.vm.data().get::<Scheduler>()?;
         let give_up = std::time::Instant::now() + watchdog;
         loop {
             self.poll_background_tasks();
@@ -123,7 +123,7 @@ impl PluginExecutor {
     /// Runs rounds for as long as one has something to do, which on a manual clock is until the
     /// test moves the clock or wakes a task. Fails on work that never settles.
     pub(super) fn run_until_idle(&self) -> Result<()> {
-        let scheduler = self.vm.data().get::<LocalScheduler>()?;
+        let scheduler = self.vm.data().get::<Scheduler>()?;
         for _ in 0..1000 {
             if scheduler.next_wake_delay() != Some(Duration::ZERO) {
                 return Ok(());
@@ -141,7 +141,7 @@ impl PluginExecutor {
         mut context: CallContext,
     ) -> Result<Vec<luau::Value>> {
         let thread = self.runtime.load_source_thread(source, &mut context)?;
-        let scheduler = self.vm.data().get::<LocalScheduler>()?;
+        let scheduler = self.vm.data().get::<Scheduler>()?;
         scheduler.spawn_luau_thread(context, thread.clone(), Vec::new());
         harmony_core::testing::drive_thread_while_ready(&self.tokio_runtime, &scheduler, &thread)
     }
@@ -1148,7 +1148,7 @@ fn awaited_background_similar_provider_result_survives_executor_polling() -> Res
         admin_call_context("init.luau")?,
     )?;
 
-    let scheduler = runtime.vm.data().get::<LocalScheduler>()?;
+    let scheduler = runtime.vm.data().get::<Scheduler>()?;
     runtime.run_until("the background task ends", || {
         (!scheduler.has_pending()).then_some(())
     })?;
@@ -2375,7 +2375,7 @@ fn plugin_executor_restart_reloads_plugin_sources_from_disk() -> Result<()> {
         stores::PluginModuleStores::empty(),
         Vec::new(),
     )?;
-    let scheduler = runtime.vm.data().get::<LocalScheduler>()?;
+    let scheduler = runtime.vm.data().get::<Scheduler>()?;
     let read = |global: &'static str| {
         runtime.eval_source_while_ready(
             format!("return {global}").into_bytes(),

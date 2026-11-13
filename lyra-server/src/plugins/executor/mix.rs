@@ -8,7 +8,7 @@ use anyhow::{
     Result,
 };
 use harmony_core::{
-    LocalScheduler,
+    Scheduler,
     UserDataBinding,
 };
 use harmony_luau as luau;
@@ -56,7 +56,7 @@ impl PluginExecutor {
             plugin,
             |limit| {
                 let (handler, thread, argument) = prepared?;
-                let scheduler = self.vm.data().get::<LocalScheduler>()?;
+                let scheduler = self.vm.data().get::<Scheduler>()?;
                 let mut context = handler.context.clone();
                 context.caller.insert(super::CallChain::root(
                     deadline,

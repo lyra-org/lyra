@@ -17,12 +17,12 @@ use std::{
 use harmony_luau as luau;
 
 use crate::{
-    LocalScheduler,
+    Scheduler,
     TokioRuntimeContext,
 };
 
 /// A scheduler's time, moved only by [`Self::advance`]. Its clones share one time, so a test keeps
-/// one and gives another to [`crate::LocalScheduler::with_manual_clock`] or
+/// one and gives another to [`crate::Scheduler::with_manual_clock`] or
 /// [`crate::plugin::RuntimeBuilder::manual_clock`].
 #[derive(Clone)]
 pub struct ManualClock {
@@ -68,7 +68,7 @@ impl Default for ManualClock {
 /// cancelled.
 pub fn drive_thread_while_ready(
     tokio_runtime: &TokioRuntimeContext,
-    scheduler: &LocalScheduler,
+    scheduler: &Scheduler,
     thread: &luau::Thread,
 ) -> anyhow::Result<Vec<luau::Value>> {
     loop {

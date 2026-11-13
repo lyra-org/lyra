@@ -138,7 +138,7 @@ impl TestPlugin {
         function: luau::Function,
         args: luau::Variadic<luau::Value>,
     ) -> luau::runtime::Result<luau::ScheduledFuture> {
-        let scheduler = vm.data().get::<harmony_core::LocalScheduler>()?;
+        let scheduler = vm.data().get::<harmony_core::Scheduler>()?;
         let thread = vm.create_thread(&function)?;
         let mut own = luau::CallContext {
             origin: context.origin.clone(),

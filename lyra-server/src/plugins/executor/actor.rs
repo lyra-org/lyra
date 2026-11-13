@@ -788,7 +788,7 @@ mod tests {
         mpsc::Receiver<QueuedPluginExecutorCommand>,
     ) {
         // No executor runs here, so the wakes go nowhere.
-        let wake = harmony_core::LocalScheduler::new().wake_handle();
+        let wake = harmony_core::Scheduler::new().wake_handle();
         let (tx, rx) = plugin_executor_channel(capacity, wake.clone());
         (
             PluginExecutorHandle {

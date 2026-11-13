@@ -506,7 +506,7 @@ fn task_test_module(recorded: Arc<Mutex<Vec<String>>>) -> ModuleSpec {
             frame
                 .vm
                 .data()
-                .get::<crate::LocalScheduler>()?
+                .get::<crate::Scheduler>()?
                 .wake_handle()
                 .wake();
             Ok(())
@@ -518,7 +518,7 @@ fn task_test_module(recorded: Arc<Mutex<Vec<String>>>) -> ModuleSpec {
             frame
                 .vm
                 .data()
-                .get::<crate::LocalScheduler>()?
+                .get::<crate::Scheduler>()?
                 .schedule_luau_thread_after(
                     group_context(&frame),
                     std::time::Duration::from_secs_f64(seconds),
@@ -742,7 +742,7 @@ impl StagedRuntime {
         )
     }
 
-    fn scheduler(&self) -> std::rc::Rc<crate::LocalScheduler> {
+    fn scheduler(&self) -> std::rc::Rc<crate::Scheduler> {
         self.runtime.scheduler().expect("the runtime's scheduler")
     }
 
@@ -849,7 +849,7 @@ fn lib_exporting(functions: &[&str]) -> String {
 }
 
 fn leftover_tasks(runtime: &super::Runtime) -> anyhow::Result<Vec<crate::TaskSnapshot>> {
-    let scheduler = runtime.vm.data().get::<crate::LocalScheduler>()?;
+    let scheduler = runtime.vm.data().get::<crate::Scheduler>()?;
     scheduler.remove_finished();
     Ok(scheduler.snapshots())
 }
@@ -875,7 +875,7 @@ fn call_handler(
 ) -> anyhow::Result<std::rc::Rc<crate::LocalLuauTaskCompletion>> {
     let (function, context) = runtime.vm.data().get::<TestHandlers>()?.0.borrow()[index].clone();
     let completion = std::rc::Rc::new(crate::LocalLuauTaskCompletion::default());
-    let scheduler = runtime.vm.data().get::<crate::LocalScheduler>()?;
+    let scheduler = runtime.vm.data().get::<crate::Scheduler>()?;
     scheduler.schedule_luau_thread_with_limit_and_completion(
         context,
         runtime.vm.create_thread(&function)?,

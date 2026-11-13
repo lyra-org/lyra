@@ -155,7 +155,7 @@ fn cancelling_database_waits_releases_reserved_permits() -> Result<()> {
                 runtime
                     .vm
                     .data()
-                    .get::<LocalScheduler>()?
+                    .get::<Scheduler>()?
                     .cancel_luau_thread(thread)
             );
             let guard = db

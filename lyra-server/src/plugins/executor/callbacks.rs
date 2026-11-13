@@ -15,8 +15,8 @@ use anyhow::{
 };
 use harmony_core::{
     LateEnd,
-    LocalScheduler,
     ResumeLimit,
+    Scheduler,
     Watched,
     WatchedThread,
 };
@@ -309,7 +309,7 @@ impl PluginExecutor {
             if self.now() >= deadline {
                 bail!("plugin handler deadline expired before execution");
             }
-            let scheduler = self.vm.data().get::<LocalScheduler>()?;
+            let scheduler = self.vm.data().get::<Scheduler>()?;
             let handler = prepare(ResumeLimit::until(deadline))?;
             Ok((scheduler, handler))
         })();

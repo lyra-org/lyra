@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use harmony_core::{
-    LocalScheduler,
+    Scheduler,
     luau::{
         ThreadDriveOptions,
         drive_thread,
@@ -108,7 +108,7 @@ impl PluginExecutor {
         }
 
         let payload_value = harmony_luau::serializable_to_luau_owned(payload)?;
-        let scheduler = self.vm.data().get::<LocalScheduler>()?;
+        let scheduler = self.vm.data().get::<Scheduler>()?;
         for handler in handlers {
             if self.is_quiesced(handler.context.origin.plugin.as_deref()) {
                 continue;

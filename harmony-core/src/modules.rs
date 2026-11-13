@@ -956,7 +956,7 @@ impl LuauRequireRuntime {
     /// has none. Only the host calls this; a require never starts a run.
     pub fn plugin_group(
         &self,
-        scheduler: &crate::LocalScheduler,
+        scheduler: &crate::Scheduler,
         plugin_id: &str,
     ) -> crate::TaskGroupId {
         *self
@@ -1415,7 +1415,7 @@ pub fn async_luau_callback(callback: luau::NativeAsyncFn) -> luau::NativeFn {
     Arc::new(move |frame| {
         let thread = frame.thread.clone();
         let context = frame.context.clone();
-        let scheduler = frame.vm.data().get::<crate::LocalScheduler>()?;
+        let scheduler = frame.vm.data().get::<crate::Scheduler>()?;
         let mut returns = frame.returns.clone();
         // Refused before the thread parks: nothing would resume it. A cancelled thread just
         // yields, as it would to wait, and is closed there.
@@ -1629,8 +1629,8 @@ mod tests {
     fn luau_module_installer_completes_ready_async_callbacks_without_yielding()
     -> luau::runtime::Result<()> {
         let vm = luau::Vm::new()?;
-        vm.data().insert(crate::LocalScheduler::new())?;
-        let scheduler = vm.data().get::<crate::LocalScheduler>()?;
+        vm.data().insert(crate::Scheduler::new())?;
+        let scheduler = vm.data().get::<crate::Scheduler>()?;
         let module = ModuleSpec::new("demo/async").function(
             FunctionSpec::new("add_one")
                 .arg_name("value")
@@ -1667,8 +1667,8 @@ mod tests {
             base: true,
             ..luau::StandardLibraries::none()
         })?;
-        vm.data().insert(crate::LocalScheduler::new())?;
-        let scheduler = vm.data().get::<crate::LocalScheduler>()?;
+        vm.data().insert(crate::Scheduler::new())?;
+        let scheduler = vm.data().get::<crate::Scheduler>()?;
         let module = ModuleSpec::new("demo/async").function(
             FunctionSpec::new("explode").call_async(Arc::new(|_frame| {
                 let mut pending_once = true;
@@ -1714,8 +1714,8 @@ mod tests {
     #[test]
     fn luau_module_installer_schedules_pending_async_callbacks() -> luau::runtime::Result<()> {
         let vm = luau::Vm::new()?;
-        vm.data().insert(crate::LocalScheduler::new())?;
-        let scheduler = vm.data().get::<crate::LocalScheduler>()?;
+        vm.data().insert(crate::Scheduler::new())?;
+        let scheduler = vm.data().get::<crate::Scheduler>()?;
         let pending_once = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let pending_once_for_callback = pending_once.clone();
         let module = ModuleSpec::new("demo/async").function(
@@ -1837,8 +1837,8 @@ mod tests {
     ) -> luau::runtime::Result<(luau::Vm, crate::TaskSnapshot)> {
         let vm = luau::Vm::new()?;
         vm.open_standard_libraries(luau::StandardLibraries::all_supported())?;
-        vm.data().insert(crate::LocalScheduler::new())?;
-        let scheduler = vm.data().get::<crate::LocalScheduler>()?;
+        vm.data().insert(crate::Scheduler::new())?;
+        let scheduler = vm.data().get::<crate::Scheduler>()?;
         let origin = ChunkOrigin {
             plugin: Some(Arc::from("demo")),
             ..ChunkOrigin::default()
@@ -1954,7 +1954,7 @@ mod tests {
             "{:?}",
             snapshot.error
         );
-        vm.data().get::<crate::LocalScheduler>()?.poll_ready();
+        vm.data().get::<crate::Scheduler>()?.poll_ready();
         assert_eq!(
             vm.eval(
                 Arc::<[u8]>::from(&b"return table.unpack(result, 1, 2)"[..]),
@@ -2309,7 +2309,7 @@ mod tests {
                 })),
             ))
             .expect("register module");
-        let scheduler = crate::LocalScheduler::new();
+        let scheduler = crate::Scheduler::new();
         let run = runtime.plugin_group(&scheduler, "demo");
         vm.data().insert(runtime)?;
         vm.data().insert(scheduler)?;
@@ -2351,7 +2351,7 @@ mod tests {
             ..ChunkOrigin::default()
         };
         let runtime = LuauRequireRuntime::new(loader, AllowAllCapabilities);
-        let scheduler = crate::LocalScheduler::new();
+        let scheduler = crate::Scheduler::new();
         let run = runtime.plugin_group(&scheduler, "demo");
         vm.data().insert(runtime)?;
         vm.data().insert(scheduler)?;
@@ -2406,7 +2406,7 @@ mod tests {
                 )),
             ))
             .expect("register module");
-        let scheduler = crate::LocalScheduler::new();
+        let scheduler = crate::Scheduler::new();
         let run = runtime.plugin_group(&scheduler, "demo");
         vm.data().insert(runtime)?;
         vm.data().insert(scheduler)?;
@@ -2441,7 +2441,7 @@ mod tests {
         loader.insert("plugin:demo/lib", b"return 1".as_slice());
         loader.insert("plugin:other/lib", b"return 1".as_slice());
         let runtime = LuauRequireRuntime::new(loader, AllowAllCapabilities);
-        let scheduler = crate::LocalScheduler::new();
+        let scheduler = crate::Scheduler::new();
         runtime.plugin_group(&scheduler, "demo");
         runtime.plugin_group(&scheduler, "other");
         let origin = ChunkOrigin::default();

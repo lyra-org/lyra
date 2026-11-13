@@ -20,9 +20,9 @@ use anyhow::{
 };
 use harmony_core::{
     LateEnd,
-    LocalScheduler,
     ResumeBound,
     ResumeLimit,
+    Scheduler,
     UserDataBinding,
     Watched,
     WatchedThread,
@@ -166,10 +166,12 @@ fn schedule_function(
     limit: ResumeLimit,
 ) -> Result<WatchedThread> {
     let thread = vm.create_thread(function)?;
-    Ok(vm
-        .data()
-        .get::<LocalScheduler>()?
-        .schedule_watched_luau_thread(context, thread, args, Some(limit)))
+    Ok(vm.data().get::<Scheduler>()?.schedule_watched_luau_thread(
+        context,
+        thread,
+        args,
+        Some(limit),
+    ))
 }
 
 /// [`run_function`] for `handler`, marking the call with `marker`.

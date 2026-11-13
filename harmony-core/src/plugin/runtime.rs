@@ -32,8 +32,8 @@ use crate::{
     CallContext,
     GatedModule,
     GlobalSpec,
-    LocalScheduler,
     ModuleId,
+    Scheduler,
     SourceLoader,
     TokioRuntimeContext,
     luau::{
@@ -171,7 +171,7 @@ where
     }
 
     /// Runs the runtime's scheduler by `clock`, for a test that polls it; see
-    /// [`LocalScheduler::with_manual_clock`]. What runs a plugin's code to its end on the calling
+    /// [`Scheduler::with_manual_clock`]. What runs a plugin's code to its end on the calling
     /// thread, such as [`Runtime::exec_all`], fails on such a runtime.
     #[cfg(any(test, feature = "testing"))]
     pub fn manual_clock(mut self, clock: crate::testing::ManualClock) -> Self {
@@ -202,7 +202,7 @@ where
             luau::Vm::with_options(luau::VmOptions::default().memory_limit(self.memory_limit))?;
         vm.open_standard_libraries(luau::StandardLibraries::all_supported())?;
 
-        let scheduler = LocalScheduler::with_clock(self.clock);
+        let scheduler = Scheduler::with_clock(self.clock);
         scheduler.set_luau_resume_budget(self.luau_resume_budget);
         let scheduler_wake = scheduler.wake_handle();
         vm.data().insert(scheduler)?;
@@ -302,7 +302,7 @@ fn end_plugin_run(vm: &luau::Vm, hooks: &[RunEndHook], plugin_id: &str) -> anyho
     let Some(group) = vm.data().get::<RequireRuntime>()?.end_plugin_run(plugin_id) else {
         return Ok(());
     };
-    vm.data().get::<LocalScheduler>()?.cancel_group(group);
+    vm.data().get::<Scheduler>()?.cancel_group(group);
     for hook in hooks {
         hook(vm, plugin_id);
     }
@@ -319,8 +319,8 @@ pub struct Runtime {
 }
 
 impl Runtime {
-    pub(super) fn scheduler(&self) -> anyhow::Result<Rc<LocalScheduler>> {
-        Ok(self.vm.data().get::<LocalScheduler>()?)
+    pub(super) fn scheduler(&self) -> anyhow::Result<Rc<Scheduler>> {
+        Ok(self.vm.data().get::<Scheduler>()?)
     }
 
     pub fn plugin_manifests(&self) -> Vec<PluginManifest> {
@@ -406,7 +406,7 @@ impl Runtime {
         self.stop_plugin(plugin_id)?;
         let require = self.vm.data().get::<RequireRuntime>()?;
         require.invalidate_plugin(plugin_id);
-        let scheduler = self.vm.data().get::<LocalScheduler>()?;
+        let scheduler = self.vm.data().get::<Scheduler>()?;
         require.plugin_group(&scheduler, plugin_id);
         let started = match self.schedule_entrypoint(plugin, &require, &scheduler) {
             Ok(ScheduledEntrypoint::Running(entrypoint)) => Ok(Some(*entrypoint)),
@@ -428,7 +428,7 @@ impl Runtime {
         &self,
         plugin: &LoadedPlugin,
         require: &RequireRuntime,
-        scheduler: &Rc<LocalScheduler>,
+        scheduler: &Rc<Scheduler>,
     ) -> anyhow::Result<ScheduledEntrypoint> {
         let Some(entrypoint) = plugin.manifest.entrypoint.as_deref() else {
             return Ok(ScheduledEntrypoint::NoEntrypoint);
@@ -492,7 +492,7 @@ impl Runtime {
 
     /// Runs `entrypoint` to its end on this thread, driving the scheduler meanwhile.
     pub(super) fn drive_entrypoint(&self, entrypoint: RunningEntrypoint) -> anyhow::Result<()> {
-        let scheduler = self.vm.data().get::<LocalScheduler>()?;
+        let scheduler = self.vm.data().get::<Scheduler>()?;
         let task = scheduler.luau_thread_handle(entrypoint.watched.thread());
         let waker = scheduler.wake_handle().waker();
         let mut cx = std::task::Context::from_waker(&waker);
@@ -632,7 +632,7 @@ impl Runtime {
         if let Some(plugin_id) = context.origin.plugin.as_deref()
             && context.task_group == TaskGroupId::default()
         {
-            let scheduler = self.vm.data().get::<LocalScheduler>()?;
+            let scheduler = self.vm.data().get::<Scheduler>()?;
             context.task_group = self
                 .vm
                 .data()
@@ -647,7 +647,7 @@ impl Runtime {
     }
 
     pub fn poll_background_tasks(&self) -> usize {
-        let Ok(scheduler) = self.vm.data().get::<LocalScheduler>() else {
+        let Ok(scheduler) = self.vm.data().get::<Scheduler>() else {
             return 0;
         };
         {

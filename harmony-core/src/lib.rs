@@ -54,7 +54,6 @@ pub use scheduler::{
     Cancellation,
     LateEnd,
     LocalLuauTaskCompletion,
-    LocalScheduler,
     ResumeBound,
     ResumeLimit,
     Scheduler,

@@ -35,8 +35,8 @@ use bytes::Bytes;
 use futures::task::AtomicWaker;
 use harmony_core::{
     LateEnd,
-    LocalScheduler,
     ResumeLimit,
+    Scheduler,
     Sleep,
     UserDataBinding,
     Watched,
@@ -434,7 +434,7 @@ impl StreamTask {
     }
 
     fn start(&self, vm: &luau::Vm) -> anyhow::Result<WatchedThread> {
-        let scheduler = vm.data().get::<LocalScheduler>()?;
+        let scheduler = vm.data().get::<Scheduler>()?;
         anyhow::ensure!(
             !scheduler.is_group_cancelled(self.context.task_group),
             "the plugin's run ended"
@@ -521,7 +521,7 @@ pub(crate) fn queue_stream(
     origin: StreamOrigin,
 ) -> luau::runtime::Result<ApiResponseStream> {
     let tasks = vm.data().get::<StreamTasks>()?;
-    let scheduler = vm.data().get::<LocalScheduler>()?;
+    let scheduler = vm.data().get::<Scheduler>()?;
     let (writer, body, end) = stream_channel();
     tasks.stops.register(&origin.plugin_id, &end.0);
     let watcher = super::watcher_context(context.origin.plugin.clone());

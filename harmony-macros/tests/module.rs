@@ -8,8 +8,8 @@ use std::sync::Arc;
 use harmony_core::{
     CallContext,
     ChunkOrigin,
-    LocalScheduler,
     ModuleSpec,
+    Scheduler,
     TokioRuntimeContext,
     UserDataBinding,
 };
@@ -107,8 +107,8 @@ enum Mood {
 fn run(source: &str, context: CallContext) -> luau::runtime::Result<Vec<luau::Value>> {
     let vm = luau::Vm::new()?;
     vm.open_standard_libraries(luau::StandardLibraries::all_supported())?;
-    vm.data().insert(LocalScheduler::new())?;
-    let scheduler = vm.data().get::<LocalScheduler>()?;
+    vm.data().insert(Scheduler::new())?;
+    let scheduler = vm.data().get::<Scheduler>()?;
     let table =
         harmony_core::luau::install_module(&vm, &context.origin, &DemoModule::module_spec())?;
     vm.set_global_table("demo", &table)?;

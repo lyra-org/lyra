@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use harmony_core::LocalScheduler;
+use harmony_core::Scheduler;
 use harmony_luau as luau;
 
 use super::{
@@ -72,7 +72,7 @@ impl PluginExecutor {
                 Ok(self
                     .vm
                     .data()
-                    .get::<LocalScheduler>()?
+                    .get::<Scheduler>()?
                     .schedule_watched_luau_thread(context, thread, vec![argument], Some(limit)))
             },
         );
