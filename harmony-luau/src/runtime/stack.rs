@@ -594,8 +594,9 @@ impl<'a> Stack<'a> {
         unsafe { gateway::string_bytes(self.raw(), index) }
     }
 
-    /// The bytes of the buffer at `index`, or `None` for any other value.
-    pub(super) fn buffer_bytes(&self, index: StackIndex) -> Option<&[u8]> {
+    /// A copy of the bytes of the buffer at `index`, or `None` for any other value. Luau code can
+    /// write to a buffer, so they aren't lent out.
+    pub(super) fn buffer_bytes(&self, index: StackIndex) -> Option<Vec<u8>> {
         let index = self.slot(index);
         let mut len = 0usize;
         // SAFETY: a live state, and a value at `index`.
@@ -603,9 +604,9 @@ impl<'a> Stack<'a> {
         if data.is_null() {
             return None;
         }
-        // SAFETY: a buffer of `len` bytes at `data`, which stays where it is, and so alive, while
-        // `self` is borrowed (see the module documentation).
-        Some(unsafe { std::slice::from_raw_parts(data.cast(), len) })
+        // SAFETY: a buffer of `len` bytes at `data`, which no Luau code runs to write to or free
+        // before the copy returns.
+        Some(unsafe { std::slice::from_raw_parts(data.cast(), len) }.to_vec())
     }
 
     /// The data of the userdata at `index` if it has `tag`.
@@ -623,7 +624,7 @@ impl<'a> Stack<'a> {
         self.read_value_ref(index).map(ValueRef::into_value)
     }
 
-    /// Reads the value at `index`, borrowing a string's or buffer's bytes from the VM.
+    /// Reads the value at `index`, borrowing a string's bytes from the VM.
     pub(super) fn read_value_ref(&self, index: StackIndex) -> Result<ValueRef<'_>> {
         let raw = self.slot(index);
         Ok(match self.type_of(raw) {

@@ -1728,7 +1728,7 @@ impl<'vm> ArgReader<'vm> {
 
     /// Reads one of `T`'s strings, failing with the accepted ones for any other string.
     pub fn read_string_enum<T: crate::StringEnum>(&mut self) -> Result<T> {
-        let (name, bytes) = self.next_named_borrowed_bytes("string")?;
+        let (name, bytes) = self.next_named_string_bytes()?;
         let value = String::from_utf8_lossy(bytes);
         T::from_str(&value).ok_or_else(|| Error::UnknownEnumValue {
             name,
@@ -1762,16 +1762,16 @@ impl<'vm> ArgReader<'vm> {
     }
 
     pub fn read_string_bytes(&mut self) -> Result<&[u8]> {
-        self.next_borrowed_bytes("string")
+        self.next_string_bytes()
     }
 
     pub fn read_named_string_bytes(&mut self, name: &'static str) -> Result<&[u8]> {
         self.cursor.label_current(name);
-        self.next_borrowed_bytes("string")
+        self.next_string_bytes()
     }
 
     pub fn read_str(&mut self) -> Result<&str> {
-        let (name, bytes) = self.next_named_borrowed_bytes("string")?;
+        let (name, bytes) = self.next_named_string_bytes()?;
         std::str::from_utf8(bytes)
             .map_err(|error| Error::InvalidUtf8BorrowedArgument { name, error })
     }
@@ -1781,13 +1781,22 @@ impl<'vm> ArgReader<'vm> {
         self.read_str()
     }
 
-    pub fn read_buffer_bytes(&mut self) -> Result<&[u8]> {
-        self.next_borrowed_bytes("buffer")
+    /// A copy of the buffer's bytes: Luau code the callback runs can write to the buffer.
+    pub fn read_buffer_bytes(&mut self) -> Result<Vec<u8>> {
+        let (name, value) = self.next_named_value("buffer")?;
+        match value {
+            Value::Buffer(bytes) => Ok(bytes),
+            other => Err(Error::ArgumentType {
+                name,
+                expected: "buffer",
+                actual: other.type_name(),
+            }),
+        }
     }
 
-    pub fn read_named_buffer_bytes(&mut self, name: &'static str) -> Result<&[u8]> {
+    pub fn read_named_buffer_bytes(&mut self, name: &'static str) -> Result<Vec<u8>> {
         self.cursor.label_current(name);
-        self.next_borrowed_bytes("buffer")
+        self.read_buffer_bytes()
     }
 
     fn next_value(&mut self, expected: &'static str) -> Result<Value> {
@@ -1875,27 +1884,29 @@ impl<'vm> ArgReader<'vm> {
         Ok((name, value))
     }
 
-    fn next_borrowed_bytes(&mut self, expected: &'static str) -> Result<&[u8]> {
-        self.next_named_borrowed_bytes(expected)
-            .map(|(_, bytes)| bytes)
+    fn next_string_bytes(&mut self) -> Result<&[u8]> {
+        self.next_named_string_bytes().map(|(_, bytes)| bytes)
     }
 
-    fn next_named_borrowed_bytes(&mut self, expected: &'static str) -> Result<(Arc<str>, &[u8])> {
+    fn next_named_string_bytes(&mut self) -> Result<(Arc<str>, &[u8])> {
         let name = self.current_name();
         if self.cursor.is_finished() {
             return Err(Error::MissingArgument(name));
         }
         let index = self.cursor.index();
         let actual = self.type_name_at(index);
-        if actual != expected {
+        if actual != "string" {
             return Err(Error::ArgumentType {
                 name,
-                expected,
+                expected: "string",
                 actual,
             });
         }
         self.cursor.advance();
-        let bytes = self.bytes_at(index, expected);
+        let bytes = self
+            .stack
+            .string_bytes(StackIndex::argument(index))
+            .unwrap_or_default();
         Ok((name, bytes))
     }
 
@@ -1909,16 +1920,6 @@ impl<'vm> ArgReader<'vm> {
 
     fn value_at(&self, index: usize) -> Result<Value> {
         self.stack.read_value(StackIndex::argument(index))
-    }
-
-    fn bytes_at(&self, index: usize, expected: &'static str) -> &[u8] {
-        let index = StackIndex::argument(index);
-        let bytes = if expected == "buffer" {
-            self.stack.buffer_bytes(index)
-        } else {
-            self.stack.string_bytes(index)
-        };
-        bytes.unwrap_or_default()
     }
 
     fn type_name_at(&self, index: usize) -> &'static str {
@@ -2081,8 +2082,8 @@ impl Value {
     }
 }
 
-/// A value read in place: a string's or buffer's bytes are the VM's own, borrowed for as long as
-/// whatever read the value keeps it.
+/// A value read in place: a string's bytes are the VM's own, borrowed for as long as whatever
+/// read the value keeps it. A buffer's are copied, since Luau code can write to a buffer.
 #[derive(Debug)]
 pub enum ValueRef<'a> {
     Nil,
@@ -2090,7 +2091,7 @@ pub enum ValueRef<'a> {
     Integer(i64),
     Number(f64),
     String(&'a [u8]),
-    Buffer(&'a [u8]),
+    Buffer(Vec<u8>),
     Table(Table),
     Function(Function),
     Thread(Thread),
@@ -2106,7 +2107,7 @@ impl ValueRef<'_> {
             Self::Integer(value) => Value::Integer(value),
             Self::Number(value) => Value::Number(value),
             Self::String(bytes) => Value::String(bytes.to_vec()),
-            Self::Buffer(bytes) => Value::Buffer(bytes.to_vec()),
+            Self::Buffer(bytes) => Value::Buffer(bytes),
             Self::Table(table) => Value::Table(table),
             Self::Function(function) => Value::Function(function),
             Self::Thread(thread) => Value::Thread(thread),
@@ -2337,9 +2338,7 @@ impl IntoLuauReturn for f64 {
 
 impl<'vm> FromLuau<'vm> for ByteString {
     fn read(reader: &mut ArgReader<'vm>) -> Result<Self> {
-        reader
-            .next_borrowed_bytes("string")
-            .map(|bytes| Self(bytes.to_vec()))
+        reader.next_string_bytes().map(|bytes| Self(bytes.to_vec()))
     }
 }
 
@@ -2371,7 +2370,7 @@ impl IntoLuauReturn for Vec<u8> {
 
 impl<'vm> FromLuau<'vm> for String {
     fn read(reader: &mut ArgReader<'vm>) -> Result<Self> {
-        let (name, bytes) = reader.next_named_borrowed_bytes("string")?;
+        let (name, bytes) = reader.next_named_string_bytes()?;
         String::from_utf8(bytes.to_vec())
             .map_err(|error| Error::InvalidUtf8Argument { name, error })
     }
@@ -2439,7 +2438,7 @@ where
 
 impl<'vm> FromLuau<'vm> for Vec<u8> {
     fn read(reader: &mut ArgReader<'vm>) -> Result<Self> {
-        reader.next_borrowed_bytes("string").map(ToOwned::to_owned)
+        reader.next_string_bytes().map(ToOwned::to_owned)
     }
 }
 
@@ -4791,7 +4790,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "requires Luau C VM")]
-    fn native_callbacks_can_borrow_string_and_buffer_args() -> Result<()> {
+    fn native_callbacks_read_string_and_buffer_args() -> Result<()> {
         let vm = Vm::new()?;
         let callback: NativeFn = Arc::new(|mut frame| {
             let text_len = frame.args.read_named_str("text")?.len() as i64;
