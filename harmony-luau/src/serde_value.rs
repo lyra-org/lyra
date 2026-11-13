@@ -304,7 +304,8 @@ impl Serializer for LuauValueSerializer {
         Ok(LuauTupleVariantSerializer {
             variant,
             table: OwnedTable::with_capacity(len, 0),
-            depth: self.depth,
+            // The variant's own table holds this one.
+            depth: nested_depth(self.depth)?,
         })
     }
 
@@ -338,7 +339,8 @@ impl Serializer for LuauValueSerializer {
         Ok(LuauStructVariantSerializer {
             variant,
             table: OwnedTable::with_capacity(0, len),
-            depth: self.depth,
+            // The variant's own table holds this one.
+            depth: nested_depth(self.depth)?,
         })
     }
 }
@@ -849,6 +851,32 @@ mod tests {
             Value::Buffer(vec![1, 2, 3])
         );
         Ok(())
+    }
+
+    #[derive(Serialize)]
+    enum Nest {
+        Tuple(Box<Nest>, u8),
+        Struct { inner: Box<Nest> },
+        End,
+    }
+
+    #[test]
+    fn counts_both_tables_of_tuple_and_struct_variants() {
+        let wraps: [fn(Nest) -> Nest; 2] = [
+            |inner| Nest::Tuple(Box::new(inner), 0),
+            |inner| Nest::Struct {
+                inner: Box::new(inner),
+            },
+        ];
+        for wrap in wraps {
+            let nested = |levels| (0..levels).fold(Nest::End, |inner, _| wrap(inner));
+            assert!(serializable_to_luau_owned(nested(64)).is_ok());
+            assert!(matches!(
+                serializable_to_luau_owned(nested(65)),
+                Err(Error::Serialize(message)) if message.contains("too deeply nested")
+            ));
+            assert!(serializable_to_luau_owned(nested(128)).is_err());
+        }
     }
 
     #[test]

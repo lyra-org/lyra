@@ -70,7 +70,8 @@ status. `clippy.toml` disallows those functions everywhere else.
   silently rounds. Reading an `i64` argument rejects a number that isn't a whole `i64`.
 - `Option<T>` reads a missing argument and `nil` alike as `None`.
 - `OwnedTable` builds a table in Rust without touching the VM, for returning from a call. `Table`
-  is a live handle.
+  is a live handle. An `OwnedTable` nests at most `OwnedTable::MAX_DEPTH` tables deep, and nesting
+  one deeper panics, which keeps the code that recurses into one within the Rust stack.
 - Reading a string can borrow its bytes from the VM (`read_str`, `ValueRef::String`). Reading a
   buffer copies them, since Luau code a callback runs can write to the buffer.
 - `Table` access is raw: `get`, `set`, `len` and `pairs` skip metamethods.

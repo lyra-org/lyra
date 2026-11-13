@@ -1573,24 +1573,29 @@ impl PartialEq for NativeFunctionValue {
     }
 }
 
+/// A table built in Rust, made into a Luau table when pushed.
+///
+/// It nests at most [`Self::MAX_DEPTH`] tables deep, itself included, so the code that pushes,
+/// drops, compares and prints it, which recurses into the tables it holds, stays within the Rust
+/// stack. Adding a value that nests it deeper panics.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct OwnedTable {
     array: Vec<Value>,
     fields: Vec<(String, Value)>,
     entries: Vec<(Value, Value)>,
+    /// The most tables nested in this one along any path.
+    nested: usize,
 }
 
 impl OwnedTable {
+    pub const MAX_DEPTH: usize = 256;
+
     pub fn new() -> Self {
         Self::default()
     }
 
     pub fn with_capacity(array: usize, fields: usize) -> Self {
-        Self {
-            array: Vec::with_capacity(array),
-            fields: Vec::with_capacity(fields),
-            entries: Vec::new(),
-        }
+        Self::with_entry_capacity(array, fields, 0)
     }
 
     pub fn with_entry_capacity(array: usize, fields: usize, entries: usize) -> Self {
@@ -1598,40 +1603,49 @@ impl OwnedTable {
             array: Vec::with_capacity(array),
             fields: Vec::with_capacity(fields),
             entries: Vec::with_capacity(entries),
+            nested: 0,
         }
     }
 
     /// An array of `values` in order.
     pub fn from_array<V: Into<Value>>(values: impl IntoIterator<Item = V>) -> Self {
-        Self {
-            array: values.into_iter().map(Into::into).collect(),
-            ..Self::default()
+        let values = values.into_iter();
+        let mut table = Self::with_capacity(values.size_hint().0, 0);
+        for value in values {
+            table.push_array(value);
         }
+        table
     }
 
     /// A table of `entries`, keyed by any value.
     pub fn from_entries<K: Into<Value>, V: Into<Value>>(
         entries: impl IntoIterator<Item = (K, V)>,
     ) -> Self {
-        Self {
-            entries: entries
-                .into_iter()
-                .map(|(key, value)| (key.into(), value.into()))
-                .collect(),
-            ..Self::default()
+        let entries = entries.into_iter();
+        let mut table = Self::with_entry_capacity(0, 0, entries.size_hint().0);
+        for (key, value) in entries {
+            table.set_key(key, value);
         }
+        table
     }
 
     pub fn push_array(&mut self, value: impl Into<Value>) {
-        self.array.push(value.into());
+        let value = value.into();
+        self.nest(&value);
+        self.array.push(value);
     }
 
     pub fn set_field(&mut self, key: impl Into<String>, value: impl Into<Value>) {
-        self.fields.push((key.into(), value.into()));
+        let value = value.into();
+        self.nest(&value);
+        self.fields.push((key.into(), value));
     }
 
     pub fn set_key(&mut self, key: impl Into<Value>, value: impl Into<Value>) {
-        self.entries.push((key.into(), value.into()));
+        let (key, value) = (key.into(), value.into());
+        self.nest(&key);
+        self.nest(&value);
+        self.entries.push((key, value));
     }
 
     pub fn array(&self) -> &[Value] {
@@ -1644,6 +1658,19 @@ impl OwnedTable {
 
     pub fn entries(&self) -> &[(Value, Value)] {
         &self.entries
+    }
+
+    fn nest(&mut self, value: &Value) {
+        let Value::TableData(table) = value else {
+            return;
+        };
+        let nested = table.nested + 1;
+        assert!(
+            nested < Self::MAX_DEPTH,
+            "an OwnedTable nests at most {} tables deep",
+            Self::MAX_DEPTH
+        );
+        self.nested = self.nested.max(nested);
     }
 }
 
@@ -2984,6 +3011,40 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    fn nested_owned_table(depth: usize) -> OwnedTable {
+        let mut table = OwnedTable::new();
+        for _ in 1..depth {
+            let mut outer = OwnedTable::new();
+            outer.set_field("inner", table);
+            table = outer;
+        }
+        table
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn owned_tables_nest_up_to_their_max_depth() -> Result<()> {
+        let vm = Vm::new()?;
+        let depth = vm.load_chunk(&Chunk::new(
+            &b"local t, d = ..., 0 while t do d += 1 t = t.inner end return d"[..],
+            ChunkOrigin::default(),
+        ))?;
+        let table = nested_owned_table(OwnedTable::MAX_DEPTH);
+        assert_eq!(
+            depth.call(&[Value::TableData(table)])?,
+            vec![Value::Number(OwnedTable::MAX_DEPTH as f64)]
+        );
+        assert_eq!(stack_top(&vm), 0);
+        Ok(())
+    }
+
+    #[test]
+    #[should_panic(expected = "an OwnedTable nests at most 256 tables deep")]
+    fn nesting_an_owned_table_deeper_panics() {
+        let mut outer = OwnedTable::new();
+        outer.push_array(nested_owned_table(OwnedTable::MAX_DEPTH));
     }
 
     #[cfg(feature = "anyhow")]
