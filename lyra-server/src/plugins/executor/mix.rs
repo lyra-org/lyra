@@ -62,7 +62,7 @@ impl PluginExecutor {
                     deadline,
                     context.origin.plugin.clone(),
                 ));
-                Ok(scheduler.schedule_watched_luau_thread(
+                Ok(scheduler.spawn_watched_luau_thread(
                     context,
                     thread,
                     vec![argument],

@@ -150,7 +150,7 @@ impl TestPlugin {
             .insert(crate::plugins::auth::DispatchAuth::default());
         let completion = Rc::new(harmony_core::LocalLuauTaskCompletion::default());
         let deadline = scheduler.now() + CALL_TIMEOUT;
-        scheduler.schedule_luau_thread_with_limit_and_completion(
+        scheduler.spawn_luau_thread_with_limit_and_completion(
             own.clone(),
             thread,
             args.0,

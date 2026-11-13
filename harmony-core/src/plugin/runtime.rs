@@ -458,7 +458,7 @@ impl Runtime {
             )?;
             let thread = self.vm.create_thread(&function)?;
             thread.sandbox()?;
-            anyhow::Ok(scheduler.schedule_watched_luau_thread(
+            anyhow::Ok(scheduler.spawn_watched_luau_thread(
                 CallContext {
                     origin: load.source.origin.clone(),
                     task_group: load.task_group,

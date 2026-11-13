@@ -319,7 +319,7 @@ impl PluginExecutor {
         };
         let running = self.running.enter(plugin.clone());
         let vm = self.vm.clone();
-        scheduler.schedule_watcher(super::watcher_context(plugin), async move {
+        scheduler.spawn_watcher(super::watcher_context(plugin), async move {
             let result = match handler
                 .watch(reply.cancelled(), deadline, LateEnd::Expired)
                 .await

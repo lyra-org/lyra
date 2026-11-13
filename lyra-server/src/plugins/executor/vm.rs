@@ -256,7 +256,7 @@ impl PluginExecutor {
             }
         };
         let restarting = Restarting::begin(self.restarting.clone());
-        scheduler.schedule_watcher(
+        scheduler.spawn_watcher(
             super::watcher_context(Some(Arc::from(plugin_id))),
             async move {
                 let outcome = restart.await;
@@ -347,7 +347,7 @@ impl PluginExecutor {
                     .vm
                     .data()
                     .get::<harmony_core::Scheduler>()?
-                    .schedule_watched_luau_thread(context, thread, args, Some(limit)))
+                    .spawn_watched_luau_thread(context, thread, args, Some(limit)))
             },
         );
     }

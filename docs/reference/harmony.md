@@ -138,7 +138,7 @@ status. `clippy.toml` disallows those functions everywhere else.
 - `Cancellation` is a flag that fires such a wake when set. `drive_thread` and a runtime's
   entrypoints take theirs from the scheduler they run on.
 - Host work that watches a Luau thread belongs in a task of its own rather than in the host's
-  loop, so that the scheduler wakes it: `Scheduler::schedule_watcher` runs a future, which
+  loop, so that the scheduler wakes it: `Scheduler::spawn_watcher` runs a future, which
   need not be `Send`. There, `LocalLuauTaskCompletion::wait` waits for the thread's end,
   `Scheduler::sleep_until` for a deadline and `Cancellation::cancelled` for a cancellation.
   Every round runs the woken watchers first and drops what they cancelled before any other task
@@ -146,7 +146,7 @@ status. `clippy.toml` disallows those functions everywhere else.
   round began, isn't resumed again, and neither are the threads its work was waiting on.
   `LocalLuauTaskCompletion::ended_at` tells a thread that ended in time from one read late.
 - A round polls each task ready as it begins, once, with the scheduler free; a task that polls
-  the scheduler it runs on panics. A thread or future a task schedules during a round is a task
+  the scheduler it runs on panics. A thread or future a task spawns during a round is a task
   at once, and, like any task started or woken during a round, first runs in the next one. A
   thread or group a task cancels is cancelled at once, and the work of its tasks dropped before
   the task goes on, except the task being polled, which is cancelled as its poll returns:

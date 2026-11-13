@@ -519,7 +519,7 @@ fn task_test_module(recorded: Arc<Mutex<Vec<String>>>) -> ModuleSpec {
                 .vm
                 .data()
                 .get::<crate::Scheduler>()?
-                .schedule_luau_thread_after(
+                .spawn_luau_thread_after(
                     group_context(&frame),
                     std::time::Duration::from_secs_f64(seconds),
                     thread,
@@ -876,7 +876,7 @@ fn call_handler(
     let (function, context) = runtime.vm.data().get::<TestHandlers>()?.0.borrow()[index].clone();
     let completion = std::rc::Rc::new(crate::LocalLuauTaskCompletion::default());
     let scheduler = runtime.vm.data().get::<crate::Scheduler>()?;
-    scheduler.schedule_luau_thread_with_limit_and_completion(
+    scheduler.spawn_luau_thread_with_limit_and_completion(
         context,
         runtime.vm.create_thread(&function)?,
         Vec::new(),
@@ -973,7 +973,7 @@ fn a_started_restart_runs_as_a_task_and_ends_like_a_restart() {
             .expect("the plugin has an entrypoint");
         let scheduler = runtime.scheduler().expect("scheduler");
         let outcome = std::rc::Rc::new(std::cell::RefCell::new(None));
-        scheduler.schedule_watcher(CallContext::default(), {
+        scheduler.spawn_watcher(CallContext::default(), {
             let outcome = outcome.clone();
             async move {
                 *outcome.borrow_mut() = Some(restart.await);
@@ -1014,15 +1014,13 @@ fn a_restart_whose_entrypoint_fails_ends_the_run_from_its_task() -> anyhow::Resu
         .start_plugin_restart("demo")?
         .ok_or_else(|| anyhow::anyhow!("the plugin has an entrypoint"))?;
     let outcome = std::rc::Rc::new(std::cell::RefCell::new(None));
-    runtime
-        .scheduler()
-        .schedule_watcher(CallContext::default(), {
-            let outcome = outcome.clone();
-            async move {
-                *outcome.borrow_mut() = Some(restart.await);
-                Ok(())
-            }
-        });
+    runtime.scheduler().spawn_watcher(CallContext::default(), {
+        let outcome = outcome.clone();
+        async move {
+            *outcome.borrow_mut() = Some(restart.await);
+            Ok(())
+        }
+    });
     runtime.run_ready();
     let error = outcome
         .borrow_mut()

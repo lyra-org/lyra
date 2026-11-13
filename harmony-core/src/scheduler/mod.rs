@@ -167,17 +167,6 @@ impl TaskHandle {
     }
 }
 
-pub(super) enum LuauThreadStart {
-    Immediate,
-    Delayed(Duration),
-    Limited {
-        limit: ResumeLimit,
-        completion: Rc<LocalLuauTaskCompletion>,
-    },
-    /// Immediately, under the scheduler's own limit, reporting to the completion.
-    WithCompletion(Rc<LocalLuauTaskCompletion>),
-}
-
 pub struct Scheduler {
     state: RefCell<State>,
     timers: Rc<Timers>,
@@ -307,23 +296,24 @@ impl Scheduler {
         self.finish(deferred);
     }
 
-    /// Runs `future` as a task of `context`'s group, from the next round on.
-    pub fn schedule_future(
+    /// Runs `future` as a task of `context`'s group. Like every task spawned during a round, it
+    /// first runs in the next round; see [`Self::poll_ready`].
+    pub fn spawn_future(
         &self,
         context: CallContext,
         future: impl Future<Output = Result<()>> + 'static,
-    ) {
-        self.spawn_boxed(context, Box::pin(future), None, false);
+    ) -> TaskHandle {
+        self.spawn_boxed(context, Box::pin(future), None, false)
     }
 
-    /// [`Self::schedule_future`] for a task that watches others: every poll runs the watchers
+    /// [`Self::spawn_future`] for a task that watches others: every round runs the watchers
     /// first, see [`Self::poll_ready`], so a thread one cancels on waking isn't resumed again.
-    pub fn schedule_watcher(
+    pub fn spawn_watcher(
         &self,
         context: CallContext,
         future: impl Future<Output = Result<()>> + 'static,
-    ) {
-        self.spawn_boxed(context, Box::pin(future), None, true);
+    ) -> TaskHandle {
+        self.spawn_boxed(context, Box::pin(future), None, true)
     }
 
     fn spawn_boxed(
@@ -364,53 +354,54 @@ impl Scheduler {
         thread: luau::Thread,
         args: Vec<luau::Value>,
     ) -> TaskHandle {
-        self.spawn_luau_thread_start(context, thread, args, LuauThreadStart::Immediate)
+        let options = self.luau_task_options(None, None);
+        self.spawn_luau_task(context, thread, args, None, options)
     }
 
-    pub fn schedule_luau_thread(
+    pub fn spawn_luau_thread_after(
         &self,
         context: CallContext,
+        delay: Duration,
         thread: luau::Thread,
         args: Vec<luau::Value>,
-    ) {
-        self.spawn_luau_thread_start(context, thread, args, LuauThreadStart::Immediate);
+    ) -> TaskHandle {
+        let options = self.luau_task_options(None, None);
+        self.spawn_luau_task(
+            context,
+            thread,
+            args,
+            self.delay_until(Some(delay)),
+            options,
+        )
     }
 
     /// Runs `thread` under the scheduler's own resume budget, reporting to `completion`.
-    pub fn schedule_luau_thread_with_completion(
+    pub fn spawn_luau_thread_with_completion(
         &self,
         context: CallContext,
         thread: luau::Thread,
         args: Vec<luau::Value>,
         completion: Rc<LocalLuauTaskCompletion>,
-    ) {
-        self.spawn_luau_thread_start(
-            context,
-            thread,
-            args,
-            LuauThreadStart::WithCompletion(completion),
-        );
+    ) -> TaskHandle {
+        let options = self.luau_task_options(None, Some(completion));
+        self.spawn_luau_task(context, thread, args, None, options)
     }
 
-    pub fn schedule_luau_thread_with_limit_and_completion(
+    pub fn spawn_luau_thread_with_limit_and_completion(
         &self,
         context: CallContext,
         thread: luau::Thread,
         args: Vec<luau::Value>,
         limit: ResumeLimit,
         completion: Rc<LocalLuauTaskCompletion>,
-    ) {
-        self.spawn_luau_thread_start(
-            context,
-            thread,
-            args,
-            LuauThreadStart::Limited { limit, completion },
-        );
+    ) -> TaskHandle {
+        let options = self.luau_task_options(Some(limit), Some(completion));
+        self.spawn_luau_task(context, thread, args, None, options)
     }
 
     /// Runs `thread` under `limit`, or the scheduler's own resume budget without one, for a
     /// watcher to answer for.
-    pub fn schedule_watched_luau_thread(
+    pub fn spawn_watched_luau_thread(
         self: &Rc<Self>,
         context: CallContext,
         thread: luau::Thread,
@@ -418,47 +409,38 @@ impl Scheduler {
         limit: Option<ResumeLimit>,
     ) -> WatchedThread {
         let completion = Rc::new(LocalLuauTaskCompletion::default());
-        let start = match limit {
-            Some(limit) => LuauThreadStart::Limited {
-                limit,
-                completion: completion.clone(),
-            },
-            None => LuauThreadStart::WithCompletion(completion.clone()),
-        };
-        self.spawn_luau_thread_start(context, thread.clone(), args, start);
+        let options = self.luau_task_options(limit, Some(completion.clone()));
+        self.spawn_luau_task(context, thread.clone(), args, None, options);
         WatchedThread::new(Rc::downgrade(self), self.timers.clone(), thread, completion)
     }
 
-    fn spawn_luau_thread_start(
+    /// A Luau task's options: `limit`, or the scheduler's own resume budget without one, and
+    /// `completion`.
+    fn luau_task_options(
+        &self,
+        limit: Option<ResumeLimit>,
+        completion: Option<Rc<LocalLuauTaskCompletion>>,
+    ) -> LuauTaskOptions {
+        let default = self.state.borrow().default_luau_task_options();
+        LuauTaskOptions {
+            resume_limit: limit.or(default.resume_limit),
+            completion,
+        }
+    }
+
+    /// Runs `thread` with `args` as a task of `context`'s group, from `wake_at` if given.
+    fn spawn_luau_task(
         &self,
         context: CallContext,
         thread: luau::Thread,
         args: Vec<luau::Value>,
-        start: LuauThreadStart,
+        wake_at: Option<Instant>,
+        options: LuauTaskOptions,
     ) -> TaskHandle {
-        let wake_at = match &start {
-            LuauThreadStart::Delayed(delay) => self.delay_until(Some(*delay)),
-            LuauThreadStart::Immediate
-            | LuauThreadStart::Limited { .. }
-            | LuauThreadStart::WithCompletion(_) => None,
-        };
         let args = self.prepare_luau_thread_start_args(&thread, args, wake_at);
         let pending_start = !thread.is_started();
         let (handle, deferred) = {
             let mut state = self.state.borrow_mut();
-            let options = match start {
-                LuauThreadStart::Immediate | LuauThreadStart::Delayed(_) => {
-                    state.default_luau_task_options()
-                }
-                LuauThreadStart::WithCompletion(completion) => LuauTaskOptions {
-                    completion: Some(completion),
-                    ..state.default_luau_task_options()
-                },
-                LuauThreadStart::Limited { limit, completion } => LuauTaskOptions {
-                    resume_limit: Some(limit),
-                    completion: Some(completion),
-                },
-            };
             let (handle, deferred) = state.insert_work(
                 context,
                 TaskWork::LuauThread {
@@ -475,26 +457,6 @@ impl Scheduler {
         };
         self.finish(deferred);
         handle
-    }
-
-    pub fn spawn_luau_thread_after(
-        &self,
-        context: CallContext,
-        delay: Duration,
-        thread: luau::Thread,
-        args: Vec<luau::Value>,
-    ) -> TaskHandle {
-        self.spawn_luau_thread_start(context, thread, args, LuauThreadStart::Delayed(delay))
-    }
-
-    pub fn schedule_luau_thread_after(
-        &self,
-        context: CallContext,
-        delay: Duration,
-        thread: luau::Thread,
-        args: Vec<luau::Value>,
-    ) {
-        self.spawn_luau_thread_start(context, thread, args, LuauThreadStart::Delayed(delay));
     }
 
     /// Has `thread` wait on `future`, after `delay` if one is given, for a host call it made as

@@ -442,7 +442,7 @@ impl StreamTask {
         let writer =
             ApiStreamWriter::class().create_value(vm, &self.context.origin, self.writer.clone())?;
         let thread = vm.create_thread(&self.produce)?;
-        Ok(scheduler.schedule_watched_luau_thread(
+        Ok(scheduler.spawn_watched_luau_thread(
             self.context.clone(),
             thread,
             vec![writer],
@@ -538,7 +538,7 @@ pub(crate) fn queue_stream(
         tasks.places.clone(),
         scheduler.sleep_until(deadline),
     );
-    scheduler.schedule_watcher(watcher, async move {
+    scheduler.spawn_watcher(watcher, async move {
         run.await;
         Ok(())
     });

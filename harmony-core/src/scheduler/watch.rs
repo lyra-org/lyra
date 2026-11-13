@@ -42,7 +42,7 @@ pub enum Watched<S> {
     Expired,
 }
 
-/// A Luau thread its watcher answers for, as [`Scheduler::schedule_watched_luau_thread`]
+/// A Luau thread its watcher answers for, as [`Scheduler::spawn_watched_luau_thread`]
 /// schedules it: however the watcher goes, the thread doesn't outlive it.
 pub struct WatchedThread {
     scheduler: Weak<Scheduler>,
