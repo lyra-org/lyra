@@ -72,7 +72,9 @@ struct StreamQuery {
     bitrate_bps: Option<u32>,
     #[cfg_attr(
         feature = "docgen",
-        schemars(description = "Target sample rate in Hz. Triggers transcoding when supplied.")
+        schemars(
+            description = "Target sample rate in Hz, from 1000 to 768000. Triggers transcoding when supplied."
+        )
     )]
     sample_rate_hz: Option<u32>,
     #[cfg_attr(

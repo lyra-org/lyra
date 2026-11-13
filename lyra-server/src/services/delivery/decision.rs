@@ -256,10 +256,13 @@ impl TranscodeKnobs {
                 "bitrate_bps must be greater than zero",
             ));
         }
-        if matches!(self.sample_rate_hz, Some(0)) {
-            return Err(DeliveryError::bad_request(
-                "sample_rate_hz must be greater than zero",
-            ));
+        let rates = lyra_ffmpeg::SUPPORTED_SAMPLE_RATES_HZ;
+        if self.sample_rate_hz.is_some_and(|hz| !rates.contains(&hz)) {
+            return Err(DeliveryError::bad_request(format!(
+                "sample_rate_hz must be between {} and {} Hz",
+                rates.start(),
+                rates.end()
+            )));
         }
         if matches!(self.channels, Some(0)) {
             return Err(DeliveryError::bad_request(
@@ -1244,17 +1247,21 @@ mod tests {
     }
 
     #[test]
-    fn policy_rejects_zero_sample_rate() {
-        let err = apply_transcode_policy(
-            knobs(None, Some(0), None),
-            AudioCodec::Mp3,
-            SourceAudio::default(),
-        )
-        .expect_err("sample_rate_hz=0 must fail fast");
-        assert_eq!(
-            bad_request_message(err),
-            "sample_rate_hz must be greater than zero"
-        );
+    fn policy_rejects_an_unsupported_sample_rate() {
+        let (min, max) = lyra_ffmpeg::SUPPORTED_SAMPLE_RATES_HZ.into_inner();
+        for hz in [0, 1, min - 1, max + 1, u32::MAX] {
+            let err = apply_transcode_policy(
+                knobs(None, Some(hz), None),
+                AudioCodec::Flac,
+                SourceAudio::default(),
+            )
+            .expect_err("an unsupported sample rate must fail fast");
+            assert_eq!(
+                bad_request_message(err),
+                "sample_rate_hz must be between 1000 and 768000 Hz",
+                "{hz} Hz"
+            );
+        }
     }
 
     #[test]
