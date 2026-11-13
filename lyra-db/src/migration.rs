@@ -174,13 +174,19 @@ impl Migration {
             Plan::Migrate {
                 from, first_step, ..
             } => {
+                let steps = &self.steps[*first_step..];
                 tracing::info!(
                     from = from.as_str(),
                     to = self.current,
-                    steps = self.steps.len() - first_step,
+                    steps = steps.len(),
                     "migrating db"
                 );
-                for step in &self.steps[*first_step..] {
+                for (index, step) in steps.iter().enumerate() {
+                    tracing::info!(
+                        step = index + 1,
+                        steps = steps.len(),
+                        "running migration step"
+                    );
                     step(t)?;
                 }
             }

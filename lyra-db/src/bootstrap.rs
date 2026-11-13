@@ -235,7 +235,7 @@ fn optimize_storage(db: &mut DbAny, config: &DbConfig) {
         return;
     }
 
-    tracing::debug!(
+    tracing::info!(
         path = %config.path.display(),
         kind = kind_label(config.kind),
         "optimizing db storage"
