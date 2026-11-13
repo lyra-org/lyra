@@ -80,11 +80,11 @@ fn unmet_dependency<'a>(
 }
 
 pub struct PluginManager {
-    pub(super) plugins: HashMap<String, LoadedPlugin>,
+    plugins: HashMap<String, LoadedPlugin>,
     /// `LoadedPlugin.directory` → plugin id. Populated at insert time.
     /// Lets the runtime gate resolve a chunk's plugin root to an identity
     /// without re-parsing chunk names (which was the forgery oracle).
-    pub(super) by_root: HashMap<PathBuf, String>,
+    by_root: HashMap<PathBuf, String>,
     plugins_dir: PathBuf,
 }
 
@@ -158,7 +158,7 @@ impl PluginManager {
 
     /// Validate cross-plugin invariants and prune offenders so the
     /// runtime never sees a half-resolved set.
-    pub(super) fn resolve_dependencies(&mut self) -> Vec<PluginDiscoveryError> {
+    fn resolve_dependencies(&mut self) -> Vec<PluginDiscoveryError> {
         let mut errors = Vec::new();
 
         // Cascading prunes: dropping A can unsatisfy B's dependency on A,
@@ -504,3 +504,6 @@ pub(super) fn execution_order(
         .filter_map(|id| by_id.remove(&id))
         .collect())
 }
+
+#[cfg(test)]
+mod tests;

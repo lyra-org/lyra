@@ -245,12 +245,12 @@ enum ScheduledEntrypoint {
 }
 
 /// A plugin's entrypoint running on the scheduler.
-pub(super) struct RunningEntrypoint {
+struct RunningEntrypoint {
     vm: luau::Vm,
     plugin_id: Arc<str>,
     entrypoint: Arc<str>,
     load: crate::modules::SourceLoad,
-    pub(super) watched: crate::WatchedThread,
+    watched: crate::WatchedThread,
     deadline: Instant,
     cancelled: crate::Cancellation,
     run_end_hooks: Rc<[RunEndHook]>,
@@ -262,7 +262,7 @@ impl RunningEntrypoint {
     /// completion wins over the deadline, which only keeps an entrypoint from holding up its
     /// runtime for good: nobody was promised an answer by then, so a plugin that loaded isn't
     /// unloaded for having loaded late. An entrypoint that didn't complete is cancelled.
-    pub(super) async fn finish(self) -> anyhow::Result<()> {
+    async fn finish(self) -> anyhow::Result<()> {
         let result = match self
             .watched
             .watch(
@@ -319,7 +319,7 @@ pub struct Runtime {
 }
 
 impl Runtime {
-    pub(super) fn scheduler(&self) -> anyhow::Result<Rc<Scheduler>> {
+    fn scheduler(&self) -> anyhow::Result<Rc<Scheduler>> {
         Ok(self.vm.data().get::<Scheduler>()?)
     }
 
@@ -398,7 +398,7 @@ impl Runtime {
             .map(RunningEntrypoint::finish))
     }
 
-    pub(super) fn start_restart_entrypoint(
+    fn start_restart_entrypoint(
         &self,
         plugin_id: &str,
     ) -> anyhow::Result<Option<RunningEntrypoint>> {
@@ -491,7 +491,7 @@ impl Runtime {
     }
 
     /// Runs `entrypoint` to its end on this thread, driving the scheduler meanwhile.
-    pub(super) fn drive_entrypoint(&self, entrypoint: RunningEntrypoint) -> anyhow::Result<()> {
+    fn drive_entrypoint(&self, entrypoint: RunningEntrypoint) -> anyhow::Result<()> {
         let scheduler = self.vm.data().get::<Scheduler>()?;
         let task = scheduler.luau_thread_handle(entrypoint.watched.thread());
         let waker = scheduler.wake_handle().waker();
@@ -551,10 +551,7 @@ impl Runtime {
 
     /// Starts the plugin's run and schedules its entrypoint. `None` when there is nothing to
     /// run. A failure to start leaves the run ended.
-    pub(super) fn start_entrypoint(
-        &self,
-        plugin: &LoadedPlugin,
-    ) -> anyhow::Result<Option<RunningEntrypoint>> {
+    fn start_entrypoint(&self, plugin: &LoadedPlugin) -> anyhow::Result<Option<RunningEntrypoint>> {
         let scheduler = self.scheduler()?;
         let require = self.vm.data().get::<RequireRuntime>()?;
         require.plugin_group(&scheduler, &plugin.manifest.id);
@@ -658,10 +655,7 @@ impl Runtime {
     }
 }
 
-pub(super) fn plugin_origin(
-    plugin_id: impl Into<Arc<str>>,
-    path: impl Into<Arc<str>>,
-) -> ChunkOrigin {
+fn plugin_origin(plugin_id: impl Into<Arc<str>>, path: impl Into<Arc<str>>) -> ChunkOrigin {
     let plugin = plugin_id.into();
     let path = path.into();
     ChunkOrigin {
@@ -670,3 +664,6 @@ pub(super) fn plugin_origin(
         path: Some(Arc::from(format!("plugins/{plugin}/{path}"))),
     }
 }
+
+#[cfg(test)]
+mod tests;

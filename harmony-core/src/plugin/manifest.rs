@@ -38,9 +38,9 @@ pub const PLUGIN_SCHEMA_VERSION: u32 = 1;
 /// Hard caps applied to `plugin.json` before `serde_json` parses it.
 /// Prevents a hostile or malformed plugin config from OOMing `discover_plugins`.
 pub const PLUGIN_CONFIG_MAX_BYTES: u64 = 64 * 1024;
-pub(super) const PLUGIN_CONFIG_MAX_SCOPE_LEN: usize = 128;
-pub(super) const PLUGIN_CONFIG_MAX_SCOPE_REASON_CHARS: usize = 200;
-pub(super) const PLUGIN_CONFIG_MAX_DEPENDENCIES: usize = 32;
+const PLUGIN_CONFIG_MAX_SCOPE_LEN: usize = 128;
+const PLUGIN_CONFIG_MAX_SCOPE_REASON_CHARS: usize = 200;
+const PLUGIN_CONFIG_MAX_DEPENDENCIES: usize = 32;
 /// The most items a scope's grant may list.
 pub const PLUGIN_CONFIG_MAX_SCOPE_GRANT_ITEMS: usize = 32;
 
@@ -445,7 +445,7 @@ pub struct Dependency {
     pub optional: bool,
 }
 
-pub(super) fn deserialize_dependencies<'de, D: Deserializer<'de>>(
+fn deserialize_dependencies<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<BTreeMap<String, Dependency>, D::Error> {
     struct DependenciesVisitor;
@@ -701,3 +701,6 @@ pub fn validate_plugin_id(id: &str) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

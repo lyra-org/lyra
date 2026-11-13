@@ -281,4 +281,4 @@ fn truncate_for_error(s: &str) -> String {
 }
 
 #[cfg(test)]
-pub(crate) mod tests;
+mod testing;
