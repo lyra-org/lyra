@@ -3344,15 +3344,23 @@ fn a_group_cancelled_from_a_task_runs_no_further() -> luau::runtime::Result<()> 
     waiting_thread(&vm, &scheduler, context.clone(), dropped.clone())?;
     scheduler.poll_ready();
 
-    // The canceller runs first, and the group's own task is ready behind it.
+    // The canceller runs first, and the group's own task is ready behind it. The group's tasks
+    // are cancelled, and their work dropped, before the canceller goes on.
     let ran = Rc::new(Cell::new(false));
+    let dropped_when_cancelled = Rc::new(Cell::new(None));
     scheduler.schedule_future(CallContext::default(), {
         let scheduler = Rc::downgrade(&scheduler);
+        let (dropped, dropped_when_cancelled) = (dropped.clone(), dropped_when_cancelled.clone());
         async move {
-            scheduler
-                .upgrade()
-                .expect("the scheduler is polling")
-                .cancel_group(group);
+            let scheduler = scheduler.upgrade().expect("the scheduler is polling");
+            scheduler.cancel_group(group);
+            dropped_when_cancelled.set(Some((
+                dropped.load(Ordering::Acquire),
+                scheduler
+                    .group_snapshots(group)
+                    .iter()
+                    .all(|task| task.state != TaskState::Pending),
+            )));
             Ok(())
         }
     });
@@ -3365,6 +3373,7 @@ fn a_group_cancelled_from_a_task_runs_no_further() -> luau::runtime::Result<()> 
     });
 
     scheduler.poll_ready();
+    assert_eq!(dropped_when_cancelled.get(), Some((true, true)));
     assert!(!ran.get(), "a task of the cancelled group still ran");
     assert!(dropped.load(Ordering::Acquire));
     assert!(scheduler.is_group_cancelled(group));

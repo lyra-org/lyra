@@ -251,16 +251,6 @@ impl State {
             .is_some_and(|handle| self.pending_thread(handle.id()).is_some())
     }
 
-    /// The threads of `group`'s pending tasks.
-    pub(super) fn group_threads(&self, group: TaskGroupId) -> Vec<luau::Thread> {
-        self.groups
-            .get(&group)
-            .into_iter()
-            .flatten()
-            .filter_map(|id| self.pending_thread(*id).cloned())
-            .collect()
-    }
-
     /// Runs `future` for `thread`, which acts as `context`, while the task also belongs to
     /// `awaiting`, the group of the run the future acts for.
     pub(super) fn spawn_luau_future(
@@ -409,11 +399,6 @@ impl State {
             .collect();
         ids.sort_unstable_by_key(|id| id.0);
         ids.into_iter().filter_map(|id| self.cancel(id)).collect()
-    }
-
-    /// Marks `group` cancelled, for its tasks to be cancelled once the poll under way ends.
-    pub(super) fn mark_group_cancelled(&mut self, group: TaskGroupId) {
-        self.cancelled_groups.insert(group);
     }
 
     pub(super) fn mark_cancelling(&mut self, id: TaskId) {

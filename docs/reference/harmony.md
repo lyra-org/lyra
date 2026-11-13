@@ -145,9 +145,10 @@ status. `clippy.toml` disallows those functions everywhere else.
   `LocalLuauTaskCompletion::ended_at` tells a thread that ended in time from one read late.
 - A round polls each task ready as it begins, once, with the scheduler free; a task that polls
   the scheduler it runs on panics. A thread or future a task schedules during a round is a task
-  at once, and, like any task started or woken during a round, first runs in the next one. Other
-  requests a task makes during a round happen after the watchers and again after the other
-  tasks: a cancelled thread or group is dropped. Neither runs further in that round, and
+  at once, and, like any task started or woken during a round, first runs in the next one. A
+  group a task cancels is cancelled at once, along with its tasks, except the task being polled,
+  which is cancelled as its poll returns. A thread a task cancels is dropped after the watchers
+  and again after the other tasks, and runs no further in that round;
   `cancel_luau_thread_and_settle` returns a future for the moment the thread is gone. A task's
   future must not hold the scheduler's `Rc` across an await, which would keep the scheduler alive
   through itself.

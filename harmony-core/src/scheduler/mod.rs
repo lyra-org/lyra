@@ -188,7 +188,6 @@ pub struct Scheduler {
     in_round: Cell<bool>,
     pending_luau_work: RefCell<Vec<PendingLuauWork>>,
     pending_luau_cancellations: RefCell<Vec<luau::Thread>>,
-    pending_group_cancellations: RefCell<Vec<TaskGroupId>>,
     /// Told once the poll under way has ended and what it deferred is done.
     poll_end: RefCell<Vec<tokio::sync::oneshot::Sender<()>>>,
     polling: Cell<bool>,
@@ -224,7 +223,6 @@ impl Scheduler {
             in_round: Cell::default(),
             pending_luau_work: RefCell::default(),
             pending_luau_cancellations: RefCell::default(),
-            pending_group_cancellations: RefCell::default(),
             poll_end: RefCell::default(),
             polling: Cell::default(),
         }
@@ -310,39 +308,16 @@ impl Scheduler {
 
     /// Cancels every pending task in `group`, and any task later spawned into it, and closes
     /// their threads at once, as [`Self::cancel_luau_thread`] closes one. The default group is
-    /// never cancelled. While the scheduler polls, as from a task, the group's tasks run no
-    /// further and are cancelled once the poll ends.
+    /// never cancelled. The task being polled, if it is in the group, is cancelled once its poll
+    /// returns.
     pub fn cancel_group(&self, group: TaskGroupId) {
-        if self.polling.get() {
-            if group != TaskGroupId::default() {
-                self.state.borrow_mut().mark_group_cancelled(group);
-                self.pending_group_cancellations.borrow_mut().push(group);
-                self.close_group(group);
-            }
-            return;
-        }
         let deferred = self.state.borrow_mut().cancel_group(group);
         self.finish(deferred);
         if group != TaskGroupId::default() {
-            // Work a poll put off and never took up, as when it unwound, goes with the group.
+            // Waits a poll put off go with the group.
             self.cancel_pending_luau_work(|work| work.is_in(group));
         }
         self.flush_pending_luau_cancellations();
-    }
-
-    /// Closes the threads of `group`'s pending tasks and of the work a poll has put off for it.
-    fn close_group(&self, group: TaskGroupId) {
-        let mut threads = self.state.borrow().group_threads(group);
-        threads.extend(
-            self.pending_luau_work
-                .borrow()
-                .iter()
-                .filter(|work| work.is_in(group))
-                .map(|work| work.thread.clone()),
-        );
-        for thread in threads {
-            close_cancelled_thread(&thread);
-        }
     }
 
     /// Runs `future` as a task of `context`'s group, from the next round on.
@@ -804,7 +779,6 @@ impl Scheduler {
     /// Does what was asked of the scheduler while it polled.
     fn end_poll(&self) {
         self.flush_pending_luau_futures();
-        self.flush_pending_group_cancellations();
         self.flush_pending_luau_cancellations();
         self.state.borrow_mut().clear_cancelling();
         for ended in std::mem::take(&mut *self.poll_end.borrow_mut()) {
@@ -959,13 +933,6 @@ impl Scheduler {
                     drop_catching_panic(&context, refused);
                 }
             }
-        }
-    }
-
-    fn flush_pending_group_cancellations(&self) {
-        let pending = std::mem::take(&mut *self.pending_group_cancellations.borrow_mut());
-        for group in pending {
-            self.cancel_group(group);
         }
     }
 
