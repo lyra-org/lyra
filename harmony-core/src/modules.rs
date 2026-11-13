@@ -1417,7 +1417,7 @@ pub fn async_luau_callback(callback: luau::NativeAsyncFn) -> luau::NativeFn {
         let context = frame.context.clone();
         let scheduler = frame.vm.data().get::<crate::Scheduler>()?;
         let mut returns = frame.returns.clone();
-        // Refused before the thread parks: nothing would resume it. A cancelled thread just
+        // Refused before the thread waits: nothing would resume it. A cancelled thread just
         // yields, as it would to wait, and is closed there.
         if scheduler.is_group_cancelled(context.task_group) {
             if thread.is_cancelled() && thread.is_yieldable() {
@@ -1435,8 +1435,7 @@ pub fn async_luau_callback(callback: luau::NativeAsyncFn) -> luau::NativeFn {
             returns.request_yield();
             // A cancelled thread is closed as it yields, and nothing is to wake it.
             if !thread.is_cancelled() {
-                scheduler.park_luau_thread(&thread);
-                scheduler.schedule_luau_future_after(context, delay, thread, future.for_call(site));
+                scheduler.wait_on_future(context, thread, future.for_call(site), Some(delay));
             }
             return Ok(());
         }
@@ -1447,8 +1446,7 @@ pub fn async_luau_callback(callback: luau::NativeAsyncFn) -> luau::NativeFn {
                 ensure_yieldable(&thread)?;
                 returns.request_yield();
                 if !thread.is_cancelled() {
-                    scheduler.park_luau_thread(&thread);
-                    scheduler.schedule_luau_future(context, thread, future.for_call(site));
+                    scheduler.wait_on_future(context, thread, future.for_call(site), None);
                 }
             }
         }
@@ -1457,7 +1455,7 @@ pub fn async_luau_callback(callback: luau::NativeAsyncFn) -> luau::NativeFn {
 }
 
 /// A call that must wait fails here when its thread can't yield, before
-/// anything is parked or scheduled for it.
+/// anything is scheduled for it.
 fn ensure_yieldable(thread: &luau::Thread) -> luau::runtime::Result<()> {
     if thread.is_yieldable() {
         return Ok(());

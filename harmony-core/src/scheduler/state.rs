@@ -73,7 +73,6 @@ pub(super) struct State {
     polled: Option<Polled>,
     /// The task that last took up each thread.
     thread_tasks: HashMap<ThreadKey, TaskHandle>,
-    parked_threads: HashSet<ThreadKey>,
 }
 
 /// How a Luau task runs: under what limit, and whom to tell how it ends.
@@ -89,6 +88,16 @@ struct Polled {
     cancelled: Rc<Cell<bool>>,
     /// Told once the task has settled after its poll.
     settled: Vec<oneshot::Sender<()>>,
+    /// The wait its thread asked for, which becomes the task's work once the thread yields.
+    next: Option<Wait>,
+}
+
+/// A host call's future a thread waits on.
+struct Wait {
+    /// The group of the run the call acts for.
+    awaiting: TaskGroupId,
+    future: luau::ScheduledFuture,
+    wake_at: Option<Instant>,
 }
 
 /// What a round takes off a task to poll it: the context it runs as, its work, the limit it runs
@@ -119,6 +128,8 @@ pub(super) enum Deferred {
     Drop {
         context: CallContext,
         work: Option<TaskWork>,
+        /// A wait the task's thread asked for and won't have.
+        wait: Option<luau::ScheduledFuture>,
         removed: Option<Box<Task>>,
     },
 }
@@ -138,10 +149,21 @@ impl Report {
 }
 
 impl Deferred {
-    fn work(context: CallContext, work: TaskWork) -> Self {
+    fn work(context: CallContext, work: Option<TaskWork>) -> Self {
         Self::Drop {
             context,
-            work: Some(work),
+            work,
+            wait: None,
+            removed: None,
+        }
+    }
+
+    /// A wait a thread asked for and won't have.
+    fn future(context: CallContext, future: luau::ScheduledFuture) -> Self {
+        Self::Drop {
+            context,
+            work: None,
+            wait: Some(future),
             removed: None,
         }
     }
@@ -164,7 +186,6 @@ impl State {
             cancelled_groups: HashSet::new(),
             polled: None,
             thread_tasks: HashMap::new(),
-            parked_threads: HashSet::new(),
         }
     }
 
@@ -262,16 +283,16 @@ impl State {
             .is_some_and(|handle| self.pending_thread(handle.id()).is_some())
     }
 
-    /// Runs `future` for `thread`, which acts as `context`, while the task also belongs to
-    /// `awaiting`, the group of the run the future acts for.
-    pub(super) fn spawn_luau_future(
+    /// Adds a task that borrows `thread` for one wait on `future`: the thread acts as `context`,
+    /// and the task also belongs to `awaiting`, the group of the run the future acts for.
+    pub(super) fn spawn_borrowed_wait(
         &mut self,
         context: CallContext,
         awaiting: TaskGroupId,
         thread: luau::Thread,
         future: luau::ScheduledFuture,
         wake_at: Option<Instant>,
-    ) -> (TaskHandle, Option<Deferred>) {
+    ) -> Option<Deferred> {
         let options = self.default_luau_task_options();
         let (handle, deferred) = self.insert_work(
             context,
@@ -285,46 +306,12 @@ impl State {
         );
         self.track_thread(&thread, handle);
         if deferred.is_some() {
-            return (handle, deferred);
+            return deferred;
         }
         if let Some(task) = self.tasks.get_mut(&handle.id()) {
             task.borrows_thread = true;
         }
-        (handle, self.await_group(handle.id(), awaiting))
-    }
-
-    /// The task keeps its thread's context and also joins `awaiting` while the future runs.
-    /// Fails, giving the future back, unless the task is parked and both groups' runs are live.
-    pub(super) fn replace_with_luau_future(
-        &mut self,
-        id: TaskId,
-        awaiting: TaskGroupId,
-        thread: luau::Thread,
-        future: luau::ScheduledFuture,
-        wake_at: Option<Instant>,
-    ) -> std::result::Result<(), TaskWork> {
-        let work = TaskWork::LuauFuture { thread, future };
-        if !self.is_parked(id) {
-            return Err(work);
-        }
-        let group = self.tasks[&id].context.task_group;
-        if self.is_cancelled(group) || self.is_cancelled(awaiting) {
-            return Err(work);
-        }
-        let cancelled = self.await_group(id, awaiting);
-        debug_assert!(cancelled.is_none(), "both groups were checked above");
-        let task = self.tasks.get_mut(&id).expect("task checked above");
-        task.work = Some(work);
-        task.state = TaskState::Pending;
-        task.error = None;
-        task.output = None;
-        task.wake_at = wake_at;
-        if let Some(wake_at) = wake_at {
-            self.wake_task_at(id, wake_at);
-        } else {
-            self.enqueue(id);
-        }
-        Ok(())
+        self.await_group(handle.id(), awaiting)
     }
 
     /// The task `thread`, which hasn't started, last started as, while that task hasn't started
@@ -415,29 +402,6 @@ impl State {
         self.cancelled_groups.contains(&group)
     }
 
-    pub(super) fn park_luau_thread(&mut self, thread: &luau::Thread) {
-        self.parked_threads.insert(thread_key(thread));
-    }
-
-    pub(super) fn take_parked_luau_thread(&mut self, thread: &luau::Thread) -> bool {
-        self.parked_threads.remove(&thread_key(thread))
-    }
-
-    #[cfg(test)]
-    pub(super) fn has_parked_threads(&self) -> bool {
-        !self.parked_threads.is_empty()
-    }
-
-    /// Parked on an async call: still pending, waiting for that call's future to become its
-    /// work.
-    pub(super) fn is_parked(&self, id: TaskId) -> bool {
-        !self.is_polled(id)
-            && self
-                .tasks
-                .get(&id)
-                .is_some_and(|task| task.state == TaskState::Pending && task.work.is_none())
-    }
-
     /// Makes pending task `id` ready, unless it already is: a task is polled at most once a round,
     /// however often it was woken.
     fn enqueue(&mut self, id: TaskId) {
@@ -479,10 +443,6 @@ impl State {
         Some(id)
     }
 
-    fn is_polled(&self, id: TaskId) -> bool {
-        self.polled.as_ref().is_some_and(|polled| polled.id == id)
-    }
-
     /// The task being polled, if `thread` is the thread it runs: found by the task itself, which
     /// keeps its thread for as long as it is polled, and not by what `thread` last started as.
     fn polled_with_thread(&mut self, thread: &luau::Thread) -> Option<&mut Polled> {
@@ -508,6 +468,27 @@ impl State {
         Some(waiting)
     }
 
+    /// Has the task being polled wait on `future` once its thread, `thread`, yields: the task
+    /// keeps its own context and also joins `awaiting` while it waits. Gives the future back when
+    /// `thread` isn't that task's, and with it a wait the thread already asked for.
+    pub(super) fn wait_in_polled_task(
+        &mut self,
+        thread: &luau::Thread,
+        awaiting: TaskGroupId,
+        future: luau::ScheduledFuture,
+        wake_at: Option<Instant>,
+    ) -> std::result::Result<Option<luau::ScheduledFuture>, luau::ScheduledFuture> {
+        let Some(polled) = self.polled_with_thread(thread) else {
+            return Err(future);
+        };
+        let replaced = polled.next.replace(Wait {
+            awaiting,
+            future,
+            wake_at,
+        });
+        Ok(replaced.map(|wait| wait.future))
+    }
+
     /// Takes the work off pending task `id` to poll it, with the context and the limit it runs
     /// under, and what its cancellation during the poll sets.
     pub(super) fn take_for_poll(&mut self, id: TaskId) -> Option<Taken> {
@@ -522,6 +503,7 @@ impl State {
             id,
             cancelled: cancelled.clone(),
             settled: Vec::new(),
+            next: None,
         });
         Some((
             task.context.clone(),
@@ -532,8 +514,9 @@ impl State {
     }
 
     /// Puts back the work of the task just polled, or settles the task as the poll came to, and
-    /// cancels the task if that was asked during its poll. Returns whether the poll ended or
-    /// parked the task, what to finish with, and whom to tell the task has settled.
+    /// cancels the task if that was asked during its poll. Returns whether the poll ended the
+    /// task or had it wait on a host call, what to finish with, and whom to tell the task has
+    /// settled.
     pub(super) fn after_poll(
         &mut self,
         id: TaskId,
@@ -544,13 +527,22 @@ impl State {
     ) -> (bool, Vec<Deferred>, Vec<oneshot::Sender<()>>) {
         let polled = self.polled.take().expect("a task is being polled");
         debug_assert_eq!(polled.id, id);
-        let Some(task) = self.tasks.get_mut(&id) else {
-            return (false, vec![Deferred::work(context, work)], polled.settled);
-        };
-        if task.state != TaskState::Pending {
-            return (false, vec![Deferred::work(context, work)], polled.settled);
+        let mut wait = polled.next;
+        let pending = self
+            .tasks
+            .get(&id)
+            .is_some_and(|task| task.state == TaskState::Pending);
+        if !pending {
+            let dropped = Deferred::Drop {
+                context,
+                work: Some(work),
+                wait: wait.map(|wait| wait.future),
+                removed: None,
+            };
+            return (false, vec![dropped], polled.settled);
         }
-        let (counted, deferred) = match outcome {
+        let task = self.tasks.get_mut(&id).expect("checked above");
+        let (counted, mut deferred) = match outcome {
             WorkPoll::Completed { output } => {
                 let result = if task.completion.is_some() {
                     Some(Ok(output.unwrap_or_default()))
@@ -562,14 +554,8 @@ impl State {
                 let report = result.map(|result| (result, None));
                 (
                     true,
-                    Some(self.settle(id, TaskState::Completed, report, false)),
+                    vec![self.settle(id, TaskState::Completed, report, false)],
                 )
-            }
-            // Stays pending, without work, until the parked call's future replaces it or a
-            // refused replacement cancels it.
-            WorkPoll::Parked => {
-                task.wake_at = None;
-                (true, Some(Deferred::work(context, work)))
             }
             WorkPoll::Cancelled => {
                 task.work = Some(work);
@@ -578,12 +564,12 @@ impl State {
                 // yielded.
                 (
                     true,
-                    Some(self.settle(
+                    vec![self.settle(
                         id,
                         TaskState::Cancelled,
                         Some((Err(message.into()), None)),
                         false,
-                    )),
+                    )],
                 )
             }
             WorkPoll::Failed(error) => {
@@ -595,24 +581,30 @@ impl State {
                 };
                 (
                     true,
-                    Some(self.settle(
+                    vec![self.settle(
                         id,
                         TaskState::Failed,
                         Some((Err(raised), interrupted_by)),
                         false,
-                    )),
+                    )],
                 )
+            }
+            // A cancelled task waits on nothing.
+            WorkPoll::Yielded if wait.is_some() && !polled.cancelled.get() => {
+                task.work = Some(work);
+                let wait = wait.take().expect("checked above");
+                (true, self.wait(id, wait))
             }
             WorkPoll::Yielded if task.borrows_thread => {
                 task.work = Some(work);
                 (
                     true,
-                    Some(self.settle(id, TaskState::Completed, None, false)),
+                    vec![self.settle(id, TaskState::Completed, None, false)],
                 )
             }
             WorkPoll::Yielded | WorkPoll::Pending => {
                 task.work = Some(work);
-                (false, None)
+                (false, Vec::new())
             }
         };
         if !matches!(
@@ -621,11 +613,49 @@ impl State {
         ) {
             self.stop_awaiting(id);
         }
-        let mut deferred: Vec<_> = deferred.into_iter().collect();
+        // Asked for by a thread that went on to end some other way, or was cancelled.
+        deferred.extend(wait.map(|wait| Deferred::future(context, wait.future)));
         if polled.cancelled.get() {
             deferred.extend(self.cancel(id));
         }
         (counted, deferred, polled.settled)
+    }
+
+    /// Has task `id`, whose thread just yielded asking for `wait`, wait on it: the thread's
+    /// future becomes the task's work. A wait for a cancelled run is refused, and the task, with
+    /// nothing left to resume its thread, is cancelled.
+    fn wait(&mut self, id: TaskId, wait: Wait) -> Vec<Deferred> {
+        let Wait {
+            awaiting,
+            future,
+            wake_at,
+        } = wait;
+        let task = &self.tasks[&id];
+        let context = task.context.clone();
+        let thread = task
+            .thread
+            .clone()
+            .expect("a task that waits runs a thread");
+        if self.is_cancelled(context.task_group) || self.is_cancelled(awaiting) {
+            let cancelled = self.cancel(id).expect("the task is pending");
+            // Dropped once the thread is closed.
+            return vec![cancelled, Deferred::future(context, future)];
+        }
+        let cancelled = self.await_group(id, awaiting);
+        debug_assert!(cancelled.is_none(), "both groups were checked above");
+        let task = self.tasks.get_mut(&id).expect("the task waits");
+        let yielded = task.work.replace(TaskWork::LuauFuture {
+            thread: thread.clone(),
+            future,
+        });
+        task.wake_at = wake_at;
+        if let Some(wake_at) = wake_at {
+            self.wake_task_at(id, wake_at);
+        } else {
+            self.enqueue(id);
+        }
+        self.track_thread(&thread, TaskHandle { id });
+        vec![Deferred::work(context, yielded)]
     }
 
     /// Fails the task whose poll unwound while its work was out of its slot. Returns what to
@@ -635,18 +665,24 @@ impl State {
         id: TaskId,
         context: CallContext,
         work: TaskWork,
-    ) -> (Deferred, Vec<oneshot::Sender<()>>) {
-        let settled = self
+    ) -> (Vec<Deferred>, Vec<oneshot::Sender<()>>) {
+        let (settled, wait) = self
             .polled
             .take()
-            .map(|polled| polled.settled)
+            .map(|polled| (polled.settled, polled.next.map(|wait| wait.future)))
             .unwrap_or_default();
         let pending = self
             .tasks
             .get(&id)
             .is_some_and(|task| task.state == TaskState::Pending);
         if !pending {
-            return (Deferred::work(context, work), settled);
+            let dropped = Deferred::Drop {
+                context,
+                work: Some(work),
+                wait,
+                removed: None,
+            };
+            return (vec![dropped], settled);
         }
         let message = "the scheduler's poll of the task unwound";
         let task = self.tasks.get_mut(&id).expect("task checked above");
@@ -659,7 +695,9 @@ impl State {
             Some((Err(raised.into()), None)),
             true,
         );
-        (failed, settled)
+        let mut deferred = vec![failed];
+        deferred.extend(wait.map(|wait| Deferred::future(context, wait)));
+        (deferred, settled)
     }
 
     /// Takes `task` out of the pending ones as `state`, and returns what it leaves: its work, the
@@ -771,6 +809,7 @@ impl State {
         Some(Deferred::Drop {
             context: task.context.clone(),
             work: task.work.take(),
+            wait: None,
             removed: Some(Box::new(task)),
         })
     }
@@ -833,11 +872,6 @@ impl State {
     #[cfg(test)]
     pub(super) fn task(&self, id: TaskId) -> Option<&Task> {
         self.tasks.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(super) fn task_mut(&mut self, id: TaskId) -> Option<&mut Task> {
-        self.tasks.get_mut(&id)
     }
 }
 

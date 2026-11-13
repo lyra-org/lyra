@@ -11,7 +11,6 @@ use std::{
     },
 };
 
-use super::Scheduler;
 use super::TaskFuture;
 use super::limit::{
     ResumeBound,
@@ -102,7 +101,6 @@ pub(super) enum WorkPoll {
     Completed {
         output: Option<Vec<luau::Value>>,
     },
-    Parked,
     /// The thread yielded on its own, with nothing scheduled to resume it.
     Yielded,
     Cancelled,
@@ -224,15 +222,7 @@ fn poll_luau_resume(
             output: Some(values),
         },
         Ok(luau::ThreadStatus::Closed) => WorkPoll::Cancelled,
-        Ok(luau::ThreadStatus::Yielded(_)) => {
-            if let Ok(scheduler) = thread.vm().data().get::<Scheduler>()
-                && scheduler.take_parked_luau_thread(thread)
-            {
-                WorkPoll::Parked
-            } else {
-                WorkPoll::Yielded
-            }
-        }
+        Ok(luau::ThreadStatus::Yielded(_)) => WorkPoll::Yielded,
         Err(error) => WorkPoll::Failed((&error).into()),
     }
 }

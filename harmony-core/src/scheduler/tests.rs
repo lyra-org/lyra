@@ -18,6 +18,7 @@ use std::{
     task::Poll,
 };
 
+use super::work::WorkPoll;
 use super::*;
 use crate::testing::ManualClock;
 
@@ -225,35 +226,62 @@ fn nil_thread() -> luau::runtime::Result<luau::Thread> {
     vm.create_thread(&function)
 }
 
-/// What a parked async call leaves: a pending task with no work.
-fn park(scheduler: &Scheduler, id: TaskId) {
-    scheduler
+fn never_ready() -> luau::ScheduledFuture {
+    luau::ScheduledFuture::new(pending::<luau::runtime::Result<()>>())
+}
+
+/// Polls task `id`, whose thread is `thread`, as if the thread asked to wait on `future`, for a
+/// call of `awaiting`'s run, and yielded.
+fn wait_in_poll(
+    scheduler: &Scheduler,
+    id: TaskId,
+    thread: &luau::Thread,
+    awaiting: TaskGroupId,
+    future: luau::ScheduledFuture,
+) {
+    let taken = scheduler.take_work(id).expect("the task is ready");
+    let waiting = scheduler
         .state
         .borrow_mut()
-        .task_mut(id)
-        .expect("task")
-        .work = None;
+        .wait_in_polled_task(thread, awaiting, future, None);
+    assert!(matches!(waiting, Ok(None)));
+    let (context, work) = taken.put_back();
+    let (_, ended, _) =
+        scheduler
+            .state
+            .borrow_mut()
+            .after_poll(id, context, work, WorkPoll::Yielded, None);
+    scheduler.finish(ended);
 }
 
 #[test]
-fn only_a_parked_task_takes_a_future() -> luau::runtime::Result<()> {
+fn only_the_thread_of_the_task_being_polled_waits_in_that_task() -> luau::runtime::Result<()> {
     let scheduler = Scheduler::new();
-    let task = scheduler.spawn(CallContext::default(), async { Ok(()) });
-    scheduler.poll_ready();
-    let thread = nil_thread()?;
+    let (thread, other) = (nil_thread()?, nil_thread()?);
+    let task = scheduler.spawn_luau_thread(CallContext::default(), thread.clone(), Vec::new());
+    let wait = |thread: &luau::Thread| {
+        scheduler
+            .state
+            .borrow_mut()
+            .wait_in_polled_task(thread, TaskGroupId::default(), never_ready(), None)
+            .is_ok()
+    };
+    assert!(!wait(&thread), "no task is being polled");
 
-    let replaced = scheduler.state.borrow_mut().replace_with_luau_future(
-        task.id(),
-        TaskGroupId::default(),
-        thread,
-        luau::ScheduledFuture::new(std::future::pending::<luau::runtime::Result<()>>()),
-        None,
-    );
-    assert!(replaced.is_err());
-    assert_eq!(
-        scheduler.snapshot(task.id()).expect("task").state,
-        TaskState::Completed
-    );
+    let taken = scheduler.take_work(task.id()).expect("the task is ready");
+    assert!(!wait(&other));
+    assert!(wait(&thread));
+    let (context, work) = taken.put_back();
+    let (_, ended, _) =
+        scheduler
+            .state
+            .borrow_mut()
+            .after_poll(task.id(), context, work, WorkPoll::Yielded, None);
+    scheduler.finish(ended);
+
+    let state = scheduler.state.borrow();
+    let task = state.task(task.id()).expect("the task");
+    assert!(matches!(task.work, Some(TaskWork::LuauFuture { .. })));
     Ok(())
 }
 
@@ -263,24 +291,16 @@ fn a_task_awaiting_another_group_s_future_belongs_to_both_groups() -> luau::runt
         let scheduler = Scheduler::new();
         let caller = scheduler.create_group();
         let callee = scheduler.create_group();
-        let task = scheduler.spawn(
+        let thread = nil_thread()?;
+        let task = scheduler.spawn_luau_thread(
             CallContext {
                 task_group: caller,
                 ..CallContext::default()
             },
-            pending(),
+            thread.clone(),
+            Vec::new(),
         );
-        let thread = nil_thread()?;
-        park(&scheduler, task.id());
-
-        let replaced = scheduler.state.borrow_mut().replace_with_luau_future(
-            task.id(),
-            callee,
-            thread,
-            luau::ScheduledFuture::new(std::future::pending::<luau::runtime::Result<()>>()),
-            None,
-        );
-        assert!(replaced.is_ok());
+        wait_in_poll(&scheduler, task.id(), &thread, callee, never_ready());
         for group in [caller, callee] {
             let snapshots = scheduler.group_snapshots(group);
             assert_eq!(snapshots.len(), 1);
@@ -307,27 +327,60 @@ fn a_task_leaves_the_awaited_group_once_its_future_completes() -> luau::runtime:
     let caller = scheduler.create_group();
     let callee = scheduler.create_group();
     let thread = nil_thread()?;
-    let task = scheduler.spawn(
+    let task = scheduler.spawn_luau_thread(
         CallContext {
             task_group: caller,
             ..CallContext::default()
         },
-        pending(),
+        thread.clone(),
+        Vec::new(),
     );
-    park(&scheduler, task.id());
-    let replaced = scheduler.state.borrow_mut().replace_with_luau_future(
+    wait_in_poll(
+        &scheduler,
         task.id(),
+        &thread,
         callee,
-        thread,
         luau::ScheduledFuture::new(async { luau::runtime::Result::Ok(()) }),
-        None,
     );
-    assert!(replaced.is_ok());
 
     assert_eq!(scheduler.group_snapshots(callee).len(), 1);
     scheduler.poll_ready();
     assert!(scheduler.group_snapshots(callee).is_empty());
     assert_eq!(scheduler.group_snapshots(caller).len(), 1);
+    Ok(())
+}
+
+/// The thread asks to wait for a run that has ended: nothing will resume it, so its task is
+/// cancelled and the wait dropped.
+#[test]
+fn a_wait_for_a_cancelled_run_cancels_the_task() -> luau::runtime::Result<()> {
+    let scheduler = Scheduler::new();
+    let callee = scheduler.create_group();
+    scheduler.cancel_group(callee);
+    let thread = nil_thread()?;
+    let task = scheduler.spawn_luau_thread(CallContext::default(), thread.clone(), Vec::new());
+    let dropped = Rc::new(Cell::new(false));
+    let held = OnDrop({
+        let dropped = dropped.clone();
+        move || dropped.set(true)
+    });
+    wait_in_poll(
+        &scheduler,
+        task.id(),
+        &thread,
+        callee,
+        luau::ScheduledFuture::new(async move {
+            let _held = held;
+            pending::<luau::runtime::Result<()>>().await
+        }),
+    );
+
+    assert_eq!(
+        scheduler.snapshot(task.id()).map(|task| task.state),
+        Some(TaskState::Cancelled)
+    );
+    assert!(dropped.get());
+    assert!(thread.resume(&[]).is_err(), "the thread was left open");
     Ok(())
 }
 
@@ -1339,13 +1392,14 @@ fn waiting_thread(
     scheduler.spawn_luau_thread(context.clone(), thread.clone(), Vec::new());
     scheduler.poll_ready();
     let guard = RaiseOnDrop(dropped);
-    scheduler.schedule_luau_future(
+    scheduler.wait_on_future(
         context,
         thread.clone(),
         luau::ScheduledFuture::new(async move {
             let _guard = guard;
             pending::<luau::runtime::Result<()>>().await
         }),
+        None,
     );
     Ok(thread)
 }
@@ -1404,7 +1458,7 @@ fn a_watcher_woken_after_its_thread_still_cancels_it_before_it_resumes() -> luau
     scheduler.poll_ready();
     let (ready, readied) = tokio::sync::oneshot::channel::<()>();
     let resumed = Arc::new(AtomicBool::new(false));
-    scheduler.schedule_luau_future(
+    scheduler.wait_on_future(
         CallContext::default(),
         thread.clone(),
         luau::ScheduledFuture::new({
@@ -1415,6 +1469,7 @@ fn a_watcher_woken_after_its_thread_still_cancels_it_before_it_resumes() -> luau
                 Ok(())
             }
         }),
+        None,
     );
     let (leave, left) = tokio::sync::oneshot::channel::<()>();
     scheduler.schedule_watcher(CallContext::default(), {
@@ -1486,13 +1541,14 @@ fn a_watcher_s_cancel_reaches_the_threads_its_thread_was_waiting_on() -> luau::r
     let inner = chunk(b"ran = true")?;
     scheduler.spawn_luau_thread(CallContext::default(), inner.clone(), Vec::new());
     let guard = CancelOnDrop(Rc::downgrade(&scheduler), inner.clone());
-    scheduler.schedule_luau_future(
+    scheduler.wait_on_future(
         CallContext::default(),
         outer,
         luau::ScheduledFuture::new(async move {
             let _guard = guard;
             pending::<luau::runtime::Result<()>>().await
         }),
+        None,
     );
     let _ = leave.send(());
     scheduler.poll_ready();
@@ -1686,10 +1742,11 @@ fn a_thread_that_ended_or_was_never_scheduled_is_not_closed() -> luau::runtime::
         panic!("expected a thread");
     };
     // Its task ends as it yields, which hands the coroutine back to the code that made it.
-    scheduler.schedule_luau_future(
+    scheduler.wait_on_future(
         CallContext::default(),
         handed_back.clone(),
         luau::ScheduledFuture::new(async { Ok(()) }),
+        None,
     );
     scheduler.poll_ready();
 
@@ -1816,7 +1873,7 @@ fn a_thread_that_cancels_itself_runs_to_its_next_yield_and_is_closed() -> luau::
     );
     assert_closed(&vm, &yielding);
     assert_closed(&vm, &waiting);
-    assert!(holds_nothing(&scheduler));
+    assert!(!scheduler.has_pending());
     for task in tasks {
         assert_eq!(
             scheduler.snapshot(task).map(|task| task.state),
@@ -1855,7 +1912,7 @@ fn a_thread_closed_where_it_yields_ends_its_task() -> luau::runtime::Result<()> 
     let ended = completion_message(&completion).expect("the thread's task ended");
     assert!(ended.is_err_and(|error| error.contains("cancelled")));
     assert_closed(&vm, &thread);
-    assert!(holds_nothing(&scheduler));
+    assert!(!scheduler.has_pending());
     Ok(())
 }
 
@@ -2071,8 +2128,8 @@ fn cancelling_a_thread_leaves_a_coroutine_it_started_waiting_on_a_call_of_its_ow
     Ok(())
 }
 
-/// The thread parks on a call in the round its group is cancelled, after it ran: the call's
-/// future never becomes its work.
+/// The thread asks to wait on a call in the round its group is cancelled, after it ran: the
+/// call's future never becomes its work.
 #[test]
 fn a_thread_whose_wait_is_refused_for_a_cancelled_group_is_closed() -> luau::runtime::Result<()> {
     let (vm, scheduler) = vm_with_waits()?;
@@ -2104,54 +2161,7 @@ fn a_thread_whose_wait_is_refused_for_a_cancelled_group_is_closed() -> luau::run
     Ok(())
 }
 
-/// A wait a poll put off and never took up, as when it unwound, is cancelled where it lies.
-#[test]
-fn cancelling_a_wait_the_scheduler_has_not_taken_up_closes_its_thread() -> luau::runtime::Result<()>
-{
-    let (vm, scheduler) = vm_with_waits()?;
-    let suspended = chunk_thread(&vm, "coroutine.yield() went_on = true")?;
-    suspended.resume(&[])?;
-    let dropped = Rc::new(Cell::new(false));
-    {
-        let _polling = Polling::begin(&scheduler.polling);
-        let held = OnDrop({
-            let (suspended, dropped) = (suspended.clone(), dropped.clone());
-            move || {
-                assert!(
-                    suspended.resume(&[]).is_err(),
-                    "closed after its work dropped"
-                );
-                dropped.set(true);
-            }
-        });
-        scheduler.schedule_luau_future(
-            CallContext::default(),
-            suspended.clone(),
-            luau::ScheduledFuture::new(async move {
-                let _held = held;
-                pending::<luau::runtime::Result<()>>().await
-            }),
-        );
-    }
-
-    assert!(scheduler.cancel_luau_thread(&suspended));
-
-    assert!(dropped.get());
-    assert_closed(&vm, &suspended);
-    scheduler.poll_ready();
-    assert!(scheduler.snapshots().is_empty());
-    Ok(())
-}
-
-/// Whether the scheduler holds nothing for any thread: no pending task, no wait parked or put
-/// off.
-fn holds_nothing(scheduler: &Scheduler) -> bool {
-    !scheduler.has_pending()
-        && !scheduler.state.borrow().has_parked_threads()
-        && scheduler.pending_luau_work.borrow().is_empty()
-}
-
-/// Luau code resumed the coroutine itself while it was parked in a host wait, and the
+/// Luau code resumed the coroutine itself while it was waiting on a host call, and the
 /// coroutine is cancelled inside that resume, outside any poll. It can't be closed while it
 /// runs, and its next yield would hand it back to Luau code and not to the scheduler: it runs
 /// on to that yield and is closed there, with nothing scheduled for a wait it asked for.
@@ -2204,7 +2214,7 @@ fn a_thread_cancelled_while_luau_code_runs_it_is_closed_where_it_yields()
             panic!("expected a thread");
         };
         assert_closed(&vm, &co);
-        assert!(holds_nothing(&scheduler), "{yields}");
+        assert!(!scheduler.has_pending(), "{yields}");
         scheduler.poll_ready();
         assert!(
             scheduler
@@ -2217,7 +2227,7 @@ fn a_thread_cancelled_while_luau_code_runs_it_is_closed_where_it_yields()
     Ok(())
 }
 
-/// As above inside a poll, from the thread the scheduler resumes: it resumes the parked
+/// As above inside a poll, from the thread the scheduler resumes: it resumes the waiting
 /// coroutine, which is cancelled there and would yield back to that thread, which goes on.
 #[test]
 fn a_thread_cancelled_while_another_task_s_code_runs_it_is_closed_where_it_yields()
@@ -2269,7 +2279,7 @@ fn a_thread_cancelled_while_another_task_s_code_runs_it_is_closed_where_it_yield
             ],
             "{yields}"
         );
-        assert!(holds_nothing(&scheduler), "{yields}");
+        assert!(!scheduler.has_pending(), "{yields}");
     }
     Ok(())
 }
@@ -2346,7 +2356,7 @@ fn a_thread_cancelled_from_another_task_is_closed_before_that_task_goes_on()
     Ok(())
 }
 
-/// The wait the thread is parked in cancels it, or its group, as it completes: the poll that
+/// The wait the thread is in cancels it, or its group, as it completes: the poll that
 /// finds the wait over must not go on to resume the thread.
 #[test]
 fn a_thread_cancelled_by_the_wait_that_wakes_it_is_not_resumed() -> luau::runtime::Result<()> {
@@ -2498,7 +2508,7 @@ fn a_thread_that_cancels_its_group_runs_to_its_next_yield_and_is_closed()
             "{yields}"
         );
         assert_closed(&vm, &thread);
-        assert!(holds_nothing(&scheduler), "{yields}");
+        assert!(!scheduler.has_pending(), "{yields}");
     }
     Ok(())
 }
@@ -2561,11 +2571,10 @@ fn the_coroutines_a_cancelled_thread_resumed_go_on() -> luau::runtime::Result<()
     Ok(())
 }
 
-/// A poll that unwinds leaves a thread parked with its wait not yet taken up. Cancelling the
-/// thread closes it and drops the wait, which would otherwise start it again as a new task.
+/// A round unwinds after a thread asked to wait on a call: the thread waits as its task, and
+/// cancelling it closes it and drops the wait, which starts no other task.
 #[test]
-fn a_thread_left_parked_by_a_poll_that_unwound_is_closed_with_its_wait() -> luau::runtime::Result<()>
-{
+fn a_thread_waiting_as_a_round_unwound_is_closed_with_its_wait() -> luau::runtime::Result<()> {
     struct PanickingWake;
     impl std::task::Wake for PanickingWake {
         fn wake(self: Arc<Self>) {
@@ -2574,7 +2583,7 @@ fn a_thread_left_parked_by_a_poll_that_unwound_is_closed_with_its_wait() -> luau
     }
 
     let (vm, scheduler) = vm_with_waits()?;
-    let parked = spawn_chunk(
+    let waiting = spawn_chunk(
         &vm,
         &scheduler,
         CallContext::default(),
@@ -2595,14 +2604,12 @@ fn a_thread_left_parked_by_a_poll_that_unwound_is_closed_with_its_wait() -> luau
     );
     let poll = catch_unwind(AssertUnwindSafe(|| scheduler.poll_ready()));
     assert!(poll.is_err(), "the poll didn't unwind");
-    assert_eq!(scheduler.pending_luau_work.borrow().len(), 1);
 
-    let task = scheduler.luau_thread_handle(&parked).expect("its task");
+    let task = scheduler.luau_thread_handle(&waiting).expect("its task");
 
-    assert!(scheduler.cancel_luau_thread(&parked));
+    assert!(scheduler.cancel_luau_thread(&waiting));
 
-    assert_closed(&vm, &parked);
-    assert!(scheduler.pending_luau_work.borrow().is_empty());
+    assert_closed(&vm, &waiting);
     let tasks = scheduler.snapshots().len();
     scheduler.poll_ready();
     assert_eq!(scheduler.snapshots().len(), tasks, "its wait became a task");
@@ -2614,7 +2621,7 @@ fn a_thread_left_parked_by_a_poll_that_unwound_is_closed_with_its_wait() -> luau
 }
 
 /// Runs a round of `scheduler` that unwinds after the tasks scheduled so far ran, as one does
-/// when a completion's waker panics. What they put off is left for a later round.
+/// when a completion's waker panics.
 fn unwind_a_round(vm: &luau::Vm, scheduler: &Scheduler) -> luau::runtime::Result<()> {
     struct PanickingWake;
     impl std::task::Wake for PanickingWake {
@@ -2663,11 +2670,11 @@ fn wait_on(completion: &LocalLuauTaskCompletion) -> Arc<NotedWake> {
     noted
 }
 
-/// As above for a group: what the unwound poll put off for it, a parked thread's wait, goes
-/// with it, as do the threads and the future a task started for it in that poll, and its
-/// threads are closed, at once. A start with a completion tells it the thread was cancelled.
+/// As above for a group: a wait one of its threads asked for in the unwound round goes with it,
+/// as do the threads and the future a task started for it there, and its threads are closed,
+/// at once. A start with a completion tells it the thread was cancelled.
 #[test]
-fn cancelling_a_group_closes_and_drops_the_work_a_poll_that_unwound_put_off()
+fn cancelling_a_group_after_a_round_unwound_closes_and_drops_what_it_started()
 -> luau::runtime::Result<()> {
     let (vm, scheduler) = vm_with_waits()?;
     let group = scheduler.create_group();
@@ -2675,7 +2682,7 @@ fn cancelling_a_group_closes_and_drops_the_work_a_poll_that_unwound_put_off()
         task_group: group,
         ..CallContext::default()
     };
-    let parked = spawn_chunk(&vm, &scheduler, in_group.clone(), "wait() went_on = true")?;
+    let waiting = spawn_chunk(&vm, &scheduler, in_group.clone(), "wait() went_on = true")?;
     let [unstarted, completed, limited, alone] =
         ["went_on = true"; 4].map(|source| chunk_thread(&vm, source).expect("a thread"));
     let completions: [Rc<LocalLuauTaskCompletion>; 3] = Default::default();
@@ -2723,14 +2730,13 @@ fn cancelling_a_group_closes_and_drops_the_work_a_poll_that_unwound_put_off()
         }
     });
     unwind_a_round(&vm, &scheduler)?;
-    assert_eq!(scheduler.pending_luau_work.borrow().len(), 1);
     let woken = completions.each_ref().map(|completion| wait_on(completion));
 
     assert!(scheduler.cancel_luau_thread(&alone));
     assert_closed(&vm, &alone);
     scheduler.cancel_group(group);
 
-    for thread in [&parked, &unstarted, &completed, &limited] {
+    for thread in [&waiting, &unstarted, &completed, &limited] {
         assert_closed(&vm, thread);
     }
     for (completion, woken) in completions.iter().zip(&woken) {
@@ -2739,7 +2745,6 @@ fn cancelling_a_group_closes_and_drops_the_work_a_poll_that_unwound_put_off()
         assert!(ended.is_err_and(|error| error.contains("cancelled")));
     }
     assert!(dropped.get(), "the group's future was kept");
-    assert!(scheduler.pending_luau_work.borrow().is_empty());
     scheduler.poll_ready();
     scheduler.poll_ready();
     assert_eq!(
@@ -2753,10 +2758,10 @@ fn cancelling_a_group_closes_and_drops_the_work_a_poll_that_unwound_put_off()
     Ok(())
 }
 
-/// Two of the waits the unwound poll put off for the group panic as they drop: each fails
+/// Two of the group's waits a task started in the unwound round panic as they drop: each fails
 /// alone, and the rest of the group's work is still closed and dropped.
 #[test]
-fn cancelling_a_group_outlives_put_off_work_that_panics_as_it_drops() -> luau::runtime::Result<()> {
+fn cancelling_a_group_outlives_waits_that_panic_as_they_drop() -> luau::runtime::Result<()> {
     let (vm, scheduler) = vm_with_waits()?;
     let group = scheduler.create_group();
     let in_group = CallContext {
@@ -2787,13 +2792,14 @@ fn cancelling_a_group_outlives_put_off_work_that_panics_as_it_drops() -> luau::r
             let scheduler = scheduler.upgrade().expect("the scheduler is polling");
             for thread in suspended {
                 let held = OnDrop(|| panic!("drop panicked"));
-                scheduler.schedule_luau_future(
+                scheduler.wait_on_future(
                     in_group.clone(),
                     thread,
                     luau::ScheduledFuture::new(async move {
                         let _held = held;
                         pending::<luau::runtime::Result<()>>().await
                     }),
+                    None,
                 );
             }
             scheduler.schedule_luau_thread(in_group.clone(), unstarted, Vec::new());
@@ -2805,14 +2811,12 @@ fn cancelling_a_group_outlives_put_off_work_that_panics_as_it_drops() -> luau::r
         }
     });
     unwind_a_round(&vm, &scheduler)?;
-    assert_eq!(scheduler.pending_luau_work.borrow().len(), 2);
 
     scheduler.cancel_group(group);
 
     for thread in suspended.iter().chain([&unstarted]) {
         assert_closed(&vm, thread);
     }
-    assert!(scheduler.pending_luau_work.borrow().is_empty());
     assert!(dropped.get(), "the group's future was kept");
     Ok(())
 }
@@ -3196,13 +3200,14 @@ fn thread_holding(
     ))?)?;
     scheduler.spawn_luau_thread(CallContext::default(), thread.clone(), Vec::new());
     scheduler.poll_ready();
-    scheduler.schedule_luau_future(
+    scheduler.wait_on_future(
         CallContext::default(),
         thread.clone(),
         luau::ScheduledFuture::new(async move {
             let _held = held;
             pending::<luau::runtime::Result<()>>().await
         }),
+        None,
     );
     Ok(thread)
 }

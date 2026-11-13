@@ -108,7 +108,9 @@ status. `clippy.toml` disallows those functions everywhere else.
 ## Async and Yielding
 
 - An `async fn` in a module yields to the `Scheduler`, which resumes the thread when its
-  future completes. One that is ready at once returns without yielding.
+  future completes. One that is ready at once returns without yielding. The future becomes the
+  work of the task the scheduler was resuming the thread as, once the thread yields; a thread no
+  task is resuming, such as a coroutine Luau code resumed, waits as a task of its own.
 - Code can't yield inside a metamethod, a `table.sort` comparator or a host `pcall`. A call that
   must wait there fails with "attempt to yield from a non-yieldable Harmony callback".
 - `Thread::cancel` closes a thread as `coroutine.close` does. One that runs, or has resumed

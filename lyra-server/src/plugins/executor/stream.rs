@@ -262,8 +262,8 @@ impl ApiStreamWriter {
             )));
         }
         let writer = self.clone();
-        // Host futures that are ready at once never park the thread, so the write waits a turn
-        // of the scheduler even when the client keeps up, letting other plugins' work run.
+        // A host future that is ready at once doesn't make the thread wait, so the write waits a
+        // turn of the scheduler even when the client keeps up, letting other plugins' work run.
         Ok(luau::ScheduledFuture::after(Duration::ZERO, async move {
             if chunk.is_empty() {
                 return Ok(());
