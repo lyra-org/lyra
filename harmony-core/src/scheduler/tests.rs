@@ -870,6 +870,87 @@ fn a_task_spawns_another_while_the_scheduler_polls() {
     assert!(ran.get());
 }
 
+/// Each round polls the tasks ready as it began: a task that spawns its successor, or wakes
+/// itself, even twice, runs once a round, and the task behind it still gets its turn.
+#[test]
+fn a_task_that_keeps_itself_ready_runs_once_a_round() {
+    fn respawn(scheduler: std::rc::Weak<LocalScheduler>, runs: Rc<Cell<usize>>) {
+        let Some(strong) = scheduler.upgrade() else {
+            return;
+        };
+        strong.schedule_future(CallContext::default(), async move {
+            runs.set(runs.get() + 1);
+            respawn(scheduler, runs);
+            Ok(())
+        });
+    }
+
+    let scheduler = Rc::new(LocalScheduler::new());
+    let respawned = Rc::new(Cell::new(0));
+    respawn(Rc::downgrade(&scheduler), respawned.clone());
+    let woken = Rc::new(Cell::new(0));
+    scheduler.schedule_future(CallContext::default(), {
+        let woken = woken.clone();
+        poll_fn(move |cx| {
+            woken.set(woken.get() + 1);
+            cx.waker().wake_by_ref();
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        })
+    });
+    let other = Rc::new(Cell::new(false));
+    scheduler.schedule_future(CallContext::default(), {
+        let other = other.clone();
+        async move {
+            other.set(true);
+            Ok(())
+        }
+    });
+
+    for round in 1..=3 {
+        scheduler.poll_ready();
+        assert_eq!((respawned.get(), woken.get()), (round, round));
+        assert!(other.get());
+    }
+}
+
+/// A watcher starts a thread and a watcher that cancels it: both first run in the next round,
+/// whose watchers run before the thread can start.
+#[test]
+fn what_a_watcher_starts_first_runs_in_the_next_round() -> luau::runtime::Result<()> {
+    let vm = luau::Vm::new()?;
+    let scheduler = Rc::new(LocalScheduler::new());
+    let thread = chunk_thread(&vm, "ran = true")?;
+    scheduler.schedule_watcher(CallContext::default(), {
+        let (scheduler, thread) = (Rc::downgrade(&scheduler), thread.clone());
+        async move {
+            let scheduler = scheduler.upgrade().expect("the scheduler is polling");
+            scheduler.schedule_luau_thread(CallContext::default(), thread.clone(), Vec::new());
+            let canceller = Rc::downgrade(&scheduler);
+            scheduler.schedule_watcher(CallContext::default(), async move {
+                canceller
+                    .upgrade()
+                    .expect("the scheduler is polling")
+                    .cancel_luau_thread(&thread);
+                Ok(())
+            });
+            Ok(())
+        }
+    });
+
+    scheduler.poll_ready();
+    assert!(
+        !ran(&vm)?,
+        "a thread a watcher started ran in the same round"
+    );
+    scheduler.poll_ready();
+    assert!(
+        !ran(&vm)?,
+        "the thread ran before the watcher started with it"
+    );
+    Ok(())
+}
+
 /// On the real clock and the real wait: nothing but the sleep's deadline ends the wait.
 #[test]
 fn a_sleep_ends_the_wait_and_wakes_its_task_at_the_deadline() {
@@ -2663,6 +2744,7 @@ fn cancelling_a_group_closes_and_drops_the_work_a_poll_that_unwound_put_off()
     assert!(scheduler.pending_futures.borrow().is_empty());
     assert_eq!(scheduler.pending_luau_work.borrow().len(), 1);
     scheduler.poll_ready();
+    scheduler.poll_ready();
     assert_eq!(
         scheduler
             .luau_thread_handle(&other)
@@ -2880,6 +2962,7 @@ fn cancelled_work_may_call_the_scheduler_as_it_drops() -> luau::runtime::Result<
     scheduler.poll_ready();
     assert!(!ran(&vm)?, "the thread its drop cancelled ran");
     assert!(scheduler.is_group_cancelled(group));
+    scheduler.poll_ready();
     assert!(spawned.get(), "the task its drop spawned didn't run");
     Ok(())
 }

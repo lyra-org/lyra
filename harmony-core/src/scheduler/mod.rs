@@ -179,8 +179,11 @@ pub struct Scheduler {
     /// scheduler is borrowed for polling.
     last_group_id: Rc<Cell<u64>>,
     ready: VecDeque<TaskId>,
-    /// The ready tasks that watch others, which a poll runs first.
+    /// The ready tasks that watch others, which a round runs first.
     ready_watchers: VecDeque<TaskId>,
+    /// The tasks the round under way has yet to poll: what was ready as it began.
+    round: VecDeque<TaskId>,
+    round_watchers: VecDeque<TaskId>,
     timers: Rc<Timers>,
     luau_resume_budget: Option<Duration>,
     wake_queue: Arc<WakeQueue>,
@@ -227,6 +230,8 @@ impl Scheduler {
             last_group_id: Rc::default(),
             ready: VecDeque::new(),
             ready_watchers: VecDeque::new(),
+            round: VecDeque::new(),
+            round_watchers: VecDeque::new(),
             timers: Rc::new(Timers::new(clock)),
             luau_resume_budget: None,
             wake_queue: Arc::new(WakeQueue::default()),
@@ -427,7 +432,7 @@ impl Scheduler {
         if let Some(wake_at) = wake_at {
             self.wake_task_at(id, wake_at);
         } else {
-            self.ready.push_back(id);
+            self.enqueue(id);
         }
         true
     }
@@ -474,6 +479,7 @@ impl Scheduler {
                 awaiting: None,
                 borrows_thread: false,
                 watcher,
+                queued: false,
                 context,
                 work: Some(work),
                 state: TaskState::Pending,
@@ -488,10 +494,8 @@ impl Scheduler {
             self.cancel(id);
         } else if let Some(wake_at) = wake_at {
             self.wake_task_at(id, wake_at);
-        } else if watcher {
-            self.ready_watchers.push_back(id);
         } else {
-            self.ready.push_back(id);
+            self.enqueue(id);
         }
 
         handle
@@ -583,14 +587,18 @@ impl Scheduler {
     }
 
     pub fn poll_ready(&mut self) -> usize {
-        self.wake(self.now());
+        self.begin_round();
         self.poll_queue(true) + self.poll_queue(false)
     }
 
-    /// Makes ready the tasks that were woken or are due at `now`.
-    fn wake(&mut self, now: Instant) {
-        self.timers.wake_due(now);
+    /// Makes ready the tasks that were woken or are due, and takes every ready task into the round
+    /// that begins, after any a round that unwound left. What is made ready during the round waits
+    /// for the next one.
+    fn begin_round(&mut self) {
+        self.timers.wake_due(self.now());
         self.drain_wake_queue();
+        self.round_watchers.append(&mut self.ready_watchers);
+        self.round.append(&mut self.ready);
     }
 
     /// Makes task `id` ready once the clock reaches `wake_at`.
@@ -602,15 +610,15 @@ impl Scheduler {
         );
     }
 
-    /// Polls the ready watchers, or the other ready tasks, once each.
+    /// Polls the round's watchers, or its other tasks, once each.
     fn poll_queue(&mut self, watchers: bool) -> usize {
         let mut completed = 0;
-
+        // Popped one by one, so that a poll that unwinds leaves the rest to the next round.
         loop {
             let next = if watchers {
-                self.ready_watchers.pop_front()
+                self.round_watchers.pop_front()
             } else {
-                self.ready.pop_front()
+                self.round.pop_front()
             };
             let Some(id) = next else {
                 break;
@@ -618,6 +626,7 @@ impl Scheduler {
             let Some(task) = self.tasks.get_mut(&id) else {
                 continue;
             };
+            task.queued = false;
             if task.state != TaskState::Pending {
                 continue;
             }
@@ -715,14 +724,26 @@ impl Scheduler {
         completed
     }
 
+    /// Makes pending task `id` ready, unless it already is: a task is polled at most once a round,
+    /// however often it was woken.
+    fn enqueue(&mut self, id: TaskId) {
+        let Some(task) = self.tasks.get_mut(&id) else {
+            return;
+        };
+        if task.state != TaskState::Pending || task.queued {
+            return;
+        }
+        task.queued = true;
+        if task.watcher {
+            self.ready_watchers.push_back(id);
+        } else {
+            self.ready.push_back(id);
+        }
+    }
+
     fn drain_wake_queue(&mut self) {
         for id in self.wake_queue.drain() {
-            match self.tasks.get(&id) {
-                Some(task) if task.state != TaskState::Pending => {}
-                Some(task) if task.watcher => self.ready_watchers.push_back(id),
-                Some(_) => self.ready.push_back(id),
-                None => {}
-            }
+            self.enqueue(id);
         }
     }
 
@@ -731,6 +752,8 @@ impl Scheduler {
     pub fn next_wake_delay(&self) -> Option<Duration> {
         if !self.ready.is_empty()
             || !self.ready_watchers.is_empty()
+            || !self.round.is_empty()
+            || !self.round_watchers.is_empty()
             || self.wake_queue.has_pending_wake()
         {
             return Some(Duration::ZERO);
@@ -818,8 +841,14 @@ impl Scheduler {
                 group_tasks.remove(&id);
             }
         }
-        self.ready.retain(|ready_id| *ready_id != id);
-        self.ready_watchers.retain(|ready_id| *ready_id != id);
+        for queue in [
+            &mut self.ready,
+            &mut self.ready_watchers,
+            &mut self.round,
+            &mut self.round_watchers,
+        ] {
+            queue.retain(|queued| *queued != id);
+        }
         self.timers.remove(TimerId::Task(id));
         true
     }
@@ -917,6 +946,8 @@ struct Task {
     borrows_thread: bool,
     /// Polled ahead of the ready tasks that aren't.
     watcher: bool,
+    /// In a ready queue, or in the round under way's.
+    queued: bool,
     work: Option<TaskWork>,
     state: TaskState,
     error: Option<Arc<str>>,

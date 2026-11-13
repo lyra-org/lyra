@@ -139,7 +139,7 @@ status. `clippy.toml` disallows those functions everywhere else.
   loop, so that the scheduler wakes it: `LocalScheduler::schedule_watcher` runs a future, which
   need not be `Send`. There, `LocalLuauTaskCompletion::wait` waits for the thread's end,
   `LocalScheduler::sleep_until` for a deadline and `Cancellation::cancelled` for a cancellation.
-  Every poll runs the woken watchers first and drops what they cancelled before any other task
+  Every round runs the woken watchers first and drops what they cancelled before any other task
   runs, so a thread whose watcher cancels it, for a caller gone or a deadline passed before the
   poll began, isn't resumed again, and neither are the threads its work was waiting on.
   `LocalLuauTaskCompletion::ended_at` tells a thread that ended in time from one read late.

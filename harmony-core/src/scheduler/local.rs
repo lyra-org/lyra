@@ -608,14 +608,15 @@ impl LocalScheduler {
             .remove(&luau_thread_key(thread))
     }
 
-    /// Runs every ready task once. The watchers run first, and what they asked for is done before
-    /// any other task runs: a thread or a group one of them cancelled is dropped, along with
-    /// whatever its work held, such as the threads of the calls it was waiting on.
+    /// Runs a round: every task ready as it begins, once. The watchers run first, and what they
+    /// asked for is done before any other task runs: a thread or a group one of them cancelled is
+    /// dropped, along with whatever its work held, such as the threads of the calls it was waiting
+    /// on. A task started or woken during the round first runs in the next one.
     pub fn poll_ready(&self) -> usize {
         let watchers = {
             let _polling = Polling::begin(&self.polling);
             let mut scheduler = self.scheduler.borrow_mut();
-            scheduler.wake(self.now());
+            scheduler.begin_round();
             scheduler.poll_queue(true)
         };
         self.end_poll();
