@@ -5,7 +5,6 @@ use std::{
         catch_unwind,
     },
     pin::Pin,
-    rc::Rc,
     task::{
         Context,
         Poll,
@@ -22,10 +21,7 @@ use super::time::Clock;
 use anyhow::Result;
 use harmony_luau as luau;
 use harmony_luau::CallContext;
-use std::cell::{
-    Cell,
-    RefCell,
-};
+use std::cell::Cell;
 
 /// Closes a thread the scheduler gives up: it will not resume it again, and neither may the Luau
 /// code that holds it. One that is running, or has resumed another, is closed where it next
@@ -180,37 +176,6 @@ pub(super) fn poll_work(
             });
             poll_luau_resume(&thread, result, previous)
         }
-    }
-}
-
-/// Work taken off a task that ended, was cancelled or was removed. Dropping it runs host code,
-/// which may panic, or call the scheduler it was a task of.
-pub(super) struct Detached {
-    context: CallContext,
-    work: Option<TaskWork>,
-}
-
-impl Drop for Detached {
-    fn drop(&mut self) {
-        drop_catching_panic(&self.context, self.work.take());
-    }
-}
-
-/// Drops `work`, or leaves it in `detached` for whoever has the scheduler borrowed to drop.
-pub(super) fn detach(
-    detached: &Option<Rc<RefCell<Vec<Detached>>>>,
-    context: &CallContext,
-    work: Option<TaskWork>,
-) {
-    let Some(work) = work else {
-        return;
-    };
-    let work = Detached {
-        context: context.clone(),
-        work: Some(work),
-    };
-    if let Some(detached) = detached {
-        detached.borrow_mut().push(work);
     }
 }
 

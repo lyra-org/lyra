@@ -141,11 +141,13 @@ status. `clippy.toml` disallows those functions everywhere else.
   `Scheduler::sleep_until` for a deadline and `Cancellation::cancelled` for a cancellation.
   Every round runs the woken watchers first and drops what they cancelled before any other task
   runs, so a thread whose watcher cancels it, for a caller gone or a deadline passed before the
-  poll began, isn't resumed again, and neither are the threads its work was waiting on.
+  round began, isn't resumed again, and neither are the threads its work was waiting on.
   `LocalLuauTaskCompletion::ended_at` tells a thread that ended in time from one read late.
-- The scheduler is borrowed while it polls. What a task asks of it then happens once it is free,
-  after the watchers and again after the other tasks: a scheduled thread or future starts, and a
-  cancelled thread or group is dropped. Neither runs further in that poll, and
+- A round polls each task ready as it begins, once, with the scheduler free; a task that polls
+  the scheduler it runs on panics. A task started or woken during a round first runs in the next
+  one. What a task asks of the scheduler during a round happens after the watchers and again
+  after the other tasks: a scheduled thread or future starts, and a cancelled thread or group is
+  dropped. Neither runs further in that round, and
   `cancel_luau_thread_and_settle` returns a future for the moment the thread is gone. A task's
   future must not hold the scheduler's `Rc` across an await, which would keep the scheduler alive
   through itself.

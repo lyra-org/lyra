@@ -27,9 +27,7 @@ impl Scheduler {
         context: CallContext,
         future: impl Future<Output = Result<()>> + 'static,
     ) -> TaskHandle {
-        self.state
-            .borrow_mut()
-            .spawn_boxed(context, Box::pin(future))
+        self.spawn_boxed(context, Box::pin(future), None, false)
     }
 
     fn spawn_after(
@@ -39,9 +37,7 @@ impl Scheduler {
         future: impl Future<Output = Result<()>> + 'static,
     ) -> TaskHandle {
         let wake_at = self.delay_until(Some(delay));
-        self.state
-            .borrow_mut()
-            .insert_task(context, Box::pin(future), wake_at)
+        self.spawn_boxed(context, Box::pin(future), wake_at, false)
     }
 }
 use harmony_luau::{
@@ -234,8 +230,7 @@ fn park(scheduler: &Scheduler, id: TaskId) {
     scheduler
         .state
         .borrow_mut()
-        .tasks
-        .get_mut(&id)
+        .task_mut(id)
         .expect("task")
         .work = None;
 }
@@ -247,13 +242,14 @@ fn only_a_parked_task_takes_a_future() -> luau::runtime::Result<()> {
     scheduler.poll_ready();
     let thread = nil_thread()?;
 
-    assert!(!scheduler.state.borrow_mut().replace_with_luau_future(
+    let replaced = scheduler.state.borrow_mut().replace_with_luau_future(
         task.id(),
         TaskGroupId::default(),
         thread,
         luau::ScheduledFuture::new(std::future::pending::<luau::runtime::Result<()>>()),
         None,
-    ));
+    );
+    assert!(replaced.is_err());
     assert_eq!(
         scheduler.snapshot(task.id()).expect("task").state,
         TaskState::Completed
@@ -277,13 +273,14 @@ fn a_task_awaiting_another_group_s_future_belongs_to_both_groups() -> luau::runt
         let thread = nil_thread()?;
         park(&scheduler, task.id());
 
-        assert!(scheduler.state.borrow_mut().replace_with_luau_future(
+        let replaced = scheduler.state.borrow_mut().replace_with_luau_future(
             task.id(),
             callee,
             thread,
             luau::ScheduledFuture::new(std::future::pending::<luau::runtime::Result<()>>()),
             None,
-        ));
+        );
+        assert!(replaced.is_ok());
         for group in [caller, callee] {
             let snapshots = scheduler.group_snapshots(group);
             assert_eq!(snapshots.len(), 1);
@@ -318,13 +315,14 @@ fn a_task_leaves_the_awaited_group_once_its_future_completes() -> luau::runtime:
         pending(),
     );
     park(&scheduler, task.id());
-    assert!(scheduler.state.borrow_mut().replace_with_luau_future(
+    let replaced = scheduler.state.borrow_mut().replace_with_luau_future(
         task.id(),
         callee,
         thread,
         luau::ScheduledFuture::new(async { luau::runtime::Result::Ok(()) }),
         None,
-    ));
+    );
+    assert!(replaced.is_ok());
 
     assert_eq!(scheduler.group_snapshots(callee).len(), 1);
     scheduler.poll_ready();
@@ -728,7 +726,7 @@ fn pending_budgeted_luau_thread_preserves_budget_and_completion() -> luau::runti
         .luau_thread_handle(&thread)
         .expect("scheduled thread handle");
     let inner = scheduler.state.borrow();
-    let task = inner.tasks.get(&handle.id()).expect("scheduled task");
+    let task = inner.task(handle.id()).expect("scheduled task");
     assert!(matches!(
         task.resume_limit,
         Some(ResumeLimit { budget: Some(budget), deadline: None, signal: None })
@@ -2160,7 +2158,7 @@ fn cancelling_work_the_scheduler_has_not_taken_up_closes_its_thread() -> luau::r
 /// off.
 fn holds_nothing(scheduler: &Scheduler) -> bool {
     !scheduler.has_pending()
-        && scheduler.parked_threads.borrow().is_empty()
+        && !scheduler.state.borrow().has_parked_threads()
         && scheduler.pending_luau_work.borrow().is_empty()
 }
 
@@ -2874,6 +2872,298 @@ fn a_poll_that_unwinds_leaves_the_scheduler_taking_work_at_once() -> luau::runti
     Ok(())
 }
 
+/// The poll unwinds while the task's work is out of its slot: the task fails, and the round's
+/// other ready tasks wait for the next one.
+#[test]
+fn a_poll_that_unwinds_with_the_work_out_fails_its_task() {
+    let scheduler = Scheduler::new();
+    let completion = Rc::new(LocalLuauTaskCompletion::default());
+    let vm = luau::Vm::new().expect("vm");
+    scheduler.schedule_luau_thread_with_completion(
+        CallContext::default(),
+        chunk_thread(&vm, "coroutine.yield()").expect("thread"),
+        Vec::new(),
+        completion.clone(),
+    );
+    let task = scheduler.snapshots()[0].id;
+    let unwound = catch_unwind(AssertUnwindSafe(|| {
+        let _taken = scheduler.take_work(task).expect("the task is ready");
+        panic!("the poll unwinds");
+    }));
+    assert!(unwound.is_err());
+
+    assert_eq!(
+        scheduler.snapshot(task).map(|task| task.state),
+        Some(TaskState::Failed)
+    );
+    let ended = completion_message(&completion).expect("the task's completion was told");
+    assert!(ended.is_err_and(|error| error.contains("unwound")));
+    let later = scheduler.spawn(CallContext::default(), async { Ok(()) });
+    assert_eq!(scheduler.poll_ready(), 1);
+    assert_eq!(
+        scheduler.snapshot(later.id()).map(|task| task.state),
+        Some(TaskState::Completed)
+    );
+}
+
+/// A task can't drive the scheduler it runs on: the round it is in would poll it again.
+#[test]
+fn a_task_that_polls_its_own_scheduler_fails_with_a_clear_panic() {
+    let scheduler = Rc::new(Scheduler::new());
+    let task = scheduler.spawn(CallContext::default(), {
+        let scheduler = Rc::downgrade(&scheduler);
+        async move {
+            scheduler
+                .upgrade()
+                .expect("the scheduler is polling")
+                .poll_ready();
+            Ok(())
+        }
+    });
+
+    scheduler.poll_ready();
+
+    let failed = scheduler.snapshot(task.id()).expect("the task");
+    assert_eq!(failed.state, TaskState::Failed);
+    assert!(
+        failed
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("during a round of the same scheduler")),
+        "{:?}",
+        failed.error
+    );
+    let later = scheduler.spawn(CallContext::default(), async { Ok(()) });
+    assert_eq!(scheduler.poll_ready(), 1);
+    assert_eq!(
+        scheduler.snapshot(later.id()).map(|task| task.state),
+        Some(TaskState::Completed)
+    );
+}
+
+/// What came due by the round's start runs in the order its timers were set, whichever is due
+/// first.
+#[test]
+fn due_tasks_and_sleeps_run_in_the_order_their_timers_were_set() {
+    let clock = ManualClock::new();
+    let scheduler = Scheduler::with_manual_clock(clock.clone());
+    let order = Rc::new(RefCell::new(Vec::new()));
+    let note = |name: &'static str| {
+        let order = order.clone();
+        async move {
+            order.borrow_mut().push(name);
+            Ok(())
+        }
+    };
+    let sleep = scheduler.sleep_until(clock.now() + Duration::from_secs(3));
+    scheduler.spawn(CallContext::default(), {
+        let woke = note("sleep");
+        async move {
+            sleep.await;
+            woke.await
+        }
+    });
+    scheduler.poll_ready();
+    scheduler.spawn_after(CallContext::default(), Duration::from_secs(5), note("late"));
+    scheduler.spawn_after(
+        CallContext::default(),
+        Duration::from_secs(1),
+        note("early"),
+    );
+
+    clock.advance(Duration::from_secs(10));
+    scheduler.poll_ready();
+
+    assert_eq!(*order.borrow(), ["sleep", "late", "early"]);
+}
+
+/// The work of a task that ended is dropped with the scheduler free, so its destructor may call
+/// it.
+#[test]
+fn finished_work_may_call_the_scheduler_as_it_drops() {
+    let scheduler = Rc::new(Scheduler::new());
+    let spawned = Rc::new(Cell::new(false));
+    let guard = OnDrop({
+        let scheduler = Rc::downgrade(&scheduler);
+        let spawned = spawned.clone();
+        move || {
+            let scheduler = scheduler.upgrade().expect("the scheduler is alive");
+            assert!(scheduler.has_pending());
+            let spawned = spawned.clone();
+            scheduler.schedule_future(CallContext::default(), async move {
+                spawned.set(true);
+                Ok(())
+            });
+        }
+    });
+    scheduler.schedule_future(CallContext::default(), async move {
+        let _guard = guard;
+        Ok(())
+    });
+    scheduler.schedule_future(CallContext::default(), pending());
+
+    scheduler.poll_ready();
+    scheduler.poll_ready();
+    assert!(spawned.get(), "the task its drop spawned didn't run");
+}
+
+/// Starts `source` in `group` with a completion, and polls it to where it waits.
+fn waiting_in_group(
+    vm: &luau::Vm,
+    scheduler: &Scheduler,
+    group: TaskGroupId,
+    source: &'static str,
+) -> luau::runtime::Result<(luau::Thread, Rc<LocalLuauTaskCompletion>)> {
+    let thread = chunk_thread(vm, source)?;
+    let completion = Rc::new(LocalLuauTaskCompletion::default());
+    scheduler.schedule_luau_thread_with_completion(
+        CallContext {
+            task_group: group,
+            ..CallContext::default()
+        },
+        thread.clone(),
+        Vec::new(),
+        completion.clone(),
+    );
+    scheduler.poll_ready();
+    Ok((thread, completion))
+}
+
+thread_local! {
+    static SIBLING: RefCell<Option<luau::Thread>> = const { RefCell::new(None) };
+    static SIBLING_RESUMED: Cell<Option<bool>> = const { Cell::new(None) };
+}
+
+/// Resumes the thread in `SIBLING` when woken, as code a completion wakes may.
+struct ResumesSibling;
+
+impl std::task::Wake for ResumesSibling {
+    fn wake(self: Arc<Self>) {
+        let resumed = SIBLING
+            .with_borrow(|sibling| sibling.as_ref().map(|thread| thread.resume(&[]).is_ok()));
+        SIBLING_RESUMED.set(resumed);
+    }
+}
+
+/// The group's first task's completion wakes code that resumes the second's thread: it finds the
+/// thread closed, as cancelling the group closes every thread before telling any completion.
+#[test]
+fn a_group_s_threads_are_closed_before_any_of_its_completions_is_told() -> luau::runtime::Result<()>
+{
+    let (vm, scheduler) = vm_with_waits()?;
+    let group = scheduler.create_group();
+    let (_, first) = waiting_in_group(&vm, &scheduler, group, "wait() went_on = true")?;
+    let (second, _) = waiting_in_group(&vm, &scheduler, group, "wait() went_on = true")?;
+    SIBLING.set(Some(second.clone()));
+    let waker = Waker::from(Arc::new(ResumesSibling));
+    assert!(first.poll(&mut Context::from_waker(&waker)).is_pending());
+
+    scheduler.cancel_group(group);
+
+    assert_eq!(
+        SIBLING_RESUMED.get(),
+        Some(false),
+        "the second thread was open"
+    );
+    SIBLING.set(None);
+    assert_closed(&vm, &second);
+    Ok(())
+}
+
+thread_local! {
+    static HELD_DROPPED: Cell<bool> = const { Cell::new(false) };
+    static DROPPED_WHEN_WOKEN: Cell<Option<bool>> = const { Cell::new(None) };
+}
+
+/// Notes whether `HELD_DROPPED` was set when woken.
+struct NotesDrop;
+
+impl std::task::Wake for NotesDrop {
+    fn wake(self: Arc<Self>) {
+        DROPPED_WHEN_WOKEN.set(Some(HELD_DROPPED.get()));
+    }
+}
+
+/// The group's first task's completion wakes code that looks at the work of another task in the
+/// group: it finds it dropped, as cancelling the group drops every task's work before telling any
+/// completion.
+#[test]
+fn a_group_s_work_is_dropped_before_any_of_its_completions_is_told() -> luau::runtime::Result<()> {
+    let (vm, scheduler) = vm_with_waits()?;
+    let group = scheduler.create_group();
+    let (_, first) = waiting_in_group(&vm, &scheduler, group, "wait() went_on = true")?;
+    let held = OnDrop(|| HELD_DROPPED.set(true));
+    scheduler.schedule_future(
+        CallContext {
+            task_group: group,
+            ..CallContext::default()
+        },
+        async move {
+            let _held = held;
+            pending::<Result<()>>().await
+        },
+    );
+    let waker = Waker::from(Arc::new(NotesDrop));
+    assert!(first.poll(&mut Context::from_waker(&waker)).is_pending());
+
+    scheduler.cancel_group(group);
+
+    assert_eq!(
+        DROPPED_WHEN_WOKEN.get(),
+        Some(true),
+        "the group's future was still held"
+    );
+    Ok(())
+}
+
+/// The group's first task's completion wakes a waker that panics: the others are still closed,
+/// dropped and told, and the panic carries on from there.
+#[test]
+fn a_completion_s_waker_that_panics_leaves_the_rest_of_a_group_cancelled()
+-> luau::runtime::Result<()> {
+    struct PanickingWake;
+    impl std::task::Wake for PanickingWake {
+        fn wake(self: Arc<Self>) {
+            panic!("the waker panics");
+        }
+    }
+
+    let (vm, scheduler) = vm_with_waits()?;
+    let group = scheduler.create_group();
+    let (_, first) = waiting_in_group(&vm, &scheduler, group, "wait() went_on = true")?;
+    let (second, told) = waiting_in_group(&vm, &scheduler, group, "wait() went_on = true")?;
+    let dropped = Rc::new(Cell::new(false));
+    let held = OnDrop({
+        let dropped = dropped.clone();
+        move || dropped.set(true)
+    });
+    scheduler.schedule_future(
+        CallContext {
+            task_group: group,
+            ..CallContext::default()
+        },
+        async move {
+            let _held = held;
+            pending::<Result<()>>().await
+        },
+    );
+    let waker = Waker::from(Arc::new(PanickingWake));
+    assert!(first.poll(&mut Context::from_waker(&waker)).is_pending());
+    let noted = wait_on(&told);
+
+    let cancelled = catch_unwind(AssertUnwindSafe(|| scheduler.cancel_group(group)));
+
+    assert!(cancelled.is_err(), "the waker's panic was lost");
+    assert_closed(&vm, &second);
+    assert!(
+        noted.0.load(Ordering::Acquire),
+        "the second completion wasn't told"
+    );
+    assert!(dropped.get(), "the group's future wasn't dropped");
+    assert!(!scheduler.has_pending());
+    Ok(())
+}
+
 #[test]
 #[should_panic(expected = "a task's result was already read")]
 fn a_completion_read_twice_panics() {
@@ -3012,7 +3302,7 @@ fn cancelled_work_panicking_as_it_drops_fails_nothing_else() -> luau::runtime::R
 
     run_until(&scheduler, || settled.get());
     assert!(dropped.get(), "the cancel after the panicking one was lost");
-    assert!(scheduler.cancelling.borrow().is_empty());
+    assert!(!scheduler.state.borrow().has_cancelling());
     Ok(())
 }
 

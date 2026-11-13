@@ -52,9 +52,8 @@ impl Clock {
     }
 }
 
-/// Every deadline the scheduler wakes something at: its delayed tasks' and its [`Sleep`]s'.
-/// Shared with [`Scheduler`](super::Scheduler), which hands out [`Sleep`]s while the scheduler is borrowed for
-/// polling.
+/// Every deadline the scheduler wakes something at: its delayed tasks' and its [`Sleep`]s'. The
+/// [`Sleep`]s share it.
 pub(super) struct Timers {
     clock: Clock,
     last_id: Cell<u64>,
