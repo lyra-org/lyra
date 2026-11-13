@@ -89,7 +89,8 @@ status. `clippy.toml` disallows those functions everywhere else.
   aside, as it does a collected native function's state and a freed thread's call context once
   no other thread shares it (a coroutine shares its creator's). The VM drops them where Rust
   code next enters it: a new stack, a native call, a call into the VM returning, or closing the
-  VM. A panic there aborts the process.
+  VM. Each drops what was waiting then; what those drops leave waits for the next. A panic there
+  aborts the process.
 - Userdata types must be `Send`, which keeps VM handles out of them, so a value waiting to drop
   can't keep its VM alive. Its `Drop` may still reach the VM some other way, as through a
   thread-local handle.

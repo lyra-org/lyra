@@ -774,19 +774,15 @@ impl VmControl {
     }
 
     /// Drops what Luau collected, which must not run inside a collection. A drop that enters the
-    /// VM can leave more, which this drops too rather than recursing. A panic aborts, as one in a
+    /// VM can leave more, which waits for the next call rather than this recursing or looping, so
+    /// a destructor that keeps leaving more can't hold the caller here. A panic aborts, as one in a
     /// destructor Luau runs would.
     fn drop_collected(&self) {
         if self.collected.borrow().is_empty() || self.dropping_collected.replace(true) {
             return;
         }
-        loop {
-            let collected = std::mem::take(&mut *self.collected.borrow_mut());
-            if collected.is_empty() {
-                break;
-            }
-            abort_on_panic(|| drop(collected));
-        }
+        let collected = std::mem::take(&mut *self.collected.borrow_mut());
+        abort_on_panic(|| drop(collected));
         self.dropping_collected.set(false);
     }
 
@@ -5245,6 +5241,45 @@ mod tests {
         }
         VM.with(|slot| slot.borrow_mut().take());
         assert_eq!(drops(), 2);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn what_destructors_leave_waits_for_the_next_entry() -> Result<()> {
+        thread_local! {
+            static VM: RefCell<Option<Vm>> = const { RefCell::new(None) };
+            static DROPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        }
+        struct Replenishes;
+        impl Drop for Replenishes {
+            fn drop(&mut self) {
+                let Some(vm) = VM.with(|vm| vm.borrow().clone()) else {
+                    return;
+                };
+                DROPS.with(|drops| drops.set(drops.get() + 1));
+                drop(
+                    vm.create_userdata(Replenishes)
+                        .expect("a destructor creates userdata"),
+                );
+                vm.inner.state.gc(sys::LUA_GCCOLLECT);
+            }
+        }
+
+        let drops = || DROPS.with(std::cell::Cell::get);
+        let vm = Vm::new()?;
+        VM.with(|slot| *slot.borrow_mut() = Some(vm.clone()));
+
+        drop(vm.create_userdata(Replenishes)?);
+        vm.inner.state.gc(sys::LUA_GCCOLLECT);
+        for _ in 0..3 {
+            let before = drops();
+            drop(vm.create_table()?);
+            assert!(drops() > before, "entering the VM drops what was collected");
+            let waiting = vm.inner.control().collected.borrow().len();
+            assert_eq!(waiting, 1, "the next generation waits for the next entry");
+        }
+        VM.with(|slot| slot.borrow_mut().take());
         Ok(())
     }
 
