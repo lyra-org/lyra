@@ -20,10 +20,9 @@ use tracing_subscriber::EnvFilter;
 /// log only when a filter directive names this target.
 const RAW_QUERY_TARGET: &str = "lyra::http::query";
 
-/// Builds the log filter from `directives`, keeping [`RAW_QUERY_TARGET`] off
-/// unless they name it, so a blanket `trace` doesn't log credentials.
-pub(crate) fn log_filter(directives: &str) -> EnvFilter {
-    let filter = EnvFilter::new(directives);
+/// Keeps [`RAW_QUERY_TARGET`] off in `filter`, built from `directives`, unless
+/// they name it, so a blanket `trace` doesn't log credentials.
+pub(crate) fn log_filter(directives: &str, filter: EnvFilter) -> EnvFilter {
     if directives.contains(RAW_QUERY_TARGET) {
         return filter;
     }
@@ -109,7 +108,7 @@ mod tests {
     fn logged_request(filter: &str, uri: &str) -> String {
         let captured = Captured::default();
         let subscriber = tracing_subscriber::fmt()
-            .with_env_filter(log_filter(filter))
+            .with_env_filter(log_filter(filter, EnvFilter::try_new(filter).unwrap()))
             .with_writer(captured.clone())
             .with_ansi(false)
             .without_time()
@@ -149,6 +148,7 @@ mod tests {
     fn raw_query_logs_only_when_its_target_is_named() {
         let uri = "/api/ws?ticket=secret";
         assert!(!logged_request("trace", uri).contains("secret"));
+        assert!(!logged_request("lyra=trace", uri).contains("secret"));
         assert!(
             logged_request(&format!("info,{RAW_QUERY_TARGET}=trace"), uri)
                 .contains("query=\"ticket=secret\"")

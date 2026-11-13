@@ -11,6 +11,7 @@ use std::{
 
 mod boot;
 mod file;
+mod log;
 pub(crate) mod storage;
 
 pub(crate) use boot::{
@@ -18,6 +19,10 @@ pub(crate) use boot::{
     BootEnv,
 };
 pub(crate) use file::ConfigFile;
+pub(crate) use log::{
+    LogFilter,
+    log_filter,
+};
 
 const LYRA_PLUGINS_DIR_ENV: &str = "LYRA_PLUGINS_DIR";
 

@@ -273,18 +273,15 @@ fn log_setting_overrides() {
 fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
     // Non-blocking: a plugin warn-loop can't stall the scheduler on sync stderr.
     let (non_blocking, guard) = tracing_appender::non_blocking(std::io::stderr());
-    let directives = std::env::var(tracing_subscriber::EnvFilter::DEFAULT_ENV)
-        .ok()
-        .filter(|directives| tracing_subscriber::EnvFilter::try_new(directives).is_ok())
-        .unwrap_or_else(|| {
-            format!(
-                "{}=info,tower_http=debug,harmony_core=info",
-                env!("CARGO_CRATE_NAME")
-            )
+    // Tracing isn't up yet, and a bad filter mustn't stop the recovery commands either.
+    let log = config::log_filter(std::env::var(tracing_subscriber::EnvFilter::DEFAULT_ENV))
+        .unwrap_or_else(|error| {
+            eprintln!("ignoring {error}; using the default log filter");
+            config::LogFilter::default()
         });
 
     tracing_subscriber::registry()
-        .with(routes::trace::log_filter(&directives))
+        .with(routes::trace::log_filter(&log.directives, log.filter))
         .with(tracing_subscriber::fmt::layer().with_writer(non_blocking))
         .init();
 
@@ -486,6 +483,25 @@ mod tests {
         super::stop_background_sync(sync, std::time::Duration::from_secs(1)).await;
 
         assert_eq!(std::sync::Arc::strong_count(&dropped), 1);
+    }
+
+    #[test]
+    fn default_log_filter_shows_lyra_and_harmony_crates_at_info() {
+        use tracing::Level;
+
+        let log = config::LogFilter::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(routes::trace::log_filter(&log.directives, log.filter));
+        tracing::subscriber::with_default(subscriber, || {
+            assert!(tracing::enabled!(target: "lyra_db::bootstrap", Level::INFO));
+            assert!(!tracing::enabled!(target: "lyra_db::bootstrap", Level::DEBUG));
+            assert!(tracing::enabled!(target: "lyra_server::plugins", Level::INFO));
+            assert!(tracing::enabled!(target: "harmony_globals", Level::INFO));
+            assert!(tracing::enabled!(target: "harmony_core::scheduler", Level::INFO));
+            assert!(tracing::enabled!(target: "tower_http::trace", Level::DEBUG));
+            assert!(tracing::enabled!(target: "hyper::proto", Level::WARN));
+            assert!(!tracing::enabled!(target: "hyper::proto", Level::INFO));
+        });
     }
 
     #[test]
