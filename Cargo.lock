@@ -1604,6 +1604,7 @@ dependencies = [
  "lyra-ffmpeg",
  "lyra-metadata",
  "matchit",
+ "mimalloc",
  "percent-encoding",
  "rand 0.10.3",
  "rcgen",
@@ -1653,6 +1654,23 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+
+[[package]]
+name = "mimalloc"
+version = "3.6.1"
+source = "git+https://github.com/microsoft/mimalloc?tag=v3.6.1#56dc5eb80145f9a3ba7ca23d47c6a248b9d8586c"
+dependencies = [
+ "mimalloc-sys",
+]
+
+[[package]]
+name = "mimalloc-sys"
+version = "3.6.1"
+source = "git+https://github.com/microsoft/mimalloc?tag=v3.6.1#56dc5eb80145f9a3ba7ca23d47c6a248b9d8586c"
+dependencies = [
+ "cc",
+ "rustversion",
+]
 
 [[package]]
 name = "mime"

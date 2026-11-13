@@ -39,6 +39,7 @@ hyper-util = { version = "0.1", default-features = false, features = ["service",
 bytes = "1"
 base64 = { workspace = true }
 matchit = "0.8" # pinned to axum's transitive version to avoid a duplicate
+mimalloc = { git = "https://github.com/microsoft/mimalloc", tag = "v3.6.1", features = ["no_thp"] }
 percent-encoding = { workspace = true }
 rand = "0.10"
 reqwest = { workspace = true, default-features = false, features = ["charset", "http2", "json", "rustls-no-provider", "system-proxy"] }

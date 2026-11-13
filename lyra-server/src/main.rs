@@ -14,6 +14,9 @@ use lyra_server::{
     CaptureArgs,
 };
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[derive(Debug, PartialEq, Eq)]
 enum Command {
     Serve { capture: Option<CaptureArgs> },
@@ -40,8 +43,17 @@ enum PluginsCommand {
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+    // mimalloc otherwise purges freed memory only from later allocations, which an idle server
+    // does not make. Options are plain globals, so this runs before any other thread exists.
+    mimalloc::option_set(mimalloc::sys::mi_option_purge_delay, 0);
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(run())
+}
+
+async fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match parse_command_args(&args)? {
         Command::Serve { capture } => lyra_server::run_server(build_info(), capture).await,
