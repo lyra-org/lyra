@@ -188,7 +188,6 @@ pub struct Scheduler {
     in_round: Cell<bool>,
     pending_luau_work: RefCell<Vec<PendingLuauWork>>,
     pending_luau_cancellations: RefCell<Vec<luau::Thread>>,
-    pending_futures: RefCell<Vec<(CallContext, TaskFuture, bool)>>,
     pending_group_cancellations: RefCell<Vec<TaskGroupId>>,
     /// Told once the poll under way has ended and what it deferred is done.
     poll_end: RefCell<Vec<tokio::sync::oneshot::Sender<()>>>,
@@ -225,7 +224,6 @@ impl Scheduler {
             in_round: Cell::default(),
             pending_luau_work: RefCell::default(),
             pending_luau_cancellations: RefCell::default(),
-            pending_futures: RefCell::default(),
             pending_group_cancellations: RefCell::default(),
             poll_end: RefCell::default(),
             polling: Cell::default(),
@@ -328,13 +326,6 @@ impl Scheduler {
         if group != TaskGroupId::default() {
             // Work a poll put off and never took up, as when it unwound, goes with the group.
             self.cancel_pending_luau_work(|work| work.is_in(group));
-            let (cancelled, kept) = std::mem::take(&mut *self.pending_futures.borrow_mut())
-                .into_iter()
-                .partition::<Vec<_>, _>(|(context, ..)| context.task_group == group);
-            *self.pending_futures.borrow_mut() = kept;
-            for (context, future, _) in cancelled {
-                drop_catching_panic(&context, future);
-            }
         }
         self.flush_pending_luau_cancellations();
     }
@@ -354,14 +345,13 @@ impl Scheduler {
         }
     }
 
-    /// Runs `future` as a task of `context`'s group. While the scheduler polls, as from another
-    /// task, the task starts once the poll ends.
+    /// Runs `future` as a task of `context`'s group, from the next round on.
     pub fn schedule_future(
         &self,
         context: CallContext,
         future: impl Future<Output = Result<()>> + 'static,
     ) {
-        self.schedule_boxed(context, Box::pin(future), false);
+        self.spawn_boxed(context, Box::pin(future), None, false);
     }
 
     /// [`Self::schedule_future`] for a task that watches others: every poll runs the watchers
@@ -371,17 +361,7 @@ impl Scheduler {
         context: CallContext,
         future: impl Future<Output = Result<()>> + 'static,
     ) {
-        self.schedule_boxed(context, Box::pin(future), true);
-    }
-
-    fn schedule_boxed(&self, context: CallContext, future: TaskFuture, watcher: bool) {
-        if self.polling.get() {
-            self.pending_futures
-                .borrow_mut()
-                .push((context, future, watcher));
-            return;
-        }
-        self.spawn_boxed(context, future, None, watcher);
+        self.spawn_boxed(context, Box::pin(future), None, true);
     }
 
     fn spawn_boxed(
@@ -849,7 +829,6 @@ impl Scheduler {
     /// Does what was asked of the scheduler while it polled.
     fn end_poll(&self) {
         self.flush_pending_luau_threads();
-        self.flush_pending_futures();
         self.flush_pending_group_cancellations();
         self.flush_pending_luau_cancellations();
         self.state.borrow_mut().clear_cancelling();
@@ -1034,13 +1013,6 @@ impl Scheduler {
                     }
                 }
             }
-        }
-    }
-
-    fn flush_pending_futures(&self) {
-        let pending = std::mem::take(&mut *self.pending_futures.borrow_mut());
-        for (context, future, watcher) in pending {
-            self.schedule_boxed(context, future, watcher);
         }
     }
 

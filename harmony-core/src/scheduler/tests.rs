@@ -2736,7 +2736,6 @@ fn cancelling_a_group_closes_and_drops_the_work_a_poll_that_unwound_put_off()
     });
     unwind_a_round(&vm, &scheduler)?;
     assert_eq!(scheduler.pending_luau_work.borrow().len(), 6);
-    assert_eq!(scheduler.pending_futures.borrow().len(), 1);
     let woken = completions.each_ref().map(|completion| wait_on(completion));
 
     assert!(scheduler.cancel_luau_thread(&alone));
@@ -2752,7 +2751,6 @@ fn cancelling_a_group_closes_and_drops_the_work_a_poll_that_unwound_put_off()
         assert!(ended.is_err_and(|error| error.contains("cancelled")));
     }
     assert!(dropped.get(), "the group's future was kept");
-    assert!(scheduler.pending_futures.borrow().is_empty());
     assert_eq!(scheduler.pending_luau_work.borrow().len(), 1);
     scheduler.poll_ready();
     scheduler.poll_ready();
