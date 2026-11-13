@@ -2,8 +2,8 @@
   "schema_version": 1,
   "id": "jellyfin",
   "name": "Jellyfin Compatibility",
-  "version": "0.0.7",
-  "lyra": "0.0.2-dev.2",
+  "version": "0.0.8",
+  "lyra": "0.0.2-dev.3",
   "description": "Plugin for creating Jellyfin-compatible routes",
   "entrypoint": "init.luau",
   "scopes": [

@@ -2,8 +2,8 @@
   "schema_version": 1,
   "id": "theaudiodb",
   "name": "TheAudioDB Provider",
-  "version": "0.0.4",
-  "lyra": "0.0.2-dev.2",
+  "version": "0.0.5",
+  "lyra": "0.0.2-dev.3",
   "description": "Resolves artist and release artwork and metadata from TheAudioDB",
   "entrypoint": "init.luau",
   "scopes": [

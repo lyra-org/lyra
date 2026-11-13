@@ -2,8 +2,8 @@
   "schema_version": 1,
   "id": "listenbrainz",
   "name": "ListenBrainz Integration",
-  "version": "0.0.4",
-  "lyra": "0.0.2-dev.2",
+  "version": "0.0.5",
+  "lyra": "0.0.2-dev.3",
   "description": "Sync your listens to ListenBrainz",
   "entrypoint": "init.luau",
   "scopes": [
