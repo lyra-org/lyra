@@ -20,6 +20,7 @@ pub use audio::{
 pub use context::{
     FfmpegContext,
     FfmpegHandle,
+    SUPPORTED_SAMPLE_RATES_HZ,
 };
 pub use error::{
     Error,
@@ -61,21 +62,24 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_sample_rate_before_start() {
-        let output = Output::new("/tmp/lyra-ffmpeg-invalid.mp3")
-            .audio_format(AudioFormat::Mp3)
-            .sample_rate_hz(0);
+    fn rejects_an_unsupported_sample_rate_before_start() {
+        let (min, max) = SUPPORTED_SAMPLE_RATES_HZ.into_inner();
+        for rate in [0, 1, min - 1, max + 1, u32::MAX] {
+            let output = Output::new("/tmp/lyra-ffmpeg-invalid.wav")
+                .audio_format(AudioFormat::Wav)
+                .sample_rate_hz(rate);
 
-        let error = match FfmpegContext::builder()
-            .input(TEST_INPUT)
-            .output(output)
-            .build()
-        {
-            Ok(_) => panic!("invalid sample rate should fail before starting ffmpeg"),
-            Err(error) => error,
-        };
+            let error = match FfmpegContext::builder()
+                .input(TEST_INPUT)
+                .output(output)
+                .build()
+            {
+                Ok(_) => panic!("{rate} Hz should fail before starting ffmpeg"),
+                Err(error) => error,
+            };
 
-        assert!(matches!(error, Error::InvalidOutputSpec(_)));
+            assert!(matches!(error, Error::InvalidOutputSpec(_)), "{rate} Hz");
+        }
     }
 
     #[test]
@@ -563,6 +567,47 @@ mod tests {
         let _ = std::fs::remove_file(target);
         assert!(
             matches!(error, Error::UnsupportedInputSampleRate(1)),
+            "{error}"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
+    fn refuses_input_above_the_maximum_sample_rate() {
+        let wav = pcm_wav("1mhz", 16, 2, 1_000_000);
+        let target = wav.with_extension("flac");
+        let error = transcode(
+            &wav,
+            Output::new(&target)
+                .audio_format(AudioFormat::Flac)
+                .sample_rate_hz(1_000),
+            None,
+        )
+        .expect_err("a 1 MHz input is refused");
+        let _ = std::fs::remove_file(wav);
+        let _ = std::fs::remove_file(target);
+        assert!(
+            matches!(error, Error::UnsupportedInputSampleRate(1_000_000)),
+            "{error}"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
+    fn refuses_input_without_a_known_sample_rate() {
+        let target = std::env::temp_dir().join(format!(
+            "lyra-ffmpeg-unknown-rate-{}.wav",
+            std::process::id()
+        ));
+        let error = transcode(
+            &asset("unknown-rate.aac"),
+            Output::new(&target).audio_format(AudioFormat::Wav),
+            None,
+        )
+        .expect_err("an input without a known rate is refused");
+        let _ = std::fs::remove_file(target);
+        assert!(
+            matches!(error, Error::UnsupportedInputSampleRate(0)),
             "{error}"
         );
     }

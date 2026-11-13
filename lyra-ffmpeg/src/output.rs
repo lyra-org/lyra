@@ -213,7 +213,7 @@ impl Output {
     }
 
     pub fn sample_rate_hz(mut self, sample_rate: u32) -> Self {
-        self.audio_sample_rate = i32::try_from(sample_rate).ok();
+        self.audio_sample_rate = Some(i32::try_from(sample_rate).unwrap_or(i32::MAX));
         self
     }
 
@@ -404,11 +404,13 @@ impl Output {
             }
         }
         if let Some(sample_rate) = self.audio_sample_rate
-            && sample_rate <= 0
+            && !crate::context::is_supported_sample_rate(sample_rate)
         {
-            return Err(crate::Error::InvalidOutputSpec(
-                "audio sample rate must be greater than zero".to_string(),
-            ));
+            return Err(crate::Error::InvalidOutputSpec(format!(
+                "audio sample rate must be between {} and {} Hz",
+                crate::SUPPORTED_SAMPLE_RATES_HZ.start(),
+                crate::SUPPORTED_SAMPLE_RATES_HZ.end()
+            )));
         }
         if let Some(channels) = self.audio_channels
             && channels <= 0

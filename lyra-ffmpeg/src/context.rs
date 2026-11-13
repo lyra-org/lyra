@@ -9,6 +9,7 @@ use std::ffi::{
     c_void,
 };
 use std::marker::PhantomData;
+use std::ops::RangeInclusive;
 use std::panic::{
     AssertUnwindSafe,
     catch_unwind,
@@ -50,9 +51,11 @@ use crate::output::{
 
 static FFMPEG_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
-/// Well below any real format's rate, the lowest in use being 5512 Hz. A lower declared rate lets a
-/// tiny input expand into gigabytes of resampled output.
-const MIN_INPUT_SAMPLE_RATE: i32 = 1_000;
+/// The sample rates audio is decoded and encoded at: from well below the lowest real format's,
+/// 5512 Hz, to the highest in use, 768 kHz. Resampling cost and output size grow with the ratio
+/// between rates, so a rate outside them lets a tiny input cost seconds of CPU or expand into
+/// gigabytes.
+pub const SUPPORTED_SAMPLE_RATES_HZ: RangeInclusive<u32> = 1_000..=768_000;
 const AVERROR_INPUT_CHANGED: i32 = -0x636e6701;
 const AVERROR_OUTPUT_CHANGED: i32 = -0x636e6702;
 
@@ -1127,7 +1130,7 @@ impl Resampler {
     /// Maps `input`'s format onto `output`'s, discarding any samples still buffered.
     unsafe fn configure(&self, output: *const AVFrame, input: *const AVFrame) -> Result<()> {
         unsafe {
-            if (*input).sample_rate < MIN_INPUT_SAMPLE_RATE {
+            if !is_supported_sample_rate((*input).sample_rate) {
                 return Err(Error::UnsupportedInputSampleRate((*input).sample_rate));
             }
             let ret = swr_config_frame(self.as_mut_ptr(), output, input);
@@ -1369,7 +1372,10 @@ unsafe fn setup_encoder(
         let enc_ctx = CodecContext::new(encoder, "encoder context")?;
         let enc_ctx_ptr = enc_ctx.as_mut_ptr();
 
-        let input_sample_rate = (*in_codecpar).sample_rate.max(1);
+        let input_sample_rate = (*in_codecpar).sample_rate;
+        if !is_supported_sample_rate(input_sample_rate) {
+            return Err(Error::UnsupportedInputSampleRate(input_sample_rate));
+        }
         let output_sample_rate =
             select_encoder_sample_rate(encoder, input_sample_rate, output.audio_sample_rate)?;
 
@@ -1514,6 +1520,10 @@ pub(crate) fn encoder_sample_rate(
         }
         select_encoder_sample_rate(encoder, input_rate, cap)
     }
+}
+
+pub(crate) fn is_supported_sample_rate(rate: i32) -> bool {
+    u32::try_from(rate).is_ok_and(|rate| SUPPORTED_SAMPLE_RATES_HZ.contains(&rate))
 }
 
 /// The rate to encode audio at `input_rate` with, from the encoder's `supported` rates: under a
