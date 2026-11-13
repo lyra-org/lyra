@@ -14,17 +14,22 @@ use harmony_luau::{
     ParameterDescriptor,
     render_globals_definition,
 };
-use tracing::Level;
 
 const MAX_LINE_BYTES: usize = 8 * 1024;
 const LOG_GLOBAL_SCOPE_NAME: &str = "harmony.globals";
+const PRINT_GLOBAL_NAME: &str = "print";
 const WARN_GLOBAL_NAME: &str = "warn";
 const LUAURC_GLOBAL_NAMES: &[&str] = &[WARN_GLOBAL_NAME];
 
 pub fn plugin_log_global_specs() -> Vec<GlobalSpec> {
     vec![
         GlobalSpec::new(LOG_GLOBAL_SCOPE_NAME)
-            .function(log_function_spec(WARN_GLOBAL_NAME, Level::WARN)),
+            .function(log_function_spec(PRINT_GLOBAL_NAME, |message| {
+                tracing::info!(parent: None, "{message}");
+            }))
+            .function(log_function_spec(WARN_GLOBAL_NAME, |message| {
+                tracing::warn!(parent: None, "{message}");
+            })),
     ]
 }
 
@@ -47,24 +52,16 @@ pub fn render_plugin_log_globals_luau_definition() -> Result<String, std::fmt::E
     }])
 }
 
-fn log_function_spec(name: &'static str, level: Level) -> FunctionSpec {
-    let spec = FunctionSpec::new(name);
-    spec.call(move |frame| emit_callback(level, frame))
+fn log_function_spec(name: &'static str, log: fn(&str)) -> FunctionSpec {
+    FunctionSpec::new(name).call(move |frame| emit_callback(log, frame))
 }
 
-fn emit_callback(level: Level, mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+fn emit_callback(log: fn(&str), mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
     let joined = join_log_values(&frame.args.drain_remaining()?);
     let sanitized = sanitize_message(&joined);
     let final_msg = truncate_to_byte_cap(&sanitized, MAX_LINE_BYTES);
 
-    match level {
-        Level::ERROR => tracing::event!(parent: None, Level::ERROR, "{final_msg}"),
-        Level::WARN => tracing::event!(parent: None, Level::WARN, "{final_msg}"),
-        Level::INFO => tracing::event!(parent: None, Level::INFO, "{final_msg}"),
-        Level::DEBUG => tracing::event!(parent: None, Level::DEBUG, "{final_msg}"),
-        Level::TRACE => tracing::event!(parent: None, Level::TRACE, "{final_msg}"),
-    }
-
+    log(&final_msg);
     Ok(())
 }
 
@@ -131,9 +128,66 @@ fn floor_char_boundary(s: &str, index: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{
+        io,
+        sync::{
+            Arc,
+            Mutex,
+        },
+    };
+
+    use tracing_subscriber::fmt::MakeWriter;
 
     use super::*;
+
+    #[derive(Clone, Default)]
+    struct Captured(Arc<Mutex<Vec<u8>>>);
+
+    impl io::Write for Captured {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for Captured {
+        type Writer = Self;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    #[test]
+    fn print_and_warn_log_through_tracing() -> luau::runtime::Result<()> {
+        let vm = luau::Vm::new()?;
+        vm.open_standard_libraries(luau::StandardLibraries::all_supported())?;
+        for globals in plugin_log_global_specs() {
+            harmony_core::luau::install_globals(&vm, &luau::ChunkOrigin::default(), &globals)?;
+        }
+        let chunk = vm.load_chunk(&luau::Chunk::new(
+            Arc::<[u8]>::from(&b"print(\"hello\", 1) warn(\"careful\")"[..]),
+            luau::ChunkOrigin::default(),
+        ))?;
+
+        let captured = Captured::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(captured.clone())
+            .with_max_level(tracing::Level::TRACE)
+            .with_ansi(false)
+            .without_time()
+            .finish();
+        tracing::subscriber::with_default(subscriber, || chunk.call(&[]))?;
+
+        let log = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
+        assert!(log.contains(" INFO harmony_globals: hello\t1\n"), "{log}");
+        assert!(log.contains(" WARN harmony_globals: careful\n"), "{log}");
+        Ok(())
+    }
 
     #[test]
     fn host_errors_log_their_message() -> luau::runtime::Result<()> {
