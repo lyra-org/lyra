@@ -588,8 +588,16 @@ pub(crate) async fn sync_library_pipeline(
         .await;
     }
     progress.check_cancelled()?;
-    revalidate_local_covers(db, library, library_db_id).await;
-    refresh_gone_covers(db, library, library_db_id).await;
+    let library_covers = async {
+        #[cfg(test)]
+        tests::before_library_covers(&library.path).await;
+        revalidate_local_covers(db, library, library_db_id).await;
+        refresh_gone_covers(db, library, library_db_id).await;
+    };
+    tokio::select! {
+        () = library_covers => {}
+        err = progress.cancelled() => return Err(err.into()),
+    }
     if !stages.covers.skips() {
         sync_changed_artist_covers(db, library, &plans, stages.covers, &progress).await?;
     }
@@ -1924,6 +1932,7 @@ FILE "album.flac" WAVE
         before_entry_hash: Option<Gate<PathBuf>>,
         after_entry_hash: Option<EntryGate>,
         entry_applied: Option<std::sync::Arc<dyn Fn(PathBuf) + Send + Sync>>,
+        before_library_covers: Option<Gate<PathBuf>>,
         /// Fails the write unsyncing what the scan's moves leave behind.
         fail_unsync_left_by_moves: bool,
         planned: std::sync::Mutex<Vec<(Vec<DbId>, Vec<DbId>)>>,
@@ -1954,6 +1963,16 @@ FILE "album.flac" WAVE
             .flatten();
         if let Some(gate) = gate {
             gate(source_dir.to_path_buf()).await;
+        }
+    }
+
+    pub(super) async fn before_library_covers(library_path: &Path) {
+        let gate = HOOKS
+            .try_with(|hooks| hooks.before_library_covers.clone())
+            .ok()
+            .flatten();
+        if let Some(gate) = gate {
+            gate(library_path.to_path_buf()).await;
         }
     }
 
@@ -4570,6 +4589,48 @@ FILE "album.flac" WAVE
                 .is_some()
         );
         assert!(entry.synced_at_ms.is_some());
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cancelling_stops_the_library_cover_passes() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cancelled-covers").await?;
+        album_track(&root.join("Album"), "Album")?;
+
+        let progress = super::super::orchestrator::begin_test_run(&library).await;
+        // The pass cancels the run, then never finishes.
+        let gate: Gate<PathBuf> = {
+            let run_id = progress.run_id().to_string();
+            std::sync::Arc::new(move |_| {
+                let run_id = run_id.clone();
+                Box::pin(async move {
+                    super::super::orchestrator::cancel_sync_run(&run_id)
+                        .await
+                        .expect("cancel");
+                    std::future::pending::<()>().await;
+                })
+            })
+        };
+        let hooks = Hooks {
+            before_library_covers: Some(gate),
+            ..Hooks::default()
+        };
+        let result = tokio::time::timeout(
+            Duration::from_secs(30),
+            sync_with(hooks.into(), &library, progress.clone()),
+        )
+        .await
+        .expect("the cancelled scan kept waiting for its cover pass");
+        super::super::orchestrator::end_test_run(&progress).await;
+
+        let err = result.expect_err("the run finished despite its cancellation");
+        assert!(
+            err.downcast_ref::<SyncRunControlError>().is_some(),
+            "{err:#}"
+        );
         let _ = std::fs::remove_dir_all(root);
         Ok(())
     }

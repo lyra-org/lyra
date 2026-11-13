@@ -981,7 +981,7 @@ async fn persist_resolved_covers(
 /// Checks the library's stored local covers against who its folders belong to now, as a scan's
 /// last step, since a scan passes over releases whose audio is unchanged. A cover that no longer
 /// passes gives way to one in the release's own folders, or is dropped. Returns how many were
-/// replaced.
+/// replaced. Dropping the pass at an await leaves no write half done, and the next scan redoes it.
 pub(crate) async fn revalidate_local_covers_for_library(
     db: &lyra_db::DbAsync,
     library_id: DbId,
@@ -1448,7 +1448,8 @@ async fn find_gone_covers(
 /// unchanged. A local cover found again in the library replaces the record; any other is removed,
 /// so the owner shows its next cover. Locked owners, and covers changed since they were found gone,
 /// are left alone, and failures are logged rather than stopping the rest. Returns how many covers
-/// were removed.
+/// were removed. Dropping the pass at an await leaves no write half done, and the next sync redoes
+/// it.
 pub(crate) async fn refresh_gone_covers_for_library(
     db: &lyra_db::DbAsync,
     library_id: DbId,
@@ -1696,18 +1697,22 @@ pub(crate) async fn sync_and_persist_release_covers_for_library(
 ) -> Result<usize> {
     sync_release_covers_for_library(db, paths, library_id, options, provider_filter, cancel)
         .await?;
-    if cancel.is_cancelled() {
-        return Ok(0);
-    }
-
-    let resolved = resolve_local_covers_for_library(
-        db,
-        library_id,
-        paths.library_root,
-        LocalCoverScope::Every,
-    )
-    .await?;
-    let persisted = persist_resolved_covers(db, library_id, paths.library_root, resolved).await?;
+    // No write here pauses partway, so dropping the local pass leaves none half done.
+    let local = async {
+        let resolved = resolve_local_covers_for_library(
+            db,
+            library_id,
+            paths.library_root,
+            LocalCoverScope::Every,
+        )
+        .await?;
+        persist_resolved_covers(db, library_id, paths.library_root, resolved).await
+    };
+    let persisted = tokio::select! {
+        biased;
+        () = cancel.cancelled() => return Ok(0),
+        persisted = local => persisted?,
+    };
     tracing::debug!(
         library_id = library_id.0,
         persisted,

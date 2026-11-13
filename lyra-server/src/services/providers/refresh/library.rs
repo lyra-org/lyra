@@ -654,9 +654,13 @@ async fn sync_library_covers_after_refresh(
     progress
         .check_cancelled()
         .map_err(|err| ProviderServiceError::Internal(err.into()))?;
-    refresh_gone_covers_for_library(&STATE.db.get(), library_db_id, paths.library_root)
-        .await
-        .map_err(ProviderServiceError::Internal)?;
+    let db = STATE.db.get();
+    tokio::select! {
+        refreshed = refresh_gone_covers_for_library(&db, library_db_id, paths.library_root) => {
+            refreshed.map_err(ProviderServiceError::Internal)?
+        }
+        err = progress.cancelled() => return Err(ProviderServiceError::Internal(err.into())),
+    };
     tracing::debug!(
         library_db_id = library_db_id.0,
         release_count,
