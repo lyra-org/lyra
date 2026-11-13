@@ -53,7 +53,7 @@ fn log_function_spec(name: &'static str, level: Level) -> FunctionSpec {
 }
 
 fn emit_callback(level: Level, mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let joined = join_log_values(frame.vm, &frame.args.drain_remaining()?);
+    let joined = join_log_values(&frame.args.drain_remaining()?);
     let sanitized = sanitize_message(&joined);
     let final_msg = truncate_to_byte_cap(&sanitized, MAX_LINE_BYTES);
 
@@ -68,15 +68,15 @@ fn emit_callback(level: Level, mut frame: luau::CallFrame<'_>) -> luau::runtime:
     Ok(())
 }
 
-fn join_log_values(vm: &luau::Vm, args: &[luau::Value]) -> String {
+fn join_log_values(args: &[luau::Value]) -> String {
     args.iter()
-        .map(|value| log_value_to_display_string(vm, value))
+        .map(log_value_to_display_string)
         .collect::<Vec<_>>()
         .join("\t")
 }
 
-fn log_value_to_display_string(vm: &luau::Vm, value: &luau::Value) -> String {
-    if let Some(message) = vm.error_message(value) {
+fn log_value_to_display_string(value: &luau::Value) -> String {
+    if let Some(message) = value.error_message() {
         return message;
     }
     match value {
@@ -156,7 +156,7 @@ mod tests {
         let other = vm.create_userdata(1_u8)?;
 
         assert_eq!(
-            join_log_values(&vm, &[error, luau::Value::UserData(other)]),
+            join_log_values(&[error, luau::Value::UserData(other)]),
             "module '<unknown module>' function '<unknown function>' plugin '<non-plugin>': gone\t<userdata>"
         );
         Ok(())

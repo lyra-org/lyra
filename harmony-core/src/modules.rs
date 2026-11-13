@@ -1927,7 +1927,7 @@ mod tests {
         )?;
         let message = "module 'demo/async' function 'fail_kinded' plugin 'demo': gone";
         assert_eq!(result[0], luau::Value::Boolean(false));
-        assert_eq!(vm.error_kind(&result[1]), Some("missing"));
+        assert_eq!(result[1].error_kind(), Some("missing"));
         assert_eq!(result[2], luau::Value::String(message.as_bytes().to_vec()));
 
         let (_, snapshot) = run_waiting_module_task("module.fail_kinded()")?;
@@ -2324,7 +2324,7 @@ mod tests {
         )?;
 
         assert_eq!(values[0], luau::Value::Boolean(false));
-        assert_eq!(vm.error_kind(&values[1]), Some("missing"));
+        assert_eq!(values[1].error_kind(), Some("missing"));
         let luau::Value::String(message) = &values[2] else {
             panic!("expected a message, got {:?}", values[2]);
         };

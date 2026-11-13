@@ -76,8 +76,8 @@ impl ErrorsModule {
         args(err: Unknown),
         returns(Option<ErrorKind>)
     )]
-    fn kind(vm: &luau::Vm, err: Option<luau::Value>) -> Option<ErrorKind> {
-        err.and_then(|err| vm.error_kind(&err))
+    fn kind(err: Option<luau::Value>) -> Option<ErrorKind> {
+        err.and_then(|err| err.error_kind())
             .and_then(<ErrorKind as luau::StringEnum>::from_str)
     }
 }

@@ -361,27 +361,6 @@ impl Vm {
         Ok(vm)
     }
 
-    /// The kind of a `HostError` value; `None` for any other value.
-    pub fn error_kind(&self, value: &Value) -> Option<&'static str> {
-        self.host_error(value).map(|error| error.kind)
-    }
-
-    /// The message of a `HostError` value, as `tostring` gives it; `None` for any other value.
-    pub fn error_message(&self, value: &Value) -> Option<String> {
-        self.host_error(value).map(|error| error.message.clone())
-    }
-
-    fn host_error<'a>(&self, value: &'a Value) -> Option<UserDataRef<'a, HostError>> {
-        match value {
-            Value::UserData(userdata)
-                if userdata.tag == HOST_ERROR_TAG && userdata.vm_id() == self.inner.id =>
-            {
-                userdata.borrow().ok()
-            }
-            _ => None,
-        }
-    }
-
     pub fn id(&self) -> u64 {
         self.inner.id
     }
@@ -2088,6 +2067,23 @@ impl IntoLuauReturn for ReturnValues {
 }
 
 impl Value {
+    /// The kind of a `HostError` value; `None` for any other value.
+    pub fn error_kind(&self) -> Option<&'static str> {
+        self.host_error().map(|error| error.kind)
+    }
+
+    /// The message of a `HostError` value, as `tostring` gives it; `None` for any other value.
+    pub fn error_message(&self) -> Option<String> {
+        self.host_error().map(|error| error.message.clone())
+    }
+
+    fn host_error(&self) -> Option<UserDataRef<'_, HostError>> {
+        match self {
+            Self::UserData(userdata) => userdata.borrow().ok(),
+            _ => None,
+        }
+    }
+
     pub fn type_name(&self) -> &'static str {
         match self {
             Self::Nil => "nil",
@@ -5553,13 +5549,13 @@ mod tests {
         assert_eq!(type_name.as_slice(), b"userdata");
         assert_eq!(tostring.as_slice(), KINDED_FAILURE.as_bytes());
         assert_eq!(interpolated.as_slice(), KINDED_FAILURE.as_bytes());
-        assert_eq!(vm.error_kind(error), Some("missing"));
-        assert_eq!(vm.error_message(error).as_deref(), Some(KINDED_FAILURE));
+        assert_eq!(error.error_kind(), Some("missing"));
+        assert_eq!(error.error_message().as_deref(), Some(KINDED_FAILURE));
 
         let other = vm.create_userdata(1_u8)?;
         for value in [plain, table, &Value::UserData(other), &Value::Nil] {
-            assert_eq!(vm.error_kind(value), None, "{value:?}");
-            assert_eq!(vm.error_message(value), None, "{value:?}");
+            assert_eq!(value.error_kind(), None, "{value:?}");
+            assert_eq!(value.error_message(), None, "{value:?}");
         }
         assert_eq!(stack_top(&vm), 0);
         Ok(())
@@ -5610,9 +5606,10 @@ mod tests {
             Value::Function(through_luau),
             Value::Function(fail),
         ])?;
-        assert_eq!(vm.error_kind(&relayed[0]), Some("missing"));
+        assert_eq!(relayed[0].error_kind(), Some("missing"));
         assert!(
-            vm.error_message(&relayed[0])
+            relayed[0]
+                .error_message()
                 .is_some_and(|message| message.ends_with(KINDED_FAILURE))
         );
         assert_eq!(stack_top(&vm), 0);
@@ -5648,7 +5645,7 @@ mod tests {
             panic!("expected the thread to finish");
         };
         assert_eq!(values[0], Value::Boolean(false));
-        assert_eq!(vm.error_kind(&values[1]), Some("missing"));
+        assert_eq!(values[1].error_kind(), Some("missing"));
         assert_eq!(values[2], Value::String(b"gone".to_vec()));
 
         let thread = vm.create_thread(&uncaught)?;
