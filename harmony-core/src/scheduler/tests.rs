@@ -711,7 +711,6 @@ fn pending_budgeted_luau_thread_preserves_budget_and_completion() -> luau::runti
     let scheduler = Scheduler::new();
     let completion = Rc::new(LocalLuauTaskCompletion::default());
 
-    scheduler.polling.set(true);
     scheduler.schedule_luau_thread_with_limit_and_completion(
         CallContext::default(),
         thread.clone(),
@@ -719,8 +718,6 @@ fn pending_budgeted_luau_thread_preserves_budget_and_completion() -> luau::runti
         ResumeLimit::budget(Duration::from_secs(1)),
         completion.clone(),
     );
-    scheduler.polling.set(false);
-    scheduler.flush_pending_luau_threads();
 
     let handle = scheduler
         .luau_thread_handle(&thread)
@@ -2112,17 +2109,16 @@ fn a_thread_whose_wait_is_refused_for_a_cancelled_group_is_closed() -> luau::run
     Ok(())
 }
 
-/// Work a poll put off and never took up, as when it unwound, is cancelled where it lies.
+/// A wait a poll put off and never took up, as when it unwound, is cancelled where it lies.
 #[test]
-fn cancelling_work_the_scheduler_has_not_taken_up_closes_its_thread() -> luau::runtime::Result<()> {
+fn cancelling_a_wait_the_scheduler_has_not_taken_up_closes_its_thread() -> luau::runtime::Result<()>
+{
     let (vm, scheduler) = vm_with_waits()?;
-    let unstarted = chunk_thread(&vm, "went_on = true")?;
     let suspended = chunk_thread(&vm, "coroutine.yield() went_on = true")?;
     suspended.resume(&[])?;
     let dropped = Rc::new(Cell::new(false));
     {
         let _polling = Polling::begin(&scheduler.polling);
-        scheduler.schedule_luau_thread(CallContext::default(), unstarted.clone(), Vec::new());
         let held = OnDrop({
             let (suspended, dropped) = (suspended.clone(), dropped.clone());
             move || {
@@ -2143,11 +2139,9 @@ fn cancelling_work_the_scheduler_has_not_taken_up_closes_its_thread() -> luau::r
         );
     }
 
-    assert!(scheduler.cancel_luau_thread(&unstarted));
     assert!(scheduler.cancel_luau_thread(&suspended));
 
     assert!(dropped.get());
-    assert_closed(&vm, &unstarted);
     assert_closed(&vm, &suspended);
     scheduler.poll_ready();
     assert!(scheduler.snapshots().is_empty());
@@ -2674,10 +2668,9 @@ fn wait_on(completion: &LocalLuauTaskCompletion) -> Arc<NotedWake> {
     noted
 }
 
-/// As above for a group: what the unwound poll put off for it, a parked thread's wait,
-/// threads not yet started and a future, goes with it, and its threads are closed, at once.
-/// A start with a completion tells it the thread was cancelled, as one cancelled by itself
-/// does.
+/// As above for a group: what the unwound poll put off for it, a parked thread's wait, goes
+/// with it, as do the threads and the future a task started for it in that poll, and its
+/// threads are closed, at once. A start with a completion tells it the thread was cancelled.
 #[test]
 fn cancelling_a_group_closes_and_drops_the_work_a_poll_that_unwound_put_off()
 -> luau::runtime::Result<()> {
@@ -2735,7 +2728,7 @@ fn cancelling_a_group_closes_and_drops_the_work_a_poll_that_unwound_put_off()
         }
     });
     unwind_a_round(&vm, &scheduler)?;
-    assert_eq!(scheduler.pending_luau_work.borrow().len(), 6);
+    assert_eq!(scheduler.pending_luau_work.borrow().len(), 1);
     let woken = completions.each_ref().map(|completion| wait_on(completion));
 
     assert!(scheduler.cancel_luau_thread(&alone));
@@ -2751,7 +2744,7 @@ fn cancelling_a_group_closes_and_drops_the_work_a_poll_that_unwound_put_off()
         assert!(ended.is_err_and(|error| error.contains("cancelled")));
     }
     assert!(dropped.get(), "the group's future was kept");
-    assert_eq!(scheduler.pending_luau_work.borrow().len(), 1);
+    assert!(scheduler.pending_luau_work.borrow().is_empty());
     scheduler.poll_ready();
     scheduler.poll_ready();
     assert_eq!(
@@ -2817,7 +2810,7 @@ fn cancelling_a_group_outlives_put_off_work_that_panics_as_it_drops() -> luau::r
         }
     });
     unwind_a_round(&vm, &scheduler)?;
-    assert_eq!(scheduler.pending_luau_work.borrow().len(), 3);
+    assert_eq!(scheduler.pending_luau_work.borrow().len(), 2);
 
     scheduler.cancel_group(group);
 
