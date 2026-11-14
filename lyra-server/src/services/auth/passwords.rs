@@ -12,10 +12,13 @@ use std::num::NonZeroUsize;
 use std::sync::LazyLock;
 
 use argon2::{
+    Algorithm,
     Argon2,
+    Params,
     PasswordHash,
     PasswordHasher,
     PasswordVerifier,
+    Version,
 };
 use rand::{
     Rng,
@@ -29,11 +32,23 @@ use tokio::sync::{
 
 const MIN_LENGTH: usize = 8;
 
+/// OWASP's Argon2id minimum: 19 MiB, two passes, one lane. Each running hash holds that memory,
+/// so [`MAX_SLOTS`] bounds the peak. Checks use the parameters stored in the hash instead.
+const PARAMS: Params = match Params::new(19 * 1024, 2, 1, None) {
+    Ok(params) => params,
+    Err(_) => panic!("the Argon2 parameters are valid"),
+};
+const MAX_SLOTS: usize = 4;
+
 static PASSWORD_WORK: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(slot_count()));
 
 fn slot_count() -> usize {
     let cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
-    (cores / 2).max(1)
+    (cores / 2).clamp(1, MAX_SLOTS)
+}
+
+fn argon2() -> Argon2<'static> {
+    Argon2::new(Algorithm::Argon2id, Version::V0x13, PARAMS)
 }
 
 /// Checked when no user matches, so a miss costs as much as a wrong password.
@@ -71,7 +86,7 @@ pub(crate) async fn matches(password: &str, stored: String) -> anyhow::Result<bo
     let password = password.to_owned();
     run(move || {
         let parsed = PasswordHash::new(&stored)?;
-        Ok(Argon2::default()
+        Ok(argon2()
             .verify_password(password.as_bytes(), &parsed)
             .is_ok())
     })
@@ -103,7 +118,7 @@ pub(crate) async fn unusable() -> anyhow::Result<String> {
 }
 
 fn hash_blocking(password: &[u8]) -> anyhow::Result<String> {
-    Ok(Argon2::default()
+    Ok(argon2()
         .hash_password(password)
         .map_err(|error| anyhow::anyhow!("password hashing failed: {error}"))?
         .to_string())
@@ -173,6 +188,29 @@ mod tests {
     #[tokio::test]
     async fn hashed_password_matches_only_itself() -> anyhow::Result<()> {
         let stored = hash("correct-password").await?;
+        assert!(matches("correct-password", stored.clone()).await?);
+        assert!(!matches("wrong-password", stored).await?);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn new_hashes_use_the_pinned_parameters() -> anyhow::Result<()> {
+        let stored = hash("correct-password").await?;
+        assert!(
+            stored.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"),
+            "{stored}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_check_uses_the_parameters_stored_in_the_hash() -> anyhow::Result<()> {
+        let other =
+            Params::new(8 * 1024, 3, 1, None).map_err(|error| anyhow::anyhow!("{error}"))?;
+        let stored = Argon2::new(Algorithm::Argon2id, Version::V0x13, other)
+            .hash_password(b"correct-password")
+            .map_err(|error| anyhow::anyhow!("{error}"))?
+            .to_string();
         assert!(matches("correct-password", stored.clone()).await?);
         assert!(!matches("wrong-password", stored).await?);
         Ok(())
