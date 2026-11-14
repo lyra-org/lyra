@@ -496,7 +496,7 @@ mod tests {
             assert!(tracing::enabled!(target: "lyra_db::bootstrap", Level::INFO));
             assert!(!tracing::enabled!(target: "lyra_db::bootstrap", Level::DEBUG));
             assert!(tracing::enabled!(target: "lyra_server::plugins", Level::INFO));
-            assert!(tracing::enabled!(target: "harmony_globals", Level::INFO));
+            assert!(tracing::enabled!(target: "harmony::plugin", Level::INFO));
             assert!(tracing::enabled!(target: "harmony_core::scheduler", Level::INFO));
             assert!(tracing::enabled!(target: "tower_http::trace", Level::DEBUG));
             assert!(tracing::enabled!(target: "hyper::proto", Level::WARN));

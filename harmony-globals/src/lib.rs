@@ -16,6 +16,7 @@ use harmony_luau::{
 };
 
 const MAX_LINE_BYTES: usize = 8 * 1024;
+const LOG_TARGET: &str = "harmony::plugin";
 const LOG_GLOBAL_SCOPE_NAME: &str = "harmony.globals";
 const PRINT_GLOBAL_NAME: &str = "print";
 const WARN_GLOBAL_NAME: &str = "warn";
@@ -24,11 +25,27 @@ const LUAURC_GLOBAL_NAMES: &[&str] = &[WARN_GLOBAL_NAME];
 pub fn plugin_log_global_specs() -> Vec<GlobalSpec> {
     vec![
         GlobalSpec::new(LOG_GLOBAL_SCOPE_NAME)
-            .function(log_function_spec(PRINT_GLOBAL_NAME, |message| {
-                tracing::info!(parent: None, "{message}");
+            .function(log_function_spec(PRINT_GLOBAL_NAME, |line| {
+                tracing::info!(
+                    target: LOG_TARGET,
+                    parent: None,
+                    plugin = line.plugin(),
+                    source = line.source(),
+                    line = line.line(),
+                    "{}",
+                    line.message,
+                );
             }))
-            .function(log_function_spec(WARN_GLOBAL_NAME, |message| {
-                tracing::warn!(parent: None, "{message}");
+            .function(log_function_spec(WARN_GLOBAL_NAME, |line| {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    parent: None,
+                    plugin = line.plugin(),
+                    source = line.source(),
+                    line = line.line(),
+                    "{}",
+                    line.message,
+                );
             })),
     ]
 }
@@ -52,16 +69,37 @@ pub fn render_plugin_log_globals_luau_definition() -> Result<String, std::fmt::E
     }])
 }
 
-fn log_function_spec(name: &'static str, log: fn(&str)) -> FunctionSpec {
+/// A line a plugin logs, with where in its code it was logged from when that is known.
+struct LogLine {
+    message: String,
+    location: Option<luau::CallerLocation>,
+}
+
+impl LogLine {
+    fn plugin(&self) -> Option<&str> {
+        self.location.as_ref()?.origin.as_ref()?.plugin.as_deref()
+    }
+
+    fn source(&self) -> Option<&str> {
+        self.location.as_ref().map(|location| &*location.chunk)
+    }
+
+    fn line(&self) -> Option<u32> {
+        self.location.as_ref()?.line
+    }
+}
+
+fn log_function_spec(name: &'static str, log: fn(&LogLine)) -> FunctionSpec {
     FunctionSpec::new(name).call(move |frame| emit_callback(log, frame))
 }
 
-fn emit_callback(log: fn(&str), mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+fn emit_callback(log: fn(&LogLine), mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let location = frame.caller_location();
     let joined = join_log_values(&frame.args.drain_remaining()?);
     let sanitized = sanitize_message(&joined);
-    let final_msg = truncate_to_byte_cap(&sanitized, MAX_LINE_BYTES);
+    let message = truncate_to_byte_cap(&sanitized, MAX_LINE_BYTES);
 
-    log(&final_msg);
+    log(&LogLine { message, location });
     Ok(())
 }
 
@@ -162,18 +200,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn print_and_warn_log_through_tracing() -> luau::runtime::Result<()> {
-        let vm = luau::Vm::new()?;
-        vm.open_standard_libraries(luau::StandardLibraries::all_supported())?;
-        for globals in plugin_log_global_specs() {
-            harmony_core::luau::install_globals(&vm, &luau::ChunkOrigin::default(), &globals)?;
-        }
-        let chunk = vm.load_chunk(&luau::Chunk::new(
-            Arc::<[u8]>::from(&b"print(\"hello\", 1) warn(\"careful\")"[..]),
-            luau::ChunkOrigin::default(),
-        ))?;
-
+    fn capture_log<T>(run: impl FnOnce() -> T) -> (T, String) {
         let captured = Captured::default();
         let subscriber = tracing_subscriber::fmt()
             .with_writer(captured.clone())
@@ -181,11 +208,113 @@ mod tests {
             .with_ansi(false)
             .without_time()
             .finish();
-        tracing::subscriber::with_default(subscriber, || chunk.call(&[]))?;
-
+        let result = tracing::subscriber::with_default(subscriber, run);
         let log = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
-        assert!(log.contains(" INFO harmony_globals: hello\t1\n"), "{log}");
-        assert!(log.contains(" WARN harmony_globals: careful\n"), "{log}");
+        (result, log)
+    }
+
+    #[test]
+    fn print_and_warn_log_where_they_were_called_from() -> luau::runtime::Result<()> {
+        let vm = luau::Vm::new()?;
+        vm.open_standard_libraries(luau::StandardLibraries::all_supported())?;
+        for globals in plugin_log_global_specs() {
+            harmony_core::luau::install_globals(&vm, &luau::ChunkOrigin::default(), &globals)?;
+        }
+        let chunk = vm.load_chunk(&luau::Chunk::new(
+            Arc::<[u8]>::from(
+                &b"print(\"hello\", 1)\nwarn(\"careful\")\ncoroutine.wrap(print)(\"native\")"[..],
+            ),
+            luau::ChunkOrigin {
+                plugin: Some(Arc::from("demo")),
+                path: Some(Arc::from("plugins/demo/init.luau")),
+                ..luau::ChunkOrigin::default()
+            },
+        ))?;
+
+        let (result, log) = capture_log(|| chunk.call(&[]));
+        result?;
+
+        assert_eq!(
+            log,
+            concat!(
+                " INFO harmony::plugin: hello\t1 plugin=\"demo\" source=\"plugins/demo/init.luau\" line=1\n",
+                " WARN harmony::plugin: careful plugin=\"demo\" source=\"plugins/demo/init.luau\" line=2\n",
+                " INFO harmony::plugin: native\n",
+            )
+        );
+        Ok(())
+    }
+
+    fn plugin(id: &str, dependencies: &[&str]) -> harmony_core::plugin::LoadedPlugin {
+        harmony_core::plugin::LoadedPlugin {
+            manifest: harmony_core::plugin::PluginManifest {
+                schema_version: harmony_core::plugin::PLUGIN_SCHEMA_VERSION,
+                id: id.to_string(),
+                name: id.to_string(),
+                version: semver::Version::new(1, 0, 0),
+                host_requirement: semver::VersionReq::STAR,
+                description: String::new(),
+                entrypoint: Some("init.luau".to_string()),
+                scopes: Vec::new(),
+                scope_reasons: Default::default(),
+                scope_grants: Default::default(),
+                dependencies: dependencies
+                    .iter()
+                    .map(|dependency| {
+                        (
+                            dependency.to_string(),
+                            harmony_core::plugin::Dependency {
+                                version: semver::VersionReq::STAR,
+                                optional: false,
+                            },
+                        )
+                    })
+                    .collect(),
+            },
+            directory: format!("plugins/{id}").into(),
+            declared_scopes: Default::default(),
+        }
+    }
+
+    /// A plugin's code logs as that plugin, also when another plugin that required it calls it.
+    #[test]
+    fn plugin_logs_name_the_plugin_whose_code_logged() -> anyhow::Result<()> {
+        let mut loader = harmony_core::MemorySourceLoader::new();
+        loader.insert(
+            "plugin:lib/init",
+            b"return {\n\tlog = function(message)\n\t\twarn(message)\n\tend,\n}".as_slice(),
+        );
+        loader.insert(
+            "plugin:app/init",
+            b"local lib = require(\"@lib\")\nprint(\"app\")\nlib.log(\"lib\")".as_slice(),
+        );
+        let plugins = [plugin("lib", &[]), plugin("app", &["lib"])];
+        let runtime = harmony_core::plugin::RuntimeBuilder::new(
+            loader,
+            plugins
+                .iter()
+                .map(|plugin| plugin.manifest.clone())
+                .collect(),
+        )
+        .plugins(Arc::from(plugins))
+        .global_specs(plugin_log_global_specs())
+        .build()?;
+
+        let (failed, log) = capture_log(|| runtime.exec_all());
+
+        assert!(failed.is_empty(), "{failed:?}");
+        let plugin_lines = log
+            .lines()
+            .filter(|line| line.contains("harmony::plugin"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            plugin_lines,
+            [
+                " INFO harmony::plugin: app plugin=\"app\" source=\"plugins/app/init\" line=2",
+                " WARN harmony::plugin: lib plugin=\"lib\" source=\"plugins/lib/init\" line=3",
+            ],
+            "{log}"
+        );
         Ok(())
     }
 

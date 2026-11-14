@@ -10,6 +10,8 @@ harmony-luau = { path = "../harmony-luau" }
 tracing = { workspace = true }
 
 [dev-dependencies]
+anyhow = { workspace = true }
+semver = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [lints]
