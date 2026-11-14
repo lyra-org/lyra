@@ -34,6 +34,7 @@ pub use runtime::{
     CallContext,
     CallFrame,
     CallSite,
+    CallerLocation,
     CapabilityId,
     Chunk,
     ChunkOrigin,

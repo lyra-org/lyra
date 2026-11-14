@@ -263,17 +263,36 @@ impl Chunk {
         }
     }
 
-    fn chunk_name(&self) -> CString {
-        let label = self
-            .origin
+    /// The name Luau knows the chunk by, which its errors and [`CallerLocation::chunk`] give.
+    fn label(&self) -> &str {
+        self.origin
             .path
             .as_deref()
             .or(self.origin.plugin.as_deref())
             .or_else(|| self.origin.module.as_ref().map(|id| id.0.as_ref()))
-            .unwrap_or("harmony-chunk");
-        CString::new(format!("={label}")).expect("formatted chunk name has no nul")
+            .unwrap_or("harmony-chunk")
+    }
+
+    fn chunk_name(&self) -> CString {
+        CString::new(format!("={}", self.label())).expect("formatted chunk name has no nul")
     }
 }
+
+/// Where a native function's caller runs: the innermost Luau function on the calling thread.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CallerLocation {
+    /// The origin of the chunk the function belongs to, unless chunks of one name were loaded
+    /// with different plugins or paths. Its `module` is set only when every load agreed on it.
+    pub origin: Option<ChunkOrigin>,
+    /// The chunk's name.
+    pub chunk: Arc<str>,
+    /// Unknown for a chunk compiled without line information.
+    pub line: Option<u32>,
+}
+
+/// How many of the calling thread's innermost frames [`CallFrame::caller_location`] searches for
+/// a Luau function.
+const CALLER_SEARCH_LEVELS: c_int = 8;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct StandardLibraries {
@@ -338,6 +357,9 @@ struct VmInner {
     userdata_tags: RefCell<stack::UserDataTags>,
     stacks: stack::LiveStacks,
     started_at: Instant,
+    /// Each chunk name's origin, or `None` once chunks of that name were loaded with different
+    /// origins.
+    chunk_origins: RefCell<HashMap<Arc<str>, Option<ChunkOrigin>>>,
 }
 
 impl Vm {
@@ -355,6 +377,7 @@ impl Vm {
                 userdata_tags: RefCell::default(),
                 stacks: stack::LiveStacks::default(),
                 started_at: Instant::now(),
+                chunk_origins: RefCell::default(),
             }),
         };
         vm.install_host_errors()?;
@@ -472,6 +495,7 @@ impl Vm {
         let bytecode = compile(&chunk.source.0, chunk.compile)?;
         let mut stack = Stack::main(self);
         stack.load(&chunk.chunk_name(), bytecode.as_bytes())?;
+        self.record_chunk_origin(chunk);
         Ok(Function {
             reference: stack.reference(StackIndex::TOP)?,
             origin: chunk.origin.clone(),
@@ -511,10 +535,45 @@ impl Vm {
             globals,
             &scope.reference,
         )?;
+        self.record_chunk_origin(chunk);
         Ok(Function {
             reference: stack.reference(StackIndex::TOP)?,
             origin: chunk.origin.clone(),
         })
+    }
+
+    fn record_chunk_origin(&self, chunk: &Chunk) {
+        let mut origins = self.inner.chunk_origins.borrow_mut();
+        match origins.get_mut(chunk.label()) {
+            Some(recorded) => {
+                *recorded = recorded.take().and_then(|mut recorded| {
+                    if recorded.plugin != chunk.origin.plugin || recorded.path != chunk.origin.path
+                    {
+                        return None;
+                    }
+                    if recorded.module != chunk.origin.module {
+                        recorded.module = None;
+                    }
+                    Some(recorded)
+                });
+            }
+            None => {
+                origins.insert(Arc::from(chunk.label()), Some(chunk.origin.clone()));
+            }
+        }
+    }
+
+    fn caller_location(&self, chunk: &[u8], line: c_int) -> CallerLocation {
+        let chunk = String::from_utf8_lossy(chunk);
+        let (chunk, origin) = match self.inner.chunk_origins.borrow().get_key_value(&*chunk) {
+            Some((name, origin)) => (name.clone(), origin.clone()),
+            None => (Arc::from(&*chunk), None),
+        };
+        CallerLocation {
+            origin,
+            chunk,
+            line: u32::try_from(line).ok().filter(|line| *line > 0),
+        }
     }
 
     pub fn eval(&self, source: impl Into<Arc<[u8]>>, origin: ChunkOrigin) -> Result<Vec<Value>> {
@@ -2752,6 +2811,17 @@ pub struct CallFrame<'vm> {
 }
 
 impl<'vm> CallFrame<'vm> {
+    /// Where the innermost Luau function on the calling thread runs, past native functions such
+    /// as `pcall` between it and this call. `None` when none is among the thread's few innermost
+    /// frames, as for a native function a task runs directly.
+    pub fn caller_location(&self) -> Option<CallerLocation> {
+        self.args
+            .stack
+            .with_luau_location(CALLER_SEARCH_LEVELS, |chunk, line| {
+                self.vm.caller_location(chunk, line)
+            })
+    }
+
     pub fn into_async(self) -> AsyncCallFrame<'vm> {
         AsyncCallFrame {
             vm: self.vm,
@@ -5694,6 +5764,150 @@ mod tests {
             String::from_utf8_lossy(message)
         );
         assert_eq!(stack_top(&vm), 0);
+        Ok(())
+    }
+
+    type Locations = Arc<std::sync::Mutex<Vec<Option<CallerLocation>>>>;
+
+    /// A native function that notes its caller's location in `locations` each time it runs.
+    fn location_probe(vm: &Vm, locations: &Locations) -> Result<Function> {
+        let locations = locations.clone();
+        vm.create_function(
+            ChunkOrigin::default(),
+            Arc::new(move |frame| {
+                locations.lock().unwrap().push(frame.caller_location());
+                Ok(())
+            }),
+        )
+    }
+
+    fn plugin_chunk_origin(plugin: &str, path: &str) -> ChunkOrigin {
+        ChunkOrigin {
+            module: None,
+            plugin: Some(Arc::from(plugin)),
+            path: Some(Arc::from(path)),
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn caller_location_is_the_innermost_luau_function() -> Result<()> {
+        let vm = Vm::new()?;
+        vm.open_standard_libraries(StandardLibraries::all_supported())?;
+        let locations = Locations::default();
+        let probe = location_probe(&vm, &locations)?;
+        let origin = plugin_chunk_origin("demo", "plugins/demo/init.luau");
+        let chunk = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(
+                &b"local probe = ...\nprobe()\ntable.foreach({ x = 1 }, probe)\npcall(probe, 1)\n"
+                    [..],
+            ),
+            origin.clone(),
+        ))?;
+        chunk.call(&[Value::Function(probe)])?;
+
+        let at = |line| {
+            Some(CallerLocation {
+                origin: Some(origin.clone()),
+                chunk: Arc::from("plugins/demo/init.luau"),
+                line: Some(line),
+            })
+        };
+        assert_eq!(*locations.lock().unwrap(), [at(2), at(3), at(4)]);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn caller_location_is_none_without_a_luau_function() -> Result<()> {
+        let vm = Vm::new()?;
+        let locations = Locations::default();
+        let probe = location_probe(&vm, &locations)?;
+        vm.create_thread(&probe)?.resume(&[])?;
+
+        assert_eq!(*locations.lock().unwrap(), [None]);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn caller_location_has_no_line_without_line_information() -> Result<()> {
+        let vm = Vm::new()?;
+        let locations = Locations::default();
+        let probe = location_probe(&vm, &locations)?;
+        let mut chunk = Chunk::new(
+            Arc::<[u8]>::from(&b"local probe = ...\nprobe()"[..]),
+            ChunkOrigin::default(),
+        );
+        chunk.compile.debug_level = 0;
+        vm.load_chunk(&chunk)?.call(&[Value::Function(probe)])?;
+
+        assert_eq!(
+            *locations.lock().unwrap(),
+            [Some(CallerLocation {
+                origin: Some(ChunkOrigin::default()),
+                chunk: Arc::from("harmony-chunk"),
+                line: None,
+            })]
+        );
+        Ok(())
+    }
+
+    /// A chunk name loaded with two plugins or paths resolves to neither, one loaded twice with the
+    /// same origin keeps it, and one whose loads differ only in module keeps no module.
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn caller_origin_is_unknown_for_a_chunk_name_with_two_origins() -> Result<()> {
+        let vm = Vm::new()?;
+        let locations = Locations::default();
+        let probe = location_probe(&vm, &locations)?;
+        let load = |origin: ChunkOrigin| {
+            vm.load_chunk(&Chunk::new(
+                Arc::<[u8]>::from(&b"local probe = ...\nprobe()"[..]),
+                origin,
+            ))
+        };
+        let kept = plugin_chunk_origin("a", "plugins/a/init.luau");
+        let first = load(kept.clone())?;
+        let second = load(kept.clone())?;
+        let shared = load(plugin_chunk_origin("a", "shared.luau"))?;
+        let other = load(plugin_chunk_origin("b", "shared.luau"))?;
+        let modules = plugin_chunk_origin("a", "plugins/a/modules.luau");
+        let named = load(ChunkOrigin {
+            module: Some(ModuleId(Arc::from("a"))),
+            ..modules.clone()
+        })?;
+        let unnamed = load(modules.clone())?;
+        for chunk in [first, second, shared, other, named, unnamed] {
+            chunk.call(&[Value::Function(probe.clone())])?;
+        }
+
+        let kept = Some(CallerLocation {
+            origin: Some(kept),
+            chunk: Arc::from("plugins/a/init.luau"),
+            line: Some(2),
+        });
+        let shared = Some(CallerLocation {
+            origin: None,
+            chunk: Arc::from("shared.luau"),
+            line: Some(2),
+        });
+        let modules = Some(CallerLocation {
+            origin: Some(modules),
+            chunk: Arc::from("plugins/a/modules.luau"),
+            line: Some(2),
+        });
+        assert_eq!(
+            *locations.lock().unwrap(),
+            [
+                kept.clone(),
+                kept,
+                shared.clone(),
+                shared,
+                modules.clone(),
+                modules
+            ]
+        );
         Ok(())
     }
 }

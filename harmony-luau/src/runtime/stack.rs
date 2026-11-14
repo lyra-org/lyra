@@ -553,6 +553,22 @@ impl<'a> Stack<'a> {
         unsafe { gateway::to_pointer(self.raw(), index) }
     }
 
+    /// Calls `read` with the chunk name, without Luau's `=` prefix, and current line of the
+    /// thread's innermost Luau function among its `levels` innermost frames. Native functions'
+    /// frames are skipped. A nonpositive line is unknown.
+    pub(super) fn with_luau_location<R>(
+        &self,
+        levels: c_int,
+        read: impl FnOnce(&[u8], c_int) -> R,
+    ) -> Option<R> {
+        // SAFETY: a live state.
+        let (source, line) = unsafe { gateway::luau_location(self.raw(), levels) }?;
+        // SAFETY: the chunk name is a NUL-terminated string that lives as long as the frame's
+        // function, which no return can take off the thread's call stack before `read` returns.
+        let source = unsafe { CStr::from_ptr(source) }.to_bytes();
+        Some(read(source.strip_prefix(b"=").unwrap_or(source), line))
+    }
+
     pub(super) fn raw_equal(&self, lhs: StackIndex, rhs: StackIndex) -> bool {
         let (lhs, rhs) = (self.slot(lhs), self.slot(rhs));
         // SAFETY: a live state, and values at `lhs` and `rhs`.

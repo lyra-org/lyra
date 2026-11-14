@@ -111,6 +111,12 @@ unsafe extern "C-unwind" {
     fn harmony_luau_gateway_next(L: *mut lua_State, idx: c_int, more: *mut c_int) -> c_int;
     fn harmony_luau_gateway_xmove(L: *mut lua_State, to: *mut lua_State, n: c_int) -> c_int;
     fn harmony_luau_gateway_topointer(L: *mut lua_State, idx: c_int) -> *const c_void;
+    fn harmony_luau_gateway_luaulocation(
+        L: *mut lua_State,
+        levels: c_int,
+        source: *mut *const c_char,
+        line: *mut c_int,
+    ) -> c_int;
     fn harmony_luau_gateway_tolstring(
         L: *mut lua_State,
         idx: c_int,
@@ -402,6 +408,19 @@ pub(super) unsafe fn next(state: *mut lua_State, index: c_int) -> Result<bool> {
 pub(super) unsafe fn to_pointer(state: *mut lua_State, index: c_int) -> usize {
     // SAFETY: the shim makes no protected call, as `lua_topointer` never raises.
     unsafe { harmony_luau_gateway_topointer(state, index) as usize }
+}
+
+/// The chunk name and current line of the innermost Luau function among `state`'s `levels`
+/// innermost frames; never raises. The name lives as long as that frame's function.
+pub(super) unsafe fn luau_location(
+    state: *mut lua_State,
+    levels: c_int,
+) -> Option<(*const c_char, c_int)> {
+    let mut source = ptr::null();
+    let mut line = 0;
+    // SAFETY: the shim makes no protected call, as `lua_getinfo` never raises.
+    let found = unsafe { harmony_luau_gateway_luaulocation(state, levels, &mut source, &mut line) };
+    (found != 0 && !source.is_null()).then_some((source, line))
 }
 
 pub(super) unsafe fn xmove(from: *mut lua_State, to: *mut lua_State, count: c_int) -> Result<()> {

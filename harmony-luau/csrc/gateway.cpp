@@ -301,4 +301,23 @@ const void* harmony_luau_gateway_topointer(lua_State* L, int idx)
     return lua_topointer(L, idx);
 }
 
+// Finds the innermost Luau function among L's `levels` innermost frames and gives its chunk name
+// and current line, which is nonpositive when unknown. Never raises: lua_getinfo with "sl" reads
+// the frame without allocating, calling back or checking for an interrupt. The chunk name lives
+// as long as the frame's function.
+int harmony_luau_gateway_luaulocation(lua_State* L, int levels, const char** source, int* line)
+{
+    lua_Debug ar;
+    for (int level = 0; level < levels && lua_getinfo(L, level, "sl", &ar); level++)
+    {
+        if (ar.what[0] != 'C')
+        {
+            *source = ar.source;
+            *line = ar.currentline;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 } // extern "C"
