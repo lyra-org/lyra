@@ -871,7 +871,8 @@ enum Parameter<'a> {
     Argument(MethodParameter<'a>),
     /// A value taken from the call through `FromCallFrame`.
     Context { ident: &'a Ident, ty: &'a Type },
-    /// The VM, call context, or chunk origin of a synchronous call, borrowed from its frame.
+    /// The VM, call context, chunk origin, or calling thread of a synchronous call, borrowed from
+    /// its frame.
     Frame(TokenStream2),
 }
 
@@ -949,6 +950,8 @@ fn frame_borrow(ty: &Type) -> Option<TokenStream2> {
         Some(quote! { &frame.context })
     } else if is_type_named(elem, "ChunkOrigin") {
         Some(quote! { &frame.context.origin })
+    } else if is_type_named(elem, "Thread") {
+        Some(quote! { &frame.thread })
     } else {
         None
     }
