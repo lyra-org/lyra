@@ -29,16 +29,18 @@ impl TaskModule {
     fn defer(
         vm: &luau::Vm,
         context: &luau::CallContext,
+        caller: &luau::Thread,
         task: TaskTarget,
         args: luau::Variadic<luau::Value>,
     ) -> luau::runtime::Result<luau::Thread> {
-        schedule_task(vm, context, task, args, None)
+        schedule_task(vm, context, caller, task, args, None)
     }
 
     #[harmony(description = "Schedules a function or thread to resume after a delay in seconds.")]
     fn delay(
         vm: &luau::Vm,
         context: &luau::CallContext,
+        caller: &luau::Thread,
         time: f64,
         task: TaskTarget,
         args: luau::Variadic<luau::Value>,
@@ -48,7 +50,7 @@ impl TaskModule {
                 "task.delay time must be finite and non-negative: {error}"
             ))
         })?;
-        schedule_task(vm, context, task, args, Some(delay))
+        schedule_task(vm, context, caller, task, args, Some(delay))
     }
 
     #[harmony(
@@ -79,10 +81,11 @@ impl TaskModule {
     fn spawn(
         vm: &luau::Vm,
         context: &luau::CallContext,
+        caller: &luau::Thread,
         task: TaskTarget,
         args: luau::Variadic<luau::Value>,
     ) -> luau::runtime::Result<luau::Thread> {
-        schedule_task(vm, context, task, args, None)
+        schedule_task(vm, context, caller, task, args, None)
     }
 }
 
@@ -119,16 +122,19 @@ impl LuauTypeInfo for TaskTarget {
     }
 }
 
+/// Schedules `task`; a function runs on a thread `caller` creates, so that it is created where the
+/// task was scheduled.
 fn schedule_task(
     vm: &luau::Vm,
     context: &luau::CallContext,
+    caller: &luau::Thread,
     task: TaskTarget,
     args: luau::Variadic<luau::Value>,
     delay: Option<Duration>,
 ) -> luau::runtime::Result<luau::Thread> {
     let scheduler = vm.data().get::<harmony_core::Scheduler>()?;
     let thread = match task {
-        TaskTarget::Function(function) => vm.create_thread(&function)?,
+        TaskTarget::Function(function) => caller.create_thread(&function)?,
         TaskTarget::Thread(thread) => thread,
     };
 
@@ -203,6 +209,65 @@ mod tests {
                 harmony_luau::Value::Number(42.0),
                 harmony_luau::Value::Nil,
                 harmony_luau::Value::Number(0.0)
+            ]
+        );
+        Ok(())
+    }
+
+    /// A function task runs where it was scheduled, also one with no Luau code of its own.
+    #[test]
+    fn native_function_tasks_run_where_they_were_scheduled() -> harmony_luau::runtime::Result<()> {
+        let vm = harmony_luau::Vm::new()?;
+        vm.data().insert(harmony_core::Scheduler::new())?;
+        let scheduler = vm.data().get::<harmony_core::Scheduler>()?;
+        let table = harmony_core::luau::install_module(
+            &vm,
+            &harmony_core::ChunkOrigin::default(),
+            &TaskModule::module_spec(),
+        )?;
+        vm.set_global_table("task", &table)?;
+        let locations = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let probe = vm.create_function(
+            harmony_core::ChunkOrigin::default(),
+            std::sync::Arc::new({
+                let locations = std::sync::Arc::clone(&locations);
+                move |frame| {
+                    let location = frame.caller_location();
+                    locations.lock().unwrap().push((
+                        location
+                            .as_ref()
+                            .and_then(|location| location.origin.as_ref()?.plugin.clone()),
+                        location.and_then(|location| location.line),
+                    ));
+                    Ok(())
+                }
+            }),
+        )?;
+        vm.set_global_function("probe", &probe)?;
+
+        vm.eval(
+            std::sync::Arc::<[u8]>::from(
+                &b"task.spawn(probe)\ntask.defer(probe)\ntask.delay(0, probe)"[..],
+            ),
+            harmony_core::ChunkOrigin {
+                plugin: Some(std::sync::Arc::from("demo")),
+                path: Some(std::sync::Arc::from("plugins/demo/init.luau")),
+                ..harmony_core::ChunkOrigin::default()
+            },
+        )?;
+        for _ in 0..10 {
+            scheduler.poll_ready();
+        }
+
+        let mut locations = locations.lock().unwrap().clone();
+        locations.sort_by_key(|(_, line)| *line);
+        let demo = Some(std::sync::Arc::<str>::from("demo"));
+        assert_eq!(
+            locations,
+            [
+                (demo.clone(), Some(1)),
+                (demo.clone(), Some(2)),
+                (demo, Some(3))
             ]
         );
         Ok(())
