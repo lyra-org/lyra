@@ -15,6 +15,7 @@ use std::{
     },
     fmt,
     future::Future,
+    hash::BuildHasherDefault,
     ops::ControlFlow,
     panic::{
         AssertUnwindSafe,
@@ -278,7 +279,8 @@ impl Chunk {
     }
 }
 
-/// Where a native function's caller runs: the innermost Luau function on the calling thread.
+/// Where a native function's caller runs: the innermost Luau function on the calling thread, or
+/// where that thread was created when it runs none.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CallerLocation {
     /// The origin of the chunk the function belongs to, unless chunks of one name were loaded
@@ -290,8 +292,35 @@ pub struct CallerLocation {
     pub line: Option<u32>,
 }
 
-/// How many of the calling thread's innermost frames [`CallFrame::caller_location`] searches for
-/// a Luau function.
+/// Hashes the `lua_State` addresses that key per-thread maps, which Luau code can't choose.
+#[derive(Default)]
+struct StateHasher(u64);
+
+impl std::hash::Hasher for StateHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.0 = (self.0.rotate_left(8) ^ u64::from(*byte)).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        }
+    }
+
+    fn write_usize(&mut self, address: usize) {
+        self.0 = (address as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
+
+    fn finish(&self) -> u64 {
+        self.0.rotate_left(32)
+    }
+}
+
+/// A chunk name and line, whose origin [`VmControl::caller_location`] looks up.
+#[derive(Clone, Debug)]
+struct SourcePosition {
+    chunk: Arc<str>,
+    line: Option<u32>,
+}
+
+/// How many of a thread's innermost frames [`stack::source_position`] searches for a Luau
+/// function.
 const CALLER_SEARCH_LEVELS: c_int = 8;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -357,9 +386,6 @@ struct VmInner {
     userdata_tags: RefCell<stack::UserDataTags>,
     stacks: stack::LiveStacks,
     started_at: Instant,
-    /// Each chunk name's origin, or `None` once chunks of that name were loaded with different
-    /// origins.
-    chunk_origins: RefCell<HashMap<Arc<str>, Option<ChunkOrigin>>>,
 }
 
 impl Vm {
@@ -377,7 +403,6 @@ impl Vm {
                 userdata_tags: RefCell::default(),
                 stacks: stack::LiveStacks::default(),
                 started_at: Instant::now(),
-                chunk_origins: RefCell::default(),
             }),
         };
         vm.install_host_errors()?;
@@ -543,7 +568,7 @@ impl Vm {
     }
 
     fn record_chunk_origin(&self, chunk: &Chunk) {
-        let mut origins = self.inner.chunk_origins.borrow_mut();
+        let mut origins = self.inner.control().chunk_origins.borrow_mut();
         match origins.get_mut(chunk.label()) {
             Some(recorded) => {
                 *recorded = recorded.take().and_then(|mut recorded| {
@@ -560,19 +585,6 @@ impl Vm {
             None => {
                 origins.insert(Arc::from(chunk.label()), Some(chunk.origin.clone()));
             }
-        }
-    }
-
-    fn caller_location(&self, chunk: &[u8], line: c_int) -> CallerLocation {
-        let chunk = String::from_utf8_lossy(chunk);
-        let (chunk, origin) = match self.inner.chunk_origins.borrow().get_key_value(&*chunk) {
-            Some((name, origin)) => (name.clone(), origin.clone()),
-            None => (Arc::from(&*chunk), None),
-        };
-        CallerLocation {
-            origin,
-            chunk,
-            line: u32::try_from(line).ok().filter(|line| *line > 0),
         }
     }
 
@@ -633,8 +645,13 @@ impl Vm {
         })
     }
 
+    /// A new thread that is to call `function`, created by the host rather than by Luau code, so
+    /// that it has no creation site for [`CallFrame::caller_location`] to fall back to.
     pub fn create_thread(&self, function: &Function) -> Result<Thread> {
         let thread = Stack::main(self).new_thread(&function.reference)?;
+        self.inner
+            .control()
+            .set_thread_site(thread.state_id(), None);
         Ok(Thread::new(thread, function.origin.clone()))
     }
 
@@ -776,6 +793,14 @@ struct VmControl {
     /// Keyed by `lua_State` address; [`VmControl::track_thread`] keeps it in step with
     /// the threads Luau creates and frees. A coroutine shares its creator's context.
     thread_contexts: RwLock<HashMap<usize, Rc<CallContext>>>,
+    /// Where each live thread was created, keyed by `lua_State` address, for a thread whose
+    /// creator ran Luau code or had a creation site of its own.
+    thread_sites: RefCell<HashMap<usize, SourcePosition, BuildHasherDefault<StateHasher>>>,
+    /// Each chunk name's origin, or `None` once chunks of that name were loaded with different
+    /// origins.
+    chunk_origins: RefCell<HashMap<Arc<str>, Option<ChunkOrigin>>>,
+    /// The name [`VmControl::chunk_name`] gave last.
+    last_chunk_name: RefCell<Option<Arc<str>>>,
     /// What Luau freed while collecting garbage, for [`VmControl::drop_collected`] to drop: a
     /// `Drop` could reach the VM, which can't be entered while it collects.
     collected: RefCell<Vec<Box<dyn Any>>>,
@@ -801,6 +826,9 @@ impl VmControl {
             interrupt_interrupted: RefCell::default(),
             interrupt_budgets: std::sync::Mutex::default(),
             thread_contexts: RwLock::new(HashMap::new()),
+            thread_sites: RefCell::default(),
+            chunk_origins: RefCell::default(),
+            last_chunk_name: RefCell::default(),
             collected: RefCell::default(),
             dropping_collected: Cell::new(false),
         }
@@ -867,6 +895,69 @@ impl VmControl {
                     contexts.insert(thread, context);
                 }
             }
+        }
+    }
+
+    /// Notes `site` as where `thread` was created, or forgets where it was.
+    fn set_thread_site(&self, thread: usize, site: Option<SourcePosition>) {
+        let Ok(mut sites) = self.thread_sites.try_borrow_mut() else {
+            return;
+        };
+        match site {
+            Some(site) => sites.insert(thread, site),
+            None => sites.remove(&thread),
+        };
+    }
+
+    fn thread_site(&self, state_id: usize) -> Option<SourcePosition> {
+        self.thread_sites.try_borrow().ok()?.get(&state_id).cloned()
+    }
+
+    /// The position of `line` in the chunk Luau names `source`, sharing the name a loaded chunk
+    /// recorded.
+    fn source_position(&self, source: &[u8], line: c_int) -> SourcePosition {
+        let source = source.strip_prefix(b"=").unwrap_or(source);
+        SourcePosition {
+            chunk: self.chunk_name(source),
+            line: u32::try_from(line).ok().filter(|line| *line > 0),
+        }
+    }
+
+    /// The name of the chunk named `source`, which [`Self::last_chunk_name`] answers without a
+    /// lookup when it is the one asked for last, as it mostly is.
+    fn chunk_name(&self, source: &[u8]) -> Arc<str> {
+        let Ok(mut last) = self.last_chunk_name.try_borrow_mut() else {
+            return Arc::from(&*String::from_utf8_lossy(source));
+        };
+        if let Some(name) = last.as_ref().filter(|name| name.as_bytes() == source) {
+            return Arc::clone(name);
+        }
+        let chunk = String::from_utf8_lossy(source);
+        let name = self
+            .chunk_origins
+            .try_borrow()
+            .ok()
+            .and_then(|origins| {
+                origins
+                    .get_key_value(&*chunk)
+                    .map(|(name, _)| Arc::clone(name))
+            })
+            .unwrap_or_else(|| Arc::from(&*chunk));
+        *last = Some(Arc::clone(&name));
+        name
+    }
+
+    fn caller_location(&self, position: SourcePosition) -> CallerLocation {
+        let origin = self
+            .chunk_origins
+            .borrow()
+            .get(&position.chunk)
+            .cloned()
+            .flatten();
+        CallerLocation {
+            origin,
+            chunk: position.chunk,
+            line: position.line,
         }
     }
 }
@@ -1099,6 +1190,13 @@ impl Thread {
 
     pub fn sandbox(&self) -> Result<()> {
         Stack::of_thread(self).sandbox_thread()
+    }
+
+    /// A new thread that is to call `function`, created as Luau code on this thread creates one:
+    /// it starts with this thread's call context, and is created where this thread's code runs.
+    pub fn create_thread(&self, function: &Function) -> Result<Thread> {
+        let thread = Stack::of_thread(self).new_thread(&function.reference)?;
+        Ok(Thread::new(thread, function.origin.clone()))
     }
 
     /// Makes `context` the call context native calls on the thread see, and returns the one it
@@ -2812,14 +2910,13 @@ pub struct CallFrame<'vm> {
 
 impl<'vm> CallFrame<'vm> {
     /// Where the innermost Luau function on the calling thread runs, past native functions such
-    /// as `pcall` between it and this call. `None` when none is among the thread's few innermost
-    /// frames, as for a native function a task runs directly.
+    /// as `pcall` between it and this call. When none is among the thread's few innermost
+    /// frames, as for a native function a task runs directly, where the thread was created: where
+    /// its creator's code ran, or the creator's own creation site. `None` for a thread
+    /// [`Vm::create_thread`] made that runs no Luau function.
     pub fn caller_location(&self) -> Option<CallerLocation> {
-        self.args
-            .stack
-            .with_luau_location(CALLER_SEARCH_LEVELS, |chunk, line| {
-                self.vm.caller_location(chunk, line)
-            })
+        let position = self.args.stack.source_position()?;
+        Some(self.vm.inner.control().caller_location(position))
     }
 
     pub fn into_async(self) -> AsyncCallFrame<'vm> {
@@ -4629,7 +4726,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "requires Luau C VM")]
-    fn freed_threads_drop_their_call_context() -> Result<()> {
+    fn freed_threads_drop_their_call_context_and_site() -> Result<()> {
         let vm = Vm::new()?;
         vm.open_standard_libraries(StandardLibraries {
             coroutine: true,
@@ -4643,12 +4740,15 @@ mod tests {
         thread.set_call_context(context_in_group(3))?;
         thread.resume(&[])?;
         thread.clear_call_context()?;
+        assert!(!vm.inner.control().thread_sites.borrow().is_empty());
         drop(thread);
         drop(function);
         vm.inner.state.gc(sys::LUA_GCCOLLECT);
 
         let contexts = vm.inner.control().thread_contexts.read().expect("contexts");
         assert!(contexts.is_empty(), "{} contexts left", contexts.len());
+        let sites = vm.inner.control().thread_sites.borrow();
+        assert!(sites.is_empty(), "{} sites left", sites.len());
         Ok(())
     }
 
@@ -5908,6 +6008,92 @@ mod tests {
                 modules
             ]
         );
+        Ok(())
+    }
+
+    fn at_line(origin: &ChunkOrigin, line: u32) -> Option<CallerLocation> {
+        Some(CallerLocation {
+            origin: Some(origin.clone()),
+            chunk: Arc::clone(origin.path.as_ref().expect("a path")),
+            line: Some(line),
+        })
+    }
+
+    /// A coroutine that runs a native function directly falls back to where it was created, and
+    /// one created by such a coroutine to where that one was.
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn caller_location_falls_back_to_where_the_thread_was_created() -> Result<()> {
+        let vm = Vm::new()?;
+        vm.open_standard_libraries(StandardLibraries::all_supported())?;
+        let locations = Locations::default();
+        let probe = location_probe(&vm, &locations)?;
+        let origin = plugin_chunk_origin("demo", "plugins/demo/init.luau");
+        let chunk = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(
+                &b"local probe = ...\n\
+                   local direct = coroutine.wrap(probe)\n\
+                   direct()\n\
+                   local make = coroutine.wrap(coroutine.wrap)\n\
+                   local nested = make(probe)\n\
+                   nested()\n"[..],
+            ),
+            origin.clone(),
+        ))?;
+        chunk.call(&[Value::Function(probe)])?;
+
+        assert_eq!(
+            *locations.lock().unwrap(),
+            [at_line(&origin, 2), at_line(&origin, 4)]
+        );
+        Ok(())
+    }
+
+    /// A thread a native function creates through its calling thread falls back to where that
+    /// thread's code called it, and one the host creates through the VM has nowhere to fall back
+    /// to, even while Luau code runs.
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
+    fn host_threads_are_created_where_their_creator_says() -> Result<()> {
+        let vm = Vm::new()?;
+        let locations = Locations::default();
+        let probe = location_probe(&vm, &locations)?;
+        let create = |as_caller: bool| {
+            vm.create_function(
+                ChunkOrigin::default(),
+                Arc::new(move |mut frame| {
+                    let function = frame.args.read::<Function>()?;
+                    let thread = if as_caller {
+                        frame.thread.create_thread(&function)?
+                    } else {
+                        frame.vm.create_thread(&function)?
+                    };
+                    frame.returns.write(Value::Thread(thread))
+                }),
+            )
+        };
+        let origin = plugin_chunk_origin("demo", "plugins/demo/init.luau");
+        let chunk = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(
+                &b"local probe, as_caller, as_host = ...\n\
+                   local by_caller = as_caller(probe)\n\
+                   return by_caller, as_host(probe)"[..],
+            ),
+            origin.clone(),
+        ))?;
+        let created = chunk.call(&[
+            Value::Function(probe),
+            Value::Function(create(true)?),
+            Value::Function(create(false)?),
+        ])?;
+        for thread in created {
+            let Value::Thread(thread) = thread else {
+                panic!("a thread");
+            };
+            thread.resume(&[])?;
+        }
+
+        assert_eq!(*locations.lock().unwrap(), [at_line(&origin, 2), None]);
         Ok(())
     }
 }

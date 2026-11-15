@@ -239,7 +239,7 @@ mod tests {
             concat!(
                 " INFO harmony::plugin: hello\t1 plugin=\"demo\" source=\"plugins/demo/init.luau\" line=1\n",
                 " WARN harmony::plugin: careful plugin=\"demo\" source=\"plugins/demo/init.luau\" line=2\n",
-                " INFO harmony::plugin: native\n",
+                " INFO harmony::plugin: native plugin=\"demo\" source=\"plugins/demo/init.luau\" line=3\n",
             )
         );
         Ok(())

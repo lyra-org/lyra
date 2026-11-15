@@ -34,6 +34,7 @@ use std::{
 use harmony_luau_sys as sys;
 
 use super::{
+    CALLER_SEARCH_LEVELS,
     CallSite,
     CallbackSlot,
     ChunkOrigin,
@@ -46,6 +47,7 @@ use super::{
     OwnedTable,
     RaisedError,
     Result,
+    SourcePosition,
     Table,
     Thread,
     UserData,
@@ -53,6 +55,7 @@ use super::{
     Value,
     ValueRef,
     Vm,
+    VmControl,
     gateway::{
         self,
         CoStatus,
@@ -553,20 +556,10 @@ impl<'a> Stack<'a> {
         unsafe { gateway::to_pointer(self.raw(), index) }
     }
 
-    /// Calls `read` with the chunk name, without Luau's `=` prefix, and current line of the
-    /// thread's innermost Luau function among its `levels` innermost frames. Native functions'
-    /// frames are skipped. A nonpositive line is unknown.
-    pub(super) fn with_luau_location<R>(
-        &self,
-        levels: c_int,
-        read: impl FnOnce(&[u8], c_int) -> R,
-    ) -> Option<R> {
-        // SAFETY: a live state.
-        let (source, line) = unsafe { gateway::luau_location(self.raw(), levels) }?;
-        // SAFETY: the chunk name is a NUL-terminated string that lives as long as the frame's
-        // function, which no return can take off the thread's call stack before `read` returns.
-        let source = unsafe { CStr::from_ptr(source) }.to_bytes();
-        Some(read(source.strip_prefix(b"=").unwrap_or(source), line))
+    /// Where code on the thread runs, as [`source_position`] finds it.
+    pub(super) fn source_position(&self) -> Option<SourcePosition> {
+        // SAFETY: a live state of this stack's VM.
+        unsafe { source_position(self.vm.inner.control(), self.raw()) }
     }
 
     pub(super) fn raw_equal(&self, lhs: StackIndex, rhs: StackIndex) -> bool {
@@ -976,6 +969,28 @@ pub(super) unsafe fn callback_slot<'a>(state: NonNull<sys::lua_State>) -> Option
     // SAFETY: null, or the data of a userdata with a destructor of its own, which Luau tags
     // `LUA_UTAG_LIMIT` and only `CallbackSlot`s are; the slot lives while the closure runs.
     unsafe { data.cast::<CallbackSlot>().as_ref() }
+}
+
+/// Where code on `state` runs: its innermost Luau function among its few innermost frames, past
+/// native ones, else where the thread was created. This serves the code that has no [`Stack`]:
+/// noting where a thread Luau creates was created.
+///
+/// # Safety
+///
+/// `state` is a live thread of the VM `control` belongs to.
+pub(super) unsafe fn source_position(
+    control: &VmControl,
+    state: *mut sys::lua_State,
+) -> Option<SourcePosition> {
+    // SAFETY: a live state, as the caller guarantees.
+    let Some((source, line)) = (unsafe { gateway::luau_location(state, CALLER_SEARCH_LEVELS) })
+    else {
+        return control.thread_site(state as usize);
+    };
+    // SAFETY: the chunk name is a NUL-terminated string that lives as long as the frame's
+    // function, which nothing here can take off the thread's call stack.
+    let source = unsafe { CStr::from_ptr(source) }.to_bytes();
+    Some(control.source_position(source, line))
 }
 
 /// A shared borrow of the `T` a userdata holds.

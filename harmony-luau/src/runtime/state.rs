@@ -30,6 +30,7 @@ use super::{
     VmControl,
     abort_on_panic,
     gateway,
+    stack,
 };
 
 static LUAU_FLAGS: Once = Once::new();
@@ -128,16 +129,18 @@ pub(super) unsafe fn control_of<'a>(state: *mut sys::lua_State) -> Option<&'a Vm
     unsafe { control.as_ref() }
 }
 
-/// A new thread, such as a coroutine, starts with its creator's call context;
-/// a freed thread's context goes with it.
+/// A new thread, such as a coroutine, starts with its creator's call context, and notes where
+/// its creator's code runs as where it was created; a freed thread's context and site go with it.
 unsafe extern "C-unwind" fn userthread(parent: *mut sys::lua_State, thread: *mut sys::lua_State) {
     // SAFETY: Luau passes a live thread.
-    if let Some(control) = unsafe { control_of(thread) } {
-        control.track_thread(
-            (!parent.is_null()).then_some(parent as usize),
-            thread as usize,
-        );
-    }
+    let Some(control) = (unsafe { control_of(thread) }) else {
+        return;
+    };
+    let parent = (!parent.is_null()).then_some(parent);
+    control.track_thread(parent.map(|parent| parent as usize), thread as usize);
+    // SAFETY: Luau passes the live thread creating `thread` as its parent.
+    let site = parent.and_then(|parent| unsafe { stack::source_position(control, parent) });
+    control.set_thread_site(thread as usize, site);
 }
 
 /// Closes a thread [`Thread::cancel`](super::Thread::cancel) found live as soon as a resume leaves
