@@ -270,9 +270,16 @@ fn log_setting_overrides() {
     }
 }
 
+/// Log lines queued for stderr before new ones are dropped. The queue is allocated whole
+/// up front, so tracing_appender's default of 128,000 lines would hold about 4 MiB for the
+/// life of the process.
+const LOG_QUEUE_LINES: usize = 8_192;
+
 fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
     // Non-blocking: a plugin warn-loop can't stall the scheduler on sync stderr.
-    let (non_blocking, guard) = tracing_appender::non_blocking(std::io::stderr());
+    let (non_blocking, guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
+        .buffered_lines_limit(LOG_QUEUE_LINES)
+        .finish(std::io::stderr());
     // Tracing isn't up yet, and a bad filter mustn't stop the recovery commands either.
     let log = config::log_filter(std::env::var(tracing_subscriber::EnvFilter::DEFAULT_ENV))
         .unwrap_or_else(|error| {
