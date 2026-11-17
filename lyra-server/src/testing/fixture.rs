@@ -640,6 +640,7 @@ impl Folders {
                 file_created_at_ms: 0,
                 synced_at_ms: None,
                 missing_at_ms: None,
+                rejected_at_ms: None,
             };
             let directory = db
                 .exec_mut(agdb::QueryBuilder::insert().element(&directory).query())?
@@ -1107,6 +1108,7 @@ impl Fixture {
                         file_created_at_ms: 0,
                         synced_at_ms: None,
                         missing_at_ms: None,
+                        rejected_at_ms: None,
                     };
                     let entry_db_id = db
                         .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?

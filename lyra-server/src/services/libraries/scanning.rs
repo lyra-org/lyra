@@ -280,6 +280,7 @@ pub(crate) fn scan_fs(
             file_created_at_ms,
             synced_at_ms: None,
             missing_at_ms: None,
+            rejected_at_ms: None,
         });
     }
 

@@ -97,11 +97,21 @@ pub struct Entry {
     pub synced_at_ms: Option<u64>,
     /// When a sync first failed to find the entry; absent while it is there.
     pub missing_at_ms: Option<u64>,
+    /// When a sync first read the changed file and found nothing in it to replace the track
+    /// sources it held, which stay, unable to play; absent while it yields them.
+    pub rejected_at_ms: Option<u64>,
 }
 
 impl Entry {
+    /// Whether a sync last failed to find the entry on disk.
     pub fn is_missing(&self) -> bool {
         self.missing_at_ms.is_some()
+    }
+
+    /// Whether the sources depending on the entry can't play: it is missing, or its file, as last
+    /// read, yields none of them.
+    pub fn is_unavailable(&self) -> bool {
+        self.is_missing() || self.rejected_at_ms.is_some()
     }
 }
 
@@ -141,6 +151,78 @@ pub fn clear_missing(db: &mut impl super::DbAccess, entry_ids: &[DbId]) -> anyho
 /// Every missing entry, in any library.
 pub fn missing_ids(db: &impl super::DbAccess) -> anyhow::Result<Vec<DbId>> {
     crate::roots::member_ids(db, crate::roots::Root::MissingEntries)
+}
+
+/// Marks `entry_ids` rejected since `at_ms`, each once: the time on the entry and its membership
+/// of the rejected root go together.
+pub(crate) fn set_rejected(
+    db: &mut impl super::DbAccess,
+    entry_ids: &[DbId],
+    at_ms: u64,
+) -> anyhow::Result<()> {
+    if entry_ids.is_empty() {
+        return Ok(());
+    }
+    db.exec_mut(
+        QueryBuilder::insert()
+            .values_uniform([("rejected_at_ms", at_ms).into()])
+            .ids(entry_ids)
+            .query(),
+    )?;
+    crate::roots::link_all(db, crate::roots::Root::RejectedEntries, entry_ids)
+}
+
+/// Ends the rejection of `entry_ids`, rejected ones, in one pass over the rejected root.
+pub(crate) fn clear_rejected(
+    db: &mut impl super::DbAccess,
+    entry_ids: &[DbId],
+) -> anyhow::Result<()> {
+    if entry_ids.is_empty() {
+        return Ok(());
+    }
+    db.exec_mut(
+        QueryBuilder::remove()
+            .values(["rejected_at_ms"])
+            .ids(entry_ids)
+            .query(),
+    )?;
+    crate::roots::unlink(db, crate::roots::Root::RejectedEntries, entry_ids)
+}
+
+/// Every rejected entry, in any library.
+pub fn rejected_ids(db: &impl super::DbAccess) -> anyhow::Result<Vec<DbId>> {
+    crate::roots::member_ids(db, crate::roots::Root::RejectedEntries)
+}
+
+/// Reconciles the rejection of `entry_ids` to exactly `held` among them: those are rejected from
+/// now on, unless they already are, and the others are no longer. Every change of a rejection goes
+/// through here.
+pub fn reconcile_rejected(
+    db: &mut impl super::DbAccess,
+    entry_ids: &[DbId],
+    held: &[DbId],
+) -> anyhow::Result<()> {
+    if entry_ids.is_empty() {
+        return Ok(());
+    }
+    let rejected = rejected_ids(db)?.into_iter().collect::<HashSet<_>>();
+    let held = held
+        .iter()
+        .filter(|entry_id| entry_ids.contains(entry_id))
+        .copied()
+        .collect::<HashSet<_>>();
+    let newly_held = held
+        .iter()
+        .filter(|entry_id| !rejected.contains(entry_id))
+        .copied()
+        .collect::<Vec<_>>();
+    let accepted = entry_ids
+        .iter()
+        .filter(|entry_id| rejected.contains(entry_id) && !held.contains(entry_id))
+        .copied()
+        .collect::<Vec<_>>();
+    set_rejected(db, &newly_held, super::users::now_ms().unsigned_abs())?;
+    clear_rejected(db, &accepted)
 }
 
 pub(crate) const SUPPORTED_AUDIO_EXTENSIONS: &[&str] = lofty::file::EXTENSIONS;
@@ -931,6 +1013,7 @@ mod tests {
             file_created_at_ms: 1,
             synced_at_ms: None,
             missing_at_ms: None,
+            rejected_at_ms: None,
         };
         let entry_id = db
             .exec_mut(QueryBuilder::insert().element(&entry).query())?
@@ -984,6 +1067,7 @@ mod tests {
             file_created_at_ms: 1,
             synced_at_ms: None,
             missing_at_ms: None,
+            rejected_at_ms: None,
         }
     }
 
@@ -1193,6 +1277,43 @@ mod tests {
 
         sync_scanned(&mut db, &library, vec![track(2)])?;
         assert!(!synced(&db)?, "a changed entry kept its sync");
+        Ok(())
+    }
+
+    #[test]
+    fn a_changed_or_moved_entry_keeps_its_rejection() -> anyhow::Result<()> {
+        let mut db = TestDb::initialized()?.into_inner();
+        let library_db_id = crate::test_db::insert_library(&mut db, "Music", "/music")?;
+        let library = crate::libraries::get_by_id(&db, library_db_id)?.expect("library");
+        sync_scanned(
+            &mut db,
+            &library,
+            vec![scanned("/music/01.flac", EntryKind::File)],
+        )?;
+        let entry_id = load_existing(&db, library_db_id)?[0]
+            .db_id
+            .expect("entry db_id");
+        set_rejected(&mut db, &[entry_id], 5)?;
+        let stored =
+            |db: &DbAny| -> anyhow::Result<Entry> { Ok(get_by_id(db, entry_id)?.expect("entry")) };
+
+        let changed = Entry {
+            file_modified_at_ms: 2,
+            ..scanned("/music/01.flac", EntryKind::File)
+        };
+        assert_eq!(sync_scanned(&mut db, &library, vec![changed])?.updated, 1);
+        assert_eq!(stored(&db)?.rejected_at_ms, Some(5));
+
+        let moved = Entry {
+            db_id: Some(entry_id),
+            ..scanned("/music/02.flac", EntryKind::File)
+        };
+        assert_eq!(sync_scanned(&mut db, &library, vec![moved])?.moved, 1);
+        let entry = stored(&db)?;
+        assert_eq!(entry.full_path, PathBuf::from("/music/02.flac"));
+        assert_eq!(entry.rejected_at_ms, Some(5));
+        assert!(entry.is_unavailable());
+        assert_eq!(rejected_ids(&db)?, vec![entry_id]);
         Ok(())
     }
 
@@ -1439,6 +1560,7 @@ mod tests {
             file_created_at_ms: 1,
             synced_at_ms: None,
             missing_at_ms: None,
+            rejected_at_ms: None,
         };
         let entry_db_id = db
             .exec_mut(QueryBuilder::insert().element(&entry).query())?

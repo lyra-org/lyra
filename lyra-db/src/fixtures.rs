@@ -148,6 +148,7 @@ pub fn insert_file_entry(db: &mut DbAny, parent: DbId, name: &str) -> anyhow::Re
         file_created_at_ms: 1,
         synced_at_ms: None,
         missing_at_ms: None,
+        rejected_at_ms: None,
     };
     let entry_db_id = db
         .exec_mut(QueryBuilder::insert().element(&entry).query())?

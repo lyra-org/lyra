@@ -3730,6 +3730,7 @@ FILE "album.flac" WAVE
             file_created_at_ms: 1,
             synced_at_ms: None,
             missing_at_ms: None,
+            rejected_at_ms: None,
         };
         let artists = (0..DIR_BATCH + 1)
             .map(|index| PathBuf::from(format!("/music/{index}")))

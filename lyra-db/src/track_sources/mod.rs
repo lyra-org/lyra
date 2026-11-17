@@ -157,11 +157,11 @@ pub fn depending_on(db: &impl DbAccess, entry_id: DbId) -> anyhow::Result<Vec<Db
     Ok(sources)
 }
 
-/// Whether the source can play: its audio entry is there, and so is the cue sheet entry its
+/// Whether the source can play: its audio entry is available, and so is the cue sheet entry its
 /// segment comes from, if any. A track is available when any of its sources is.
 pub fn is_available(db: &impl DbAccess, source_id: DbId) -> anyhow::Result<bool> {
     let present = |entry_id: DbId| -> anyhow::Result<bool> {
-        Ok(super::entries::get_by_id(db, entry_id)?.is_some_and(|entry| !entry.is_missing()))
+        Ok(super::entries::get_by_id(db, entry_id)?.is_some_and(|entry| !entry.is_unavailable()))
     };
     let Some(entry_id) = super::graph::neighbor_ids(db, source_id, "Entry")?
         .into_iter()
@@ -461,12 +461,72 @@ mod tests {
             file_created_at_ms: 1,
             synced_at_ms: None,
             missing_at_ms: None,
+            rejected_at_ms: None,
         };
         let qr = db.exec_mut(QueryBuilder::insert().element(&entry).query())?;
         qr.ids()
             .first()
             .copied()
             .ok_or_else(|| anyhow!("entry insert returned no id"))
+    }
+
+    fn embedded_source(
+        db: &mut DbAny,
+        track_db_id: DbId,
+        entry_db_id: DbId,
+    ) -> anyhow::Result<DbId> {
+        db.transaction_mut(|t| {
+            upsert(
+                t,
+                track_db_id,
+                entry_db_id,
+                TrackSourceUpsert {
+                    source_kind: "embedded_tags".to_string(),
+                    source_key: format!("entry:{}:embedded", entry_db_id.0),
+                    is_primary: false,
+                    start_ms: None,
+                    end_ms: None,
+                    format: Default::default(),
+                },
+                None,
+            )
+        })
+    }
+
+    #[test]
+    fn a_rejected_entry_stops_only_the_sources_it_plays() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let track_db_id = insert_track(&mut db, "Track 1")?;
+        let rejected = insert_entry(&mut db)?;
+        let other = insert_entry(&mut db)?;
+        let rejected_source = embedded_source(&mut db, track_db_id, rejected)?;
+        let other_source = embedded_source(&mut db, track_db_id, other)?;
+
+        super::super::entries::set_rejected(&mut db, &[rejected], 1)?;
+        assert!(!is_available(&db, rejected_source)?);
+        assert!(is_available(&db, other_source)?);
+        assert!(track_available(&db, track_db_id)?);
+        assert!(
+            super::super::catalog::read(&db)?
+                .unavailable_tracks
+                .is_empty()
+        );
+
+        super::super::entries::set_rejected(&mut db, &[other], 2)?;
+        assert!(!track_available(&db, track_db_id)?);
+        assert_eq!(
+            super::super::catalog::read(&db)?.unavailable_tracks,
+            std::collections::HashSet::from([track_db_id])
+        );
+
+        super::super::entries::clear_rejected(&mut db, &[rejected])?;
+        assert!(track_available(&db, track_db_id)?);
+        assert_eq!(
+            super::super::entries::rejected_ids(&db)?,
+            vec![other],
+            "the rejected root keeps only the entry still rejected"
+        );
+        Ok(())
     }
 
     #[test]

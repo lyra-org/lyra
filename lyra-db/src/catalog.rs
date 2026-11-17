@@ -238,11 +238,13 @@ pub fn read(db: &(impl DbAccess + Sync)) -> anyhow::Result<Catalog> {
     })
 }
 
-/// The tracks some of whose sources' entries are missing and none of whose sources can play, as
-/// `track_sources::is_available` decides for each. Reads only around the missing entries.
+/// The tracks some of whose sources' entries are missing or rejected and none of whose sources
+/// can play, as `track_sources::is_available` decides for each. Reads only around those entries.
 fn unavailable_tracks(db: &impl DbAccess) -> anyhow::Result<HashSet<DbId>> {
     let mut tracks = HashSet::new();
-    for entry in super::entries::missing_ids(db)? {
+    let missing = super::entries::missing_ids(db)?;
+    let rejected = super::entries::rejected_ids(db)?;
+    for entry in missing.into_iter().chain(rejected) {
         for source in super::track_sources::depending_on(db, entry)? {
             tracks.extend(super::graph::inbound_neighbor_ids(db, source, "Track")?);
         }

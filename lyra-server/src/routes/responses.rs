@@ -750,6 +750,7 @@ mod tests {
                 file_created_at_ms: 1_700_000_000_000,
                 synced_at_ms: None,
                 missing_at_ms: None,
+                rejected_at_ms: None,
             },
             false,
         ))?;

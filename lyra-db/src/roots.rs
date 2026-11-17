@@ -42,6 +42,9 @@ pub enum Root {
     /// The entries a sync last failed to find, so availability reads them without walking every
     /// entry.
     MissingEntries,
+    /// The entries whose changed file a sync last found nothing in, so availability reads them
+    /// without walking every entry.
+    RejectedEntries,
     Releases,
     Tracks,
 }
@@ -58,6 +61,7 @@ impl Root {
             Self::Genres => "genres",
             Self::Labels => "labels",
             Self::MissingEntries => "missing_entries",
+            Self::RejectedEntries => "rejected_entries",
             Self::Releases => "releases",
             Self::Tracks => "tracks",
         }
