@@ -47,6 +47,7 @@ use crate::services::metadata::{
         SourceYields,
         apply_read_batch,
         coalesce_group_tracks,
+        prune_sources,
     },
     log_skip_summary,
     parse_metadata,
@@ -101,7 +102,20 @@ pub(super) async fn process_album_group(
     if !parsed.skipped.is_empty() {
         log_skip_summary(&parsed.skipped);
     }
-    let plan = GroupPlan::new(&files, &parsed);
+    let plan = match GroupPlan::read(db, &files, &parsed).await {
+        Ok(plan) => plan,
+        Err(err) => {
+            progress
+                .fail_work(
+                    work_id,
+                    SyncStageKey::MetadataParse,
+                    details,
+                    format!("{err:#}"),
+                )
+                .await;
+            return Ok(Vec::new());
+        }
+    };
     match parsed
         .skipped
         .iter()
@@ -147,17 +161,27 @@ pub(super) async fn process_album_group(
         .iter()
         .map(|batch| metadata_entry_ids(batch).collect::<Vec<_>>())
         .collect::<Vec<_>>();
-    let sets = linked_sets(&batch_entries);
+    let linked = linked_sets(&batch_entries, &plan.sheet_links);
+    // Each set's write takes its sheets' drops and settles the unyielding files that wait on it;
+    // the last write settles those of no set.
+    let mut drops = linked.split(&plan.drops, |segment| segment.sheet);
+    let mut unyielding = linked.split(&plan.unyielding, |&entry_id| entry_id);
     let mut batches = batches.into_iter().map(Some).collect::<Vec<_>>();
     let mut applied = Vec::new();
-    for set in &sets {
+    for (set, set_batches) in linked.sets.iter().enumerate() {
         let commit = SetCommit {
-            settled: set
+            drops: source_keys(std::mem::take(&mut drops[set])),
+            settled: set_batches
                 .iter()
                 .map(|&batch| plan.settled(&batch_entries[batch]))
                 .collect(),
+            unyielding: std::mem::take(&mut unyielding[set])
+                .into_iter()
+                .copied()
+                .collect(),
+            media: &plan.media,
         };
-        let set_batches = set
+        let set_batches = set_batches
             .iter()
             .filter_map(|&batch| batches[batch].take())
             .collect();
@@ -171,7 +195,7 @@ pub(super) async fn process_album_group(
             &progress,
         )
         .await?;
-        if let Some(releases) = committed {
+        if let Some((releases, _)) = committed {
             applied.extend(
                 releases
                     .into_iter()
@@ -180,15 +204,27 @@ pub(super) async fn process_album_group(
             );
         }
     }
-    // Holds are read after the sets' writes, which dropped the sources they replaced. A failed
-    // settlement leaves its files unsynced for the next sync.
-    if let Err(err) = settle_unyielding(db, &plan, &progress).await {
-        if err.downcast_ref::<SyncRunControlError>().is_some() {
-            return Err(err);
-        }
-        report_failed_settlement(&progress, &source_dir, &err).await;
+
+    // A failed settlement leaves its files unsynced for the next sync.
+    let setless = linked.sets.len();
+    let unyielding = std::mem::take(&mut unyielding[setless])
+        .into_iter()
+        .copied()
+        .collect::<Vec<_>>();
+    let drops = source_keys(std::mem::take(&mut drops[setless]));
+    match settle_unyielding(db, &unyielding, &drops, &plan.media, &progress).await {
+        Ok(_) => {}
+        Err(err) if err.downcast_ref::<SyncRunControlError>().is_some() => return Err(err),
+        Err(err) => report_failed_settlement(&progress, &source_dir, &err).await,
     }
     Ok(applied)
+}
+
+fn source_keys(segments: Vec<&StoredSegment>) -> Vec<String> {
+    segments
+        .into_iter()
+        .map(|segment| segment.source_key.clone())
+        .collect()
 }
 
 /// Reports the failed write settling a group's unyielding files as a failed unit.
@@ -219,80 +255,227 @@ async fn report_failed_settlement(
 struct GroupFiles {
     by_path: HashMap<PathBuf, DbId>,
     unsynced: HashSet<DbId>,
-    /// The audio files and cue sheets.
-    media: HashSet<DbId>,
+    audio: HashSet<DbId>,
+    sheets: HashSet<DbId>,
 }
 
 impl GroupFiles {
     fn of(entries: &[Entry]) -> Self {
-        let files = entries
-            .iter()
-            .filter(|entry| entry.kind == EntryKind::File)
-            .filter_map(|entry| Some((entry, entry.db_id?)));
-        let mut by_path = HashMap::new();
-        let mut unsynced = HashSet::new();
-        let mut media = HashSet::new();
-        for (entry, entry_id) in files {
-            by_path.insert(entry.full_path.clone(), entry_id);
+        let mut files = Self {
+            by_path: HashMap::new(),
+            unsynced: HashSet::new(),
+            audio: HashSet::new(),
+            sheets: HashSet::new(),
+        };
+        for entry in entries.iter().filter(|entry| entry.kind == EntryKind::File) {
+            let Some(entry_id) = entry.db_id else {
+                continue;
+            };
+            files.by_path.insert(entry.full_path.clone(), entry_id);
             if entry.synced_at_ms.is_none() {
-                unsynced.insert(entry_id);
+                files.unsynced.insert(entry_id);
             }
-            if matches!(
-                classify_entry_file_kind(entry).as_deref(),
-                Some("audio" | "cue")
-            ) {
-                media.insert(entry_id);
-            }
+            match classify_entry_file_kind(entry).as_deref() {
+                Some("audio") => files.audio.insert(entry_id),
+                Some("cue") => files.sheets.insert(entry_id),
+                _ => false,
+            };
         }
-        Self {
-            by_path,
-            unsynced,
-            media,
+        files
+    }
+}
+
+/// A segment as stored: the source a cue sheet's track gave an audio file.
+#[derive(Clone, Debug)]
+struct StoredSegment {
+    sheet: DbId,
+    audio: DbId,
+    source_key: String,
+}
+
+/// The stored segments of `sheets`.
+fn stored_cue_segments(
+    db: &impl lyra_db::DbAccess,
+    sheets: &HashSet<DbId>,
+) -> anyhow::Result<Vec<StoredSegment>> {
+    let mut segments = Vec::new();
+    for &sheet in sheets {
+        for source_db_id in lyra_db::track_sources::depending_on(db, sheet)? {
+            let Some(source) = lyra_db::track_sources::get_by_id(db, source_db_id)? else {
+                continue;
+            };
+            for audio in lyra_db::graph::neighbor_ids(db, source_db_id, "Entry")? {
+                segments.push(StoredSegment {
+                    sheet,
+                    audio,
+                    source_key: source.identity.clone(),
+                });
+            }
         }
     }
+    Ok(segments)
 }
 
 /// What a group's read means for its writes, decided before any of them.
 struct GroupPlan {
     /// The files changed since a sync last settled them.
     unsynced: HashSet<DbId>,
-    /// The files whose read failed for now, which no write settles or releases from a hold.
-    unreadable: HashSet<DbId>,
+    /// The files the read missed for now, whole or, for a sheet, in part: no write settles them
+    /// or changes their hold.
+    unread: HashSet<DbId>,
     /// The source keys the read yielded.
     yields: SourceYields,
-    /// The changed files the read yielded nothing of.
+    /// The changed files the read yielded nothing of, and the sheets another one outbid.
     unyielding: Vec<DbId>,
     /// The audio files and cue sheets among the group's files, which can hold tracks.
     media: HashSet<DbId>,
+    /// The audio applied in this pass whatever its sync, as a sheet's claim on it moved.
+    forced: HashSet<DbId>,
+    /// The files each changed or outbid sheet plays, played or references, whose batches commit
+    /// together.
+    sheet_links: HashMap<DbId, HashSet<DbId>>,
+    /// The stored segments a changed sheet no longer references, of audio yielding nothing else.
+    drops: Vec<StoredSegment>,
 }
 
 impl GroupPlan {
-    fn new(files: &GroupFiles, parsed: &ParseMetadataOutput) -> Self {
-        let unreadable = parsed
+    async fn read(
+        db: &DbAsync,
+        files: &GroupFiles,
+        parsed: &ParseMetadataOutput,
+    ) -> anyhow::Result<Self> {
+        let unread = parsed
             .skipped
             .iter()
             .filter(|record| record.reason.is_transient())
             .filter_map(|record| files.by_path.get(&record.path).copied())
+            .chain(parsed.partial.keys().copied())
             .collect::<HashSet<_>>();
         let read = metadata_entry_ids(&parsed.metadata).collect::<HashSet<_>>();
-        let unyielding = files
+        let yields = SourceYields::of(&parsed.metadata);
+        let mut unyielding = files
             .unsynced
             .iter()
             .copied()
-            .filter(|entry_id| !read.contains(entry_id) && !unreadable.contains(entry_id))
-            .collect();
-        Self {
-            unsynced: files.unsynced.clone(),
-            unreadable,
-            yields: SourceYields::of(&parsed.metadata),
-            unyielding,
-            media: files.media.clone(),
+            .filter(|entry_id| !read.contains(entry_id) && !unread.contains(entry_id))
+            .collect::<Vec<_>>();
+        let outbid_synced = parsed
+            .outbid
+            .keys()
+            .filter(|sheet| !files.unsynced.contains(sheet))
+            .copied()
+            .collect::<Vec<_>>();
+        unyielding.extend(outbid_synced);
+
+        // What each sheet references now: what it yielded, what it withheld of audio the read
+        // couldn't read for now, or what it would have yielded had another not outbid it.
+        let mut references = HashMap::<DbId, Vec<(DbId, &str)>>::new();
+        for track in &parsed.metadata {
+            if let Some(sheet) = track.cue_sheet_entry_id {
+                let reference = (track.entry_db_id, track.source_key.as_str());
+                references.entry(sheet).or_default().push(reference);
+            }
         }
+        for (&sheet, segments) in parsed.outbid.iter().chain(&parsed.partial) {
+            let segments = segments.iter().map(|(audio, key)| (*audio, key.as_str()));
+            references.entry(sheet).or_default().extend(segments);
+        }
+        let changed = files
+            .sheets
+            .intersection(&files.unsynced)
+            .copied()
+            .collect::<HashSet<_>>();
+        let claiming = changed
+            .iter()
+            .chain(parsed.outbid.keys())
+            .copied()
+            .collect::<HashSet<_>>();
+        let stored = stored_cue_segments(&*db.read().await, &claiming)?;
+
+        let claimed = parsed
+            .metadata
+            .iter()
+            .filter(|track| track.cue_sheet_entry_id.is_some())
+            .map(|track| track.entry_db_id)
+            .collect::<HashSet<_>>();
+        // A changed sheet that references anything was reread: a segment it no longer references
+        // for its audio moved, and the audio it left is applied; one it no longer references at
+        // all goes, unless another file now yields it or its audio can't be read as audio, which
+        // the sheet couldn't have yielded.
+        let moved = stored
+            .iter()
+            .filter(|segment| changed.contains(&segment.sheet))
+            .filter_map(|segment| Some((segment, references.get(&segment.sheet)?)))
+            .filter(|(segment, references)| {
+                !references.contains(&(segment.audio, segment.source_key.as_str()))
+            })
+            .collect::<Vec<_>>();
+        let stale = moved
+            .iter()
+            .filter(|(segment, references)| {
+                !references.iter().any(|(_, key)| *key == segment.source_key)
+                    && !yields.yielded(&segment.source_key)
+                    && files.audio.contains(&segment.audio)
+                    && !parsed.unplayable.contains(&segment.audio)
+            })
+            .map(|(segment, _)| *segment)
+            .collect::<Vec<_>>();
+        // An outbid sheet claims none of its audio this read, so a file it stored a segment on that
+        // the winner doesn't take reads on its own, as a fresh scan reads it: the pair moved too.
+        let freed = stored
+            .iter()
+            .filter(|segment| parsed.outbid.contains_key(&segment.sheet))
+            .filter(|segment| !claimed.contains(&segment.audio));
+        let forced = moved
+            .iter()
+            .map(|(segment, _)| segment)
+            .copied()
+            .chain(freed)
+            .map(|segment| segment.audio)
+            .chain(
+                stored
+                    .iter()
+                    .map(|segment| segment.audio)
+                    .filter(|audio| claimed.contains(audio)),
+            )
+            .collect();
+        let drops = stale
+            .iter()
+            .filter(|segment| !read.contains(&segment.audio))
+            .map(|&segment| segment.clone())
+            .collect();
+        let mut sheet_links = HashMap::<DbId, HashSet<DbId>>::new();
+        for segment in &stored {
+            sheet_links
+                .entry(segment.sheet)
+                .or_default()
+                .insert(segment.audio);
+        }
+        for sheet in &claiming {
+            let referenced = references.get(sheet).into_iter().flatten();
+            sheet_links
+                .entry(*sheet)
+                .or_default()
+                .extend(referenced.map(|(audio, _)| *audio));
+        }
+
+        Ok(Self {
+            unsynced: files.unsynced.clone(),
+            unread,
+            yields,
+            unyielding,
+            media: files.audio.union(&files.sheets).copied().collect(),
+            forced,
+            sheet_links,
+            drops,
+        })
     }
 
-    /// Whether this pass applies `batch`: whether any of its files changed.
+    /// Whether this pass applies `batch`: whether any of its files changed or had a sheet's
+    /// claim on it move.
     fn selects(&self, batch: &[TrackMetadata]) -> bool {
-        metadata_entry_ids(batch).any(|entry_id| self.unsynced.contains(&entry_id))
+        metadata_entry_ids(batch)
+            .any(|entry_id| self.unsynced.contains(&entry_id) || self.forced.contains(&entry_id))
     }
 
     /// The entries among `entries` a committed write settles: those read in full.
@@ -300,8 +483,29 @@ impl GroupPlan {
         entries
             .iter()
             .copied()
-            .filter(|entry_id| !self.unreadable.contains(entry_id))
+            .filter(|entry_id| !self.unread.contains(entry_id))
             .collect()
+    }
+}
+
+/// A group's batches that commit together, and the set each entry waits on.
+#[derive(Debug, PartialEq)]
+struct LinkedSets {
+    /// Each set's batches, by index.
+    sets: Vec<Vec<usize>>,
+    set_of: HashMap<DbId, usize>,
+}
+
+impl LinkedSets {
+    /// Splits `items` by the set the entry `entry_of` names for each waits on, the last list
+    /// holding those that wait on none.
+    fn split<'a, T>(&self, items: &'a [T], entry_of: impl Fn(&T) -> DbId) -> Vec<Vec<&'a T>> {
+        let mut split = vec![Vec::new(); self.sets.len() + 1];
+        for item in items {
+            let set = self.set_of.get(&entry_of(item)).copied();
+            split[set.unwrap_or(self.sets.len())].push(item);
+        }
+        split
     }
 }
 
@@ -331,16 +535,28 @@ impl Components {
     }
 }
 
-/// Links a group's batches, given by their entries, that share an entry, as a cue sheet split
-/// across releases does: they commit together. Returns each set's batches, by index, in the order
-/// of their first batch.
-fn linked_sets(batch_entries: &[Vec<DbId>]) -> Vec<Vec<usize>> {
+/// Links a group's batches, given by their entries, into the sets that commit together: the
+/// connected components of their entries joined with each sheet and the files `sheet_links` lists
+/// for it, which it plays, played or references, batched or not. Batches sharing an entry link,
+/// as a sheet split across releases does, and so do those holding files one sheet's claims move
+/// between. Every entry of a component waits on its set; sets are in the order of their first
+/// batch.
+fn linked_sets(
+    batch_entries: &[Vec<DbId>],
+    sheet_links: &HashMap<DbId, HashSet<DbId>>,
+) -> LinkedSets {
     let mut components = Components::default();
     for entries in batch_entries {
         for pair in entries.windows(2) {
             components.join(pair[0], pair[1]);
         }
     }
+    for (&sheet, files) in sheet_links {
+        for &file in files {
+            components.join(sheet, file);
+        }
+    }
+
     let mut set_of_root = HashMap::new();
     let mut sets = Vec::<Vec<usize>>::new();
     for (batch, entries) in batch_entries.iter().enumerate() {
@@ -351,25 +567,37 @@ fn linked_sets(batch_entries: &[Vec<DbId>]) -> Vec<Vec<usize>> {
         });
         sets[set].push(batch);
     }
-    sets
+    let entries = components.0.keys().copied().collect::<Vec<_>>();
+    let set_of = entries
+        .into_iter()
+        .filter_map(|entry| Some((entry, *set_of_root.get(&components.root(entry))?)))
+        .collect();
+    LinkedSets { sets, set_of }
 }
 
 /// What a set's write settles once its batches applied.
-struct SetCommit {
+struct SetCommit<'a> {
+    /// The keys of the segments its sheets dropped.
+    drops: Vec<String>,
     /// Each batch's entries the write settles.
     settled: Vec<Vec<DbId>>,
+    /// The unyielding files that wait on the set.
+    unyielding: Vec<DbId>,
+    media: &'a HashSet<DbId>,
 }
 
-impl SetCommit {
-    /// Stamps the settled entries of the batches that applied to no release, which have no
-    /// artifacts to wait for, and ends the holds of the others.
+impl SetCommit<'_> {
+    /// Drops the segments the set's sheets no longer reference and settles its unyielding files,
+    /// then stamps the settled entries of the batches that applied to no release, which have no
+    /// artifacts to wait for, and ends the holds of the others. Returns the files it held.
     fn write(
         &self,
         t: &mut DbAnyTransactionMut<'_>,
         releases: &[Option<DbId>],
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Vec<DbId>> {
         #[cfg(test)]
         super::tests::before_set_commit()?;
+        let held = settle(t, &self.drops, &self.unyielding, self.media)?;
         let (mut released, mut unreleased) = (Vec::new(), Vec::new());
         for (release, entries) in releases.iter().zip(&self.settled) {
             match release {
@@ -380,43 +608,60 @@ impl SetCommit {
         lyra_db::entries::mark_synced(t, &unreleased, &[])?;
         // The released files' sources just applied, so they play now, though their stamp waits for
         // their release's artifacts.
-        lyra_db::entries::reconcile_rejected(t, &released, &[])
+        lyra_db::entries::reconcile_rejected(t, &released, &[])?;
+        Ok(held)
     }
 }
 
-/// Stamps the plan's unyielding files synced, in one write with their holds: the audio files and
-/// cue sheets among them that still have sources from an earlier read keep their tracks, unable
-/// to play, rather than lose them to a read that offers nothing in their place. Returns those
-/// held. A cancelled run commits none of it.
+/// Drops the segments `drops` keys, then stamps `unyielding` synced with their holds: the audio
+/// files and cue sheets among them that still have sources from an earlier read keep their
+/// tracks, unable to play, rather than lose them to a read that offers nothing in their place.
+/// Returns those held.
+fn settle(
+    t: &mut DbAnyTransactionMut<'_>,
+    drops: &[String],
+    unyielding: &[DbId],
+    media: &HashSet<DbId>,
+) -> anyhow::Result<Vec<DbId>> {
+    prune_sources(t, drops)?;
+    let mut held = Vec::new();
+    for &entry_id in unyielding
+        .iter()
+        .filter(|entry_id| media.contains(entry_id))
+    {
+        if !lyra_db::track_sources::depending_on(t, entry_id)?.is_empty() {
+            held.push(entry_id);
+        }
+    }
+    lyra_db::entries::mark_synced(t, unyielding, &held)?;
+    Ok(held)
+}
+
+/// Settles, as [`settle`] does, the unyielding files and drops that wait on no set, in a write of
+/// their own. A cancelled run commits none of it.
 async fn settle_unyielding(
     db: &DbAsync,
-    plan: &GroupPlan,
+    unyielding: &[DbId],
+    drops: &[String],
+    media: &HashSet<DbId>,
     progress: &SyncRunProgress,
 ) -> anyhow::Result<Vec<DbId>> {
-    let unyielding = &plan.unyielding;
-    if unyielding.is_empty() {
+    if unyielding.is_empty() && drops.is_empty() {
         return Ok(Vec::new());
     }
     let mut db_write = db.write().await;
-    db_write.transaction_mut(|t| {
+    let held = db_write.transaction_mut(|t| -> anyhow::Result<Vec<DbId>> {
         progress.check_cancelled()?;
-        let mut held = Vec::new();
-        for &entry_id in unyielding
-            .iter()
-            .filter(|entry_id| plan.media.contains(entry_id))
-        {
-            if !lyra_db::track_sources::depending_on(t, entry_id)?.is_empty() {
-                held.push(entry_id);
-            }
-        }
         #[cfg(test)]
         super::tests::before_settlement_commit()?;
-        lyra_db::entries::mark_synced(t, unyielding, &held)?;
+        let held = settle(t, drops, unyielding, media)?;
         #[cfg(test)]
         super::tests::in_settlement();
         progress.check_cancelled()?;
         Ok(held)
-    })
+    })?;
+    crate::services::covers::discard_listed_cover_files(&*db_write);
+    Ok(held)
 }
 
 fn metadata_entry_ids(metadata: &[TrackMetadata]) -> impl Iterator<Item = DbId> + '_ {
@@ -427,17 +672,17 @@ fn metadata_entry_ids(metadata: &[TrackMetadata]) -> impl Iterator<Item = DbId> 
 
 /// Applies a set of linked batches and then `commit` in one write, so a failed or cancelled
 /// apply changes none of them and leaves their files for the next sync. Returns the first release
-/// each batch applied to, or `None` when the write failed, which is a failed unit; only a
-/// cancelled run fails this.
+/// each batch applied to, with the files the commit held, or `None` when the write failed, which
+/// is a failed unit; only a cancelled run fails this.
 async fn apply_linked_batches(
     db: &DbAsync,
     library_db_id: DbId,
     candidate_dirs: &BTreeMap<DbId, PathBuf>,
     batches: Vec<Vec<TrackMetadata>>,
     yields: &SourceYields,
-    commit: &SetCommit,
+    commit: &SetCommit<'_>,
     progress: &SyncRunProgress,
-) -> anyhow::Result<Option<Vec<Option<DbId>>>> {
+) -> anyhow::Result<Option<(Vec<Option<DbId>>, Vec<DbId>)>> {
     progress.check_cancelled()?;
     let mut units = Vec::with_capacity(batches.len());
     for batch in &batches {
@@ -457,7 +702,7 @@ async fn apply_linked_batches(
     let mut failed_batch = None;
     let mut db_write = db.write().await;
     let started = Instant::now();
-    let result = db_write.transaction_mut(|t| -> anyhow::Result<Vec<Option<DbId>>> {
+    let result = db_write.transaction_mut(|t| -> anyhow::Result<(Vec<Option<DbId>>, Vec<DbId>)> {
         let mut releases = Vec::with_capacity(batches.len());
         for (index, batch) in batches.into_iter().enumerate() {
             progress.check_cancelled()?;
@@ -475,9 +720,9 @@ async fn apply_linked_batches(
                 }
             }
         }
-        commit.write(t, &releases)?;
+        let held = commit.write(t, &releases)?;
         progress.check_cancelled()?;
-        Ok(releases)
+        Ok((releases, held))
     });
     if result.is_ok() {
         crate::services::covers::discard_listed_cover_files(&*db_write);
@@ -495,13 +740,13 @@ async fn apply_linked_batches(
     );
 
     let err = match result {
-        Ok(releases) => {
+        Ok(committed) => {
             for (work_id, _) in units {
                 progress
                     .complete_work(work_id, SyncStageKey::MetadataApply)
                     .await;
             }
-            return Ok(Some(releases));
+            return Ok(Some(committed));
         }
         Err(err) => err,
     };
@@ -541,14 +786,52 @@ mod tests {
     }
 
     #[test]
-    fn batches_sharing_an_entry_commit_together() {
-        let sets = linked_sets(&[
-            ids(&[1, 9]),
-            ids(&[2]),
-            ids(&[3, 9]),
-            ids(&[3, 4]),
-            ids(&[5]),
+    fn batches_link_through_shared_entries_and_a_sheet_s_files() {
+        let sheet_links = HashMap::from([(DbId(10), HashSet::from([DbId(1), DbId(3), DbId(9)]))]);
+        let linked = linked_sets(
+            &[ids(&[1]), ids(&[2]), ids(&[3, 4]), ids(&[4, 5]), ids(&[6])],
+            &sheet_links,
+        );
+        assert_eq!(linked.sets, vec![vec![0, 2, 3], vec![1], vec![4]]);
+        assert_eq!(
+            linked.set_of[&DbId(5)],
+            0,
+            "a shared entry links its batches"
+        );
+        assert_eq!(
+            linked.set_of[&DbId(10)],
+            0,
+            "a sheet waits on its files' batches"
+        );
+        assert_eq!(
+            linked.set_of[&DbId(9)],
+            0,
+            "a file in no batch waits on its sheet's set"
+        );
+        assert_eq!(linked.set_of[&DbId(6)], 2);
+    }
+
+    #[test]
+    fn a_file_in_no_batch_joins_the_sets_of_the_sheets_naming_it() {
+        // Two sheets name x.flac, in no batch; one's other file is in the first batch, the
+        // other's in the second.
+        let sheet_links = HashMap::from([
+            (DbId(10), HashSet::from([DbId(1), DbId(3)])),
+            (DbId(11), HashSet::from([DbId(3), DbId(2)])),
         ]);
-        assert_eq!(sets, vec![vec![0, 2, 3], vec![1], vec![4]]);
+        let linked = linked_sets(&[ids(&[1, 10]), ids(&[2])], &sheet_links);
+        assert_eq!(linked.sets, vec![vec![0, 1]]);
+        for entry in [1, 2, 3, 10, 11] {
+            assert_eq!(linked.set_of[&DbId(entry)], 0);
+        }
+    }
+
+    #[test]
+    fn a_sheet_whose_files_are_in_no_batch_waits_on_nothing() {
+        let sheet_links = HashMap::from([(DbId(10), HashSet::from([DbId(9)]))]);
+        let linked = linked_sets(&[ids(&[1]), ids(&[2])], &sheet_links);
+        assert_eq!(linked.sets, vec![vec![0], vec![1]]);
+        assert!(!linked.set_of.contains_key(&DbId(10)));
+        assert!(!linked.set_of.contains_key(&DbId(9)));
     }
 }

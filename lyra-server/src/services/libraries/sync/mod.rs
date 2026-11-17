@@ -4275,6 +4275,789 @@ FILE "two.flac" WAVE
         Ok(())
     }
 
+    /// A cue sheet splitting `album.flac` and `dropped.flac`, one segment each.
+    const SPLIT_SHEET: &str = r#"PERFORMER "Cue Artist"
+TITLE "Cue Album"
+FILE "album.flac" WAVE
+  TRACK 01 AUDIO
+    TITLE "Cue Track 1"
+    INDEX 01 00:00:00
+FILE "dropped.flac" WAVE
+  TRACK 02 AUDIO
+    TITLE "Cue Track 2"
+    INDEX 01 00:00:00
+"#;
+
+    /// [`SPLIT_SHEET`] without `dropped.flac`.
+    const KEPT_SHEET: &str = r#"PERFORMER "Cue Artist"
+TITLE "Cue Album"
+FILE "album.flac" WAVE
+  TRACK 01 AUDIO
+    TITLE "Cue Track 1"
+    INDEX 01 00:00:00
+"#;
+
+    /// A synced library of [`SPLIT_SHEET`] over its two files, `dropped.flac` as
+    /// `prepare_dropped` leaves it.
+    struct SplitSheet {
+        root: PathBuf,
+        library: Library,
+        cue: PathBuf,
+        kept: PathBuf,
+        dropped: PathBuf,
+        kept_segment: String,
+        dropped_segment: String,
+    }
+
+    impl SplitSheet {
+        async fn new(
+            name: &str,
+            prepare_dropped: impl FnOnce(&Path) -> anyhow::Result<()>,
+        ) -> anyhow::Result<Self> {
+            let (root, library) = empty_library(name).await?;
+            let album = root.join("Album");
+            let kept = album.join("album.flac");
+            let dropped = album.join("dropped.flac");
+            std::fs::rename(album_track(&album, "Album")?, &kept)?;
+            std::fs::copy(&kept, &dropped)?;
+            prepare_dropped(&dropped)?;
+            let cue = album.join("album.cue");
+            std::fs::write(&cue, SPLIT_SHEET)?;
+            sync(&library).await?;
+            let tracks = snapshot(&library).await?;
+            let (kept_segment, dropped_segment) = (&tracks[&kept].1, &tracks[&dropped].1);
+            assert_eq!((kept_segment.len(), dropped_segment.len()), (1, 1));
+            Ok(Self {
+                kept_segment: kept_segment[0].clone(),
+                dropped_segment: dropped_segment[0].clone(),
+                root,
+                library,
+                cue,
+                kept,
+                dropped,
+            })
+        }
+
+        /// Rewrites the sheet as `text`, so the next sync reads it again.
+        fn edit(&self, text: &str) -> anyhow::Result<()> {
+            std::fs::write(&self.cue, text)?;
+            shift_mtime(&self.cue, 5)
+        }
+
+        async fn segment_exists(&self, id: &str) -> anyhow::Result<bool> {
+            Ok(lyra_db::lookup::find_node_id_by_id(&*STATE.db.read().await, id)?.is_some())
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_cue_sheet_that_drops_an_audio_file_drops_its_segments() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let split = SplitSheet::new("cue-drops-audio", |path| retag(path, drop_album)).await?;
+
+        split.edit(KEPT_SHEET)?;
+        sync(&split.library).await?;
+
+        let tracks = snapshot(&split.library).await?;
+        assert_eq!(tracks[&split.kept].1, vec![split.kept_segment.clone()]);
+        assert!(
+            tracks[&split.dropped].1.is_empty(),
+            "the dropped file kept its segment"
+        );
+        assert!(!split.segment_exists(&split.dropped_segment).await?);
+        assert!(synced(&split.library, &split.cue).await?);
+        let _ = std::fs::remove_dir_all(&split.root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_file_a_cue_sheet_drops_gets_a_track_of_its_own() -> anyhow::Result<()> {
+        use lofty::prelude::*;
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        // Another album than the sheet's, so its own track lands in a batch apart.
+        let split = SplitSheet::new("cue-drops-tagged", |path| {
+            retag(path, |tag| tag.set_album("Elsewhere".to_string()))
+        })
+        .await?;
+
+        split.edit(KEPT_SHEET)?;
+        sync(&split.library).await?;
+
+        assert!(!split.segment_exists(&split.dropped_segment).await?);
+        let own = tracks_of(&split.library, &split.dropped).await?;
+        assert_eq!(own.len(), 1, "the dropped file has no track of its own");
+        assert!(own[0].1);
+        assert_eq!(
+            release_title_of(&split.library, &split.dropped).await?,
+            "Elsewhere"
+        );
+        let _ = std::fs::remove_dir_all(&split.root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_cue_sheet_whose_batch_fails_keeps_the_segments_it_dropped() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let split = SplitSheet::new("cue-drops-failed", |path| retag(path, drop_album)).await?;
+
+        split.edit(KEPT_SHEET)?;
+        let progress = super::super::orchestrator::begin_test_run(&split.library).await;
+        let hooks = Hooks {
+            reject_album: Some("Album"),
+            ..Hooks::default()
+        };
+        sync_with(hooks.into(), &split.library, progress.clone()).await?;
+        super::super::orchestrator::end_test_run(&progress).await;
+        assert!(
+            split.segment_exists(&split.dropped_segment).await?,
+            "the segment went before the sheet's batch applied"
+        );
+        assert!(!synced(&split.library, &split.cue).await?);
+
+        sync(&split.library).await?;
+        assert!(!split.segment_exists(&split.dropped_segment).await?);
+        assert!(synced(&split.library, &split.cue).await?);
+        let _ = std::fs::remove_dir_all(&split.root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_cue_sheet_keeps_the_segment_of_audio_it_can_t_read_for_now() -> anyhow::Result<()> {
+        use lofty::prelude::*;
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let split = SplitSheet::new("cue-unreadable-audio", |path| {
+            retag(path, |tag| tag.set_title("Dropped".to_string()))
+        })
+        .await?;
+
+        // The edit moves the first segment's start, so its apply shows.
+        split.edit(&SPLIT_SHEET.replacen("INDEX 01 00:00:00", "INDEX 01 00:00:15", 1))?;
+        if !deny_reads(&split.dropped)? {
+            // Running with privileges that ignore permissions.
+            let _ = std::fs::remove_dir_all(&split.root);
+            return Ok(());
+        }
+        let result = sync(&split.library).await;
+        allow_reads(&split.dropped)?;
+        result?;
+
+        assert_eq!(
+            snapshot(&split.library).await?[&split.dropped].1,
+            vec![split.dropped_segment.clone()],
+            "an unreadable file lost its segment"
+        );
+        let kept =
+            lyra_db::lookup::find_node_id_by_id(&*STATE.db.read().await, &split.kept_segment)?
+                .expect("kept segment");
+        let sources = lyra_db::track_sources::get_by_track(&*STATE.db.read().await, kept)?;
+        assert_eq!(
+            sources
+                .iter()
+                .map(|source| source.start_ms)
+                .collect::<Vec<_>>(),
+            vec![Some(200)],
+            "the edited sheet didn't apply"
+        );
+        let _ = std::fs::remove_dir_all(&split.root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_failure_inside_a_write_leaves_the_sheet_and_its_files_as_they_were()
+    -> anyhow::Result<()> {
+        use lofty::prelude::*;
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let split = SplitSheet::new("cue-drop-rolled-back", |path| {
+            retag(path, |tag| tag.set_album("Elsewhere".to_string()))
+        })
+        .await?;
+
+        // The dropped file's own track is written, its old segment pruned, then the write fails.
+        split.edit(KEPT_SHEET)?;
+        let progress = super::super::orchestrator::begin_test_run(&split.library).await;
+        let hooks = Hooks {
+            reject_album: Some("Elsewhere"),
+            ..Hooks::default()
+        };
+        sync_with(hooks.into(), &split.library, progress.clone()).await?;
+        super::super::orchestrator::end_test_run(&progress).await;
+        assert_eq!(
+            snapshot(&split.library).await?[&split.dropped].1,
+            vec![split.dropped_segment.clone()],
+            "the failed write changed the dropped file's tracks"
+        );
+        assert!(!synced(&split.library, &split.cue).await?);
+
+        sync(&split.library).await?;
+        assert!(!split.segment_exists(&split.dropped_segment).await?);
+        assert_eq!(tracks_of(&split.library, &split.dropped).await?.len(), 1);
+        assert!(synced(&split.library, &split.cue).await?);
+        let _ = std::fs::remove_dir_all(&split.root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_cue_track_pointed_at_other_audio_follows_it() -> anyhow::Result<()> {
+        const ON_A: &str = r#"PERFORMER "Cue Artist"
+TITLE "Cue Album"
+FILE "a.flac" WAVE
+  TRACK 01 AUDIO
+    TITLE "Cue Track 1"
+    INDEX 01 00:00:00
+"#;
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cue-retarget").await?;
+        let album = root.join("Album");
+        std::fs::create_dir_all(&album)?;
+        let (a, b) = (album.join("a.flac"), album.join("b.flac"));
+        album_file(&a, "Elsewhere", 1)?;
+        album_file(&b, "Album", 2)?;
+        let cue = album.join("album.cue");
+        std::fs::write(&cue, ON_A)?;
+        sync(&library).await?;
+        let cue_track = tracks_of(&library, &a).await?;
+        assert_eq!(cue_track.len(), 1);
+
+        std::fs::write(&cue, ON_A.replace("a.flac", "b.flac"))?;
+        shift_mtime(&cue, 5)?;
+        sync(&library).await?;
+
+        assert_eq!(
+            tracks_of(&library, &b).await?,
+            vec![(cue_track[0].0.clone(), true)],
+            "the sheet's track didn't follow it"
+        );
+        let own = tracks_of(&library, &a).await?;
+        assert_eq!(own.len(), 1, "the file the sheet left has no track");
+        assert_ne!(own[0].0, cue_track[0].0);
+        assert!(own[0].1);
+        assert_eq!(release_title_of(&library, &a).await?, "Elsewhere");
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cue_audio_overwritten_with_other_content_holds_its_segments() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cue-not-audio").await?;
+        let album = root.join("Album");
+        let audio = album.join("album.flac");
+        std::fs::rename(album_track(&album, "Album")?, &audio)?;
+        std::fs::write(album.join("album.cue"), CUE_SHEET)?;
+        sync(&library).await?;
+        let segments = tracks_of(&library, &audio).await?;
+        assert_eq!(segments.len(), 2);
+
+        let original = std::fs::read(&audio)?;
+        std::fs::write(&audio, b"not audio at all")?;
+        shift_mtime(&audio, 5)?;
+        sync(&library).await?;
+        assert!(entry_for(&library, &audio).await?.rejected_at_ms.is_some());
+        assert_eq!(
+            tracks_of(&library, &audio).await?,
+            segments
+                .iter()
+                .map(|(id, _)| (id.clone(), false))
+                .collect::<Vec<_>>(),
+            "a sheet's segments of no audio play"
+        );
+
+        std::fs::write(&audio, original)?;
+        shift_mtime(&audio, 10)?;
+        sync(&library).await?;
+        assert_eq!(entry_for(&library, &audio).await?.rejected_at_ms, None);
+        assert_eq!(tracks_of(&library, &audio).await?, segments);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_unchanged_sheet_outbid_for_some_of_its_audio_holds_the_rest() -> anyhow::Result<()>
+    {
+        const TWO_FILES: &str = r#"PERFORMER "Cue Artist"
+TITLE "Cue Album"
+FILE "album.flac" WAVE
+  TRACK 01 AUDIO
+    TITLE "Cue Track 1"
+    INDEX 01 00:00:00
+FILE "other.flac" WAVE
+  TRACK 02 AUDIO
+    TITLE "Cue Track 2"
+    INDEX 01 00:00:00
+"#;
+        const FIRST_FILE: &str = r#"PERFORMER "Cue Artist"
+TITLE "Cue Album"
+FILE "album.flac" WAVE
+  TRACK 01 AUDIO
+    TITLE "Rival Track 1"
+    INDEX 01 00:00:00
+"#;
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("rejected-cue-overlap").await?;
+        let album = root.join("Album");
+        let shared = album.join("album.flac");
+        let other = album.join("other.flac");
+        std::fs::rename(album_track(&album, "Album")?, &shared)?;
+        std::fs::copy(&shared, &other)?;
+        retag(&other, drop_album)?;
+        let first = album.join("first.cue");
+        std::fs::write(&first, TWO_FILES)?;
+        sync(&library).await?;
+        let shared_before = tracks_of(&library, &shared).await?;
+        let other_before = tracks_of(&library, &other).await?;
+        assert_eq!((shared_before.len(), other_before.len()), (1, 1));
+
+        // A new sheet takes the shared audio from the unchanged one.
+        let second = album.join("second.cue");
+        std::fs::write(&second, FIRST_FILE)?;
+        sync(&library).await?;
+
+        assert_eq!(segment_owners(&library, &shared).await?, vec![second]);
+        assert_eq!(segment_owners(&library, &other).await?, vec![first.clone()]);
+        let first_entry = entry_for(&library, &first).await?;
+        assert!(first_entry.synced_at_ms.is_some());
+        assert!(
+            first_entry.rejected_at_ms.is_some(),
+            "the outbid sheet doesn't hold the segment nothing replaced"
+        );
+        let shared_after = tracks_of(&library, &shared).await?;
+        assert_eq!(
+            shared_after.len(),
+            1,
+            "the outbid segment stayed beside the winner's"
+        );
+        assert_ne!(shared_after[0].0, shared_before[0].0);
+        assert!(shared_after[0].1, "the winning sheet's segment can't play");
+        assert_eq!(
+            tracks_of(&library, &other).await?,
+            vec![(other_before[0].0.clone(), false)],
+            "the segment nothing replaced isn't held"
+        );
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_rival_sheet_takes_the_audio_its_winner_stops_claiming() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cue-rival-takes-over").await?;
+        let album = root.join("Album");
+        let audio = album.join("album.flac");
+        std::fs::rename(album_track(&album, "Album")?, &audio)?;
+        let sheets = [album.join("first.cue"), album.join("second.cue")];
+        std::fs::write(&sheets[0], CUE_SHEET)?;
+        sync(&library).await?;
+        std::fs::write(&sheets[1], CUE_SHEET.replace("Cue Track", "Rival Track"))?;
+        sync(&library).await?;
+        let owners = segment_owners(&library, &audio).await?;
+        assert_eq!(owners.len(), 1);
+        let (winner, rival) = if owners[0] == sheets[0] {
+            (&sheets[0], &sheets[1])
+        } else {
+            (&sheets[1], &sheets[0])
+        };
+        assert!(synced(&library, rival).await?);
+
+        // The winner stops claiming the audio; the rival, unchanged, takes it in the same sync.
+        std::fs::write(winner, "REM nothing here\n")?;
+        shift_mtime(winner, 5)?;
+        sync(&library).await?;
+
+        assert_eq!(segment_owners(&library, &audio).await?, vec![rival.clone()]);
+        let tracks = tracks_of(&library, &audio).await?;
+        assert_eq!(tracks.len(), 2);
+        assert!(tracks.iter().all(|(_, plays)| *plays));
+        let winner_entry = entry_for(&library, winner).await?;
+        assert!(winner_entry.synced_at_ms.is_some());
+        assert_eq!(
+            winner_entry.rejected_at_ms, None,
+            "the emptied sheet is held"
+        );
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    /// A sheet splitting `a.flac` and `b.flac`, one segment each.
+    const A_AND_B: &str = r#"PERFORMER "Cue Artist"
+TITLE "Cue Album"
+FILE "a.flac" WAVE
+  TRACK 01 AUDIO
+    TITLE "Cue Track 1"
+    INDEX 01 00:00:00
+FILE "b.flac" WAVE
+  TRACK 02 AUDIO
+    TITLE "Cue Track 2"
+    INDEX 01 00:00:00
+"#;
+
+    /// A sheet with a segment of `a.flac` alone.
+    const A_ONLY: &str = r#"PERFORMER "Rival Artist"
+TITLE "Rival Album"
+FILE "a.flac" WAVE
+  TRACK 01 AUDIO
+    TITLE "Rival Track 1"
+    INDEX 01 00:00:00
+"#;
+
+    /// Removes every tag from `path`.
+    fn strip_tags(path: &Path) -> anyhow::Result<()> {
+        use lofty::prelude::*;
+
+        for tag in lofty::read_from_path(path)?.tags() {
+            tag.tag_type()
+                .remove_from_path(path, lofty::config::WriteOptions::default())?;
+        }
+        shift_mtime(path, 5)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_failed_takeover_keeps_the_loser_s_other_segment() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cue-takeover-fails").await?;
+        let album = root.join("Album");
+        let (a, b, c) = (
+            album.join("a.flac"),
+            album.join("b.flac"),
+            album.join("c.flac"),
+        );
+        album_file(&a, "Album", 1)?;
+        album_file(&b, "Other", 2)?;
+        let (first, second) = (album.join("first.cue"), album.join("second.cue"));
+        std::fs::write(&first, A_AND_B)?;
+        sync(&library).await?;
+        let b_segment = snapshot(&library).await?[&b].1.clone();
+        assert_eq!(b_segment.len(), 1);
+
+        // A rival takes a.flac, and b.flac, freed, lands in a batch with a new c.flac; the
+        // rival's batch fails.
+        std::fs::write(&second, A_ONLY)?;
+        album_file(&c, "Other", 3)?;
+        let progress = super::super::orchestrator::begin_test_run(&library).await;
+        let hooks = Hooks {
+            reject_album: Some("Album"),
+            ..Hooks::default()
+        };
+        sync_with(hooks.into(), &library, progress.clone()).await?;
+        super::super::orchestrator::end_test_run(&progress).await;
+        let tracks = snapshot(&library).await?;
+        assert_eq!(
+            tracks[&b].1, b_segment,
+            "the failed takeover cost the loser its other segment"
+        );
+        assert!(tracks[&c].1.is_empty());
+        assert_eq!(segment_owners(&library, &a).await?, vec![first.clone()]);
+
+        sync(&library).await?;
+        assert_eq!(segment_owners(&library, &a).await?, vec![second]);
+        let own = snapshot(&library).await?[&b].1.clone();
+        assert_eq!(own.len(), 1);
+        assert_ne!(own, b_segment);
+        assert_eq!(snapshot(&library).await?[&c].1.len(), 1);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    /// A rival takes a.flac from a sheet over a.flac and b.flac, where b.flac, synced and alone
+    /// in its batch, has tags of its own or none it can use; returns b.flac's tracks before and
+    /// after, and the loser's entry after.
+    async fn takeover_freeing_b(
+        name: &str,
+        valid_tags: bool,
+    ) -> anyhow::Result<(Vec<(String, bool)>, Vec<(String, bool)>, lyra_db::Entry)> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library(name).await?;
+        let album = root.join("Album");
+        let (a, b) = (album.join("a.flac"), album.join("b.flac"));
+        album_file(&a, "Album", 1)?;
+        album_file(&b, "Other", 2)?;
+        if !valid_tags {
+            retag(&b, drop_album)?;
+        }
+        let (first, second) = (album.join("first.cue"), album.join("second.cue"));
+        std::fs::write(&first, A_AND_B)?;
+        sync(&library).await?;
+        let before = tracks_of(&library, &b).await?;
+        assert_eq!(before.len(), 1);
+        assert!(synced(&library, &b).await?);
+
+        std::fs::write(&second, A_ONLY)?;
+        sync(&library).await?;
+
+        assert_eq!(segment_owners(&library, &a).await?, vec![second]);
+        let after = tracks_of(&library, &b).await?;
+        let loser = entry_for(&library, &first).await?;
+        let _ = std::fs::remove_dir_all(root);
+        Ok((before, after, loser))
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_file_an_outbid_sheet_frees_gets_a_track_of_its_own() -> anyhow::Result<()> {
+        let (before, after, loser) = takeover_freeing_b("cue-outbid-frees", true).await?;
+        assert_eq!(after.len(), 1);
+        assert_ne!(after[0].0, before[0].0, "the loser's segment stayed");
+        assert!(after[0].1);
+        assert_eq!(loser.rejected_at_ms, None);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_file_an_outbid_sheet_frees_without_usable_tags_keeps_its_segment_held()
+    -> anyhow::Result<()> {
+        let (before, after, loser) = takeover_freeing_b("cue-outbid-holds", false).await?;
+        assert_eq!(
+            after,
+            vec![(before[0].0.clone(), false)],
+            "the loser's segment isn't held"
+        );
+        assert!(loser.rejected_at_ms.is_some());
+        Ok(())
+    }
+
+    /// The start, end and format of each source playing `audio`, by start.
+    async fn sources_of(
+        library: &Library,
+        audio: &Path,
+    ) -> anyhow::Result<Vec<(Option<u64>, Option<u64>, String)>> {
+        let entry = entry_for(library, audio).await?.db_id.expect("entry");
+        let db = STATE.db.read().await;
+        let mut sources = Vec::new();
+        for source in lyra_db::graph::inbound_neighbor_ids(&*db, entry, "TrackSource")? {
+            let source = lyra_db::track_sources::get_by_id(&*db, source)?.expect("source");
+            sources.push((
+                source.start_ms,
+                source.end_ms,
+                format!("{:?}", source.format()),
+            ));
+        }
+        sources.sort();
+        Ok(sources)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_cue_edit_whose_audio_is_unreadable_for_now_waits_for_a_full_read()
+    -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cue-partial-read").await?;
+        let album = root.join("Album");
+        let audio = album.join("album.flac");
+        std::fs::rename(album_track(&album, "Album")?, &audio)?;
+        let cue = album.join("album.cue");
+        std::fs::write(&cue, CUE_SHEET)?;
+        sync(&library).await?;
+        let probed = sources_of(&library, &audio).await?;
+        assert!(probed.iter().all(|(_, end, _)| end.is_some()));
+
+        std::fs::write(&cue, CUE_SHEET.replace("Cue Track 2", "Cue Track Two"))?;
+        shift_mtime(&cue, 5)?;
+        if !deny_reads(&audio)? {
+            // Running with privileges that ignore permissions.
+            let _ = std::fs::remove_dir_all(root);
+            return Ok(());
+        }
+        let result = sync(&library).await;
+        allow_reads(&audio)?;
+        result?;
+        assert_eq!(
+            sources_of(&library, &audio).await?,
+            probed,
+            "a read without the audio overwrote what it gave"
+        );
+        assert!(
+            !synced(&library, &cue).await?,
+            "nothing is left to read again"
+        );
+
+        sync(&library).await?;
+        assert!(synced(&library, &cue).await?);
+        assert_eq!(sources_of(&library, &audio).await?, probed);
+        let db = STATE.db.read().await;
+        let titles = snapshot(&library).await?[&audio]
+            .1
+            .iter()
+            .map(|id| {
+                let track = lyra_db::lookup::find_node_id_by_id(&*db, id)?.expect("track");
+                Ok(lyra_db::tracks::get_by_id(&*db, track)?
+                    .expect("track")
+                    .track_title)
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        assert!(
+            titles.iter().any(|title| title == "Cue Track Two"),
+            "{titles:?}"
+        );
+        drop(db);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_loser_settles_with_the_takeover_when_the_last_write_fails() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cue-settle-fails").await?;
+        let album = root.join("Album");
+        let (a, b, c) = (
+            album.join("a.flac"),
+            album.join("b.flac"),
+            album.join("c.flac"),
+        );
+        album_file(&a, "Album", 1)?;
+        album_file(&b, "Album", 2)?;
+        retag(&b, drop_album)?;
+        album_file(&c, "Album", 3)?;
+        let (first, second) = (album.join("first.cue"), album.join("second.cue"));
+        std::fs::write(&first, A_AND_B)?;
+        sync(&library).await?;
+        let b_segment = tracks_of(&library, &b).await?;
+
+        // A rival takes a.flac while c.flac, in no set, is retagged into a hold; the last write,
+        // settling c.flac, fails.
+        std::fs::write(&second, A_ONLY)?;
+        retag(&c, drop_album)?;
+        let progress = super::super::orchestrator::begin_test_run(&library).await;
+        let hooks = Hooks {
+            fail_settlement: true,
+            ..Hooks::default()
+        };
+        sync_with(hooks.into(), &library, progress.clone()).await?;
+        let run = super::super::orchestrator::get_sync_run(progress.run_id())
+            .await?
+            .expect("run");
+        super::super::orchestrator::end_test_run(&progress).await;
+        assert_eq!(run.progress.failed_units, 1);
+        assert_eq!(segment_owners(&library, &a).await?, vec![second]);
+        assert!(
+            entry_for(&library, &first).await?.rejected_at_ms.is_some(),
+            "the loser waited on the failed write"
+        );
+        assert_eq!(
+            tracks_of(&library, &b).await?,
+            vec![(b_segment[0].0.clone(), false)]
+        );
+        let unsettled = entry_for(&library, &c).await?;
+        assert_eq!(unsettled.synced_at_ms, None);
+        assert_eq!(unsettled.rejected_at_ms, None);
+
+        sync(&library).await?;
+        assert!(entry_for(&library, &c).await?.rejected_at_ms.is_some());
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_outbid_sheet_edited_to_drop_a_file_drops_its_segment() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cue-outbid-edit").await?;
+        let album = root.join("Album");
+        let (a, b) = (album.join("a.flac"), album.join("b.flac"));
+        album_file(&a, "Album", 1)?;
+        album_file(&b, "Album", 2)?;
+        retag(&b, drop_album)?;
+        let (first, second) = (album.join("first.cue"), album.join("second.cue"));
+        std::fs::write(&first, A_AND_B)?;
+        sync(&library).await?;
+        std::fs::write(&second, A_ONLY)?;
+        sync(&library).await?;
+        assert_eq!(segment_owners(&library, &a).await?, vec![second.clone()]);
+        assert!(entry_for(&library, &first).await?.rejected_at_ms.is_some());
+
+        // The outbid sheet stops naming b.flac, still losing a.flac.
+        let a_alone = A_AND_B
+            .split_once("FILE \"b.flac\"")
+            .expect("b.flac's section")
+            .0;
+        std::fs::write(&first, a_alone)?;
+        shift_mtime(&first, 5)?;
+        sync(&library).await?;
+        assert!(
+            snapshot(&library).await?[&b].1.is_empty(),
+            "b.flac kept its segment"
+        );
+        assert_eq!(entry_for(&library, &first).await?.rejected_at_ms, None);
+
+        // The rival gives a.flac up, and the edited sheet takes it back.
+        std::fs::write(&second, "REM nothing here\n")?;
+        shift_mtime(&second, 5)?;
+        sync(&library).await?;
+        assert_eq!(segment_owners(&library, &a).await?, vec![first.clone()]);
+        assert!(snapshot(&library).await?[&b].1.is_empty());
+        assert_eq!(entry_for(&library, &first).await?.rejected_at_ms, None);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn held_cue_audio_read_unreadable_for_now_stays_held() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cue-held-unreadable").await?;
+        let album = root.join("Album");
+        let audio = album.join("album.flac");
+        std::fs::rename(album_track(&album, "Album")?, &audio)?;
+        let cue = album.join("album.cue");
+        std::fs::write(&cue, CUE_SHEET)?;
+        sync(&library).await?;
+        std::fs::write(&audio, b"not audio at all")?;
+        shift_mtime(&audio, 5)?;
+        sync(&library).await?;
+        let held = entry_for(&library, &audio).await?;
+        assert!(held.rejected_at_ms.is_some());
+        let segments = tracks_of(&library, &audio).await?;
+        assert!(segments.iter().all(|(_, plays)| !plays));
+
+        std::fs::write(&cue, CUE_SHEET.replace("Cue Track 2", "Cue Track Two"))?;
+        shift_mtime(&cue, 5)?;
+        if !deny_reads(&audio)? {
+            // Running with privileges that ignore permissions.
+            let _ = std::fs::remove_dir_all(root);
+            return Ok(());
+        }
+        let result = sync(&library).await;
+        allow_reads(&audio)?;
+        result?;
+
+        assert_eq!(
+            entry_for(&library, &audio).await?.rejected_at_ms,
+            held.rejected_at_ms,
+            "an unreadable read released the hold"
+        );
+        assert_eq!(tracks_of(&library, &audio).await?, segments);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_cue_sheet_dropping_tagless_audio_drops_its_segment() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let split = SplitSheet::new("cue-drops-tagless", strip_tags).await?;
+
+        split.edit(KEPT_SHEET)?;
+        sync(&split.library).await?;
+
+        assert!(!split.segment_exists(&split.dropped_segment).await?);
+        assert!(snapshot(&split.library).await?[&split.dropped].1.is_empty());
+        let _ = std::fs::remove_dir_all(&split.root);
+        Ok(())
+    }
+
     #[tokio::test]
     async fn directories_in_later_batches_find_their_parents() -> anyhow::Result<()> {
         let db = DbAsync::new(lyra_db::test_db::new_test_db()?);

@@ -30,7 +30,7 @@ impl SourceYields {
         )
     }
 
-    fn yielded(&self, source_key: &str) -> bool {
+    pub(crate) fn yielded(&self, source_key: &str) -> bool {
         self.0.contains(source_key)
     }
 }
@@ -62,6 +62,26 @@ fn prune_stale_track_sources(
             for track_db_id in lyra_db::graph::inbound_neighbor_ids(db, source_db_id, "Track")? {
                 stale.push((track_db_id, source_db_id));
             }
+        }
+    }
+    detach_stale_sources(db, stale)
+}
+
+/// Detaches the sources keyed `source_keys` from their tracks and collects what that leaves, as
+/// [`prune_stale_track_sources`] does. Keys no source holds are skipped.
+pub(crate) fn prune_sources(
+    db: &mut DbAnyTransactionMut<'_>,
+    source_keys: &[String],
+) -> anyhow::Result<()> {
+    let mut stale = Vec::new();
+    for key in source_keys {
+        let Some(source_db_id) =
+            lyra_db::lookup::find_id_by_index(db, "identity", key, "TrackSource")?
+        else {
+            continue;
+        };
+        for track_db_id in lyra_db::graph::inbound_neighbor_ids(db, source_db_id, "Track")? {
+            stale.push((track_db_id, source_db_id));
         }
     }
     detach_stale_sources(db, stale)

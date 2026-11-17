@@ -87,6 +87,11 @@ pub(crate) fn classify_entry_file_kind(entry: &Entry) -> Option<String> {
         .or_else(|| lyra_db::entries::classify_file_kind(&entry.full_path).map(str::to_string))
 }
 
+/// An audio file that reads as audio but carries no tags.
+#[derive(Debug, thiserror::Error)]
+#[error("no tags found in {0}")]
+pub(crate) struct NoTags(String);
+
 pub(crate) fn read_audio_tags(
     path: std::path::PathBuf,
 ) -> anyhow::Result<(Tag, FileProperties, SourceFormat)> {
@@ -99,7 +104,7 @@ pub(crate) fn read_audio_tags(
         .map(Tag::tag_type);
     let mut tag = tag_type
         .and_then(|tag_type| tagged_file.remove(tag_type))
-        .ok_or_else(|| anyhow!("no tags found in {}", path.display()))?;
+        .ok_or_else(|| NoTags(path.display().to_string()))?;
 
     for (key, value) in [
         (ItemKey::Barcode, fallbacks.barcode),
@@ -288,6 +293,14 @@ pub(crate) struct SkipRecord {
 pub(crate) struct ParseMetadataOutput {
     pub(crate) metadata: Vec<TrackMetadata>,
     pub(crate) skipped: Vec<SkipRecord>,
+    /// The audio files that read as no audio at all, whose cue segments the read withholds.
+    pub(crate) unplayable: HashSet<DbId>,
+    /// The cue sheets another one outbid for their audio, with the segments each would have
+    /// yielded, as `(audio, source key)`.
+    pub(crate) outbid: HashMap<DbId, Vec<(DbId, String)>>,
+    /// The cue sheets read in part, with the segments withheld as their audio couldn't be read for
+    /// now, as `(audio, source key)`.
+    pub(crate) partial: HashMap<DbId, Vec<(DbId, String)>>,
 }
 
 pub(crate) fn log_skip_summary(skipped: &[SkipRecord]) {
@@ -371,6 +384,7 @@ pub(crate) async fn parse_metadata(
 
     let mut skipped: Vec<SkipRecord> = Vec::new();
     let mut cue_metadata = Vec::new();
+    let mut outbid = HashMap::new();
     let mut cue_claimed_audio_entries = HashSet::new();
     let mut held_audio_entries = HashSet::new();
     for cue_entry in &cue_entries {
@@ -389,6 +403,13 @@ pub(crate) async fn parse_metadata(
                         path: cue_entry.full_path.clone(),
                         reason: SkipReason::CueAlreadyClaimed,
                     });
+                    if let Some(sheet) = cue_entry.db_id {
+                        let segments = metadata
+                            .into_iter()
+                            .map(|track| (track.entry_db_id, track.source_key))
+                            .collect::<Vec<_>>();
+                        outbid.insert(sheet, segments);
+                    }
                     continue;
                 }
                 cue_metadata.extend(metadata);
@@ -417,6 +438,8 @@ pub(crate) async fn parse_metadata(
     let mut entry_ids_by_path: HashMap<String, VecDeque<(DbId, String, SourceFormat)>> =
         HashMap::new();
     let mut raw_tags = Vec::new();
+    let mut unplayable = HashSet::new();
+    let mut unread = HashSet::new();
 
     for entry in audio_entries {
         let Some(entry_db_id) = entry.db_id else {
@@ -443,9 +466,15 @@ pub(crate) async fn parse_metadata(
                     path = %path.display(),
                     "skipping metadata for file"
                 );
+                let error = ReadError::from(&err);
+                if error.transient {
+                    unread.insert(entry_db_id);
+                } else if err.downcast_ref::<NoTags>().is_none() {
+                    unplayable.insert(entry_db_id);
+                }
                 skipped.push(SkipRecord {
                     path: path.clone(),
-                    reason: SkipReason::ReadFailed((&err).into()),
+                    reason: SkipReason::ReadFailed(error),
                 });
                 continue;
             }
@@ -455,6 +484,7 @@ pub(crate) async fn parse_metadata(
                     path = %path.display(),
                     "metadata task failed"
                 );
+                unread.insert(entry_db_id);
                 skipped.push(SkipRecord {
                     path: path.clone(),
                     reason: SkipReason::TaskFailed(err.to_string()),
@@ -508,6 +538,21 @@ pub(crate) async fn parse_metadata(
         }
     }
 
+    // A file that reads as no audio at all, while it stays so, plays no segment of its sheet. A
+    // segment of audio the read couldn't read for now waits for a read that gives the duration
+    // and format only the audio has, rather than applying without them.
+    let mut partial = HashMap::<DbId, Vec<(DbId, String)>>::new();
+    cue_metadata.retain(|track| {
+        if unread.contains(&track.entry_db_id) {
+            if let Some(sheet) = track.cue_sheet_entry_id {
+                let segment = (track.entry_db_id, track.source_key.clone());
+                partial.entry(sheet).or_default().push(segment);
+            }
+            return false;
+        }
+        !unplayable.contains(&track.entry_db_id)
+    });
+
     // A single embedded tag set on one audio container should not replace
     // per-track cue titles/artists when that container is split into many tracks.
     let mut cue_tracks_per_entry: HashMap<DbId, usize> = HashMap::new();
@@ -553,7 +598,13 @@ pub(crate) async fn parse_metadata(
 
     metadata.extend(cue_metadata);
     sort_track_metadata(&mut metadata);
-    Ok(ParseMetadataOutput { metadata, skipped })
+    Ok(ParseMetadataOutput {
+        metadata,
+        skipped,
+        unplayable,
+        outbid,
+        partial,
+    })
 }
 
 fn skip_required_field_empty(

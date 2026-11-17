@@ -31,7 +31,10 @@ pub(crate) use self::grouping::{
     group_by_source_dir,
     metadata_groups,
 };
-pub(crate) use self::tracks::SourceYields;
+pub(crate) use self::tracks::{
+    SourceYields,
+    prune_sources,
+};
 use self::{
     releases::{
         ReleaseIngestResult,
@@ -378,6 +381,18 @@ mod tests {
     fn fixture_path() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/assets/metadata/integration_track.flac")
+    }
+
+    /// Copies the fixture to `path` without its tags, as audio only a cue sheet describes.
+    fn untagged_audio(path: &Path) -> anyhow::Result<()> {
+        use lofty::prelude::*;
+
+        fs::copy(fixture_path(), path)?;
+        for tag in lofty::read_from_path(path)?.tags() {
+            tag.tag_type()
+                .remove_from_path(path, lofty::config::WriteOptions::default())?;
+        }
+        Ok(())
     }
 
     fn multi_fixture_dir() -> PathBuf {
@@ -2411,7 +2426,7 @@ mod tests {
 
         let audio_path = dir_path.join("album.flac");
         let cue_path = dir_path.join("album.cue");
-        fs::write(&audio_path, b"placeholder-audio")?;
+        untagged_audio(&audio_path)?;
         fs::write(
             &cue_path,
             r#"PERFORMER "Cue Artist"
@@ -2466,7 +2481,8 @@ FILE "album.flac" WAVE
         assert_eq!(track_two_sources.len(), 1);
         assert_eq!(track_two_sources[0].source_kind, "cue");
         assert_eq!(track_two_sources[0].start_ms, Some(120_000));
-        assert_eq!(track_two_sources[0].end_ms, None);
+        // The last segment ends where the audio does.
+        assert_eq!(track_two_sources[0].end_ms, Some(1_000));
 
         let cue_sheets: Vec<lyra_db::CueSheet> =
             roots::members::<lyra_db::CueSheet>(&db, Root::CueSheets)?;
@@ -2517,7 +2533,7 @@ FILE "album.flac" WAVE
         let cue_path = dir_path.join("Cafe\u{301} Album.cue");
 
         for path in [&audio_one, &audio_two, &audio_three, &audio_four] {
-            fs::write(path, b"placeholder-audio")?;
+            untagged_audio(path)?;
         }
 
         let cue_text = "\u{feff}PERFORMER \"Cue Artist\"
