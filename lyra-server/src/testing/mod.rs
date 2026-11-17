@@ -221,7 +221,7 @@ pub async fn prepare_fixture(
     }
     let metadata = coalesced.pop().expect("coalesced release group");
 
-    services::metadata::ingestion::apply_metadata(&mut db, library_db_id, metadata)?;
+    services::metadata::ingestion::apply_whole_read(&mut db, library_db_id, metadata)?;
 
     let mut track_db_ids = BTreeSet::new();
     for &(entry_db_id, _) in path_to_entry.values() {

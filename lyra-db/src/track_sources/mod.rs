@@ -192,7 +192,10 @@ pub fn track_available(db: &impl DbAccess, track_id: DbId) -> anyhow::Result<boo
     Ok(false)
 }
 
-pub fn get_track_id_by_source_key(db: &DbAny, source_key: &str) -> anyhow::Result<Option<DbId>> {
+pub fn get_track_id_by_source_key(
+    db: &impl DbAccess,
+    source_key: &str,
+) -> anyhow::Result<Option<DbId>> {
     let Some(source_id) = find_source_id_by_identity(db, source_key)? else {
         return Ok(None);
     };

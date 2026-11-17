@@ -773,7 +773,7 @@ async fn refresh_gone_covers(db: &DbAsync, library: &Library, library_db_id: DbI
 async fn mark_entries_synced(db: &DbAsync, library_db_id: DbId, entry_ids: &[DbId]) {
     let result = {
         let mut db_write = db.write().await;
-        lyra_db::entries::mark_synced(&mut db_write, entry_ids)
+        db_write.transaction_mut(|t| lyra_db::entries::mark_synced(t, entry_ids))
     };
     if let Err(err) = result {
         tracing::error!(
@@ -1415,7 +1415,6 @@ mod tests {
         Root,
     };
 
-    use crate::services::metadata::TrackMetadata;
     use std::{
         collections::BTreeMap,
         path::{
@@ -1727,6 +1726,10 @@ FILE "album.flac" WAVE
         before_library_covers: Option<Gate<PathBuf>>,
         /// Fails the write unsyncing what the scan's moves leave behind.
         fail_unsync_left_by_moves: bool,
+        /// Cancelled inside a group's write once it applied a batch.
+        cancel_in_write: Option<tokio_util::sync::CancellationToken>,
+        /// Fails a set's write once its batches applied.
+        fail_set_commit: bool,
         planned: std::sync::Mutex<Vec<(Vec<DbId>, Vec<DbId>)>>,
     }
 
@@ -1734,11 +1737,15 @@ FILE "album.flac" WAVE
         static HOOKS: std::sync::Arc<Hooks>;
     }
 
-    pub(super) fn before_apply(metadata: &[TrackMetadata]) -> anyhow::Result<()> {
-        let album = metadata[0].album.clone().unwrap_or_default();
+    /// Runs inside a write once a batch of `album` applied, failing the batch with its error.
+    pub(super) fn after_apply(album: &str) -> anyhow::Result<()> {
+        let album = album.to_string();
         HOOKS
             .try_with(|hooks| {
                 hooks.applied.lock().expect("applied").push(album.clone());
+                if let Some(cancel) = &hooks.cancel_in_write {
+                    cancel.cancel();
+                }
                 if hooks.reject_album == Some(album.as_str()) {
                     return Err(anyhow::anyhow!("'release_title' cannot be empty")
                         .context("invalid 'local' metadata layer"));
@@ -1766,6 +1773,16 @@ FILE "album.flac" WAVE
         if let Some(gate) = gate {
             gate(library_path.to_path_buf()).await;
         }
+    }
+
+    pub(super) fn before_set_commit() -> anyhow::Result<()> {
+        if HOOKS
+            .try_with(|hooks| hooks.fail_set_commit)
+            .unwrap_or(false)
+        {
+            anyhow::bail!("the set's commit fails");
+        }
+        Ok(())
     }
 
     pub(super) fn before_unsync_left_by_moves() -> anyhow::Result<()> {
@@ -3698,6 +3715,117 @@ FILE "album.flac" WAVE
             "the audio replaced its segments while its cue sheet couldn't be read"
         );
         assert!(!synced(&library, &audio_named).await?);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_run_cancelled_inside_the_last_write_commits_nothing_of_it() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cancel-in-write").await?;
+        let audio = album_track(&root.join("Album"), "Album")?;
+
+        let progress = super::super::orchestrator::begin_test_run(&library).await;
+        let hooks = Hooks {
+            cancel_in_write: Some(progress.cancellation().clone()),
+            ..Hooks::default()
+        };
+        let result = sync_with(hooks.into(), &library, progress.clone()).await;
+        super::super::orchestrator::end_test_run(&progress).await;
+        assert!(result.is_err(), "the cancelled run finished");
+        assert!(snapshot(&library).await?[&audio].1.is_empty());
+        assert!(!synced(&library, &audio).await?);
+
+        sync(&library).await?;
+        assert_eq!(snapshot(&library).await?[&audio].1.len(), 1);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_write_failing_as_it_commits_is_a_failed_unit() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("commit-fails").await?;
+        let audio = album_track(&root.join("Album"), "Album")?;
+
+        let progress = super::super::orchestrator::begin_test_run(&library).await;
+        let hooks = Hooks {
+            fail_set_commit: true,
+            ..Hooks::default()
+        };
+        sync_with(hooks.into(), &library, progress.clone()).await?;
+        let run = super::super::orchestrator::get_sync_run(progress.run_id())
+            .await?
+            .expect("run");
+        super::super::orchestrator::end_test_run(&progress).await;
+        assert_eq!(run.progress.failed_units, 1, "the failure went unreported");
+        assert_eq!(run.failure_count, 1);
+        assert!(snapshot(&library).await?[&audio].1.is_empty());
+        assert!(!synced(&library, &audio).await?);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn linked_albums_fail_together_while_an_unlinked_sibling_commits() -> anyhow::Result<()> {
+        const SPLIT: &str = r#"PERFORMER "Cue Artist"
+TITLE "Cue Album"
+FILE "one.flac" WAVE
+  TRACK 01 AUDIO
+    TITLE "Cue Track 1"
+    INDEX 01 00:00:00
+FILE "../Two/two.flac" WAVE
+  TRACK 02 AUDIO
+    TITLE "Cue Track 2"
+    INDEX 01 00:00:00
+"#;
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("linked-albums").await?;
+        let artist = root.join("Artist");
+        let (one, two, other) = (
+            artist.join("One/one.flac"),
+            artist.join("Two/two.flac"),
+            artist.join("Other/03.flac"),
+        );
+        album_file(&one, "One", 1)?;
+        album_file(&two, "Two", 2)?;
+        album_file(&other, "Other", 3)?;
+        let cue = artist.join("One/split.cue");
+        std::fs::write(&cue, SPLIT)?;
+
+        let progress = super::super::orchestrator::begin_test_run(&library).await;
+        let hooks = std::sync::Arc::new(Hooks {
+            reject_album: Some("Two"),
+            ..Hooks::default()
+        });
+        sync_with(hooks.clone(), &library, progress.clone()).await?;
+        let run = super::super::orchestrator::get_sync_run(progress.run_id())
+            .await?
+            .expect("run");
+        super::super::orchestrator::end_test_run(&progress).await;
+        let mut applied = hooks.applied.lock().expect("applied").clone();
+        applied.sort();
+        assert_eq!(applied, ["One", "Other", "Two"]);
+        assert_eq!(run.progress.failed_units, 1);
+        let tracks = snapshot(&library).await?;
+        assert!(
+            tracks[&one].1.is_empty(),
+            "the album linked to the failure committed"
+        );
+        assert!(tracks[&two].1.is_empty());
+        for path in [&one, &two, &cue] {
+            assert!(!synced(&library, path).await?);
+        }
+        assert_eq!(tracks[&other].1.len(), 1, "the unlinked album waited");
+        assert!(synced(&library, &other).await?);
+
+        sync(&library).await?;
+        let tracks = snapshot(&library).await?;
+        assert_eq!((tracks[&one].1.len(), tracks[&two].1.len()), (1, 1));
         let _ = std::fs::remove_dir_all(root);
         Ok(())
     }

@@ -9,7 +9,7 @@ use std::collections::{
 };
 
 use agdb::{
-    DbAny,
+    DbAnyTransactionMut,
     DbId,
 };
 
@@ -41,7 +41,7 @@ impl SourceYields {
 /// track it shares with another file keeps the other's. A source the read yields for another file,
 /// as a cue track pointed at other audio, stays for that file's batch to move, with its track.
 fn prune_stale_track_sources(
-    db: &mut DbAny,
+    db: &mut DbAnyTransactionMut<'_>,
     metadata: &[TrackMetadata],
     yields: &SourceYields,
 ) -> anyhow::Result<()> {
@@ -64,27 +64,27 @@ fn prune_stale_track_sources(
             }
         }
     }
-    if stale.is_empty() {
-        return Ok(());
+    detach_stale_sources(db, stale)
+}
+
+/// Detaches each `(track, source)` pair, then collects the sources, their cue records, and the
+/// tracks left with no file, with their emptied releases.
+fn detach_stale_sources(
+    db: &mut DbAnyTransactionMut<'_>,
+    stale: Vec<(DbId, DbId)>,
+) -> anyhow::Result<()> {
+    let mut left = lyra_db::orphans::Candidates::default();
+    for &(track_db_id, source_db_id) in &stale {
+        remove_edges_between(db, track_db_id, source_db_id)?;
+        left.tracks.push(track_db_id);
+        left.track_sources.push(source_db_id);
     }
-
-    db.transaction_mut(|t| -> anyhow::Result<_> {
-        let mut left = lyra_db::orphans::Candidates::default();
-        for &(track_db_id, source_db_id) in &stale {
-            remove_edges_between(t, track_db_id, source_db_id)?;
-            left.tracks.push(track_db_id);
-            left.track_sources.push(source_db_id);
-        }
-        lyra_db::orphans::collect(t, left)
-    })?;
-    crate::services::covers::discard_listed_cover_files(db);
-
-    Ok(())
+    lyra_db::orphans::collect(db, left)
 }
 
 /// Whether `source_id` is a cue sheet's segment whose cue sheet is missing: the entry no longer
 /// yields it only because the sheet can't be read, so the segment's track stays, unavailable.
-fn cue_sheet_missing(db: &DbAny, source_id: DbId) -> anyhow::Result<bool> {
+fn cue_sheet_missing(db: &impl lyra_db::DbAccess, source_id: DbId) -> anyhow::Result<bool> {
     let Some(cue_entry_id) = lyra_db::track_sources::cue_entry_id(db, source_id)? else {
         return Ok(false);
     };
@@ -92,7 +92,7 @@ fn cue_sheet_missing(db: &DbAny, source_id: DbId) -> anyhow::Result<bool> {
 }
 
 pub(crate) fn build_existing_track_map(
-    db: &mut DbAny,
+    db: &mut DbAnyTransactionMut<'_>,
     metadata: &[TrackMetadata],
     yields: &SourceYields,
 ) -> anyhow::Result<HashMap<String, DbId>> {

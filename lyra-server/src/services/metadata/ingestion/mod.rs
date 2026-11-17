@@ -19,6 +19,7 @@ use std::{
 
 use agdb::{
     DbAny,
+    DbAnyTransactionMut,
     DbId,
 };
 
@@ -117,20 +118,24 @@ pub(crate) fn coalesce_group_tracks(
     )
 }
 
-/// Applies `metadata` as the whole of a read: each file's sources it lacks are dropped.
-pub(crate) fn apply_metadata(
+/// Applies `metadata` as the whole of a read, in a write of its own: every file in it loses the
+/// sources it didn't yield. A scan applies its batches with [`apply_read_batch`] instead.
+pub(crate) fn apply_whole_read(
     db: &mut DbAny,
     library_db_id: DbId,
     metadata: Vec<TrackMetadata>,
 ) -> anyhow::Result<MetadataApplyResult> {
     let yields = SourceYields::of(&metadata);
-    apply_read_batch(db, library_db_id, metadata, &yields)
+    let result = db.transaction_mut(|t| apply_read_batch(t, library_db_id, metadata, &yields))?;
+    crate::services::covers::discard_listed_cover_files(db);
+    Ok(result)
 }
 
-/// Applies `metadata`, one batch of a read that yielded `yields`: each file of the batch loses the
-/// sources the read didn't yield, wherever its batches put the ones it did.
+/// Applies `metadata`, one batch of a read that yielded `yields`, in the caller's write: each file
+/// of the batch loses the sources the read didn't yield, wherever its batches put the ones it did.
+/// The caller discards the cover files the write listed once it commits.
 pub(crate) fn apply_read_batch(
-    db: &mut DbAny,
+    db: &mut DbAnyTransactionMut<'_>,
     library_db_id: DbId,
     metadata: Vec<TrackMetadata>,
     yields: &SourceYields,
@@ -556,7 +561,7 @@ mod tests {
             for metadata in
                 coalesce_group_tracks(&source_dir, &candidate_dirs, parse_output.metadata)
             {
-                apply_metadata(db, library_db_id, metadata)?;
+                apply_whole_read(db, library_db_id, metadata)?;
             }
         }
 
@@ -1053,7 +1058,7 @@ mod tests {
         let entry_db_id = insert_entry(&mut db, "/music/ordered/capsule.flac")?;
         connect(&mut db, library_db_id, entry_db_id)?;
 
-        apply_metadata(
+        apply_whole_read(
             &mut db,
             library_db_id,
             vec![TrackMetadata {
@@ -1115,7 +1120,7 @@ mod tests {
         let entry_db_id = insert_entry(&mut db, "/music/cv/01.flac")?;
         connect(&mut db, library_db_id, entry_db_id)?;
 
-        apply_metadata(
+        apply_whole_read(
             &mut db,
             library_db_id,
             vec![TrackMetadata {
@@ -1249,12 +1254,12 @@ mod tests {
         connect(&mut db, library_db_id, first_entry)?;
         connect(&mut db, library_db_id, second_entry)?;
 
-        apply_metadata(
+        apply_whole_read(
             &mut db,
             library_db_id,
             vec![voiced_track(first_entry, "First Album", "First Actor")],
         )?;
-        apply_metadata(
+        apply_whole_read(
             &mut db,
             library_db_id,
             vec![voiced_track(second_entry, "Second Album", "Second Actor")],
@@ -1326,7 +1331,7 @@ mod tests {
         let entry = insert_entry(&mut db, "/music/album/image.flac")?;
         connect(&mut db, library_id, entry)?;
         let whole = track_metadata(entry.0, "Whole", "Old Artist", None, Some(1), 1);
-        apply_metadata(&mut db, library_id, vec![whole])?;
+        apply_whole_read(&mut db, library_id, vec![whole])?;
         let old_track: DbId = select_tracks(&db)?[0].db_id.clone().unwrap().into();
         let old_release: DbId = select_releases(&db)?[0].db_id.clone().unwrap().into();
         let old_source = lyra_db::graph::neighbor_ids(&db, old_track, "TrackSource")?[0];
@@ -1352,7 +1357,7 @@ mod tests {
             segment.source_key = format!("entry:{}:segment:{number}", entry.0);
             segments.push(segment);
         }
-        apply_metadata(&mut db, library_id, segments)?;
+        apply_whole_read(&mut db, library_id, segments)?;
 
         for id in &old_ids {
             assert_eq!(lyra_db::lookup::find_node_id_by_id(&db, id)?, None);
@@ -1382,16 +1387,16 @@ mod tests {
         connect(&mut db, library_id, first)?;
         connect(&mut db, library_id, copy)?;
         let read = |entry: DbId| track_metadata(entry.0, "Album", "Artist", None, Some(1), 1);
-        apply_metadata(&mut db, library_id, vec![read(first)])?;
+        apply_whole_read(&mut db, library_id, vec![read(first)])?;
         let track: DbId = select_tracks(&db)?[0].db_id.clone().unwrap().into();
         connect_track_to_entry_source(&mut db, track, copy)?;
         let sources = |db: &DbAny| lyra_db::graph::neighbor_ids(db, track, "TrackSource");
         assert_eq!(sources(&db)?.len(), 2);
 
-        apply_metadata(&mut db, library_id, vec![read(first)])?;
+        apply_whole_read(&mut db, library_id, vec![read(first)])?;
         assert_eq!(sources(&db)?.len(), 2, "the copy's source went");
 
-        apply_metadata(&mut db, library_id, vec![read(first), read(copy)])?;
+        apply_whole_read(&mut db, library_id, vec![read(first), read(copy)])?;
         let tracks = select_tracks(&db)?;
         assert_eq!(tracks.len(), 1);
         assert_eq!(DbId::from(tracks[0].db_id.clone().unwrap()), track);
@@ -1415,7 +1420,7 @@ mod tests {
                 segment.source_key = "cue:sheet:track:1".to_string();
                 segment
             };
-            apply_metadata(&mut db, library_id, vec![segment(before)])?;
+            apply_whole_read(&mut db, library_id, vec![segment(before)])?;
             let track: DbId = select_tracks(&db)?[0].db_id.clone().unwrap().into();
 
             // The sheet's track now plays b.flac, and a.flac yields a track of its own, in
@@ -1427,9 +1432,12 @@ mod tests {
             if other_file_first {
                 batches.reverse();
             }
-            for batch in batches {
-                apply_read_batch(&mut db, library_id, batch, &yields)?;
-            }
+            db.transaction_mut(|t| -> anyhow::Result<()> {
+                for batch in batches {
+                    apply_read_batch(t, library_id, batch, &yields)?;
+                }
+                Ok(())
+            })?;
 
             let sources = lyra_db::graph::neighbor_ids(&db, track, "TrackSource")?;
             assert_eq!(sources.len(), 1, "the sheet's track lost its source");
@@ -1462,14 +1470,14 @@ mod tests {
                 number,
             ));
         }
-        apply_metadata(&mut db, library_id, tracks.clone())?;
+        apply_whole_read(&mut db, library_id, tracks.clone())?;
         assert_eq!(select_releases(&db)?.len(), 2);
         collect_unreferenced_artists(&mut db)?;
 
         for track in &mut tracks {
             track.album = Some("Kept".to_string());
         }
-        apply_metadata(&mut db, library_id, tracks)?;
+        apply_whole_read(&mut db, library_id, tracks)?;
 
         let releases = select_releases(&db)?;
         assert_eq!(releases.len(), 1);
@@ -1499,7 +1507,7 @@ mod tests {
             metadata.album_artists = None;
             tracks.push(metadata);
         }
-        apply_metadata(&mut db, library_id, tracks.clone())?;
+        apply_whole_read(&mut db, library_id, tracks.clone())?;
         let release_id: DbId = select_releases(&db)?[0].db_id.clone().unwrap().into();
         let release_artists = |db: &DbAny| -> anyhow::Result<Vec<String>> {
             Ok(lyra_db::artists::get(db, release_id)?
@@ -1509,7 +1517,7 @@ mod tests {
         };
         assert_eq!(release_artists(&db)?, vec!["Main"]);
 
-        apply_metadata(&mut db, library_id, vec![tracks[2].clone()])?;
+        apply_whole_read(&mut db, library_id, vec![tracks[2].clone()])?;
 
         assert_eq!(select_releases(&db)?.len(), 1);
         assert_eq!(
@@ -1539,7 +1547,7 @@ mod tests {
                 number,
             ));
         }
-        apply_metadata(&mut db, library_id, tracks.clone())?;
+        apply_whole_read(&mut db, library_id, tracks.clone())?;
         let release_id: DbId = select_releases(&db)?[0].db_id.clone().unwrap().into();
         let mut track_ids = lyra_db::tracks::get_direct(&db, release_id)?;
         track_ids.sort_by_key(|track| track.track);
@@ -1563,8 +1571,8 @@ mod tests {
             track.album = Some("Urn (Remastered)".to_string());
             track.year = Some(2018);
         }
-        apply_metadata(&mut db, library_id, tracks.clone())?;
-        apply_metadata(&mut db, library_id, vec![tracks[2].clone()])?;
+        apply_whole_read(&mut db, library_id, tracks.clone())?;
+        apply_whole_read(&mut db, library_id, vec![tracks[2].clone()])?;
         collect_unreferenced_artists(&mut db)?;
 
         let releases = select_releases(&db)?;
@@ -1596,7 +1604,7 @@ mod tests {
             }
             tracks.push(metadata);
         }
-        apply_metadata(db, library_id, tracks.clone())?;
+        apply_whole_read(db, library_id, tracks.clone())?;
         Ok((library_id, tracks))
     }
 
@@ -1629,7 +1637,7 @@ mod tests {
         assert_eq!(full.2.len(), 1);
         assert!(full.3.is_some());
 
-        apply_metadata(&mut db, library_id, vec![tracks[1].clone()])?;
+        apply_whole_read(&mut db, library_id, vec![tracks[1].clone()])?;
 
         assert_eq!(select_releases(&db)?.len(), 1);
         assert_eq!(release_scan_fields(&db)?, full);
@@ -1648,7 +1656,7 @@ mod tests {
             track.barcode = None;
         }
 
-        apply_metadata(&mut db, library_id, tracks)?;
+        apply_whole_read(&mut db, library_id, tracks)?;
 
         assert_eq!(
             release_scan_fields(&db)?,
@@ -1687,7 +1695,7 @@ mod tests {
             connect(db, library_id, entry)?;
             let mut track = track_metadata(entry.0, album, artist, None, Some(1), 1);
             track.artist_relations = relations;
-            apply_metadata(db, library_id, vec![track])?;
+            apply_whole_read(db, library_id, vec![track])?;
         }
         Ok(())
     }
@@ -1744,7 +1752,7 @@ mod tests {
             let entry = insert_entry(&mut db, &format!("/music/merged/{number:02}.flac"))?;
             connect(&mut db, library_id, entry)?;
             let metadata = track_metadata(entry.0, album, artist, None, Some(1), 1);
-            apply_metadata(&mut db, library_id, vec![metadata.clone()])?;
+            apply_whole_read(&mut db, library_id, vec![metadata.clone()])?;
             tracks.push(metadata);
         }
         let winner = artist_named(&db, "Mr.Children")?.ok_or_else(|| anyhow!("winner"))?;
@@ -1771,7 +1779,7 @@ mod tests {
             1
         );
 
-        apply_metadata(&mut db, library_id, vec![tracks[1].clone()])?;
+        apply_whole_read(&mut db, library_id, vec![tracks[1].clone()])?;
         collect_unreferenced_artists(&mut db)?;
 
         assert_eq!(artist_named(&db, "Mr Children")?, None);
@@ -1795,7 +1803,7 @@ mod tests {
         {
             let entry = insert_entry(&mut db, &format!("/music/aliases/{number:02}.flac"))?;
             connect(&mut db, library_id, entry)?;
-            apply_metadata(
+            apply_whole_read(
                 &mut db,
                 library_id,
                 vec![track_metadata(
@@ -1843,9 +1851,9 @@ mod tests {
         .map(|(entry, artist, number)| {
             track_metadata(entry.0, "Atomic Heart", artist, None, Some(1), number)
         });
-        apply_metadata(&mut db, library_id, both.to_vec())?;
+        apply_whole_read(&mut db, library_id, both.to_vec())?;
         assert_eq!(local_name(&db)?, Some(Some("Mr Children".into())));
-        apply_metadata(&mut db, library_id, vec![both[1].clone()])?;
+        apply_whole_read(&mut db, library_id, vec![both[1].clone()])?;
         assert_eq!(local_name(&db)?, Some(Some("Mr Children".into())));
         assert_eq!(
             lyra_db::artists::get_by_id(&db, winner)?
@@ -1868,7 +1876,7 @@ mod tests {
         let entry = insert_entry(&mut db, "/music/combined/track.flac")?;
         connect(&mut db, library_id, entry)?;
         let metadata = track_metadata(entry.0, "Combined Album", "imase and なとり", None, None, 1);
-        apply_metadata(&mut db, library_id, vec![metadata.clone()])?;
+        apply_whole_read(&mut db, library_id, vec![metadata.clone()])?;
         let release_id: DbId = select_releases(&db)?[0].db_id.clone().unwrap().into();
         let track_id: DbId = lyra_db::tracks::get(&db, release_id)?[0]
             .db_id
@@ -1916,7 +1924,7 @@ mod tests {
             assert_eq!(artists_of(&db, owner)?, split);
         }
 
-        apply_metadata(&mut db, library_id, vec![metadata])?;
+        apply_whole_read(&mut db, library_id, vec![metadata])?;
         collect_unreferenced_artists(&mut db)?;
         for owner in [release_id, track_id] {
             assert_eq!(artists_of(&db, owner)?, split, "a rescan keeps the split");
@@ -2009,7 +2017,7 @@ mod tests {
         let entry_db_id = insert_entry(&mut db, "/music/audio_props/surround.flac")?;
         connect(&mut db, library_db_id, entry_db_id)?;
 
-        apply_metadata(
+        apply_whole_read(
             &mut db,
             library_db_id,
             vec![track_metadata_with_audio_properties(
@@ -2045,7 +2053,7 @@ mod tests {
         let entry_db_id = insert_entry(&mut db, "/music/lossy/song.mp3")?;
         connect(&mut db, library_db_id, entry_db_id)?;
 
-        apply_metadata(
+        apply_whole_read(
             &mut db,
             library_db_id,
             vec![track_metadata_with_audio_properties(
@@ -2080,7 +2088,7 @@ mod tests {
         let entry_db_id = insert_entry(&mut db, "/music/refresh/track.flac")?;
         connect(&mut db, library_db_id, entry_db_id)?;
 
-        apply_metadata(
+        apply_whole_read(
             &mut db,
             library_db_id,
             vec![track_metadata_with_audio_properties(
@@ -2098,7 +2106,7 @@ mod tests {
             audio_properties(Some(44_100), Some(2), Some(16), Some(900_000))
         );
 
-        apply_metadata(
+        apply_whole_read(
             &mut db,
             library_db_id,
             vec![track_metadata_with_audio_properties(
@@ -2140,7 +2148,7 @@ mod tests {
             )
         };
 
-        apply_metadata(
+        apply_whole_read(
             &mut db,
             library_db_id,
             vec![with_gains(Some(-6.5), Some(-7.25))],
@@ -2151,7 +2159,7 @@ mod tests {
         assert_eq!(tracks[0].track_gain_db, Some(-6.5));
         assert_eq!(tracks[0].album_gain_db, Some(-7.25));
 
-        apply_metadata(&mut db, library_db_id, vec![with_gains(None, None)])?;
+        apply_whole_read(&mut db, library_db_id, vec![with_gains(None, None)])?;
         let tracks = lyra_db::tracks::get(&db, release_db_id)?;
         assert_eq!(tracks[0].track_gain_db, None);
         assert_eq!(tracks[0].album_gain_db, None);
@@ -2211,7 +2219,7 @@ mod tests {
                 album_gain_db: None,
             };
 
-        apply_metadata(
+        apply_whole_read(
             &mut db,
             library_db_id,
             vec![
@@ -2290,7 +2298,7 @@ mod tests {
             album_gain_db: None,
         };
 
-        apply_metadata(
+        apply_whole_read(
             &mut db,
             library_db_id,
             vec![
@@ -2368,7 +2376,7 @@ mod tests {
                 album_gain_db: None,
             };
 
-        apply_metadata(
+        apply_whole_read(
             &mut db,
             library_db_id,
             vec![
@@ -2680,7 +2688,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             },
         ];
 
-        apply_metadata(&mut db, library_db_id, metadata)?;
+        apply_whole_read(&mut db, library_db_id, metadata)?;
 
         let releases = select_releases(&db)?;
         assert_eq!(releases.len(), 1);
@@ -2783,7 +2791,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             },
         ];
 
-        apply_metadata(&mut db, library_db_id, metadata)?;
+        apply_whole_read(&mut db, library_db_id, metadata)?;
 
         let releases = select_releases(&db)?;
         assert_eq!(releases.len(), 1);
@@ -2886,7 +2894,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 album_gain_db: None,
             },
         ];
-        apply_metadata(&mut db, library_db_id, first_scan)?;
+        apply_whole_read(&mut db, library_db_id, first_scan)?;
 
         let second_scan = vec![
             TrackMetadata {
@@ -2956,7 +2964,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 album_gain_db: None,
             },
         ];
-        apply_metadata(&mut db, library_db_id, second_scan)?;
+        apply_whole_read(&mut db, library_db_id, second_scan)?;
 
         let releases = select_releases(&db)?;
         assert_eq!(releases.len(), 1);
@@ -3208,7 +3216,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             track_gain_db: None,
             album_gain_db: None,
         };
-        apply_metadata(&mut db, library_db_id, vec![first_scan])?;
+        apply_whole_read(&mut db, library_db_id, vec![first_scan])?;
 
         let release = select_releases(&db)?
             .into_iter()
@@ -3324,7 +3332,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             track_gain_db: None,
             album_gain_db: None,
         };
-        apply_metadata(&mut db, library_db_id, vec![second_scan])?;
+        apply_whole_read(&mut db, library_db_id, vec![second_scan])?;
 
         let track_after_rescan = lyra_db::tracks::get_by_id(&db, track_db_id)?
             .ok_or_else(|| anyhow!("track missing"))?;
@@ -3392,7 +3400,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             track_gain_db: None,
             album_gain_db: None,
         };
-        apply_metadata(&mut db, library_db_id, vec![tagged])?;
+        apply_whole_read(&mut db, library_db_id, vec![tagged])?;
 
         let release = select_releases(&db)?
             .into_iter()
@@ -3452,7 +3460,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             track_gain_db: None,
             album_gain_db: None,
         };
-        apply_metadata(&mut db, library_db_id, vec![stripped])?;
+        apply_whole_read(&mut db, library_db_id, vec![stripped])?;
 
         let track_after = lyra_db::tracks::get_by_id(&db, track_db_id)?
             .ok_or_else(|| anyhow!("track missing"))?;
@@ -3525,7 +3533,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             track_gain_db: None,
             album_gain_db: None,
         };
-        apply_metadata(&mut db, library_db_id, vec![first_scan])?;
+        apply_whole_read(&mut db, library_db_id, vec![first_scan])?;
 
         let release = select_releases(&db)?
             .into_iter()
@@ -3605,7 +3613,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             track_gain_db: None,
             album_gain_db: None,
         };
-        apply_metadata(&mut db, library_db_id, vec![second_scan])?;
+        apply_whole_read(&mut db, library_db_id, vec![second_scan])?;
 
         let after_rescan = lyra_db::labels::get_for_release(&db, release_db_id)?;
         assert_eq!(after_rescan.len(), 1);
@@ -3680,7 +3688,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         let mut db = new_test_db()?;
         let (library_db_id, entry_db_id) = single_file_library(&mut db, "/music/Album/01.flac")?;
 
-        apply_metadata(&mut db, library_db_id, vec![tagged_track(entry_db_id)])?;
+        apply_whole_read(&mut db, library_db_id, vec![tagged_track(entry_db_id)])?;
 
         let release_db_id = only_release(&db)?;
         let release = lyra_db::releases::get_by_id(&db, release_db_id)?
@@ -3723,7 +3731,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
     fn disabling_a_provider_restores_the_local_value() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let (library_db_id, entry_db_id) = single_file_library(&mut db, "/music/Album/01.flac")?;
-        apply_metadata(&mut db, library_db_id, vec![tagged_track(entry_db_id)])?;
+        apply_whole_read(&mut db, library_db_id, vec![tagged_track(entry_db_id)])?;
 
         let release_db_id = only_release(&db)?;
         let track_db_id = only_track(&db, release_db_id)?;
@@ -3761,7 +3769,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
     fn rescanning_an_unchanged_file_rewrites_nothing() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let (library_db_id, entry_db_id) = single_file_library(&mut db, "/music/Album/01.flac")?;
-        apply_metadata(&mut db, library_db_id, vec![tagged_track(entry_db_id)])?;
+        apply_whole_read(&mut db, library_db_id, vec![tagged_track(entry_db_id)])?;
 
         let release_db_id = only_release(&db)?;
         let track_db_id = only_track(&db, release_db_id)?;
@@ -3770,7 +3778,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         let track_before =
             lyra_db::tracks::get_by_id(&db, track_db_id)?.ok_or_else(|| anyhow!("t"))?;
 
-        apply_metadata(&mut db, library_db_id, vec![tagged_track(entry_db_id)])?;
+        apply_whole_read(&mut db, library_db_id, vec![tagged_track(entry_db_id)])?;
 
         let release_layer_after = local_layer(&db, release_db_id)?;
         let track_layer_after = local_layer(&db, track_db_id)?;
@@ -3805,7 +3813,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
     fn a_manual_edit_survives_a_rescan() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let (library_db_id, entry_db_id) = single_file_library(&mut db, "/music/Album/01.flac")?;
-        apply_metadata(&mut db, library_db_id, vec![tagged_track(entry_db_id)])?;
+        apply_whole_read(&mut db, library_db_id, vec![tagged_track(entry_db_id)])?;
 
         let release_db_id = only_release(&db)?;
         let track_db_id = only_track(&db, release_db_id)?;
@@ -3816,7 +3824,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         )?;
         crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track_db_id)?;
 
-        apply_metadata(&mut db, library_db_id, vec![tagged_track(entry_db_id)])?;
+        apply_whole_read(&mut db, library_db_id, vec![tagged_track(entry_db_id)])?;
 
         let track =
             lyra_db::tracks::get_by_id(&db, track_db_id)?.ok_or_else(|| anyhow!("track"))?;
@@ -3828,7 +3836,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
     fn dropping_a_manual_edit_falls_back_to_the_local_layer() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let (library_db_id, entry_db_id) = single_file_library(&mut db, "/music/Album/01.flac")?;
-        apply_metadata(&mut db, library_db_id, vec![tagged_track(entry_db_id)])?;
+        apply_whole_read(&mut db, library_db_id, vec![tagged_track(entry_db_id)])?;
 
         let release_db_id = only_release(&db)?;
         let track_db_id = only_track(&db, release_db_id)?;
@@ -3881,7 +3889,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         let disc_two_entry = insert_entry(&mut db, "/music/Album/disc2/01.flac")?;
         connect(&mut db, library_db_id, disc_two_entry)?;
 
-        apply_metadata(
+        apply_whole_read(
             &mut db,
             library_db_id,
             vec![
@@ -3896,7 +3904,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 .all(|track| track.disc_total == Some(2))
         );
 
-        apply_metadata(
+        apply_whole_read(
             &mut db,
             library_db_id,
             vec![track_metadata(
@@ -3966,7 +3974,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             track_gain_db: None,
             album_gain_db: None,
         };
-        apply_metadata(&mut db, library_db_id, vec![scan])?;
+        apply_whole_read(&mut db, library_db_id, vec![scan])?;
 
         let release = select_releases(&db)?
             .into_iter()
@@ -4047,7 +4055,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             ));
         }
 
-        let first = apply_metadata(&mut db, library_db_id, metadata.clone())?;
+        let first = apply_whole_read(&mut db, library_db_id, metadata.clone())?;
         let release_db_id = first.releases[0];
         let playlist_db_id = playlist_with_tracks(&mut db, "unchanged-covers", &first.tracks)?;
         insert_release_cover(&mut db, release_db_id, "unchanged-cover")?;
@@ -4058,7 +4066,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         );
 
         lyra_db::covers::display::reset_playlist_cover_sync_count();
-        let second = apply_metadata(&mut db, library_db_id, metadata)?;
+        let second = apply_whole_read(&mut db, library_db_id, metadata)?;
 
         assert_eq!(second.releases, vec![release_db_id]);
         assert_eq!(
@@ -4099,7 +4107,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 track_number,
             ));
         }
-        let target = apply_metadata(&mut db, library_db_id, target_metadata.clone())?;
+        let target = apply_whole_read(&mut db, library_db_id, target_metadata.clone())?;
         let target_release_db_id = target.releases[0];
 
         let mut moved_metadata = Vec::new();
@@ -4116,7 +4124,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 track_number,
             ));
         }
-        let source = apply_metadata(&mut db, library_db_id, moved_metadata.clone())?;
+        let source = apply_whole_read(&mut db, library_db_id, moved_metadata.clone())?;
         let source_release_db_id = source.releases[0];
         let playlist_db_id = playlist_with_tracks(&mut db, "moved-covers", &source.tracks)?;
         insert_release_cover(&mut db, source_release_db_id, "source-cover")?;
@@ -4134,7 +4142,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         target_metadata.extend(moved_metadata);
 
         lyra_db::covers::display::reset_playlist_cover_sync_count();
-        let result = apply_metadata(&mut db, library_db_id, target_metadata)?;
+        let result = apply_whole_read(&mut db, library_db_id, target_metadata)?;
 
         assert_eq!(result.releases, vec![target_release_db_id]);
         assert_eq!(

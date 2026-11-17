@@ -783,7 +783,7 @@ pub fn remove_missing(
     Ok(removed.len())
 }
 
-pub fn mark_synced(db: &mut DbAny, entry_ids: &[DbId]) -> anyhow::Result<()> {
+pub fn mark_synced(db: &mut impl super::DbAccess, entry_ids: &[DbId]) -> anyhow::Result<()> {
     if entry_ids.is_empty() {
         return Ok(());
     }

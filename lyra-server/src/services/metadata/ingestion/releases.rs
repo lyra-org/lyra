@@ -14,7 +14,6 @@ use std::time::{
 };
 
 use agdb::{
-    DbAny,
     DbAnyTransactionMut,
     DbId,
     QueryBuilder,
@@ -330,15 +329,6 @@ fn release_date_from_track(track: &TrackMetadata) -> Option<String> {
 }
 
 pub(crate) fn persist_release(
-    db: &mut DbAny,
-    library_db_id: DbId,
-    release_title: &str,
-    release_tracks: Vec<TrackIngest>,
-) -> anyhow::Result<ReleaseIngestResult> {
-    db.transaction_mut(|t| persist_release_inner(t, library_db_id, release_title, release_tracks))
-}
-
-fn persist_release_inner(
     db: &mut DbAnyTransactionMut<'_>,
     library_db_id: DbId,
     release_title: &str,
@@ -718,7 +708,6 @@ fn persist_release_inner(
 
     // A release the batch took the last track of goes with this write.
     lyra_db::orphans::collect(db, left)?;
-    crate::services::covers::discard_listed_cover_files(db);
 
     Ok(ReleaseIngestResult {
         release_db_id,
