@@ -1874,7 +1874,7 @@ function helpers.prefetch_track_stats_and_media(
 		context.position_lookup = positions
 	end
 
-	local sources = playback_sources.get_many(seed.track_ids, { include_entry = options.include_media_info == true })
+	local sources = playback_sources.get(seed.track_ids, { include_entry = options.include_media_info == true })
 	if type(sources) == "table" then
 		context.playback_source_by_track_id = sources
 		context.has_source_prefetch = true

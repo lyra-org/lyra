@@ -17,7 +17,7 @@ playback.resolve_playback_source_for_track = function(song: any, include_entry: 
 	end
 	local described_source = table.clone(source)
 	described_source.sample_rate_hz = audio.sample_rate_hz
-	described_source.channel_count = audio.channel_count
+	described_source.channels = audio.channels
 	described_source.bit_depth = audio.bit_depth
 	described_source.bitrate_bps = audio.bitrate_bps
 	return described_source
@@ -27,7 +27,7 @@ local function described(properties: any): any
 	audio_by_song[copy] = properties
 	return copy
 end
-local surround = described({ channel_count = 6, sample_rate_hz = 48000, bitrate_bps = 320000 })
+local surround = described({ channels = 6, sample_rate_hz = 48000, bitrate_bps = 320000 })
 -- Upstream's profiles cap direct play at 8 Mbps unless they say otherwise, and count a source of
 -- unknown bitrate as 40 Mbps, so most tests play the song at a known bitrate.
 local known = described({ bitrate_bps = 96000 })
@@ -175,7 +175,7 @@ contains(downmixed.TranscodingUrl, "TranscodingMaxAudioChannels=6")
 local downmixed_tail = "&audiochannels=2&TranscodeReasons=AudioChannelsNotSupported"
 assert(string.sub(downmixed.TranscodingUrl, -#downmixed_tail) == downmixed_tail, downmixed.TranscodingUrl)
 assert(
-	limited({ audio_profile({ stereo }) }, described({ channel_count = 2, bitrate_bps = 96000 })).SupportsDirectPlay,
+	limited({ audio_profile({ stereo }) }, described({ channels = 2, bitrate_bps = 96000 })).SupportsDirectPlay,
 	"stereo plays"
 )
 assert(limited({ audio_profile({ stereo }, { Codec = "flac" }) }).SupportsDirectPlay, "a profile for another codec")
@@ -192,7 +192,7 @@ local at_most_cd = { Condition = "LessThanEqual", Property = "AudioSampleRate", 
 local resampled = limited({ audio_profile({ at_most_cd }, { ApplyConditions = { hires } }) })
 assert(not resampled.SupportsDirectPlay, "48 kHz exceeds 44.1 kHz")
 contains(resampled.TranscodingUrl, "&AudioBitrate=192000&AudioSampleRate=44100&")
-local cd = described({ channel_count = 6, sample_rate_hz = 44100, bitrate_bps = 320000 })
+local cd = described({ channels = 6, sample_rate_hz = 44100, bitrate_bps = 320000 })
 assert(limited({ audio_profile({ stereo }, { ApplyConditions = { hires } }) }, cd).SupportsDirectPlay, "not hi-res")
 
 -- An unknown value fails only a required condition, which conditions are unless they say not.

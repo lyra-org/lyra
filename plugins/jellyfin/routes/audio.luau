@@ -286,7 +286,7 @@ function module.handle_universal_route(ctx: ApiContext): ApiResponse
 	local track_id = track.id
 
 	local source = media.resolve_playback_source_for_track(track)
-	local source_channels = if source then source.channel_count else nil
+	local source_channels = if source then source.channels else nil
 	-- As upstream, only the maximum streaming bitrate, or its profile's 8 Mbps default, limits direct
 	-- play; the audio bitrate only sets the encode's.
 	local media_source = playback.build_audio_media_source(track.id, track, false)
@@ -458,7 +458,7 @@ function module.handle_stream_route(ctx: ApiContext): ApiResponse
 		or { infer_audio_codec(container) }
 	container = container or CONTAINER_BY_AUDIO_CODEC[codecs[1]]
 	local source = media.resolve_public_playback_source(track)
-	local source_channels = if source then source.channel_count else nil
+	local source_channels = if source then source.channels else nil
 	local settings = encoder.settings(query, channel_request, codecs, bitrate_bps, source_channels, false)
 	local format, delivered_codecs, refused = delivery_request(container, codecs)
 	if refused then
@@ -560,7 +560,7 @@ local function resolve_audio_hls_query_options(
 		return nil, nil, responses.bad_request(`StartTimeTicks {start_ticks_err}`)
 	end
 	local source = media.resolve_playback_source_for_track(track)
-	local source_channels = if source then source.channel_count else nil
+	local source_channels = if source then source.channels else nil
 	local settings = encoder.settings(
 		query,
 		channel_request,

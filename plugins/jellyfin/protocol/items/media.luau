@@ -106,7 +106,7 @@ end
 -- file can't be handed over as the track, and its size isn't the track's, so clients are told to
 -- transcode, as upstream tells them for a source it can't direct play.
 function module.is_trimmed(source: PlaybackSourceInfo?): boolean
-	return source ~= nil and source.is_virtual
+	return source ~= nil and (source.start_ms ~= nil or source.end_ms ~= nil)
 end
 
 function module.jellyfin_codec(source: PlaybackSourceInfo?): string?
@@ -134,7 +134,7 @@ function module.build_media_info(
 		Codec = codec,
 		Type = "Audio",
 		Index = 0,
-		Channels = if source then source.channel_count else nil,
+		Channels = if source then source.channels else nil,
 		SampleRate = if source then source.sample_rate_hz else nil,
 		BitDepth = if source then source.bit_depth else nil,
 		IsDefault = true,
@@ -216,17 +216,11 @@ function module.resolve_playback_source_for_track(track: { id: string }?, includ
 		return nil
 	end
 
-	local ok, source_items = pcall(playback_sources.get, track.id, { include_entry = include_entry == true })
-	if not ok or type(source_items) ~= "table" then
+	local ok, sources = pcall(playback_sources.get, { track.id }, { include_entry = include_entry == true })
+	if not ok then
 		return nil
 	end
-	for _, source in source_items do
-		if source and type(source) == "table" then
-			return source
-		end
-	end
-
-	return nil
+	return sources[track.id]
 end
 
 -- Reads as the system for public streaming routes, which must serve nothing from it but the audio.
@@ -235,11 +229,11 @@ function module.resolve_public_playback_source(track: { id: string }?, include_e
 		return nil
 	end
 
-	local ok, source = pcall(playback_sources.streamable, track.id, { include_entry = include_entry == true })
-	if not ok or type(source) ~= "table" then
+	local ok, sources = pcall(playback_sources.streamable, { track.id }, { include_entry = include_entry == true })
+	if not ok then
 		return nil
 	end
-	return source
+	return sources[track.id]
 end
 
 return module
