@@ -20,7 +20,6 @@ type CodecProfile = client_info.CodecProfile
 type DeliveryDescription = playback_sources.DeliveryDescription
 type DirectPlayProfile = client_info.DirectPlayProfile
 type Limitation = client_info.Limitation
-type PlaybackSourceInfo = playback_sources.PlaybackSourceInfo
 type Request = request.Request
 type SourceDescription = playback_sources.SourceDescription
 type TrackStreamOptions = api.TrackStreamOptions
@@ -565,18 +564,6 @@ local PODCAST = "podcast"
 
 local NOT_STREAMABLE = "The song can't be streamed"
 
--- A playback source as `decide` describes one.
-local function described(source: PlaybackSourceInfo): SourceDescription
-	return {
-		container = source.container,
-		codec = source.codec,
-		bitrate_bps = source.bitrate_bps,
-		sample_rate_hz = source.sample_rate_hz,
-		channels = source.channel_count,
-		bit_depth = source.bit_depth,
-	}
-end
-
 -- The track's source, and how Lyra sends it as it is; nil without a source, and without a
 -- delivery when Lyra can't send the source as it is.
 local function source_of(track_id: string): (SourceDescription?, DeliveryDescription?)
@@ -584,8 +571,7 @@ local function source_of(track_id: string): (SourceDescription?, DeliveryDescrip
 	if direct then
 		return direct.source, direct
 	end
-	local source = playback_sources.get_many({ track_id })[track_id]
-	return if source then described(source) else nil, nil
+	return playback_sources.get({ track_id })[track_id], nil
 end
 
 local function decision_for(track_id: string, info: ClientInfo): { [string]: any }
@@ -683,7 +669,8 @@ module.methods = {
 		if not transcode_params then
 			return response.http_error(400, "Required parameter is missing: transcodeParams")
 		end
-		local source = playback_sources.get_many({ id :: string })[id :: string]
+		-- The source the decision described, so its parameters fit.
+		local source = source_of(id :: string)
 		if not source then
 			return response.http_error(404, NOT_STREAMABLE)
 		end
@@ -694,7 +681,7 @@ module.methods = {
 			return response.http_error(400, `Invalid offset: {raw_offset}`)
 		end
 
-		local options = parse_params(transcode_params, described(source))
+		local options = parse_params(transcode_params, source)
 		if options == false then
 			return response.http_error(410, "transcodeParams no longer fit the song; ask getTranscodeDecision again")
 		end

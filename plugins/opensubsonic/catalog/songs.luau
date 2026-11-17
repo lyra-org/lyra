@@ -112,7 +112,7 @@ function module.list(track_list: { Track }, saved_bookmarks: { [string]: bookmar
 	local release_projections = credits.projections(release_ids, { "credits" })
 	local genres_by_release = if #release_ids > 0 then genres.by_release(release_ids) else {}
 
-	local sources = playback_sources.get_many(ids, { include_entry = true })
+	local sources = playback_sources.get(ids, { include_entry = true })
 	local relative_files: { EntryInfo } = {}
 	for _, source in sources do
 		if source.entry and source.entry.full_path == nil then
@@ -170,7 +170,7 @@ function module.list(track_list: { Track }, saved_bookmarks: { [string]: bookmar
 			bitRate = if bitrate_bps then math.floor(bitrate_bps / 1000 + 0.5) else nil,
 			bitDepth = if source then source.bit_depth or 0 else 0,
 			samplingRate = if source then source.sample_rate_hz or 0 else 0,
-			channelCount = if source then source.channel_count or 0 else 0,
+			channelCount = if source then source.channels or 0 else 0,
 			path = if entry then entry.full_path or relative_paths[entry.id] else nil,
 			isVideo = false,
 			userRating = user_ratings[id],
