@@ -30,6 +30,7 @@ pub(crate) use self::grouping::{
     group_by_source_dir,
     metadata_groups,
 };
+pub(crate) use self::tracks::SourceYields;
 use self::{
     releases::{
         ReleaseIngestResult,
@@ -116,16 +117,29 @@ pub(crate) fn coalesce_group_tracks(
     )
 }
 
+/// Applies `metadata` as the whole of a read: each file's sources it lacks are dropped.
 pub(crate) fn apply_metadata(
     db: &mut DbAny,
     library_db_id: DbId,
     metadata: Vec<TrackMetadata>,
 ) -> anyhow::Result<MetadataApplyResult> {
+    let yields = SourceYields::of(&metadata);
+    apply_read_batch(db, library_db_id, metadata, &yields)
+}
+
+/// Applies `metadata`, one batch of a read that yielded `yields`: each file of the batch loses the
+/// sources the read didn't yield, wherever its batches put the ones it did.
+pub(crate) fn apply_read_batch(
+    db: &mut DbAny,
+    library_db_id: DbId,
+    metadata: Vec<TrackMetadata>,
+    yields: &SourceYields,
+) -> anyhow::Result<MetadataApplyResult> {
     if metadata.is_empty() {
         return Ok(MetadataApplyResult::default());
     }
 
-    let existing_tracks = build_existing_track_map(db, &metadata)?;
+    let existing_tracks = build_existing_track_map(db, &metadata, yields)?;
 
     let mut current_release = None;
     let mut release_tracks: Vec<TrackIngest> = Vec::new();
@@ -1355,6 +1369,78 @@ mod tests {
         collect_unreferenced_artists(&mut db)?;
         assert_eq!(artist_names(&db)?, ["New Artist"]);
         lyra_db::orphans::testing::assert_drained(&db)
+    }
+
+    #[test]
+    fn a_file_read_again_leaves_the_source_another_file_gives_its_track() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let library =
+            test_db::insert_test_library_node(&mut db, "Album", PathBuf::from("/music/album"))?;
+        let library_id = library.db_id.unwrap();
+        let first = insert_entry(&mut db, "/music/album/01.flac")?;
+        let copy = insert_entry(&mut db, "/music/album/copy.flac")?;
+        connect(&mut db, library_id, first)?;
+        connect(&mut db, library_id, copy)?;
+        let read = |entry: DbId| track_metadata(entry.0, "Album", "Artist", None, Some(1), 1);
+        apply_metadata(&mut db, library_id, vec![read(first)])?;
+        let track: DbId = select_tracks(&db)?[0].db_id.clone().unwrap().into();
+        connect_track_to_entry_source(&mut db, track, copy)?;
+        let sources = |db: &DbAny| lyra_db::graph::neighbor_ids(db, track, "TrackSource");
+        assert_eq!(sources(&db)?.len(), 2);
+
+        apply_metadata(&mut db, library_id, vec![read(first)])?;
+        assert_eq!(sources(&db)?.len(), 2, "the copy's source went");
+
+        apply_metadata(&mut db, library_id, vec![read(first), read(copy)])?;
+        let tracks = select_tracks(&db)?;
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(DbId::from(tracks[0].db_id.clone().unwrap()), track);
+        assert_eq!(sources(&db)?.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn a_source_a_read_yields_for_another_file_moves_with_its_track() -> anyhow::Result<()> {
+        for other_file_first in [false, true] {
+            let mut db = new_test_db()?;
+            let library =
+                test_db::insert_test_library_node(&mut db, "Album", PathBuf::from("/music/album"))?;
+            let library_id = library.db_id.unwrap();
+            let before = insert_entry(&mut db, "/music/album/a.flac")?;
+            let after = insert_entry(&mut db, "/music/album/b.flac")?;
+            connect(&mut db, library_id, before)?;
+            connect(&mut db, library_id, after)?;
+            let segment = |entry: DbId| {
+                let mut segment = track_metadata(entry.0, "Split", "Artist", None, Some(1), 1);
+                segment.source_key = "cue:sheet:track:1".to_string();
+                segment
+            };
+            apply_metadata(&mut db, library_id, vec![segment(before)])?;
+            let track: DbId = select_tracks(&db)?[0].db_id.clone().unwrap().into();
+
+            // The sheet's track now plays b.flac, and a.flac yields a track of its own, in
+            // batches of one read applied in either order.
+            let own = track_metadata(before.0, "Own", "Artist", None, Some(1), 1);
+            let moved = segment(after);
+            let yields = SourceYields::of(&[own.clone(), moved.clone()]);
+            let mut batches = vec![vec![moved], vec![own]];
+            if other_file_first {
+                batches.reverse();
+            }
+            for batch in batches {
+                apply_read_batch(&mut db, library_id, batch, &yields)?;
+            }
+
+            let sources = lyra_db::graph::neighbor_ids(&db, track, "TrackSource")?;
+            assert_eq!(sources.len(), 1, "the sheet's track lost its source");
+            assert_eq!(
+                lyra_db::graph::neighbor_ids(&db, sources[0], "Entry")?,
+                vec![after]
+            );
+            assert_eq!(select_tracks(&db)?.len(), 2);
+            assert_eq!(lyra_db::tracks::get_by_entry(&db, before)?.len(), 1);
+        }
+        Ok(())
     }
 
     #[test]

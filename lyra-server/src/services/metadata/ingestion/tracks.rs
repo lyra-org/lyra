@@ -16,35 +16,50 @@ use agdb::{
 use super::super::TrackMetadata;
 use lyra_db::graph::remove_edges_between;
 
-/// Detaches the sources the entries no longer yield from their tracks, then collects what that
-/// leaves: the sources, their cue records, and the tracks left with no file, with their emptied
-/// releases.
-fn prune_stale_track_sources(db: &mut DbAny, metadata: &[TrackMetadata]) -> anyhow::Result<()> {
-    let mut expected_by_entry: HashMap<DbId, HashSet<String>> = HashMap::new();
-    for meta in metadata {
-        expected_by_entry
-            .entry(meta.entry_db_id)
-            .or_default()
-            .insert(meta.source_key.clone());
+/// The source keys a read yielded.
+#[derive(Debug, Default)]
+pub(crate) struct SourceYields(HashSet<String>);
+
+impl SourceYields {
+    pub(crate) fn of(metadata: &[TrackMetadata]) -> Self {
+        Self(
+            metadata
+                .iter()
+                .map(|meta| meta.source_key.clone())
+                .collect(),
+        )
     }
 
+    fn yielded(&self, source_key: &str) -> bool {
+        self.0.contains(source_key)
+    }
+}
+
+/// Detaches from their tracks the sources of the files in `metadata` that their read didn't
+/// yield, then collects what that leaves: the sources, their cue records, and the tracks left
+/// with no file, with their emptied releases. Only a file's own sources go, those playing it: a
+/// track it shares with another file keeps the other's. A source the read yields for another file,
+/// as a cue track pointed at other audio, stays for that file's batch to move, with its track.
+fn prune_stale_track_sources(
+    db: &mut DbAny,
+    metadata: &[TrackMetadata],
+    yields: &SourceYields,
+) -> anyhow::Result<()> {
+    let entries = metadata
+        .iter()
+        .map(|meta| meta.entry_db_id)
+        .collect::<HashSet<_>>();
+
     let mut stale = Vec::new();
-    for (entry_db_id, expected_source_keys) in expected_by_entry {
-        let tracks = lyra_db::tracks::get_by_entry(db, entry_db_id)?;
-        for track in tracks {
-            let Some(track_db_id) = track.db_id.map(Into::into) else {
+    for entry_db_id in entries {
+        for source_db_id in lyra_db::graph::inbound_neighbor_ids(db, entry_db_id, "TrackSource")? {
+            let Some(source) = lyra_db::track_sources::get_by_id(db, source_db_id)? else {
                 continue;
             };
-            let sources = lyra_db::track_sources::get_by_track(db, track_db_id)?;
-            for source in sources {
-                let Some(source_db_id) = source.db_id else {
-                    continue;
-                };
-                if expected_source_keys.contains(&source.identity)
-                    || cue_sheet_missing(db, source_db_id)?
-                {
-                    continue;
-                }
+            if yields.yielded(&source.identity) || cue_sheet_missing(db, source_db_id)? {
+                continue;
+            }
+            for track_db_id in lyra_db::graph::inbound_neighbor_ids(db, source_db_id, "Track")? {
                 stale.push((track_db_id, source_db_id));
             }
         }
@@ -79,8 +94,9 @@ fn cue_sheet_missing(db: &DbAny, source_id: DbId) -> anyhow::Result<bool> {
 pub(crate) fn build_existing_track_map(
     db: &mut DbAny,
     metadata: &[TrackMetadata],
+    yields: &SourceYields,
 ) -> anyhow::Result<HashMap<String, DbId>> {
-    prune_stale_track_sources(db, metadata)?;
+    prune_stale_track_sources(db, metadata, yields)?;
 
     let mut track_ids = HashMap::new();
 

@@ -41,7 +41,8 @@ use crate::services::metadata::{
     ingestion::{
         MetadataApplyResult,
         MetadataGroup,
-        apply_metadata,
+        SourceYields,
+        apply_read_batch,
         coalesce_group_tracks,
     },
     log_skip_summary,
@@ -144,6 +145,7 @@ pub(super) async fn process_album_group(
     }
 
     let unsynced_entries = group_unsynced.into_values().collect::<HashSet<_>>();
+    let yields = SourceYields::of(&metadata);
     let batches = coalesce_group_tracks(&source_dir, &candidate_dirs, metadata)
         .into_iter()
         .filter(|metadata| {
@@ -172,6 +174,7 @@ pub(super) async fn process_album_group(
             library_db_id,
             batch_source_dir,
             metadata,
+            &yields,
             progress.clone(),
         )
         .await;
@@ -198,6 +201,7 @@ async fn apply_metadata_batch(
     library_db_id: DbId,
     source_dir: Option<PathBuf>,
     metadata: Vec<TrackMetadata>,
+    yields: &SourceYields,
     progress: SyncRunProgress,
 ) -> anyhow::Result<MetadataApplyResult> {
     let run_id = progress.run_id().to_string();
@@ -225,7 +229,7 @@ async fn apply_metadata_batch(
         #[cfg(test)]
         super::tests::before_apply(&metadata)?;
         let mut db_write = db.write().await;
-        apply_metadata(&mut db_write, library_db_id, metadata)
+        apply_read_batch(&mut db_write, library_db_id, metadata, yields)
     }
     .await;
     let apply_result = match apply_write_result {
