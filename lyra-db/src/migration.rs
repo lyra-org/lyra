@@ -35,6 +35,7 @@ use super::bootstrap::{
 
 mod listen_totals;
 mod reported_session_key;
+mod track_source_key;
 mod unreferenced;
 
 /// The release before this version; its databases run every step in `STEPS`.
@@ -48,6 +49,7 @@ pub(crate) const STEPS: &[Step] = &[
     reported_session_key::run,
     listen_totals::run,
     unreferenced::run,
+    track_source_key::run,
 ];
 
 const STAMP_ALIAS: &str = "server";

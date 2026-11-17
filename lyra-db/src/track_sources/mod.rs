@@ -33,7 +33,6 @@ pub struct TrackSource {
     pub db_id: Option<DbId>,
     pub id: String,
     pub source_kind: String,
-    pub source_key: String,
     pub identity: String,
     pub is_primary: bool,
     pub start_ms: Option<u64>,
@@ -230,7 +229,6 @@ pub fn upsert(
         db_id: existing_id,
         id: nanoid(),
         source_kind: source.source_kind,
-        source_key: source.source_key.clone(),
         identity: source.source_key,
         is_primary: source.is_primary,
         start_ms: source.start_ms,
@@ -545,7 +543,7 @@ mod tests {
 
         let sources = get_by_track(&db, track_db_id)?;
         assert_eq!(sources.len(), 1);
-        assert_eq!(sources[0].source_key, "key1");
+        assert_eq!(sources[0].identity, "key1");
         Ok(())
     }
 

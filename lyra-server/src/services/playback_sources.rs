@@ -100,7 +100,7 @@ pub(crate) fn candidates(
             source_db_id: source_id,
             source_id: source.id,
             source_kind: source.source_kind,
-            source_key: source.source_key,
+            source_key: source.identity,
             is_primary: source.is_primary,
             input_path,
             full_path,

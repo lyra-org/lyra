@@ -426,7 +426,6 @@ mod tests {
             db_id: None,
             id: nanoid(),
             source_kind: "embedded_tags".to_string(),
-            source_key: format!("entry:{}:embedded", entry_id.0),
             identity: format!("entry:{}:embedded", entry_id.0),
             is_primary: true,
             start_ms: None,

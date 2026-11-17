@@ -27,7 +27,7 @@ impl TrackSourcesModule {
         };
         let source = lyra_db::track_sources::get_primary_by_track(&db, track_id)?;
         Ok(source
-            .map(|source| source.source_key)
+            .map(|source| source.identity)
             .filter(|value| !value.trim().is_empty()))
     }
 }

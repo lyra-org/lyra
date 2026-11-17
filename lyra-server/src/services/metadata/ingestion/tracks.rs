@@ -40,7 +40,7 @@ fn prune_stale_track_sources(db: &mut DbAny, metadata: &[TrackMetadata]) -> anyh
                 let Some(source_db_id) = source.db_id else {
                     continue;
                 };
-                if expected_source_keys.contains(&source.source_key)
+                if expected_source_keys.contains(&source.identity)
                     || cue_sheet_missing(db, source_db_id)?
                 {
                     continue;
