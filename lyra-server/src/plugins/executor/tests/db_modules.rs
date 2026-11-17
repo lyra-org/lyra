@@ -670,15 +670,15 @@ fn plugin_executor_exposes_db_backed_lyra_track_sources_module() -> Result<()> {
 }
 
 #[test]
-fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()> {
+fn playback_sources_describe_sources_without_reading_their_files() -> Result<()> {
     let mut db = lyra_db::test_db::new_test_db()?;
     let user = lyra_db::fixtures::test_user("playback-source-user")?;
     let user_public_id = user.id.clone();
     let user_db_id = lyra_db::users::create(&mut db, &user)?;
     let track_db_id = lyra_db::fixtures::insert_track(&mut db, "Raw Playback Source Track")?;
     let directory = tempfile::tempdir()?;
+    // Never written: the reads describe the source as stored, without looking at the file.
     let entry_path = directory.path().join("source.flac");
-    std::fs::write(&entry_path, b"plugin playback source")?;
     let entry = lyra_db::entries::Entry {
         db_id: None,
         id: lyra_db::nanoid(),
@@ -702,18 +702,17 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
         directory.path().to_str().expect("UTF-8 temp path"),
     )?;
     lyra_db::graph::ensure_owned_edge(&mut db, library_db_id, entry_db_id)?;
-    let source_key = format!("entry:{}:embedded", entry_db_id.0);
-    let source_id = db.transaction_mut(|t| {
+    db.transaction_mut(|t| {
         lyra_db::track_sources::upsert(
             t,
             track_db_id,
             entry_db_id,
             lyra_db::track_sources::TrackSourceUpsert {
                 source_kind: "embedded_tags".to_string(),
-                source_key: source_key.clone(),
+                source_key: format!("entry:{}:embedded", entry_db_id.0),
                 is_primary: true,
-                start_ms: Some(100),
-                end_ms: Some(200),
+                start_ms: None,
+                end_ms: None,
                 format: lyra_db::track_sources::SourceFormat {
                     container: Some(lyra_db::track_sources::SourceContainer::M4a),
                     codec: Some(lyra_db::track_sources::SourceCodec::Alac),
@@ -724,7 +723,6 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
         )
     })?;
     let track_id = public_id(&db, track_db_id)?;
-    let source_id = public_id(&db, source_id)?;
     let db = lyra_db::DbAsync::new(db);
 
     let runtime = PluginExecutor::with_database(
@@ -756,8 +754,8 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
                 local playback_sources = require("@lyra/playback_sources")
                 local track_id = "{track_id}"
 
-                executor_playback_source_rows = playback_sources.get(track_id, {{ include_entry = true }})
-                executor_playback_source_many = playback_sources.get_many({{ track_id, track_id, "missing" }}, {{ include_entry = true }})
+                executor_playback_sources = playback_sources.get({{ track_id }}, {{ include_entry = true }})
+                executor_streamable_sources = playback_sources.streamable({{ track_id }})
             "#,
         )
         .into_bytes(),
@@ -769,48 +767,24 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
         "check.luau",
         format!(
             r#"
-                local first = executor_playback_source_rows[1]
-                local many = executor_playback_source_many["{track_id}"]
+                local source = executor_playback_sources["{track_id}"]
 
-                return first.track_id,
-                    first.source_id,
-                    first.source_kind,
-                    first.source_key,
-                    first.is_primary,
-                    first.start_ms,
-                    first.end_ms,
-                    first.is_virtual,
-                    first.entry.name,
-                    first.entry.hash,
-                    first.entry.full_path,
-                    first.container,
-                    first.codec,
-                    many.entry.name,
-                    executor_playback_source_many["missing"] == nil
+                return source.container,
+                    source.codec,
+                    source.entry.name,
+                    executor_streamable_sources["{track_id}"].container
             "#,
         )
         .into_bytes(),
     )?;
-    let _ = std::fs::remove_file(&entry_path);
 
     assert_eq!(
         values,
         vec![
-            luau::Value::String(track_id.into_bytes()),
-            luau::Value::String(source_id.into_bytes()),
-            luau::Value::String(b"embedded_tags".to_vec()),
-            luau::Value::String(source_key.into_bytes()),
-            luau::Value::Boolean(true),
-            luau::Value::Number(100.0),
-            luau::Value::Number(200.0),
-            luau::Value::Boolean(true),
-            luau::Value::String(b"raw-playback-source.flac".to_vec()),
-            luau::Value::String(b"raw-playback-hash".to_vec()),
-            luau::Value::String(entry_path.to_string_lossy().into_owned().into_bytes()),
             luau::Value::String(b"m4a".to_vec()),
             luau::Value::String(b"alac".to_vec()),
             luau::Value::String(b"raw-playback-source.flac".to_vec()),
-            luau::Value::Boolean(true),
+            luau::Value::String(b"m4a".to_vec()),
         ]
     );
     Ok(())

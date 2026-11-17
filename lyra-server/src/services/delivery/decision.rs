@@ -6,6 +6,7 @@
 use lyra_db::track_sources::{
     SourceCodec,
     SourceContainer,
+    SourceFormat,
 };
 use lyra_ffmpeg::{
     AudioCodec,
@@ -736,17 +737,23 @@ pub(crate) struct SourceDescription {
     pub(crate) bit_depth: Option<u32>,
 }
 
-impl DeliveryDecision {
-    pub(crate) fn describe(&self, source: &ValidatedTrackSource) -> DeliveryDescription {
-        let format = &source.format;
-        let source_description = SourceDescription {
+impl From<&SourceFormat> for SourceDescription {
+    fn from(format: &SourceFormat) -> Self {
+        Self {
             container: format.container.map(|container| container.as_str()),
             codec: format.codec.map(|codec| codec.as_str()),
             bitrate_bps: format.bitrate_bps,
             sample_rate_hz: format.sample_rate_hz,
             channels: format.channel_count,
             bit_depth: format.bit_depth,
-        };
+        }
+    }
+}
+
+impl DeliveryDecision {
+    pub(crate) fn describe(&self, source: &ValidatedTrackSource) -> DeliveryDescription {
+        let format = &source.format;
+        let source_description = SourceDescription::from(format);
         if self.direct_passthrough {
             return DeliveryDescription {
                 transcode: false,

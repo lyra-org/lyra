@@ -1,5 +1,6 @@
 local fixture = ...
 
+local errors = require("@lyra/errors")
 local playback_sources = require("@lyra/playback_sources")
 
 -- Nothing asked of the source: it is served as it is.
@@ -32,8 +33,9 @@ assert(#flac.reasons == 1 and flac.reasons[1] == "container", `reasons {#flac.re
 local bad_depth_ok, bad_depth_err = pcall(playback_sources.decide, fixture.ids.song, { bit_depth = 20 })
 assert(not bad_depth_ok, "20 bits is not a deliverable depth")
 assert(string.find(tostring(bad_depth_err), "bit_depth must be 16 or 24", 1, true), `error {bad_depth_err}`)
+assert(errors.kind(bad_depth_err) == "invalid", `kind {errors.kind(bad_depth_err)}`)
 
 -- A request the stream would refuse raises its error instead.
 local ok, err = pcall(playback_sources.decide, fixture.ids.song, { format = "caf" })
 assert(not ok, "caf cannot be streamed")
-assert(string.find(tostring(err), "400", 1, true), `error {err}`)
+assert(errors.kind(err) == "invalid", `kind {errors.kind(err)}`)

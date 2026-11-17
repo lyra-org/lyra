@@ -1,11 +1,12 @@
 local fixture, harness = ...
 
+local errors = require("@lyra/errors")
 local playback_sources = require("@lyra/playback_sources")
 
 -- The viewer cannot see the track's library, so a decision for it is refused like its stream.
 local ok, err = pcall(playback_sources.decide, fixture.ids.song)
 assert(not ok, "a caller without access gets no decision")
-assert(string.find(tostring(err), "404", 1, true), `error {err}`)
+assert(errors.kind(err) == "not_found", `kind {errors.kind(err)}`)
 
 -- A public decision answers as a public stream route serves: without the caller's access check.
 local public = playback_sources.decide(fixture.ids.song, { public = true })
@@ -21,4 +22,4 @@ local refused_ok, refused = harness.plugin:call(function()
 	return pcall(playback_sources.decide, fixture.ids.song)
 end)
 assert(not refused_ok, "a private stream needs a caller")
-assert(string.find(tostring(refused), "401", 1, true), `error {refused}`)
+assert(errors.kind(refused) == "unauthenticated", `kind {errors.kind(refused)}`)

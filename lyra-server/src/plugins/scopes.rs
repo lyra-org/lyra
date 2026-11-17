@@ -1820,10 +1820,9 @@ mod tests {
         (
             "lyra/playback_sources",
             &[
-                "get(id, options)",
-                "streamable(track_id, options)",
+                "get(track_ids, options)",
+                "streamable(track_ids, options)",
                 "decide(track_id, options)",
-                "get_many(track_ids, options)",
             ],
         ),
         (

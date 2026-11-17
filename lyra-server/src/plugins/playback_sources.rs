@@ -23,33 +23,35 @@ use crate::plugins::args::{
     UniqueIds,
 };
 use crate::plugins::auth::ResponseCaller;
+use crate::plugins::errors::{
+    ErrorKind,
+    auth_error_kind,
+    kinded,
+};
 use crate::plugins::{
-    ids::{
-        self,
-        Resolved,
-    },
+    ids::Resolved,
     types::EntryInfo,
 };
 use crate::{
-    plugins::db::Db,
+    plugins::db::{
+        SystemDb,
+        ViewerDb,
+    },
     services::{
         auth::{
             AuthError,
             Principal,
         },
+        catalog::Viewer,
         delivery::{
             self,
             DeliveryError,
+            SourceDescription,
         },
-        libraries::MediaRoots,
         playback_sources as playback_source_service,
     },
 };
 
-use lyra_db::roots::{
-    self,
-    Root,
-};
 use std::collections::HashMap;
 
 #[cfg(feature = "docgen")]
@@ -60,9 +62,6 @@ struct TrackStreamOptions;
 
 #[cfg(feature = "docgen")]
 struct DeliveryDescription;
-
-#[cfg(feature = "docgen")]
-struct SourceDescription;
 
 /// The `options` argument of the source reads.
 #[derive(Default)]
@@ -93,94 +92,44 @@ pub(crate) struct PlaybackSourcesModule;
 #[harmony_macros::module(id = "lyra/playback_sources", docs_feature = "docgen")]
 impl PlaybackSourcesModule {
     #[harmony(
-        description = "The playback sources of the tracks the caller can see under the node with `id`, or of every such track without one. An unknown id gives an empty list.",
-        returns(Vec<PlaybackSourceInfo>)
+        description = "The playback source of each of these tracks, keyed by track id: the first of a track's available sources whose file is in a library the caller can see, its primary one first, as the last scan found it. The file itself is not checked: when it is gone, a stream plays the track's next source or fails, as `decide` tells. Tracks without such a source and tracks the caller cannot see are absent.",
+        returns(HashMap<String, PlaybackSourceInfo>)
     )]
     async fn get(
-        id: Option<String>,
+        track_ids: UniqueIds,
         options: Option<SourceOptions>,
-        #[context] db: Db,
+        #[context] db: ViewerDb,
         #[context] principal: Principal,
     ) -> luau::runtime::Result<luau::OwnedTable> {
         let include_entry = options.unwrap_or_default().include_entry;
-        let db = db.read().await;
         let include_full_path = lyra_db::roles::has_permission(
             &principal.permissions,
             lyra_db::Permission::ManageLibraries,
         );
-        let tracks = match id {
-            Some(id) => match ids::db_id(&*db, &id)? {
-                Some(id) => lyra_db::tracks::get(&db, id)?,
-                None => return Ok(luau::OwnedTable::new()),
-            },
-            None => roots::members(&*db, Root::Tracks)?,
-        };
-        let roots = MediaRoots::for_principal(&*db, Some(&principal))?;
-        let mut candidates = Vec::new();
-        for track in tracks {
-            let Some(track_id) = track.db_id.clone().map(DbId::from) else {
-                continue;
-            };
-            if !crate::services::auth::access::entity_accessible(&db, &principal, track_id)? {
-                continue;
-            }
-            candidates.push((
-                track_id,
-                playback_source_service::candidates(&db, &track, include_entry)?,
-            ));
-        }
-        let parents = entry_parents(&db, candidates.iter().flat_map(|(_, sources)| sources))?;
-        drop(db);
-        let sources = allowed_sources(candidates, roots).await?;
-        let mut rows = luau::OwnedTable::new();
-        for (_, source) in sources {
-            rows.push_array(luau::Value::TableData(source_to_table(
-                source,
-                &parents,
-                include_entry,
-                include_full_path,
-            )?));
-        }
-        Ok(rows)
+        let (db, viewer) = db.read().await?;
+        let tracks = Resolved::of(&*db, track_ids.0)?;
+        let sources = sources(&db, &viewer, &tracks, include_entry)?;
+        keyed_sources(&db, tracks, sources, include_entry, include_full_path)
     }
 
     #[harmony(
-        description = "A track's playback source read as the system, without the entry's full path. Ignores library visibility, so it is only for public streaming routes, which must serve nothing from it but the audio.",
-        returns(Option<PlaybackSourceInfo>)
+        description = "`get` read as the system, without the entries' full paths. Ignores library visibility, so it is only for public streaming routes, which must serve nothing from it but the audio.",
+        returns(HashMap<String, PlaybackSourceInfo>)
     )]
     async fn streamable(
-        track_id: String,
+        track_ids: UniqueIds,
         options: Option<SourceOptions>,
-        #[context] db: Db,
-    ) -> luau::runtime::Result<luau::Value> {
+        #[context] db: SystemDb,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
         let include_entry = options.unwrap_or_default().include_entry;
-        let db = db.read().await;
-        let Some(track_id) = ids::db_id_of(&db, &track_id, "Track")? else {
-            return Ok(luau::Value::Nil);
-        };
-        let Some(track) = lyra_db::tracks::get_by_id(&db, track_id)? else {
-            return Ok(luau::Value::Nil);
-        };
-        let roots = MediaRoots::for_principal(&*db, None)?;
-        let candidates = playback_source_service::candidates(&db, &track, include_entry)?;
-        let parents = entry_parents(&db, &candidates)?;
-        drop(db);
-        let Some((_, source)) = allowed_sources(vec![(track_id, candidates)], roots)
-            .await?
-            .pop()
-        else {
-            return Ok(luau::Value::Nil);
-        };
-        Ok(luau::Value::TableData(source_to_table(
-            source,
-            &parents,
-            include_entry,
-            false,
-        )?))
+        let (db, viewer) = db.read().await?;
+        let tracks = Resolved::of(&*db, track_ids.0)?;
+        let sources = sources(&db, &viewer, &tracks, include_entry)?;
+        keyed_sources(&db, tracks, sources, include_entry, false)
     }
 
     #[harmony(
-        description = "What `api.response.stream_track(track_id, options)` would deliver, without serving anything: whether the source file is served as it is or transcoded, why, and the delivered format. It checks access as the stream would, for the caller the dispatch acts for as of this call. Raises the error the stream would answer with when the request cannot be served, as `<status>: <message>`; a stream can still fail once served, as when Lyra is out of transcoding capacity.",
+        description = "What `api.response.stream_track(track_id, options)` would deliver, without serving anything: whether the source file is served as it is or transcoded, why, and the delivered format. It checks access and the source file as the stream would, for the caller the dispatch acts for as of this call. When the request cannot be served, raises the error the stream would answer with: kind `invalid` for options the stream refuses, `unauthenticated` for a credential that no longer verifies, `forbidden` for a refused caller, and `not_found` for a track that is missing, hidden, without a source or whose file is gone; other failures have no kind. A stream can still fail once served, as when Lyra is out of transcoding capacity.",
         args(track_id: String, options: Option<TrackStreamOptions>),
         returns(DeliveryDescription)
     )]
@@ -204,90 +153,103 @@ impl PlaybackSourcesModule {
             0,
         )
     }
-
-    #[harmony(
-        description = "The playback source of each of these tracks, keyed by track id. Tracks without one and tracks the caller cannot see are absent.",
-        returns(HashMap<String, PlaybackSourceInfo>)
-    )]
-    async fn get_many(
-        track_ids: UniqueIds,
-        options: Option<SourceOptions>,
-        #[context] db: Db,
-        #[context] principal: Principal,
-    ) -> luau::runtime::Result<luau::OwnedTable> {
-        let include_entry = options.unwrap_or_default().include_entry;
-        let db = db.read().await;
-        let tracks = Resolved::of(&*db, track_ids.0)?;
-        let include_full_path = lyra_db::roles::has_permission(
-            &principal.permissions,
-            lyra_db::Permission::ManageLibraries,
-        );
-        let found = lyra_db::tracks::get_existing_by_ids(&*db, tracks.db_ids())?;
-        let roots = MediaRoots::for_principal(&*db, Some(&principal))?;
-        let mut candidates = Vec::with_capacity(found.len());
-        for &track_id in tracks.db_ids() {
-            let Some(track) = found.get(&track_id) else {
-                continue;
-            };
-            if !crate::services::auth::access::entity_accessible(&db, &principal, track_id)? {
-                continue;
-            }
-            candidates.push((
-                track_id,
-                playback_source_service::candidates(&db, track, include_entry)?,
-            ));
-        }
-        let parents = entry_parents(&db, candidates.iter().flat_map(|(_, sources)| sources))?;
-        drop(db);
-        let sources = allowed_sources(candidates, roots).await?;
-        let mut rows = Vec::with_capacity(sources.len());
-        for (track_id, source) in sources {
-            rows.push((
-                track_id,
-                source_to_table(source, &parents, include_entry, include_full_path)?,
-            ));
-        }
-        Ok(tracks.keyed(rows))
-    }
 }
 
-/// The source each track plays from among its candidates, leaving out those with none, off the
-/// async threads.
-async fn allowed_sources(
-    candidates: Vec<(DbId, Vec<playback_source_service::PlaybackSource>)>,
-    roots: MediaRoots,
-) -> anyhow::Result<Vec<(DbId, playback_source_service::PlaybackSource)>> {
-    tokio::task::spawn_blocking(move || {
-        candidates
-            .into_iter()
-            .filter_map(|(track_id, sources)| {
-                Some((
-                    track_id,
-                    playback_source_service::first_allowed(sources, &roots)?,
-                ))
-            })
-            .collect()
-    })
-    .await
-    .map_err(|err| anyhow::anyhow!("playback source task panicked: {err}"))
+/// The source each of `tracks` the viewer sees plays from, as stored: the first whose file the
+/// viewer sees too, as streaming picks among the files in the viewer's libraries.
+fn sources(
+    db: &agdb::DbAny,
+    viewer: &Viewer,
+    tracks: &Resolved,
+    include_entry: bool,
+) -> luau::runtime::Result<Vec<(DbId, playback_source_service::PlaybackSource)>> {
+    let found = lyra_db::tracks::get_existing_by_ids(db, tracks.db_ids())?;
+    let mut sources = Vec::with_capacity(found.len());
+    for &track_id in tracks.db_ids() {
+        let Some(track) = found.get(&track_id) else {
+            continue;
+        };
+        if !viewer.sees(db, track_id)? {
+            continue;
+        }
+        for source in playback_source_service::candidates(db, track, include_entry)? {
+            if viewer.sees(db, source.entry_db_id)? {
+                sources.push((track_id, source));
+                break;
+            }
+        }
+    }
+    Ok(sources)
+}
+
+fn keyed_sources(
+    db: &agdb::DbAny,
+    tracks: Resolved,
+    sources: Vec<(DbId, playback_source_service::PlaybackSource)>,
+    include_entry: bool,
+    include_full_path: bool,
+) -> luau::runtime::Result<luau::OwnedTable> {
+    let parents = EntryInfo::parents(
+        db,
+        sources
+            .iter()
+            .filter_map(|(_, source)| source.entry.as_ref()),
+    )?;
+    let mut rows = Vec::with_capacity(sources.len());
+    for (track_id, source) in sources {
+        rows.push((
+            track_id,
+            source_to_table(source, &parents, include_entry, include_full_path)?,
+        ));
+    }
+    Ok(tracks.keyed(rows))
 }
 
 fn delivery_runtime_error(error: DeliveryError) -> luau::Error {
-    crate::plugins::runtime_error(delivery_error_message(error))
+    let (message, kind) = delivery_error(error);
+    match kind {
+        Some(kind) => kinded(kind, message),
+        None => crate::plugins::runtime_error(message),
+    }
 }
 
 /// The error a stream route would answer `error` with, status first, as `decide` raises it.
+#[cfg(test)]
 pub(crate) fn delivery_error_message(error: DeliveryError) -> String {
-    let (status, message) = match error {
-        DeliveryError::BadRequest(message) => (StatusCode::BAD_REQUEST, message),
-        DeliveryError::Unauthorized(message) => (StatusCode::UNAUTHORIZED, message),
-        DeliveryError::NotFound(message) => (StatusCode::NOT_FOUND, message),
-        DeliveryError::Gone(message) => (StatusCode::GONE, message),
-        DeliveryError::ServiceUnavailable(message) => (StatusCode::SERVICE_UNAVAILABLE, message),
-        DeliveryError::Auth(error) => auth_error_status(error),
-        DeliveryError::Internal(error) => internal_error_status(error),
+    delivery_error(error).0
+}
+
+/// The message a stream route would answer `error` with, status first, and the kind of error it
+/// is to a plugin, when an error kind says so.
+fn delivery_error(error: DeliveryError) -> (String, Option<ErrorKind>) {
+    let (status, message, kind) = match error {
+        DeliveryError::BadRequest(message) => {
+            (StatusCode::BAD_REQUEST, message, Some(ErrorKind::Invalid))
+        }
+        DeliveryError::Unauthorized(message) => (
+            StatusCode::UNAUTHORIZED,
+            message,
+            Some(ErrorKind::Unauthenticated),
+        ),
+        DeliveryError::NotFound(message) => {
+            (StatusCode::NOT_FOUND, message, Some(ErrorKind::NotFound))
+        }
+        DeliveryError::Gone(message) => (StatusCode::GONE, message, Some(ErrorKind::NotFound)),
+        DeliveryError::ServiceUnavailable(message) => {
+            (StatusCode::SERVICE_UNAVAILABLE, message, None)
+        }
+        DeliveryError::Auth(error) => {
+            let kind = auth_error_kind(&error);
+            let (status, message) = auth_error_status(error);
+            (status, message, kind)
+        }
+        DeliveryError::Internal(error) => {
+            let kind = error.downcast_ref::<AuthError>().and_then(auth_error_kind);
+            let (status, message) = internal_error_status(error);
+            (status, message, kind)
+        }
     };
-    format!("{status}: {message}")
+    (format!("{status}: {message}"), kind)
 }
 
 fn auth_error_status(error: AuthError) -> (StatusCode, String) {
@@ -310,64 +272,39 @@ fn internal_error_status(error: anyhow::Error) -> (StatusCode, String) {
     }
 }
 
-/// The public ids of the parents of the entries `sources` hold, for [`source_to_table`].
-fn entry_parents<'a>(
-    db: &agdb::DbAny,
-    sources: impl IntoIterator<Item = &'a playback_source_service::PlaybackSource>,
-) -> luau::runtime::Result<HashMap<DbId, String>> {
-    EntryInfo::parents(
-        db,
-        sources
-            .into_iter()
-            .filter_map(|source| source.entry.as_ref()),
-    )
-}
-
 fn source_to_table(
     source: playback_source_service::PlaybackSource,
     parents: &HashMap<DbId, String>,
     include_entry: bool,
     include_full_path: bool,
 ) -> luau::runtime::Result<luau::OwnedTable> {
-    let playback_source_service::PlaybackSource {
-        track_id,
-        source_id,
-        source_kind,
-        source_key,
-        is_primary,
-        format,
-        start_ms,
-        end_ms,
-        entry,
-        ..
-    } = source;
+    let SourceDescription {
+        container,
+        codec,
+        bitrate_bps,
+        sample_rate_hz,
+        channels,
+        bit_depth,
+    } = SourceDescription::from(&source.format);
 
-    let mut table = luau::OwnedTable::with_capacity(0, 15);
-    table.set_field("track_id", track_id);
-    table.set_field("source_id", source_id);
-    table.set_field("source_kind", source_kind);
-    table.set_field("source_key", source_key);
-    table.set_field("is_primary", is_primary);
-    table.set_field(
-        "container",
-        format.container.map(|container| container.as_str()),
-    );
-    table.set_field("codec", format.codec.map(|codec| codec.as_str()));
+    let mut table = luau::OwnedTable::with_capacity(0, 9);
+    table.set_field("container", container);
+    table.set_field("codec", codec);
     for (name, value) in [
-        ("sample_rate_hz", format.sample_rate_hz),
-        ("channel_count", format.channel_count),
-        ("bit_depth", format.bit_depth),
-        ("bitrate_bps", format.bitrate_bps),
+        ("bitrate_bps", bitrate_bps),
+        ("sample_rate_hz", sample_rate_hz),
+        ("channels", channels),
+        ("bit_depth", bit_depth),
     ] {
         table.set_field(name, optional_u64(value.map(u64::from)));
     }
-    table.set_field("start_ms", optional_u64(start_ms));
-    table.set_field("end_ms", optional_u64(end_ms));
-    table.set_field("is_virtual", start_ms.is_some() || end_ms.is_some());
+    table.set_field("start_ms", optional_u64(source.start_ms));
+    table.set_field("end_ms", optional_u64(source.end_ms));
     if include_entry {
         table.set_field(
             "entry",
-            entry
+            source
+                .entry
                 .map(|entry| {
                     harmony_luau::serializable_to_luau_owned(EntryInfo::new(
                         entry,
@@ -394,95 +331,22 @@ impl LuauTypeInfo for PlaybackSourceInfo {
 }
 
 #[cfg(feature = "docgen")]
-impl DescribeInterface for PlaybackSourceInfo {
-    fn interface_descriptor() -> InterfaceDescriptor {
-        let mut descriptor = InterfaceDescriptor::new("PlaybackSourceInfo", None);
-        descriptor.fields.extend([
-            FieldDescriptor {
-                name: "track_id",
-                ty: String::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "source_id",
-                ty: String::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "source_kind",
-                ty: String::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "source_key",
-                ty: String::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "is_primary",
-                ty: bool::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "container",
-                ty: LuauType::optional(LuauType::named("SourceContainer")),
-                description: Some(
-                    "The file format holding the audio, read from the file's contents when it was scanned.",
-                ),
-            },
-            FieldDescriptor {
-                name: "codec",
-                ty: LuauType::optional(LuauType::named("SourceCodec")),
-                description: Some(
-                    "The audio's encoding inside its container, named as FFmpeg names codecs.",
-                ),
-            },
-            FieldDescriptor {
-                name: "sample_rate_hz",
-                ty: Option::<u32>::luau_type(),
-                description: Some("The audio's sample rate, read from the file when it was scanned."),
-            },
-            FieldDescriptor {
-                name: "channel_count",
-                ty: Option::<u32>::luau_type(),
-                description: Some("The audio's channel count, read from the file when it was scanned."),
-            },
-            FieldDescriptor {
-                name: "bit_depth",
-                ty: Option::<u32>::luau_type(),
-                description: Some(
-                    "The audio's bits per sample, read from the file when it was scanned; absent for lossy codecs.",
-                ),
-            },
-            FieldDescriptor {
-                name: "bitrate_bps",
-                ty: Option::<u32>::luau_type(),
-                description: Some(
-                    "The file's overall bitrate in bits per second, read when it was scanned.",
-                ),
-            },
-            FieldDescriptor {
-                name: "start_ms",
-                ty: Option::<u64>::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "end_ms",
-                ty: Option::<u64>::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "is_virtual",
-                ty: bool::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "entry",
-                ty: Option::<EntryInfo>::luau_type(),
-                description: None,
-            },
-        ]);
-        descriptor
+impl PlaybackSourceInfo {
+    fn type_alias_descriptor() -> TypeAliasDescriptor {
+        TypeAliasDescriptor::new(
+            "PlaybackSourceInfo",
+            LuauType::intersection(vec![
+                SourceDescription::luau_type(),
+                LuauType::object(vec![
+                    field("start_ms", Option::<u64>::luau_type(), None),
+                    field("end_ms", Option::<u64>::luau_type(), None),
+                    field("entry", Option::<EntryInfo>::luau_type(), None),
+                ]),
+            ]),
+            Some(
+                "A track's playback source: the format of the file it plays from, as the last scan read it, and with `include_entry` the file itself. `start_ms` and `end_ms` mark the part of the file the track plays, as when a CUE sheet splits one; without them the track starts or ends with the file.",
+            ),
+        )
     }
 }
 
@@ -558,22 +422,33 @@ impl LuauTypeInfo for SourceDescription {
 #[cfg(feature = "docgen")]
 impl DescribeInterface for SourceDescription {
     fn interface_descriptor() -> InterfaceDescriptor {
-        let mut descriptor = InterfaceDescriptor::new("SourceDescription", None);
+        let mut descriptor = InterfaceDescriptor::new(
+            "SourceDescription",
+            Some("A source file's format, read from its contents when it was scanned."),
+        );
         descriptor.fields.extend([
             field(
                 "container",
                 LuauType::optional(LuauType::named("SourceContainer")),
-                None,
+                Some("The file format holding the audio."),
             ),
             field(
                 "codec",
                 LuauType::optional(LuauType::named("SourceCodec")),
-                None,
+                Some("The audio's encoding inside its container, named as FFmpeg names codecs."),
             ),
-            field("bitrate_bps", Option::<u32>::luau_type(), None),
+            field(
+                "bitrate_bps",
+                Option::<u32>::luau_type(),
+                Some("The file's overall bitrate."),
+            ),
             field("sample_rate_hz", Option::<u32>::luau_type(), None),
             field("channels", Option::<u32>::luau_type(), None),
-            field("bit_depth", Option::<u32>::luau_type(), None),
+            field(
+                "bit_depth",
+                Option::<u32>::luau_type(),
+                Some("The audio's bits per sample; absent for lossy codecs."),
+            ),
         ]);
         descriptor
     }
@@ -592,6 +467,7 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
     };
     let mut aliases = crate::plugins::api::options::delivery_aliases();
     aliases.extend([
+        PlaybackSourceInfo::type_alias_descriptor(),
         TypeAliasDescriptor::new(
             "SourceContainer",
             string_enum(lyra_db::track_sources::SourceContainer::VALUES),
@@ -614,7 +490,6 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &aliases,
         &[
             EntryInfo::interface_descriptor(),
-            PlaybackSourceInfo::interface_descriptor(),
             source_options,
             crate::plugins::api::options::track_stream_options_interface(),
             DeliveryDescription::interface_descriptor(),

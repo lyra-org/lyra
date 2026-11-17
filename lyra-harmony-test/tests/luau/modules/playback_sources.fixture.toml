@@ -3,7 +3,35 @@ run_as = "viewer"
 [[users]]
 key = "viewer"
 
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["viewer"]
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+
 [[tracks]]
 key = "song"
 title = "Song"
+release = "album"
 file = "song.opus"
+
+[[tracks]]
+key = "part"
+title = "Part"
+release = "album"
+file = "song.opus"
+folder = "Part"
+start_ms = 1000
+end_ms = 2000
+
+[[tracks]]
+key = "gone"
+title = "Gone"
+release = "album"
+file = "song.opus"
+folder = "Gone"
+missing = true

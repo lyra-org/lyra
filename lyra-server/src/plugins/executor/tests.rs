@@ -3229,15 +3229,15 @@ fn streamable_bindings_serve_anonymous_public_routes() -> Result<()> {
             api.get("/stream/{track}/{release}", function(ctx)
                 local track = ctx.params.track
                 local release = ctx.params.release
-                local source = playback_sources.streamable(track, { include_entry = true })
+                local source = playback_sources.streamable({ track }, { include_entry = true })[track]
                 return api.response.json(200, {
                     track = tracks.streamable({ track, release })[track] ~= nil,
                     release = tracks.streamable({ release })[release] ~= nil,
                     entry_name = source and source.entry and source.entry.name,
                     full_path = source and source.entry and source.entry.full_path,
-                    release_source = playback_sources.streamable(release) ~= nil,
+                    release_source = playback_sources.streamable({ release })[release] ~= nil,
                     scoped = pcall(tracks.get, { track }),
-                    scoped_source = pcall(playback_sources.get, track),
+                    scoped_source = pcall(playback_sources.get, { track }),
                 })
             end, { auth = "public" })
         "#[..],

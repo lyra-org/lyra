@@ -1,0 +1,21 @@
+run_as = "manager"
+
+[[users]]
+key = "manager"
+permissions = ["manage_libraries"]
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["manager"]
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+file = "song.opus"

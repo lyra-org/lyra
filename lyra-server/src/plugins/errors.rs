@@ -34,21 +34,30 @@ pub(crate) fn kinded(kind: ErrorKind, error: impl std::fmt::Display) -> luau::Er
     }
 }
 
-/// `error` raised for a plugin: a credential that no longer verifies is `unauthenticated`, a
+/// What `error` means to a plugin: a credential that no longer verifies is `unauthenticated`, a
 /// refusal `forbidden` and a missing target `not_found`.
-pub(crate) fn auth_error(error: AuthError) -> luau::Error {
+pub(crate) fn auth_error_kind(error: &AuthError) -> Option<ErrorKind> {
     match error {
         AuthError::MissingBearerCredential
         | AuthError::InvalidBearerCredential
-        | AuthError::SessionExpired => kinded(ErrorKind::Unauthenticated, error),
-        AuthError::Forbidden(_) => kinded(ErrorKind::Forbidden, error),
-        AuthError::NotFound(_) => kinded(ErrorKind::NotFound, error),
-        AuthError::InvalidClientName(_) | AuthError::RateLimited(_) => {
-            crate::plugins::runtime_error(error)
-        }
+        | AuthError::SessionExpired => Some(ErrorKind::Unauthenticated),
+        AuthError::Forbidden(_) => Some(ErrorKind::Forbidden),
+        AuthError::NotFound(_) => Some(ErrorKind::NotFound),
+        AuthError::InvalidClientName(_) | AuthError::RateLimited(_) => None,
+        AuthError::Internal(error) => error.downcast_ref::<AuthError>().and_then(auth_error_kind),
+    }
+}
+
+/// `error` raised for a plugin, with the kind [`auth_error_kind`] gives it.
+pub(crate) fn auth_error(error: AuthError) -> luau::Error {
+    match error {
         AuthError::Internal(error) => match error.downcast::<AuthError>() {
             Ok(error) => auth_error(error),
             Err(error) => crate::plugins::runtime_error(error),
+        },
+        error => match auth_error_kind(&error) {
+            Some(kind) => kinded(kind, error),
+            None => crate::plugins::runtime_error(error),
         },
     }
 }

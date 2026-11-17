@@ -65,5 +65,6 @@ same(names(genres.query({ available = false }).items, "name"), "Jazz,Rock", "gen
 local entry_lists = entries.by_track({ ids.playing, ids.missing })
 same(entry_lists[ids.playing][1].missing_at_ms, nil, "a present entry")
 assert(entry_lists[ids.missing][1].missing_at_ms ~= nil, "a missing entry has a time")
-same(playback_sources.streamable(ids.missing), nil, "a missing track's source")
-assert(playback_sources.streamable(ids.playing) ~= nil, "a playing track's source")
+local sources = playback_sources.streamable({ ids.playing, ids.missing })
+same(sources[ids.missing], nil, "a missing track's source")
+assert(sources[ids.playing] ~= nil, "a playing track's source")

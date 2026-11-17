@@ -24,6 +24,7 @@ pub(crate) use decision::{
     DeliveryDecision,
     DeliveryDescription,
     DeliveryTarget,
+    SourceDescription,
     TranscodeKnobs,
     ValidatedRequest,
     apply_transcode_policy,

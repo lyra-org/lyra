@@ -31,12 +31,10 @@ use lyra_db::track_sources::{
 };
 
 pub(crate) struct PlaybackSource {
-    pub(crate) track_id: String,
     pub(crate) source_db_id: DbId,
     pub(crate) source_id: String,
-    pub(crate) source_kind: String,
-    pub(crate) source_key: String,
-    pub(crate) is_primary: bool,
+    /// The entry of the file the source plays.
+    pub(crate) entry_db_id: DbId,
     /// The file to open: as stored among [`candidates`], and as the roots found it from
     /// [`first_allowed`] on.
     pub(crate) input_path: String,
@@ -96,12 +94,9 @@ pub(crate) fn candidates(
 
         let format = source.format();
         candidates.push(PlaybackSource {
-            track_id: track.id.clone(),
             source_db_id: source_id,
             source_id: source.id,
-            source_kind: source.source_kind,
-            source_key: source.identity,
-            is_primary: source.is_primary,
+            entry_db_id,
             input_path,
             full_path,
             format,
