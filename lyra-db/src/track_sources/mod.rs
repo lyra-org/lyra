@@ -15,10 +15,6 @@ use agdb::{
 use crate::nanoid;
 
 use super::DbAccess;
-use super::roots::{
-    self,
-    Root,
-};
 
 mod format;
 
@@ -267,10 +263,6 @@ pub fn upsert(
             .map(|element| element.id)
             .ok_or_else(|| anyhow::anyhow!("upsert track source returned no id"))?,
     };
-
-    if existing_id.is_none() {
-        roots::link(db, Root::TrackSources, source_id)?;
-    }
 
     let has_track_edge = db
         .exec(

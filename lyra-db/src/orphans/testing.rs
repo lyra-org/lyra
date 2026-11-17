@@ -179,8 +179,16 @@ pub fn assert_collected(db: &DbAny) -> anyhow::Result<()> {
             releases.push(release);
         }
     }
+    let sources = db.exec(
+        QueryBuilder::search()
+            .elements()
+            .where_()
+            .key("db_element_id")
+            .value("TrackSource")
+            .query(),
+    )?;
     let mut track_sources = Vec::new();
-    for source in roots::member_ids(db, Root::TrackSources)? {
+    for source in sources.ids() {
         if inbound_neighbor_ids(db, source, "Track")?.is_empty() {
             track_sources.push(source);
         }

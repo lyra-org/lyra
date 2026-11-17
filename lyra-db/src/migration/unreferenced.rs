@@ -463,6 +463,13 @@ mod tests {
     fn what_a_cut_short_scan_left_goes_and_unreached_artists_become_candidates()
     -> anyhow::Result<()> {
         let mut db = new_test_db()?;
+        // Databases this step runs on still have the root a later step removes.
+        db.exec_mut(
+            QueryBuilder::insert()
+                .nodes()
+                .aliases("track_sources")
+                .query(),
+        )?;
         let (kept_release, kept_track) = playable(&mut db)?;
         let kept_artist = node(&mut db, "Artist", Some("artists"))?;
         let related = node(&mut db, "Artist", Some("artists"))?;

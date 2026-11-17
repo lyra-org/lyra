@@ -44,7 +44,6 @@ pub enum Root {
     MissingEntries,
     Releases,
     Tracks,
-    TrackSources,
 }
 
 impl Root {
@@ -61,7 +60,6 @@ impl Root {
             Self::MissingEntries => "missing_entries",
             Self::Releases => "releases",
             Self::Tracks => "tracks",
-            Self::TrackSources => "track_sources",
         }
     }
 }
