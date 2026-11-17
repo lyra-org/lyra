@@ -27,23 +27,21 @@ use lyra_db::{
     metadata::mapping_config::MetadataMappingConfig,
 };
 
-use super::{
-    super::{
-        MediaRoots,
-        orchestrator::{
-            SyncRunControlError,
-            SyncRunProgress,
-            SyncStageKey,
-            SyncTotalState,
-            SyncWorkDetails,
-        },
+use super::super::{
+    MediaRoots,
+    orchestrator::{
+        SyncRunControlError,
+        SyncRunProgress,
+        SyncStageKey,
+        SyncTotalState,
+        SyncWorkDetails,
     },
-    mark_entries_synced,
 };
 use crate::services::metadata::{
     CueLinks,
     ParseMetadataOutput,
     TrackMetadata,
+    classify_entry_file_kind,
     ingestion::{
         MetadataGroup,
         SourceYields,
@@ -182,14 +180,47 @@ pub(super) async fn process_album_group(
             );
         }
     }
-    mark_entries_synced(db, library_db_id, &plan.unyielding).await;
+    // Holds are read after the sets' writes, which dropped the sources they replaced. A failed
+    // settlement leaves its files unsynced for the next sync.
+    if let Err(err) = settle_unyielding(db, &plan, &progress).await {
+        if err.downcast_ref::<SyncRunControlError>().is_some() {
+            return Err(err);
+        }
+        report_failed_settlement(&progress, &source_dir, &err).await;
+    }
     Ok(applied)
+}
+
+/// Reports the failed write settling a group's unyielding files as a failed unit.
+async fn report_failed_settlement(
+    progress: &SyncRunProgress,
+    source_dir: &std::path::Path,
+    err: &anyhow::Error,
+) {
+    progress
+        .add_stage_total(SyncStageKey::MetadataApply, 1, SyncTotalState::Estimated)
+        .await;
+    let details = SyncWorkDetails::new("metadata_settle_group")
+        .source_dir(Some(source_dir.to_string_lossy().into_owned()));
+    let work_id = progress
+        .start_work(SyncStageKey::MetadataApply, details.clone())
+        .await;
+    progress
+        .fail_work(
+            work_id,
+            SyncStageKey::MetadataApply,
+            details,
+            format!("{err:#}"),
+        )
+        .await;
 }
 
 /// The group's files as the scan found them, taken before the parse consumes them.
 struct GroupFiles {
     by_path: HashMap<PathBuf, DbId>,
     unsynced: HashSet<DbId>,
+    /// The audio files and cue sheets.
+    media: HashSet<DbId>,
 }
 
 impl GroupFiles {
@@ -200,13 +231,24 @@ impl GroupFiles {
             .filter_map(|entry| Some((entry, entry.db_id?)));
         let mut by_path = HashMap::new();
         let mut unsynced = HashSet::new();
+        let mut media = HashSet::new();
         for (entry, entry_id) in files {
             by_path.insert(entry.full_path.clone(), entry_id);
             if entry.synced_at_ms.is_none() {
                 unsynced.insert(entry_id);
             }
+            if matches!(
+                classify_entry_file_kind(entry).as_deref(),
+                Some("audio" | "cue")
+            ) {
+                media.insert(entry_id);
+            }
         }
-        Self { by_path, unsynced }
+        Self {
+            by_path,
+            unsynced,
+            media,
+        }
     }
 }
 
@@ -214,12 +256,14 @@ impl GroupFiles {
 struct GroupPlan {
     /// The files changed since a sync last settled them.
     unsynced: HashSet<DbId>,
-    /// The files whose read failed for now, which no write settles.
+    /// The files whose read failed for now, which no write settles or releases from a hold.
     unreadable: HashSet<DbId>,
     /// The source keys the read yielded.
     yields: SourceYields,
     /// The changed files the read yielded nothing of.
     unyielding: Vec<DbId>,
+    /// The audio files and cue sheets among the group's files, which can hold tracks.
+    media: HashSet<DbId>,
 }
 
 impl GroupPlan {
@@ -242,6 +286,7 @@ impl GroupPlan {
             unreadable,
             yields: SourceYields::of(&parsed.metadata),
             unyielding,
+            media: files.media.clone(),
         }
     }
 
@@ -316,8 +361,8 @@ struct SetCommit {
 }
 
 impl SetCommit {
-    /// Stamps the entries of the batches that applied to no release, which have no artifacts
-    /// to wait for.
+    /// Stamps the settled entries of the batches that applied to no release, which have no
+    /// artifacts to wait for, and ends the holds of the others.
     fn write(
         &self,
         t: &mut DbAnyTransactionMut<'_>,
@@ -325,14 +370,53 @@ impl SetCommit {
     ) -> anyhow::Result<()> {
         #[cfg(test)]
         super::tests::before_set_commit()?;
-        let unreleased = releases
-            .iter()
-            .zip(&self.settled)
-            .filter(|(release, _)| release.is_none())
-            .flat_map(|(_, settled)| settled.iter().copied())
-            .collect::<Vec<_>>();
-        lyra_db::entries::mark_synced(t, &unreleased)
+        let (mut released, mut unreleased) = (Vec::new(), Vec::new());
+        for (release, entries) in releases.iter().zip(&self.settled) {
+            match release {
+                Some(_) => released.extend(entries),
+                None => unreleased.extend(entries),
+            }
+        }
+        lyra_db::entries::mark_synced(t, &unreleased, &[])?;
+        // The released files' sources just applied, so they play now, though their stamp waits for
+        // their release's artifacts.
+        lyra_db::entries::reconcile_rejected(t, &released, &[])
     }
+}
+
+/// Stamps the plan's unyielding files synced, in one write with their holds: the audio files and
+/// cue sheets among them that still have sources from an earlier read keep their tracks, unable
+/// to play, rather than lose them to a read that offers nothing in their place. Returns those
+/// held. A cancelled run commits none of it.
+async fn settle_unyielding(
+    db: &DbAsync,
+    plan: &GroupPlan,
+    progress: &SyncRunProgress,
+) -> anyhow::Result<Vec<DbId>> {
+    let unyielding = &plan.unyielding;
+    if unyielding.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut db_write = db.write().await;
+    db_write.transaction_mut(|t| {
+        progress.check_cancelled()?;
+        let mut held = Vec::new();
+        for &entry_id in unyielding
+            .iter()
+            .filter(|entry_id| plan.media.contains(entry_id))
+        {
+            if !lyra_db::track_sources::depending_on(t, entry_id)?.is_empty() {
+                held.push(entry_id);
+            }
+        }
+        #[cfg(test)]
+        super::tests::before_settlement_commit()?;
+        lyra_db::entries::mark_synced(t, unyielding, &held)?;
+        #[cfg(test)]
+        super::tests::in_settlement();
+        progress.check_cancelled()?;
+        Ok(held)
+    })
 }
 
 fn metadata_entry_ids(metadata: &[TrackMetadata]) -> impl Iterator<Item = DbId> + '_ {

@@ -773,7 +773,7 @@ async fn refresh_gone_covers(db: &DbAsync, library: &Library, library_db_id: DbI
 async fn mark_entries_synced(db: &DbAsync, library_db_id: DbId, entry_ids: &[DbId]) {
     let result = {
         let mut db_write = db.write().await;
-        db_write.transaction_mut(|t| lyra_db::entries::mark_synced(t, entry_ids))
+        db_write.transaction_mut(|t| lyra_db::entries::mark_synced(t, entry_ids, &[]))
     };
     if let Err(err) = result {
         tracing::error!(
@@ -1726,10 +1726,13 @@ FILE "album.flac" WAVE
         before_library_covers: Option<Gate<PathBuf>>,
         /// Fails the write unsyncing what the scan's moves leave behind.
         fail_unsync_left_by_moves: bool,
-        /// Cancelled inside a group's write once it applied a batch.
+        /// Cancelled inside a group's write once it applied a batch, or as it settles the files
+        /// that yielded nothing.
         cancel_in_write: Option<tokio_util::sync::CancellationToken>,
         /// Fails a set's write once its batches applied.
         fail_set_commit: bool,
+        /// Fails the write settling a group's unyielding files.
+        fail_settlement: bool,
         planned: std::sync::Mutex<Vec<(Vec<DbId>, Vec<DbId>)>>,
     }
 
@@ -1773,6 +1776,28 @@ FILE "album.flac" WAVE
         if let Some(gate) = gate {
             gate(library_path.to_path_buf()).await;
         }
+    }
+
+    /// Runs inside the write settling a group's unyielding files, cancelling as `after_apply`
+    /// does.
+    pub(super) fn in_settlement() {
+        let cancel = HOOKS
+            .try_with(|hooks| hooks.cancel_in_write.clone())
+            .ok()
+            .flatten();
+        if let Some(cancel) = cancel {
+            cancel.cancel();
+        }
+    }
+
+    pub(super) fn before_settlement_commit() -> anyhow::Result<()> {
+        if HOOKS
+            .try_with(|hooks| hooks.fail_settlement)
+            .unwrap_or(false)
+        {
+            anyhow::bail!("the settlement fails");
+        }
+        Ok(())
     }
 
     pub(super) fn before_set_commit() -> anyhow::Result<()> {
@@ -3826,6 +3851,427 @@ FILE "../Two/two.flac" WAVE
         sync(&library).await?;
         let tracks = snapshot(&library).await?;
         assert_eq!((tracks[&one].1.len(), tracks[&two].1.len()), (1, 1));
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    /// Rewrites `audio`'s primary tag with `change` and moves its mtime, so the scan reads it
+    /// again.
+    fn retag(audio: &Path, change: impl FnOnce(&mut lofty::tag::Tag)) -> anyhow::Result<()> {
+        use lofty::{
+            config::WriteOptions,
+            prelude::*,
+        };
+
+        let mut tagged = lofty::read_from_path(audio)?;
+        let tag = tagged
+            .primary_tag_mut()
+            .ok_or_else(|| anyhow::anyhow!("fixture has no primary tag"))?;
+        change(tag);
+        tag.save_to_path(audio, WriteOptions::default())?;
+        shift_mtime(audio, 5)
+    }
+
+    fn drop_album(tag: &mut lofty::tag::Tag) {
+        use lofty::prelude::*;
+
+        tag.remove_album();
+    }
+
+    async fn track_plays(track: DbId) -> anyhow::Result<bool> {
+        let db = STATE.db.read().await;
+        Ok(crate::services::catalog::Availability::of(&db)?.track(track))
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_retag_the_scan_rejects_holds_the_track_until_fixed() -> anyhow::Result<()> {
+        use lofty::prelude::*;
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("rejected-retag").await?;
+        let audio = album_track(&root.join("Album"), "Album")?;
+        sync(&library).await?;
+        let tracks = snapshot(&library).await?[&audio].1.clone();
+        assert_eq!(tracks.len(), 1);
+        let track = track_of_file(&library, &audio).await?;
+        let (user, playlist) = {
+            let mut db = STATE.db.write().await;
+            let user = lyra_db::test_db::insert_user(&mut db, "listener")?;
+            lyra_db::favorites::add(
+                &mut db,
+                user,
+                track,
+                lyra_db::favorites::FavoriteKind::Track,
+                1,
+            )?;
+            let playlist = lyra_db::playlists::create(
+                &mut db,
+                &lyra_db::Playlist {
+                    db_id: None,
+                    id: lyra_db::nanoid(),
+                    name: "Mix".to_string(),
+                    description: None,
+                    is_public: Some(false),
+                    created_at_ms: None,
+                    updated_at_ms: None,
+                },
+                user,
+            )?;
+            db.transaction_mut(|t| lyra_db::playlists::add_track(t, playlist, track))?;
+            (user, playlist)
+        };
+
+        retag(&audio, drop_album)?;
+        sync(&library).await?;
+        assert_eq!(
+            snapshot(&library).await?[&audio].1,
+            tracks,
+            "the track went"
+        );
+        let entry = entry_for(&library, &audio).await?;
+        assert!(entry.synced_at_ms.is_some());
+        assert!(entry.rejected_at_ms.is_some(), "the entry isn't held");
+        assert!(!track_plays(track).await?, "a held track plays");
+
+        retag(&audio, |tag| tag.set_album("Album".to_string()))?;
+        sync(&library).await?;
+        assert_eq!(
+            snapshot(&library).await?[&audio].1,
+            tracks,
+            "the track changed"
+        );
+        let entry = entry_for(&library, &audio).await?;
+        assert!(entry.synced_at_ms.is_some());
+        assert_eq!(entry.rejected_at_ms, None, "the fixed entry is still held");
+        assert!(track_plays(track).await?);
+        let db = STATE.db.read().await;
+        assert!(lyra_db::favorites::has(&*db, user, track)?);
+        let entries = lyra_db::playlists::get_tracks(&*db, playlist)?
+            .into_iter()
+            .map(|entry| entry.edge_id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            lyra_db::playlists::resolve_edge_targets(&*db, &entries)?,
+            vec![track]
+        );
+        drop(db);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_new_file_the_scan_rejects_is_not_held() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("rejected-new").await?;
+        let audio = album_track(&root.join("Album"), "Album")?;
+        retag(&audio, drop_album)?;
+        sync(&library).await?;
+
+        assert!(snapshot(&library).await?[&audio].1.is_empty());
+        let entry = entry_for(&library, &audio).await?;
+        assert!(entry.synced_at_ms.is_some());
+        assert_eq!(entry.rejected_at_ms, None);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn audio_whose_tags_are_rejected_still_plays_its_cue_segments() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("rejected-cue-audio").await?;
+        let audio = album_track(&root.join("Album"), "Album")?;
+        let audio_named = root.join("Album/album.flac");
+        std::fs::rename(&audio, &audio_named)?;
+        std::fs::write(root.join("Album/album.cue"), CUE_SHEET)?;
+        sync(&library).await?;
+        let segments = snapshot(&library).await?[&audio_named].1.clone();
+        assert_eq!(segments.len(), 2);
+
+        retag(&audio_named, drop_album)?;
+        sync(&library).await?;
+
+        assert_eq!(snapshot(&library).await?[&audio_named].1, segments);
+        let entry = entry_for(&library, &audio_named).await?;
+        assert!(entry.synced_at_ms.is_some());
+        assert_eq!(
+            entry.rejected_at_ms, None,
+            "audio its cue sheet reads is held"
+        );
+        let db = STATE.db.read().await;
+        let availability = crate::services::catalog::Availability::of(&db)?;
+        for segment in &segments {
+            let track = lyra_db::lookup::find_node_id_by_id(&*db, segment)?.expect("track");
+            assert!(
+                availability.track(track),
+                "a segment of read audio can't play"
+            );
+        }
+        drop(db);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    /// The cue sheets whose segments the tracks of `audio` play, by their entries' paths.
+    async fn segment_owners(library: &Library, audio: &Path) -> anyhow::Result<Vec<PathBuf>> {
+        let entry = entry_for(library, audio).await?.db_id.expect("entry");
+        let db = STATE.db.read().await;
+        let mut owners = Vec::new();
+        for source in lyra_db::graph::inbound_neighbor_ids(&*db, entry, "TrackSource")? {
+            if let Some(sheet) = lyra_db::track_sources::cue_entry_id(&*db, source)? {
+                owners.push(
+                    lyra_db::entries::get_by_id(&*db, sheet)?
+                        .expect("sheet")
+                        .full_path,
+                );
+            }
+        }
+        owners.sort();
+        owners.dedup();
+        Ok(owners)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_cue_sheet_outbid_for_its_audio_is_not_held() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("rejected-cue-outbid").await?;
+        let audio = album_track(&root.join("Album"), "Album")?;
+        let audio_named = root.join("Album/album.flac");
+        std::fs::rename(&audio, &audio_named)?;
+        let first = root.join("Album/first.cue");
+        std::fs::write(&first, CUE_SHEET)?;
+        sync(&library).await?;
+        let first_id = entry_for(&library, &first).await?.db_id.expect("entry");
+        let had_segments = {
+            let db = STATE.db.read().await;
+            !lyra_db::track_sources::depending_on(&*db, first_id)?.is_empty()
+        };
+        assert!(had_segments);
+
+        let second = root.join("Album/second.cue");
+        std::fs::write(&second, CUE_SHEET)?;
+        std::fs::write(&first, CUE_SHEET.replace("Cue Track 2", "Cue Track Two"))?;
+        shift_mtime(&first, 5)?;
+        sync(&library).await?;
+
+        let entries = [
+            entry_for(&library, &first).await?,
+            entry_for(&library, &second).await?,
+        ];
+        assert!(
+            entries.iter().all(|entry| entry.synced_at_ms.is_some()),
+            "a sheet is left to read again"
+        );
+        assert!(
+            entries.iter().all(|entry| entry.rejected_at_ms.is_none()),
+            "the outbid sheet is held"
+        );
+        assert_eq!(segment_owners(&library, &audio_named).await?, vec![second]);
+        let segments = snapshot(&library).await?[&audio_named].1.clone();
+        assert_eq!(segments.len(), 2);
+        let db = STATE.db.read().await;
+        let availability = crate::services::catalog::Availability::of(&db)?;
+        for segment in &segments {
+            let track = lyra_db::lookup::find_node_id_by_id(&*db, segment)?.expect("track");
+            assert!(
+                availability.track(track),
+                "a segment of the winning sheet can't play"
+            );
+        }
+        drop(db);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    /// The public ids of the tracks `path`'s file plays, with whether each can play.
+    async fn tracks_of(library: &Library, path: &Path) -> anyhow::Result<Vec<(String, bool)>> {
+        let ids = snapshot(library).await?[path].1.clone();
+        let db = STATE.db.read().await;
+        let availability = crate::services::catalog::Availability::of(&db)?;
+        let mut tracks = Vec::new();
+        for id in ids {
+            let track = lyra_db::lookup::find_node_id_by_id(&*db, &id)?.expect("track");
+            tracks.push((id, availability.track(track)));
+        }
+        Ok(tracks)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_cue_sheet_whose_batch_fails_stays_unsynced_and_held() -> anyhow::Result<()> {
+        const SHEET: &str = r#"PERFORMER "Cue Artist"
+TITLE "Cue Album"
+FILE "one.flac" WAVE
+  TRACK 01 AUDIO
+    TITLE "Cue Track 1"
+    INDEX 01 00:00:00
+FILE "two.flac" WAVE
+  TRACK 02 AUDIO
+    TITLE "Cue Track 2"
+    INDEX 01 00:00:00
+"#;
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("rejected-cue-batches").await?;
+        let album = root.join("Album");
+        std::fs::create_dir_all(&album)?;
+        album_file(&album.join("one.flac"), "One", 1)?;
+        album_file(&album.join("two.flac"), "Two", 2)?;
+        let cue = album.join("album.cue");
+        std::fs::write(&cue, SHEET)?;
+        sync(&library).await?;
+        let one = tracks_of(&library, &album.join("one.flac")).await?;
+        assert_eq!(one.len(), 1);
+
+        std::fs::write(&cue, "REM nothing here\n")?;
+        shift_mtime(&cue, 5)?;
+        sync(&library).await?;
+        let rejected_at = entry_for(&library, &cue).await?.rejected_at_ms;
+        assert!(rejected_at.is_some(), "the emptied sheet isn't held");
+        assert_eq!(
+            tracks_of(&library, &album.join("one.flac")).await?,
+            vec![(one[0].0.clone(), false)]
+        );
+
+        std::fs::write(&cue, SHEET)?;
+        shift_mtime(&cue, 10)?;
+        let progress = super::super::orchestrator::begin_test_run(&library).await;
+        let hooks = Hooks {
+            reject_album: Some("Two"),
+            ..Hooks::default()
+        };
+        sync_with(hooks.into(), &library, progress.clone()).await?;
+        super::super::orchestrator::end_test_run(&progress).await;
+        let entry = entry_for(&library, &cue).await?;
+        assert_eq!(
+            entry.synced_at_ms, None,
+            "a sheet with a failed batch is synced"
+        );
+        assert_eq!(entry.rejected_at_ms, rejected_at, "its hold changed");
+
+        sync(&library).await?;
+        let entry = entry_for(&library, &cue).await?;
+        assert!(entry.synced_at_ms.is_some());
+        assert_eq!(entry.rejected_at_ms, None);
+        assert_eq!(
+            tracks_of(&library, &album.join("one.flac")).await?,
+            vec![(one[0].0.clone(), true)]
+        );
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_track_with_another_source_plays_while_one_file_is_held() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("rejected-multi-source").await?;
+        let held = root.join("Album/01.flac");
+        let other = root.join("Album/02.flac");
+        album_file(&held, "Album", 1)?;
+        album_file(&other, "Album", 2)?;
+        sync(&library).await?;
+        let track = track_of_file(&library, &held).await?;
+        let other_entry = entry_for(&library, &other).await?.db_id.expect("entry");
+        {
+            let mut db = STATE.db.write().await;
+            db.transaction_mut(|t| {
+                lyra_db::track_sources::upsert(
+                    t,
+                    track,
+                    other_entry,
+                    lyra_db::track_sources::TrackSourceUpsert {
+                        source_kind: "embedded_tags".into(),
+                        source_key: "second-copy".into(),
+                        is_primary: false,
+                        start_ms: None,
+                        end_ms: None,
+                        format: Default::default(),
+                    },
+                    None,
+                )
+            })?;
+        }
+
+        retag(&held, drop_album)?;
+        sync(&library).await?;
+
+        assert!(entry_for(&library, &held).await?.rejected_at_ms.is_some());
+        assert!(
+            track_plays(track).await?,
+            "the other file's source can't play"
+        );
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_failed_settlement_is_a_failed_unit_and_retried() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("settlement-fails").await?;
+        let audio = album_track(&root.join("Album"), "Album")?;
+        sync(&library).await?;
+
+        retag(&audio, drop_album)?;
+        let progress = super::super::orchestrator::begin_test_run(&library).await;
+        let hooks = Hooks {
+            fail_settlement: true,
+            ..Hooks::default()
+        };
+        sync_with(hooks.into(), &library, progress.clone()).await?;
+        let run = super::super::orchestrator::get_sync_run(progress.run_id())
+            .await?
+            .expect("run");
+        super::super::orchestrator::end_test_run(&progress).await;
+        assert_eq!(run.progress.failed_units, 1, "the failure went unreported");
+        assert_eq!(run.failure_count, 1);
+        let entry = entry_for(&library, &audio).await?;
+        assert_eq!(
+            entry.synced_at_ms, None,
+            "nothing is left to retry the file"
+        );
+        assert_eq!(entry.rejected_at_ms, None);
+
+        sync(&library).await?;
+        assert!(entry_for(&library, &audio).await?.rejected_at_ms.is_some());
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_run_cancelled_as_it_settles_rejected_files_holds_none() -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("cancel-in-settlement").await?;
+        let audio = album_track(&root.join("Album"), "Album")?;
+        sync(&library).await?;
+
+        // The group holds only the rejected file, so the settling write is its only one.
+        retag(&audio, drop_album)?;
+        let progress = super::super::orchestrator::begin_test_run(&library).await;
+        let hooks = Hooks {
+            cancel_in_write: Some(progress.cancellation().clone()),
+            ..Hooks::default()
+        };
+        let result = sync_with(hooks.into(), &library, progress.clone()).await;
+        super::super::orchestrator::end_test_run(&progress).await;
+        assert!(result.is_err(), "the cancelled run finished");
+        let entry = entry_for(&library, &audio).await?;
+        assert_eq!(
+            entry.synced_at_ms, None,
+            "the cancelled run stamped the file"
+        );
+        assert_eq!(
+            entry.rejected_at_ms, None,
+            "the cancelled run held the file"
+        );
+
+        sync(&library).await?;
+        assert!(entry_for(&library, &audio).await?.rejected_at_ms.is_some());
         let _ = std::fs::remove_dir_all(root);
         Ok(())
     }

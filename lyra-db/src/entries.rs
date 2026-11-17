@@ -783,7 +783,14 @@ pub fn remove_missing(
     Ok(removed.len())
 }
 
-pub fn mark_synced(db: &mut impl super::DbAccess, entry_ids: &[DbId]) -> anyhow::Result<()> {
+/// Stamps `entry_ids` synced now and reconciles their rejection to `held` among them. A synced
+/// entry is read again only once it changes, so callers write both in one transaction, and the
+/// stamp never lands without the rejection its read decided.
+pub fn mark_synced(
+    db: &mut impl super::DbAccess,
+    entry_ids: &[DbId],
+    held: &[DbId],
+) -> anyhow::Result<()> {
     if entry_ids.is_empty() {
         return Ok(());
     }
@@ -793,7 +800,7 @@ pub fn mark_synced(db: &mut impl super::DbAccess, entry_ids: &[DbId]) -> anyhow:
             .ids(entry_ids)
             .query(),
     )?;
-    Ok(())
+    reconcile_rejected(db, entry_ids, held)
 }
 
 /// Whether a scan that couldn't read `protected` paths can tell anything about `path`: not when
@@ -1270,13 +1277,52 @@ mod tests {
         };
         assert!(!synced(&db)?);
 
-        mark_synced(&mut db, &[entry_id])?;
+        mark_synced(&mut db, &[entry_id], &[])?;
         assert!(synced(&db)?);
         sync_scanned(&mut db, &library, vec![track(1)])?;
         assert!(synced(&db)?, "an unchanged entry lost its sync");
 
         sync_scanned(&mut db, &library, vec![track(2)])?;
         assert!(!synced(&db)?, "a changed entry kept its sync");
+        Ok(())
+    }
+
+    #[test]
+    fn marking_synced_writes_the_rejection_with_the_stamp() -> anyhow::Result<()> {
+        let mut db = TestDb::initialized()?.into_inner();
+        let library_db_id = crate::test_db::insert_library(&mut db, "Music", "/music")?;
+        let library = crate::libraries::get_by_id(&db, library_db_id)?.expect("library");
+        sync_scanned(
+            &mut db,
+            &library,
+            vec![
+                scanned("/music/01.flac", EntryKind::File),
+                scanned("/music/02.flac", EntryKind::File),
+            ],
+        )?;
+        let ids = load_existing(&db, library_db_id)?
+            .into_iter()
+            .filter_map(|entry| entry.db_id)
+            .collect::<Vec<_>>();
+        let (held, other) = (ids[0], ids[1]);
+        let stored = |db: &DbAny, entry_id| -> anyhow::Result<Entry> {
+            Ok(get_by_id(db, entry_id)?.expect("entry"))
+        };
+
+        mark_synced(&mut db, &ids, &[held])?;
+        let first = stored(&db, held)?;
+        assert!(first.synced_at_ms.is_some());
+        let rejected_at = first.rejected_at_ms.expect("held entry is rejected");
+        assert!(stored(&db, other)?.synced_at_ms.is_some());
+        assert_eq!(stored(&db, other)?.rejected_at_ms, None);
+
+        mark_synced(&mut db, &ids, &[held])?;
+        assert_eq!(stored(&db, held)?.rejected_at_ms, Some(rejected_at));
+        assert_eq!(rejected_ids(&db)?, vec![held], "held twice, linked once");
+
+        mark_synced(&mut db, &ids, &[])?;
+        assert_eq!(stored(&db, held)?.rejected_at_ms, None);
+        assert!(rejected_ids(&db)?.is_empty());
         Ok(())
     }
 
@@ -1349,7 +1395,7 @@ mod tests {
             .iter()
             .map(|path| id_of(&db, path))
             .collect::<anyhow::Result<Vec<_>>>()?;
-        mark_synced(&mut db, &ids)?;
+        mark_synced(&mut db, &ids, &[])?;
         db.transaction_mut(|t| -> anyhow::Result<()> {
             let sheet = crate::cue::sheets::upsert(t, ids[3], "hash")?;
             crate::cue::tracks::upsert(t, sheet, ids[3], 1, ids[4], None, 0)?;
@@ -1398,7 +1444,7 @@ mod tests {
         assert!(!missing(&db, paths[1])? && !missing(&db, paths[4])?);
         assert_eq!(missing_ids(&db)?.len(), 2);
 
-        mark_synced(&mut db, &ids)?;
+        mark_synced(&mut db, &ids, &[])?;
         let observed = paths
             .iter()
             .chain(&dirs)

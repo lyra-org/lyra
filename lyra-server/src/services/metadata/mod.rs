@@ -76,7 +76,7 @@ pub(crate) use model::TrackMetadata;
 
 const SOURCE_KIND_EMBEDDED_TAGS: &str = "embedded_tags";
 
-fn classify_entry_file_kind(entry: &Entry) -> Option<String> {
+pub(crate) fn classify_entry_file_kind(entry: &Entry) -> Option<String> {
     if entry.kind != lyra_db::entries::EntryKind::File {
         return None;
     }
