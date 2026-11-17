@@ -3325,7 +3325,12 @@ fn label_bindings_hide_inaccessible_releases() -> Result<()> {
 fn track_source_bindings_hide_inaccessible_tracks() -> Result<()> {
     let mut fixture = library_access_fixture()?;
     let mut ids = Vec::new();
-    for (library, name) in [(fixture.shown, "shown"), (fixture.hidden, "hidden")] {
+    // `shared` belongs to the shown library, but its file to the hidden one.
+    for (library, file_library, name) in [
+        (fixture.shown, fixture.shown, "shown"),
+        (fixture.hidden, fixture.hidden, "hidden"),
+        (fixture.shown, fixture.hidden, "shared"),
+    ] {
         let track = lyra_db::fixtures::insert_track(&mut fixture.db, name)?;
         let entry = lyra_db::Entry {
             db_id: None,
@@ -3346,7 +3351,7 @@ fn track_source_bindings_hide_inaccessible_tracks() -> Result<()> {
             .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
             .ids()[0];
         lyra_db::fixtures::connect(&mut fixture.db, library, track)?;
-        lyra_db::fixtures::connect(&mut fixture.db, library, entry_id)?;
+        lyra_db::fixtures::connect(&mut fixture.db, file_library, entry_id)?;
         fixture.db.transaction_mut(|t| -> Result<()> {
             lyra_db::track_sources::upsert(
                 t,
@@ -3366,25 +3371,30 @@ fn track_source_bindings_hide_inaccessible_tracks() -> Result<()> {
         })?;
         ids.push((public_id(&fixture.db, track)?, entry.id));
     }
-    let [(shown, _), (hidden, hidden_entry)] = &ids[..] else {
+    let [(shown, _), (hidden, hidden_entry), (shared, _)] = &ids[..] else {
         unreachable!()
     };
     let values = fixture.eval(
-        &["lyra.track_sources", "lyra.chromaprint"],
+        &["lyra.playback_sources", "lyra.chromaprint"],
         format!(
             r#"
-                local track_sources = require("@lyra/track_sources")
+                local playback_sources = require("@lyra/playback_sources")
                 local chromaprint = require("@lyra/chromaprint")
                 local _, fingerprint_error = pcall(chromaprint.compute, "{hidden_entry}")
-                return track_sources.get_primary_source_key("{shown}"),
-                    track_sources.get_primary_source_key("{hidden}") == nil,
+                local sources = playback_sources.get({{ "{shown}", "{hidden}", "{shared}" }}, {{ include_entry = true }})
+                return sources["{shown}"].entry.name,
+                    sources["{hidden}"] == nil,
+                    sources["{shared}"] == nil,
                     string.find(tostring(fingerprint_error), "entry not found", 1, true) ~= nil
             "#
         ),
     )?;
     let text = |value: &str| luau::Value::String(value.as_bytes().to_vec());
     let yes = luau::Value::Boolean(true);
-    assert_eq!(values, vec![text("shown"), yes.clone(), yes]);
+    assert_eq!(
+        values,
+        vec![text("shown.flac"), yes.clone(), yes.clone(), yes]
+    );
     Ok(())
 }
 

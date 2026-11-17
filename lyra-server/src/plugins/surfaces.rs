@@ -34,7 +34,6 @@ use crate::plugins::{
     releases,
     server,
     tags,
-    track_sources,
     tracks,
     users,
 };
@@ -112,11 +111,6 @@ fn surfaces() -> &'static [Surface] {
             "lyra/ratings",
             ratings::get_module,
             ratings::render_luau_definition
-        ),
-        surface!(
-            "lyra/track_sources",
-            track_sources::get_module,
-            track_sources::render_luau_definition
         ),
         surface!(
             "lyra/tracks",

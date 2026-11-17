@@ -84,7 +84,6 @@ use crate::plugins::{
     releases,
     server,
     tags,
-    track_sources,
     tracks,
     users,
 };
@@ -541,11 +540,6 @@ scopes! {
             Effect::ReadsPersonal(PersonalKind::Tags, Users::Acting),
             Effect::WritesPersonal(PersonalKind::Tags, Users::Acting),
         ],
-    },
-    TrackSources => {
-        id: "lyra.track_sources",
-        module: track_sources::TrackSourcesModule::module_spec,
-        effects: &[],
     },
     Tracks => {
         id: "lyra.tracks",
@@ -1889,7 +1883,6 @@ mod tests {
                 "get_tagged(tag)",
             ],
         ),
-        ("lyra/track_sources", &["get_primary_source_key(track_id)"]),
         (
             "lyra/tracks",
             &[
