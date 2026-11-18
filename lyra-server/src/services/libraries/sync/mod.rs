@@ -5058,6 +5058,72 @@ FILE "a.flac" WAVE
         Ok(())
     }
 
+    /// Syncs `library` in a run of its own and returns the units the run skipped, once every unit
+    /// it counted settled.
+    async fn skipped_units_of_sync(library: &Library) -> anyhow::Result<u64> {
+        let progress = super::super::orchestrator::begin_test_run(library).await;
+        sync_library_pipeline(
+            &STATE.db.get(),
+            library,
+            LibrarySyncOptions::default(),
+            progress.clone(),
+        )
+        .await?;
+        let run = super::super::orchestrator::get_sync_run(progress.run_id())
+            .await?
+            .expect("run");
+        super::super::orchestrator::end_test_run(&progress).await;
+        let progress = run.progress;
+        assert_eq!(
+            progress.completed_units + progress.failed_units + progress.skipped_units,
+            progress.total_units,
+            "every unit counted is settled"
+        );
+        assert_eq!(progress.failed_units, 0);
+        Ok(progress.skipped_units)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_run_counts_a_group_newly_holding_files_as_one_skipped_unit() -> anyhow::Result<()> {
+        use lofty::prelude::*;
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("rejected-report").await?;
+        let files = (1..=3)
+            .map(|track| root.join(format!("Album/{track:02}.flac")))
+            .collect::<Vec<_>>();
+        for (track, file) in (1..).zip(&files) {
+            album_file(file, "Album", track)?;
+        }
+        sync(&library).await?;
+        retag(&files[0], drop_album)?;
+        sync(&library).await?;
+        assert!(
+            entry_for(&library, &files[0])
+                .await?
+                .rejected_at_ms
+                .is_some()
+        );
+
+        // The first file, held already, changes again; the others are newly held.
+        retag(&files[0], |tag| {
+            tag.set_title("Still Albumless".to_string())
+        })?;
+        for file in &files[1..] {
+            retag(file, drop_album)?;
+        }
+        let newly_held = skipped_units_of_sync(&library).await?;
+        for file in &files {
+            assert!(entry_for(&library, file).await?.rejected_at_ms.is_some());
+            retag(file, |tag| tag.set_title("Albumless Again".to_string()))?;
+        }
+        let none_newly_held = skipped_units_of_sync(&library).await?;
+        assert_eq!(newly_held, none_newly_held + 1);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
     #[tokio::test]
     async fn directories_in_later_batches_find_their_parents() -> anyhow::Result<()> {
         let db = DbAsync::new(lyra_db::test_db::new_test_db()?);

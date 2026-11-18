@@ -11,7 +11,10 @@ use std::{
         HashMap,
         HashSet,
     },
-    path::PathBuf,
+    path::{
+        Path,
+        PathBuf,
+    },
     sync::Arc,
     time::Instant,
 };
@@ -168,6 +171,7 @@ pub(super) async fn process_album_group(
     let mut unyielding = linked.split(&plan.unyielding, |&entry_id| entry_id);
     let mut batches = batches.into_iter().map(Some).collect::<Vec<_>>();
     let mut applied = Vec::new();
+    let mut held = Vec::new();
     for (set, set_batches) in linked.sets.iter().enumerate() {
         let commit = SetCommit {
             drops: source_keys(std::mem::take(&mut drops[set])),
@@ -195,7 +199,8 @@ pub(super) async fn process_album_group(
             &progress,
         )
         .await?;
-        if let Some((releases, _)) = committed {
+        if let Some((releases, set_held)) = committed {
+            held.extend(set_held);
             applied.extend(
                 releases
                     .into_iter()
@@ -213,11 +218,41 @@ pub(super) async fn process_album_group(
         .collect::<Vec<_>>();
     let drops = source_keys(std::mem::take(&mut drops[setless]));
     match settle_unyielding(db, &unyielding, &drops, &plan.media, &progress).await {
-        Ok(_) => {}
+        Ok(settled_held) => held.extend(settled_held),
         Err(err) if err.downcast_ref::<SyncRunControlError>().is_some() => return Err(err),
         Err(err) => report_failed_settlement(&progress, &source_dir, &err).await,
     }
+    let newly_held = held
+        .iter()
+        .filter(|entry_id| !files.held.contains(entry_id))
+        .count();
+    if newly_held > 0 {
+        report_held_files(&progress, &source_dir, newly_held).await;
+    }
     Ok(applied)
+}
+
+/// Reports a group whose changed files newly yield nothing in place of their tracks as a skipped
+/// unit, so the run counts them without failing: the tracks stay, unable to play, until the files
+/// change again.
+async fn report_held_files(progress: &SyncRunProgress, source_dir: &Path, count: usize) {
+    progress
+        .add_stage_total(SyncStageKey::MetadataParse, 1, SyncTotalState::Estimated)
+        .await;
+    let source_dir = source_dir.to_string_lossy().into_owned();
+    let work_id = progress
+        .start_work(
+            SyncStageKey::MetadataParse,
+            SyncWorkDetails::new("hold_rejected_files").source_dir(Some(source_dir.clone())),
+        )
+        .await;
+    progress
+        .skip_work(
+            work_id,
+            SyncStageKey::MetadataParse,
+            format!("{source_dir}: {count} changed files yield no track; their tracks can't play"),
+        )
+        .await;
 }
 
 fn source_keys(segments: Vec<&StoredSegment>) -> Vec<String> {
@@ -230,7 +265,7 @@ fn source_keys(segments: Vec<&StoredSegment>) -> Vec<String> {
 /// Reports the failed write settling a group's unyielding files as a failed unit.
 async fn report_failed_settlement(
     progress: &SyncRunProgress,
-    source_dir: &std::path::Path,
+    source_dir: &Path,
     err: &anyhow::Error,
 ) {
     progress
@@ -257,6 +292,8 @@ struct GroupFiles {
     unsynced: HashSet<DbId>,
     audio: HashSet<DbId>,
     sheets: HashSet<DbId>,
+    /// The files held when the sync read them.
+    held: HashSet<DbId>,
 }
 
 impl GroupFiles {
@@ -266,6 +303,7 @@ impl GroupFiles {
             unsynced: HashSet::new(),
             audio: HashSet::new(),
             sheets: HashSet::new(),
+            held: HashSet::new(),
         };
         for entry in entries.iter().filter(|entry| entry.kind == EntryKind::File) {
             let Some(entry_id) = entry.db_id else {
@@ -274,6 +312,9 @@ impl GroupFiles {
             files.by_path.insert(entry.full_path.clone(), entry_id);
             if entry.synced_at_ms.is_none() {
                 files.unsynced.insert(entry_id);
+            }
+            if entry.rejected_at_ms.is_some() {
+                files.held.insert(entry_id);
             }
             match classify_entry_file_kind(entry).as_deref() {
                 Some("audio") => files.audio.insert(entry_id),
