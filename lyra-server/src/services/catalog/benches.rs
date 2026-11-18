@@ -240,7 +240,7 @@ impl Bench {
     {
         let cx = Context::with(Arc::clone(&self.index), &self.db, &self.viewer);
         let mut query = Query::<C>::new(C::Filter::default());
-        query.search = search.map(str::to_string);
+        query.matching.search = search.map(str::to_string);
         let page = page_in(&cx, &query, offset, Some(limit)).unwrap();
         page.total + page.items.len() as u64
     }
@@ -256,7 +256,7 @@ impl Bench {
         {
             let cx = Context::with(Arc::clone(&bench.index), &bench.db, &bench.viewer);
             let mut query = Query::<C>::new(C::Filter::default());
-            query.name = Some(name);
+            query.matching.name = Some(name);
             let page = page_in(&cx, &query, 0, Some(20)).unwrap();
             page.total + page.items.len() as u64
         }
@@ -344,7 +344,7 @@ fn checked(track_count: usize, admin: bool) -> Bench {
     let total = |search| {
         let cx = Context::with(Arc::clone(&bench.index), &bench.db, &bench.viewer);
         let mut query = Query::<Tracks>::new(Default::default());
-        query.search = Some(search);
+        query.matching.search = Some(search);
         page_in(&cx, &query, 0, Some(1)).unwrap().total
     };
     assert_eq!(total("quarantined".to_string()), hidden);
@@ -548,7 +548,7 @@ fn scope_cycling() {
     let searched = |viewer: &Viewer| {
         let cx = Context::with(Arc::clone(&index), &db, viewer);
         let mut query = Query::<Tracks>::new(Default::default());
-        query.search = Some("velvet horizon".to_string());
+        query.matching.search = Some("velvet horizon".to_string());
         page_in(&cx, &query, 0, Some(20)).unwrap().total
     };
     println!("{track_count} tracks, 8 libraries");

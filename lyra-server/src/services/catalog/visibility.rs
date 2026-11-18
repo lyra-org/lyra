@@ -451,3 +451,96 @@ fn numbers_cover_only_visible_ids_and_numeric_keys() -> anyhow::Result<()> {
     assert_eq!(names[&split.a][..2], [None, None]);
     Ok(())
 }
+
+#[test]
+fn genre_matches_reach_only_visible_releases() -> anyhow::Result<()> {
+    use super::{
+        Match,
+        genres::{
+            GenreFilter,
+            GenreKey,
+            Genres,
+        },
+    };
+    let mut split = split()?;
+    for (release, genre) in [
+        (split.secret, "Secret"),
+        (split.middle, "Middle"),
+        (zulu(&split)?, "Zulu"),
+    ] {
+        lyra_db::genres::sync_release_genres(&mut split.db, release, &[genre.to_string()])?;
+    }
+    let db = &split.db;
+    let names = |viewer: &Viewer, filter: GenreFilter| -> anyhow::Result<Vec<String>> {
+        let ids = found(db, viewer, &Query::<Genres>::new(filter))?;
+        Ok(lookups::get::<Genres>(db, viewer, &ids)?
+            .into_values()
+            .map(|genre| genre.item.name)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect())
+    };
+    let of_tracks = |ids: Vec<DbId>| GenreFilter {
+        tracks: Some(Match::new(TrackFilter {
+            ids: Some(ids),
+            ..TrackFilter::default()
+        })),
+        ..GenreFilter::default()
+    };
+    let of_releases = |ids: Vec<DbId>| GenreFilter {
+        releases: Some(Match::new(ReleaseFilter {
+            ids: Some(ids),
+            ..ReleaseFilter::default()
+        })),
+        ..GenreFilter::default()
+    };
+    // `a` sits on visible Zulu and hidden Alpha Secret: it lends only what the viewer sees.
+    assert_eq!(
+        names(&split.restricted, of_tracks(vec![split.a]))?,
+        ["Zulu"]
+    );
+    assert_eq!(
+        names(&split.admin, of_tracks(vec![split.a]))?,
+        ["Secret", "Zulu"]
+    );
+    assert!(names(&split.restricted, of_tracks(vec![split.h]))?.is_empty());
+    assert!(names(&split.restricted, of_releases(vec![split.secret]))?.is_empty());
+    assert_eq!(
+        names(&split.admin, of_releases(vec![split.secret]))?,
+        ["Secret"]
+    );
+    // Credited to Aaron, `b` reaches Middle, and Aaron's own hidden release stays out.
+    let by_aaron = GenreFilter {
+        tracks: Some(Match::new(TrackFilter {
+            artists: Some(credit(split.aaron, CreditRole::Any)),
+            ..TrackFilter::default()
+        })),
+        ..GenreFilter::default()
+    };
+    assert_eq!(names(&split.restricted, by_aaron.clone())?, ["Middle"]);
+
+    let secret_genre = lyra_db::genres::find_by_name(db, "Secret")?.expect("the genre exists");
+    let counts = super::numbers::<Genres>(
+        db,
+        &split.admin,
+        &of_tracks(vec![split.a]),
+        vec![secret_genre],
+        &[GenreKey::ReleaseCount, GenreKey::TrackCount],
+    )?;
+    assert_eq!(
+        counts[&secret_genre],
+        [Some(1), Some(1)],
+        "the hidden release counts only the matching track for an admin"
+    );
+    Ok(())
+}
+
+/// The visible release "Zulu".
+fn zulu(split: &Split) -> anyhow::Result<DbId> {
+    Ok(
+        lyra_db::graph::inbound_neighbor_ids(&split.db, split.a, "Release")?
+            .into_iter()
+            .find(|release| *release != split.secret)
+            .expect("a sits on Zulu"),
+    )
+}

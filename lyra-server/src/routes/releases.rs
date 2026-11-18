@@ -449,7 +449,7 @@ pub(crate) fn release_page(
         available,
         ..ReleaseFilter::default()
     });
-    query.search = search_term;
+    query.matching.search = search_term;
     query.sort = sort;
     page_request
         .catalog(db, &viewer, query)?

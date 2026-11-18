@@ -128,23 +128,28 @@ pub(crate) enum PersonalData {
     Favorites,
     Listens,
     Ratings,
+    Tags,
 }
 
-/// The viewer's own favorites, listens and ratings a query keeps.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// The viewer's own favorites, listens, ratings and tags a query keeps.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct PersonalFilter {
     pub(crate) favorite: Option<bool>,
     pub(crate) listened: Option<bool>,
     pub(crate) rating: RatingFilter,
+    /// Keeps the entities the viewer tagged with any of these tag names, compared as tags store
+    /// them: case-sensitive, once normalized. Empty keeps every entity.
+    pub(crate) tags: Vec<String>,
 }
 
 impl PersonalFilter {
     /// The viewer's personal data the filter reads.
-    pub(crate) fn reads(self) -> Vec<PersonalData> {
+    pub(crate) fn reads(&self) -> Vec<PersonalData> {
         [
             self.favorite.map(|_| PersonalData::Favorites),
             self.listened.map(|_| PersonalData::Listens),
             (!self.rating.is_any()).then_some(PersonalData::Ratings),
+            (!self.tags.is_empty()).then_some(PersonalData::Tags),
         ]
         .into_iter()
         .flatten()
@@ -155,7 +160,7 @@ impl PersonalFilter {
     /// and leaving entities out starts from `all`. `listened_by` gives the slots that count as
     /// listened, given the tracks the viewer listened to.
     pub(crate) fn restrict(
-        self,
+        &self,
         cx: &Context<'_>,
         table: &Table,
         slots: &mut Option<Bits>,
@@ -191,6 +196,20 @@ impl PersonalFilter {
             RatingFilter::Any => {}
             RatingFilter::Rated(bounds) => restrict(rated(bounds)?, true),
             RatingFilter::Unrated => restrict(rated(RatingBounds::default())?, false),
+        }
+        if !self.tags.is_empty() {
+            let user = cx.viewer.user_db_id("the tag filter")?;
+            let names = self
+                .tags
+                .iter()
+                .map(|name| {
+                    lyra_db::tags::normalize_tag_name(name).map_err(|error| {
+                        CatalogError::Invalid(format!("invalid tag name {name:?}: {error}"))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let tagged = lyra_db::tags::targets_named(cx.db, user, &names)?;
+            restrict(table.slots(&tagged), true);
         }
         Ok(())
     }
@@ -279,7 +298,8 @@ impl<'a> Context<'a> {
         Self::with_available(index, db, viewer, None)
     }
 
-    fn with_available(
+    /// [`Self::with`] narrowed to `available`, as a query asking for it is.
+    pub(crate) fn with_available(
         index: Arc<Snapshot>,
         db: &'a DbAny,
         viewer: &'a Viewer,
@@ -306,8 +326,9 @@ impl<'a> Context<'a> {
 fn available_candidates<C: Catalog>(
     cx: &Context<'_>,
     filter: &C::Filter,
+    prepared: &C::Prepared,
 ) -> Result<Bits, CatalogError> {
-    let mut candidates = C::candidates(cx, filter)?;
+    let mut candidates = C::candidates(cx, filter, prepared)?;
     if cx.scope.available.is_some() {
         candidates.and(C::scoped(&cx.scope));
     }
@@ -363,8 +384,15 @@ impl<'a> Column<'a> {
 
 pub(crate) trait Catalog {
     type Key: SortKey;
-    type Filter;
+    type Filter: Clone + std::fmt::Debug + Default;
     type Item;
+    /// What a filter reads once for a query, before its candidates and columns, such as the slots
+    /// its nested queries match.
+    type Prepared: Default;
+
+    fn prepare(_cx: &Context<'_>, _filter: &Self::Filter) -> Result<Self::Prepared, CatalogError> {
+        Ok(Self::Prepared::default())
+    }
 
     /// The viewer's personal data the filter reads.
     fn personal(_filter: &Self::Filter) -> Vec<PersonalData> {
@@ -386,7 +414,11 @@ pub(crate) trait Catalog {
     fn table(index: &Snapshot) -> &Table;
 
     /// The slots the viewer can see that pass the filter.
-    fn candidates(cx: &Context<'_>, filter: &Self::Filter) -> Result<Bits, CatalogError>;
+    fn candidates(
+        cx: &Context<'_>,
+        filter: &Self::Filter,
+        prepared: &Self::Prepared,
+    ) -> Result<Bits, CatalogError>;
 
     /// The slots of this catalog that `scope` holds.
     fn scoped(scope: &Scope) -> &Bits;
@@ -395,6 +427,7 @@ pub(crate) trait Catalog {
     fn column<'a>(
         cx: &'a Context<'_>,
         filter: &Self::Filter,
+        prepared: &Self::Prepared,
         key: Self::Key,
         slots: &[u32],
     ) -> Result<Column<'a>, CatalogError>;
@@ -463,12 +496,61 @@ impl NameRange {
     }
 }
 
-pub(crate) struct Query<C: Catalog> {
+/// What a query keeps, before it sorts and pages: its filter, name bounds and search.
+pub(crate) struct Match<C: Catalog> {
     pub(crate) filter: C::Filter,
     pub(crate) names: NameRange,
     /// Keeps the items whose name is this one, as an exact search match compares names.
     pub(crate) name: Option<String>,
     pub(crate) search: Option<String>,
+}
+
+impl<C: Catalog> Match<C> {
+    pub(crate) fn new(filter: C::Filter) -> Self {
+        Self {
+            filter,
+            names: NameRange::default(),
+            name: None,
+            search: None,
+        }
+    }
+
+    /// The viewer's personal data the match reads.
+    pub(crate) fn personal(&self) -> Vec<PersonalData> {
+        C::personal(&self.filter)
+    }
+}
+
+impl<C: Catalog> Clone for Match<C> {
+    fn clone(&self) -> Self {
+        Self {
+            filter: self.filter.clone(),
+            names: self.names.clone(),
+            name: self.name.clone(),
+            search: self.search.clone(),
+        }
+    }
+}
+
+impl<C: Catalog> std::fmt::Debug for Match<C> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Match")
+            .field("filter", &self.filter)
+            .field("names", &self.names)
+            .field("name", &self.name)
+            .field("search", &self.search)
+            .finish()
+    }
+}
+
+impl<C: Catalog> Default for Match<C> {
+    fn default() -> Self {
+        Self::new(C::Filter::default())
+    }
+}
+
+pub(crate) struct Query<C: Catalog> {
+    pub(crate) matching: Match<C>,
     /// Empty means relevance when searching, and the catalog's default otherwise.
     pub(crate) sort: SortSpec<C::Key>,
     pub(crate) seed: u64,
@@ -477,10 +559,7 @@ pub(crate) struct Query<C: Catalog> {
 impl<C: Catalog> Query<C> {
     pub(crate) fn new(filter: C::Filter) -> Self {
         Self {
-            filter,
-            names: NameRange::default(),
-            name: None,
-            search: None,
+            matching: Match::new(filter),
             sort: Vec::new(),
             seed: 0,
         }
@@ -488,11 +567,77 @@ impl<C: Catalog> Query<C> {
 
     /// The viewer's personal data the query reads to filter or sort.
     pub(crate) fn personal(&self) -> BTreeSet<PersonalData> {
-        C::personal(&self.filter)
+        self.matching
+            .personal()
             .into_iter()
             .chain(self.sort.iter().filter_map(|(key, _)| key.personal()))
             .collect()
     }
+}
+
+/// The slots `matching` keeps, unranked.
+pub(crate) fn matching_in<C: Catalog>(
+    cx: &Context<'_>,
+    matching: &Match<C>,
+) -> Result<Bits, CatalogError> {
+    let prepared = C::prepare(cx, &matching.filter)?;
+    let (candidates, named) = narrowed(cx, matching, &prepared)?;
+    let table = C::table(&cx.index);
+    Ok(
+        match (matching.search.as_deref().and_then(Needle::parse), named) {
+            (Some(needle), named) => table.matches(
+                &needle,
+                &named.map_or(candidates, |slots| Bits::of(table.len(), slots)),
+                |word| C::related(cx, word),
+            ),
+            (None, Some(slots)) => Bits::of(table.len(), slots),
+            (None, None) => candidates,
+        },
+    )
+}
+
+/// [`matching_in`] for a query nested in another, which reads in the outer query's context.
+/// Availability belongs to the whole query, so the nested one may only leave it unset or repeat
+/// the outer one's.
+pub(crate) fn nested_in<C: Catalog>(
+    cx: &Context<'_>,
+    matching: &Match<C>,
+) -> Result<Bits, CatalogError> {
+    if let Some(available) = C::available(&matching.filter)
+        && cx.scope.available != Some(available)
+    {
+        return Err(CatalogError::Invalid(
+            "a nested query's `available` must be unset or match its outer query's: \
+             availability applies to the whole query"
+                .to_string(),
+        ));
+    }
+    matching_in(cx, matching)
+}
+
+/// The candidates that pass `matching`'s filter and name bounds and, when it names one, the few of
+/// them with that name.
+fn narrowed<C: Catalog>(
+    cx: &Context<'_>,
+    matching: &Match<C>,
+    prepared: &C::Prepared,
+) -> Result<(Bits, Option<Vec<u32>>), CatalogError> {
+    let table = C::table(&cx.index);
+    let mut candidates = available_candidates::<C>(cx, &matching.filter, prepared)?;
+    let in_names = |slot: &u32| matching.names.contains(table.sort_name(*slot));
+    // A name matches few slots, so each is checked on its own and only they are sorted.
+    let named = matching.name.as_deref().map(|name| {
+        table
+            .named(name)
+            .iter()
+            .copied()
+            .filter(|slot| candidates.contains(*slot) && in_names(slot))
+            .collect::<Vec<_>>()
+    });
+    if named.is_none() && !matching.names.is_unbounded() {
+        candidates = Bits::of(table.len(), candidates.iter().filter(in_names));
+    }
+    Ok((candidates, named))
 }
 
 /// Every matching id in order.
@@ -503,7 +648,7 @@ pub(crate) fn order<C: Catalog>(
     query: &Query<C>,
 ) -> Result<Vec<DbId>, CatalogError> {
     leading_in(
-        &Context::filtered::<C>(db, viewer, &query.filter)?,
+        &Context::filtered::<C>(db, viewer, &query.matching.filter)?,
         query,
         None,
     )
@@ -568,14 +713,16 @@ pub(crate) fn numbers_in<C: Catalog>(
     keys: &[C::Key],
 ) -> Result<HashMap<DbId, Vec<Option<u64>>>, CatalogError> {
     let table = C::table(&cx.index);
-    let slots = available_candidates::<C>(cx, &C::id_filter(ids))?
+    let ids = C::id_filter(ids);
+    let slots = available_candidates::<C>(cx, &ids, &C::prepare(cx, &ids)?)?
         .iter()
         .collect::<Vec<_>>();
+    let prepared = C::prepare(cx, filter)?;
     let columns = keys
         .iter()
         .map(|key| {
             (!key.ranked())
-                .then(|| C::column(cx, filter, *key, &slots))
+                .then(|| C::column(cx, filter, &prepared, *key, &slots))
                 .transpose()
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -602,7 +749,7 @@ pub(crate) fn page<C: Catalog>(
     limit: Option<u64>,
 ) -> Result<Page<C::Item>, CatalogError> {
     page_in(
-        &Context::filtered::<C>(db, viewer, &query.filter)?,
+        &Context::filtered::<C>(db, viewer, &query.matching.filter)?,
         query,
         offset,
         limit,
@@ -648,8 +795,10 @@ fn sorted<C: Catalog>(
     query: &Query<C>,
     keep: Option<usize>,
 ) -> Result<(Vec<u32>, usize), CatalogError> {
-    let needle = query.search.as_deref().and_then(Needle::parse);
-    let sort = resolve_sort::<C>(&query.filter, &query.sort, needle.is_some())?;
+    let matching = &query.matching;
+    let filter = &matching.filter;
+    let needle = matching.search.as_deref().and_then(Needle::parse);
+    let sort = resolve_sort::<C>(filter, &query.sort, needle.is_some())?;
     // Ties break in name order, so ending on it orders nothing more.
     let mut keys = sort.as_slice();
     while let Some(((key, Direction::Ascending), rest)) = keys.split_last()
@@ -659,20 +808,8 @@ fn sorted<C: Catalog>(
     }
 
     let table = C::table(&cx.index);
-    let mut candidates = available_candidates::<C>(cx, &query.filter)?;
-    let in_names = |slot: &u32| query.names.contains(table.sort_name(*slot));
-    // A name matches few slots, so each is checked on its own and only they are sorted.
-    let named = query.name.as_deref().map(|name| {
-        table
-            .named(name)
-            .iter()
-            .copied()
-            .filter(|slot| candidates.contains(*slot) && in_names(slot))
-            .collect::<Vec<_>>()
-    });
-    if named.is_none() && !query.names.is_unbounded() {
-        candidates = Bits::of(table.len(), candidates.iter().filter(in_names));
-    }
+    let prepared = C::prepare(cx, filter)?;
+    let (candidates, named) = narrowed(cx, matching, &prepared)?;
     let unranked = |slot| Entry {
         hit: Hit {
             slot,
@@ -709,12 +846,12 @@ fn sorted<C: Catalog>(
                 // Reading no values still raises any error the sort keys would.
                 for (key, _) in keys {
                     if key.kind() == KeyKind::Field {
-                        C::column(cx, &query.filter, *key, &[])?;
+                        C::column(cx, filter, &prepared, *key, &[])?;
                     }
                 }
                 return Ok((Vec::new(), total));
             }
-            if let Some(order) = kept_order::<C>(cx, &query.filter, keys)? {
+            if let Some(order) = kept_order::<C>(cx, filter, &prepared, keys)? {
                 let keep = keep.unwrap_or(usize::MAX).min(total);
                 let mut slots = Vec::with_capacity(keep);
                 for slot in order.iter() {
@@ -739,7 +876,7 @@ fn sorted<C: Catalog>(
     let columns = keys
         .iter()
         .map(|(key, _)| match key.kind() {
-            KeyKind::Field => C::column(cx, &query.filter, *key, &slots).map(Some),
+            KeyKind::Field => C::column(cx, filter, &prepared, *key, &slots).map(Some),
             _ => Ok(None),
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -779,6 +916,7 @@ fn sorted<C: Catalog>(
 fn kept_order<C: Catalog>(
     cx: &Context<'_>,
     filter: &C::Filter,
+    prepared: &C::Prepared,
     keys: &[(C::Key, Direction)],
 ) -> Result<Option<Arc<[u32]>>, CatalogError> {
     let table = C::table(&cx.index);
@@ -800,7 +938,7 @@ fn kept_order<C: Catalog>(
             )))
         }
         KeyKind::Field => {
-            let (values, cache) = match C::column(cx, filter, *key, &[])? {
+            let (values, cache) = match C::column(cx, filter, prepared, *key, &[])? {
                 Column::Stored(values, cache) => (values, cache),
                 Column::Fields(values) => (Arc::from(values), &table.cache),
                 Column::Computed(_) => return Ok(None),
@@ -919,10 +1057,12 @@ mod tests {
     use crate::services::catalog::{
         artists::Artists,
         releases::{
+            ReleaseFilter,
             ReleaseKey,
             Releases,
         },
         tracks::{
+            TrackFilter,
             TrackKey,
             Tracks,
         },
@@ -940,7 +1080,7 @@ mod tests {
 
     fn search<C: Catalog>(db: &DbAny, filter: C::Filter, term: &str) -> Vec<DbId> {
         let mut query = Query::<C>::new(filter);
-        query.search = Some(term.to_string());
+        query.matching.search = Some(term.to_string());
         order(db, &Viewer::System, &query).expect("search runs")
     }
 
@@ -1013,7 +1153,7 @@ mod tests {
         C::Filter: Default,
     {
         let mut query = Query::<C>::new(C::Filter::default());
-        query.search = Some(term.to_string());
+        query.matching.search = Some(term.to_string());
         let ids = order(db, viewer, &query).expect("search runs");
         let total = page(db, viewer, &query, 0, Some(1))
             .expect("search runs")
@@ -1120,7 +1260,7 @@ mod tests {
         C::Filter: Default,
     {
         let mut query = Query::<C>::new(C::Filter::default());
-        query.name = Some(name.to_string());
+        query.matching.name = Some(name.to_string());
         order(db, &Viewer::System, &query).expect("the query runs")
     }
 
@@ -1160,8 +1300,8 @@ mod tests {
         assert_eq!(found, [credited, shouted]);
 
         let mut query = Query::<Artists>::new(Default::default());
-        query.name = Some("Björk".to_string());
-        query.search = Some("trio".to_string());
+        query.matching.name = Some("Björk".to_string());
+        query.matching.search = Some("trio".to_string());
         assert!(order(&db, &Viewer::System, &query)?.is_empty());
         Ok(())
     }
@@ -1173,7 +1313,6 @@ mod tests {
         use crate::services::catalog::{
             ArtistCredit,
             CreditRole,
-            tracks::TrackFilter,
         };
         use lyra_db::{
             CreditType,
@@ -1583,5 +1722,112 @@ mod tests {
             assert_eq!(tracks, singles);
         }
         Ok(())
+    }
+
+    #[test]
+    fn a_match_keeps_what_its_query_lists() -> anyhow::Result<()> {
+        let split = split()?;
+        let db = &split.db;
+        let cx = Context::new(db, &Viewer::System)?;
+        let kept = |query: &Query<Tracks>| -> anyhow::Result<HashSet<DbId>> {
+            Ok(matching_in(&cx, &query.matching)?
+                .iter()
+                .map(|slot| cx.index.tracks.id(slot))
+                .collect())
+        };
+        for search in [
+            None,
+            Some("   "),
+            Some("'"),
+            Some("song"),
+            Some("privateartist"),
+        ] {
+            for name in [None, Some("SONG"), Some("'")] {
+                let mut query = Query::<Tracks>::new(TrackFilter::default());
+                query.matching.search = search.map(str::to_string);
+                query.matching.name = name.map(str::to_string);
+                let listed = order(db, &Viewer::System, &query)?;
+                assert_eq!(
+                    kept(&query)?,
+                    listed.into_iter().collect::<HashSet<_>>(),
+                    "search {search:?}, name {name:?}"
+                );
+            }
+        }
+        let mut blank = Query::<Tracks>::new(TrackFilter::default());
+        blank.matching.search = Some("   ".to_string());
+        assert_eq!(kept(&blank)?.len(), 2, "a blank search keeps every track");
+        blank.matching.search = Some("'".to_string());
+        assert!(
+            kept(&blank)?.is_empty(),
+            "a search that folds away keeps none"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_nested_match_leaves_availability_to_its_query() -> anyhow::Result<()> {
+        use crate::services::catalog::genres::{
+            GenreFilter,
+            Genres,
+        };
+        let split = split()?;
+        let nested = |outer: Option<bool>, inner: Option<bool>| {
+            let filter = GenreFilter {
+                available: outer,
+                tracks: Some(Match::new(TrackFilter {
+                    available: inner,
+                    ..TrackFilter::default()
+                })),
+                ..GenreFilter::default()
+            };
+            order(&split.db, &Viewer::System, &Query::<Genres>::new(filter))
+        };
+        for (outer, inner) in [(None, None), (Some(true), None), (Some(true), Some(true))] {
+            assert!(nested(outer, inner).is_ok(), "{outer:?} with {inner:?}");
+        }
+        for (outer, inner) in [(None, Some(true)), (Some(false), Some(true))] {
+            assert!(
+                matches!(nested(outer, inner), Err(CatalogError::Invalid(_))),
+                "{outer:?} with {inner:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn nested_matches_read_what_their_filters_read() {
+        use crate::services::catalog::genres::{
+            GenreFilter,
+            Genres,
+        };
+        let filter = GenreFilter {
+            releases: Some(Match::new(ReleaseFilter {
+                personal: PersonalFilter {
+                    rating: RatingFilter::Unrated,
+                    ..PersonalFilter::default()
+                },
+                ..ReleaseFilter::default()
+            })),
+            tracks: Some(Match::new(TrackFilter {
+                personal: PersonalFilter {
+                    favorite: Some(true),
+                    tags: vec!["Vinyl".to_string()],
+                    ..PersonalFilter::default()
+                },
+                bookmarked: Some(false),
+                ..TrackFilter::default()
+            })),
+            ..GenreFilter::default()
+        };
+        assert_eq!(
+            Query::<Genres>::new(filter).personal(),
+            BTreeSet::from([
+                PersonalData::Bookmarks,
+                PersonalData::Favorites,
+                PersonalData::Ratings,
+                PersonalData::Tags,
+            ])
+        );
     }
 }

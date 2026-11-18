@@ -55,7 +55,8 @@ pub(crate) fn visible<C: Catalog>(
 
 fn visible_in<C: Catalog>(cx: &Context<'_>, ids: &[DbId]) -> Result<HashSet<DbId>, CatalogError> {
     let table = C::table(&cx.index);
-    Ok(C::candidates(cx, &C::id_filter(ids.to_vec()))?
+    let filter = C::id_filter(ids.to_vec());
+    Ok(C::candidates(cx, &filter, &C::prepare(cx, &filter)?)?
         .iter()
         .map(|slot| table.id(slot))
         .collect())

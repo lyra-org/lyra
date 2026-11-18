@@ -23,10 +23,13 @@ use super::{
         Column,
         Context,
         KeyKind,
+        Match,
         SortKey,
+        nested_in,
     },
-    scoped_releases,
+    releases::Releases,
     totals_column,
+    tracks::Tracks,
 };
 use lyra_db::genres::Genre;
 
@@ -34,9 +37,9 @@ use lyra_db::genres::Genre;
 pub(crate) enum GenreKey {
     Name,
     DateCreated,
-    /// The visible releases in the genre.
+    /// The visible releases in the genre that the filter's library and nested queries keep.
     ReleaseCount,
-    /// The tracks on the visible releases in the genre.
+    /// The tracks on those releases, only those `tracks` matches when it is set.
     TrackCount,
     TotalDuration,
     ListenCount,
@@ -82,7 +85,8 @@ impl SortKey for GenreKey {
     }
 }
 
-/// Genres are reached through the releases in them.
+/// Genres are reached through the releases in them. `library`, `releases` and `tracks` narrow
+/// those releases, together, and the counts and totals count only within them.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct GenreFilter {
     /// Keeps only available entities (`true`) or only unavailable ones (`false`), narrowing
@@ -91,8 +95,35 @@ pub(crate) struct GenreFilter {
     pub(crate) ids: Option<Vec<DbId>>,
     pub(crate) exclude_ids: Vec<DbId>,
     pub(crate) library: Option<DbId>,
-    /// Genres of these releases.
-    pub(crate) releases: Option<Vec<DbId>>,
+    /// Genres of the releases this matches.
+    pub(crate) releases: Option<Match<Releases>>,
+    /// Genres of the releases the tracks this matches are kept through: their visible releases
+    /// within its own `library`, `releases` and `genres`. Only these tracks count as the genres'
+    /// tracks.
+    pub(crate) tracks: Option<Match<Tracks>>,
+}
+
+/// What a genre filter's release scope and nested queries keep.
+#[derive(Default)]
+pub(crate) struct GenreScope {
+    /// The releases that count, or `None` for every release the viewer sees.
+    releases: Option<Bits>,
+    /// The tracks that count, or `None` for every track on the releases that count.
+    tracks: Option<Bits>,
+}
+
+impl GenreScope {
+    fn counts_release(&self, release: u32) -> bool {
+        self.releases
+            .as_ref()
+            .is_none_or(|releases| releases.contains(release))
+    }
+
+    fn counts_track(&self, track: u32) -> bool {
+        self.tracks
+            .as_ref()
+            .is_none_or(|tracks| tracks.contains(track))
+    }
 }
 
 pub(crate) struct Genres;
@@ -101,6 +132,43 @@ impl Catalog for Genres {
     type Key = GenreKey;
     type Filter = GenreFilter;
     type Item = super::Listed<Genre>;
+    type Prepared = GenreScope;
+
+    fn prepare(cx: &Context<'_>, filter: &GenreFilter) -> Result<GenreScope, CatalogError> {
+        let links = cx.links();
+        let mut releases = filter
+            .library
+            .map(|library| links.releases_of_library(library));
+        let mut restrict = |bits: Bits| match &mut releases {
+            Some(releases) => releases.and(&bits),
+            None => releases = Some(bits),
+        };
+        if let Some(matching) = &filter.releases {
+            restrict(nested_in(cx, matching)?);
+        }
+        let mut tracks = None;
+        if let Some(matching) = &filter.tracks {
+            let matched = nested_in(cx, matching)?;
+            // A genre filter on the tracks keeps a track only through these releases.
+            let mut reached = links.releases_of_tracks(&matched);
+            if let Some(kept) = matching.filter.releases_kept(cx) {
+                reached.and(&kept);
+            }
+            restrict(reached);
+            tracks = Some(matched);
+        }
+        Ok(GenreScope { releases, tracks })
+    }
+
+    fn personal(filter: &GenreFilter) -> Vec<PersonalData> {
+        let mut reads = filter
+            .releases
+            .as_ref()
+            .map(Match::personal)
+            .unwrap_or_default();
+        reads.extend(filter.tracks.iter().flat_map(Match::personal));
+        reads
+    }
 
     fn available(filter: &GenreFilter) -> Option<bool> {
         filter.available
@@ -129,13 +197,15 @@ impl Catalog for Genres {
         &scope.genres
     }
 
-    fn candidates(cx: &Context<'_>, filter: &GenreFilter) -> Result<Bits, CatalogError> {
+    fn candidates(
+        cx: &Context<'_>,
+        filter: &GenreFilter,
+        scope: &GenreScope,
+    ) -> Result<Bits, CatalogError> {
         let index = &cx.index;
-        let mut genres = if filter.library.is_none() && filter.releases.is_none() {
-            cx.scope.genres.clone()
-        } else {
-            cx.links()
-                .genres_of_releases(&scoped_genre_releases(cx, filter))
+        let mut genres = match &scope.releases {
+            Some(releases) => cx.links().genres_of_releases(releases),
+            None => cx.scope.genres.clone(),
         };
         if let Some(ids) = &filter.ids {
             genres.and(&index.genres.slots(ids));
@@ -146,7 +216,8 @@ impl Catalog for Genres {
 
     fn column<'a>(
         cx: &'a Context<'_>,
-        filter: &GenreFilter,
+        _filter: &GenreFilter,
+        scope: &GenreScope,
         key: GenreKey,
         slots: &[u32],
     ) -> Result<Column<'a>, CatalogError> {
@@ -165,15 +236,15 @@ impl Catalog for Genres {
             return Ok(Column::Fields(&index.genre.created));
         }
         let links = cx.links();
-        let scoped = scoped_genre_releases(cx, filter);
         let releases_of = |genre: u32| {
             links
                 .releases_of_genre(genre)
-                .filter(|release| scoped.contains(*release))
+                .filter(|release| scope.counts_release(*release))
         };
         let tracks_of = |genre: u32| {
             let mut tracks = releases_of(genre)
                 .flat_map(|release| links.tracks_of_release(release))
+                .filter(|track| scope.counts_track(*track))
                 .collect::<Vec<_>>();
             tracks.sort_unstable();
             tracks.dedup();
@@ -206,8 +277,85 @@ impl Catalog for Genres {
     }
 }
 
-/// The release slots the viewer can see that the filter scopes genres to.
-fn scoped_genre_releases(cx: &Context<'_>, filter: &GenreFilter) -> Bits {
-    scoped_releases(cx, filter.library, filter.releases.as_deref(), &[])
-        .unwrap_or_else(|| Bits::full(cx.index.releases.len()))
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::*;
+    use crate::services::{
+        auth::Principal,
+        catalog::{
+            PersonalFilter,
+            Viewer,
+            numbers,
+            releases::ReleaseFilter,
+            tracks::TrackFilter,
+        },
+    };
+    use lyra_db::{
+        favorites::FavoriteKind,
+        fixtures::{
+            insert_release,
+            insert_track,
+            link_track,
+        },
+        test_db::{
+            insert_user,
+            new_test_db,
+        },
+    };
+
+    #[test]
+    fn a_track_match_counts_only_the_tracks_it_keeps() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user = insert_user(&mut db, "listener")?;
+        let album = insert_release(&mut db, "Album")?;
+        lyra_db::genres::sync_release_genres(&mut db, album, &["Rock".to_string()])?;
+        let rock = lyra_db::genres::find_by_name(&db, "Rock")?.expect("the genre exists");
+        let mut tracks = Vec::new();
+        for number in 0..10 {
+            let track = insert_track(&mut db, &format!("Track {number}"))?;
+            link_track(&mut db, album, track)?;
+            tracks.push(track);
+        }
+        lyra_db::favorites::add(&mut db, user, tracks[3], FavoriteKind::Track, 1)?;
+        let viewer = Viewer::user(
+            &db,
+            Principal::for_user(&db, user, vec![lyra_db::Permission::Admin], HashSet::new()),
+        )?;
+        let counts = |filter: GenreFilter| {
+            numbers::<Genres>(
+                &db,
+                &viewer,
+                &filter,
+                vec![rock],
+                &[GenreKey::ReleaseCount, GenreKey::TrackCount],
+            )
+        };
+        let favorites = GenreFilter {
+            tracks: Some(Match::new(TrackFilter {
+                personal: PersonalFilter {
+                    favorite: Some(true),
+                    ..PersonalFilter::default()
+                },
+                ..TrackFilter::default()
+            })),
+            ..GenreFilter::default()
+        };
+        assert_eq!(counts(favorites)?[&rock], [Some(1), Some(1)]);
+        assert_eq!(counts(GenreFilter::default())?[&rock], [Some(1), Some(10)]);
+        let others = GenreFilter {
+            tracks: Some(Match::new(TrackFilter {
+                ids: Some(vec![tracks[0], tracks[1]]),
+                ..TrackFilter::default()
+            })),
+            releases: Some(Match::new(ReleaseFilter {
+                ids: Some(vec![album]),
+                ..ReleaseFilter::default()
+            })),
+            ..GenreFilter::default()
+        };
+        assert_eq!(counts(others)?[&rock], [Some(1), Some(2)]);
+        Ok(())
+    }
 }

@@ -84,6 +84,22 @@ impl luau::LuauTypeInfo for ArtistQuery {
     }
 }
 
+/// An `ArtistMatch` argument.
+struct ArtistMatch(catalog::PendingMatch<Artists>);
+
+impl<'vm> luau::FromLuau<'vm> for ArtistMatch {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let opts: luau::Table = reader.read()?;
+        catalog::PendingMatch::read(&opts, read_filter(&opts)?).map(Self)
+    }
+}
+
+impl luau::LuauTypeInfo for ArtistMatch {
+    fn luau_type() -> luau::LuauType {
+        luau::LuauType::named("ArtistMatch")
+    }
+}
+
 #[cfg(feature = "docgen")]
 struct ArtistRecord;
 
@@ -126,7 +142,7 @@ impl ArtistsModule {
     }
 
     #[harmony(
-        description = "The artists the caller can see that pass every filter, sorted and paged. Artists are visible through credits on releases or tracks the caller can see. Without `sort`, a search ranks by relevance and anything else is by sort name. Filtering by `favorite`, `listened` or a rating, or sorting by favorite time, listens or rating, needs the `lyra.favorites`, `lyra.listens` or `lyra.ratings` scope respectively.",
+        description = "The artists the caller can see that pass every filter, sorted and paged. Artists are visible through credits on releases or tracks the caller can see. Without `sort`, a search ranks by relevance and anything else is by sort name. Filtering by `favorite`, `listened`, a rating or `tags`, or sorting by favorite time, listens or rating, needs the `lyra.favorites`, `lyra.listens`, `lyra.ratings` or `lyra.tags` scope respectively.",
         returns(ArtistPage)
     )]
     async fn query(
@@ -157,6 +173,18 @@ impl ArtistsModule {
                 })
                 .map_err(catalog::error)?;
         catalog::page_table(page)?.into_luau_return()
+    }
+
+    #[harmony(
+        description = "The names of the caller's tags on the artists the caller can see that `matching` keeps, ascending by byte order, which `tags` filters by. Needs the `lyra.tags` scope, and reading personal data through `matching` needs the scope `query` needs for it.",
+        returns(Vec<String>)
+    )]
+    async fn tags(
+        matching: ArtistMatch,
+        #[context] db: ViewerDb,
+        #[context] scopes: catalog::PersonalScopes,
+    ) -> luau::runtime::Result<luau::Value> {
+        catalog::tags(matching.0, &db, &scopes).await
     }
 
     #[harmony(
@@ -416,7 +444,19 @@ fn artist_interfaces() -> Vec<InterfaceDescriptor> {
     ]);
 
     let mut query = InterfaceDescriptor::new("ArtistQuery", None);
-    query.fields.extend([
+    query.fields.extend(filter_fields());
+    query.fields.extend(catalog::query_fields("ArtistSortKey"));
+
+    let mut matching = InterfaceDescriptor::new("ArtistMatch", None);
+    matching.fields.extend(filter_fields());
+    matching.fields.extend(catalog::match_fields());
+
+    vec![relation, query, matching]
+}
+
+#[cfg(feature = "docgen")]
+fn filter_fields() -> Vec<FieldDescriptor> {
+    let mut fields = vec![
         field("ids", Option::<Vec<String>>::luau_type()),
         field("exclude_ids", Option::<Vec<String>>::luau_type()),
         field("library_id", Option::<String>::luau_type()),
@@ -444,20 +484,28 @@ fn artist_interfaces() -> Vec<InterfaceDescriptor> {
             "exclude_credit_role",
             LuauType::optional(LuauType::named("CreditRole")),
         ),
-        field("credit_types", Option::<Vec<crate::plugins::types::LuauCreditType>>::luau_type()),
-        field("exclude_credit_types", Option::<Vec<crate::plugins::types::LuauCreditType>>::luau_type()),
-        field("artist_type", Option::<crate::plugins::types::LuauArtistType>::luau_type()),
+        field(
+            "credit_types",
+            Option::<Vec<crate::plugins::types::LuauCreditType>>::luau_type(),
+        ),
+        field(
+            "exclude_credit_types",
+            Option::<Vec<crate::plugins::types::LuauCreditType>>::luau_type(),
+        ),
+        field(
+            "artist_type",
+            Option::<crate::plugins::types::LuauArtistType>::luau_type(),
+        ),
         field("favorite", Option::<bool>::luau_type()),
         described_field(
             "listened",
             Option::<bool>::luau_type(),
             "Whether the caller has listened to any track credited to the artist or on its releases.",
         ),
-    ]);
-    query.fields.extend(catalog::rating_fields());
-    query.fields.extend(catalog::query_fields("ArtistSortKey"));
-
-    vec![relation, query]
+        catalog::tags_field(),
+    ];
+    fields.extend(catalog::rating_fields());
+    fields
 }
 
 #[cfg(feature = "docgen")]

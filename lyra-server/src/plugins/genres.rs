@@ -56,14 +56,59 @@ use lyra_db::genres::{
 
 pub(crate) struct GenresModule;
 
-/// The `query` argument, read with its page bounds.
-/// The `query` argument, read with its page bounds.
-struct GenreQuery(catalog::PagedQuery<Genres>);
+/// The `query` argument, read with its page bounds. Its nested matches sit in its filter from
+/// the start, so the query reads all they read, and only their ids wait to be resolved.
+struct GenreQuery {
+    request: catalog::PagedQuery<Genres>,
+    releases: Option<catalog::MatchIds>,
+    tracks: Option<catalog::MatchIds>,
+}
 
 impl<'vm> luau::FromLuau<'vm> for GenreQuery {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let opts: luau::Table = reader.read()?;
-        catalog::read_query::<Genres>(&opts, GenreFilter::default()).map(Self)
+        let mut request = catalog::read_query::<Genres>(&opts, GenreFilter::default())?;
+        let filter = &mut request.query.matching.filter;
+        let releases = catalog::PendingMatch::nested(
+            &opts,
+            "releases",
+            crate::plugins::releases::read_filter,
+        )?
+        .map(|nested| {
+            filter.releases = Some(nested.matching);
+            nested.ids
+        });
+        let tracks =
+            catalog::PendingMatch::nested(&opts, "tracks", crate::plugins::tracks::read_filter)?
+                .map(|nested| {
+                    filter.tracks = Some(nested.matching);
+                    nested.ids
+                });
+        Ok(Self {
+            request,
+            releases,
+            tracks,
+        })
+    }
+}
+
+impl GenreQuery {
+    /// The query with every id it names resolved under the guard it reads through.
+    fn resolve(self, db: &DbAny) -> luau::runtime::Result<catalog::PagedQuery<Genres>> {
+        let Self {
+            mut request,
+            releases,
+            tracks,
+        } = self;
+        request.resolve_ids(db)?;
+        let filter = &mut request.query.matching.filter;
+        if let (Some(ids), Some(matching)) = (releases, filter.releases.as_mut()) {
+            ids.apply(db, matching)?;
+        }
+        if let (Some(ids), Some(matching)) = (tracks, filter.tracks.as_mut()) {
+            ids.apply(db, matching)?;
+        }
+        Ok(request)
     }
 }
 
@@ -93,7 +138,7 @@ impl<'vm> luau::FromLuau<'vm> for GenreResolveRequest {
 #[harmony_macros::module(id = "lyra/genres", docs_feature = "docgen")]
 impl GenresModule {
     #[harmony(
-        description = "The genres of the releases the caller can see that pass every filter, sorted and paged. Without `sort`, a search ranks by relevance and anything else is by name. Sorting by `listen_count` or `last_played_at` needs the `lyra.listens` scope.",
+        description = "The genres of the releases the caller can see that pass every filter, sorted and paged. Without `sort`, a search ranks by relevance and anything else is by name. Sorting by `listen_count` or `last_played_at` needs the `lyra.listens` scope, and reading personal data through `releases` or `tracks` needs the scope `releases.query` or `tracks.query` needs for it.",
         returns(GenrePage)
     )]
     async fn query(
@@ -101,10 +146,9 @@ impl GenresModule {
         #[context] db: ViewerDb,
         #[context] scopes: catalog::PersonalScopes,
     ) -> luau::runtime::Result<luau::OwnedTable> {
-        let mut request = query.0;
-        scopes.check(&request.query)?;
+        scopes.check(&query.request.query)?;
         let (db, viewer) = db.read().await?;
-        request.resolve_ids(&db)?;
+        let request = query.resolve(&db)?;
         let page =
             services::catalog::page(&db, &viewer, &request.query, request.offset, request.limit)
                 .map_err(catalog::error)?;
@@ -468,9 +512,18 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
             description: None,
         },
         FieldDescriptor {
-            name: "release_ids",
-            ty: Option::<Vec<String>>::luau_type(),
-            description: Some("Genres of these releases."),
+            name: "releases",
+            ty: LuauType::optional(LuauType::named("ReleaseMatch")),
+            description: Some(
+                "Genres of the releases this keeps, as `releases.query` keeps them; `{ ids = release_ids }` names releases by id. With `library_id` and `tracks`, a release must pass all three, and `release_count` and `track_count` count only those releases.",
+            ),
+        },
+        FieldDescriptor {
+            name: "tracks",
+            ty: LuauType::optional(LuauType::named("TrackMatch")),
+            description: Some(
+                "Genres of the releases the tracks this keeps are kept through, as `tracks.query` keeps them: each track's releases the caller can see, within the match's own `library_id`, `release_ids` and `genre_ids`. So filtering the match by any genre found keeps a track it came from. A genre's `track_count` then counts only those tracks, and its `release_count` only the releases holding one.",
+            ),
         },
     ]);
     query.fields.extend(catalog::query_fields("GenreSortKey"));
@@ -484,12 +537,16 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
                     FieldDescriptor {
                         name: "release_count",
                         ty: u64::luau_type(),
-                        description: Some("The visible releases in the genre."),
+                        description: Some(
+                            "The visible releases in the genre that `library_id`, `releases` and `tracks` keep.",
+                        ),
                     },
                     FieldDescriptor {
                         name: "track_count",
                         ty: u64::luau_type(),
-                        description: Some("The tracks on those releases."),
+                        description: Some(
+                            "The tracks on those releases, only those `tracks` keeps when it is set.",
+                        ),
                     },
                 ]),
             ]),
@@ -500,9 +557,12 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
             "GenrePage",
             "GenreSummary",
         ))
+        .chain([catalog::credit_role_alias()])
         .collect::<Vec<_>>(),
         &[
             query,
+            crate::plugins::releases::release_match(),
+            crate::plugins::tracks::track_match(),
             GenreRecord::interface_descriptor(),
             GenreExternalId::interface_descriptor(),
             GenreAliasInput::interface_descriptor(),

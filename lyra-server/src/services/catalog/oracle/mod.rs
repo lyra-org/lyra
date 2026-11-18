@@ -47,6 +47,7 @@ pub(super) use super::{
     pipeline::{
         Catalog,
         KeyKind,
+        Match,
         Query,
         ShuffleUnit,
         SortKey,
@@ -372,6 +373,80 @@ fn restrict_rating(
     Ok(())
 }
 
+/// The tracks and releases a query asking for availability keeps.
+pub(crate) struct Kept {
+    pub(crate) tracks: HashSet<DbId>,
+    pub(crate) releases: HashSet<DbId>,
+}
+
+/// What a query asking for `available` keeps, read track by track: the tracks that can play, or
+/// can't, and the releases holding one of them, with a release of no tracks counting as
+/// available. `None` when the query asks for neither.
+pub(crate) fn kept(db: &DbAny, available: Option<bool>) -> anyhow::Result<Option<Kept>> {
+    let Some(available) = available else {
+        return Ok(None);
+    };
+    let mut playable = HashMap::new();
+    for track in lyra_db::roots::member_ids(db, lyra_db::roots::Root::Tracks)? {
+        playable.insert(track, lyra_db::track_sources::track_available(db, track)?);
+    }
+    let tracks = playable
+        .iter()
+        .filter(|(_, plays)| **plays == available)
+        .map(|(track, _)| *track)
+        .collect();
+    let mut releases = HashSet::new();
+    for release in all_releases(db)? {
+        let on = lyra_db::graph::neighbor_ids(db, release, "Track")?;
+        let keeps = if available {
+            on.is_empty() || on.iter().any(|track| playable[track])
+        } else {
+            on.iter().any(|track| !playable[track])
+        };
+        if keeps {
+            releases.insert(release);
+        }
+    }
+    Ok(Some(Kept { tracks, releases }))
+}
+
+/// The tag filter as the scanning pipeline applied it, keeping entities of `kind`.
+fn restrict_tags(
+    db: &DbAny,
+    viewer: &Viewer,
+    tags: &[String],
+    kind: &str,
+    candidates: &mut Candidates,
+) -> Result<(), CatalogError> {
+    if tags.is_empty() {
+        return Ok(());
+    }
+    let user = viewer.user_db_id("the tag filter")?;
+    let mut tagged = Vec::new();
+    for name in tags {
+        tagged.extend(lyra_db::tags::get_targets_by_tag(db, user, name)?);
+    }
+    candidates.restrict(lyra_db::graph::existing_ids(db, &tagged, kind)?);
+    Ok(())
+}
+
+/// The ids `matching` keeps, as the scanning pipeline found them.
+fn matched<C: Old>(
+    db: &DbAny,
+    viewer: &Viewer,
+    matching: &Match<C>,
+    kind: &str,
+) -> Result<HashSet<DbId>, CatalogError> {
+    let query = Query {
+        matching: matching.clone(),
+        sort: Vec::new(),
+        seed: 0,
+    };
+    Ok(order(db, viewer, &query, kind, &mut Reads::default())?
+        .into_iter()
+        .collect())
+}
+
 /// A candidate id set built by intersection, where `None` stands for every entity.
 #[derive(Default)]
 pub(crate) struct Candidates(Option<HashSet<DbId>>);
@@ -623,13 +698,13 @@ pub(crate) fn order<C: Old>(
     kind: &str,
     reads: &mut Reads,
 ) -> Result<Vec<DbId>, CatalogError> {
-    let needle = query.search.as_deref().and_then(Needle::parse);
+    let needle = query.matching.search.as_deref().and_then(Needle::parse);
     let sort = if !query.sort.is_empty() {
         query.sort.clone()
     } else if needle.is_some() {
         vec![(C::Key::RELEVANCE, Direction::Ascending)]
     } else {
-        C::default_sort(&query.filter)
+        C::default_sort(&query.matching.filter)
     };
     let mut fields = Vec::new();
     let columns = sort
@@ -650,27 +725,28 @@ pub(crate) fn order<C: Old>(
         Some(ids) => ids.clone(),
         None => reads
             .candidates
-            .insert(C::old_candidates(db, viewer, &query.filter)?)
+            .insert(C::old_candidates(db, viewer, &query.matching.filter)?)
             .clone(),
     };
     let positions = fields.iter().map(|key| key.position()).collect::<Vec<_>>();
     let rows = match reads.rows.get(&positions) {
         Some(rows) => rows.clone(),
         None => {
-            let rows = C::old_rows(db, viewer, &query.filter, ids, &fields)?;
+            let rows = C::old_rows(db, viewer, &query.matching.filter, ids, &fields)?;
             reads.rows.insert(positions, rows.clone());
             rows
         }
     };
     // A name that folds away matches nothing, as a search that does.
     let name = query
+        .matching
         .name
         .as_deref()
         .map(|name| search::key(&search::fold(name)));
     let related = &mut reads.related;
     let mut entries = Vec::new();
     for row in rows {
-        if !query.names.contains(row.sort_name()) {
+        if !query.matching.names.contains(row.sort_name()) {
             continue;
         }
         if name

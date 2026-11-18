@@ -146,14 +146,14 @@ async fn search_responses(
     let tracks = TrackListOptions::for_query(
         params.track_inc,
         query.clone(),
-        personal,
+        personal.clone(),
         available,
         page_request(),
     );
     let artists = ArtistListOptions::for_query(
         params.artist_inc,
         query.clone(),
-        personal,
+        personal.clone(),
         available,
         page_request(),
     );

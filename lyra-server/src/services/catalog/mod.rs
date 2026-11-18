@@ -9,6 +9,7 @@
 pub(crate) mod artists;
 #[cfg(all(test, feature = "nightly"))]
 pub(crate) mod benches;
+pub(crate) mod facets;
 pub(crate) mod genres;
 pub(crate) mod index;
 pub(crate) mod lookups;
@@ -48,6 +49,7 @@ use self::{
     },
 };
 pub(crate) use pipeline::{
+    Match,
     NameRange,
     PersonalData,
     PersonalFilter,

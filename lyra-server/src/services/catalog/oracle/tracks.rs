@@ -104,6 +104,10 @@ impl Old for Tracks {
         restrict_rating(db, viewer, filter.personal.rating, &mut tracks, || {
             all_tracks(db)
         })?;
+        restrict_tags(db, viewer, &filter.personal.tags, "Track", &mut tracks)?;
+        if let Some(kept) = kept(db, filter.available)? {
+            tracks.restrict(kept.tracks);
+        }
         if let Some(bookmarked) = filter.bookmarked {
             let user = viewer.user_db_id("the bookmarked filter")?;
             let bookmarks = lyra_db::bookmarks::target_ids(db, user)?;

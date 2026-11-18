@@ -138,9 +138,23 @@ modules predate some of them.
   documented, rather than in trailing positional parameters.
 - Queries take `offset`, `limit` and `sort` (`{ key, order }`) and return a page of
   `{ items, total, offset }`.
-- A summary's counts and totals follow the query's scope filters, the library and the related
-  items it narrows to, as `artists.query` with `library_id` counts only that library's releases.
-  Filters that only choose which items appear, such as a credit role, leave them alone.
+- A summary's counts and totals follow what scopes the query: the library, and the related items
+  it narrows to by `release_ids`, `genre_ids` or a match, as `artists.query` with `library_id`
+  counts only that library's releases and `genres.query` with `tracks` only the tracks that match.
+  Filters on the counted item's own credits only choose which items appear and leave the counts
+  alone: `artists.query`'s credit filters and its `track_ids` pick the artists credited there, and
+  each artist's counts still cover all its credits within the scope.
+- Related items named by id are a `<kind>_ids` list, matching any of them, such as `release_ids`
+  and `genre_ids`, with `library_id` for a library. A query takes a match of another kind's query
+  instead, named for the kind, as `genres.query` takes `tracks` and `releases`, where it narrows by
+  what those items match rather than by which ones they are; `{ ids = ... }` inside a match is that
+  query's own id filter. A match is the other query's filters without `sort`, `seed`, `offset` and
+  `limit`, which it raises on. Its fields hold together with the outer query's, and availability
+  applies to the whole query: a match leaves `available` unset or repeats the outer query's, and
+  raises otherwise.
+- A read of the values a set of items holds, such as `tracks.years` and `tracks.tags`, takes a
+  match and reads each value as the filter of the same name keeps by, so filtering by any value it
+  returns keeps an item the value came from.
 - A range filter takes `min_<field>` and `max_<field>`, both inclusive and either optional, and
   raises when the minimum exceeds the maximum, as `min_rating` and `min_year` do.
 - A lookup by exact name goes through the catalog queries' `name` filter, which compares names as

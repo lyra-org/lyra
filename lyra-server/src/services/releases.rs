@@ -275,7 +275,7 @@ mod tests {
             genres: vec![rock],
             ..ReleaseFilter::default()
         });
-        query.search = Some("blue".to_string());
+        query.matching.search = Some("blue".to_string());
         let details = list_details_with_query(&db, ReleaseIncludes::default(), &query)?;
 
         assert_eq!(details.len(), 1);

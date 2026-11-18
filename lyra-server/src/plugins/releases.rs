@@ -50,19 +50,38 @@ use crate::services::{
 pub(crate) struct ReleasesModule;
 
 /// The `query` argument, read with its page bounds.
-/// The `query` argument, read with its page bounds.
 struct ReleaseQuery(catalog::PagedQuery<Releases>);
 
 impl<'vm> luau::FromLuau<'vm> for ReleaseQuery {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let opts: luau::Table = reader.read()?;
-        let filter = ReleaseFilter {
-            years: catalog::read_years(&opts)?,
-            personal: catalog::read_personal(&opts)?,
-            ..ReleaseFilter::default()
-        };
-        catalog::read_query::<Releases>(&opts, filter).map(Self)
+        catalog::read_query::<Releases>(&opts, read_filter(&opts)?).map(Self)
     }
+}
+
+/// A `ReleaseMatch` argument.
+struct ReleaseMatch(catalog::PendingMatch<Releases>);
+
+impl<'vm> luau::FromLuau<'vm> for ReleaseMatch {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let opts: luau::Table = reader.read()?;
+        catalog::PendingMatch::read(&opts, read_filter(&opts)?).map(Self)
+    }
+}
+
+impl luau::LuauTypeInfo for ReleaseMatch {
+    fn luau_type() -> luau::LuauType {
+        luau::LuauType::named("ReleaseMatch")
+    }
+}
+
+/// The filter fields only releases take; the shared ones are read with the query.
+pub(crate) fn read_filter(opts: &luau::Table) -> luau::runtime::Result<ReleaseFilter> {
+    Ok(ReleaseFilter {
+        years: catalog::read_years(opts)?,
+        personal: catalog::read_personal(opts)?,
+        ..ReleaseFilter::default()
+    })
 }
 
 impl luau::LuauTypeInfo for ReleaseQuery {
@@ -166,7 +185,7 @@ impl ReleasesModule {
     }
 
     #[harmony(
-        description = "The releases the caller can see that pass every filter, sorted and paged. Without `sort`, a search ranks by relevance and anything else is by sort name. Filtering by `favorite`, `listened` or a rating, or sorting by favorite time, listens or rating, needs the `lyra.favorites`, `lyra.listens` or `lyra.ratings` scope respectively.",
+        description = "The releases the caller can see that pass every filter, sorted and paged. Without `sort`, a search ranks by relevance and anything else is by sort name. Filtering by `favorite`, `listened`, a rating or `tags`, or sorting by favorite time, listens or rating, needs the `lyra.favorites`, `lyra.listens`, `lyra.ratings` or `lyra.tags` scope respectively.",
         returns(ReleasePage)
     )]
     async fn query(
@@ -196,6 +215,30 @@ impl ReleasesModule {
                 })
                 .map_err(catalog::error)?;
         catalog::page_table(page)?.into_luau_return()
+    }
+
+    #[harmony(
+        description = "Every year of the releases the caller can see that `matching` keeps, ascending: the year of each release's date, which `years` filters by, so a release without a date adds none and filtering by any year listed keeps a release it came from. Reading personal data through `matching` needs the scope `query` needs for it.",
+        returns(Vec<u32>)
+    )]
+    async fn years(
+        matching: ReleaseMatch,
+        #[context] db: ViewerDb,
+        #[context] scopes: catalog::PersonalScopes,
+    ) -> luau::runtime::Result<luau::Value> {
+        catalog::years(matching.0, &db, &scopes).await
+    }
+
+    #[harmony(
+        description = "The names of the caller's tags on the releases the caller can see that `matching` keeps, ascending by byte order, which `tags` filters by. Needs the `lyra.tags` scope, and reading personal data through `matching` needs the scope `query` needs for it.",
+        returns(Vec<String>)
+    )]
+    async fn tags(
+        matching: ReleaseMatch,
+        #[context] db: ViewerDb,
+        #[context] scopes: catalog::PersonalScopes,
+    ) -> luau::runtime::Result<luau::Value> {
+        catalog::tags(matching.0, &db, &scopes).await
     }
 
     #[harmony(
@@ -465,7 +508,25 @@ fn release_type_aliases() -> Vec<TypeAliasDescriptor> {
 #[cfg(feature = "docgen")]
 fn release_query() -> InterfaceDescriptor {
     let mut descriptor = InterfaceDescriptor::new("ReleaseQuery", None);
-    descriptor.fields.extend([
+    descriptor.fields.extend(filter_fields());
+    descriptor
+        .fields
+        .extend(catalog::query_fields("ReleaseSortKey"));
+    descriptor
+}
+
+/// The `ReleaseMatch` interface: a `ReleaseQuery` without its order and page.
+#[cfg(feature = "docgen")]
+pub(crate) fn release_match() -> InterfaceDescriptor {
+    let mut descriptor = InterfaceDescriptor::new("ReleaseMatch", None);
+    descriptor.fields.extend(filter_fields());
+    descriptor.fields.extend(catalog::match_fields());
+    descriptor
+}
+
+#[cfg(feature = "docgen")]
+fn filter_fields() -> Vec<FieldDescriptor> {
+    let mut fields = vec![
         field("ids", Option::<Vec<String>>::luau_type()),
         field("exclude_ids", Option::<Vec<String>>::luau_type()),
         field("library_id", Option::<String>::luau_type()),
@@ -477,13 +538,11 @@ fn release_query() -> InterfaceDescriptor {
             Option::<bool>::luau_type(),
             "Whether the caller has listened to every one of the release's tracks.",
         ),
-    ]);
-    descriptor.fields.extend(catalog::rating_fields());
-    descriptor.fields.extend(catalog::credit_fields());
-    descriptor
-        .fields
-        .extend(catalog::query_fields("ReleaseSortKey"));
-    descriptor
+        catalog::tags_field(),
+    ];
+    fields.extend(catalog::rating_fields());
+    fields.extend(catalog::credit_fields());
+    fields
 }
 
 #[cfg(feature = "docgen")]
@@ -502,7 +561,7 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
     render_definition_file_with_support(
         &ReleasesModule::module_descriptor(),
         &release_type_aliases(),
-        &[release_query(), similar_release_options()],
+        &[release_query(), release_match(), similar_release_options()],
         &[],
     )
 }

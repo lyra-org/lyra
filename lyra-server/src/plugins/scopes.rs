@@ -1617,6 +1617,7 @@ mod tests {
             &[
                 "get(ids)",
                 "query(query)",
+                "tags(matching)",
                 "by_release(release_ids)",
                 "by_track(track_ids)",
                 "artwork_id_by_name(name)",
@@ -1866,6 +1867,8 @@ mod tests {
             &[
                 "get(ids)",
                 "query(query)",
+                "years(matching)",
+                "tags(matching)",
                 "by_track(track_ids)",
                 "by_genre(genre_ids)",
                 "chains(release_ids)",
@@ -1890,6 +1893,8 @@ mod tests {
                 "get(ids)",
                 "streamable(ids)",
                 "query(query)",
+                "years(matching)",
+                "tags(matching)",
                 "by_release(release_ids)",
                 "by_entry(entry_ids)",
                 "chains(track_ids)",

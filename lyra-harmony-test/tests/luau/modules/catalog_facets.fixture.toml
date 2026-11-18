@@ -1,0 +1,117 @@
+run_as = "listener"
+
+# The listener sees "Open": "Solo" (Rock, jazz), released in 1999 by Amy, holds S1 from 2001 and
+# S2 without a year; "Live" (Blues) by Ben holds L1 from 2009. "Closed" holds Amy's "Hidden"
+# (Blues, 2005) with H1 from 2005. The listener favorited S2 and tagged items on both sides.
+
+[[users]]
+key = "listener"
+
+[[libraries]]
+key = "open"
+name = "Open"
+users = ["listener"]
+
+[[libraries]]
+key = "closed"
+name = "Closed"
+
+[[artists]]
+key = "amy"
+name = "Amy"
+
+[[artists]]
+key = "ben"
+name = "Ben"
+
+[[genres]]
+key = "rock"
+name = "Rock"
+
+[[genres]]
+key = "jazz"
+name = "jazz"
+
+[[genres]]
+key = "blues"
+name = "Blues"
+
+[[releases]]
+key = "solo"
+title = "Solo"
+library = "open"
+date = "1999-04"
+artists = ["amy"]
+genres = ["rock", "jazz"]
+
+[[releases]]
+key = "live"
+title = "Live"
+library = "open"
+artists = ["ben"]
+genres = ["blues"]
+
+[[releases]]
+key = "hidden"
+title = "Hidden"
+library = "closed"
+date = "2005"
+artists = ["amy"]
+genres = ["blues"]
+
+[[tracks]]
+key = "s1"
+title = "S1"
+release = "solo"
+year = 2001
+
+[[tracks]]
+key = "s2"
+title = "S2"
+release = "solo"
+
+[[tracks]]
+key = "l1"
+title = "L1"
+release = "live"
+year = 2009
+
+[[tracks]]
+key = "h1"
+title = "H1"
+release = "hidden"
+year = 2005
+
+[[favorites]]
+user = "listener"
+target = "s2"
+
+[[tags]]
+user = "listener"
+target = "s1"
+name = "Vinyl"
+
+[[tags]]
+user = "listener"
+target = "s2"
+name = "vinyl"
+
+[[tags]]
+user = "listener"
+target = "solo"
+name = "Vinyl"
+
+[[tags]]
+user = "listener"
+target = "ben"
+name = "Band"
+
+[[tags]]
+user = "listener"
+target = "h1"
+name = "Lost"
+
+[[tags]]
+user = "listener"
+target = "hidden"
+name = "Lost"

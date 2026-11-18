@@ -11,7 +11,7 @@ impl Old for Genres {
         viewer: &Viewer,
         filter: &GenreFilter,
     ) -> Result<Vec<DbId>, CatalogError> {
-        let releases = scoped_genre_releases(db, viewer, filter)?;
+        let (releases, _) = genre_scope(db, viewer, filter)?;
         let mut genres = Candidates::default();
         match &filter.ids {
             Some(ids) => {
@@ -56,16 +56,19 @@ impl Old for Genres {
             GenreKey::ListenCount,
             GenreKey::LastPlayedAt,
         ]) {
-            let visible = scoped_genre_releases(db, viewer, filter)?
-                .into_iter()
-                .collect::<HashSet<_>>();
+            let (counted, counted_tracks) = genre_scope(db, viewer, filter)?;
+            let counted = counted.into_iter().collect::<HashSet<_>>();
             for (genre, releases) in lyra_db::genres::get_releases_many(db, &ids)? {
                 let releases = releases
                     .into_iter()
-                    .filter(|release| visible.contains(release))
+                    .filter(|release| counted.contains(release))
                     .collect::<Vec<_>>();
                 release_counts.insert(genre, releases.len() as u64);
-                tracks_by_genre.insert(genre, tracks_of_releases(db, releases)?);
+                let mut tracks = tracks_of_releases(db, releases)?;
+                if let Some(counted_tracks) = &counted_tracks {
+                    tracks.retain(|track| counted_tracks.contains(track));
+                }
+                tracks_by_genre.insert(genre, tracks);
             }
         }
         let totals = track_totals(
@@ -105,12 +108,60 @@ impl Old for Genres {
     }
 }
 
-/// The releases the viewer can see that the filter scopes genres to.
-fn scoped_genre_releases(
+/// The releases the viewer can see that the filter's library, availability and nested queries
+/// keep, and the tracks that alone count, when anything narrows them.
+fn genre_scope(
     db: &DbAny,
     viewer: &Viewer,
     filter: &GenreFilter,
-) -> anyhow::Result<Vec<DbId>> {
-    scoped_releases(db, viewer, filter.library, filter.releases.as_deref(), &[])?
-        .resolve(&[], || all_releases(db))
+) -> Result<(Vec<DbId>, Option<HashSet<DbId>>), CatalogError> {
+    let mut releases = scoped_releases(db, viewer, filter.library, None, &[])?;
+    let available = kept(db, filter.available)?;
+    if let Some(available) = &available {
+        releases.restrict(available.releases.iter().copied());
+    }
+    if let Some(matching) = &filter.releases {
+        let matching = inheriting(matching, filter.available);
+        releases.restrict(matched(db, viewer, &matching, "Release")?);
+    }
+    let mut tracks = filter
+        .tracks
+        .as_ref()
+        .map(|matching| matched(db, viewer, &inheriting(matching, filter.available), "Track"))
+        .transpose()?;
+    if let (Some(matching), Some(tracks)) = (&filter.tracks, &tracks) {
+        let visible = visible_releases(viewer, db)?;
+        let kept = scoped_releases(
+            db,
+            viewer,
+            matching.filter.library,
+            matching.filter.releases.as_deref(),
+            &matching.filter.genres,
+        )?;
+        releases.restrict(
+            releases_of_tracks(db, tracks.iter().copied())?
+                .into_iter()
+                .filter(|release| {
+                    seen(&visible, *release) && kept.ids().is_none_or(|kept| kept.contains(release))
+                }),
+        );
+    }
+    if let Some(available) = available {
+        tracks = Some(match tracks {
+            Some(tracks) => tracks.intersection(&available.tracks).copied().collect(),
+            None => available.tracks,
+        });
+    }
+    Ok((releases.resolve(&[], || all_releases(db))?, tracks))
+}
+
+/// `matching` with the availability of the query it is nested in, which applies to the whole
+/// query.
+fn inheriting<C: Catalog>(matching: &Match<C>, available: Option<bool>) -> Match<C> {
+    let mut matching = matching.clone();
+    let nested = C::available_mut(&mut matching.filter);
+    if nested.is_none() {
+        *nested = available;
+    }
+    matching
 }

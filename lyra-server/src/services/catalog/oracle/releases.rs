@@ -54,6 +54,10 @@ impl Old for Releases {
         restrict_rating(db, viewer, filter.personal.rating, &mut releases, || {
             all_releases(db)
         })?;
+        restrict_tags(db, viewer, &filter.personal.tags, "Release", &mut releases)?;
+        if let Some(kept) = kept(db, filter.available)? {
+            releases.restrict(kept.releases);
+        }
 
         let mut excluded = filter.exclude_ids.clone();
         if !filter.exclude_artists.is_empty() {

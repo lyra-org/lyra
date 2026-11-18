@@ -98,6 +98,7 @@ const WORDS: &[&str] = &[
     "Zero",
 ];
 const GENRES: &[&str] = &["Rock", "Jazz", "Acid Jazz", "Ambient", "J-Pop"];
+const TAGS: &[&str] = &["Vinyl", "vinyl", "Live"];
 
 struct Fixture {
     db: DbAny,
@@ -223,6 +224,36 @@ fn fixture(seed: u64) -> anyhow::Result<Fixture> {
         tracks.push(track_db_id);
     }
 
+    // Some tracks play from files, any of which may be missing; a track with none plays.
+    for track in &tracks {
+        if !rng.chance(40) {
+            continue;
+        }
+        for source in 0..1 + rng.below(2) {
+            let name = format!("{}-{source}.flac", track.0);
+            let entry = lyra_db::fixtures::insert_file_entry(&mut db, libraries[0].0, &name)?;
+            if rng.chance(60) {
+                lyra_db::entries::set_missing(&mut db, &[entry], 1)?;
+            }
+            db.transaction_mut(|t| {
+                lyra_db::track_sources::upsert(
+                    t,
+                    *track,
+                    entry,
+                    lyra_db::track_sources::TrackSourceUpsert {
+                        source_kind: "embedded_tags".into(),
+                        source_key: format!("oracle:{name}"),
+                        is_primary: source == 0,
+                        start_ms: None,
+                        end_ms: None,
+                        format: Default::default(),
+                    },
+                    None,
+                )
+            })?;
+        }
+    }
+
     for release in &releases {
         let on = lyra_db::graph::neighbor_ids(&db, *release, "Track")?;
         if on.len() >= 2 && rng.chance(60) {
@@ -258,6 +289,10 @@ fn fixture(seed: u64) -> anyhow::Result<Fixture> {
         if rng.chance(25) {
             let value = RatingValue::new(1 + rng.below(5) as u8).expect("a rating");
             lyra_db::ratings::upsert(&mut db, user, *target, value, rng.below(9) as i64)?;
+        }
+        if rng.chance(30) {
+            let name = *rng.pick(TAGS);
+            lyra_db::tags::create(&mut db, user, *target, name, "blue", rng.below(9) as i64)?;
         }
     }
     let genres = GENRES
@@ -350,8 +385,8 @@ where
     let index = Arc::new(Snapshot::build(db)?);
     let mut matched = 0;
     for (who, viewer) in fixture.viewers() {
-        let cx = Context::with(Arc::clone(&index), db, &viewer);
         for filter in &filters {
+            let cx = Context::with_available(Arc::clone(&index), db, &viewer, C::available(filter));
             let mut reads = Reads::default();
             let unsorted = [
                 Vec::new(),
@@ -377,12 +412,12 @@ where
                 }));
             for (name, search, sort, seed) in queries {
                 let mut query = Query::<C>::new(filter.clone());
-                query.name = name.map(str::to_string);
-                query.search = search.map(str::to_string);
+                query.matching.name = name.map(str::to_string);
+                query.matching.search = search.map(str::to_string);
                 query.sort = sort.clone();
                 query.seed = seed;
                 if search.is_none() && sort.len() == 1 && sort[0].1 == Direction::Descending {
-                    query.names = NameRange::new(Some("b".to_string()), None, None);
+                    query.matching.names = NameRange::new(Some("b".to_string()), None, None);
                 }
                 let expected = order(db, &viewer, &query, kind, &mut reads);
                 let found = catalog::pipeline::leading_in(&cx, &query, None);
@@ -443,6 +478,14 @@ where
     }
     assert!(matched > 100, "{kind} queries found too little: {matched}");
     Ok(())
+}
+
+/// Every entity tagged with any of `names`.
+fn tagged(names: &[&str]) -> PersonalFilter {
+    PersonalFilter {
+        tags: names.iter().map(ToString::to_string).collect(),
+        ..PersonalFilter::default()
+    }
 }
 
 fn rating(min: u8, max: u8) -> RatingFilter {
@@ -543,6 +586,11 @@ fn tracks_match_the_scanning_pipeline() -> anyhow::Result<()> {
                 },
                 ..Default::default()
             },
+            TrackFilter {
+                library: Some(fixture.libraries[1].0),
+                personal: tagged(&["Vinyl", "Live"]),
+                ..Default::default()
+            },
         ];
         use TrackKey::*;
         let mut sort_specs = sorts(&[
@@ -630,6 +678,7 @@ fn releases_match_the_scanning_pipeline() -> anyhow::Result<()> {
                     favorite: Some(true),
                     listened: Some(true),
                     rating: rating(1, 3),
+                    ..PersonalFilter::default()
                 },
                 ..Default::default()
             },
@@ -638,6 +687,10 @@ fn releases_match_the_scanning_pipeline() -> anyhow::Result<()> {
                     rating: rated(true),
                     ..PersonalFilter::default()
                 },
+                ..Default::default()
+            },
+            ReleaseFilter {
+                personal: tagged(&["vinyl"]),
                 ..Default::default()
             },
         ];
@@ -726,6 +779,7 @@ fn artists_match_the_scanning_pipeline() -> anyhow::Result<()> {
                     favorite: Some(false),
                     listened: Some(true),
                     rating: rating(3, 5),
+                    ..PersonalFilter::default()
                 },
                 ..Default::default()
             },
@@ -735,6 +789,11 @@ fn artists_match_the_scanning_pipeline() -> anyhow::Result<()> {
                     rating: rated(false),
                     ..PersonalFilter::default()
                 },
+                ..Default::default()
+            },
+            ArtistFilter {
+                library: Some(fixture.libraries[0].0),
+                personal: tagged(&["Vinyl", "Live"]),
                 ..Default::default()
             },
         ];
@@ -789,8 +848,101 @@ fn genres_match_the_scanning_pipeline() -> anyhow::Result<()> {
             },
             GenreFilter {
                 ids: Some(fixture.genres[..3].to_vec()),
-                releases: Some(fixture.releases[..7].to_vec()),
+                releases: Some(Match::new(ReleaseFilter {
+                    ids: Some(fixture.releases[..7].to_vec()),
+                    ..Default::default()
+                })),
                 exclude_ids: fixture.genres[..1].to_vec(),
+                ..Default::default()
+            },
+            GenreFilter {
+                tracks: Some(Match::new(TrackFilter {
+                    personal: PersonalFilter {
+                        favorite: Some(true),
+                        ..PersonalFilter::default()
+                    },
+                    ..Default::default()
+                })),
+                ..Default::default()
+            },
+            GenreFilter {
+                library: Some(fixture.libraries[0].0),
+                tracks: Some(Match {
+                    search: Some("blue".to_string()),
+                    ..Match::default()
+                }),
+                ..Default::default()
+            },
+            GenreFilter {
+                releases: Some(Match::new(ReleaseFilter {
+                    artists: Some(ArtistCredit::any(fixture.artists[..6].to_vec())),
+                    ..Default::default()
+                })),
+                tracks: Some(Match::new(TrackFilter {
+                    years: vec![1990, 1992],
+                    personal: tagged(&["Vinyl"]),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            },
+            GenreFilter {
+                releases: Some(Match {
+                    name: Some("blue".to_string()),
+                    ..Match::default()
+                }),
+                ..Default::default()
+            },
+            GenreFilter {
+                tracks: Some(Match::new(TrackFilter {
+                    releases: Some(fixture.releases[..4].to_vec()),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            },
+            GenreFilter {
+                tracks: Some(Match::new(TrackFilter {
+                    library: Some(fixture.libraries[1].0),
+                    genres: fixture.genres[..2].to_vec(),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            },
+            GenreFilter {
+                available: Some(false),
+                ..Default::default()
+            },
+            GenreFilter {
+                available: Some(true),
+                library: Some(fixture.libraries[0].0),
+                ..Default::default()
+            },
+            GenreFilter {
+                available: Some(false),
+                tracks: Some(Match::new(TrackFilter {
+                    releases: Some(fixture.releases[..6].to_vec()),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            },
+            GenreFilter {
+                available: Some(true),
+                releases: Some(Match::new(ReleaseFilter {
+                    available: Some(true),
+                    genres: fixture.genres[..2].to_vec(),
+                    ..Default::default()
+                })),
+                tracks: Some(Match::new(TrackFilter {
+                    personal: tagged(&["Vinyl", "Live"]),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            },
+            GenreFilter {
+                available: Some(false),
+                releases: Some(Match {
+                    search: Some("blue".to_string()),
+                    ..Match::default()
+                }),
                 ..Default::default()
             },
         ];
@@ -818,6 +970,226 @@ fn genres_match_the_scanning_pipeline() -> anyhow::Result<()> {
                 LastPlayedAt,
             ],
         )?;
+    }
+    Ok(())
+}
+
+/// The items `matching` keeps for `viewer`, by the scanning pipeline.
+fn kept<C: Old>(
+    fixture: &Fixture,
+    viewer: &Viewer,
+    matching: &Match<C>,
+    kind: &str,
+) -> Result<HashSet<DbId>, CatalogError> {
+    matched(&fixture.db, viewer, matching, kind)
+}
+
+/// Each value a facet reads keeps, as a filter, some of the items it was read from, and together
+/// they keep every item holding a value.
+fn inverts<C: Old>(
+    fixture: &Fixture,
+    viewer: &Viewer,
+    matching: &Match<C>,
+    kind: &str,
+    values: &[String],
+    holding: impl Fn(&DbId) -> bool,
+    narrowed: impl Fn(&Match<C>, &str) -> Match<C>,
+) -> anyhow::Result<()> {
+    let all = kept(fixture, viewer, matching, kind)?;
+    let mut covered = HashSet::new();
+    for value in values {
+        let found = kept(fixture, viewer, &narrowed(matching, value), kind)?;
+        assert!(!found.is_empty(), "{kind} value {value} keeps nothing");
+        assert!(found.is_subset(&all), "{kind} value {value} keeps more");
+        covered.extend(found);
+    }
+    let holding = all.into_iter().filter(holding).collect::<HashSet<_>>();
+    assert_eq!(covered, holding, "{kind} values cover what holds one");
+    Ok(())
+}
+
+#[test]
+fn facets_invert_their_filters() -> anyhow::Result<()> {
+    use crate::services::catalog::facets;
+    for seed in SEEDS {
+        let fixture = fixture(seed)?;
+        let db = &fixture.db;
+        let years_of = |kind: &str| -> anyhow::Result<HashMap<DbId, u64>> {
+            let ids = match kind {
+                "Track" => fixture.tracks.clone(),
+                _ => fixture.releases.clone(),
+            };
+            let field = if kind == "Track" {
+                "year"
+            } else {
+                "release_date"
+            };
+            Ok(lyra_db::graph::select_fields(db, &ids, &[field])?
+                .into_iter()
+                .filter_map(|(id, fields)| {
+                    let year = match kind {
+                        "Track" => fields.number("year")?,
+                        _ => u64::from(lyra_db::releases::release_year(Some(
+                            fields.text("release_date")?,
+                        ))?),
+                    };
+                    Some((id, year))
+                })
+                .collect())
+        };
+        let (track_years, release_years) = (years_of("Track")?, years_of("Release")?);
+        let mut tagged_ids = HashSet::new();
+        for name in TAGS {
+            tagged_ids.extend(lyra_db::tags::get_targets_by_tag(db, fixture.user, name)?);
+        }
+        let track_matches: [Match<Tracks>; 6] = [
+            Match::default(),
+            Match::new(TrackFilter {
+                library: Some(fixture.libraries[0].0),
+                ..Default::default()
+            }),
+            Match {
+                search: Some("blue".to_string()),
+                ..Match::default()
+            },
+            // Tracks on several releases reach genres only through the releases kept.
+            Match::new(TrackFilter {
+                releases: Some(fixture.releases[..4].to_vec()),
+                ..Default::default()
+            }),
+            Match::new(TrackFilter {
+                available: Some(false),
+                library: Some(fixture.libraries[1].0),
+                ..Default::default()
+            }),
+            Match::new(TrackFilter {
+                available: Some(true),
+                ..Default::default()
+            }),
+        ];
+        let release_matches = [
+            Match::default(),
+            Match::new(ReleaseFilter {
+                genres: fixture.genres[..2].to_vec(),
+                ..Default::default()
+            }),
+        ];
+        let artist_matches = [
+            Match::default(),
+            Match::new(ArtistFilter {
+                library: Some(fixture.libraries[2].0),
+                ..Default::default()
+            }),
+        ];
+        for (_, viewer) in fixture.viewers().into_iter().skip(1) {
+            for matching in &track_matches {
+                let genre_ids = catalog::order::<Genres>(
+                    db,
+                    &viewer,
+                    &Query::new(GenreFilter {
+                        available: matching.filter.available,
+                        tracks: Some(matching.clone()),
+                        ..Default::default()
+                    }),
+                )?
+                .iter()
+                .map(|genre| genre.0.to_string())
+                .collect::<Vec<_>>();
+                let mut in_any_genre = matching.clone();
+                in_any_genre.filter.genres = fixture.genres.clone();
+                let holding_genre = kept(&fixture, &viewer, &in_any_genre, "Track")?;
+                inverts::<Tracks>(
+                    &fixture,
+                    &viewer,
+                    matching,
+                    "Track",
+                    &genre_ids,
+                    |id| holding_genre.contains(id),
+                    |matching, genre| {
+                        let mut narrowed = matching.clone();
+                        narrowed.filter.genres = vec![DbId(genre.parse().expect("a genre id"))];
+                        narrowed
+                    },
+                )?;
+                let years = facets::years(db, &viewer, matching)?
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>();
+                inverts::<Tracks>(
+                    &fixture,
+                    &viewer,
+                    matching,
+                    "Track",
+                    &years,
+                    |id| track_years.contains_key(id),
+                    |matching, year| {
+                        let mut narrowed = matching.clone();
+                        narrowed.filter.years = vec![year.parse().expect("a year")];
+                        narrowed
+                    },
+                )?;
+                inverts::<Tracks>(
+                    &fixture,
+                    &viewer,
+                    matching,
+                    "Track",
+                    &facets::tags(db, &viewer, matching)?,
+                    |id| tagged_ids.contains(id),
+                    |matching, tag| {
+                        let mut narrowed = matching.clone();
+                        narrowed.filter.personal = tagged(&[tag]);
+                        narrowed
+                    },
+                )?;
+            }
+            for matching in &release_matches {
+                let years = facets::years(db, &viewer, matching)?
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>();
+                inverts::<Releases>(
+                    &fixture,
+                    &viewer,
+                    matching,
+                    "Release",
+                    &years,
+                    |id| release_years.contains_key(id),
+                    |matching, year| {
+                        let mut narrowed = matching.clone();
+                        narrowed.filter.years = vec![year.parse().expect("a year")];
+                        narrowed
+                    },
+                )?;
+                inverts::<Releases>(
+                    &fixture,
+                    &viewer,
+                    matching,
+                    "Release",
+                    &facets::tags(db, &viewer, matching)?,
+                    |id| tagged_ids.contains(id),
+                    |matching, tag| {
+                        let mut narrowed = matching.clone();
+                        narrowed.filter.personal = tagged(&[tag]);
+                        narrowed
+                    },
+                )?;
+            }
+            for matching in &artist_matches {
+                inverts::<Artists>(
+                    &fixture,
+                    &viewer,
+                    matching,
+                    "Artist",
+                    &facets::tags(db, &viewer, matching)?,
+                    |id| tagged_ids.contains(id),
+                    |matching, tag| {
+                        let mut narrowed = matching.clone();
+                        narrowed.filter.personal = tagged(&[tag]);
+                        narrowed
+                    },
+                )?;
+            }
+        }
     }
     Ok(())
 }

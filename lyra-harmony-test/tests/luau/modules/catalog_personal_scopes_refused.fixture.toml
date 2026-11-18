@@ -7,4 +7,5 @@ without_scopes = [
   "lyra.listens.all",
   "lyra.ratings",
   "lyra.ratings.all",
+  "lyra.tags",
 ]

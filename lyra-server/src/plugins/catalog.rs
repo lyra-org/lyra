@@ -44,6 +44,7 @@ use crate::{
             CatalogError,
             CreditRole,
             Direction,
+            Match,
             NameRange,
             Page,
             PersonalData,
@@ -51,6 +52,7 @@ use crate::{
             Query,
             Viewer,
             artists::ArtistFilter,
+            facets::Dated,
             genres::GenreFilter,
             pipeline::{
                 Catalog,
@@ -69,9 +71,9 @@ pub(crate) fn error(error: CatalogError) -> luau::Error {
     }
 }
 
-/// The personal data whose scopes the calling plugin declares. Filtering or
-/// sorting by a viewer's bookmarks, favorites, listens or ratings reads them, so a query
-/// needs the scope that gates them, as if it used that module.
+/// The personal data whose scopes the calling plugin declares. Filtering or sorting by a
+/// viewer's bookmarks, favorites, listens, ratings or tags, or listing their tags, reads them, so
+/// a query needs the scope that gates them, as if it used that module.
 pub(crate) struct PersonalScopes(BTreeSet<PersonalData>);
 
 impl luau::FromCallFrame for PersonalScopes {
@@ -83,6 +85,7 @@ impl luau::FromCallFrame for PersonalScopes {
                 PersonalData::Favorites,
                 PersonalData::Listens,
                 PersonalData::Ratings,
+                PersonalData::Tags,
             ]
             .into_iter()
             .filter(|data| require.allows(&context.origin, scope_of(*data).def().id))
@@ -94,10 +97,15 @@ impl luau::FromCallFrame for PersonalScopes {
 impl PersonalScopes {
     /// Raises when `query` reads personal data whose scope the caller lacks.
     pub(crate) fn check<C: Catalog>(&self, query: &Query<C>) -> luau::runtime::Result<()> {
-        query
-            .personal()
-            .iter()
-            .try_for_each(|data| self.require(*data))
+        self.check_reads(query.personal())
+    }
+
+    /// Raises when the caller lacks the scope of any of `reads`.
+    pub(crate) fn check_reads(
+        &self,
+        reads: impl IntoIterator<Item = PersonalData>,
+    ) -> luau::runtime::Result<()> {
+        reads.into_iter().try_for_each(|data| self.require(data))
     }
 
     /// Raises when the caller lacks the scope that gates `data`.
@@ -106,12 +114,13 @@ impl PersonalScopes {
             return Ok(());
         }
         Err(crate::plugins::runtime_error(format!(
-            "filtering or sorting by the caller's {} requires the {} scope",
+            "reading the caller's {} requires the {} scope",
             match data {
                 PersonalData::Bookmarks => "bookmarks",
                 PersonalData::Favorites => "favorites",
                 PersonalData::Listens => "listens",
                 PersonalData::Ratings => "ratings",
+                PersonalData::Tags => "tags",
             },
             scope_of(data).def().id,
         )))
@@ -124,6 +133,7 @@ fn scope_of(data: PersonalData) -> Scope {
         PersonalData::Favorites => Scope::Favorites,
         PersonalData::Listens => Scope::Listens,
         PersonalData::Ratings => Scope::Ratings,
+        PersonalData::Tags => Scope::Tags,
     }
 }
 
@@ -142,9 +152,126 @@ where
     /// Sets the filter's ids, resolved under the guard the query reads through.
     pub(crate) fn resolve_ids(&mut self, db: &DbAny) -> luau::runtime::Result<()> {
         let ids = std::mem::take(&mut self.ids).resolve(db)?;
-        self.query.filter.apply(ids);
+        self.query.matching.filter.apply(ids);
         Ok(())
     }
+}
+
+/// A match nested in another query or read on its own, with the ids its filter names, read
+/// apart from the rest so they resolve under the guard it is read through.
+pub(crate) struct PendingMatch<C: Catalog> {
+    pub(crate) matching: Match<C>,
+    pub(crate) ids: MatchIds,
+}
+
+/// The ids a match's filter names, read with it.
+pub(crate) struct MatchIds(QueryIds);
+
+impl MatchIds {
+    /// Sets `matching`'s filter ids, resolved under the guard it reads through.
+    pub(crate) fn apply<C: Catalog>(
+        self,
+        db: &DbAny,
+        matching: &mut Match<C>,
+    ) -> luau::runtime::Result<()>
+    where
+        C::Filter: IdFilter,
+    {
+        matching.filter.apply(self.0.resolve(db)?);
+        Ok(())
+    }
+}
+
+impl<C: Catalog> PendingMatch<C>
+where
+    C::Filter: IdFilter,
+{
+    /// Reads the match fields of `table`, which takes no `sort`, `seed`, `offset` or `limit`:
+    /// a match keeps items without ordering or paging them. `filter` holds what the catalog's
+    /// own fields set.
+    pub(crate) fn read(table: &luau::Table, filter: C::Filter) -> luau::runtime::Result<Self> {
+        for key in ["sort", "seed", "offset", "limit"] {
+            if !matches!(table.get(key)?, luau::Value::Nil) {
+                return Err(crate::plugins::runtime_error(format!(
+                    "a match takes no {key}: it keeps items without ordering or paging them"
+                )));
+            }
+        }
+        read_match(table, filter)
+    }
+
+    /// The match in the nested query field `key` of `table`, if any.
+    pub(crate) fn nested(
+        table: &luau::Table,
+        key: &str,
+        filter: impl FnOnce(&luau::Table) -> luau::runtime::Result<C::Filter>,
+    ) -> luau::runtime::Result<Option<Self>> {
+        table
+            .optional_table_field(key)?
+            .map(|nested| Self::read(&nested, filter(&nested)?))
+            .transpose()
+    }
+
+    /// The match with its filter's ids, resolved under the guard it reads through.
+    pub(crate) fn resolve(self, db: &DbAny) -> luau::runtime::Result<Match<C>> {
+        let mut matching = self.matching;
+        self.ids.apply(db, &mut matching)?;
+        Ok(matching)
+    }
+}
+
+/// Every year of the items `matching` keeps, for the catalog modules' `years`.
+pub(crate) async fn years<C: Dated>(
+    matching: PendingMatch<C>,
+    db: &ViewerDb,
+    scopes: &PersonalScopes,
+) -> luau::runtime::Result<luau::Value>
+where
+    C::Filter: IdFilter,
+{
+    scopes.check_reads(matching.matching.personal())?;
+    let (db, viewer) = db.read().await?;
+    let matching = matching.resolve(&db)?;
+    let years = services::catalog::facets::years(&db, &viewer, &matching).map_err(error)?;
+    harmony_luau::serializable_to_luau_owned(years)
+}
+
+/// The names of the caller's tags on the items `matching` keeps, for the catalog modules' `tags`.
+pub(crate) async fn tags<C: Catalog>(
+    matching: PendingMatch<C>,
+    db: &ViewerDb,
+    scopes: &PersonalScopes,
+) -> luau::runtime::Result<luau::Value>
+where
+    C::Filter: IdFilter,
+{
+    scopes.check_reads(services::catalog::facets::tags_read(&matching.matching))?;
+    let (db, viewer) = db.read().await?;
+    let matching = matching.resolve(&db)?;
+    let names = services::catalog::facets::tags(&db, &viewer, &matching).map_err(error)?;
+    harmony_luau::serializable_to_luau_owned(names)
+}
+
+fn read_match<C: Catalog>(
+    table: &luau::Table,
+    mut filter: C::Filter,
+) -> luau::runtime::Result<PendingMatch<C>>
+where
+    C::Filter: IdFilter,
+{
+    *C::available_mut(&mut filter) = table.optional_bool_field("available")?;
+    let mut matching = Match::new(filter);
+    matching.names = NameRange::new(
+        table.optional_string_field("sort_name_prefix")?,
+        table.optional_string_field("sort_name_at_least")?,
+        table.optional_string_field("sort_name_below")?,
+    );
+    matching.name = table.optional_string_field("name")?;
+    matching.search = table.optional_string_field("search")?;
+    Ok(PendingMatch {
+        matching,
+        ids: MatchIds(QueryIds::read(table, C::Filter::KEYS)?),
+    })
 }
 
 /// A public-id field a catalog query's filter takes.
@@ -254,23 +381,19 @@ pub(crate) fn read_query<C: Catalog>(
 where
     C::Filter: IdFilter,
 {
-    let mut filter = filter;
-    *C::available_mut(&mut filter) = table.optional_bool_field("available")?;
-    let mut query = Query::new(filter);
-    query.names = NameRange::new(
-        table.optional_string_field("sort_name_prefix")?,
-        table.optional_string_field("sort_name_at_least")?,
-        table.optional_string_field("sort_name_below")?,
-    );
-    query.name = table.optional_string_field("name")?;
-    query.search = table.optional_string_field("search")?;
-    query.sort = read_sort(table)?;
-    query.seed = args::optional_u64(table, "seed")?.unwrap_or(0);
+    let PendingMatch {
+        matching,
+        ids: MatchIds(ids),
+    } = read_match(table, filter)?;
     Ok(PagedQuery {
-        query,
+        query: Query {
+            matching,
+            sort: read_sort(table)?,
+            seed: args::optional_u64(table, "seed")?.unwrap_or(0),
+        },
         offset: args::optional_u64(table, "offset")?.unwrap_or(0),
         limit: args::optional_u64(table, "limit")?,
-        ids: QueryIds::read(table, C::Filter::KEYS)?,
+        ids,
     })
 }
 
@@ -316,8 +439,8 @@ pub(crate) fn read_years(table: &luau::Table) -> luau::runtime::Result<Vec<u32>>
         .unwrap_or_default())
 }
 
-/// The caller's personal filter from `favorite`, `listened`, `rated`, `min_rating` and
-/// `max_rating`.
+/// The caller's personal filter from `favorite`, `listened`, `rated`, `min_rating`,
+/// `max_rating` and `tags`.
 pub(crate) fn read_personal(table: &luau::Table) -> luau::runtime::Result<PersonalFilter> {
     let bound = |key| {
         table
@@ -346,7 +469,30 @@ pub(crate) fn read_personal(table: &luau::Table) -> luau::runtime::Result<Person
         favorite: table.optional_bool_field("favorite")?,
         listened: table.optional_bool_field("listened")?,
         rating,
+        tags: read_tag_names(table)?,
     })
+}
+
+/// The tag names of the optional array field `tags`, without repeats.
+fn read_tag_names(table: &luau::Table) -> luau::runtime::Result<Vec<String>> {
+    let Some(names) = table.optional_table_field("tags")? else {
+        return Ok(Vec::new());
+    };
+    let mut seen = std::collections::HashSet::new();
+    let mut unique = Vec::new();
+    for (index, value) in args::array_values(&names)? {
+        let luau::Value::String(bytes) = value else {
+            return Err(crate::plugins::runtime_error(format!(
+                "tags entry {index} must be a string, got {}",
+                args::describe(&value)
+            )));
+        };
+        let name = String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?;
+        if seen.insert(name.clone()) {
+            unique.push(name);
+        }
+    }
+    Ok(unique)
 }
 
 fn rating_filter_message(err: InvalidRatingFilter) -> &'static str {
@@ -494,7 +640,8 @@ pub(crate) fn counted<C: Catalog, T>(
 ) -> Result<Page<Counted<T>>, CatalogError> {
     let ids = page.items.iter().filter_map(&id_of).collect::<Vec<_>>();
     let keys = counts.iter().map(|(_, key)| *key).collect::<Vec<_>>();
-    let mut values = services::catalog::counts::<C>(db, viewer, &query.filter, ids, &keys)?;
+    let mut values =
+        services::catalog::counts::<C>(db, viewer, &query.matching.filter, ids, &keys)?;
     let items = page
         .items
         .into_iter()
@@ -542,6 +689,25 @@ fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
 /// The query fields every catalog shares, for its query interface.
 #[cfg(feature = "docgen")]
 pub(crate) fn query_fields(sort_key: &'static str) -> Vec<FieldDescriptor> {
+    let mut fields = match_fields();
+    fields.extend([
+        field(
+            "sort",
+            LuauType::optional(LuauType::array(LuauType::object(vec![
+                field("key", LuauType::named(sort_key)),
+                field("order", LuauType::optional(args::sort_order_type())),
+            ]))),
+        ),
+        field("seed", Option::<u64>::luau_type()),
+        field("offset", Option::<u64>::luau_type()),
+        field("limit", Option::<u64>::luau_type()),
+    ]);
+    fields
+}
+
+/// The match fields every catalog shares, for its query and match interfaces.
+#[cfg(feature = "docgen")]
+pub(crate) fn match_fields() -> Vec<FieldDescriptor> {
     vec![
         field("sort_name_prefix", Option::<String>::luau_type()),
         field("sort_name_at_least", Option::<String>::luau_type()),
@@ -560,24 +726,26 @@ pub(crate) fn query_fields(sort_key: &'static str) -> Vec<FieldDescriptor> {
                 "Each word must start a word of the item's name or sort name, ignoring case, accents, apostrophes and punctuation, so `ac dc` finds `AC/DC`; no character is an operator. A word in a script written without spaces, such as Japanese, matches anywhere in a word. Tracks also match through their visible releases and those releases' and their own artists, releases through their artists, and artists and genres through their aliases. Without `sort`, results rank exact names first, then names starting with the search, then names holding every word, then names holding some, then matches only through related items.",
             ),
         },
-        field(
-            "sort",
-            LuauType::optional(LuauType::array(LuauType::object(vec![
-                field("key", LuauType::named(sort_key)),
-                field("order", LuauType::optional(args::sort_order_type())),
-            ]))),
-        ),
         FieldDescriptor {
             name: "available",
             ty: Option::<bool>::luau_type(),
             description: Some(
-                "`true` keeps the items whose `available` field is true; `false` keeps the tracks that can't play, and the releases, artists and genres holding one, partly playable ones included. Either counts only the matching tracks in what a release, artist or genre holds. Defaults to both.",
+                "`true` keeps the items whose `available` field is true; `false` keeps the tracks that can't play, and the releases, artists and genres holding one, partly playable ones included. Either counts only the matching tracks in what a release, artist or genre holds. Defaults to both. It applies to a whole query, so a nested match leaves it unset or repeats its outer query's; any other value raises.",
             ),
         },
-        field("seed", Option::<u64>::luau_type()),
-        field("offset", Option::<u64>::luau_type()),
-        field("limit", Option::<u64>::luau_type()),
     ]
+}
+
+/// The `tags` filter field.
+#[cfg(feature = "docgen")]
+pub(crate) fn tags_field() -> FieldDescriptor {
+    FieldDescriptor {
+        name: "tags",
+        ty: Option::<Vec<String>>::luau_type(),
+        description: Some(
+            "Keeps only items the caller tagged with any of these tag names, compared as tags store them: case-sensitively, once normalized as `tags.add` normalizes them. A name the caller has no tag of matches nothing; one that can't be a tag name raises. Needs the `lyra.tags` scope.",
+        ),
+    }
 }
 
 #[cfg(feature = "docgen")]
@@ -728,17 +896,11 @@ impl IdFilter for ArtistFilter {
 }
 
 impl IdFilter for GenreFilter {
-    const KEYS: &'static [IdKey] = &[
-        IdKey::Ids,
-        IdKey::ExcludeIds,
-        IdKey::Library,
-        IdKey::Releases,
-    ];
+    const KEYS: &'static [IdKey] = &[IdKey::Ids, IdKey::ExcludeIds, IdKey::Library];
 
     fn apply(&mut self, ids: ResolvedIds) {
         self.ids = ids.ids;
         self.exclude_ids = ids.exclude_ids;
         self.library = ids.library;
-        self.releases = ids.releases;
     }
 }

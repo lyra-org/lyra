@@ -63,6 +63,7 @@ impl Old for Artists {
         restrict_rating(db, viewer, filter.personal.rating, &mut artists, || {
             all_artists(db)
         })?;
+        restrict_tags(db, viewer, &filter.personal.tags, "Artist", &mut artists)?;
 
         Ok(artists.resolve(&filter.exclude_ids, || all_artists(db))?)
     }

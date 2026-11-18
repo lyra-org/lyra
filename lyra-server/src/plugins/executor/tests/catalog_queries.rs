@@ -746,7 +746,10 @@ fn genre_query_follows_releases_and_ranks_searches() -> Result<()> {
         vec!["Jazz", "Rock", "Rockabilly"]
     );
     assert_eq!(
-        catalog.genre_names(&format!(r#"{{ release_ids = {{ "{}" }} }}"#, catalog.album))?,
+        catalog.genre_names(&format!(
+            r#"{{ releases = {{ ids = {{ "{}" }} }} }}"#,
+            catalog.album
+        ))?,
         vec!["Rock"]
     );
     assert_eq!(

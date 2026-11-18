@@ -431,7 +431,7 @@ pub(crate) fn track_page(
         available,
         ..TrackFilter::default()
     });
-    query.search = search_term;
+    query.matching.search = search_term;
     query.sort = sort;
     page_request
         .catalog(db, &viewer, query)?
@@ -1930,6 +1930,7 @@ mod tests {
                     favorite,
                     listened,
                     rating,
+                    ..catalog::PersonalFilter::default()
                 },
                 bookmarked: None,
                 page_request: super::super::PageRequest::first(100),
@@ -2022,9 +2023,64 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn list_track_responses_filters_by_the_callers_tag() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let principal = {
+            let mut db = STATE.db.write().await;
+            let user_db_id = lyra_db::test_db::insert_user(&mut db, "track-tag-filter-user")?;
+            let other_user_db_id =
+                lyra_db::test_db::insert_user(&mut db, "track-tag-filter-other")?;
+            for (title, owner, tag) in [
+                ("Pressed", user_db_id, "Vinyl"),
+                ("Lowercase", user_db_id, "vinyl"),
+                ("Theirs", other_user_db_id, "Vinyl"),
+            ] {
+                let track = insert_track(&mut db, title)?;
+                lyra_db::tags::create(&mut db, owner, track, tag, "blue", 1)?;
+            }
+            Principal::for_user(
+                &*db,
+                user_db_id,
+                vec![lyra_db::Permission::Admin],
+                HashSet::new(),
+            )
+        };
+
+        let page = list_track_responses(
+            &principal,
+            TrackListOptions {
+                inc: None,
+                query: None,
+                library_id: None,
+                release_id: None,
+                sort_by: None,
+                sort_order: None,
+                personal: catalog::PersonalFilter {
+                    tags: vec![" Vinyl ".to_string()],
+                    ..catalog::PersonalFilter::default()
+                },
+                bookmarked: None,
+                page_request: super::super::PageRequest::first(100),
+                available: None,
+            },
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        let titles = page
+            .items
+            .into_iter()
+            .map(|track| track.title)
+            .collect::<Vec<_>>();
+        assert_eq!(titles, ["Pressed"]);
+        Ok(())
+    }
+
     #[test]
     fn track_list_query_reads_personal_filters_from_the_query_string() {
-        let uri: axum::http::Uri = "/?rated=false&favorite=true&listened=false&limit=5"
+        let uri: axum::http::Uri = "/?rated=false&favorite=true&listened=false&limit=5&tag=Vinyl"
             .parse()
             .expect("valid uri");
         let query = Query::<TrackListQuery>::try_from_uri(&uri)
@@ -2036,8 +2092,20 @@ mod tests {
                 favorite: Some(true),
                 listened: Some(false),
                 rating: lyra_db::ratings::RatingFilter::Unrated,
+                tags: vec!["Vinyl".to_string()],
             },
         );
+
+        let uri: axum::http::Uri = "/?tag=Live%2C%20Loud".parse().expect("valid uri");
+        let query = Query::<TrackListQuery>::try_from_uri(&uri)
+            .expect("query parses")
+            .0;
+        assert_eq!(query.personal.parse().unwrap().tags, ["Live, Loud"]);
+        let uri: axum::http::Uri = "/?tag=%20".parse().expect("valid uri");
+        let query = Query::<TrackListQuery>::try_from_uri(&uri)
+            .expect("query parses")
+            .0;
+        assert!(query.personal.parse().unwrap().tags.is_empty());
 
         let uri: axum::http::Uri = "/?rated=false&min_rating=2".parse().expect("valid uri");
         let query = Query::<TrackListQuery>::try_from_uri(&uri)

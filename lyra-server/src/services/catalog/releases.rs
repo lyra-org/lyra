@@ -130,6 +130,7 @@ pub(crate) struct Releases;
 impl Catalog for Releases {
     type Key = ReleaseKey;
     type Filter = ReleaseFilter;
+    type Prepared = ();
     type Item = super::Listed<Release>;
 
     fn personal(filter: &ReleaseFilter) -> Vec<PersonalData> {
@@ -163,7 +164,11 @@ impl Catalog for Releases {
         &scope.releases
     }
 
-    fn candidates(cx: &Context<'_>, filter: &ReleaseFilter) -> Result<Bits, CatalogError> {
+    fn candidates(
+        cx: &Context<'_>,
+        filter: &ReleaseFilter,
+        _prepared: &(),
+    ) -> Result<Bits, CatalogError> {
         let index = &cx.index;
         let links = cx.links();
         let len = index.releases.len();
@@ -222,6 +227,7 @@ impl Catalog for Releases {
     fn column<'a>(
         cx: &'a Context<'_>,
         _filter: &ReleaseFilter,
+        _prepared: &(),
         key: ReleaseKey,
         slots: &[u32],
     ) -> Result<Column<'a>, CatalogError> {

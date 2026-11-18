@@ -160,6 +160,7 @@ pub(crate) struct Artists;
 impl Catalog for Artists {
     type Key = ArtistKey;
     type Filter = ArtistFilter;
+    type Prepared = ();
     type Item = super::Listed<Artist>;
 
     fn personal(filter: &ArtistFilter) -> Vec<PersonalData> {
@@ -193,7 +194,11 @@ impl Catalog for Artists {
         &scope.artists
     }
 
-    fn candidates(cx: &Context<'_>, filter: &ArtistFilter) -> Result<Bits, CatalogError> {
+    fn candidates(
+        cx: &Context<'_>,
+        filter: &ArtistFilter,
+        _prepared: &(),
+    ) -> Result<Bits, CatalogError> {
         let index = &cx.index;
         let len = index.artists.len();
         let mut artists = None::<Bits>;
@@ -251,6 +256,7 @@ impl Catalog for Artists {
     fn column<'a>(
         cx: &'a Context<'_>,
         filter: &ArtistFilter,
+        _prepared: &(),
         key: ArtistKey,
         slots: &[u32],
     ) -> Result<Column<'a>, CatalogError> {

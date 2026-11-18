@@ -199,9 +199,9 @@ pub(crate) struct SeedQuery {
     pub(crate) seed: Option<u64>,
 }
 
-/// The `favorite`, `listened` and rating filters on catalog list endpoints.
+/// The `favorite`, `listened`, rating and `tag` filters on catalog list endpoints.
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub(crate) struct PersonalFilterQuery {
     #[cfg_attr(
         feature = "docgen",
@@ -221,6 +221,13 @@ pub(crate) struct PersonalFilterQuery {
     listened: Option<bool>,
     #[serde(flatten)]
     rating: ratings::RatingFilterQuery,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Optional: keeps only entities the authenticated user has tagged with this tag name. Names compare as tags store them, case-sensitively, so `Vinyl` doesn't find `vinyl`. A blank value is ignored, any other that isn't a valid tag name fails with 400, and a name the user has no tag of matches nothing."
+        )
+    )]
+    tag: Option<String>,
 }
 
 impl PersonalFilterQuery {
@@ -237,6 +244,11 @@ impl PersonalFilterQuery {
             favorite: self.favorite,
             listened: self.listened,
             rating: self.rating.parse()?,
+            tags: self
+                .tag
+                .into_iter()
+                .filter(|name| !name.trim().is_empty())
+                .collect(),
         })
     }
 }

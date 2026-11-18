@@ -293,21 +293,12 @@ impl Table {
         if needle.words().is_empty() {
             return Vec::new();
         }
-        let len = self.len();
         let mut matched = within.clone();
         let mut by_name = within.clone();
         let mut by_sort_name = within.clone();
         let mut own = Vec::with_capacity(needle.words().len());
         for word in needle.words() {
-            let ids = self.words.matching(word);
-            let name = self.words.slots(Field::Name, &ids, len);
-            let sort_name = self.words.slots(Field::SortName, &ids, len);
-            let mut any = self.words.slots(Field::Alias, &ids, len);
-            any.or(&name);
-            any.or(&sort_name);
-            if let Some(related) = related(word) {
-                any.or(&related);
-            }
+            let (name, sort_name, any) = self.word_slots(word, &related);
             matched.and(&any);
             by_name.and(&name);
             by_sort_name.and(&sort_name);
@@ -341,6 +332,47 @@ impl Table {
                 }
             })
             .collect()
+    }
+
+    /// The slots of `within` that every word of `needle` matches, as [`Self::search`] finds them,
+    /// without ranking them.
+    pub(crate) fn matches(
+        &self,
+        needle: &Needle,
+        within: &Bits,
+        related: impl Fn(&search::Word) -> Option<Bits>,
+    ) -> Bits {
+        if needle.words().is_empty() {
+            return Bits::empty(self.len());
+        }
+        let mut matched = within.clone();
+        for word in needle.words() {
+            matched.and(&self.word_slots(word, &related).2);
+            if matched.is_empty() {
+                break;
+            }
+        }
+        matched
+    }
+
+    /// The slots whose name, whose sort name, and whose name, sort name, alias or `related` texts
+    /// match `word`.
+    fn word_slots(
+        &self,
+        word: &search::Word,
+        related: impl Fn(&search::Word) -> Option<Bits>,
+    ) -> (Bits, Bits, Bits) {
+        let len = self.len();
+        let ids = self.words.matching(word);
+        let name = self.words.slots(Field::Name, &ids, len);
+        let sort_name = self.words.slots(Field::SortName, &ids, len);
+        let mut any = self.words.slots(Field::Alias, &ids, len);
+        any.or(&name);
+        any.or(&sort_name);
+        if let Some(related) = related(word) {
+            any.or(&related);
+        }
+        (name, sort_name, any)
     }
 
     /// The slots whose own texts match `word`, for searches through related entities.

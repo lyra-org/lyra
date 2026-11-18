@@ -186,6 +186,12 @@ impl YearRange {
 }
 
 impl TrackFilter {
+    /// The release slots the filter keeps tracks on: those the viewer sees within `library`,
+    /// `releases` and `genres`, or `None` for every release when nothing narrows them.
+    pub(crate) fn releases_kept(&self, cx: &Context<'_>) -> Option<Bits> {
+        scoped_releases(cx, self.library, self.releases.as_deref(), &self.genres)
+    }
+
     fn single_release(&self) -> Option<DbId> {
         match self.releases.as_deref() {
             Some([release]) => Some(*release),
@@ -199,6 +205,7 @@ pub(crate) struct Tracks;
 impl Catalog for Tracks {
     type Key = TrackKey;
     type Filter = TrackFilter;
+    type Prepared = ();
     type Item = super::Listed<Track>;
 
     fn personal(filter: &TrackFilter) -> Vec<PersonalData> {
@@ -242,16 +249,15 @@ impl Catalog for Tracks {
         &scope.tracks
     }
 
-    fn candidates(cx: &Context<'_>, filter: &TrackFilter) -> Result<Bits, CatalogError> {
+    fn candidates(
+        cx: &Context<'_>,
+        filter: &TrackFilter,
+        _prepared: &(),
+    ) -> Result<Bits, CatalogError> {
         let index = &cx.index;
         let links = cx.links();
         let len = index.tracks.len();
-        let releases = scoped_releases(
-            cx,
-            filter.library,
-            filter.releases.as_deref(),
-            &filter.genres,
-        );
+        let releases = filter.releases_kept(cx);
         let mut tracks = match (&filter.ids, &releases) {
             (Some(ids), Some(releases)) => Bits::of(
                 len,
@@ -328,6 +334,7 @@ impl Catalog for Tracks {
     fn column<'a>(
         cx: &'a Context<'_>,
         _filter: &TrackFilter,
+        _prepared: &(),
         key: TrackKey,
         slots: &[u32],
     ) -> Result<Column<'a>, CatalogError> {

@@ -245,7 +245,7 @@ async fn list_genres(
         available,
         ..GenreFilter::default()
     });
-    query.search = search_term;
+    query.matching.search = search_term;
     query.sort = sort;
     let page = page_request.catalog(db, &viewer, query)?;
     let covers = if inc.covers {

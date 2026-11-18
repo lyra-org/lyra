@@ -501,7 +501,7 @@ pub(crate) fn artist_page(
         available,
         ..ArtistFilter::default()
     });
-    query.search = search_term;
+    query.matching.search = search_term;
     query.sort = sort;
     page_request
         .catalog(db, &viewer, query)?

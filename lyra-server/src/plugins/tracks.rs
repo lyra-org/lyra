@@ -45,15 +45,35 @@ struct TrackQuery(catalog::PagedQuery<Tracks>);
 impl<'vm> luau::FromLuau<'vm> for TrackQuery {
     fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
         let opts: luau::Table = reader.read()?;
-        let filter = TrackFilter {
-            years: catalog::read_years(&opts)?,
-            year_range: read_year_range(&opts)?,
-            personal: catalog::read_personal(&opts)?,
-            bookmarked: opts.optional_bool_field("bookmarked")?,
-            ..TrackFilter::default()
-        };
-        catalog::read_query::<Tracks>(&opts, filter).map(Self)
+        catalog::read_query::<Tracks>(&opts, read_filter(&opts)?).map(Self)
     }
+}
+
+/// A `TrackMatch` argument.
+struct TrackMatch(catalog::PendingMatch<Tracks>);
+
+impl<'vm> luau::FromLuau<'vm> for TrackMatch {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        let opts: luau::Table = reader.read()?;
+        catalog::PendingMatch::read(&opts, read_filter(&opts)?).map(Self)
+    }
+}
+
+impl luau::LuauTypeInfo for TrackMatch {
+    fn luau_type() -> luau::LuauType {
+        luau::LuauType::named("TrackMatch")
+    }
+}
+
+/// The filter fields only tracks take; the shared ones are read with the query.
+pub(crate) fn read_filter(opts: &luau::Table) -> luau::runtime::Result<TrackFilter> {
+    Ok(TrackFilter {
+        years: catalog::read_years(opts)?,
+        year_range: read_year_range(opts)?,
+        personal: catalog::read_personal(opts)?,
+        bookmarked: opts.optional_bool_field("bookmarked")?,
+        ..TrackFilter::default()
+    })
 }
 
 /// The bounds `min_year` and `max_year` give.
@@ -166,7 +186,7 @@ impl TracksModule {
     }
 
     #[harmony(
-        description = "The tracks the caller can see that pass every filter, sorted and paged. Without `sort`, a search ranks by relevance, a query scoped to one release is in disc and track order, and anything else is by sort name. Filtering by `favorite`, `listened`, a rating or `bookmarked`, or sorting by favorite time, listens, rating or bookmark time, needs the `lyra.favorites`, `lyra.listens`, `lyra.ratings` or `lyra.bookmarks` scope respectively.",
+        description = "The tracks the caller can see that pass every filter, sorted and paged. Without `sort`, a search ranks by relevance, a query scoped to one release is in disc and track order, and anything else is by sort name. Filtering by `favorite`, `listened`, a rating, `bookmarked` or `tags`, or sorting by favorite time, listens, rating or bookmark time, needs the `lyra.favorites`, `lyra.listens`, `lyra.ratings`, `lyra.bookmarks` or `lyra.tags` scope respectively.",
         returns(TrackPage)
     )]
     async fn query(
@@ -182,6 +202,30 @@ impl TracksModule {
             services::catalog::page(&db, &viewer, &request.query, request.offset, request.limit)
                 .map_err(catalog::error)?;
         catalog::page_table(page)?.into_luau_return()
+    }
+
+    #[harmony(
+        description = "Every year of the tracks the caller can see that `matching` keeps, ascending: each track's own year, which `years` filters by, so a track without one adds none and filtering by any year listed keeps a track it came from. Reading personal data through `matching` needs the scope `query` needs for it.",
+        returns(Vec<u32>)
+    )]
+    async fn years(
+        matching: TrackMatch,
+        #[context] db: ViewerDb,
+        #[context] scopes: catalog::PersonalScopes,
+    ) -> luau::runtime::Result<luau::Value> {
+        catalog::years(matching.0, &db, &scopes).await
+    }
+
+    #[harmony(
+        description = "The names of the caller's tags on the tracks the caller can see that `matching` keeps, ascending by byte order, which `tags` filters by. Needs the `lyra.tags` scope, and reading personal data through `matching` needs the scope `query` needs for it.",
+        returns(Vec<String>)
+    )]
+    async fn tags(
+        matching: TrackMatch,
+        #[context] db: ViewerDb,
+        #[context] scopes: catalog::PersonalScopes,
+    ) -> luau::runtime::Result<luau::Value> {
+        catalog::tags(matching.0, &db, &scopes).await
     }
 
     #[harmony(
@@ -282,7 +326,25 @@ fn track_type_aliases() -> Vec<TypeAliasDescriptor> {
 #[cfg(feature = "docgen")]
 fn track_query() -> InterfaceDescriptor {
     let mut descriptor = InterfaceDescriptor::new("TrackQuery", None);
-    descriptor.fields.extend([
+    descriptor.fields.extend(filter_fields());
+    descriptor
+        .fields
+        .extend(catalog::query_fields("TrackSortKey"));
+    descriptor
+}
+
+/// The `TrackMatch` interface: a `TrackQuery` without its order and page.
+#[cfg(feature = "docgen")]
+pub(crate) fn track_match() -> InterfaceDescriptor {
+    let mut descriptor = InterfaceDescriptor::new("TrackMatch", None);
+    descriptor.fields.extend(filter_fields());
+    descriptor.fields.extend(catalog::match_fields());
+    descriptor
+}
+
+#[cfg(feature = "docgen")]
+fn filter_fields() -> Vec<FieldDescriptor> {
+    let mut fields = vec![
         field("ids", Option::<Vec<String>>::luau_type()),
         field("exclude_ids", Option::<Vec<String>>::luau_type()),
         field("library_id", Option::<String>::luau_type()),
@@ -306,17 +368,13 @@ fn track_query() -> InterfaceDescriptor {
         FieldDescriptor {
             name: "bookmarked",
             ty: Option::<bool>::luau_type(),
-            description: Some(
-                "Keeps tracks the caller bookmarked (`true`) or did not (`false`).",
-            ),
+            description: Some("Keeps tracks the caller bookmarked (`true`) or did not (`false`)."),
         },
-    ]);
-    descriptor.fields.extend(catalog::rating_fields());
-    descriptor.fields.extend(catalog::credit_fields());
-    descriptor
-        .fields
-        .extend(catalog::query_fields("TrackSortKey"));
-    descriptor
+        catalog::tags_field(),
+    ];
+    fields.extend(catalog::rating_fields());
+    fields.extend(catalog::credit_fields());
+    fields
 }
 
 #[cfg(feature = "docgen")]
@@ -324,7 +382,7 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
     render_definition_file_with_support(
         &TracksModule::module_descriptor(),
         &track_type_aliases(),
-        &[track_query()],
+        &[track_query(), track_match()],
         &[],
     )
 }
