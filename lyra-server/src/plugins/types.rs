@@ -391,6 +391,7 @@ pub(crate) struct EntryInfo {
     file_modified_at_ms: u64,
     file_created_at_ms: u64,
     missing_at_ms: Option<u64>,
+    rejected_at_ms: Option<u64>,
 }
 
 impl EntryInfo {
@@ -417,6 +418,7 @@ impl EntryInfo {
             file_modified_at_ms: entry.file_modified_at_ms,
             file_created_at_ms: entry.file_created_at_ms,
             missing_at_ms: entry.missing_at_ms,
+            rejected_at_ms: entry.rejected_at_ms,
         })
     }
 
@@ -489,6 +491,13 @@ impl DescribeInterface for EntryInfo {
                     "missing_at_ms",
                     Option::<u64>::luau_type(),
                     Some("When a sync first failed to find the file; nil while it is there."),
+                ),
+                field(
+                    "rejected_at_ms",
+                    Option::<u64>::luau_type(),
+                    Some(
+                        "When a sync first read the changed file and found nothing in it to replace its tracks, which stay, unable to play; nil while it yields them.",
+                    ),
                 ),
             ],
         }

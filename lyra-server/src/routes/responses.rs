@@ -689,6 +689,14 @@ pub struct EntryResponse {
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub missing_at: Option<String>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "When a sync first read the changed file and found nothing in it to replace its tracks, which stay, unable to play, as an RFC3339 timestamp; omitted while it yields them."
+        )
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rejected_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tracks: Option<Vec<TrackResponse>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -712,6 +720,9 @@ impl EntryResponse {
             ),
             missing_at: entry
                 .missing_at_ms
+                .map(crate::services::timestamps::unix_ms_to_rfc3339_u64),
+            rejected_at: entry
+                .rejected_at_ms
                 .map(crate::services::timestamps::unix_ms_to_rfc3339_u64),
             tracks: None,
             releases: None,
@@ -756,6 +767,33 @@ mod tests {
         ))?;
 
         assert_eq!(value["modified_at"], json!("2023-11-14T22:13:20Z"));
+        assert!(value.get("rejected_at").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn entry_response_says_since_when_a_file_is_rejected() -> anyhow::Result<()> {
+        let value = serde_json::to_value(EntryResponse::from_entry(
+            lyra_db::Entry {
+                db_id: None,
+                id: "entry".to_string(),
+                full_path: PathBuf::from("/tmp/track.flac"),
+                kind: lyra_db::entries::EntryKind::File,
+                file_kind: Some("audio".to_string()),
+                name: "track.flac".to_string(),
+                hash: None,
+                size: 123,
+                file_modified_at_ms: 1_700_000_000_000,
+                file_created_at_ms: 1_700_000_000_000,
+                synced_at_ms: Some(1_700_000_000_000),
+                missing_at_ms: None,
+                rejected_at_ms: Some(1_700_000_000_000),
+            },
+            false,
+        ))?;
+
+        assert_eq!(value["rejected_at"], json!("2023-11-14T22:13:20Z"));
+        assert!(value.get("missing_at").is_none());
         Ok(())
     }
 }
