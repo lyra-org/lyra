@@ -552,6 +552,38 @@ fn get_targets_by_tag_with_cap(
     Ok(out)
 }
 
+/// The targets `owner_db_id` tagged with any of `normalized_names`, read from each tag without a
+/// cap. Names that are none of the owner's tags match nothing.
+pub fn targets_named(
+    db: &impl DbAccess,
+    owner_db_id: DbId,
+    normalized_names: &[String],
+) -> anyhow::Result<HashSet<DbId>> {
+    let mut targets = HashSet::new();
+    for name in normalized_names {
+        if let Some(tag_id) = find_tag_id_by_owner_and_name(db, owner_db_id, name)? {
+            targets.extend(get_targets(db, tag_id)?);
+        }
+    }
+    Ok(targets)
+}
+
+/// Every tag of `owner_db_id` with its targets, read without a cap.
+pub fn with_targets(
+    db: &impl DbAccess,
+    owner_db_id: DbId,
+) -> anyhow::Result<Vec<(Tag, Vec<DbId>)>> {
+    let tag_ids = owner_tag_ids(db, owner_db_id)?;
+    let mut tags = super::graph::bulk_fetch_typed::<Tag>(db, tag_ids.clone(), "Tag")?;
+    let mut tagged = Vec::with_capacity(tags.len());
+    for tag_id in tag_ids {
+        if let Some(tag) = tags.remove(&tag_id) {
+            tagged.push((tag, get_targets(db, tag_id)?));
+        }
+    }
+    Ok(tagged)
+}
+
 /// Detach a target from a named tag while preserving the tag node.
 pub fn remove_target(
     db: &mut impl DbAccess,
@@ -936,6 +968,45 @@ mod tests {
         let (lower_id, _) = create(&mut db, user, track, "chill", "red", 2)?;
 
         assert_ne!(upper_id, lower_id);
+        Ok(())
+    }
+
+    #[test]
+    fn owner_tag_reads_keep_to_the_owner_and_exact_names() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let alice = create_test_user(&mut db)?;
+        let bob = create_test_user(&mut db)?;
+        let [first, second, third] = [
+            create_test_track(&mut db)?,
+            create_test_track(&mut db)?,
+            create_test_track(&mut db)?,
+        ];
+        create(&mut db, alice, first, "Chill", "blue", 1)?;
+        create(&mut db, alice, second, "chill", "blue", 2)?;
+        create(&mut db, alice, second, "Live", "blue", 3)?;
+        create(&mut db, bob, third, "Chill", "red", 4)?;
+
+        let named = |names: &[&str]| {
+            let names = names.iter().map(ToString::to_string).collect::<Vec<_>>();
+            targets_named(&db, alice, &names)
+        };
+        assert_eq!(named(&["Chill"])?, HashSet::from([first]));
+        assert_eq!(named(&["Chill", "Live"])?, HashSet::from([first, second]));
+        assert!(named(&["Missing"])?.is_empty());
+
+        let mut tagged = with_targets(&db, alice)?
+            .into_iter()
+            .map(|(tag, targets)| (tag.tag, targets))
+            .collect::<Vec<_>>();
+        tagged.sort();
+        assert_eq!(
+            tagged,
+            [
+                ("Chill".to_string(), vec![first]),
+                ("Live".to_string(), vec![second]),
+                ("chill".to_string(), vec![second]),
+            ]
+        );
         Ok(())
     }
 
