@@ -193,6 +193,8 @@ struct Release {
     /// The library the release, and so its tracks, belongs to.
     library: Option<String>,
     added: Option<u64>,
+    /// The release date, `YYYY`, `YYYY-MM` or `YYYY-MM-DD`.
+    date: Option<String>,
     #[serde(default)]
     artists: Vec<String>,
     #[serde(default)]
@@ -982,6 +984,7 @@ impl Fixture {
             let mut layer = LocalLayer::default();
             layer.supply(MetadataField::ReleaseTitle, Some(release.title.as_str()));
             layer.supply(MetadataField::Description, release.description.as_deref());
+            layer.supply(MetadataField::ReleaseDate, release.date.as_deref());
             layer.supply_input(
                 MetadataField::Genres,
                 (!genre_names.is_empty()).then_some(Some(FieldInput::Genres(genre_names))),

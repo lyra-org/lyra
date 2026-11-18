@@ -146,6 +146,7 @@ key = "solo"
 title = "Solo"
 library = "music"    # optional; the release and its tracks belong to the library
 added = 400000       # optional file creation time, in unix milliseconds
+date = "2001-05"     # optional release date
 artists = ["amy"]
 genres = ["rock"]
 cover = "cover.png"  # an image file, relative to the fixture, whose hash is the release key
