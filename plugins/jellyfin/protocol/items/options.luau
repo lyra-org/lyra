@@ -41,6 +41,8 @@ export type ItemsQueryOptions = {
 	album_ids: { string },
 	genre_ids: { string },
 	filters: { string },
+	-- `Tags`, pipe-delimited as upstream takes them.
+	tags: { string },
 	is_favorite: boolean?,
 	is_played: boolean?,
 	years: { number },
@@ -125,7 +127,22 @@ local function parse_bool(query: ApiQueryParams?, keys: { string }, default_valu
 	return default_value
 end
 
-local function parse_csv(query: ApiQueryParams?, keys: { string }): { string }
+local function split_pipes(raw: string?): { string }
+	local values: { string } = {}
+	if type(raw) ~= "string" then
+		return values
+	end
+	for _, part in string.split(raw, "|") do
+		local item = requests.trim(part)
+		if item then
+			table.insert(values, item)
+		end
+	end
+	return values
+end
+
+-- The values of the first of `keys` present, in any case, each split by `split`.
+local function parse_delimited(query: ApiQueryParams?, keys: { string }, split: (string?) -> { string }): { string }
 	local results: { string } = {}
 	if type(query) ~= "table" then
 		return results
@@ -142,7 +159,7 @@ local function parse_csv(query: ApiQueryParams?, keys: { string }): { string }
 		end
 		seen_keys[key] = true
 		for _, raw in values do
-			for _, item in split_csv(raw) do
+			for _, item in split(raw) do
 				table.insert(results, item)
 			end
 		end
@@ -161,6 +178,10 @@ local function parse_csv(query: ApiQueryParams?, keys: { string }): { string }
 		end
 	end
 	return results
+end
+
+local function parse_csv(query: ApiQueryParams?, keys: { string }): { string }
+	return parse_delimited(query, keys, split_csv)
 end
 
 -- Well-formed item ids, lowercased and without dashes, each once.
@@ -231,6 +252,7 @@ function module.parse(query: ApiQueryParams?): ItemsQueryOptions
 		album_ids = parse_item_ids(query, { "AlbumIds" }),
 		genre_ids = parse_item_ids(query, { "GenreIds" }),
 		filters = parse_csv(query, { "Filters" }),
+		tags = parse_delimited(query, { "Tags" }, split_pipes),
 		is_favorite = parse_bool(query, { "IsFavorite" }, nil),
 		is_played = parse_bool(query, { "IsPlayed" }, nil),
 		years = parse_years(query),
@@ -305,6 +327,7 @@ function module.has_filters(options: ItemsQueryOptions): boolean
 			options.contributing_artist_ids,
 			options.album_ids,
 			options.genre_ids,
+			options.tags,
 			options.years,
 		} :: { { any } }
 	do

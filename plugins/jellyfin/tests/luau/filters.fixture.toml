@@ -1,7 +1,7 @@
 run_as = "admin"
 
-# "Solo" (Rock, jazz) by Amy holds S1 from 2001 and S2 without a year; "Live" (Blues) by Ben holds
-# L1 from 2009.
+# "Solo" (Rock, jazz), released in 1999 by Amy, holds S1 from 2001 and S2 without a year; "Live"
+# (Blues) by Ben holds L1 from 2009.
 
 [[users]]
 key = "admin"
@@ -30,6 +30,7 @@ name = "Blues"
 [[releases]]
 key = "solo"
 title = "Solo"
+date = "1999-04"
 artists = ["amy"]
 genres = ["rock", "jazz"]
 

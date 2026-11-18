@@ -21,6 +21,7 @@ type ArtistQuery = artists.ArtistQuery
 type CreditRole = tracks.CreditRole
 type CreditType = artists.CreditType
 type GenreQuery = genres.GenreQuery
+type GenreReleaseMatch = genres.ReleaseMatch
 type ReleaseQuery = releases.ReleaseQuery
 type TrackQuery = tracks.TrackQuery
 
@@ -332,6 +333,26 @@ local function common(options: ItemsQueryOptions): Common?
 	}
 end
 
+-- The caller's tag names among `known`, the names on one kind of item, that match a `Tags` value
+-- as upstream matches tags, ignoring case; false when `Tags` names none of them, so the listing
+-- finds nothing.
+local function matching_tags(requested: { string }, known: () -> { string }): ({ string }?, boolean)
+	if #requested == 0 then
+		return nil, true
+	end
+	local wanted: { [string]: boolean } = {}
+	for _, name in requested do
+		wanted[string.lower(name)] = true
+	end
+	local names: { string } = {}
+	for _, name in known() do
+		if wanted[string.lower(name)] then
+			table.insert(names, name)
+		end
+	end
+	return names, #names > 0
+end
+
 -- Narrows the genre filter to a parent genre; false when the two can't both hold.
 local function scope_genres(genre_ids: { string }?, genre_id: string): ({ string }?, boolean)
 	local scoped = intersect(genre_ids, { genre_id })
@@ -379,11 +400,14 @@ function module.tracks(options: ItemsQueryOptions, scope: Scope): TrackQuery?
 	end
 	local artist_ids, credit_role, exclude_credit_role, artists_ok = artist_credit(options)
 	local release_ids, albums_ok = decode(options.album_ids)
-	if not artists_ok or not albums_ok then
+	local tags, tags_ok = matching_tags(options.tags, function()
+		return tracks.tags({})
+	end)
+	if not artists_ok or not albums_ok or not tags_ok then
 		return nil
 	end
 
-	local query: TrackQuery = { available = true }
+	local query: TrackQuery = { available = true, tags = tags }
 	local genre_ids = filters.genre_ids
 	local scope_id = scope.id
 	if scope_id ~= nil then
@@ -455,11 +479,14 @@ function module.releases(options: ItemsQueryOptions, scope: Scope): ReleaseQuery
 	end
 	local artist_ids, credit_role, exclude_credit_role, artists_ok = artist_credit(options)
 	local album_ids, albums_ok = decode(options.album_ids)
-	if not artists_ok or not albums_ok then
+	local tags, tags_ok = matching_tags(options.tags, function()
+		return releases.tags({})
+	end)
+	if not artists_ok or not albums_ok or not tags_ok then
 		return nil
 	end
 
-	local query: ReleaseQuery = { available = true }
+	local query: ReleaseQuery = { available = true, tags = tags }
 	local genre_ids = filters.genre_ids
 	local scope_id = scope.id
 	if scope_id ~= nil then
@@ -521,11 +548,14 @@ function module.artists(options: ItemsQueryOptions, scope: Scope, role: CreditRo
 		table.move(list, 1, #list, #named + 1, named)
 	end
 	local named_ids, named_ok = decode(named)
-	if not named_ok then
+	local tags, tags_ok = matching_tags(options.tags, function()
+		return artists.tags({})
+	end)
+	if not named_ok or not tags_ok then
 		return nil
 	end
 
-	local query: ArtistQuery = { available = true }
+	local query: ArtistQuery = { available = true, tags = tags }
 	local genre_ids = filters.genre_ids
 	local scope_id = scope.id
 	if scope_id ~= nil then
@@ -674,10 +704,12 @@ function module.people(options: ItemsQueryOptions, scope: Scope, appears_in: Sco
 	return query, mixed
 end
 
+-- Upstream applies the user-state filters and `Tags` to the genres themselves, which in Lyra are
+-- never favourites, rated or tagged, and the parent to the items carrying them.
 function module.genres(options: ItemsQueryOptions, scope: Scope): GenreQuery?
 	local filters = common(options)
-	-- Genres can't be favourites or rated in Lyra, and only tracks resume.
-	if not filters or filters.favorite == true or filters.liked or filters.resumable then
+	-- Only tracks resume.
+	if not filters or filters.favorite == true or filters.liked or filters.resumable or #options.tags > 0 then
 		return nil
 	end
 	local release_ids, albums_ok = decode(options.album_ids)
@@ -686,12 +718,16 @@ function module.genres(options: ItemsQueryOptions, scope: Scope): GenreQuery?
 	end
 
 	local query: GenreQuery = { available = true }
+	local artist_id: string? = nil
 	local scope_id = scope.id
 	if scope_id ~= nil then
 		if scope.entity_type == "Library" then
 			query.library_id = scope_id
 		elseif scope.entity_type == "Release" then
 			release_ids = intersect(release_ids, { scope_id })
+		elseif scope.entity_type == "Artist" then
+			-- An artist's children are the albums it is credited on.
+			artist_id = scope_id
 		else
 			return nil
 		end
@@ -701,9 +737,16 @@ function module.genres(options: ItemsQueryOptions, scope: Scope): GenreQuery?
 		return nil
 	end
 
+	if release_ids ~= nil or artist_id ~= nil then
+		local albums: GenreReleaseMatch = { ids = release_ids }
+		if artist_id ~= nil then
+			albums.artist_ids = { artist_id }
+			albums.credit_role = "release"
+		end
+		query.releases = albums
+	end
 	query.ids = ids
 	query.exclude_ids = filters.exclude_ids
-	query.release_ids = release_ids
 	query.sort_name_prefix = options.name_starts_with
 	query.sort_name_at_least = options.name_starts_with_or_greater
 	query.sort_name_below = options.name_less_than

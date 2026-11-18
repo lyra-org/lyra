@@ -4,18 +4,18 @@
 -- You can obtain one here:
 -- www.meshiplaw.com/lyra.
 
--- Upstream's filter values: the genres, tags and years carried by the items a listing finds
--- recursively under its parent, as their own responses carry them.
+-- Upstream's filter values: the genres, tags and years of the items a listing finds recursively
+-- under its parent. Each is read as Lyra's filter of the same name reads it, so picking a value
+-- lists the items it came from: a track lends the genres of every release of its the caller sees,
+-- and only its own year.
 
 local artists = require("@lyra/artists")
 local genres = require("@lyra/genres")
 local releases = require("@lyra/releases")
-local tags = require("@lyra/tags")
 local tracks = require("@lyra/tracks")
 
 local api = require("@lyra/api")
 
-local enrichment = require("./enrichment")
 local item_ids = require("./identifiers")
 local lookups = require("./lookups")
 local options_module = require("./options")
@@ -33,32 +33,12 @@ export type FilterValues = {
 	years: { number },
 }
 
--- Ids per batched lookup.
-local BATCH_SIZE = 500
-
 local module = {}
 
-local function batched<T>(ids: { string }, fetch: ({ string }) -> { [string]: T }): { [string]: T }
-	local merged: { [string]: T } = {}
-	for first = 1, #ids, BATCH_SIZE do
-		local chunk = table.move(ids, first, math.min(first + BATCH_SIZE - 1, #ids), 1, {})
-		for id, value in fetch(chunk) do
-			merged[id] = value
-		end
-	end
-	return merged
-end
-
-local function keys<K>(set: { [K]: boolean }): { K }
-	local list: { K } = {}
-	for key in set do
-		table.insert(list, key)
-	end
-	return list
-end
-
-local function by_name(a: { name: string }, b: { name: string }): boolean
-	return string.lower(a.name) < string.lower(b.name)
+-- A listing query as a match: what it finds, unordered and unpaged.
+local function as_match<Q>(listing: Q & { sort: any, seed: number?, offset: number?, limit: number? }): Q
+	listing.sort, listing.seed, listing.offset, listing.limit = nil, nil, nil, nil
+	return listing
 end
 
 -- Nil when the parent isn't a folder, which upstream answers with no values.
@@ -73,12 +53,26 @@ function module.collect(options: ItemsQueryOptions): FilterValues?
 	listed.sort_by = {}
 	listed.recursive = true
 
-	local tagged: { string } = {}
-	local genre_releases: { [string]: boolean } = {}
+	local found_genres: { GenreInfo } = {}
+	local seen_genres: { [string]: boolean } = {}
+	local function add_genres(found: { genres.GenreSummary })
+		for _, info in found do
+			if not seen_genres[info.id] then
+				seen_genres[info.id] = true
+				table.insert(found_genres, info)
+			end
+		end
+	end
+	local tag_names: { string } = {}
+	local function add_tags(names: { string })
+		table.move(names, 1, #names, #tag_names + 1, tag_names)
+	end
 	local years: { [number]: boolean } = {}
-	local function add_year(year: number?)
-		if year and year > 0 then
-			years[year] = true
+	local function add_years(found: { number })
+		for _, year in found do
+			if year > 0 then
+				years[year] = true
+			end
 		end
 	end
 
@@ -86,32 +80,18 @@ function module.collect(options: ItemsQueryOptions): FilterValues?
 		then query.releases(listed, scope)
 		else nil
 	if release_query then
-		release_query.offset, release_query.limit = 0, nil
-		for _, release in releases.query(release_query).items do
-			table.insert(tagged, release.id)
-			genre_releases[release.id] = true
-			add_year(enrichment.release_year(release.release_date))
-		end
+		local albums = as_match(release_query)
+		add_genres(genres.query({ releases = albums, available = true }).items)
+		add_tags(releases.tags(albums))
+		add_years(releases.years(albums))
 	end
 
-	-- A track carries its album's genres, and its album's year when it has none of its own.
 	local track_query = if options_module.wants_item_type(listed, "audio") then query.tracks(listed, scope) else nil
 	if track_query then
-		track_query.offset, track_query.limit = 0, nil
-		local found = tracks.query(track_query).items
-		local track_ids: { string } = {}
-		for _, track in found do
-			table.insert(track_ids, track.id)
-		end
-		local releases_by_track = batched(track_ids, releases.by_track)
-		for _, track in found do
-			table.insert(tagged, track.id)
-			local release = lookups.first_added_release(releases_by_track[track.id])
-			if release then
-				genre_releases[release.id] = true
-			end
-			add_year(track.year or enrichment.release_year(if release then release.release_date else nil))
-		end
+		local songs = as_match(track_query)
+		add_genres(genres.query({ tracks = songs, available = true }).items)
+		add_tags(tracks.tags(songs))
+		add_years(tracks.years(songs))
 	end
 
 	-- Artists carry tags but no genres or year.
@@ -119,36 +99,23 @@ function module.collect(options: ItemsQueryOptions): FilterValues?
 		then query.artists(listed, scope, nil)
 		else nil
 	if artist_query then
-		artist_query.offset, artist_query.limit = 0, nil
-		for _, artist in artists.query(artist_query).items do
-			table.insert(tagged, artist.id)
-		end
+		add_tags(artists.tags(as_match(artist_query)))
 	end
 
-	local found_genres: { GenreInfo } = {}
-	local seen_genres: { [string]: boolean } = {}
-	for _, infos in batched(keys(genre_releases), genres.by_release) do
-		for _, info in infos do
-			if not seen_genres[info.id] then
-				seen_genres[info.id] = true
-				table.insert(found_genres, info)
-			end
-		end
-	end
-	table.sort(found_genres, by_name)
+	table.sort(found_genres, function(a: GenreInfo, b: GenreInfo): boolean
+		return string.lower(a.name) < string.lower(b.name)
+	end)
 
 	-- Upstream groups tags case-insensitively, names each group by its least spelling, and orders
 	-- them ordinally.
 	local tag_groups: { [string]: string } = {}
-	for _, infos in batched(tagged, tags.by_target) do
-		for _, info in infos do
-			local name = requests.trim(info.tag)
-			if name then
-				local key = string.lower(name)
-				local current: string? = tag_groups[key]
-				if current == nil or name < current then
-					tag_groups[key] = name
-				end
+	for _, raw_name in tag_names do
+		local name = requests.trim(raw_name)
+		if name then
+			local key = string.lower(name)
+			local current: string? = tag_groups[key]
+			if current == nil or name < current then
+				tag_groups[key] = name
 			end
 		end
 	end
@@ -158,7 +125,10 @@ function module.collect(options: ItemsQueryOptions): FilterValues?
 	end
 	table.sort(found_tags)
 
-	local found_years = keys(years)
+	local found_years: { number } = {}
+	for year in years do
+		table.insert(found_years, year)
+	end
 	table.sort(found_years)
 	return { genres = found_genres, tags = found_tags, years = found_years }
 end

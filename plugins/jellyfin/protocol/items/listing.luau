@@ -12,6 +12,7 @@ local favorites = require("@lyra/favorites")
 local genres = require("@lyra/genres")
 local playlists = require("@lyra/playlists")
 local releases = require("@lyra/releases")
+local tags = require("@lyra/tags")
 local tracks = require("@lyra/tracks")
 
 local artwork = require("./images")
@@ -316,11 +317,36 @@ local function playlist_source(options: ItemsQueryOptions, scope: Scope): Source
 		candidates = playlist_access.list_visible()
 	end
 
+	-- `Tags` keeps the playlists the caller tagged, matched ignoring case as on catalog items.
+	local tagged: { [string]: boolean }? = nil
+	if #options.tags > 0 and #candidates > 0 then
+		local wanted_tags: { [string]: boolean } = {}
+		for _, name in options.tags do
+			wanted_tags[string.lower(name)] = true
+		end
+		local candidate_ids: { string } = {}
+		for _, playlist in candidates do
+			local id: string = playlist.id
+			table.insert(candidate_ids, id)
+		end
+		local found: { [string]: boolean } = {}
+		for id, infos in tags.by_target(candidate_ids) do
+			for _, info in infos do
+				if wanted_tags[string.lower(info.tag)] then
+					found[id] = true
+					break
+				end
+			end
+		end
+		tagged = found
+	end
+
 	local shown: { Playlist } = {}
 	for _, playlist in candidates do
 		local id = playlist.id
 		if
 			excluded[id]
+			or (tagged ~= nil and not tagged[id])
 			or (favorite ~= nil and (favorite[id] == true) ~= is_favorite)
 			or (search ~= nil and string.find(string.lower(playlist.name or ""), search, 1, true) == nil)
 		then

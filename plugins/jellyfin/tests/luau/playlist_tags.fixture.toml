@@ -1,0 +1,70 @@
+run_as = "listener"
+
+# The listener owns "Alpha", tagged "Vinyl", "Beta", tagged "vinyl", "Gamma", tagged "Live", and
+# "Delta", untagged, which the other user tagged "Vinyl".
+
+[[users]]
+key = "listener"
+
+[[users]]
+key = "other"
+
+[[libraries]]
+key = "music"
+name = "Music"
+users = ["listener", "other"]
+
+[[releases]]
+key = "album"
+title = "Album"
+library = "music"
+
+[[tracks]]
+key = "song"
+title = "Song"
+release = "album"
+
+[[playlists]]
+key = "alpha"
+owner = "listener"
+name = "Alpha"
+tracks = ["song"]
+
+[[playlists]]
+key = "beta"
+owner = "listener"
+name = "Beta"
+tracks = ["song"]
+
+[[playlists]]
+key = "gamma"
+owner = "listener"
+name = "Gamma"
+tracks = ["song"]
+
+[[playlists]]
+key = "delta"
+owner = "listener"
+name = "Delta"
+public = true
+tracks = ["song"]
+
+[[tags]]
+user = "listener"
+target = "alpha"
+name = "Vinyl"
+
+[[tags]]
+user = "listener"
+target = "beta"
+name = "vinyl"
+
+[[tags]]
+user = "listener"
+target = "gamma"
+name = "Live"
+
+[[tags]]
+user = "other"
+target = "delta"
+name = "Vinyl"
