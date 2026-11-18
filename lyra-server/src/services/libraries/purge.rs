@@ -3,8 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-//! Purging what a library's missing files leave: their tracks, with everything attached to them,
-//! and the missing entries themselves.
+//! Purging what a library's unavailable files hold: their tracks, with everything attached to
+//! them, the missing entries themselves, and the holds of the rejected ones.
 
 use super::{
     SyncRunProgress,
@@ -27,8 +27,9 @@ use lyra_db::{
 const BATCH: usize = 256;
 
 /// Removes what `plan` names: its tracks a batch at a time, each batch under a write of its own,
-/// with everything attached to them and the releases they empty, then its entries. The artists
-/// that leaves unreferenced wait for the caller's collection. Returns how many tracks it removed.
+/// with everything attached to them and the releases they empty, then its missing entries, then
+/// releases its rejected ones. The artists that leaves unreferenced wait for the caller's
+/// collection. Returns how many tracks it removed.
 pub(crate) async fn apply(
     db: &DbAsync,
     library: &Library,
@@ -63,17 +64,19 @@ pub(crate) async fn apply(
             progress.complete_work(work_id, SyncStageKey::Purge).await;
         }
     }
-    let removed = {
+    let (removed, released) = {
         let mut db_write = db.write().await;
         let removed = lyra_db::entries::remove_missing(&mut db_write, library, &plan.entries)?;
+        let released = lyra_db::entries::release_rejected(&mut db_write, library, &plan.released)?;
         crate::services::covers::discard_listed_cover_files(&*db_write);
-        removed
+        (removed, released)
     };
     tracing::info!(
         library_db_id = ?library.db_id,
         purged_tracks = plan.tracks.len(),
         purged_entries = removed,
-        "missing files purged"
+        released_entries = released,
+        "unavailable files purged"
     );
     Ok(plan.tracks.len())
 }
@@ -88,7 +91,7 @@ pub(crate) async fn purge(
 ) -> anyhow::Result<usize> {
     let plan = {
         let db_read = db.read().await;
-        lyra_db::entries::missing_purge_plan(&db_read, library, scope).map_err(|err| match err {
+        lyra_db::entries::purge_plan(&db_read, library, scope).map_err(|err| match err {
             PurgePlanError::Db(err) => err,
             other => anyhow::anyhow!(other),
         })?

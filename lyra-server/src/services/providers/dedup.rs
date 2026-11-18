@@ -682,10 +682,10 @@ mod tests {
         let scope = lyra_db::entries::PurgeScope::Tracks(vec![track_b]);
         let db = STATE.db.read().await;
         assert!(matches!(
-            lyra_db::entries::missing_purge_plan(&db, &a, &scope),
-            Err(lyra_db::entries::PurgePlanError::NotMissing(_))
+            lyra_db::entries::purge_plan(&db, &a, &scope),
+            Err(lyra_db::entries::PurgePlanError::NotUnavailable(_))
         ));
-        let plan = lyra_db::entries::missing_purge_plan(&db, &b, &scope)?;
+        let plan = lyra_db::entries::purge_plan(&db, &b, &scope)?;
         assert_eq!(plan.entries, vec![file_b.db_id.expect("entry")]);
         Ok(())
     }
@@ -719,12 +719,12 @@ mod tests {
         lyra_db::entries::set_missing(&mut db, &[entry_a, entry_b], 1)?;
 
         assert!(matches!(
-            lyra_db::entries::missing_purge_plan(
+            lyra_db::entries::purge_plan(
                 &db,
                 &a,
                 &lyra_db::entries::PurgeScope::Tracks(vec![track_a]),
             ),
-            Err(lyra_db::entries::PurgePlanError::NotMissing(_))
+            Err(lyra_db::entries::PurgePlanError::NotUnavailable(_))
         ));
         Ok(())
     }

@@ -108,10 +108,15 @@ impl Entry {
         self.missing_at_ms.is_some()
     }
 
+    /// Whether the entry's file, as a sync last read it, yields none of the sources it holds.
+    pub fn is_rejected(&self) -> bool {
+        self.rejected_at_ms.is_some()
+    }
+
     /// Whether the sources depending on the entry can't play: it is missing, or its file, as last
     /// read, yields none of them.
     pub fn is_unavailable(&self) -> bool {
-        self.is_missing() || self.rejected_at_ms.is_some()
+        self.is_missing() || self.is_rejected()
     }
 }
 
@@ -556,41 +561,69 @@ fn insert_owned_edge(
     Ok(())
 }
 
-/// The missing files a purge removes.
+/// The unavailable files a purge takes.
 #[derive(Clone, Debug)]
 pub enum PurgeScope {
-    /// Every missing file of the library, and the tracks only they hold.
+    /// Every missing or rejected file of the library, and the tracks only they hold.
     All,
-    /// These tracks, which must be the library's and unable to play, and the missing files no
-    /// other track needs.
+    /// These tracks, which must be the library's and unable to play, and the missing or rejected
+    /// files no other track needs.
     Tracks(Vec<DbId>),
     /// The files missing since before this time, outside paths a sync couldn't read, and the
-    /// tracks only they hold.
+    /// tracks only they hold. A rejected file never expires: it waits for a fix or a purge.
     Expired {
         missing_before_ms: u64,
         protected: Vec<PathBuf>,
     },
 }
 
-/// The tracks and missing entries a purge removes.
+/// What a purge takes: tracks, the missing entries it removes, and the rejected entries it
+/// releases, which stay, as their files do.
 #[derive(Debug, Default)]
 pub struct PurgePlan {
     pub tracks: Vec<DbId>,
     pub entries: Vec<DbId>,
+    pub released: Released,
+}
+
+/// The rejected entries a purge releases, and the files the next sync reads again for it: they,
+/// and every file their sources play or a cue sheet links them to. Planned before the purge
+/// removes the tracks and cue records that tell.
+#[derive(Debug, Default)]
+pub struct Released {
+    pub entries: Vec<DbId>,
+    pub reread: Vec<DbId>,
+}
+
+impl Released {
+    fn of(db: &impl super::DbAccess, entries: Vec<DbId>) -> anyhow::Result<Self> {
+        let mut reread = entries.iter().copied().collect::<HashSet<_>>();
+        for &entry_id in &entries {
+            reread.extend(crate::cue::linked_entries(db, entry_id)?);
+            for source in crate::track_sources::depending_on(db, entry_id)? {
+                reread.extend(crate::track_sources::depended_entries(db, source)?);
+            }
+        }
+        Ok(Self {
+            entries,
+            reread: reread.into_iter().collect(),
+        })
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum PurgePlanError {
     /// A chosen track isn't one of the library's tracks, or can still play; by its public id.
     #[error("track {0} is not an unavailable track of this library")]
-    NotMissing(String),
+    NotUnavailable(String),
     #[error(transparent)]
     Db(#[from] anyhow::Error),
 }
 
-/// What purging `scope` from `library` removes, as `db` has it now. A track is held by missing
-/// files when every one of its sources depends on one of them.
-pub fn missing_purge_plan(
+/// What purging `scope` from `library` takes, as `db` has it now. A track is held by unavailable
+/// files when every one of its sources depends on one of them. An entry both missing and rejected
+/// counts as missing.
+pub fn purge_plan(
     db: &DbAny,
     library: &Library,
     scope: &PurgeScope,
@@ -598,44 +631,54 @@ pub fn missing_purge_plan(
     let library_db_id = library
         .db_id
         .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
-    let (missing, present): (Vec<_>, Vec<_>) = load_existing(db, library_db_id)?
-        .into_iter()
-        .partition(Entry::is_missing);
-    let ids_of = |entries: &mut dyn Iterator<Item = &Entry>| -> HashSet<DbId> {
-        entries.filter_map(|entry| entry.db_id).collect()
+    let existing = load_existing(db, library_db_id)?;
+    let ids_of = |keep: &dyn Fn(&Entry) -> bool| -> HashSet<DbId> {
+        existing
+            .iter()
+            .filter(|entry| keep(entry))
+            .filter_map(|entry| entry.db_id)
+            .collect()
     };
+    let missing = ids_of(&Entry::is_missing);
+    let rejected = ids_of(&|entry| !entry.is_missing() && entry.is_rejected());
     match scope {
-        PurgeScope::All => Ok(entries_plan(db, ids_of(&mut missing.iter()))?),
+        PurgeScope::All => Ok(entries_plan(db, missing, rejected)?),
         PurgeScope::Expired {
             missing_before_ms,
             protected,
-        } => Ok(entries_plan(
-            db,
-            ids_of(&mut missing.iter().filter(|entry| {
+        } => {
+            let expired = ids_of(&|entry| {
                 entry
                     .missing_at_ms
                     .is_some_and(|at| at <= *missing_before_ms)
                     && !is_protected(&entry.full_path, protected)
-            })),
-        )?),
+            });
+            Ok(entries_plan(db, expired, HashSet::new())?)
+        }
         PurgeScope::Tracks(tracks) => tracks_plan(
             db,
             library_db_id,
             tracks,
-            &ids_of(&mut missing.iter()),
-            &ids_of(&mut present.iter()),
+            &missing,
+            &rejected,
+            &ids_of(&|_| true),
         ),
     }
 }
 
-fn entries_plan(db: &impl super::DbAccess, entries: HashSet<DbId>) -> anyhow::Result<PurgePlan> {
+fn entries_plan(
+    db: &impl super::DbAccess,
+    missing: HashSet<DbId>,
+    rejected: HashSet<DbId>,
+) -> anyhow::Result<PurgePlan> {
     use super::graph::{
         inbound_neighbor_ids,
         neighbor_ids,
     };
 
+    let purged = missing.union(&rejected).copied().collect::<HashSet<_>>();
     let mut candidates = HashSet::new();
-    for &entry in &entries {
+    for &entry in &purged {
         for source in crate::track_sources::depending_on(db, entry)? {
             candidates.extend(inbound_neighbor_ids(db, source, "Track")?);
         }
@@ -644,7 +687,7 @@ fn entries_plan(db: &impl super::DbAccess, entries: HashSet<DbId>) -> anyhow::Re
     'tracks: for track in candidates {
         for source in neighbor_ids(db, track, "TrackSource")? {
             let depended = crate::track_sources::depended_entries(db, source)?;
-            if !depended.iter().any(|entry| entries.contains(entry)) {
+            if !depended.iter().any(|entry| purged.contains(entry)) {
                 continue 'tracks;
             }
         }
@@ -652,7 +695,8 @@ fn entries_plan(db: &impl super::DbAccess, entries: HashSet<DbId>) -> anyhow::Re
     }
     Ok(PurgePlan {
         tracks,
-        entries: entries.into_iter().collect(),
+        entries: missing.into_iter().collect(),
+        released: Released::of(db, rejected.into_iter().collect())?,
     })
 }
 
@@ -661,13 +705,15 @@ fn tracks_plan(
     library_db_id: DbId,
     tracks: &[DbId],
     missing: &HashSet<DbId>,
-    present: &HashSet<DbId>,
+    rejected: &HashSet<DbId>,
+    library_entries: &HashSet<DbId>,
 ) -> Result<PurgePlan, PurgePlanError> {
     use super::graph::{
         inbound_neighbor_ids,
         neighbor_ids,
     };
 
+    let unavailable = missing.union(rejected).copied().collect::<HashSet<_>>();
     let selected = tracks.iter().copied().collect::<HashSet<_>>();
     let mut candidates = HashSet::new();
     for &track in tracks {
@@ -677,28 +723,34 @@ fn tracks_plan(
         }
         let mut held = Vec::new();
         let mut foreign = false;
+        let mut every_source_held = true;
         for source in neighbor_ids(db, track, "TrackSource")? {
-            for entry in crate::track_sources::depended_entries(db, source)? {
-                if missing.contains(&entry) {
+            let depended = crate::track_sources::depended_entries(db, source)?;
+            every_source_held &= depended.iter().any(|entry| unavailable.contains(entry));
+            for entry in depended {
+                if unavailable.contains(&entry) {
                     held.push(entry);
                 } else {
-                    foreign |= !present.contains(&entry);
+                    foreign |= !library_entries.contains(&entry);
                 }
             }
         }
-        // A track of a shared release whose missing files are another library's is that one's, and
-        // one held in another library too would leave that library's file without a track.
+        // A track of a shared release whose unavailable files are another library's is that
+        // one's, and one held in another library too would leave that library's file without a
+        // track. As in a purge of files, every source must depend on an unavailable one.
         if !in_library
             || held.is_empty()
             || foreign
+            || !every_source_held
             || crate::track_sources::track_available(db, track)?
         {
             let public_id = crate::lookup::find_id_by_db_id(db, track)?.unwrap_or_default();
-            return Err(PurgePlanError::NotMissing(public_id));
+            return Err(PurgePlanError::NotUnavailable(public_id));
         }
         candidates.extend(held);
     }
     let mut entries = Vec::new();
+    let mut released = Vec::new();
     'entries: for entry in candidates {
         for source in crate::track_sources::depending_on(db, entry)? {
             if inbound_neighbor_ids(db, source, "Track")?
@@ -708,11 +760,16 @@ fn tracks_plan(
                 continue 'entries;
             }
         }
-        entries.push(entry);
+        if missing.contains(&entry) {
+            entries.push(entry);
+        } else {
+            released.push(entry);
+        }
     }
     Ok(PurgePlan {
         tracks: tracks.to_vec(),
         entries,
+        released: Released::of(db, released)?,
     })
 }
 
@@ -781,6 +838,51 @@ pub fn remove_missing(
         crate::orphans::collect(t, left)
     })?;
     Ok(removed.len())
+}
+
+/// Releases the rejected entries `released` plans, once the purge removed its tracks: their hold
+/// ends, the sources still depending on them leave the tracks they share with other files, and
+/// the files it planned to read again lose their sync, so the next sync reads them as a fresh scan
+/// would. Returns how many it released.
+pub fn release_rejected(
+    db: &mut DbAny,
+    library: &Library,
+    released: &Released,
+) -> anyhow::Result<usize> {
+    use super::graph::{
+        inbound_neighbor_ids,
+        remove_edges_between,
+    };
+
+    let library_db_id = library
+        .db_id
+        .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
+    let wanted = released.entries.iter().copied().collect::<HashSet<_>>();
+    let entries = load_existing(db, library_db_id)?
+        .into_iter()
+        .filter(|entry| entry.is_rejected() && !entry.is_missing())
+        .filter_map(|entry| entry.db_id)
+        .filter(|id| wanted.contains(id))
+        .collect::<Vec<_>>();
+    if entries.is_empty() {
+        return Ok(0);
+    }
+    db.transaction_mut(|t| -> anyhow::Result<()> {
+        unsync(t, released.reread.clone(), &entries, &[])?;
+        let mut left = crate::orphans::Candidates::default();
+        for &entry_id in &entries {
+            for source in crate::track_sources::depending_on(t, entry_id)? {
+                for track in inbound_neighbor_ids(t, source, "Track")? {
+                    remove_edges_between(t, track, source)?;
+                    left.tracks.push(track);
+                }
+                left.track_sources.push(source);
+            }
+        }
+        crate::orphans::collect(t, left)?;
+        clear_rejected(t, &entries)
+    })?;
+    Ok(entries.len())
 }
 
 /// Stamps `entry_ids` synced now and reconciles their rejection to `held` among them. A synced

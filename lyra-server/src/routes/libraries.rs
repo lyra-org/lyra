@@ -592,7 +592,7 @@ struct PurgeRequest {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Public ids of the library's unavailable tracks to purge, with the missing files only they need. Omitted, every missing file of the library and the tracks only they hold."
+            description = "Public ids of the library's unavailable tracks to purge, with the missing and rejected files only they need. Omitted, every missing or rejected file of the library and the tracks only they hold."
         )
     )]
     track_ids: Option<Vec<String>>,
@@ -608,7 +608,7 @@ async fn purge_library(
     match control::start_purge(&principal, &id, request.track_ids).await {
         Ok(response) => Ok(Json(response)),
         Err(control::PurgeStartError::Control(err)) => Err(err.into()),
-        Err(err @ control::PurgeStartError::NotMissing(_)) => {
+        Err(err @ control::PurgeStartError::NotUnavailable(_)) => {
             Err(AppError::conflict(err.to_string()))
         }
         Err(err @ control::PurgeStartError::Busy) => Err(AppError::conflict(err.to_string())),
@@ -617,8 +617,8 @@ async fn purge_library(
 
 #[cfg(feature = "docgen")]
 fn purge_library_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Purge missing files").description(
-        "Starts a background purge of what a library's missing files leave: with `track_ids`, those unavailable tracks and the missing files no other track needs; without, every missing file and the tracks only they hold. A purged track goes with its favorites, ratings, tags, listens, bookmarks, playlist entries, chains, lyrics and covers; releases and artists left with nothing go too. Answers 409 when a named track isn't an unavailable track of the library, or while a sync, refresh or purge of the library is running. The run's `purge` stage counts the tracks purged. Requires ManageLibraries and library access.",
+    op.summary("Purge unavailable files").description(
+        "Starts a background purge of what a library's unavailable files hold: missing files, and rejected ones, whose last read yielded nothing in place of the tracks they held. With `track_ids`, it takes those unavailable tracks and the files no other track needs; without, every missing or rejected file and the tracks only they hold. Missing files are removed. Rejected files stay and lose their hold, and the next sync reads them, and the files they played, as new. A purged track goes with its favorites, ratings, tags, listens, bookmarks, playlist entries, chains, lyrics and covers; releases and artists left with nothing go too. Answers 409 when a named track isn't an unavailable track of the library, or while a sync, refresh or purge of the library is running. The run's `purge` stage counts the tracks purged. Requires ManageLibraries and library access.",
     )
 }
 

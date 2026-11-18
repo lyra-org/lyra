@@ -626,8 +626,7 @@ async fn purge_expired_missing(
     };
     let plan = {
         let db_read = db.read().await;
-        lyra_db::entries::missing_purge_plan(&db_read, library, &selection)
-            .map_err(anyhow::Error::from)?
+        lyra_db::entries::purge_plan(&db_read, library, &selection).map_err(anyhow::Error::from)?
     };
     super::purge::apply(db, library, plan, progress).await?;
     Ok(())
@@ -4577,14 +4576,14 @@ FILE "two.flac" WAVE
         let (root, library, gone, kept) = library_with_a_missing_album("purge-chosen").await?;
         {
             let db = STATE.db.read().await;
-            let refused = lyra_db::entries::missing_purge_plan(
+            let refused = lyra_db::entries::purge_plan(
                 &db,
                 &library,
                 &lyra_db::entries::PurgeScope::Tracks(vec![gone, kept]),
             );
             assert!(matches!(
                 refused,
-                Err(lyra_db::entries::PurgePlanError::NotMissing(_))
+                Err(lyra_db::entries::PurgePlanError::NotUnavailable(_))
             ));
         }
         super::super::purge::purge(
@@ -4596,6 +4595,248 @@ FILE "two.flac" WAVE
         .await?;
         assert!(!track_exists(gone).await?);
         assert!(track_exists(kept).await?);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_purge_of_chosen_tracks_takes_one_missing_and_rejected_files_hold()
+    -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library, gone, kept) = library_with_a_missing_album("purge-rejected").await?;
+        let rejected = entry_for(&library, &root.join("Kept/track.flac"))
+            .await?
+            .db_id
+            .expect("entry");
+        {
+            let mut db = STATE.db.write().await;
+            db.transaction_mut(|t| {
+                lyra_db::track_sources::upsert(
+                    t,
+                    gone,
+                    rejected,
+                    lyra_db::track_sources::TrackSourceUpsert {
+                        source_kind: "embedded_tags".into(),
+                        source_key: "rejected-copy".into(),
+                        is_primary: false,
+                        start_ms: None,
+                        end_ms: None,
+                        format: Default::default(),
+                    },
+                    None,
+                )
+            })?;
+            lyra_db::entries::reconcile_rejected(&mut db, &[rejected], &[rejected])?;
+        }
+
+        let plan = {
+            let db = STATE.db.read().await;
+            assert!(!lyra_db::track_sources::track_available(&*db, gone)?);
+            lyra_db::entries::purge_plan(
+                &db,
+                &library,
+                &lyra_db::entries::PurgeScope::Tracks(vec![gone]),
+            )?
+        };
+        assert_eq!(plan.tracks, vec![gone]);
+        assert_eq!(plan.entries.len(), 1, "the missing file only it needs");
+        assert!(
+            plan.released.entries.is_empty(),
+            "the rejected file another track needs is released"
+        );
+        super::super::purge::purge(
+            &STATE.db.get(),
+            &library,
+            &lyra_db::entries::PurgeScope::Tracks(vec![gone]),
+            &SyncRunProgress::unreported_for_test(),
+        )
+        .await?;
+        assert!(!track_exists(gone).await?);
+        assert!(track_exists(kept).await?);
+        let entry = entry_for(&library, &root.join("Kept/track.flac")).await?;
+        assert!(entry.is_rejected(), "the hold kept's track needs ended");
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn purging_a_held_track_releases_its_file_to_read_as_new() -> anyhow::Result<()> {
+        use lofty::prelude::*;
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("purge-held").await?;
+        let audio = album_track(&root.join("Album"), "Album")?;
+        sync(&library).await?;
+        let track = track_of_file(&library, &audio).await?;
+        retag(&audio, drop_album)?;
+        sync(&library).await?;
+        assert!(entry_for(&library, &audio).await?.is_rejected());
+
+        let expired = {
+            let db = STATE.db.read().await;
+            lyra_db::entries::purge_plan(
+                &db,
+                &library,
+                &lyra_db::entries::PurgeScope::Expired {
+                    missing_before_ms: u64::MAX,
+                    protected: Vec::new(),
+                },
+            )?
+        };
+        assert!(
+            expired.tracks.is_empty() && expired.released.entries.is_empty(),
+            "a hold expired"
+        );
+
+        let purged = super::super::purge::purge(
+            &STATE.db.get(),
+            &library,
+            &lyra_db::entries::PurgeScope::All,
+            &SyncRunProgress::unreported_for_test(),
+        )
+        .await?;
+        assert_eq!(purged, 1);
+        assert!(!track_exists(track).await?);
+        let entry = entry_for(&library, &audio).await?;
+        assert!(!entry.is_rejected());
+        assert_eq!(
+            entry.synced_at_ms, None,
+            "the released file isn't read again"
+        );
+        assert!(lyra_db::entries::rejected_ids(&*STATE.db.read().await)?.is_empty());
+
+        sync(&library).await?;
+        assert!(snapshot(&library).await?[&audio].1.is_empty());
+        let entry = entry_for(&library, &audio).await?;
+        assert!(entry.synced_at_ms.is_some());
+        assert!(!entry.is_rejected(), "a file with no tracks is held");
+
+        retag(&audio, |tag| tag.set_album("Album".to_string()))?;
+        sync(&library).await?;
+        let fixed = track_of_file(&library, &audio).await?;
+        assert_ne!(fixed, track, "the purged track came back");
+        assert!(track_plays(fixed).await?);
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn purging_a_held_file_leaves_the_tracks_it_shares_to_their_other_files()
+    -> anyhow::Result<()> {
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("purge-held-shared").await?;
+        let held = album_track(&root.join("Held"), "Held")?;
+        let shared = album_track(&root.join("Shared"), "Shared")?;
+        sync(&library).await?;
+        let held_track = track_of_file(&library, &held).await?;
+        let shared_track = track_of_file(&library, &shared).await?;
+        let held_entry = entry_for(&library, &held).await?.db_id.expect("entry");
+        STATE.db.write().await.transaction_mut(|t| {
+            lyra_db::track_sources::upsert(
+                t,
+                shared_track,
+                held_entry,
+                lyra_db::track_sources::TrackSourceUpsert {
+                    source_kind: "embedded_tags".into(),
+                    source_key: "held-copy".into(),
+                    is_primary: false,
+                    start_ms: None,
+                    end_ms: None,
+                    format: Default::default(),
+                },
+                None,
+            )
+        })?;
+        retag(&held, drop_album)?;
+        sync(&library).await?;
+        assert!(entry_for(&library, &held).await?.is_rejected());
+
+        super::super::purge::purge(
+            &STATE.db.get(),
+            &library,
+            &lyra_db::entries::PurgeScope::All,
+            &SyncRunProgress::unreported_for_test(),
+        )
+        .await?;
+        assert!(!track_exists(held_track).await?);
+        assert!(track_exists(shared_track).await?);
+        assert!(track_plays(shared_track).await?);
+        let db = STATE.db.read().await;
+        assert!(
+            lyra_db::track_sources::depending_on(&*db, held_entry)?.is_empty(),
+            "the released file still has a source"
+        );
+        drop(db);
+        assert!(!entry_for(&library, &held).await?.is_rejected());
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn purging_a_held_cue_sheet_reads_its_audio_on_its_own() -> anyhow::Result<()> {
+        const SHEET: &str = r#"PERFORMER "Cue Artist"
+TITLE "Cue Album"
+FILE "one.flac" WAVE
+  TRACK 01 AUDIO
+    TITLE "Cue Track 1"
+    INDEX 01 00:00:00
+FILE "two.flac" WAVE
+  TRACK 02 AUDIO
+    TITLE "Cue Track 2"
+    INDEX 01 00:00:00
+"#;
+
+        let _guard = crate::services::testing::runtime_test_lock().await;
+        crate::services::testing::init_default_test_state()?;
+        let (root, library) = empty_library("purge-held-cue").await?;
+        let album = root.join("Album");
+        std::fs::create_dir_all(&album)?;
+        let (one, two) = (album.join("one.flac"), album.join("two.flac"));
+        album_file(&one, "One", 1)?;
+        album_file(&two, "Two", 2)?;
+        let cue = album.join("album.cue");
+        std::fs::write(&cue, SHEET)?;
+        sync(&library).await?;
+        let segments = [
+            tracks_of(&library, &one).await?,
+            tracks_of(&library, &two).await?,
+        ];
+
+        std::fs::write(&cue, "REM nothing here\n")?;
+        shift_mtime(&cue, 5)?;
+        sync(&library).await?;
+        assert!(entry_for(&library, &cue).await?.is_rejected());
+        assert_eq!(
+            tracks_of(&library, &one).await?,
+            vec![(segments[0][0].0.clone(), false)]
+        );
+
+        super::super::purge::purge(
+            &STATE.db.get(),
+            &library,
+            &lyra_db::entries::PurgeScope::All,
+            &SyncRunProgress::unreported_for_test(),
+        )
+        .await?;
+        assert!(!entry_for(&library, &cue).await?.is_rejected());
+        for (file, held) in [&one, &two].into_iter().zip(&segments) {
+            assert!(tracks_of(&library, file).await?.is_empty());
+            assert_eq!(entry_for(&library, file).await?.synced_at_ms, None);
+            let id = &held[0].0;
+            let db = STATE.db.read().await;
+            assert!(lyra_db::lookup::find_node_id_by_id(&*db, id)?.is_none());
+        }
+
+        sync(&library).await?;
+        for file in [&one, &two] {
+            let tracks = tracks_of(&library, file).await?;
+            assert_eq!(tracks.len(), 1, "{} isn't read on its own", file.display());
+            assert!(tracks[0].1);
+        }
+        assert!(!entry_for(&library, &cue).await?.is_rejected());
         let _ = std::fs::remove_dir_all(root);
         Ok(())
     }

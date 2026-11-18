@@ -125,7 +125,7 @@ pub(crate) enum PurgeStartError {
     Control(#[from] LibraryControlError),
     /// A named track isn't one of the library's unavailable tracks.
     #[error("track {0} is not an unavailable track of this library")]
-    NotMissing(String),
+    NotUnavailable(String),
     /// Another run of the library is active.
     #[error("a sync, refresh or purge of the library is running")]
     Busy,
@@ -137,8 +137,8 @@ impl From<anyhow::Error> for PurgeStartError {
     }
 }
 
-/// Starts a purge of the library's missing files: those of `track_ids`, which must be the
-/// library's unavailable tracks, or all of them without any. Checks the principal and the tracks
+/// Starts a purge of the library's missing and rejected files: those of `track_ids`, which must be
+/// the library's unavailable tracks, or all of them without any. Checks the principal and the tracks
 /// under the lock that serializes starts, and starts nothing while another run is active.
 pub(crate) async fn start_purge(
     principal: &Principal,
@@ -156,16 +156,14 @@ pub(crate) async fn start_purge(
             for id in track_ids {
                 let track = lyra_db::lookup::find_node_id_by_id(db, id)?
                     .filter(|track| lyra_db::graph::is_kind(db, *track, "Track").unwrap_or(false))
-                    .ok_or_else(|| PurgeStartError::NotMissing(id.clone()))?;
+                    .ok_or_else(|| PurgeStartError::NotUnavailable(id.clone()))?;
                 tracks.push(track);
             }
             let selection = PurgeScope::Tracks(tracks);
-            lyra_db::entries::missing_purge_plan(db, &library, &selection).map_err(
-                |err| match err {
-                    PurgePlanError::NotMissing(id) => PurgeStartError::NotMissing(id),
-                    PurgePlanError::Db(err) => err.into(),
-                },
-            )?;
+            lyra_db::entries::purge_plan(db, &library, &selection).map_err(|err| match err {
+                PurgePlanError::NotUnavailable(id) => PurgeStartError::NotUnavailable(id),
+                PurgePlanError::Db(err) => err.into(),
+            })?;
             Ok((library, LibraryRun::Purge(selection)))
         },
     )
